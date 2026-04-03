@@ -12,6 +12,7 @@ import { fetchMfRentalData } from "@app/Internal/commands/reas/api/mf-rental";
 import { fetchSoldListings } from "@app/Internal/commands/reas/api/reas-client";
 import { fetchRentalListings, fetchSaleListings } from "@app/Internal/commands/reas/api/sreality-client";
 import { parsePeriods, resolveDistrict } from "@app/Internal/commands/reas/lib/config-builder";
+import { getListingPersistenceDistrict } from "@app/Internal/commands/reas/lib/district-matching";
 import {
     buildListingsFetchFilters,
     type FetchableListingType,
@@ -73,7 +74,15 @@ function buildPersistedListings({
         type: "sold" as const,
         status: "sold" as const,
         sourceId: listing._id,
-        district: districtName,
+        district: getListingPersistenceDistrict({
+            requestedDistrict: districtName,
+            locality: [
+                listing.formattedAddress,
+                listing.formattedLocation,
+                listing.cadastralAreaSlug,
+                listing.municipalitySlug,
+            ].join(" "),
+        }),
         disposition: listing.disposition,
         area: listing.utilityArea || listing.displayArea,
         price: listing.soldPrice,
@@ -95,7 +104,7 @@ function buildPersistedListings({
         type: "sale" as const,
         status: "active" as const,
         sourceId: listing.sourceId,
-        district: districtName,
+        district: getListingPersistenceDistrict({ requestedDistrict: districtName, locality: listing.address }),
         disposition: listing.disposition,
         area: listing.area,
         price: listing.price,
@@ -115,7 +124,7 @@ function buildPersistedListings({
         type: "rental" as const,
         status: "active" as const,
         sourceId: listing.sourceId,
-        district: districtName,
+        district: getListingPersistenceDistrict({ requestedDistrict: districtName, locality: listing.locality }),
         disposition: listing.disposition,
         area: listing.area,
         price: listing.price,
@@ -147,6 +156,113 @@ export interface AnalysisProgress {
 }
 
 export type ProgressCallback = (progress: AnalysisProgress) => void;
+
+interface ListingsSnapshotTarget {
+    type: FetchableListingType;
+    source: ProviderName;
+    sourceContract: string;
+}
+
+type ListingsSnapshotSuccessKey = `${ProviderName}:${FetchableListingType}`;
+
+type ListingsSnapshotSuccess = Partial<Record<ListingsSnapshotSuccessKey, boolean>>;
+
+function buildSnapshotTarget(
+    type: FetchableListingType,
+    source: ProviderName,
+    sourceContract: string
+): ListingsSnapshotTarget {
+    return {
+        type,
+        source,
+        sourceContract,
+    };
+}
+
+export function buildListingsSnapshotTargets({
+    filters,
+    listingType,
+}: {
+    filters: AnalysisFilters;
+    listingType?: FetchableListingType;
+}): ListingsSnapshotTarget[] {
+    const targets: ListingsSnapshotTarget[] = [];
+
+    if ((!listingType || listingType === "sold") && isProviderEnabled(filters, "reas")) {
+        targets.push(buildSnapshotTarget("sold", "reas", "reas-catalog"));
+    }
+
+    if ((!listingType || listingType === "sale") && isProviderEnabled(filters, "sreality")) {
+        targets.push(buildSnapshotTarget("sale", "sreality", "sreality-v2"));
+    }
+
+    if ((!listingType || listingType === "sale") && isProviderEnabled(filters, "bezrealitky")) {
+        targets.push(buildSnapshotTarget("sale", "bezrealitky", "graphql:listAdverts"));
+    }
+
+    if ((!listingType || listingType === "rental") && isProviderEnabled(filters, "sreality")) {
+        targets.push(buildSnapshotTarget("rental", "sreality", "sreality-v2"));
+    }
+
+    if ((!listingType || listingType === "rental") && isProviderEnabled(filters, "bezrealitky")) {
+        targets.push(buildSnapshotTarget("rental", "bezrealitky", "graphql:listAdverts"));
+    }
+
+    if ((!listingType || listingType === "rental") && isProviderEnabled(filters, "ereality")) {
+        targets.push(buildSnapshotTarget("rental", "ereality", "ereality-html"));
+    }
+
+    return targets;
+}
+
+export function buildSuccessfulListingsSnapshotTargets({
+    filters,
+    listingType,
+    providerSuccess,
+}: {
+    filters: AnalysisFilters;
+    listingType?: FetchableListingType;
+    providerSuccess: ListingsSnapshotSuccess;
+}): ListingsSnapshotTarget[] {
+    const requestedTargets = buildListingsSnapshotTargets({ filters, listingType });
+
+    return requestedTargets.filter((target) => {
+        const successKey: ListingsSnapshotSuccessKey = `${target.source}:${target.type}`;
+
+        return providerSuccess[successKey] === true;
+    });
+}
+
+function replaceListingsSnapshots({
+    district,
+    snapshotTargets,
+}: {
+    district: string;
+    snapshotTargets: ListingsSnapshotTarget[];
+}) {
+    for (const target of snapshotTargets) {
+        reasDatabase.replaceListingsSnapshot({
+            district,
+            type: target.type,
+            source: target.source,
+            sourceContract: target.sourceContract,
+        });
+    }
+}
+
+function repairListingSnapshots({
+    district,
+    snapshotTargets,
+}: {
+    district: string;
+    snapshotTargets: ListingsSnapshotTarget[];
+}) {
+    reasDatabase.repairListingDistricts({
+        district,
+        types: [...new Set(snapshotTargets.map((target) => target.type))],
+        sources: [...new Set(snapshotTargets.map((target) => target.source))],
+    });
+}
 
 export function isProviderEnabled(filters: AnalysisFilters, provider: ProviderName): boolean {
     return !filters.providers || filters.providers.includes(provider);
@@ -234,9 +350,24 @@ export async function fetchAndAnalyze(
 
     if (reasResult.status === "fulfilled") {
         allListings = reasResult.value;
+        providerSummary.push(
+            buildProviderSummary({
+                provider: "reas",
+                sourceContract: "reas-catalog",
+                count: allListings.length,
+            })
+        );
     } else {
         warnings.push(
             `REAS: ${reasResult.reason instanceof Error ? reasResult.reason.message : String(reasResult.reason)}`
+        );
+        providerSummary.push(
+            buildProviderSummary({
+                provider: "reas",
+                sourceContract: "reas-catalog",
+                count: 0,
+                error: reasResult.reason instanceof Error ? reasResult.reason.message : String(reasResult.reason),
+            })
         );
     }
 
@@ -274,9 +405,27 @@ export async function fetchAndAnalyze(
 
     if (srealitySaleResult.status === "fulfilled") {
         saleListings.push(...srealitySaleResult.value);
+        providerSummary.push(
+            buildProviderSummary({
+                provider: "sreality",
+                sourceContract: "sreality-v2-sale",
+                count: srealitySaleResult.value.length,
+            })
+        );
     } else {
         warnings.push(
             `Sreality sales: ${srealitySaleResult.reason instanceof Error ? srealitySaleResult.reason.message : String(srealitySaleResult.reason)}`
+        );
+        providerSummary.push(
+            buildProviderSummary({
+                provider: "sreality",
+                sourceContract: "sreality-v2-sale",
+                count: 0,
+                error:
+                    srealitySaleResult.reason instanceof Error
+                        ? srealitySaleResult.reason.message
+                        : String(srealitySaleResult.reason),
+            })
         );
     }
 
@@ -309,9 +458,27 @@ export async function fetchAndAnalyze(
 
     if (bezrealitkySaleResult.status === "fulfilled") {
         saleListings.push(...bezrealitkySaleResult.value);
+        providerSummary.push(
+            buildProviderSummary({
+                provider: "bezrealitky",
+                sourceContract: "graphql:listAdverts:sale",
+                count: bezrealitkySaleResult.value.length,
+            })
+        );
     } else {
         warnings.push(
             `Bezrealitky sales: ${bezrealitkySaleResult.reason instanceof Error ? bezrealitkySaleResult.reason.message : String(bezrealitkySaleResult.reason)}`
+        );
+        providerSummary.push(
+            buildProviderSummary({
+                provider: "bezrealitky",
+                sourceContract: "graphql:listAdverts:sale",
+                count: 0,
+                error:
+                    bezrealitkySaleResult.reason instanceof Error
+                        ? bezrealitkySaleResult.reason.message
+                        : String(bezrealitkySaleResult.reason),
+            })
         );
     }
 
@@ -346,9 +513,24 @@ export async function fetchAndAnalyze(
 
     if (mfResult.status === "fulfilled") {
         mfBenchmarks = mfResult.value;
+        providerSummary.push(
+            buildProviderSummary({
+                provider: "mf",
+                sourceContract: "mf-cenova-mapa",
+                count: mfBenchmarks.length,
+            })
+        );
     } else {
         warnings.push(
             `MF cenova mapa: ${mfResult.reason instanceof Error ? mfResult.reason.message : String(mfResult.reason)}`
+        );
+        providerSummary.push(
+            buildProviderSummary({
+                provider: "mf",
+                sourceContract: "mf-cenova-mapa",
+                count: 0,
+                error: mfResult.reason instanceof Error ? mfResult.reason.message : String(mfResult.reason),
+            })
         );
     }
 
@@ -429,6 +611,13 @@ export async function fetchAndAnalyze(
         discount,
         rentalListings,
         saleListings,
+        bezrealitkyListings: {
+            rentals:
+                bezrealitkyRentalResult.status === "fulfilled"
+                    ? bezrealitkyRentalResult.value.filter((listing) => listing.price >= MIN_RENTAL_PRICE)
+                    : [],
+            sales: bezrealitkySaleResult.status === "fulfilled" ? bezrealitkySaleResult.value : [],
+        },
         mfBenchmarks,
         target,
         filters,
@@ -441,8 +630,20 @@ export async function fetchAndAnalyze(
     if (options?.persistResult !== false) {
         try {
             const fetchedAt = new Date().toISOString();
+            const snapshotTargets = buildSuccessfulListingsSnapshotTargets({
+                filters,
+                providerSuccess: {
+                    "reas:sold": reasResult.status === "fulfilled",
+                    "sreality:rental": srealityRentalResult.status === "fulfilled",
+                    "sreality:sale": srealitySaleResult.status === "fulfilled",
+                    "bezrealitky:rental": bezrealitkyRentalResult.status === "fulfilled",
+                    "bezrealitky:sale": bezrealitkySaleResult.status === "fulfilled",
+                    "ereality:rental": erealityResult.status === "fulfilled",
+                },
+            });
             reasDatabase.saveAnalysis(result);
             reasDatabase.saveDistrictSnapshot(result);
+            replaceListingsSnapshots({ district: filters.district.name, snapshotTargets });
             reasDatabase.upsertListings(
                 buildPersistedListings({
                     districtName: filters.district.name,
@@ -453,6 +654,7 @@ export async function fetchAndAnalyze(
                 }),
                 filters.district.name
             );
+            repairListingSnapshots({ district: filters.district.name, snapshotTargets });
         } catch {
             // Non-fatal — persistence failure should not break analysis
         }
@@ -499,10 +701,16 @@ export async function fetchListingsIntoCache(
     const saleListings: SaleListing[] = [];
     const rentalListings: RentalListing[] = [];
 
+    let soldFetchSucceeded = false;
+    let srealityFetchSucceeded = false;
+    let bezrealitkyFetchSucceeded = false;
+    let erealityFetchSucceeded = false;
+
     if (options.type === "sold") {
         const soldResults = await Promise.allSettled(
             filters.periods.map((period) => fetchSoldListings(filters, period, refresh))
         );
+        soldFetchSucceeded = soldResults.every((result) => result.status === "fulfilled");
 
         for (const result of soldResults) {
             if (result.status === "fulfilled") {
@@ -525,6 +733,7 @@ export async function fetchListingsIntoCache(
 
         if (srealityResult.status === "fulfilled") {
             saleListings.push(...srealityResult.value);
+            srealityFetchSucceeded = true;
         } else {
             warnings.push(
                 srealityResult.reason instanceof Error
@@ -535,6 +744,7 @@ export async function fetchListingsIntoCache(
 
         if (bezrealitkyResult.status === "fulfilled") {
             saleListings.push(...bezrealitkyResult.value);
+            bezrealitkyFetchSucceeded = true;
         } else {
             warnings.push(
                 bezrealitkyResult.reason instanceof Error
@@ -559,6 +769,7 @@ export async function fetchListingsIntoCache(
 
         if (srealityResult.status === "fulfilled") {
             rentalListings.push(...srealityResult.value);
+            srealityFetchSucceeded = true;
         } else {
             warnings.push(
                 srealityResult.reason instanceof Error
@@ -569,6 +780,7 @@ export async function fetchListingsIntoCache(
 
         if (bezrealitkyResult.status === "fulfilled") {
             rentalListings.push(...bezrealitkyResult.value);
+            bezrealitkyFetchSucceeded = true;
         } else {
             warnings.push(
                 bezrealitkyResult.reason instanceof Error
@@ -579,6 +791,7 @@ export async function fetchListingsIntoCache(
 
         if (erealityResult.status === "fulfilled") {
             rentalListings.push(...erealityResult.value);
+            erealityFetchSucceeded = true;
         } else {
             warnings.push(
                 erealityResult.reason instanceof Error
@@ -589,6 +802,18 @@ export async function fetchListingsIntoCache(
     }
 
     const fetchedAt = new Date().toISOString();
+    const snapshotTargets = buildSuccessfulListingsSnapshotTargets({
+        filters,
+        listingType: options.type,
+        providerSuccess: {
+            "reas:sold": soldFetchSucceeded,
+            "sreality:sale": srealityFetchSucceeded,
+            "sreality:rental": srealityFetchSucceeded,
+            "bezrealitky:sale": bezrealitkyFetchSucceeded,
+            "bezrealitky:rental": bezrealitkyFetchSucceeded,
+            "ereality:rental": erealityFetchSucceeded,
+        },
+    });
     const persistedListings = buildPersistedListings({
         districtName: filters.district.name,
         fetchedAt,
@@ -597,30 +822,9 @@ export async function fetchListingsIntoCache(
         rentalListings,
     });
 
-    const snapshotSources = new Map<string, string | undefined>();
-
-    for (const listing of persistedListings) {
-        const key = `${listing.source}:${listing.type}`;
-
-        if (!snapshotSources.has(key)) {
-            snapshotSources.set(key, listing.sourceContract);
-        }
-    }
-
-    for (const [key, sourceContract] of snapshotSources) {
-        const [source, type] = key.split(":");
-
-        if (type === "sale" || type === "rental" || type === "sold") {
-            reasDatabase.replaceListingsSnapshot({
-                district: filters.district.name,
-                type,
-                source,
-                sourceContract,
-            });
-        }
-    }
-
+    replaceListingsSnapshots({ district: filters.district.name, snapshotTargets });
     reasDatabase.upsertListings(persistedListings, filters.district.name);
+    repairListingSnapshots({ district: filters.district.name, snapshotTargets });
 
     return {
         type: options.type,

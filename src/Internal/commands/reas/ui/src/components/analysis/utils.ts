@@ -189,9 +189,47 @@ export function getConfidenceTone(confidence: string): string {
 export function getProviderCounts(data: DashboardExport) {
     const providerSummary = data.meta.providerSummary ?? [];
     const total = providerSummary.reduce((sum, item) => sum + item.count, 0);
-    const healthy = providerSummary.filter((item) => !item.error).length;
+    const providers = new Set(data.meta.providers);
 
-    return { providerSummary, total, healthy };
+    for (const item of providerSummary) {
+        providers.add(item.provider);
+    }
+
+    const providerStatuses = new Map<string, boolean>();
+
+    for (const provider of providers) {
+        providerStatuses.set(provider, false);
+    }
+
+    for (const item of providerSummary) {
+        if (getProviderHealth(item) !== "healthy") {
+            continue;
+        }
+
+        providerStatuses.set(item.provider, true);
+    }
+
+    const healthy = Array.from(providerStatuses.values()).filter(Boolean).length;
+
+    return {
+        providerSummary,
+        total,
+        healthy,
+        providers: Array.from(providers),
+        uniqueProviders: providers.size,
+    };
+}
+
+export function getProviderHealth(item: { count: number; error?: string }) {
+    if (item.error) {
+        return "error" as const;
+    }
+
+    if (item.count === 0) {
+        return "warning" as const;
+    }
+
+    return "healthy" as const;
 }
 
 export function getMedianActivePricePerM2(data: DashboardExport): number {

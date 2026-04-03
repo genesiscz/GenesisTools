@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { SavedPropertyRow } from "@app/Internal/commands/reas/lib/store";
+import { getDefaultComparePeriods } from "@app/Internal/commands/reas/ui/src/components/compare/compare-query";
 import { buildWatchlistCompareQuery } from "@app/Internal/commands/reas/ui/src/components/watchlist/compare-query";
 
 function makeProperty(overrides?: Partial<SavedPropertyRow>): SavedPropertyRow {
@@ -55,6 +56,7 @@ describe("buildWatchlistCompareQuery", () => {
         expect(params.get("districts")).toBe("Praha 2,Hradec Králové");
         expect(params.get("type")).toBe("brick");
         expect(params.get("disposition")).toBe("2+kk");
+        expect(params.get("periods")).toBe(getDefaultComparePeriods());
         expect(params.get("price")).toBe("5000000");
         expect(params.get("area")).toBe("70");
     });
@@ -66,7 +68,17 @@ describe("buildWatchlistCompareQuery", () => {
         ]);
 
         expect(params.get("districts")).toBe("Praha 2");
+        expect(params.get("periods")).toBe(getDefaultComparePeriods());
         expect(params.get("price")).toBeNull();
         expect(params.get("area")).toBeNull();
+    });
+
+    test("preserves shared watchlist periods when all selected properties use the same horizon", () => {
+        const params = buildWatchlistCompareQuery([
+            makeProperty({ periods: "2022,2023" }),
+            makeProperty({ id: 2, district: "Praha 3", periods: "2022,2023" }),
+        ]);
+
+        expect(params.get("periods")).toBe("2022,2023");
     });
 });

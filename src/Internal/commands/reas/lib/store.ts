@@ -1,5 +1,6 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { getListingPersistenceDistrict } from "@app/Internal/commands/reas/lib/district-matching";
 import type { FullAnalysis } from "@app/Internal/commands/reas/types";
 import { BaseDatabase } from "@app/utils/database";
 import { SafeJSON } from "@app/utils/json";
@@ -140,6 +141,12 @@ export interface ReplaceListingsSnapshotOptions {
     type: "sale" | "rental" | "sold";
     source: string;
     sourceContract?: string;
+}
+
+export interface RepairListingDistrictsOptions {
+    district?: string;
+    types?: Array<"sale" | "rental" | "sold">;
+    sources?: string[];
 }
 
 export interface GetListingsOptions {
@@ -734,6 +741,70 @@ export class ReasDatabase extends BaseDatabase {
         }
 
         this.db.prepare(`DELETE FROM listings WHERE ${where.join(" AND ")}`).run(params);
+    }
+
+    repairListingDistricts(options: RepairListingDistrictsOptions = {}): { scanned: number; repaired: number } {
+        const where: string[] = [];
+        const params: Record<string, string> = {};
+
+        if (options.district) {
+            where.push("district = $district");
+            params.$district = options.district;
+        }
+
+        if (options.types && options.types.length > 0) {
+            const typePlaceholders = options.types.map((_, index) => `$type_${index}`);
+            where.push(`type IN (${typePlaceholders.join(", ")})`);
+
+            for (const [index, type] of options.types.entries()) {
+                params[`$type_${index}`] = type;
+            }
+        }
+
+        if (options.sources && options.sources.length > 0) {
+            const sourcePlaceholders = options.sources.map((_, index) => `$source_${index}`);
+            where.push(`source IN (${sourcePlaceholders.join(", ")})`);
+
+            for (const [index, source] of options.sources.entries()) {
+                params[`$source_${index}`] = source;
+            }
+        }
+
+        const whereClause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
+        const rows = this.db
+            .prepare(`SELECT id, district, address, raw_json FROM listings ${whereClause} ORDER BY id ASC`)
+            .all(params) as Array<{ id: number; district: string; address: string; raw_json: string | null }>;
+        const stmt = this.db.prepare(
+            "UPDATE listings SET district = $district, updated_at = datetime('now') WHERE id = $id"
+        );
+        let repaired = 0;
+
+        for (const row of rows) {
+            const rawJson = row.raw_json ? (SafeJSON.parse(row.raw_json) as Record<string, unknown>) : null;
+            const localityCandidates = [
+                row.address,
+                typeof rawJson?.locality === "string" ? rawJson.locality : null,
+                typeof rawJson?.formattedAddress === "string" ? rawJson.formattedAddress : null,
+                typeof rawJson?.formattedLocation === "string" ? rawJson.formattedLocation : null,
+                typeof rawJson?.municipalitySlug === "string" ? rawJson.municipalitySlug : null,
+                typeof rawJson?.cadastralAreaSlug === "string" ? rawJson.cadastralAreaSlug : null,
+            ]
+                .filter((value): value is string => Boolean(value?.trim()))
+                .join(" ");
+            const nextDistrict = getListingPersistenceDistrict({
+                requestedDistrict: row.district,
+                locality: localityCandidates,
+            });
+
+            if (!nextDistrict || nextDistrict === row.district) {
+                continue;
+            }
+
+            stmt.run({ $district: nextDistrict, $id: row.id });
+            repaired++;
+        }
+
+        return { scanned: rows.length, repaired };
     }
 
     getListings(options: GetListingsOptions = {}): ListingRow[] {

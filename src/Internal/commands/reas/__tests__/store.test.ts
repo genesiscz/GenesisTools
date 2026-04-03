@@ -654,4 +654,82 @@ describe("listings", () => {
         expect(listings).toHaveLength(1);
         expect(listings[0]?.address).toBe("Mečislavova, Praha 4 - Nusle");
     });
+
+    test("repairListingDistricts backfills stale districts from stored listing locality", () => {
+        db.upsertListings(
+            [
+                {
+                    source: "bezrealitky",
+                    sourceContract: "graphql:listAdverts",
+                    type: "rental",
+                    sourceId: "repair-1",
+                    district: "Praha 4",
+                    disposition: "2+kk",
+                    area: 57,
+                    price: 21000,
+                    pricePerM2: 368,
+                    address: "Varšavská, Praha 2 - Vinohrady",
+                    link: "https://bezrealitky.cz/repair-1",
+                    status: "active",
+                    fetchedAt: "2026-04-03T00:00:00.000Z",
+                    rawJson: SafeJSON.stringify({
+                        locality: "Varšavská, Praha 2 - Vinohrady",
+                    }),
+                },
+            ],
+            "Praha 4"
+        );
+
+        const result = db.repairListingDistricts();
+
+        expect(result.repaired).toBe(1);
+        expect(db.getListings({ district: "Praha 2", type: "rental" })).toHaveLength(1);
+        expect(db.getListings({ district: "Praha 4", type: "rental" })).toHaveLength(0);
+    });
+
+    test("repairListingDistricts can scope repairs to the refreshed provider snapshot", () => {
+        db.upsertListings(
+            [
+                {
+                    source: "bezrealitky",
+                    sourceContract: "graphql:listAdverts",
+                    type: "rental",
+                    sourceId: "repair-scope-1",
+                    district: "Praha 4",
+                    disposition: "2+kk",
+                    area: 57,
+                    price: 21000,
+                    pricePerM2: 368,
+                    address: "Varšavská, Praha 2 - Vinohrady",
+                    link: "https://bezrealitky.cz/repair-scope-1",
+                    status: "active",
+                    fetchedAt: "2026-04-03T00:00:00.000Z",
+                    rawJson: SafeJSON.stringify({ locality: "Varšavská, Praha 2 - Vinohrady" }),
+                },
+                {
+                    source: "sreality",
+                    sourceContract: "sreality-v2",
+                    type: "rental",
+                    sourceId: "repair-scope-2",
+                    district: "Praha 4",
+                    disposition: "2+kk",
+                    area: 58,
+                    price: 23000,
+                    pricePerM2: 397,
+                    address: "Korunní, Praha 2 - Vinohrady",
+                    link: "https://sreality.cz/repair-scope-2",
+                    status: "active",
+                    fetchedAt: "2026-04-03T00:00:00.000Z",
+                    rawJson: SafeJSON.stringify({ locality: "Korunní, Praha 2 - Vinohrady" }),
+                },
+            ],
+            "Praha 4"
+        );
+
+        const result = db.repairListingDistricts({ district: "Praha 4", types: ["rental"], sources: ["bezrealitky"] });
+
+        expect(result.repaired).toBe(1);
+        expect(db.getListings({ district: "Praha 2", type: "rental", source: "bezrealitky" })).toHaveLength(1);
+        expect(db.getListings({ district: "Praha 4", type: "rental", source: "sreality" })).toHaveLength(1);
+    });
 });

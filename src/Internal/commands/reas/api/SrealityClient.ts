@@ -22,6 +22,7 @@ import type {
 import { SREALITY_V2_SOURCE_CONTRACT } from "@app/Internal/commands/reas/api/SrealityClient.types";
 import { cacheKey, getCached, SREALITY_TTL, setCache } from "@app/Internal/commands/reas/cache/index";
 import { getSrealityCategorySubCb } from "@app/Internal/commands/reas/data/disposition-map";
+import { matchesRequestedDistrict } from "@app/Internal/commands/reas/lib/district-matching";
 import type { AnalysisFilters, CacheEntry, SaleListing, SrealityRental } from "@app/Internal/commands/reas/types";
 import { ApiClient } from "@app/utils/api/ApiClient";
 
@@ -78,25 +79,6 @@ function buildCacheKeyParams(filters: AnalysisFilters, offerType: SrealityOfferT
         disposition: filters.disposition ?? null,
         constructionType: filters.constructionType,
     };
-}
-
-function normalizeLocalityToken(value: string): string {
-    return value
-        .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, "")
-        .toLowerCase();
-}
-
-function isPrahaWard(name: string): boolean {
-    return /^Praha\s+\d+$/i.test(name.trim());
-}
-
-function matchesRequestedDistrict(locality: string, districtName: string): boolean {
-    if (!isPrahaWard(districtName)) {
-        return true;
-    }
-
-    return normalizeLocalityToken(locality).includes(normalizeLocalityToken(districtName));
 }
 
 function buildV2SearchParams(filters: AnalysisFilters, offerType: SrealityOfferType, page: number): URLSearchParams {
@@ -311,7 +293,12 @@ export class SrealityClient {
             const estates = body._embedded?.estates ?? [];
 
             for (const estate of estates) {
-                if (!matchesRequestedDistrict(estate.locality, request.filters.district.name)) {
+                if (
+                    !matchesRequestedDistrict({
+                        requestedDistrict: request.filters.district.name,
+                        locality: estate.locality,
+                    })
+                ) {
                     continue;
                 }
 

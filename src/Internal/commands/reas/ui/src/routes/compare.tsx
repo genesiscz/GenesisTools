@@ -13,7 +13,11 @@ import { ComparisonMarketTable } from "../components/compare/ComparisonMarketTab
 import { ComparisonOverview } from "../components/compare/ComparisonOverview";
 import { ComparisonRankingsTable } from "../components/compare/ComparisonRankingsTable";
 import { ComparisonTrendSection } from "../components/compare/ComparisonTrendSection";
-import { buildCompareSearchParams, parseCompareSearchParams } from "../components/compare/compare-query";
+import {
+    buildComparePeriodControlOptions,
+    buildCompareSearchParams,
+    parseCompareSearchParams,
+} from "../components/compare/compare-query";
 import { DistrictContextCallout } from "../components/compare/DistrictContextCallout";
 import { DistrictDetailTable } from "../components/compare/DistrictDetailTable";
 import { DistrictPicker } from "../components/compare/DistrictPicker";
@@ -47,12 +51,14 @@ function ComparePage() {
     const [selectedDistricts, setSelectedDistricts] = useState<string[]>(initialSearchState.districts);
     const [propertyType, setPropertyType] = useState(initialSearchState.propertyType);
     const [disposition, setDisposition] = useState(initialSearchState.disposition);
+    const [periods, setPeriods] = useState(initialSearchState.periods);
     const [price, setPrice] = useState(initialSearchState.price);
     const [area, setArea] = useState(initialSearchState.area);
     const [isComparing, setIsComparing] = useState(false);
     const [results, setResults] = useState<DistrictComparisonResult[]>([]);
     const [appliedSearch, setAppliedSearch] = useState<string | null>(search);
     const lastSyncedSearchRef = useRef<string | null>(null);
+    const periodControlOptions = buildComparePeriodControlOptions(periods);
 
     useEffect(() => {
         const parsed = parseCompareSearchParams({ search, maxDistricts: MAX_DISTRICTS });
@@ -60,6 +66,7 @@ function ComparePage() {
         setSelectedDistricts((current) => (arraysEqual(current, parsed.districts) ? current : parsed.districts));
         setPropertyType((current) => (current === parsed.propertyType ? current : parsed.propertyType));
         setDisposition((current) => (current === parsed.disposition ? current : parsed.disposition));
+        setPeriods((current) => (current === parsed.periods ? current : parsed.periods));
         setPrice((current) => (current === parsed.price ? current : parsed.price));
         setArea((current) => (current === parsed.area ? current : parsed.area));
         setAppliedSearch(search);
@@ -74,6 +81,7 @@ function ComparePage() {
             districts: selectedDistricts,
             propertyType,
             disposition,
+            periods,
             price,
             area,
         }).toString();
@@ -89,7 +97,7 @@ function ComparePage() {
             to: nextSearch ? `/compare?${nextSearch}` : "/compare",
             replace: true,
         });
-    }, [area, disposition, price, propertyType, router, search, selectedDistricts]);
+    }, [area, disposition, periods, price, propertyType, router, search, selectedDistricts]);
 
     const removeDistrict = useCallback((district: string) => {
         setSelectedDistricts((prev) => prev.filter((value) => value !== district));
@@ -118,6 +126,7 @@ function ComparePage() {
                     districts: selectedDistricts,
                     type: propertyType,
                     disposition: disposition === "all" ? undefined : disposition,
+                    periods,
                     price,
                     area,
                 }),
@@ -166,7 +175,7 @@ function ComparePage() {
         } finally {
             setIsComparing(false);
         }
-    }, [selectedDistricts, propertyType, disposition, price, area]);
+    }, [selectedDistricts, propertyType, disposition, periods, price, area]);
 
     const canCompare = selectedDistricts.length >= MIN_DISTRICTS && !isComparing;
     const loadedComparisons = results.flatMap((result) => (result.comparison ? [result.comparison] : []));
@@ -224,7 +233,7 @@ function ComparePage() {
                             <CardTitle className="text-xs font-mono text-gray-400">Shared Configuration</CardTitle>
                         </CardHeader>
                         <CardContent>
-                            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
                                 <label className="block">
                                     <span className="block text-[10px] font-mono text-gray-500 mb-1">
                                         Property Type
@@ -251,6 +260,20 @@ function ComparePage() {
                                         {DISPOSITIONS.map((value) => (
                                             <option key={value.value} value={value.value}>
                                                 {value.label}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </label>
+                                <label className="block">
+                                    <span className="block text-[10px] font-mono text-gray-500 mb-1">Sold Horizon</span>
+                                    <select
+                                        value={periods}
+                                        onChange={(event) => setPeriods(event.target.value)}
+                                        className="cyber-select"
+                                    >
+                                        {periodControlOptions.map((option) => (
+                                            <option key={option.value} value={option.value}>
+                                                {option.label}
                                             </option>
                                         ))}
                                     </select>
@@ -334,15 +357,19 @@ function ComparePage() {
                         <>
                             <ComparisonOverview comparisons={loadedComparisons} />
                             <section className="grid gap-6 xl:grid-cols-2">
-                                <DistrictPriceBarChart
-                                    comparisons={loadedComparisons}
-                                    targetDistrict={targetDistrict}
-                                    targetPricePerM2={targetPricePerM2}
-                                />
-                                <DistrictYieldBarChart
-                                    comparisons={loadedComparisons}
-                                    targetDistrict={targetDistrict}
-                                />
+                                <div className="min-w-0">
+                                    <DistrictPriceBarChart
+                                        comparisons={loadedComparisons}
+                                        targetDistrict={targetDistrict}
+                                        targetPricePerM2={targetPricePerM2}
+                                    />
+                                </div>
+                                <div className="min-w-0">
+                                    <DistrictYieldBarChart
+                                        comparisons={loadedComparisons}
+                                        targetDistrict={targetDistrict}
+                                    />
+                                </div>
                             </section>
 
                             <DistrictDetailTable comparisons={loadedComparisons} />
@@ -360,10 +387,16 @@ function ComparePage() {
 
                             <Separator className="bg-white/5" />
 
-                            <div className="grid grid-cols-1 2xl:grid-cols-2 gap-6">
-                                <ComparisonGrid comparisons={loadedComparisons} />
-                                <ComparisonRankingsTable comparisons={loadedComparisons} />
-                                <ComparisonMarketTable comparisons={loadedComparisons} />
+                            <div className="grid grid-cols-1 gap-6 2xl:grid-cols-2">
+                                <div className="min-w-0">
+                                    <ComparisonGrid comparisons={loadedComparisons} />
+                                </div>
+                                <div className="min-w-0">
+                                    <ComparisonRankingsTable comparisons={loadedComparisons} />
+                                </div>
+                                <div className="min-w-0">
+                                    <ComparisonMarketTable comparisons={loadedComparisons} />
+                                </div>
                             </div>
 
                             <Card className="border-white/5 bg-white/[0.02]">

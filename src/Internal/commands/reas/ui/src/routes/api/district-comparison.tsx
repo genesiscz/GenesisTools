@@ -26,6 +26,7 @@ export const Route = createFileRoute("/api/district-comparison")({
 
                 const constructionType = (body.type as string | undefined) ?? "brick";
                 const disposition = body.disposition as string | undefined;
+                const periods = body.periods as string | undefined;
                 const price = Number(body.price ?? 5000000);
                 const area = Number(body.area ?? 80);
 
@@ -36,7 +37,7 @@ export const Route = createFileRoute("/api/district-comparison")({
                             district,
                             constructionType,
                             disposition,
-                            periodsStr: body.periods as string | undefined,
+                            periodsStr: periods,
                             price,
                             area,
                             rent: body.rent ? Number(body.rent) : undefined,

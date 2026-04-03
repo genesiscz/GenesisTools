@@ -55,6 +55,19 @@ const filters: AnalysisFilters = {
     },
 };
 
+const prahaWardFilters: AnalysisFilters = {
+    estateType: "flat",
+    constructionType: "brick",
+    disposition: "2+kk",
+    periods: [],
+    district: {
+        name: "Praha 4",
+        reasId: 3100,
+        srealityId: 10,
+        srealityLocality: "region",
+    },
+};
+
 describe("mapBezrealitkyDisposition", () => {
     test("maps DISP_3_KK to 3+kk", () => {
         expect(mapBezrealitkyDisposition("DISP_3_KK")).toBe("3+kk");
@@ -195,6 +208,56 @@ describe("BezrealitkyClient", () => {
         expect(result[0].coordinates).toEqual({ lat: 50.1, lng: 14.4 });
         expect(result[0].link).toBe("https://www.bezrealitky.cz/nemovitosti-byty-domy/r1-pronajem");
         expect(result[1].sourceId).toBe("r3");
+    });
+
+    test("fetchRentalListings drops off-district Praha ward results", async () => {
+        const client = new BezrealitkyClient({
+            graphqlClient: new FakeGraphqlClient([
+                {
+                    data: {
+                        listAdverts: {
+                            totalCount: 2,
+                            list: [
+                                {
+                                    id: "p4-1",
+                                    uri: "p4-1-pronajem",
+                                    disposition: "DISP_2_KK",
+                                    surface: 52,
+                                    price: 21000,
+                                    charges: 3500,
+                                    reserved: false,
+                                    gps: { lat: 50.06, lng: 14.43 },
+                                    'address({"locale":"CS"})': "Mečislavova, Praha 4 - Nusle",
+                                    links: [],
+                                },
+                                {
+                                    id: "p2-1",
+                                    uri: "p2-1-pronajem",
+                                    disposition: "DISP_2_KK",
+                                    surface: 54,
+                                    price: 22000,
+                                    charges: 3600,
+                                    reserved: false,
+                                    gps: { lat: 50.08, lng: 14.44 },
+                                    'address({"locale":"CS"})': "Varšavská, Praha 2 - Vinohrady",
+                                    links: [],
+                                },
+                            ],
+                        },
+                    },
+                },
+            ]),
+            autocompleteClient: new FakeAutocompleteClient({
+                type: "FeatureCollection",
+                features: [{ properties: { osm_type: "R", osm_id: "435541" } }],
+            }),
+            pageSize: 50,
+        });
+
+        const result = await client.fetchRentalListings(prahaWardFilters, true);
+
+        expect(result).toHaveLength(1);
+        expect(result[0]?.locality).toContain("Praha 4");
     });
 
     test("fetchAdvertDetail maps the validated field subset", async () => {

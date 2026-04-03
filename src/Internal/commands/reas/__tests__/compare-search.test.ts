@@ -3,9 +3,11 @@ import type { DashboardExport } from "@app/Internal/commands/reas/lib/api-export
 import type { ListingRow } from "@app/Internal/commands/reas/lib/store";
 import {
     buildAnalysisCompareQuery,
+    buildComparePeriodControlOptions,
     buildCompareSearchParams,
     buildListingCompareQuery,
     DEFAULT_COMPARE_DISTRICTS,
+    getDefaultComparePeriods,
     parseCompareSearchParams,
 } from "@app/Internal/commands/reas/ui/src/components/compare/compare-query";
 
@@ -15,18 +17,19 @@ describe("compare-query", () => {
             districts: ["Praha 2", "Praha 3", "Praha 2"],
             propertyType: "brick",
             disposition: "2+kk",
+            periods: "2024,2025,2026",
             price: "5000000",
             area: "80",
         });
 
         expect(params.toString()).toBe(
-            "districts=Praha+2%2CPraha+3&type=brick&disposition=2%2Bkk&price=5000000&area=80"
+            "districts=Praha+2%2CPraha+3&type=brick&disposition=2%2Bkk&periods=2024%2C2025%2C2026&price=5000000&area=80"
         );
     });
 
     test("parses compare state from a URL search string and clamps max districts", () => {
         const parsed = parseCompareSearchParams({
-            search: "?districts=Praha%202,Praha%203,Praha%204,Praha%205,Praha%206&type=panel&disposition=3%2Bkk&price=6100000&area=92",
+            search: "?districts=Praha%202,Praha%203,Praha%204,Praha%205,Praha%206&type=panel&disposition=3%2Bkk&periods=2024,2025&price=6100000&area=92",
             maxDistricts: 4,
         });
 
@@ -34,9 +37,19 @@ describe("compare-query", () => {
             districts: ["Praha 2", "Praha 3", "Praha 4", "Praha 5"],
             propertyType: "panel",
             disposition: "3+kk",
+            periods: "2024,2025",
             price: "6100000",
             area: "92",
         });
+    });
+
+    test("defaults compare periods to a meaningful sold horizon", () => {
+        const parsed = parseCompareSearchParams({
+            search: "?districts=Praha%202,Praha%203&type=brick&price=5000000&area=80",
+            maxDistricts: 12,
+        });
+
+        expect(parsed.periods).toBe(getDefaultComparePeriods());
     });
 
     test("builds compare params from analysis results", () => {
@@ -45,8 +58,28 @@ describe("compare-query", () => {
         expect(params.get("districts")).toBe("Praha 2");
         expect(params.get("type")).toBe("brick");
         expect(params.get("disposition")).toBe("2+kk");
+        expect(params.get("periods")).toBe(getDefaultComparePeriods());
         expect(params.get("price")).toBe("5000000");
         expect(params.get("area")).toBe("80");
+    });
+
+    test("preserves explicit analysis periods in compare params when export metadata knows them", () => {
+        const data = makeExportData();
+        data.meta.filters.periods = [
+            {
+                label: "2023",
+                from: new Date("2023-01-01T00:00:00.000Z"),
+                to: new Date("2023-12-31T23:59:59.000Z"),
+            },
+            {
+                label: "2024",
+                from: new Date("2024-01-01T00:00:00.000Z"),
+                to: new Date("2024-12-31T23:59:59.000Z"),
+            },
+        ];
+        const params = buildAnalysisCompareQuery(data);
+
+        expect(params.get("periods")).toBe("2023,2024");
     });
 
     test("builds compare params from listing detail rows", () => {
@@ -57,6 +90,7 @@ describe("compare-query", () => {
         expect(params.get("districts")).toBe("Praha 8");
         expect(params.get("type")).toBe("panel");
         expect(params.get("disposition")).toBe("1+kk");
+        expect(params.get("periods")).toBe(getDefaultComparePeriods());
         expect(params.get("price")).toBe("4200000");
         expect(params.get("area")).toBe("42");
     });
@@ -83,8 +117,15 @@ describe("compare-query", () => {
             maxDistricts: 12,
         });
 
-        expect(params.toString()).toBe("districts=&type=brick&price=5000000&area=80");
+        expect(params.toString()).toBe("districts=&type=brick&periods=2024%2C2025%2C2026&price=5000000&area=80");
         expect(parsed.districts).toEqual([]);
+    });
+
+    test("adds a custom visible control option when preserved periods do not match presets", () => {
+        expect(buildComparePeriodControlOptions("2023,2024")).toContainEqual({
+            value: "2023,2024",
+            label: "Custom · 2023,2024",
+        });
     });
 });
 

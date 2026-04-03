@@ -59,8 +59,8 @@ export function ComparisonTrendSection({ comparisons }: ComparisonTrendSectionPr
                     Multi-district trendline
                 </CardTitle>
             </CardHeader>
-            <CardContent className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
-                <div className="flex flex-col gap-4">
+            <CardContent className="grid min-w-0 grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
+                <div className="flex min-w-0 flex-col gap-4">
                     <div className="flex flex-wrap items-center gap-2">
                         {DISTRICT_TREND_TIMEFRAMES.map((timeframe) => (
                             <button
@@ -101,7 +101,7 @@ export function ComparisonTrendSection({ comparisons }: ComparisonTrendSectionPr
                     </div>
                     <TrendChart data={[]} rows={model.rows} series={model.series} height={260} />
                 </div>
-                <div className="flex flex-col gap-3">
+                <div className="flex min-w-0 flex-col gap-3">
                     {model.series.map((series) => {
                         const comparison = comparisons.find((item) => item.district === series.district);
                         const latestSnapshot = comparison?.snapshots[comparison.snapshots.length - 1] ?? null;

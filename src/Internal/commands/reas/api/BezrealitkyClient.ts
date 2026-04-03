@@ -13,6 +13,7 @@ import type {
     BezrealitkyRegionNode,
 } from "@app/Internal/commands/reas/api/BezrealitkyClient.types";
 import { cacheKey, getCached, SREALITY_TTL, setCache } from "@app/Internal/commands/reas/cache/index";
+import { matchesRequestedDistrict } from "@app/Internal/commands/reas/lib/district-matching";
 import type {
     AnalysisFilters,
     CacheEntry,
@@ -562,6 +563,12 @@ function matchesDisposition(listing: RentalListing | SaleListing, disposition: s
     return listing.disposition === disposition;
 }
 
+function matchesRequestedListingDistrict(listing: RentalListing | SaleListing, requestedDistrict: string): boolean {
+    const locality = "address" in listing ? listing.address : listing.locality;
+
+    return matchesRequestedDistrict({ requestedDistrict, locality });
+}
+
 export class BezrealitkyClient {
     private readonly graphqlClient: ApiClient;
     private readonly autocompleteClient: ApiClient;
@@ -709,7 +716,8 @@ export class BezrealitkyClient {
                     return mapRentalListing(advert, RENTAL_CONTRACT);
                 })
                 .filter((listing): listing is RentalListing | SaleListing => listing !== null)
-                .filter((listing) => matchesDisposition(listing, filters.disposition));
+                .filter((listing) => matchesDisposition(listing, filters.disposition))
+                .filter((listing) => matchesRequestedListingDistrict(listing, filters.district.name));
 
             allListings.push(...mappedListings);
             totalCount = advertList.totalCount;

@@ -84,6 +84,12 @@ describe("buildDashboardExport()", () => {
         expect(result.meta.providerSummary).toHaveLength(1);
     });
 
+    test("defaults meta.providers to the full enabled provider set", () => {
+        const result = buildDashboardExport(mockAnalysis);
+
+        expect(result.meta.providers).toEqual(["reas", "sreality", "bezrealitky", "ereality", "mf"]);
+    });
+
     test("serializes to valid JSON", () => {
         const result = buildDashboardExport(mockAnalysis);
         const json = SafeJSON.stringify(result);
@@ -140,6 +146,52 @@ describe("buildDashboardExport()", () => {
         const result = buildDashboardExport(mockAnalysis);
 
         expect(isDashboardExport(result)).toBe(true);
+    });
+
+    test("includes provider-level provenance details with warning state", () => {
+        const result = buildDashboardExport(mockAnalysis);
+
+        expect(result.meta.provenance?.sections.overview.providerDetails[0]).toEqual({
+            provider: "sreality",
+            sourceContract: "sreality-v2",
+            count: 0,
+            fetchedAt: "2026-04-02T00:00:00.000Z",
+            status: "warning",
+            message: "Returned 0 rows for the current filters.",
+        });
+    });
+
+    test("includes MF in rentals provenance when MF benchmark data is present", () => {
+        const result = buildDashboardExport({
+            ...mockAnalysis,
+            mfBenchmarks: [
+                {
+                    cadastralUnit: "Praha 2",
+                    municipality: "Praha",
+                    sizeCategory: "VK2",
+                    referencePrice: 21_000,
+                    confidenceMin: 19_000,
+                    confidenceMax: 23_000,
+                    median: 21_500,
+                    newBuildPrice: 24_000,
+                    coverageScore: 92,
+                },
+            ],
+            providerSummary: [
+                ...mockAnalysis.providerSummary!,
+                {
+                    provider: "mf",
+                    sourceContract: "mf-cenova-mapa",
+                    count: 1,
+                    fetchedAt: "2026-04-02T01:00:00.000Z",
+                },
+            ],
+        });
+
+        expect(result.meta.provenance?.sections.rentals.providers).toContain("mf");
+        expect(result.meta.provenance?.sections.rentals.providerDetails.some((item) => item.provider === "mf")).toBe(
+            true
+        );
     });
 
     test("rejects malformed dashboard export payloads", () => {

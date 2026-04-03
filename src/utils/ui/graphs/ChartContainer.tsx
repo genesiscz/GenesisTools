@@ -21,15 +21,15 @@ function ChartContainer({
     ...props
 }: ChartContainerProps) {
     return (
-        <Card className={cn("overflow-hidden", className)} {...props}>
+        <Card className={cn("min-w-0 overflow-hidden", className)} {...props}>
             {(title || description) && (
                 <CardHeader className="gap-1">
                     {title ? <CardTitle>{title}</CardTitle> : null}
                     {description ? <CardDescription>{description}</CardDescription> : null}
                 </CardHeader>
             )}
-            <CardContent className={cn("pt-0", contentClassName)}>
-                <div className="min-w-0 w-full" style={{ height }}>
+            <CardContent className={cn("min-w-0 pt-0", contentClassName)}>
+                <div className="min-w-0 w-full overflow-hidden" style={{ height }}>
                     <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={height}>
                         {children}
                     </ResponsiveContainer>

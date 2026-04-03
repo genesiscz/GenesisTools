@@ -1,4 +1,5 @@
 import { cacheKey, getCached, REAS_TTL, setCache } from "@app/Internal/commands/reas/cache/index";
+import { matchesRequestedDistrict } from "@app/Internal/commands/reas/lib/district-matching";
 import type { AnalysisFilters, CacheEntry, DateRange, ReasListing } from "@app/Internal/commands/reas/types";
 import { ApiClient } from "@app/utils/api/ApiClient";
 import { SafeJSON } from "@app/utils/json";
@@ -48,11 +49,39 @@ function filterByDisposition(listings: ReasListing[], disposition: string | unde
     return listings.filter((listing) => listing.disposition === disposition);
 }
 
+function filterByDistrict(listings: ReasListing[], requestedDistrict: string): ReasListing[] {
+    if (!/^Praha\s+\d+$/i.test(requestedDistrict.trim())) {
+        return listings;
+    }
+
+    return listings.filter((listing) =>
+        matchesRequestedDistrict({
+            requestedDistrict,
+            locality: [
+                listing.formattedAddress,
+                listing.formattedLocation,
+                listing.cadastralAreaSlug,
+                listing.municipalitySlug,
+            ].join(" "),
+        })
+    );
+}
+
+interface ReasClientConfig {
+    apiClient?: Pick<ApiClient, "get">;
+}
+
 export class ReasClient {
-    private readonly apiClient = new ApiClient({
-        baseUrl: BASE_URL,
-        loggerContext: { provider: "reas" },
-    });
+    private readonly apiClient: Pick<ApiClient, "get">;
+
+    constructor(config: ReasClientConfig = {}) {
+        this.apiClient =
+            config.apiClient ??
+            new ApiClient({
+                baseUrl: BASE_URL,
+                loggerContext: { provider: "reas" },
+            });
+    }
 
     buildQueryParams(filters: AnalysisFilters, dateRange: DateRange): URLSearchParams {
         return buildReasQueryParams(filters, dateRange);
@@ -96,7 +125,7 @@ export class ReasClient {
             }
         }
 
-        const listings = filterByDisposition(allListings, filters.disposition);
+        const listings = filterByDistrict(filterByDisposition(allListings, filters.disposition), filters.district.name);
 
         const entry: CacheEntry<ReasListing> = {
             fetchedAt: new Date().toISOString(),

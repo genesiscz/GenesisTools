@@ -1,4 +1,5 @@
 import { cacheKey, getCached, SREALITY_TTL, setCache } from "@app/Internal/commands/reas/cache/index";
+import { matchesRequestedDistrict } from "@app/Internal/commands/reas/lib/district-matching";
 import type { AnalysisFilters, CacheEntry, RentalListing } from "@app/Internal/commands/reas/types";
 import { ApiClient, ApiClientError } from "@app/utils/api/ApiClient";
 import type { ErealityListing } from "./ErealityClient.types";
@@ -191,16 +192,20 @@ export class ErealityClient {
             ? allListings.filter((listing) => listing.disposition === filters.disposition)
             : allListings;
 
+        const districtFiltered = filtered.filter((listing) =>
+            matchesRequestedDistrict({ requestedDistrict: filters.district.name, locality: listing.locality })
+        );
+
         const entry: CacheEntry<RentalListing> = {
             fetchedAt: new Date().toISOString(),
             params: keyParams,
-            count: filtered.length,
-            data: filtered,
+            count: districtFiltered.length,
+            data: districtFiltered,
         };
 
         await setCache(key, entry);
 
-        return filtered;
+        return districtFiltered;
     }
 }
 

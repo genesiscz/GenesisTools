@@ -58,3 +58,25 @@ export function sortDataTableRows<Row extends object>({
         return direction === "asc" ? comparison : -comparison;
     });
 }
+
+export function summarizeProviderMessage(message: string): string {
+    const compactMessage = message.replace(/\s+/g, " ").trim();
+
+    if (compactMessage.length <= 160) {
+        return compactMessage;
+    }
+
+    const statusSummaryMatch = compactMessage.match(/(\d{3}\s+[A-Za-z ]+\s+—\s+[^.]+)$/);
+
+    if (statusSummaryMatch) {
+        return statusSummaryMatch[1].trim();
+    }
+
+    const lastDividerIndex = compactMessage.lastIndexOf(" — ");
+
+    if (lastDividerIndex >= 0) {
+        return compactMessage.slice(lastDividerIndex + 3).trim();
+    }
+
+    return `${compactMessage.slice(0, 157)}…`;
+}

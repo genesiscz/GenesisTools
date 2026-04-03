@@ -180,6 +180,10 @@ export interface FullAnalysis {
     discount: import("@app/Internal/commands/reas/analysis/discount").DiscountResult;
     rentalListings: RentalListing[];
     saleListings?: SaleListing[];
+    bezrealitkyListings?: {
+        rentals: RentalListing[];
+        sales: SaleListing[];
+    };
     mfBenchmarks: MfRentalBenchmark[];
     target: TargetProperty;
     filters: AnalysisFilters;
