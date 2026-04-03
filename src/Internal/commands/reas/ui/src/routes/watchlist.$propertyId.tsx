@@ -1,23 +1,34 @@
 import type { DashboardExport } from "@app/Internal/commands/reas/lib/api-export";
 import type { PropertyAnalysisHistoryRow, SavedPropertyRow } from "@app/Internal/commands/reas/lib/store";
 import type { FullAnalysis } from "@app/Internal/commands/reas/types";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { Badge } from "@ui/components/badge";
 import { Button } from "@ui/components/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
+import { Checkbox } from "@ui/components/checkbox";
+import { Input } from "@ui/components/input";
 import { Skeleton } from "@ui/components/skeleton";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@ui/components/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@ui/components/tabs";
+import { toast } from "@ui/index";
 import { cn } from "@ui/lib/utils";
 import { ArrowLeft, ExternalLink, FileStack, History, Layers3 } from "lucide-react";
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ComparablesTable } from "../components/ComparablesTable";
 import { MomentumCard } from "../components/MomentumCard";
 import { PriceTrendChart } from "../components/PriceTrendChart";
 import { ScoreCard } from "../components/ScoreCard";
+import { DataTable } from "../components/analysis/DataTable";
+import { InfoBox } from "../components/analysis/InfoBox";
+import { ScoreGauge } from "../components/analysis/ScoreGauge";
+import { SectionTitle } from "../components/analysis/SectionTitle";
+import { StatCard } from "../components/analysis/StatCard";
 import { PropertyHistoryChart } from "../components/watchlist/PropertyHistoryChart";
+import { buildPropertyCardModel } from "../components/watchlist/property-card-model";
+import { PropertyMortgageCard } from "../components/watchlist/PropertyMortgageCard";
 import { ProviderLinks } from "../components/watchlist/ProviderLinks";
+import { PropertyVerdictMini } from "../components/watchlist/PropertyVerdictMini";
+import { PropertyYieldBreakdown } from "../components/watchlist/PropertyYieldBreakdown";
 import {
     formatConstructionType,
     formatCurrencyCompact,
@@ -48,12 +59,6 @@ interface PropertyDetailResponse {
 
 interface PropertyHistoryResponse {
     history: PropertyAnalysisHistoryRow[];
-}
-
-interface DetailMetricProps {
-    label: string;
-    value: string;
-    tone?: "default" | "accent" | "warning";
 }
 
 const DETAIL_METRIC_SKELETON_KEYS = ["one", "two", "three", "four"] as const;
@@ -91,39 +96,64 @@ function usePropertyHistory(propertyId: number) {
     });
 }
 
-function DetailMetric({ label, value, tone = "default" }: DetailMetricProps) {
-    return (
-        <Card className="border-white/5 bg-white/[0.02]">
-            <CardHeader className="pb-2">
-                <CardTitle className="text-[10px] font-mono uppercase tracking-[0.18em] text-gray-600">
-                    {label}
-                </CardTitle>
-            </CardHeader>
-            <CardContent>
-                <div
-                    className={cn(
-                        "text-2xl font-mono font-bold",
-                        tone === "accent" && "text-cyan-400",
-                        tone === "warning" && "text-amber-400",
-                        tone === "default" && "text-gray-100"
-                    )}
-                >
-                    {value}
-                </div>
-            </CardContent>
-        </Card>
-    );
-}
-
 function WatchlistPropertyDetailPage() {
     const params = Route.useParams();
     const propertyId = Number(params.propertyId);
+    const queryClient = useQueryClient();
     const detailQuery = usePropertyDetail(propertyId);
     const historyQuery = usePropertyHistory(propertyId);
+    const [alertYieldFloor, setAlertYieldFloor] = useState("");
+    const [alertGradeChange, setAlertGradeChange] = useState(false);
 
     const property = detailQuery.data?.property;
     const exportData = detailQuery.data?.exportData ?? null;
     const history = historyQuery.data?.history ?? detailQuery.data?.history ?? [];
+    const propertyModel = useMemo(() => {
+        if (!property) {
+            return null;
+        }
+
+        return buildPropertyCardModel(property);
+    }, [property]);
+
+    useEffect(() => {
+        if (!property) {
+            return;
+        }
+
+        setAlertYieldFloor(property.alert_yield_floor != null ? String(property.alert_yield_floor) : "");
+        setAlertGradeChange(property.alert_grade_change === 1);
+    }, [property]);
+
+    const updateAlertsMutation = useMutation({
+        mutationFn: async () => {
+            const response = await fetch(`/api/properties?id=${propertyId}`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: globalThis.JSON.stringify({
+                    action: "update-settings",
+                    alertYieldFloor: alertYieldFloor.trim() ? Number(alertYieldFloor) : null,
+                    alertGradeChange,
+                }),
+            });
+
+            const body = (await response.json()) as { error?: string };
+
+            if (!response.ok) {
+                throw new Error(body.error ?? "Failed to update alert settings");
+            }
+        },
+        onSuccess: async () => {
+            await Promise.all([
+                queryClient.invalidateQueries({ queryKey: ["properties"] }),
+                queryClient.invalidateQueries({ queryKey: ["property-detail", propertyId] }),
+            ]);
+            toast.success("Alert settings updated");
+        },
+        onError: (error: Error) => {
+            toast.error(error.message);
+        },
+    });
 
     const historySeries = useMemo(() => {
         const ordered = [...history].reverse();
@@ -177,6 +207,8 @@ function WatchlistPropertyDetailPage() {
     const staleness = getStalenessInfo(property.last_analyzed_at);
     const gradeStyle = property.last_grade ? (GRADE_COLORS[property.last_grade] ?? "") : "";
     const providers = parseSavedProviders(property.providers);
+    const alertYieldTriggered =
+        property.alert_yield_floor != null && property.last_net_yield != null && property.last_net_yield < property.alert_yield_floor;
 
     return (
         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-6">
@@ -253,14 +285,93 @@ function WatchlistPropertyDetailPage() {
                 <ProviderLinks district={property.district} listingUrl={property.listing_url} providers={providers} />
 
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-                    <DetailMetric label="Net Yield" value={formatYield(property.last_net_yield)} tone="accent" />
-                    <DetailMetric label="Score" value={formatNumber(property.last_score)} tone="warning" />
-                    <DetailMetric
+                    <StatCard label="Net Yield" value={formatYield(property.last_net_yield)} accent="cyan" />
+                    <StatCard label="Score" value={formatNumber(property.last_score)} accent="amber" />
+                    <StatCard
                         label="Median CZK/m2"
                         value={formatCurrencyCompact(property.last_median_price_per_m2)}
+                        accent="slate"
                     />
-                    <DetailMetric label="Comparable Count" value={formatNumber(property.comparable_count)} />
+                    <StatCard label="Comparable Count" value={formatNumber(property.comparable_count)} accent="green" />
                 </div>
+
+                <Card className="border-white/5 bg-white/[0.02]">
+                    <CardHeader className="pb-3">
+                        <CardTitle className="text-sm font-mono text-amber-400">Alert Settings</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                        <div className="flex flex-wrap gap-2 text-[10px] font-mono">
+                            <Badge variant="outline" className="border-white/10 bg-white/[0.02] text-gray-400">
+                                Current yield {formatYield(property.last_net_yield)}
+                            </Badge>
+                            {property.alert_yield_floor != null ? (
+                                <Badge
+                                    variant="outline"
+                                    className={cn(
+                                        "bg-white/[0.02]",
+                                        alertYieldTriggered
+                                            ? "border-rose-500/30 text-rose-300"
+                                            : "border-amber-500/20 text-amber-300"
+                                    )}
+                                >
+                                    Floor {property.alert_yield_floor.toFixed(1)}%
+                                </Badge>
+                            ) : (
+                                <Badge variant="outline" className="border-white/10 bg-white/[0.02] text-gray-500">
+                                    No yield floor set
+                                </Badge>
+                            )}
+                            <Badge
+                                variant="outline"
+                                className={cn(
+                                    "bg-white/[0.02]",
+                                    property.alert_grade_change
+                                        ? "border-amber-500/20 text-amber-300"
+                                        : "border-white/10 text-gray-500"
+                                )}
+                            >
+                                Grade change {property.alert_grade_change ? "enabled" : "off"}
+                            </Badge>
+                        </div>
+
+                        <div className="grid gap-3 md:grid-cols-[minmax(0,220px)_1fr]">
+                            <div>
+                                <label htmlFor="detail-alert-yield" className="mb-1 block text-[10px] font-mono text-gray-500">
+                                    Yield floor (%)
+                                </label>
+                                <Input
+                                    id="detail-alert-yield"
+                                    type="number"
+                                    value={alertYieldFloor}
+                                    onChange={(event) => setAlertYieldFloor(event.target.value)}
+                                    placeholder="4.5"
+                                    className="h-8 border-white/10 bg-black/20 text-xs font-mono"
+                                />
+                            </div>
+
+                            <label className="flex items-center gap-2 rounded border border-white/10 bg-black/20 px-3 py-2 text-[11px] font-mono text-gray-300 md:self-end">
+                                <Checkbox
+                                    id="detail-alert-grade"
+                                    checked={alertGradeChange}
+                                    onCheckedChange={(checked) => setAlertGradeChange(checked === true)}
+                                />
+                                <span>Alert when the investment grade changes</span>
+                            </label>
+                        </div>
+
+                        <div className="flex justify-end">
+                            <Button
+                                type="button"
+                                variant="outline"
+                                onClick={() => updateAlertsMutation.mutate()}
+                                disabled={updateAlertsMutation.isPending}
+                                className="border-amber-500/30 text-amber-300 hover:bg-amber-500/10 font-mono text-xs"
+                            >
+                                {updateAlertsMutation.isPending ? "Saving..." : "Save Alerts"}
+                            </Button>
+                        </div>
+                    </CardContent>
+                </Card>
             </div>
 
             <Tabs defaultValue="overview">
@@ -269,27 +380,96 @@ function WatchlistPropertyDetailPage() {
                         <Layers3 className="h-3.5 w-3.5" />
                         Overview
                     </TabsTrigger>
-                    <TabsTrigger value="history" className="font-mono text-xs">
+                    <TabsTrigger value="comparables" className="font-mono text-xs">
                         <History className="h-3.5 w-3.5" />
-                        History
+                        Comparables
                     </TabsTrigger>
-                    <TabsTrigger value="export" className="font-mono text-xs">
+                    <TabsTrigger value="rentals" className="font-mono text-xs">
                         <FileStack className="h-3.5 w-3.5" />
-                        Stored Export
+                        Rentals
+                    </TabsTrigger>
+                    <TabsTrigger value="investment" className="font-mono text-xs">
+                        <FileStack className="h-3.5 w-3.5" />
+                        Investment
+                    </TabsTrigger>
+                    <TabsTrigger value="verdict" className="font-mono text-xs">
+                        <FileStack className="h-3.5 w-3.5" />
+                        Verdict
                     </TabsTrigger>
                 </TabsList>
 
                 <TabsContent value="overview" className="space-y-4">
                     {exportData ? (
                         <>
-                            <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-                                <ScoreCard data={exportData} />
-                                <YieldCard data={exportData} />
-                                <MomentumCard data={exportData} />
+                            <SectionTitle
+                                title="Overview"
+                                subtitle="Stored property snapshot, current pricing signal, and the latest trend history."
+                            />
+
+                            <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.1fr_0.9fr]">
+                                <Card className="border-white/5 bg-white/[0.02]">
+                                    <CardContent className="flex flex-col gap-4 p-5 md:flex-row md:items-center md:justify-between">
+                                        <div className="space-y-3">
+                                            <div className="text-xs font-mono uppercase tracking-[0.24em] text-slate-500">
+                                                Snapshot verdict
+                                            </div>
+                                            <div className="text-2xl font-mono font-semibold text-white">
+                                                {property.last_grade ? `Grade ${property.last_grade}` : "No grade yet"}
+                                            </div>
+                                            <InfoBox tone={alertYieldTriggered ? "warning" : "info"}>
+                                                {alertYieldTriggered
+                                                    ? `Yield is below the configured floor of ${property.alert_yield_floor?.toFixed(1)}%.`
+                                                    : `Latest analysis uses ${providers.length} configured providers and ${history.length} stored snapshots.`}
+                                            </InfoBox>
+                                        </div>
+                                        <ScoreGauge score={property.last_score ?? 0} label="Stored score" />
+                                    </CardContent>
+                                </Card>
+
+                                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                                    <StatCard
+                                        label="Purchase Price"
+                                        value={formatCurrencyFull(property.target_price)}
+                                        hint={`${formatNumber(property.target_area)} m2 · ${formatDisposition(property.disposition)}`}
+                                        accent="amber"
+                                    />
+                                    <StatCard
+                                        label="Monthly Rent"
+                                        value={formatCurrencyFull(property.monthly_rent)}
+                                        hint={`Costs ${formatCurrencyFull(property.monthly_costs)}`}
+                                        accent="cyan"
+                                    />
+                                    <StatCard
+                                        label="Percentile"
+                                        value={property.percentile != null ? `${property.percentile.toFixed(0)}th` : "-"}
+                                        hint="Relative to sold comparables"
+                                        accent="green"
+                                    />
+                                    <StatCard
+                                        label="Momentum"
+                                        value={property.momentum ?? "-"}
+                                        hint={`Last analyzed ${formatDateTime(property.last_analyzed_at)}`}
+                                        accent="purple"
+                                    />
+                                </div>
                             </div>
 
                             <PriceTrendChart data={exportData} />
-                            <ComparablesTable data={exportData} />
+
+                            <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+                                <PropertyHistoryChart title="Score History" color="rgb(245 158 11)" points={historySeries.score} />
+                                <PropertyHistoryChart
+                                    title="Net Yield History"
+                                    color="rgb(6 182 212)"
+                                    valueSuffix="%"
+                                    points={historySeries.netYield}
+                                />
+                                <PropertyHistoryChart
+                                    title="Median Price History"
+                                    color="rgb(16 185 129)"
+                                    points={historySeries.medianPrice}
+                                />
+                            </div>
                         </>
                     ) : (
                         <Card className="border-white/5 bg-white/[0.02]">
@@ -302,243 +482,40 @@ function WatchlistPropertyDetailPage() {
                     )}
                 </TabsContent>
 
-                <TabsContent value="history" className="space-y-4">
-                    <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-                        <PropertyHistoryChart
-                            title="Score History"
-                            color="rgb(245 158 11)"
-                            points={historySeries.score}
-                        />
-                        <PropertyHistoryChart
-                            title="Net Yield History"
-                            color="rgb(6 182 212)"
-                            valueSuffix="%"
-                            points={historySeries.netYield}
-                        />
-                        <PropertyHistoryChart
-                            title="Median Price History"
-                            color="rgb(16 185 129)"
-                            points={historySeries.medianPrice}
-                        />
-                    </div>
-
-                    <Card className="border-white/5 bg-white/[0.02]">
-                        <CardHeader className="pb-2">
-                            <CardTitle className="text-sm font-mono text-amber-400">Analysis Snapshots</CardTitle>
-                        </CardHeader>
-                        <CardContent className="px-0">
-                            {historyQuery.isLoading ? (
-                                <div className="px-6 pb-6 space-y-2">
-                                    {HISTORY_ROW_SKELETON_KEYS.map((key) => (
-                                        <Skeleton key={key} variant="default" className="h-8 w-full" />
-                                    ))}
-                                </div>
-                            ) : history.length > 0 ? (
-                                <div className="overflow-x-auto">
-                                    <Table>
-                                        <TableHeader>
-                                            <TableRow className="border-white/5 hover:bg-transparent">
-                                                <TableHead className="text-[10px] font-mono text-gray-500">
-                                                    Analyzed
-                                                </TableHead>
-                                                <TableHead className="text-[10px] font-mono text-gray-500">
-                                                    Grade
-                                                </TableHead>
-                                                <TableHead className="text-[10px] font-mono text-gray-500 text-right">
-                                                    Score
-                                                </TableHead>
-                                                <TableHead className="text-[10px] font-mono text-gray-500 text-right">
-                                                    Net Yield
-                                                </TableHead>
-                                                <TableHead className="text-[10px] font-mono text-gray-500 text-right">
-                                                    Gross Yield
-                                                </TableHead>
-                                                <TableHead className="text-[10px] font-mono text-gray-500 text-right">
-                                                    Median CZK/m2
-                                                </TableHead>
-                                                <TableHead className="text-[10px] font-mono text-gray-500 text-right">
-                                                    Comps
-                                                </TableHead>
-                                            </TableRow>
-                                        </TableHeader>
-                                        <TableBody>
-                                            {history.map((entry) => (
-                                                <TableRow
-                                                    key={entry.id}
-                                                    className="border-white/5 hover:bg-white/[0.02]"
-                                                >
-                                                    <TableCell className="text-xs font-mono text-gray-400">
-                                                        {formatDateTime(entry.analyzed_at)}
-                                                    </TableCell>
-                                                    <TableCell>
-                                                        {entry.grade ? (
-                                                            <Badge
-                                                                variant="outline"
-                                                                className={cn(
-                                                                    "text-[10px] font-mono",
-                                                                    GRADE_COLORS[entry.grade] ??
-                                                                        "border-white/10 text-gray-400"
-                                                                )}
-                                                            >
-                                                                {entry.grade}
-                                                            </Badge>
-                                                        ) : (
-                                                            <span className="text-xs font-mono text-gray-500">-</span>
-                                                        )}
-                                                    </TableCell>
-                                                    <TableCell className="text-xs font-mono text-right text-amber-400">
-                                                        {formatNumber(entry.score)}
-                                                    </TableCell>
-                                                    <TableCell className="text-xs font-mono text-right text-cyan-400">
-                                                        {formatYield(entry.net_yield)}
-                                                    </TableCell>
-                                                    <TableCell className="text-xs font-mono text-right text-gray-300">
-                                                        {formatYield(entry.gross_yield)}
-                                                    </TableCell>
-                                                    <TableCell className="text-xs font-mono text-right text-gray-300">
-                                                        {formatCurrencyCompact(entry.median_price_per_m2)}
-                                                    </TableCell>
-                                                    <TableCell className="text-xs font-mono text-right text-gray-400">
-                                                        {formatNumber(entry.comparable_count)}
-                                                    </TableCell>
-                                                </TableRow>
-                                            ))}
-                                        </TableBody>
-                                    </Table>
-                                </div>
-                            ) : (
-                                <div className="px-6 pb-6">
-                                    <p className="text-xs font-mono text-gray-500">
-                                        No analysis history is stored for this property yet.
-                                    </p>
-                                </div>
-                            )}
-                        </CardContent>
-                    </Card>
-                </TabsContent>
-
-                <TabsContent value="export" className="space-y-4">
+                <TabsContent value="comparables" className="space-y-4">
                     {exportData ? (
                         <>
+                            <SectionTitle
+                                title="Comparables"
+                                subtitle="Stored sold-market evidence and pricing context used for this property snapshot."
+                            />
+                            <ComparablesTable data={exportData} />
+                        </>
+                    ) : (
+                        <Card className="border-white/5 bg-white/[0.02]">
+                            <CardContent className="py-10 text-center">
+                                <p className="text-sm font-mono text-gray-400">No sold comparables are stored yet.</p>
+                            </CardContent>
+                        </Card>
+                    )}
+                </TabsContent>
+
+                <TabsContent value="rentals" className="space-y-4">
+                    {exportData ? (
+                        <>
+                            <SectionTitle
+                                title="Rentals"
+                                subtitle="Stored rental rows and MF benchmark context from the latest export."
+                            />
+
                             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-                                <DetailMetric
-                                    label="Target Price"
-                                    value={formatCurrencyFull(exportData.meta.target.price)}
-                                />
-                                <DetailMetric
-                                    label="Target Area"
-                                    value={`${formatNumber(exportData.meta.target.area)} m2`}
-                                />
-                                <DetailMetric
-                                    label="Providers"
-                                    value={formatNumber(exportData.meta.providers.length)}
-                                />
-                                <DetailMetric label="Generated" value={formatDateTime(exportData.meta.generatedAt)} />
+                                <StatCard label="Target Price" value={formatCurrencyFull(exportData.meta.target.price)} accent="amber" />
+                                <StatCard label="Target Area" value={`${formatNumber(exportData.meta.target.area)} m2`} accent="slate" />
+                                <StatCard label="Providers" value={formatNumber(exportData.meta.providers.length)} accent="cyan" />
+                                <StatCard label="Generated" value={formatDateTime(exportData.meta.generatedAt)} accent="green" />
                             </div>
 
-                            <Card className="border-white/5 bg-white/[0.02]">
-                                <CardHeader className="pb-2">
-                                    <CardTitle className="text-sm font-mono text-amber-400">
-                                        Provider Fetch Summary
-                                    </CardTitle>
-                                </CardHeader>
-                                <CardContent className="px-0">
-                                    {exportData.meta.providerSummary && exportData.meta.providerSummary.length > 0 ? (
-                                        <div className="overflow-x-auto">
-                                            <Table>
-                                                <TableHeader>
-                                                    <TableRow className="border-white/5 hover:bg-transparent">
-                                                        <TableHead className="text-[10px] font-mono text-gray-500">
-                                                            Provider
-                                                        </TableHead>
-                                                        <TableHead className="text-[10px] font-mono text-gray-500">
-                                                            Contract
-                                                        </TableHead>
-                                                        <TableHead className="text-[10px] font-mono text-gray-500 text-right">
-                                                            Count
-                                                        </TableHead>
-                                                        <TableHead className="text-[10px] font-mono text-gray-500">
-                                                            Fetched
-                                                        </TableHead>
-                                                    </TableRow>
-                                                </TableHeader>
-                                                <TableBody>
-                                                    {exportData.meta.providerSummary.map((provider) => (
-                                                        <TableRow
-                                                            key={`${provider.provider}-${provider.sourceContract}`}
-                                                            className="border-white/5 hover:bg-white/[0.02]"
-                                                        >
-                                                            <TableCell className="text-xs font-mono text-gray-300">
-                                                                {provider.provider}
-                                                            </TableCell>
-                                                            <TableCell className="text-xs font-mono text-gray-500">
-                                                                {provider.sourceContract}
-                                                            </TableCell>
-                                                            <TableCell className="text-xs font-mono text-right text-cyan-400">
-                                                                {formatNumber(provider.count)}
-                                                            </TableCell>
-                                                            <TableCell className="text-xs font-mono text-gray-500">
-                                                                {formatDateTime(provider.fetchedAt)}
-                                                            </TableCell>
-                                                        </TableRow>
-                                                    ))}
-                                                </TableBody>
-                                            </Table>
-                                        </div>
-                                    ) : (
-                                        <p className="px-6 pb-6 text-xs font-mono text-gray-500">
-                                            No provider summary stored.
-                                        </p>
-                                    )}
-                                </CardContent>
-                            </Card>
-
                             <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-                                <Card className="border-white/5 bg-white/[0.02]">
-                                    <CardHeader className="pb-2">
-                                        <CardTitle className="text-sm font-mono text-amber-400">
-                                            Stored Sold Comparables
-                                        </CardTitle>
-                                    </CardHeader>
-                                    <CardContent className="px-0">
-                                        <div className="overflow-x-auto">
-                                            <Table>
-                                                <TableHeader>
-                                                    <TableRow className="border-white/5 hover:bg-transparent">
-                                                        <TableHead className="text-[10px] font-mono text-gray-500">
-                                                            Address
-                                                        </TableHead>
-                                                        <TableHead className="text-[10px] font-mono text-gray-500 text-right">
-                                                            Price
-                                                        </TableHead>
-                                                        <TableHead className="text-[10px] font-mono text-gray-500 text-right">
-                                                            CZK/m2
-                                                        </TableHead>
-                                                    </TableRow>
-                                                </TableHeader>
-                                                <TableBody>
-                                                    {exportData.listings.sold.slice(0, 8).map((listing, index) => (
-                                                        <TableRow
-                                                            key={`${listing.address}-${index}`}
-                                                            className="border-white/5 hover:bg-white/[0.02]"
-                                                        >
-                                                            <TableCell className="text-xs font-mono text-gray-300 max-w-[260px] truncate">
-                                                                {listing.address}
-                                                            </TableCell>
-                                                            <TableCell className="text-xs font-mono text-right text-gray-300">
-                                                                {formatCurrencyCompact(listing.price)}
-                                                            </TableCell>
-                                                            <TableCell className="text-xs font-mono text-right text-cyan-400">
-                                                                {formatCurrencyCompact(listing.pricePerM2)}
-                                                            </TableCell>
-                                                        </TableRow>
-                                                    ))}
-                                                </TableBody>
-                                            </Table>
-                                        </div>
-                                    </CardContent>
-                                </Card>
-
                                 <Card className="border-white/5 bg-white/[0.02]">
                                     <CardHeader className="pb-2">
                                         <CardTitle className="text-sm font-mono text-amber-400">
@@ -546,41 +523,29 @@ function WatchlistPropertyDetailPage() {
                                         </CardTitle>
                                     </CardHeader>
                                     <CardContent className="px-0">
-                                        <div className="overflow-x-auto">
-                                            <Table>
-                                                <TableHeader>
-                                                    <TableRow className="border-white/5 hover:bg-transparent">
-                                                        <TableHead className="text-[10px] font-mono text-gray-500">
-                                                            Address
-                                                        </TableHead>
-                                                        <TableHead className="text-[10px] font-mono text-gray-500 text-right">
-                                                            Rent
-                                                        </TableHead>
-                                                        <TableHead className="text-[10px] font-mono text-gray-500 text-right">
-                                                            CZK/m2
-                                                        </TableHead>
-                                                    </TableRow>
-                                                </TableHeader>
-                                                <TableBody>
-                                                    {exportData.listings.rentals.slice(0, 8).map((listing, index) => (
-                                                        <TableRow
-                                                            key={`${listing.address}-${index}`}
-                                                            className="border-white/5 hover:bg-white/[0.02]"
-                                                        >
-                                                            <TableCell className="text-xs font-mono text-gray-300 max-w-[260px] truncate">
-                                                                {listing.address}
-                                                            </TableCell>
-                                                            <TableCell className="text-xs font-mono text-right text-gray-300">
-                                                                {formatCurrencyCompact(listing.rent)}
-                                                            </TableCell>
-                                                            <TableCell className="text-xs font-mono text-right text-cyan-400">
-                                                                {formatCurrencyCompact(listing.rentPerM2)}
-                                                            </TableCell>
-                                                        </TableRow>
-                                                    ))}
-                                                </TableBody>
-                                            </Table>
-                                        </div>
+                                        <DataTable
+                                            columns={[
+                                                { key: "address", header: "Address", className: "max-w-[260px] truncate text-gray-300" },
+                                                { key: "rentLabel", header: "Rent", align: "right" },
+                                                { key: "rentPerM2Label", header: "CZK/m2", align: "right", className: "text-cyan-400" },
+                                            ]}
+                                            rows={exportData.listings.rentals.slice(0, 12).map((listing) => ({
+                                                ...listing,
+                                                rentLabel: formatCurrencyCompact(listing.rent),
+                                                rentPerM2Label: formatCurrencyCompact(listing.rentPerM2),
+                                            }))}
+                                            getRowKey={(row, index) => `${String(row.address)}-${index}`}
+                                            emptyMessage="No rental rows stored in this export."
+                                        />
+                                    </CardContent>
+                                </Card>
+
+                                <Card className="border-white/5 bg-white/[0.02]">
+                                    <CardHeader className="pb-2">
+                                        <CardTitle className="text-sm font-mono text-amber-400">Yield Context</CardTitle>
+                                    </CardHeader>
+                                    <CardContent className="space-y-4">
+                                        <YieldCard data={exportData} />
                                     </CardContent>
                                 </Card>
                             </div>
@@ -594,6 +559,140 @@ function WatchlistPropertyDetailPage() {
                             </CardContent>
                         </Card>
                     )}
+                </TabsContent>
+
+                <TabsContent value="investment" className="space-y-4">
+                    <SectionTitle
+                        title="Investment"
+                        subtitle="Financing impact, yield breakdown, and the current score stack for this property."
+                    />
+                    <div className="grid grid-cols-1 xl:grid-cols-[1fr_1fr] gap-4">
+                        <Card className="border-white/5 bg-white/[0.02]">
+                            <CardContent className="grid gap-4 p-5 md:grid-cols-[0.8fr_1.2fr] md:items-center">
+                                <ScoreGauge score={property.last_score ?? 0} label="Stored score" />
+                                <div className="space-y-3">
+                                    <InfoBox tone="info" title="Stored snapshot">
+                                        Net yield {formatYield(property.last_net_yield)} · gross yield {formatYield(property.last_gross_yield)} · market median {formatCurrencyCompact(property.last_median_price_per_m2)}.
+                                    </InfoBox>
+                                    {exportData ? <MomentumCard data={exportData} /> : null}
+                                </div>
+                            </CardContent>
+                        </Card>
+
+                        {propertyModel ? <PropertyYieldBreakdown model={propertyModel} /> : null}
+                    </div>
+
+                    <PropertyMortgageCard mortgage={propertyModel?.mortgage ?? null} />
+                </TabsContent>
+
+                <TabsContent value="verdict" className="space-y-4">
+                    <SectionTitle
+                        title="Verdict"
+                        subtitle="Recommendation, provider provenance, and the stored history snapshots behind the latest score."
+                    />
+
+                    {propertyModel ? (
+                        <div className="grid grid-cols-1 xl:grid-cols-[0.95fr_1.05fr] gap-4">
+                            <PropertyVerdictMini grade={property.last_grade} model={propertyModel} />
+                            <div className="space-y-4">
+                                <InfoBox tone={property.last_grade === "A" || property.last_grade === "B" ? "positive" : "warning"} title="Recommendation">
+                                    {propertyModel.recommendation
+                                        ? `${propertyModel.recommendation} backed by ${propertyModel.reasons.length} stored reasons and ${propertyModel.verdictChecklist.length} checklist items.`
+                                        : "No stored recommendation is available yet. Refresh the property to generate one."}
+                                </InfoBox>
+                                {exportData ? <ScoreCard data={exportData} /> : null}
+                            </div>
+                        </div>
+                    ) : (
+                        <InfoBox tone="warning" title="Stored analysis">
+                            This property does not have stored analysis details yet. Refresh it to populate a verdict.
+                        </InfoBox>
+                    )}
+
+                    <Card className="border-white/5 bg-white/[0.02]">
+                        <CardHeader className="pb-2">
+                            <CardTitle className="text-sm font-mono text-amber-400">Provider Fetch Summary</CardTitle>
+                        </CardHeader>
+                        <CardContent className="px-0">
+                            {exportData?.meta.providerSummary && exportData.meta.providerSummary.length > 0 ? (
+                                <DataTable
+                                    columns={[
+                                        { key: "provider", header: "Provider", className: "text-gray-300" },
+                                        { key: "sourceContract", header: "Contract", className: "text-gray-500" },
+                                        { key: "countLabel", header: "Count", align: "right", className: "text-cyan-400" },
+                                        { key: "fetchedLabel", header: "Fetched", className: "text-gray-500" },
+                                    ]}
+                                    rows={exportData.meta.providerSummary.map((provider) => ({
+                                        ...provider,
+                                        countLabel: formatNumber(provider.count),
+                                        fetchedLabel: formatDateTime(provider.fetchedAt),
+                                    }))}
+                                    getRowKey={(row) => `${String(row.provider)}-${String(row.sourceContract)}`}
+                                />
+                            ) : (
+                                <p className="px-6 pb-6 text-xs font-mono text-gray-500">No provider summary stored.</p>
+                            )}
+                        </CardContent>
+                    </Card>
+
+                    <Card className="border-white/5 bg-white/[0.02]">
+                        <CardHeader className="pb-2">
+                            <CardTitle className="text-sm font-mono text-amber-400">Analysis Snapshots</CardTitle>
+                        </CardHeader>
+                        <CardContent className="px-0">
+                            {historyQuery.isLoading ? (
+                                <div className="px-6 pb-6 space-y-2">
+                                    {HISTORY_ROW_SKELETON_KEYS.map((key) => (
+                                        <Skeleton key={key} variant="default" className="h-8 w-full" />
+                                    ))}
+                                </div>
+                            ) : history.length > 0 ? (
+                                <DataTable
+                                    columns={[
+                                        { key: "analyzedLabel", header: "Analyzed", className: "text-gray-400" },
+                                        {
+                                            key: "gradeLabel",
+                                            header: "Grade",
+                                            render: (row) =>
+                                                row.grade ? (
+                                                    <Badge
+                                                        variant="outline"
+                                                        className={cn(
+                                                            "text-[10px] font-mono",
+                                                            GRADE_COLORS[String(row.grade)] ?? "border-white/10 text-gray-400"
+                                                        )}
+                                                    >
+                                                        {row.gradeLabel}
+                                                    </Badge>
+                                                ) : (
+                                                    <span className="text-xs font-mono text-gray-500">-</span>
+                                                ),
+                                        },
+                                        { key: "scoreLabel", header: "Score", align: "right", className: "text-amber-400" },
+                                        { key: "netYieldLabel", header: "Net Yield", align: "right", className: "text-cyan-400" },
+                                        { key: "grossYieldLabel", header: "Gross Yield", align: "right" },
+                                        { key: "medianLabel", header: "Median CZK/m2", align: "right" },
+                                        { key: "compsLabel", header: "Comps", align: "right", className: "text-gray-400" },
+                                    ]}
+                                    rows={history.map((entry) => ({
+                                        ...entry,
+                                        analyzedLabel: formatDateTime(entry.analyzed_at),
+                                        gradeLabel: entry.grade ?? "-",
+                                        scoreLabel: formatNumber(entry.score),
+                                        netYieldLabel: formatYield(entry.net_yield),
+                                        grossYieldLabel: formatYield(entry.gross_yield),
+                                        medianLabel: formatCurrencyCompact(entry.median_price_per_m2),
+                                        compsLabel: formatNumber(entry.comparable_count),
+                                    }))}
+                                    getRowKey={(row) => String(row.id)}
+                                />
+                            ) : (
+                                <div className="px-6 pb-6">
+                                    <p className="text-xs font-mono text-gray-500">No analysis history is stored for this property yet.</p>
+                                </div>
+                            )}
+                        </CardContent>
+                    </Card>
                 </TabsContent>
             </Tabs>
         </div>

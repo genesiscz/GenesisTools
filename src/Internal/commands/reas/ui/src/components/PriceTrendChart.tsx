@@ -1,9 +1,9 @@
 import type { DashboardExport } from "@app/Internal/commands/reas/lib/api-export";
 import { Badge } from "@ui/components/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
+import { ChartContainer, ChartTooltipContent, chartAxisProps, chartGridProps } from "@ui/graphs";
 import { cn } from "@ui/lib/utils";
 import { TrendingDown, TrendingUp } from "lucide-react";
-import { ChartContainer, ChartTooltipContent, chartAxisProps, chartGridProps } from "@ui/graphs";
 import { CartesianGrid, Line, LineChart, Tooltip, XAxis, YAxis } from "recharts";
 import { buildPriceTrendModel } from "./price-trend-model";
 
@@ -71,7 +71,11 @@ export function PriceTrendChart({ data }: PriceTrendChartProps) {
                     <LineChart data={points} margin={{ top: 8, right: 12, bottom: 12, left: 8 }}>
                         <CartesianGrid {...chartGridProps} />
                         <XAxis {...chartAxisProps} dataKey="label" />
-                        <YAxis {...chartAxisProps} tickFormatter={(value: number) => formatAxisValue(value)} width={56} />
+                        <YAxis
+                            {...chartAxisProps}
+                            tickFormatter={(value: number) => formatAxisValue(value)}
+                            width={56}
+                        />
                         <Tooltip
                             content={
                                 <ChartTooltipContent

@@ -31,9 +31,7 @@ export function DistrictDetailTable({ comparisons }: { comparisons: DistrictComp
                 return sortDir === "asc" ? leftValue.localeCompare(rightValue) : rightValue.localeCompare(leftValue);
             }
 
-            return sortDir === "asc"
-                ? Number(leftValue) - Number(rightValue)
-                : Number(rightValue) - Number(leftValue);
+            return sortDir === "asc" ? Number(leftValue) - Number(rightValue) : Number(rightValue) - Number(leftValue);
         });
     }, [comparisons, sortDir, sortKey]);
 
@@ -61,7 +59,11 @@ export function DistrictDetailTable({ comparisons }: { comparisons: DistrictComp
                         <TableRow className="border-white/5 hover:bg-transparent">
                             <SortableHead label="District" onClick={() => handleSort("district")} />
                             <SortableHead label="Median CZK/m²" align="right" onClick={() => handleSort("median")} />
-                            <SortableHead label="Market Gross Yield" align="right" onClick={() => handleSort("yield")} />
+                            <SortableHead
+                                label="Market Gross Yield"
+                                align="right"
+                                onClick={() => handleSort("yield")}
+                            />
                             <SortableHead label="DOM" align="right" onClick={() => handleSort("dom")} />
                             <SortableHead label="Discount" align="right" onClick={() => handleSort("discount")} />
                             <SortableHead label="Sold" align="right" onClick={() => handleSort("volume")} />
@@ -73,13 +75,27 @@ export function DistrictDetailTable({ comparisons }: { comparisons: DistrictComp
                         {rows.map((row) => (
                             <TableRow key={row.district} className="border-white/5 hover:bg-white/[0.02]">
                                 <TableCell className="font-mono text-xs text-gray-100">{row.district}</TableCell>
-                                <TableCell className="text-right font-mono text-xs text-cyan-300">{Math.round(row.median).toLocaleString("cs-CZ")}</TableCell>
-                                <TableCell className="text-right font-mono text-xs text-emerald-300">{row.yield.toFixed(2)}%</TableCell>
-                                <TableCell className="text-right font-mono text-xs text-gray-300">{Math.round(row.dom)}d</TableCell>
-                                <TableCell className="text-right font-mono text-xs text-amber-300">{row.discount.toFixed(1)}%</TableCell>
-                                <TableCell className="text-right font-mono text-xs text-gray-300">{row.volume}</TableCell>
-                                <TableCell className="text-right font-mono text-xs text-gray-300">{row.rentals}</TableCell>
-                                <TableCell className="text-right font-mono text-xs text-gray-300">{row.percentile.toFixed(0)}th</TableCell>
+                                <TableCell className="text-right font-mono text-xs text-cyan-300">
+                                    {Math.round(row.median).toLocaleString("cs-CZ")}
+                                </TableCell>
+                                <TableCell className="text-right font-mono text-xs text-emerald-300">
+                                    {row.yield.toFixed(2)}%
+                                </TableCell>
+                                <TableCell className="text-right font-mono text-xs text-gray-300">
+                                    {Math.round(row.dom)}d
+                                </TableCell>
+                                <TableCell className="text-right font-mono text-xs text-amber-300">
+                                    {row.discount.toFixed(1)}%
+                                </TableCell>
+                                <TableCell className="text-right font-mono text-xs text-gray-300">
+                                    {row.volume}
+                                </TableCell>
+                                <TableCell className="text-right font-mono text-xs text-gray-300">
+                                    {row.rentals}
+                                </TableCell>
+                                <TableCell className="text-right font-mono text-xs text-gray-300">
+                                    {row.percentile.toFixed(0)}th
+                                </TableCell>
                             </TableRow>
                         ))}
                     </TableBody>
@@ -89,10 +105,23 @@ export function DistrictDetailTable({ comparisons }: { comparisons: DistrictComp
     );
 }
 
-function SortableHead({ label, onClick, align = "left" }: { label: string; onClick: () => void; align?: "left" | "right" }) {
+function SortableHead({
+    label,
+    onClick,
+    align = "left",
+}: {
+    label: string;
+    onClick: () => void;
+    align?: "left" | "right";
+}) {
     return (
         <TableHead className={align === "right" ? "text-right" : undefined}>
-            <Button variant="ghost" size="sm" onClick={onClick} className="h-auto px-0 font-mono text-[10px] text-gray-500 hover:bg-transparent hover:text-gray-300">
+            <Button
+                variant="ghost"
+                size="sm"
+                onClick={onClick}
+                className="h-auto px-0 font-mono text-[10px] text-gray-500 hover:bg-transparent hover:text-gray-300"
+            >
                 {label}
                 <ArrowDownUp className="w-3 h-3" />
             </Button>

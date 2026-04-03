@@ -623,7 +623,12 @@ describe("listings", () => {
             "Praha 4"
         );
 
-        db.replaceListingsSnapshot({ district: "Praha 4", type: "sale", source: "sreality", sourceContract: "sreality-v2" });
+        db.replaceListingsSnapshot({
+            district: "Praha 4",
+            type: "sale",
+            source: "sreality",
+            sourceContract: "sreality-v2",
+        });
 
         db.upsertListings(
             [

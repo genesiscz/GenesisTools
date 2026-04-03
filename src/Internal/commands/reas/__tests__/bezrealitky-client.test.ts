@@ -199,71 +199,71 @@ describe("BezrealitkyClient", () => {
 
     test("fetchAdvertDetail maps the validated field subset", async () => {
         const graphqlClient = new FakeGraphqlClient([
-                {
-                    data: {
-                        advert: {
-                            id: "851182",
-                            uri: "851182-nabidka-pronajem-bytu-rybna-praha",
-                            offerType: "PRONAJEM",
-                            price: 92515,
-                            charges: 16326,
-                            serviceCharges: 0,
-                            utilityCharges: 16326,
-                            deposit: 107000,
-                            availableFrom: 1780524000,
-                            originalPrice: 92617,
-                            isDiscounted: false,
-                            disposition: "DISP_3_1",
-                            surface: 86,
-                            gps: { lat: 50.0882082, lng: 14.4262296 },
-                            'address({"locale":"CS"})': "Rybná, Praha - Staré Město",
-                            'imageAltText({"locale":"CS"})': "Pronájem bytu 86 m², Rybná, Praha",
-                            'mortgageData({"locale":"CS"})': { rateLow: null, rateHigh: null, years: null, loan: null },
-                            links: [{ url: "https://example.test/detail", type: "detail" }],
-                            publicImages: [
-                                { id: "img-1", order: 2, url: "https://example.test/image-2.jpg" },
-                                { id: "img-0", order: 1, url: "https://example.test/image-1.jpg" },
+            {
+                data: {
+                    advert: {
+                        id: "851182",
+                        uri: "851182-nabidka-pronajem-bytu-rybna-praha",
+                        offerType: "PRONAJEM",
+                        price: 92515,
+                        charges: 16326,
+                        serviceCharges: 0,
+                        utilityCharges: 16326,
+                        deposit: 107000,
+                        availableFrom: 1780524000,
+                        originalPrice: 92617,
+                        isDiscounted: false,
+                        disposition: "DISP_3_1",
+                        surface: 86,
+                        gps: { lat: 50.0882082, lng: 14.4262296 },
+                        'address({"locale":"CS"})': "Rybná, Praha - Staré Město",
+                        'imageAltText({"locale":"CS"})': "Pronájem bytu 86 m², Rybná, Praha",
+                        'mortgageData({"locale":"CS"})': { rateLow: null, rateHigh: null, years: null, loan: null },
+                        links: [{ url: "https://example.test/detail", type: "detail" }],
+                        publicImages: [
+                            { id: "img-1", order: 2, url: "https://example.test/image-2.jpg" },
+                            { id: "img-0", order: 1, url: "https://example.test/image-1.jpg" },
+                        ],
+                        formattedAds: [
+                            { title: "Heating", value: "Central" },
+                            { title: "Transport", value: "Metro A", valueHref: "https://example.test/metro" },
+                        ],
+                        poiData: '{"public_transport":{"properties":{"osm_tags":{"name":"Masná"}}}}',
+                        'regionTree({"locale":"CS"})': [
+                            { id: "486", name: "Praha", uri: "praha" },
+                            { id: "15460", name: "Praha-Staré Město", uri: "praha-stare-mesto" },
+                        ],
+                        'relatedAdverts({"limit":6})': {
+                            list: [
+                                {
+                                    id: "830720",
+                                    uri: "830720-nabidka-pronajem",
+                                    offerType: "PRONAJEM",
+                                    price: 107960,
+                                    charges: 50482,
+                                    disposition: "UNDEFINED",
+                                    surface: 100,
+                                    reserved: false,
+                                    gps: { lat: 50.09, lng: 14.42 },
+                                    'address({"locale":"CS"})': "U Milosrdných, Praha",
+                                    'imageAltText({"locale":"CS"})': "Pronájem bytu 100 m², U Milosrdných, Praha",
+                                    originalPrice: null,
+                                    isDiscounted: false,
+                                    availableFrom: null,
+                                    links: [],
+                                },
                             ],
-                            formattedAds: [
-                                { title: "Heating", value: "Central" },
-                                { title: "Transport", value: "Metro A", valueHref: "https://example.test/metro" },
-                            ],
-                            poiData: '{"public_transport":{"properties":{"osm_tags":{"name":"Masná"}}}}',
-                            'regionTree({"locale":"CS"})': [
-                                { id: "486", name: "Praha", uri: "praha" },
-                                { id: "15460", name: "Praha-Staré Město", uri: "praha-stare-mesto" },
-                            ],
-                            'relatedAdverts({"limit":6})': {
-                                list: [
-                                    {
-                                        id: "830720",
-                                        uri: "830720-nabidka-pronajem",
-                                        offerType: "PRONAJEM",
-                                        price: 107960,
-                                        charges: 50482,
-                                        disposition: "UNDEFINED",
-                                        surface: 100,
-                                        reserved: false,
-                                        gps: { lat: 50.09, lng: 14.42 },
-                                        'address({"locale":"CS"})': "U Milosrdných, Praha",
-                                        'imageAltText({"locale":"CS"})': "Pronájem bytu 100 m², U Milosrdných, Praha",
-                                        originalPrice: null,
-                                        isDiscounted: false,
-                                        availableFrom: null,
-                                        links: [],
-                                    },
-                                ],
-                            },
-                            nemoreport: {
-                                id: "nemo-1",
-                                resultUrl: "https://example.test/nemoreport",
-                                status: "DONE",
-                                message: "ready",
-                            },
+                        },
+                        nemoreport: {
+                            id: "nemo-1",
+                            resultUrl: "https://example.test/nemoreport",
+                            status: "DONE",
+                            message: "ready",
                         },
                     },
                 },
-            ]);
+            },
+        ]);
         const client = new BezrealitkyClient({ graphqlClient });
 
         const detail = await client.fetchAdvertDetail("851182");

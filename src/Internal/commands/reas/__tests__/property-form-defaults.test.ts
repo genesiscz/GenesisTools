@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { buildImportedPropertyDraft, buildSavedPropertyFromListing } from "@app/Internal/commands/reas/lib/property-form-defaults";
+import {
+    buildImportedPropertyDraft,
+    buildSavedPropertyFromListing,
+} from "@app/Internal/commands/reas/lib/property-form-defaults";
 import type { ListingRow, RentEstimate } from "@app/Internal/commands/reas/lib/store";
 
 function makeListing(overrides?: Partial<ListingRow>): ListingRow {

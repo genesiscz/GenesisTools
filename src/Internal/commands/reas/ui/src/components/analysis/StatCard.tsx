@@ -1,6 +1,6 @@
-import type { LucideIcon } from "lucide-react";
 import { Card, CardContent } from "@ui/components/card";
 import { cn } from "@ui/lib/utils";
+import type { LucideIcon } from "lucide-react";
 import { STAT_CARD_ACCENT_STYLES, type StatCardAccent } from "./shared";
 
 interface StatCardProps {

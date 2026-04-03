@@ -14,8 +14,8 @@ import {
     TrendTab,
     VerdictTab,
 } from "./analysis/AnalysisSections";
-import { ExportButton } from "./ExportButton";
 import { buildAnalysisCompareQuery } from "./compare/compare-query";
+import { ExportButton } from "./ExportButton";
 import { StalenessIndicator } from "./StalenessIndicator";
 
 interface AnalysisResultsProps {
@@ -63,7 +63,11 @@ export function AnalysisResults({ data }: AnalysisResultsProps) {
                                 {(data.meta.providers ?? []).join(" · ")}
                             </div>
                         </div>
-                        <Button asChild variant="outline" className="border-cyan-500/20 bg-cyan-500/5 text-cyan-300 hover:bg-cyan-500/10">
+                        <Button
+                            asChild
+                            variant="outline"
+                            className="border-cyan-500/20 bg-cyan-500/5 text-cyan-300 hover:bg-cyan-500/10"
+                        >
                             <Link to={compareHref}>
                                 <GitCompare className="h-3.5 w-3.5" />
                                 Compare District

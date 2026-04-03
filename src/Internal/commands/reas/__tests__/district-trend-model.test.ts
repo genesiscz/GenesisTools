@@ -190,11 +190,7 @@ describe("buildDistrictTrendModel", () => {
             visibleDistricts: ["Praha 2", "Praha 3"],
         });
 
-        expect(model.rows.map((row: { date: string }) => row.date)).toEqual([
-            "2025-10-01",
-            "2025-12-01",
-            "2026-03-01",
-        ]);
+        expect(model.rows.map((row: { date: string }) => row.date)).toEqual(["2025-10-01", "2025-12-01", "2026-03-01"]);
         expect(model.rows[1]).toMatchObject({
             date: "2025-12-01",
             "Praha 3": 103000,
@@ -208,7 +204,35 @@ describe("buildDistrictTrendModel", () => {
 
     test("returns series metadata only for visible districts with the latest snapshot summary", () => {
         const model = buildDistrictTrendModel({
-            comparisons: [makeComparison(), makeComparison({ district: "Praha 3", summary: { medianPricePerM2: 104500, grossYield: 4.1, netYield: 3.5, daysOnMarket: 36, targetPercentile: 42, salesCount: 12, rentalCount: 10 }, snapshots: [{ district: "Praha 3", constructionType: "brick", disposition: null, medianPricePerM2: 104500, comparablesCount: 12, trendDirection: "flat", yoyChange: 2.1, marketGrossYield: 4.1, marketNetYield: 3.4, snapshotDate: "2026-03-01" }] })],
+            comparisons: [
+                makeComparison(),
+                makeComparison({
+                    district: "Praha 3",
+                    summary: {
+                        medianPricePerM2: 104500,
+                        grossYield: 4.1,
+                        netYield: 3.5,
+                        daysOnMarket: 36,
+                        targetPercentile: 42,
+                        salesCount: 12,
+                        rentalCount: 10,
+                    },
+                    snapshots: [
+                        {
+                            district: "Praha 3",
+                            constructionType: "brick",
+                            disposition: null,
+                            medianPricePerM2: 104500,
+                            comparablesCount: 12,
+                            trendDirection: "flat",
+                            yoyChange: 2.1,
+                            marketGrossYield: 4.1,
+                            marketNetYield: 3.4,
+                            snapshotDate: "2026-03-01",
+                        },
+                    ],
+                }),
+            ],
             timeframeDays: DISTRICT_TREND_TIMEFRAMES[2].days,
             visibleDistricts: ["Praha 3"],
         });

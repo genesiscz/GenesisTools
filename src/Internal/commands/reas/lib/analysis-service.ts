@@ -12,7 +12,11 @@ import { fetchMfRentalData } from "@app/Internal/commands/reas/api/mf-rental";
 import { fetchSoldListings } from "@app/Internal/commands/reas/api/reas-client";
 import { fetchRentalListings, fetchSaleListings } from "@app/Internal/commands/reas/api/sreality-client";
 import { parsePeriods, resolveDistrict } from "@app/Internal/commands/reas/lib/config-builder";
-import { buildListingsFetchFilters, type FetchableListingType, type ListingsFetchInput } from "@app/Internal/commands/reas/lib/listings-fetch";
+import {
+    buildListingsFetchFilters,
+    type FetchableListingType,
+    type ListingsFetchInput,
+} from "@app/Internal/commands/reas/lib/listings-fetch";
 import { reasDatabase, type UpsertListingInput } from "@app/Internal/commands/reas/lib/store";
 import type {
     AnalysisFilters,
@@ -496,7 +500,9 @@ export async function fetchListingsIntoCache(
     const rentalListings: RentalListing[] = [];
 
     if (options.type === "sold") {
-        const soldResults = await Promise.allSettled(filters.periods.map((period) => fetchSoldListings(filters, period, refresh)));
+        const soldResults = await Promise.allSettled(
+            filters.periods.map((period) => fetchSoldListings(filters, period, refresh))
+        );
 
         for (const result of soldResults) {
             if (result.status === "fulfilled") {
@@ -509,7 +515,9 @@ export async function fetchListingsIntoCache(
 
     if (options.type === "sale") {
         const [srealityResult, bezrealitkyResult] = await Promise.allSettled([
-            isProviderEnabled(filters, "sreality") ? fetchSaleListings(filters, refresh) : Promise.resolve([] as SaleListing[]),
+            isProviderEnabled(filters, "sreality")
+                ? fetchSaleListings(filters, refresh)
+                : Promise.resolve([] as SaleListing[]),
             isProviderEnabled(filters, "bezrealitky")
                 ? fetchBezrealitkySales(filters, refresh)
                 : Promise.resolve([] as SaleListing[]),
@@ -518,32 +526,44 @@ export async function fetchListingsIntoCache(
         if (srealityResult.status === "fulfilled") {
             saleListings.push(...srealityResult.value);
         } else {
-            warnings.push(srealityResult.reason instanceof Error ? srealityResult.reason.message : "Failed to fetch Sreality sales");
+            warnings.push(
+                srealityResult.reason instanceof Error
+                    ? srealityResult.reason.message
+                    : "Failed to fetch Sreality sales"
+            );
         }
 
         if (bezrealitkyResult.status === "fulfilled") {
             saleListings.push(...bezrealitkyResult.value);
         } else {
             warnings.push(
-                bezrealitkyResult.reason instanceof Error ? bezrealitkyResult.reason.message : "Failed to fetch Bezrealitky sales"
+                bezrealitkyResult.reason instanceof Error
+                    ? bezrealitkyResult.reason.message
+                    : "Failed to fetch Bezrealitky sales"
             );
         }
     }
 
     if (options.type === "rental") {
         const [srealityResult, bezrealitkyResult, erealityResult] = await Promise.allSettled([
-            isProviderEnabled(filters, "sreality") ? fetchRentalListings(filters, refresh) : Promise.resolve([] as RentalListing[]),
+            isProviderEnabled(filters, "sreality")
+                ? fetchRentalListings(filters, refresh)
+                : Promise.resolve([] as RentalListing[]),
             isProviderEnabled(filters, "bezrealitky")
                 ? fetchBezrealitkyRentals(filters, refresh)
                 : Promise.resolve([] as RentalListing[]),
-            isProviderEnabled(filters, "ereality") ? fetchErealityRentals(filters, refresh) : Promise.resolve([] as RentalListing[]),
+            isProviderEnabled(filters, "ereality")
+                ? fetchErealityRentals(filters, refresh)
+                : Promise.resolve([] as RentalListing[]),
         ]);
 
         if (srealityResult.status === "fulfilled") {
             rentalListings.push(...srealityResult.value);
         } else {
             warnings.push(
-                srealityResult.reason instanceof Error ? srealityResult.reason.message : "Failed to fetch Sreality rentals"
+                srealityResult.reason instanceof Error
+                    ? srealityResult.reason.message
+                    : "Failed to fetch Sreality rentals"
             );
         }
 
@@ -560,7 +580,11 @@ export async function fetchListingsIntoCache(
         if (erealityResult.status === "fulfilled") {
             rentalListings.push(...erealityResult.value);
         } else {
-            warnings.push(erealityResult.reason instanceof Error ? erealityResult.reason.message : "Failed to fetch eReality rentals");
+            warnings.push(
+                erealityResult.reason instanceof Error
+                    ? erealityResult.reason.message
+                    : "Failed to fetch eReality rentals"
+            );
         }
     }
 

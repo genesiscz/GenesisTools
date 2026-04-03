@@ -81,7 +81,17 @@ function makeExportData(
         },
         listings: {
             sold: [],
-            activeSales: [{ disposition: "2+kk", area: 80, price: 5200000, pricePerM2: 125000, address: district, link: "https://example.com", source: "sreality" }],
+            activeSales: [
+                {
+                    disposition: "2+kk",
+                    area: 80,
+                    price: 5200000,
+                    pricePerM2: 125000,
+                    address: district,
+                    link: "https://example.com",
+                    source: "sreality",
+                },
+            ],
             rentals: [],
         },
         analysis: {
@@ -144,8 +154,30 @@ describe("district comparison models", () => {
     test("buildDistrictPriceBarModel sorts districts by median price and builds target markers", () => {
         const model = buildDistrictPriceBarModel({
             comparisons: [
-                makeComparison({ district: "Praha 3", summary: { medianPricePerM2: 116000, grossYield: 4.1, netYield: 3.4, daysOnMarket: 36, targetPercentile: 48, salesCount: 18, rentalCount: 12 } }),
-                makeComparison({ district: "Praha 2", summary: { medianPricePerM2: 122000, grossYield: 4.5, netYield: 3.8, daysOnMarket: 30, targetPercentile: 52, salesCount: 20, rentalCount: 14 } }),
+                makeComparison({
+                    district: "Praha 3",
+                    summary: {
+                        medianPricePerM2: 116000,
+                        grossYield: 4.1,
+                        netYield: 3.4,
+                        daysOnMarket: 36,
+                        targetPercentile: 48,
+                        salesCount: 18,
+                        rentalCount: 12,
+                    },
+                }),
+                makeComparison({
+                    district: "Praha 2",
+                    summary: {
+                        medianPricePerM2: 122000,
+                        grossYield: 4.5,
+                        netYield: 3.8,
+                        daysOnMarket: 30,
+                        targetPercentile: 52,
+                        salesCount: 20,
+                        rentalCount: 14,
+                    },
+                }),
             ],
             targetDistrict: "Praha 2",
             targetPricePerM2: 125000,
@@ -160,8 +192,32 @@ describe("district comparison models", () => {
     test("buildDistrictYieldBarModel keeps benchmark context and district highlight", () => {
         const model = buildDistrictYieldBarModel({
             comparisons: [
-                makeComparison({ district: "Praha 2", summary: { medianPricePerM2: 122000, grossYield: 4.5, netYield: 3.8, daysOnMarket: 30, targetPercentile: 52, salesCount: 20, rentalCount: 14 }, exportData: makeExportData("Praha 2", { marketGrossYield: 4.2, marketNetYield: 3.5 }) }),
-                makeComparison({ district: "Praha 3", summary: { medianPricePerM2: 116000, grossYield: 4.1, netYield: 3.4, daysOnMarket: 36, targetPercentile: 48, salesCount: 18, rentalCount: 12 }, exportData: makeExportData("Praha 3", { marketGrossYield: 3.9, marketNetYield: 3.2 }) }),
+                makeComparison({
+                    district: "Praha 2",
+                    summary: {
+                        medianPricePerM2: 122000,
+                        grossYield: 4.5,
+                        netYield: 3.8,
+                        daysOnMarket: 30,
+                        targetPercentile: 52,
+                        salesCount: 20,
+                        rentalCount: 14,
+                    },
+                    exportData: makeExportData("Praha 2", { marketGrossYield: 4.2, marketNetYield: 3.5 }),
+                }),
+                makeComparison({
+                    district: "Praha 3",
+                    summary: {
+                        medianPricePerM2: 116000,
+                        grossYield: 4.1,
+                        netYield: 3.4,
+                        daysOnMarket: 36,
+                        targetPercentile: 48,
+                        salesCount: 18,
+                        rentalCount: 12,
+                    },
+                    exportData: makeExportData("Praha 3", { marketGrossYield: 3.9, marketNetYield: 3.2 }),
+                }),
             ],
             targetDistrict: "Praha 3",
         });
@@ -176,12 +232,28 @@ describe("district comparison models", () => {
             comparisons: [
                 makeComparison({
                     district: "Praha 2",
-                    summary: { medianPricePerM2: 122000, grossYield: 5.1, netYield: 4.2, daysOnMarket: 30, targetPercentile: 52, salesCount: 20, rentalCount: 14 },
+                    summary: {
+                        medianPricePerM2: 122000,
+                        grossYield: 5.1,
+                        netYield: 4.2,
+                        daysOnMarket: 30,
+                        targetPercentile: 52,
+                        salesCount: 20,
+                        rentalCount: 14,
+                    },
                     exportData: makeExportData("Praha 2", { marketGrossYield: 4.2, marketNetYield: 3.5 }),
                 }),
                 makeComparison({
                     district: "Praha 3",
-                    summary: { medianPricePerM2: 116000, grossYield: 4.4, netYield: 3.7, daysOnMarket: 36, targetPercentile: 48, salesCount: 18, rentalCount: 12 },
+                    summary: {
+                        medianPricePerM2: 116000,
+                        grossYield: 4.4,
+                        netYield: 3.7,
+                        daysOnMarket: 36,
+                        targetPercentile: 48,
+                        salesCount: 18,
+                        rentalCount: 12,
+                    },
                     exportData: makeExportData("Praha 3", { marketGrossYield: 3.9, marketNetYield: 3.2 }),
                 }),
             ],
@@ -196,8 +268,32 @@ describe("district comparison models", () => {
     test("buildDistrictRadarModel normalizes selected districts across all dimensions", () => {
         const model = buildDistrictRadarModel({
             comparisons: [
-                makeComparison({ district: "Praha 2", summary: { medianPricePerM2: 122000, grossYield: 4.5, netYield: 3.8, daysOnMarket: 30, targetPercentile: 52, salesCount: 20, rentalCount: 14 }, exportData: makeExportData("Praha 2", { marketGrossYield: 4.2, marketNetYield: 3.5 }) }),
-                makeComparison({ district: "Praha 3", summary: { medianPricePerM2: 116000, grossYield: 4.1, netYield: 3.4, daysOnMarket: 36, targetPercentile: 48, salesCount: 18, rentalCount: 12 }, exportData: makeExportData("Praha 3", { marketGrossYield: 3.9, marketNetYield: 3.2 }) }),
+                makeComparison({
+                    district: "Praha 2",
+                    summary: {
+                        medianPricePerM2: 122000,
+                        grossYield: 4.5,
+                        netYield: 3.8,
+                        daysOnMarket: 30,
+                        targetPercentile: 52,
+                        salesCount: 20,
+                        rentalCount: 14,
+                    },
+                    exportData: makeExportData("Praha 2", { marketGrossYield: 4.2, marketNetYield: 3.5 }),
+                }),
+                makeComparison({
+                    district: "Praha 3",
+                    summary: {
+                        medianPricePerM2: 116000,
+                        grossYield: 4.1,
+                        netYield: 3.4,
+                        daysOnMarket: 36,
+                        targetPercentile: 48,
+                        salesCount: 18,
+                        rentalCount: 12,
+                    },
+                    exportData: makeExportData("Praha 3", { marketGrossYield: 3.9, marketNetYield: 3.2 }),
+                }),
             ],
             selectedDistricts: ["Praha 2", "Praha 3"],
         });

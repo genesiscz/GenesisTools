@@ -1,6 +1,6 @@
 import type { DashboardExport } from "@app/Internal/commands/reas/lib/api-export";
-import type { ListingRow, SavedPropertyRow } from "@app/Internal/commands/reas/lib/store";
 import { PROPERTY_TYPES } from "@app/Internal/commands/reas/lib/config-builder";
+import type { ListingRow, SavedPropertyRow } from "@app/Internal/commands/reas/lib/store";
 
 const DEFAULT_COMPARE_STATE = {
     propertyType: "brick",

@@ -1,4 +1,12 @@
-import { ChartContainer, PolarAngleAxis, PolarGrid, PolarRadiusAxis, Radar, RadarChart, chartAxisProps } from "@ui/graphs";
+import {
+    ChartContainer,
+    chartAxisProps,
+    PolarAngleAxis,
+    PolarGrid,
+    PolarRadiusAxis,
+    Radar,
+    RadarChart,
+} from "@ui/graphs";
 import { buildDistrictRadarModel } from "./district-comparison-model";
 import type { DistrictComparison } from "./types";
 

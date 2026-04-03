@@ -42,7 +42,9 @@ export function MomentumCard({ data }: MomentumCardProps) {
                         <DirectionIcon className="h-6 w-6" />
                     </div>
                     <div>
-                        <div className={cn("text-lg font-bold font-mono", model.directionClassName)}>{model.directionLabel}</div>
+                        <div className={cn("text-lg font-bold font-mono", model.directionClassName)}>
+                            {model.directionLabel}
+                        </div>
                         <div className="text-xs font-mono text-gray-500">{model.velocityPerPeriodLabel}</div>
                     </div>
                 </div>
@@ -50,7 +52,9 @@ export function MomentumCard({ data }: MomentumCardProps) {
                 {/* Momentum indicator */}
                 <div className="flex items-center justify-between">
                     <span className="text-xs font-mono text-gray-500">Momentum</span>
-                    <Badge className={cn("font-mono text-[10px]", model.momentumClassName)}>{model.momentumLabel}</Badge>
+                    <Badge className={cn("font-mono text-[10px]", model.momentumClassName)}>
+                        {model.momentumLabel}
+                    </Badge>
                 </div>
 
                 {/* Confidence */}

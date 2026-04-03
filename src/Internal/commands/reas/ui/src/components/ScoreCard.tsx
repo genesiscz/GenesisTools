@@ -3,7 +3,7 @@ import { Badge } from "@ui/components/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
 import { cn } from "@ui/lib/utils";
 import { Award, TrendingDown, TrendingUp } from "lucide-react";
-import { getScoreCardModel, GRADE_COLORS } from "./analysis/display-model";
+import { GRADE_COLORS, getScoreCardModel } from "./analysis/display-model";
 
 export { GRADE_COLORS } from "./analysis/display-model";
 
@@ -63,7 +63,13 @@ export function ScoreCard({ data }: ScoreCardProps) {
                         </div>
 
                         {/* Recommendation badge */}
-                        <Badge className={cn("font-mono text-xs", recommendationClassName.bg, recommendationClassName.text)}>
+                        <Badge
+                            className={cn(
+                                "font-mono text-xs",
+                                recommendationClassName.bg,
+                                recommendationClassName.text
+                            )}
+                        >
                             {recommendationLabel}
                         </Badge>
                     </div>

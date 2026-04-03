@@ -30,9 +30,7 @@ export function buildListingsFetchFilters(input: ListingsFetchInput): AnalysisFi
 
     const supportedProviders = LISTING_FETCH_PROVIDERS[input.type];
     const selectedSource = input.source?.trim().toLowerCase();
-    const providers = selectedSource
-        ? supportedProviders.filter((provider) => provider === selectedSource)
-        : undefined;
+    const providers = selectedSource ? supportedProviders.filter((provider) => provider === selectedSource) : undefined;
     const year = new Date().getFullYear();
 
     return {

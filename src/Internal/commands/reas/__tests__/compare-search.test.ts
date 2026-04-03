@@ -4,8 +4,8 @@ import type { ListingRow } from "@app/Internal/commands/reas/lib/store";
 import {
     buildAnalysisCompareQuery,
     buildCompareSearchParams,
-    DEFAULT_COMPARE_DISTRICTS,
     buildListingCompareQuery,
+    DEFAULT_COMPARE_DISTRICTS,
     parseCompareSearchParams,
 } from "@app/Internal/commands/reas/ui/src/components/compare/compare-query";
 
@@ -19,7 +19,9 @@ describe("compare-query", () => {
             area: "80",
         });
 
-        expect(params.toString()).toBe("districts=Praha+2%2CPraha+3&type=brick&disposition=2%2Bkk&price=5000000&area=80");
+        expect(params.toString()).toBe(
+            "districts=Praha+2%2CPraha+3&type=brick&disposition=2%2Bkk&price=5000000&area=80"
+        );
     });
 
     test("parses compare state from a URL search string and clamps max districts", () => {
@@ -48,7 +50,9 @@ describe("compare-query", () => {
     });
 
     test("builds compare params from listing detail rows", () => {
-        const params = buildListingCompareQuery(makeListing({ district: "Praha 8", building_type: "panel", disposition: "1+kk" }));
+        const params = buildListingCompareQuery(
+            makeListing({ district: "Praha 8", building_type: "panel", disposition: "1+kk" })
+        );
 
         expect(params.get("districts")).toBe("Praha 8");
         expect(params.get("type")).toBe("panel");

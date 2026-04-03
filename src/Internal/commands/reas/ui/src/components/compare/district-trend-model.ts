@@ -1,13 +1,6 @@
 import type { DistrictComparison } from "./types";
 
-const DISTRICT_TREND_COLORS = [
-    "#f59e0b",
-    "#06b6d4",
-    "#10b981",
-    "#a855f7",
-    "#f43f5e",
-    "#38bdf8",
-];
+const DISTRICT_TREND_COLORS = ["#f59e0b", "#06b6d4", "#10b981", "#a855f7", "#f43f5e", "#38bdf8"];
 
 export const DISTRICT_TREND_TIMEFRAMES = [
     { label: "3M", days: 90 },
@@ -65,7 +58,9 @@ export function buildDistrictTrendModel({
     const series = districts.map((district, index) => {
         const comparison = comparisons.find((item) => item.district === district);
         const filteredSnapshots =
-            comparison?.snapshots.filter((snapshot) => snapshot.snapshotDate >= cutoffDate && snapshot.snapshotDate <= latestDate) ?? [];
+            comparison?.snapshots.filter(
+                (snapshot) => snapshot.snapshotDate >= cutoffDate && snapshot.snapshotDate <= latestDate
+            ) ?? [];
         const latestSnapshot = filteredSnapshots.at(-1) ?? null;
 
         for (const snapshot of filteredSnapshots) {

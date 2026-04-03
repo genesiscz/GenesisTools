@@ -1,8 +1,8 @@
-import type { ReactNode } from "react";
-import { useMemo } from "react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@ui/components/table";
 import { cn } from "@ui/lib/utils";
-import { sortDataTableRows, type DataTablePrimitive } from "./shared";
+import type { ReactNode } from "react";
+import { useMemo } from "react";
+import { type DataTablePrimitive, sortDataTableRows } from "./shared";
 
 type DataTableAlign = "left" | "right";
 
@@ -97,7 +97,10 @@ export function DataTable<Row extends Record<string, ReactNode>>({
                         ))
                     ) : (
                         <TableRow className="border-white/5 hover:bg-transparent">
-                            <TableCell colSpan={columns.length} className="py-8 text-center font-mono text-xs text-slate-500">
+                            <TableCell
+                                colSpan={columns.length}
+                                className="py-8 text-center font-mono text-xs text-slate-500"
+                            >
                                 {emptyMessage}
                             </TableCell>
                         </TableRow>

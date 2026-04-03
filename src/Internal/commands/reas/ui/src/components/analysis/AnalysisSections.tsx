@@ -132,7 +132,9 @@ export function OverviewTab({ data }: AnalysisSectionProps) {
                                     <div className={cn("text-5xl font-black font-mono", getScoreTone(summary.overall))}>
                                         {summary.grade}
                                     </div>
-                                    <div className="mt-1 text-sm font-mono text-slate-400">{summary.recommendation}</div>
+                                    <div className="mt-1 text-sm font-mono text-slate-400">
+                                        {summary.recommendation}
+                                    </div>
                                 </div>
                                 <ScoreGauge score={summary.overall} label="Investment score" />
                             </div>
@@ -202,12 +204,12 @@ export function OverviewTab({ data }: AnalysisSectionProps) {
                         {(providerCounts.providerSummary.length > 0
                             ? providerCounts.providerSummary
                             : data.meta.providers.map((provider) => ({
-                              provider,
-                              count: 0,
-                              fetchedAt: data.meta.generatedAt,
-                              sourceContract: provider,
-                              error: undefined,
-                          }))
+                                  provider,
+                                  count: 0,
+                                  fetchedAt: data.meta.generatedAt,
+                                  sourceContract: provider,
+                                  error: undefined,
+                              }))
                         ).map((provider) => (
                             <div
                                 key={`${provider.provider}-${provider.sourceContract}`}
@@ -497,11 +499,20 @@ export function RentalsTab({ data }: AnalysisSectionProps) {
                     <CardContent className="px-0">
                         <DataTable
                             columns={[
-                                { key: "address", header: "Address", className: "max-w-[220px] truncate text-slate-200" },
+                                {
+                                    key: "address",
+                                    header: "Address",
+                                    className: "max-w-[220px] truncate text-slate-200",
+                                },
                                 { key: "disposition", header: "Disp.", className: "text-slate-400" },
                                 { key: "areaLabel", header: "Area", align: "right" },
                                 { key: "rentLabel", header: "Rent", align: "right" },
-                                { key: "rentPerM2Label", header: "Rent / m²", align: "right", className: "text-cyan-300" },
+                                {
+                                    key: "rentPerM2Label",
+                                    header: "Rent / m²",
+                                    align: "right",
+                                    className: "text-cyan-300",
+                                },
                             ]}
                             rows={data.listings.rentals.slice(0, 12).map((listing) => ({
                                 ...listing,

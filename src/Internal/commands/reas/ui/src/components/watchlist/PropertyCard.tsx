@@ -1,11 +1,16 @@
-import type { SavedPropertyRow } from "@app/Internal/commands/reas/lib/store";
+import type { PropertyAnalysisHistoryRow, SavedPropertyRow } from "@app/Internal/commands/reas/lib/store";
 import { Link } from "@tanstack/react-router";
 import { Badge } from "@ui/components/badge";
 import { Button } from "@ui/components/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
 import { cn } from "@ui/lib/utils";
-import { CheckSquare, ExternalLink, Loader2, RefreshCw, Square, Trash2 } from "lucide-react";
+import { CheckSquare, ChevronDown, ChevronUp, ExternalLink, Loader2, RefreshCw, Square, Trash2 } from "lucide-react";
 import { useCallback, useState } from "react";
+import { buildPropertyCardModel } from "./property-card-model";
+import { PropertyMortgageCard } from "./PropertyMortgageCard";
+import { PropertySparkline } from "./property-sparkline";
+import { PropertyVerdictMini } from "./PropertyVerdictMini";
+import { PropertyYieldBreakdown } from "./PropertyYieldBreakdown";
 import {
     formatConstructionType,
     formatCurrencyCompact,
@@ -19,9 +24,11 @@ import {
     PROVIDER_LABELS,
     parseSavedProviders,
 } from "./watchlist-utils";
+import { buildCompareSearchParams } from "../compare/compare-query";
 
 interface PropertyCardProps {
     property: SavedPropertyRow;
+    history: PropertyAnalysisHistoryRow[];
     onRefresh: (id: number) => Promise<void>;
     onDelete: (id: number) => void;
     selectedForCompare?: boolean;
@@ -31,7 +38,7 @@ interface PropertyCardProps {
 interface MetricItemProps {
     label: string;
     value: string;
-    tone?: "default" | "accent" | "success" | "warning";
+    tone?: "default" | "accent" | "success" | "warning" | "danger";
 }
 
 function MetricItem({ label, value, tone = "default" }: MetricItemProps) {
@@ -44,6 +51,7 @@ function MetricItem({ label, value, tone = "default" }: MetricItemProps) {
                     tone === "accent" && "text-cyan-400",
                     tone === "success" && "text-emerald-400",
                     tone === "warning" && "text-amber-400",
+                    tone === "danger" && "text-rose-400",
                     tone === "default" && "text-gray-200"
                 )}
             >
@@ -55,6 +63,7 @@ function MetricItem({ label, value, tone = "default" }: MetricItemProps) {
 
 export function PropertyCard({
     property,
+    history,
     onRefresh,
     onDelete,
     selectedForCompare = false,
@@ -62,10 +71,19 @@ export function PropertyCard({
 }: PropertyCardProps) {
     const [refreshing, setRefreshing] = useState(false);
     const [confirmDelete, setConfirmDelete] = useState(false);
+    const [expanded, setExpanded] = useState(false);
 
     const staleness = getStalenessInfo(property.last_analyzed_at);
     const gradeStyle = property.last_grade ? (GRADE_COLORS[property.last_grade] ?? "") : "";
     const providers = parseSavedProviders(property.providers);
+    const cardModel = buildPropertyCardModel(property);
+    const compareHref = `/compare?${buildCompareSearchParams({
+        districts: [property.district],
+        propertyType: property.construction_type,
+        disposition: property.disposition,
+        price: property.target_price,
+        area: property.target_area,
+    }).toString()}`;
 
     const handleRefresh = useCallback(async () => {
         setRefreshing(true);
@@ -143,19 +161,77 @@ export function PropertyCard({
             </CardHeader>
             <CardContent className="space-y-4">
                 <div className="grid grid-cols-2 gap-2">
-                    <MetricItem label="Net Yield" value={formatYield(property.last_net_yield)} tone="accent" />
-                    <MetricItem label="Score" value={formatNumber(property.last_score)} tone="warning" />
-                    <MetricItem
-                        label="Median CZK/m2"
-                        value={formatCurrencyCompact(property.last_median_price_per_m2)}
-                        tone="default"
-                    />
+                    <div className="space-y-1">
+                        <MetricItem label="Net Yield" value={formatYield(property.last_net_yield)} tone="accent" />
+                        <PropertySparkline history={history} getValue={(row) => row.net_yield} stroke="rgb(6 182 212)" />
+                    </div>
+                    <div className="space-y-1">
+                        <MetricItem label="Score" value={formatNumber(property.last_score)} tone="warning" />
+                        <PropertySparkline history={history} getValue={(row) => row.score} stroke="rgb(245 158 11)" />
+                    </div>
+                    <div className="space-y-1">
+                        <MetricItem
+                            label="Median CZK/m2"
+                            value={formatCurrencyCompact(property.last_median_price_per_m2)}
+                            tone="default"
+                        />
+                        <PropertySparkline
+                            history={history}
+                            getValue={(row) => row.median_price_per_m2}
+                            stroke="rgb(148 163 184)"
+                        />
+                    </div>
                     <MetricItem
                         label="Target Price"
                         value={formatCurrencyCompact(property.target_price)}
                         tone="default"
                     />
                 </div>
+
+                {cardModel && (
+                    <>
+                        <div className="grid grid-cols-2 gap-2 xl:grid-cols-6">
+                            {cardModel.metrics.map((metric) => (
+                                <div key={metric.label} className="space-y-1">
+                                    <MetricItem label={metric.label} value={metric.value} tone={metric.tone} />
+                                    {metric.label === "Net Yield" && (
+                                        <PropertySparkline
+                                            history={history}
+                                            getValue={(row) => row.net_yield}
+                                            stroke="rgb(6 182 212)"
+                                        />
+                                    )}
+                                    {metric.label === "CZK/m2" && (
+                                        <PropertySparkline
+                                            history={history}
+                                            getValue={(row) => row.median_price_per_m2}
+                                            stroke="rgb(148 163 184)"
+                                        />
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+
+                        {expanded && (
+                            <div className="grid gap-3 xl:grid-cols-3">
+                                <PropertyVerdictMini grade={property.last_grade} model={cardModel} />
+                                <PropertyYieldBreakdown model={cardModel} />
+                                <PropertyMortgageCard mortgage={cardModel.mortgage} />
+                            </div>
+                        )}
+
+                        <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => setExpanded((current) => !current)}
+                            className="h-8 border-white/10 text-xs font-mono text-gray-300 hover:bg-white/[0.04]"
+                        >
+                            {expanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                            {expanded ? "Collapse Analysis" : "Expand Analysis"}
+                        </Button>
+                    </>
+                )}
 
                 <div className="flex flex-wrap gap-2 text-[10px] font-mono">
                     <Badge variant="outline" className="border-white/10 text-gray-400 bg-white/[0.02]">
@@ -238,6 +314,15 @@ export function PropertyCard({
                         <Link to="/watchlist/$propertyId" params={{ propertyId: String(property.id) }}>
                             Details
                         </Link>
+                    </Button>
+
+                    <Button
+                        size="sm"
+                        variant="outline"
+                        asChild
+                        className="h-8 text-xs font-mono border-white/10 text-gray-300 hover:bg-white/[0.04]"
+                    >
+                        <Link to={compareHref}>Compare District</Link>
                     </Button>
 
                     <Button

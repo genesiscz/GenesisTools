@@ -3,11 +3,16 @@ import { createFileRoute, useRouter, useRouterState } from "@tanstack/react-rout
 import { Badge } from "@ui/components/badge";
 import { Button } from "@ui/components/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
-import { Separator } from "@ui/components/separator";
 import { Input } from "@ui/components/input";
+import { Separator } from "@ui/components/separator";
 import { Skeleton } from "@ui/components/skeleton";
 import { GitCompare, Loader2, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { ComparisonGrid } from "../components/compare/ComparisonGrid";
+import { ComparisonMarketTable } from "../components/compare/ComparisonMarketTable";
+import { ComparisonOverview } from "../components/compare/ComparisonOverview";
+import { ComparisonRankingsTable } from "../components/compare/ComparisonRankingsTable";
+import { ComparisonTrendSection } from "../components/compare/ComparisonTrendSection";
 import { buildCompareSearchParams, parseCompareSearchParams } from "../components/compare/compare-query";
 import { DistrictContextCallout } from "../components/compare/DistrictContextCallout";
 import { DistrictDetailTable } from "../components/compare/DistrictDetailTable";
@@ -15,11 +20,6 @@ import { DistrictPicker } from "../components/compare/DistrictPicker";
 import { DistrictPriceBarChart } from "../components/compare/DistrictPriceBarChart";
 import { DistrictRadarComparison } from "../components/compare/DistrictRadarChart";
 import { DistrictYieldBarChart } from "../components/compare/DistrictYieldBarChart";
-import { ComparisonGrid } from "../components/compare/ComparisonGrid";
-import { ComparisonMarketTable } from "../components/compare/ComparisonMarketTable";
-import { ComparisonOverview } from "../components/compare/ComparisonOverview";
-import { ComparisonRankingsTable } from "../components/compare/ComparisonRankingsTable";
-import { ComparisonTrendSection } from "../components/compare/ComparisonTrendSection";
 import type { DistrictComparison } from "../components/compare/types";
 
 export const Route = createFileRoute("/compare")({
@@ -57,9 +57,7 @@ function ComparePage() {
     useEffect(() => {
         const parsed = parseCompareSearchParams({ search, maxDistricts: MAX_DISTRICTS });
 
-        setSelectedDistricts((current) =>
-            arraysEqual(current, parsed.districts) ? current : parsed.districts
-        );
+        setSelectedDistricts((current) => (arraysEqual(current, parsed.districts) ? current : parsed.districts));
         setPropertyType((current) => (current === parsed.propertyType ? current : parsed.propertyType));
         setDisposition((current) => (current === parsed.disposition ? current : parsed.disposition));
         setPrice((current) => (current === parsed.price ? current : parsed.price));
@@ -356,7 +354,9 @@ function ComparePage() {
                                 selectedDistricts={selectedDistricts}
                             />
 
-                            <DistrictContextCallout districts={loadedComparisons.map((comparison) => comparison.district)} />
+                            <DistrictContextCallout
+                                districts={loadedComparisons.map((comparison) => comparison.district)}
+                            />
 
                             <Separator className="bg-white/5" />
 
@@ -368,19 +368,22 @@ function ComparePage() {
 
                             <Card className="border-white/5 bg-white/[0.02]">
                                 <CardHeader>
-                                    <CardTitle className="text-sm font-mono text-amber-300">
-                                        Data provenance
-                                    </CardTitle>
+                                    <CardTitle className="text-sm font-mono text-amber-300">Data provenance</CardTitle>
                                 </CardHeader>
                                 <CardContent className="flex flex-col gap-3 text-xs font-mono text-gray-400">
                                     {loadedComparisons.map((comparison) => (
-                                        <div key={comparison.district} className="rounded-lg border border-white/5 bg-black/20 p-3">
+                                        <div
+                                            key={comparison.district}
+                                            className="rounded-lg border border-white/5 bg-black/20 p-3"
+                                        >
                                             <div className="text-gray-200">{comparison.district}</div>
                                             <div className="mt-1">
                                                 Providers: {(comparison.exportData.meta.providers ?? []).join(" · ")}
                                             </div>
                                             <div className="mt-1">
-                                                Sold {comparison.summary.salesCount} · Rentals {comparison.summary.rentalCount} · Active {comparison.exportData.listings.activeSales.length}
+                                                Sold {comparison.summary.salesCount} · Rentals{" "}
+                                                {comparison.summary.rentalCount} · Active{" "}
+                                                {comparison.exportData.listings.activeSales.length}
                                             </div>
                                         </div>
                                     ))}

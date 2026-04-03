@@ -27,12 +27,18 @@ export function DistrictPriceBarChart({
         >
             <BarChart data={model.rows} layout="vertical" margin={{ top: 10, right: 28, left: 8, bottom: 12 }}>
                 <CartesianGrid {...chartGridProps} horizontal={false} />
-                <XAxis {...chartAxisProps} type="number" tickFormatter={(value: number) => `${Math.round(value / 1000)}k`} />
+                <XAxis
+                    {...chartAxisProps}
+                    type="number"
+                    tickFormatter={(value: number) => `${Math.round(value / 1000)}k`}
+                />
                 <YAxis {...chartAxisProps} type="category" dataKey="district" width={84} />
                 <Tooltip
                     content={
                         <ChartTooltipContent
-                            valueFormatter={(value) => `${Math.round(Number(value ?? 0)).toLocaleString("cs-CZ")} CZK/m²`}
+                            valueFormatter={(value) =>
+                                `${Math.round(Number(value ?? 0)).toLocaleString("cs-CZ")} CZK/m²`
+                            }
                         />
                     }
                 />

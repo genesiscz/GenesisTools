@@ -114,7 +114,9 @@ export function ComparisonTrendSection({ comparisons }: ComparisonTrendSectionPr
                             >
                                 <div className="flex items-center justify-between gap-3">
                                     <div>
-                                        <div className="text-sm font-mono font-semibold text-gray-100">{series.district}</div>
+                                        <div className="text-sm font-mono font-semibold text-gray-100">
+                                            {series.district}
+                                        </div>
                                         <div className="text-[10px] font-mono uppercase tracking-wider text-gray-500">
                                             Latest snapshot {series.latestDate ?? "N/A"}
                                         </div>
@@ -132,7 +134,9 @@ export function ComparisonTrendSection({ comparisons }: ComparisonTrendSectionPr
                                     />
                                     <MetricPair
                                         label="Comparables"
-                                        value={String(latestSnapshot?.comparablesCount ?? comparison?.summary.salesCount ?? 0)}
+                                        value={String(
+                                            latestSnapshot?.comparablesCount ?? comparison?.summary.salesCount ?? 0
+                                        )}
                                     />
                                 </div>
                                 <div

@@ -23,7 +23,9 @@ export function DistrictYieldBarChart({
                 <CartesianGrid {...chartGridProps} />
                 <XAxis {...chartAxisProps} dataKey="district" interval={0} angle={-18} textAnchor="end" height={56} />
                 <YAxis {...chartAxisProps} tickFormatter={(value: number) => `${value.toFixed(1)}%`} width={48} />
-                <Tooltip content={<ChartTooltipContent valueFormatter={(value) => `${Number(value ?? 0).toFixed(2)}%`} />} />
+                <Tooltip
+                    content={<ChartTooltipContent valueFormatter={(value) => `${Number(value ?? 0).toFixed(2)}%`} />}
+                />
                 {model.benchmarkYield !== null && (
                     <ReferenceLine
                         y={model.benchmarkYield}

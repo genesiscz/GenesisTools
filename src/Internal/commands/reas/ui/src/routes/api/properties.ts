@@ -142,7 +142,11 @@ export const Route = createFileRoute("/api/properties")({
                                 ? undefined
                                 : Number(alertYieldFloorValue);
 
-                        if (alertYieldFloorValue != null && alertYieldFloorValue !== "" && !Number.isFinite(parsedAlertYieldFloor)) {
+                        if (
+                            alertYieldFloorValue != null &&
+                            alertYieldFloorValue !== "" &&
+                            !Number.isFinite(parsedAlertYieldFloor)
+                        ) {
                             return Response.json({ error: "Invalid alertYieldFloor value" }, { status: 400 });
                         }
 

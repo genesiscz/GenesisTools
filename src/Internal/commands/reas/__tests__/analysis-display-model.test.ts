@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import type { DashboardExport } from "@app/Internal/commands/reas/lib/api-export";
 import {
+    GRADE_COLORS,
     getMomentumCardModel,
     getScoreCardModel,
-    GRADE_COLORS,
 } from "@app/Internal/commands/reas/ui/src/components/analysis/display-model";
 
 function makeExport(): DashboardExport {

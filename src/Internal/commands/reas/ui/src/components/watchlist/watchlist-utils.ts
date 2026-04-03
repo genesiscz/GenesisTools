@@ -1,12 +1,5 @@
 import type { ProviderName } from "@app/Internal/commands/reas/types";
-
-export const GRADE_COLORS: Record<string, string> = {
-    A: "text-emerald-400 border-emerald-500/30 bg-emerald-500/10",
-    B: "text-cyan-400 border-cyan-500/30 bg-cyan-500/10",
-    C: "text-amber-400 border-amber-500/30 bg-amber-500/10",
-    D: "text-orange-400 border-orange-500/30 bg-orange-500/10",
-    F: "text-red-400 border-red-500/30 bg-red-500/10",
-};
+export { GRADE_COLORS } from "../analysis/display-model";
 
 export const PROVIDER_BADGE_STYLES: Record<string, string> = {
     reas: "text-rose-300 border-rose-500/30 bg-rose-500/10",

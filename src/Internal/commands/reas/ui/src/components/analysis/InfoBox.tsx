@@ -1,5 +1,5 @@
-import type { ReactNode } from "react";
 import { cn } from "@ui/lib/utils";
+import type { ReactNode } from "react";
 import { INFO_BOX_TONE_STYLES, type InfoBoxTone } from "./shared";
 
 interface InfoBoxProps {

@@ -83,8 +83,7 @@ export function getMomentumCardModel(data: DashboardExport) {
               ? "text-orange-400 border-orange-500/30 bg-orange-500/10"
               : "text-gray-400 border-white/10 bg-white/5";
 
-    const confidencePercent =
-        momentum.confidence === "high" ? 85 : momentum.confidence === "medium" ? 60 : 35;
+    const confidencePercent = momentum.confidence === "high" ? 85 : momentum.confidence === "medium" ? 60 : 35;
 
     return {
         direction: momentum.direction,
@@ -95,7 +94,8 @@ export function getMomentumCardModel(data: DashboardExport) {
         momentumLabel: capitalize(momentum.momentum),
         momentumClassName,
         confidencePercent,
-        confidenceClassName: confidencePercent >= 70 ? "bg-green-500" : confidencePercent >= 40 ? "bg-amber-500" : "bg-red-500",
+        confidenceClassName:
+            confidencePercent >= 70 ? "bg-green-500" : confidencePercent >= 40 ? "bg-amber-500" : "bg-red-500",
         interpretation: momentum.interpretation,
     };
 }

@@ -1,6 +1,6 @@
 import { ChartContainer, ChartTooltipContent, chartAxisProps, chartGridProps } from "@ui/graphs";
-import { CartesianGrid, Line, LineChart, Tooltip, XAxis, YAxis } from "recharts";
 import { useMemo } from "react";
+import { CartesianGrid, Line, LineChart, Tooltip, XAxis, YAxis } from "recharts";
 import { normalizeTrendChartData, type TrendChartPoint } from "./trend-chart-utils";
 
 interface TrendChartProps {

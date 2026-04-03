@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import {
     getScoreGaugeDisplay,
     INFO_BOX_TONE_STYLES,
-    sortDataTableRows,
     STAT_CARD_ACCENT_STYLES,
+    sortDataTableRows,
 } from "@app/Internal/commands/reas/ui/src/components/analysis/shared";
 
 interface TableRowModel {

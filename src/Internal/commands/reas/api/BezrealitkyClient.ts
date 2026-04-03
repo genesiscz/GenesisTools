@@ -368,11 +368,13 @@ function getPublicImages(raw: BezrealitkyAdvertRaw): BezrealitkyImage[] {
                 return [];
             }
 
-            return [{
-                id: candidate.id,
-                order: typeof candidate.order === "number" ? candidate.order : null,
-                url: candidate.url,
-            } satisfies BezrealitkyImage];
+            return [
+                {
+                    id: candidate.id,
+                    order: typeof candidate.order === "number" ? candidate.order : null,
+                    url: candidate.url,
+                } satisfies BezrealitkyImage,
+            ];
         })
         .sort((left, right) => (left.order ?? Number.MAX_SAFE_INTEGER) - (right.order ?? Number.MAX_SAFE_INTEGER));
 }
@@ -389,11 +391,13 @@ function getFormattedAds(raw: BezrealitkyAdvertRaw): BezrealitkyFormattedParamet
 
         const candidate = entry as Record<string, unknown>;
 
-        return [{
-            title: typeof candidate.title === "string" ? candidate.title : null,
-            value: typeof candidate.value === "string" ? candidate.value : null,
-            valueHref: typeof candidate.valueHref === "string" ? candidate.valueHref : null,
-        } satisfies BezrealitkyFormattedParameter];
+        return [
+            {
+                title: typeof candidate.title === "string" ? candidate.title : null,
+                value: typeof candidate.value === "string" ? candidate.value : null,
+                valueHref: typeof candidate.valueHref === "string" ? candidate.valueHref : null,
+            } satisfies BezrealitkyFormattedParameter,
+        ];
     });
 }
 

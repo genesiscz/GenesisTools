@@ -1,6 +1,9 @@
 import type { DistrictComparison } from "./types";
 
-const PRAHA_CONTEXT: Record<string, { title: string; highlights: string[]; transport: string[]; developments: string[] }> = {
+const PRAHA_CONTEXT: Record<
+    string,
+    { title: string; highlights: string[]; transport: string[]; developments: string[] }
+> = {
     "Praha 1": {
         title: "Praha 1 premium historic core",
         highlights: ["Prestige pricing", "Tourism and short-stay pressure", "Tight prime inventory"],
@@ -9,13 +12,21 @@ const PRAHA_CONTEXT: Record<string, { title: string; highlights: string[]; trans
     },
     "Praha 2": {
         title: "Praha 2 urban core with stable demand",
-        highlights: ["Strong owner-occupier demand", "Established inner-city stock", "Premium micro-locations around Vinohrady"],
+        highlights: [
+            "Strong owner-occupier demand",
+            "Established inner-city stock",
+            "Premium micro-locations around Vinohrady",
+        ],
         transport: ["Metro A/C", "High tram accessibility"],
         developments: ["Renovation-led repricing in older stock"],
     },
     "Praha 3": {
         title: "Praha 3 growth district with spillover demand",
-        highlights: ["Value relative to core wards", "Mixed stock attracts broad demand", "Creative-office spillover supports rents"],
+        highlights: [
+            "Value relative to core wards",
+            "Mixed stock attracts broad demand",
+            "Creative-office spillover supports rents",
+        ],
         transport: ["Tram backbone", "Metro A edge access"],
         developments: ["Former industrial pockets continue to reposition"],
     },
@@ -94,9 +105,7 @@ export function buildDistrictPriceBarModel({
         }));
 
     const pragueAverage =
-        rows.length > 0
-            ? Math.round(rows.reduce((total, row) => total + row.medianPricePerM2, 0) / rows.length)
-            : null;
+        rows.length > 0 ? Math.round(rows.reduce((total, row) => total + row.medianPricePerM2, 0) / rows.length) : null;
 
     return {
         rows,
@@ -121,7 +130,8 @@ export function buildDistrictYieldBarModel({
             highlight: comparison.district === targetDistrict,
         }));
 
-    const benchmarkYield = rows.length > 0 ? round(rows.reduce((total, row) => total + row.grossYield, 0) / rows.length) : null;
+    const benchmarkYield =
+        rows.length > 0 ? round(rows.reduce((total, row) => total + row.grossYield, 0) / rows.length) : null;
 
     return {
         rows,
@@ -148,7 +158,9 @@ export function buildDistrictRadarModel({
     const priceScores = normalizeLowerBetter(selected.map((comparison) => comparison.summary.medianPricePerM2));
     const yieldScores = normalizeHigherBetter(selected.map((comparison) => getDistrictMarketGrossYield(comparison)));
     const liquidityScores = normalizeLowerBetter(selected.map((comparison) => comparison.summary.daysOnMarket));
-    const discountScores = normalizeHigherBetter(selected.map((comparison) => comparison.exportData.analysis.discount.medianDiscount));
+    const discountScores = normalizeHigherBetter(
+        selected.map((comparison) => comparison.exportData.analysis.discount.medianDiscount)
+    );
     const trendScores = normalizeHigherBetter(
         selected.map((comparison) => comparison.snapshots[comparison.snapshots.length - 1]?.yoyChange ?? 0)
     );

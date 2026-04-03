@@ -19,7 +19,10 @@ export const Route = createFileRoute("/api/district-snapshots")({
                 const historyDays = days ? Number(days) : 365;
 
                 if (!district && (!districts || districts.length === 0)) {
-                    return Response.json({ error: "Missing required parameter: district or districts" }, { status: 400 });
+                    return Response.json(
+                        { error: "Missing required parameter: district or districts" },
+                        { status: 400 }
+                    );
                 }
 
                 if (districts && districts.length > 0) {

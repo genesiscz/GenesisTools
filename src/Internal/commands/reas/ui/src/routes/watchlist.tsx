@@ -1,4 +1,4 @@
-import type { SavedPropertyRow, SavePropertyInput } from "@app/Internal/commands/reas/lib/store";
+import type { PropertyAnalysisHistoryRow, SavedPropertyRow, SavePropertyInput } from "@app/Internal/commands/reas/lib/store";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Outlet, useRouter, useRouterState } from "@tanstack/react-router";
 import { Badge } from "@ui/components/badge";
@@ -27,6 +27,7 @@ export const Route = createFileRoute("/watchlist")({
 
 interface PropertiesResponse {
     properties: SavedPropertyRow[];
+    historyByProperty: Record<number, PropertyAnalysisHistoryRow[]>;
 }
 
 interface SummaryMetricProps {
@@ -194,6 +195,7 @@ function WatchlistIndexPage() {
     );
 
     const properties = propertiesData?.properties ?? [];
+    const historyByProperty = propertiesData?.historyByProperty ?? {};
     const selectedCompareProperties = properties.filter((property) => selectedCompareIds.includes(property.id));
     const selectedCompareDistricts = [...new Set(selectedCompareProperties.map((property) => property.district))];
 
@@ -579,12 +581,13 @@ function WatchlistIndexPage() {
             {!propertiesLoading && filteredProperties.length > 0 && (
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                     {filteredProperties.map((property) => (
-                        <PropertyCard
-                            key={property.id}
-                            property={property}
-                            onRefresh={handleRefresh}
-                            onDelete={handleDelete}
-                            selectedForCompare={selectedCompareIds.includes(property.id)}
+                            <PropertyCard
+                                key={property.id}
+                                property={property}
+                                history={historyByProperty[property.id] ?? []}
+                                onRefresh={handleRefresh}
+                                onDelete={handleDelete}
+                                selectedForCompare={selectedCompareIds.includes(property.id)}
                             onToggleCompare={toggleCompareSelection}
                         />
                     ))}
