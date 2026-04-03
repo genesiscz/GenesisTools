@@ -46,6 +46,15 @@ async function main(): Promise<void> {
         }
 
         notifManager.markFirstPollDone();
+
+        // Warmup hook: check rules against fresh usage data
+        try {
+            const { processWarmupRules } = await import("@app/claude/lib/warmup/service");
+            await processWarmupRules(results);
+        } catch (err) {
+            console.warn(`Warmup check failed: ${err}`);
+        }
+
         db.pruneOlderThan(dashConfig.dataRetentionDays);
 
         const accountNames = results.map((r) => r.accountName).join(", ");
