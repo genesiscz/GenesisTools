@@ -33,6 +33,7 @@ interface RootOptions {
 }
 
 type SelectionKind = "all" | "listeners" | "connections" | number;
+// Avoid overly aggressive polling because every refresh shells out to lsof/ps.
 const MIN_WATCH_INTERVAL_MS = 250;
 
 function validatePort(portArg: string): number {

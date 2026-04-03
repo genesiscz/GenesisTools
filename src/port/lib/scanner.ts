@@ -102,8 +102,10 @@ const KB_PER_MB = 1024;
 const KB_PER_GB = 1024 * 1024;
 const GRACEFUL_SHUTDOWN_WAIT_MS = 1000;
 const DEFAULT_WATCH_INTERVAL_MS = 2000;
-// ps columns: PID PPID USER STAT %CPU RSS TTY LSTART COMMAND
-const PS_ROW_PATTERN = /^(\d+)\s+(\d+)\s+(\S+)\s+(\S+)\s+([\d.]+)\s+(\d+)\s+\w+\s+(\w+\s+\d+\s+[\d:]+\s+\d+)\s+(.*)$/;
+const PS_COLUMNS_SPEC = "pid=,ppid=,user=,state=,pcpu=,rss=,lstart=,command=";
+// ps output columns: PID PPID USER STAT %CPU RSS TTY LSTART COMMAND
+const PS_OUTPUT_PATTERN =
+    /^(\d+)\s+(\d+)\s+(\S+)\s+(\S+)\s+([\d.]+)\s+(\d+)\s+\w+\s+(\w+\s+\d+\s+[\d:]+\s+\d+)\s+(.*)$/;
 
 interface PsRow {
     pid: number;
@@ -140,7 +142,7 @@ function chunk<T>(items: T[], size: number): T[][] {
 }
 
 function parsePsLine(line: string): PsRow | null {
-    const match = line.trim().match(PS_ROW_PATTERN);
+    const match = line.trim().match(PS_OUTPUT_PATTERN);
 
     if (!match) {
         return null;
@@ -164,7 +166,7 @@ function batchPsInfo(pids: number[]): Map<number, PsRow> {
     const rows = new Map<number, PsRow>();
 
     for (const batch of chunk(pids, PS_BATCH_SIZE)) {
-        const result = run("ps", ["-p", batch.join(","), "-o", "pid=,ppid=,user=,state=,pcpu=,rss=,lstart=,command="]);
+        const result = run("ps", ["-p", batch.join(","), "-o", PS_COLUMNS_SPEC]);
 
         for (const line of result.stdout.split("\n")) {
             if (line.trim() === "") {
@@ -337,8 +339,12 @@ function detectFrameworkFromCommand(command: string, processName: string): strin
         return "Docker";
     }
 
-    if (name === "node" || name === "bun") {
+    if (name === "node") {
         return "Node.js";
+    }
+
+    if (name === "bun") {
+        return "Bun";
     }
 
     if (name === "python" || name === "python3") {
@@ -644,7 +650,7 @@ export function isLikelyDevProcess(processName: string, command: string): boolea
 }
 
 export function getAllProcesses(): ProcessSnapshot[] {
-    const result = run("ps", ["-axo", "pid=,ppid=,user=,state=,pcpu=,rss=,lstart=,command="]);
+    const result = run("ps", ["-axo", PS_COLUMNS_SPEC]);
 
     if (result.status !== 0 || result.stdout.trim() === "") {
         return [];
