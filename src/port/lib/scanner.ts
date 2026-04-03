@@ -96,6 +96,15 @@ const DEV_PROCESS_NAMES = new Set([
     "com.docker.backend",
 ]);
 
+const PS_BATCH_SIZE = 60;
+const MAX_PROJECT_ROOT_DEPTH = 12;
+const KB_PER_MB = 1024;
+const KB_PER_GB = 1024 * 1024;
+const GRACEFUL_SHUTDOWN_WAIT_MS = 1000;
+const DEFAULT_WATCH_INTERVAL_MS = 2000;
+// ps columns: PID PPID USER STAT %CPU RSS TTY LSTART COMMAND
+const PS_ROW_PATTERN = /^(\d+)\s+(\d+)\s+(\S+)\s+(\S+)\s+([\d.]+)\s+(\d+)\s+\w+\s+(\w+\s+\d+\s+[\d:]+\s+\d+)\s+(.*)$/;
+
 interface PsRow {
     pid: number;
     ppid: number;
@@ -131,9 +140,7 @@ function chunk<T>(items: T[], size: number): T[][] {
 }
 
 function parsePsLine(line: string): PsRow | null {
-    const match = line
-        .trim()
-        .match(/^(\d+)\s+(\d+)\s+(\S+)\s+(\S+)\s+([\d.]+)\s+(\d+)\s+\w+\s+(\w+\s+\d+\s+[\d:]+\s+\d+)\s+(.*)$/);
+    const match = line.trim().match(PS_ROW_PATTERN);
 
     if (!match) {
         return null;
@@ -156,7 +163,7 @@ function parsePsLine(line: string): PsRow | null {
 function batchPsInfo(pids: number[]): Map<number, PsRow> {
     const rows = new Map<number, PsRow>();
 
-    for (const batch of chunk(pids, 60)) {
+    for (const batch of chunk(pids, PS_BATCH_SIZE)) {
         const result = run("ps", ["-p", batch.join(","), "-o", "pid=,ppid=,user=,state=,pcpu=,rss=,lstart=,command="]);
 
         for (const line of result.stdout.split("\n")) {
@@ -180,7 +187,7 @@ function batchPsInfo(pids: number[]): Map<number, PsRow> {
 function batchCwd(pids: number[]): Map<number, string> {
     const values = new Map<number, string>();
 
-    for (const batch of chunk(pids, 60)) {
+    for (const batch of chunk(pids, PS_BATCH_SIZE)) {
         const result = run("lsof", ["-a", "-d", "cwd", "-p", batch.join(",")]);
         const lines = result.stdout.split("\n").slice(1);
 
@@ -240,12 +247,12 @@ function formatMemory(rssKb: number): string | null {
         return null;
     }
 
-    if (rssKb >= 1024 * 1024) {
-        return `${(rssKb / (1024 * 1024)).toFixed(1)} GB`;
+    if (rssKb >= KB_PER_GB) {
+        return `${(rssKb / KB_PER_GB).toFixed(1)} GB`;
     }
 
-    if (rssKb >= 1024) {
-        return `${(rssKb / 1024).toFixed(1)} MB`;
+    if (rssKb >= KB_PER_MB) {
+        return `${(rssKb / KB_PER_MB).toFixed(1)} MB`;
     }
 
     return `${rssKb} KB`;
@@ -256,7 +263,7 @@ function findProjectRoot(cwd: string): string {
     let current = cwd;
     let depth = 0;
 
-    while (current !== "/" && depth < 12) {
+    while (current !== "/" && depth < MAX_PROJECT_ROOT_DEPTH) {
         for (const marker of markers) {
             if (existsSync(join(current, marker))) {
                 return current;
@@ -752,7 +759,7 @@ export async function killProcesses(pids: number[]): Promise<KillResult[]> {
         return results;
     }
 
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+    await new Promise((resolve) => setTimeout(resolve, GRACEFUL_SHUTDOWN_WAIT_MS));
 
     for (const pid of pending) {
         if (!isProcessAlive(pid)) {
@@ -782,7 +789,7 @@ export function watchPorts(
     options?: { includeSystem?: boolean; intervalMs?: number }
 ): ReturnType<typeof setInterval> {
     const includeSystem = options?.includeSystem ?? false;
-    const intervalMs = options?.intervalMs ?? 2000;
+    const intervalMs = options?.intervalMs ?? DEFAULT_WATCH_INTERVAL_MS;
     let previous = new Map<number, PortSnapshot>();
 
     const collect = () => {

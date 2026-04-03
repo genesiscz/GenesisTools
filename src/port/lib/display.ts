@@ -2,6 +2,8 @@ import Table from "cli-table3";
 import pc from "picocolors";
 import type { KillResult, PortSnapshot, ProcessSnapshot } from "./types";
 
+const HEADER_MAX_WIDTH = 31;
+
 function createTable(headers: string[]): Table.Table {
     return new Table({
         chars: {
@@ -101,12 +103,16 @@ function formatCpu(cpu: number): string {
 }
 
 export function renderHeader(title: string, subtitle: string): void {
+    const border = pc.cyan(pc.bold(" │"));
+
     console.log();
     console.log(pc.cyan(pc.bold(" ┌─────────────────────────────────────┐")));
     console.log(
-        `${pc.cyan(pc.bold(" │"))}${pc.white(pc.bold(`  ${truncate(title, 31).padEnd(31)}`))}${pc.cyan(pc.bold("│"))}`
+        `${border}${pc.white(pc.bold(`  ${truncate(title, HEADER_MAX_WIDTH).padEnd(HEADER_MAX_WIDTH)}`))}${pc.cyan(pc.bold("│"))}`
     );
-    console.log(`${pc.cyan(pc.bold(" │"))}${pc.dim(`  ${truncate(subtitle, 31).padEnd(31)}`)}${pc.cyan(pc.bold("│"))}`);
+    console.log(
+        `${border}${pc.dim(`  ${truncate(subtitle, HEADER_MAX_WIDTH).padEnd(HEADER_MAX_WIDTH)}`)}${pc.cyan(pc.bold("│"))}`
+    );
     console.log(pc.cyan(pc.bold(" └─────────────────────────────────────┘")));
     console.log();
 }

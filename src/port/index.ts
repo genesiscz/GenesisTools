@@ -33,6 +33,7 @@ interface RootOptions {
 }
 
 type SelectionKind = "all" | "listeners" | "connections" | number;
+const MIN_WATCH_INTERVAL_MS = 250;
 
 function validatePort(portArg: string): number {
     const port = Number.parseInt(portArg, 10);
@@ -239,8 +240,10 @@ async function cleanPorts(options: { yes?: boolean }): Promise<void> {
 async function watchPortActivity(options: { all?: boolean; interval?: string }): Promise<void> {
     const intervalMs = options.interval ? Number.parseInt(options.interval, 10) : 2000;
 
-    if (Number.isNaN(intervalMs) || intervalMs < 250) {
-        throw new Error(`Invalid interval: ${pc.bold(options.interval ?? "")}. Use a number of milliseconds >= 250.`);
+    if (Number.isNaN(intervalMs) || intervalMs < MIN_WATCH_INTERVAL_MS) {
+        throw new Error(
+            `Invalid interval: ${pc.bold(options.interval ?? "")}. Use a number of milliseconds >= ${MIN_WATCH_INTERVAL_MS}.`
+        );
     }
 
     displayWatchHeader(Boolean(options.all), intervalMs);
