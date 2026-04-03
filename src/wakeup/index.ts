@@ -1,90 +1,68 @@
 #!/usr/bin/env bun
 
 import { handleReadmeFlag } from "@app/utils/readme";
+import { Storage } from "@app/utils/storage";
 import * as p from "@clack/prompts";
 import { Command } from "commander";
-import pc from "picocolors";
+import { registerConfigCommand, runConfigurationMenu } from "./commands/config";
 import { registerDaemonCommands } from "./commands/daemon";
-import { runWakeServer } from "./lib/server";
-import { sendWakePacket } from "./lib/wol";
+import { registerLoginCommand } from "./commands/login";
+import { registerClientCommand } from "./commands/register";
+import { registerSendCommand, runSendFlow } from "./commands/send";
+import { registerServerCommand } from "./commands/server";
+import { registerWakeCommand, runWakeFlow } from "./commands/wake";
+import { readWakeupConfig } from "./config";
 
 handleReadmeFlag(import.meta.url);
 
 const program = new Command();
+const storage = new Storage("wakeup");
 
 program.name("wakeup").description("Wake-on-LAN helper and tiny wake relay").version("1.0.0");
 
-program
-    .command("send")
-    .description("Send a Wake-on-LAN magic packet")
-    .requiredOption("-m, --mac <mac>", "Target MAC address (e.g., 01:23:45:67:89:ab)")
-    .option("-b, --broadcast <addr>", "Broadcast address", "255.255.255.255")
-    .option("-p, --port <port>", "UDP port", "9")
-    .option("--password <hex>", "Optional SecureOn password (hex)")
-    .action(async (opts: Record<string, unknown>) => {
-        const port = Number(opts.port ?? 9);
-
-        if (Number.isNaN(port) || port <= 0 || port > 65535) {
-            p.log.error("Invalid UDP port");
-            process.exit(1);
-        }
-
-        try {
-            const result = await sendWakePacket({
-                mac: String(opts.mac),
-                broadcast: String(opts.broadcast ?? "255.255.255.255"),
-                port,
-                password: opts.password as string | undefined,
-            });
-            p.log.success(
-                `Magic packet sent to ${pc.cyan(result.mac)} via ${result.broadcast}:${result.port} (${result.bytesSent} bytes)`
-            );
-        } catch (err) {
-            p.log.error(err instanceof Error ? err.message : String(err));
-            process.exit(1);
-        }
-    });
-
-program
-    .command("server")
-    .description("Run a minimal HTTP relay that forwards wake requests to a MAC address")
-    .option("-p, --port <port>", "HTTP port to listen on", "8787")
-    .option("--bind <host>", "Bind host", "0.0.0.0")
-    .option("-b, --broadcast <addr>", "Default broadcast address", "255.255.255.255")
-    .option("--wol-port <port>", "UDP port for magic packet", "9")
-    .option("-m, --default-mac <mac>", "Default MAC address if request omits one")
-    .option("-t, --token <token>", "Shared secret; require Authorization: Bearer <token>")
-    .option("--log-requests", "Log incoming wake attempts", false)
-    .action(async (opts: Record<string, unknown>) => {
-        const port = Number(opts.port ?? 8787);
-        const wolPort = Number(opts.wolPort ?? 9);
-
-        if (Number.isNaN(port) || port <= 0 || port > 65535) {
-            p.log.error("Invalid port");
-            process.exit(1);
-        }
-
-        if (Number.isNaN(wolPort) || wolPort <= 0 || wolPort > 65535) {
-            p.log.error("Invalid wol-port");
-            process.exit(1);
-        }
-
-        p.log.info(
-            `Starting wake server on ${opts.bind ?? "0.0.0.0"}:${port} (broadcast ${opts.broadcast ?? "255.255.255.255"}:${wolPort})`
-        );
-
-        await runWakeServer({
-            port,
-            hostname: (opts.bind as string | undefined) ?? "0.0.0.0",
-            broadcast: (opts.broadcast as string | undefined) ?? "255.255.255.255",
-            wolPort,
-            defaultMac: opts.defaultMac as string | undefined,
-            token: opts.token as string | undefined,
-            logRequests: Boolean(opts.logRequests),
-        });
-    });
-
+registerConfigCommand(program, storage);
+registerServerCommand(program, storage);
+registerClientCommand(program, storage);
+registerLoginCommand(program, storage);
+registerWakeCommand(program, storage);
+registerSendCommand(program, storage);
 registerDaemonCommands(program);
+
+program.action(async () => {
+    let config = await readWakeupConfig(storage);
+
+    if (!config.role) {
+        await runConfigurationMenu(storage);
+        config = await readWakeupConfig(storage);
+    }
+
+    const choice = await p.select({
+        message: "What do you want to do?",
+        options: [
+            { value: "wake", label: "Wake a device" },
+            { value: "config", label: "Configuration" },
+            { value: "send", label: "Send raw magic packet" },
+        ],
+        initialValue: "wake",
+    });
+
+    if (p.isCancel(choice)) {
+        p.cancel("Cancelled");
+        process.exit(0);
+    }
+
+    if (choice === "config") {
+        await runConfigurationMenu(storage);
+        return;
+    }
+
+    if (choice === "send") {
+        await runSendFlow(storage);
+        return;
+    }
+
+    await runWakeFlow(storage);
+});
 
 async function main(): Promise<void> {
     try {

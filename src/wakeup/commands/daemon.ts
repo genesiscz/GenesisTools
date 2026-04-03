@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import { getDaemonStatus } from "@app/daemon/lib/launchd";
 import { isTaskRegistered, registerTask, unregisterTask } from "@app/daemon/lib/register";
+import { SafeJSON } from "@app/utils/json";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -24,20 +25,20 @@ function buildRegisterCommand(opts: {
     const parts = [
         bunPath(),
         "run",
-        JSON.stringify(SERVER_SCRIPT),
+        SafeJSON.stringify(SERVER_SCRIPT),
         "server",
         `--port ${opts.port}`,
-        `--broadcast ${JSON.stringify(opts.broadcast)}`,
+        `--broadcast ${SafeJSON.stringify(opts.broadcast)}`,
         `--wol-port ${opts.wolPort}`,
-        `--bind ${JSON.stringify(opts.host ?? "0.0.0.0")}`,
+        `--bind ${SafeJSON.stringify(opts.host ?? "0.0.0.0")}`,
     ];
 
     if (opts.mac) {
-        parts.push(`--default-mac ${JSON.stringify(opts.mac)}`);
+        parts.push(`--default-mac ${SafeJSON.stringify(opts.mac)}`);
     }
 
     if (opts.token) {
-        parts.push(`--token ${JSON.stringify(opts.token)}`);
+        parts.push(`--token ${SafeJSON.stringify(opts.token)}`);
     }
 
     if (opts.log) {
@@ -136,7 +137,9 @@ export function registerDaemonCommands(program: Command): void {
             if (registered) {
                 p.log.success(`Task ${pc.cyan(TASK_NAME)} is registered`);
             } else {
-                p.log.warn(`Task ${pc.cyan(TASK_NAME)} is not registered. Run: ${pc.cyan("tools wakeup daemon register")}`);
+                p.log.warn(
+                    `Task ${pc.cyan(TASK_NAME)} is not registered. Run: ${pc.cyan("tools wakeup daemon register")}`
+                );
             }
 
             if (daemonStatus.running) {
