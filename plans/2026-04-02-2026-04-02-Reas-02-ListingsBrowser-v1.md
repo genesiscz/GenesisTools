@@ -41,17 +41,17 @@ Create two new pages (`/listings/live` and `/listings/sold`) that let users brow
 ### Phase C: Listings Pages
 
 - [x] 10. **Create `/listings` route with sub-tabs** — Main listings page with 3 tabs: "Na prodej" (For Sale — active), "Pronájmy" (Rentals — active), "Prodané" (Sold). Each tab is a filterable, sortable, paginated table.
-- [ ] 11. **Build `ListingsTable` component** — Reusable table with shadcn Table, sortable columns, pagination. Columns: Source icon/badge, Address (linked to source URL), Disposition, Area, Price, CZK/m², District, Date (fetchedAt or soldAt), Actions. Source badges show origin (reas.cz, sreality.cz, bezrealitky.cz, ereality.cz) with colored indicators.
-- [ ] 12. **Build `ListingFilters` component** — Horizontal filter bar with: District select, Disposition multi-select, Price range (min/max inputs), Area range, Source multi-select (checkboxes for each provider), Date range picker. Uses shadcn Select, Input, DateRangePicker.
+- [x] 11. **Build `ListingsTable` component** — Reusable table with shadcn Table, sortable columns, pagination. Columns: Source icon/badge, Address (linked to source URL), Disposition, Area, Price, CZK/m², District, Date (fetchedAt or soldAt), Actions. Source badges show origin (reas.cz, sreality.cz, bezrealitky.cz, ereality.cz) with colored indicators.
+- [x] 12. **Build `ListingFilters` component** — Horizontal filter bar with: District select, Disposition multi-select, Price range (min/max inputs), Area range, Source multi-select (checkboxes for each provider), Date range picker. Uses shadcn Select, Input, DateRangePicker.
 - [ ] 13. **Build `ListingDetail` sheet/panel** — Side panel (shadcn Sheet) that slides in when clicking a listing row. Shows: Full address, all metrics, map embed (if coordinates available), link to source, "Add to Watchlist" button, listing history (price changes if tracked). For sold listings: shows soldAt date, original price, sold price, discount, days on market. For Bezrealitky active listings, hydrate the panel from GraphQL `AdvertDetail` so it can render structured charges, deposit, `availableFrom`, media gallery, `poiData`, `regionTree`, `formattedAds`, related adverts, and `nemoreport` links.
 - [x] 14. **Build `SourceBadge` component** — Small colored badge showing data source with link. Reas = blue, Sreality = green, Bezrealitky = orange, Ereality = purple, MF = gray.
 - [x] 15. **Add listings navigation to `__root.tsx`** — Add "Listings" nav item to the root layout at `__root.tsx:36-56`.
 
 ### Phase D: Data Freshness & Auto-Fetch
 
-- [ ] 16. **Add "Fetch Listings" action button** — Button on listings page that triggers fresh data fetch for selected district/filters. Shows progress indicator. Uses existing cache with manual refresh option.
-- [ ] 17. **Show data freshness per source** — Each source column shows when data was last fetched. Use existing `StalenessIndicator` component.
-- [ ] 18. **Add listing count summary** — Top of page shows: "342 sold listings | 89 rentals | from 4 sources | Last updated: 2h ago"
+- [x] 16. **Add "Fetch Listings" action button** — Button on listings page that triggers fresh data fetch for selected district/filters. Shows progress indicator. Uses existing cache with manual refresh option.
+- [x] 17. **Show data freshness per source** — Each source column shows when data was last fetched. Use existing `StalenessIndicator` component.
+- [x] 18. **Add listing count summary** — Top of page shows: "342 sold listings | 89 rentals | from 4 sources | Last updated: 2h ago"
 
 ## Verification Criteria
 

@@ -31,12 +31,12 @@ Transform the shallow `/watchlist` page from a flat property summary into a full
 
 ### Phase B: Property Card Redesign
 
-- [ ] 6. **Build `PropertyCardExpanded` component** — Replace flat `PropertyCard` with an expandable card. Collapsed state shows: name, grade badge + score, key metric row (yield, CZK/m², percentile, momentum arrow). Expanded state reveals full analysis sections.
-- [ ] 7. **Build `PropertyMetricRow` component** — Compact horizontal row of 6 mini-stat chips: Grade, Net Yield %, Percentile, CZK/m², Comparables count, Momentum direction. Each chip colored by value quality (green/amber/red).
-- [ ] 8. **Build `PropertySparkline` component** — Tiny inline SVG sparkline showing metric trend over time (yield, median price, score). Uses `property_analysis_history` data. Renders inline next to each metric value.
-- [ ] 9. **Build `PropertyVerdictMini` component** — Compact verdict block: pass/fail checklist (6 criteria with checkmarks), score gauge (small), buy/hold/avoid recommendation. Matches `letnany-live-dashboard.jsx:494-545` but condensed.
-- [ ] 10. **Build `PropertyYieldBreakdown` component** — Shows: gross yield, net yield, at-market comparison, mortgage-adjusted yield (if mortgage params provided), payback years, benchmark comparison bar. Matches `YieldCard` but with mortgage intelligence added.
-- [ ] 11. **Build `PropertyMortgageCard` component** — If mortgage params are set: monthly payment, total interest over term, LTV ratio, DSTI ratio (if income provided), cash-on-cash return, break-even occupancy rate. Amortization sparkline.
+- [x] 6. **Build `PropertyCardExpanded` component** — Replace flat `PropertyCard` with an expandable card. Collapsed state shows: name, grade badge + score, key metric row (yield, CZK/m², percentile, momentum arrow). Expanded state reveals full analysis sections.
+- [x] 7. **Build `PropertyMetricRow` component** — Compact horizontal row of 6 mini-stat chips: Grade, Net Yield %, Percentile, CZK/m², Comparables count, Momentum direction. Each chip colored by value quality (green/amber/red).
+- [x] 8. **Build `PropertySparkline` component** — Tiny inline SVG sparkline showing metric trend over time (yield, median price, score). Uses `property_analysis_history` data. Renders inline next to each metric value.
+- [x] 9. **Build `PropertyVerdictMini` component** — Compact verdict block: pass/fail checklist (6 criteria with checkmarks), score gauge (small), buy/hold/avoid recommendation. Matches `letnany-live-dashboard.jsx:494-545` but condensed.
+- [x] 10. **Build `PropertyYieldBreakdown` component** — Shows: gross yield, net yield, at-market comparison, mortgage-adjusted yield (if mortgage params provided), payback years, benchmark comparison bar. Matches `YieldCard` but with mortgage intelligence added.
+- [x] 11. **Build `PropertyMortgageCard` component** — If mortgage params are set: monthly payment, total interest over term, LTV ratio, DSTI ratio (if income provided), cash-on-cash return, break-even occupancy rate. Amortization sparkline.
 - [x] 12. **Build `PropertySourceLinks` component** — Shows all data sources with direct links: "Data from: reas.cz (477 sold), sreality.cz (89 rentals), bezrealitky.cz (34 rentals), MF cenova mapa". Each source is a clickable link.
 
 ### Phase C: Enhanced Add/Edit Form
@@ -51,9 +51,9 @@ Transform the shallow `/watchlist` page from a flat property summary into a full
 
 - [x] 18. **Add summary stats row at top** — Total properties, average yield, best performer, worst performer, total portfolio value, weighted average grade.
 - [x] 19. **Add sort/filter controls** — Sort watchlist by: grade, yield, percentile, last updated, name. Filter by: district, grade range, yield range.
-- [ ] 20. **Add "Refresh All" bulk action** — Button to re-analyze all watchlist properties in sequence with progress indicator.
+- [x] 20. **Add "Refresh All" bulk action** — Button to re-analyze all watchlist properties in sequence with progress indicator.
 - [x] 21. **Add comparison action** — Select 2-4 watchlist properties and navigate to comparison view with them pre-loaded.
-- [ ] 22. **Add notification thresholds** — Per-property alert settings: "Alert me if yield drops below X%" or "Alert if grade changes". Stored in saved_properties table.
+- [x] 22. **Add notification thresholds** — Per-property alert settings: "Alert me if yield drops below X%" or "Alert if grade changes". Stored in saved_properties table.
 
 ## Verification Criteria
 

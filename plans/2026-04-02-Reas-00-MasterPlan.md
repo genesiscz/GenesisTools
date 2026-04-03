@@ -183,7 +183,7 @@ Dependencies for ALL subplans. Do this first.
 
 - [x] **0.1** Create and maintain deep Playwright MCP verification from the start — do not wait until the end. After each major slice, exercise the implemented flows in the running UI, fix regressions immediately, and do a final end-to-end pass before closing the plan.
 - [x] **0.2** `bun add recharts ofetch` — install recharts + ofetch dependencies
-- [ ] **0.3** Create `src/utils/api/ApiClient.ts` — wraps `ofetch.create()` with pino logging interceptors, retry, rate limiting, timing
+- [x] **0.3** Create `src/utils/api/ApiClient.ts` — wraps `ofetch.create()` with pino logging interceptors, retry, rate limiting, timing
 - [x] **0.4** Create `src/utils/ui/graphs/` — chart theme, tooltip, container, colors (re-exports recharts)
 - [x] **0.5** Add shadcn components needed across plans:
    - `Tabs` (Plan 01, 04)
@@ -221,9 +221,9 @@ The user's primary request. Depends on Phase 1 for enriched data.
 - [x] **2.1** Schema: `property_analysis_history` table for tracking changes over time
 - [x] **2.2** Store full analysis JSON on PATCH refresh
 - [x] **2.3** Create `/api/property-detail?id=N` endpoint
-- [ ] **2.4** Add `listing_url` to AddPropertyForm + "Import from URL" feature
-- [ ] **2.5** Shared detail components: `StatCard`, `DataTable`, `InfoBox`, `ScoreGauge`, formatters
-- [ ] **2.6** Detail page tabs: Overview, Comparables, Rentals, Investment, Verdict
+- [x] **2.4** Add `listing_url` to AddPropertyForm + "Import from URL" feature
+- [x] **2.5** Shared detail components: `StatCard`, `DataTable`, `InfoBox`, `ScoreGauge`, formatters
+- [x] **2.6** Detail page tabs: Overview, Comparables, Rentals, Investment, Verdict
 - [x] **2.7** Wire up `/watchlist/$propertyId` route
 - [x] **2.8** Enhanced PropertyCard: clickable -> detail, listing URL, provider badges
 - [x] **2.9** `ProviderLinks` component — search result URLs per provider
@@ -236,7 +236,7 @@ The user's primary request. Depends on Phase 1 for enriched data.
 Reuses chart components from Phase 0 and data from Phase 1.
 
 - [x] **3.1** Extend `DashboardExport` with score, momentum, histogram, scatter data
-- [ ] **3.2** Build analysis building blocks (StatCard, SectionTitle, etc. — shared with Phase 2)
+- [x] **3.2** Build analysis building blocks (StatCard, SectionTitle, etc. — shared with Phase 2)
 - [x] **3.3** 7 tabs: Overview, Price Distribution, Trend, Comparables, Rentals, Investment, Verdict
 - [ ] **3.4** Replace handrolled SVG charts with recharts
 
@@ -258,8 +258,8 @@ Depends on Phase 1 (all providers wired) and Phase 0 (persistence schema).
 Depends on Phase 1 (enriched district data) and Phase 0 (charts).
 
 - [x] **5.1** `/api/district-comparison` batch endpoint
-- [ ] **5.2** District-level charts: price bar, yield bar, trend overlay, radar
-- [ ] **5.3** Rewrite `/compare` as multi-section page
+- [x] **5.2** District-level charts: price bar, yield bar, trend overlay, radar
+- [x] **5.3** Rewrite `/compare` as multi-section page
 
 > Full task details: `plans/2026-04-02-2026-04-02-Reas-03-DistrictComparison-v1.md`
 
@@ -268,7 +268,7 @@ Depends on Phase 1 (enriched district data) and Phase 0 (charts).
 Polish. Depends on Phase 2-3 for rich data to export.
 
 - [x] **6.1** `lib/pdf-export.ts` — Markdown builder + md-to-pdf
-- [ ] **6.2** `--format pdf` CLI flag
+- [x] **6.2** `--format pdf` CLI flag
 - [x] **6.3** Dashboard PDF download button
 
 > Full task details: `.claude/plans/2026-04-01-ReasPdfExport.md`

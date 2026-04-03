@@ -38,11 +38,11 @@ Transform the flat `/analyze` page into a rich, multi-tabbed property analysis e
 
 ### Phase C: Reusable Analysis Building Blocks
 
-- [ ] 11. **Create `StatCard` component** — Reusable metric card with left color border, label/value/subtitle (matches `analysis-letnany.jsx:151-158`). Use shadcn Card with variant extension. Place at `ui/src/components/analysis/StatCard.tsx`.
-- [ ] 12. **Create `SectionTitle` component** — Heading with subtitle for section breaks. Place at `ui/src/components/analysis/SectionTitle.tsx`.
-- [ ] 13. **Create `DataTable` reusable component** — Generic table with configurable columns, custom renderers, row highlighting predicate, sorting support (matches `analysis-letnany.jsx:170-195`). Use shadcn Table underneath. Place at `ui/src/components/analysis/DataTable.tsx`.
-- [ ] 14. **Create `Callout` component** — Color-coded alert box (green=positive, amber=warning, red=critical, blue=info). Place at `ui/src/components/analysis/Callout.tsx`. Use shadcn Alert as base.
-- [ ] 15. **Create `ScoreGauge` component** — Circular conic-gradient score gauge (matches `analysis-letnany.jsx:749-754`). Place at `ui/src/components/analysis/ScoreGauge.tsx`.
+- [x] 11. **Create `StatCard` component** — Reusable metric card with left color border, label/value/subtitle (matches `analysis-letnany.jsx:151-158`). Use shadcn Card with variant extension. Place at `ui/src/components/analysis/StatCard.tsx`.
+- [x] 12. **Create `SectionTitle` component** — Heading with subtitle for section breaks. Place at `ui/src/components/analysis/SectionTitle.tsx`.
+- [x] 13. **Create `DataTable` reusable component** — Generic table with configurable columns, custom renderers, row highlighting predicate, sorting support (matches `analysis-letnany.jsx:170-195`). Use shadcn Table underneath. Place at `ui/src/components/analysis/DataTable.tsx`.
+- [x] 14. **Create `Callout` component** — Color-coded alert box (green=positive, amber=warning, red=critical, blue=info). Place at `ui/src/components/analysis/Callout.tsx`. Use shadcn Alert as base.
+- [x] 15. **Create `ScoreGauge` component** — Circular conic-gradient score gauge (matches `analysis-letnany.jsx:749-754`). Place at `ui/src/components/analysis/ScoreGauge.tsx`.
 
 ### Phase D: Tab Components (7 Tabs)
 

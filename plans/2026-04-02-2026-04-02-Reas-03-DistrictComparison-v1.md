@@ -26,30 +26,30 @@ Transform the flat `/compare` page into an interactive Prague district compariso
 ### Phase A: Backend Enrichment
 
 - [x] 1. **Create `/api/district-comparison` endpoint** — New server route that accepts array of district IDs and returns pre-computed comparison data for all requested districts in a single batch call. Runs parallel analysis for each district (cached). Returns: per-district median/m², yield, DOM, discount, trend, rental stats, listing count, momentum.
-- [ ] 2. **Add district-level rental yield aggregation** — Extend `analysis-service.ts` to compute and persist per-district rental yield estimates. Use sreality median rent / reas median sale price ratio per district.
+- [x] 2. **Add district-level rental yield aggregation** — Extend `analysis-service.ts` to compute and persist per-district rental yield estimates. Use sreality median rent / reas median sale price ratio per district.
 - [ ] 3. **Add district price snapshot time-series** — Enhance `district_snapshots` to store monthly snapshots. Create endpoint to return time-series for multiple districts for overlay charting.
 - [ ] 4. **Pre-seed Praha district data** — Create a background job or CLI command that fetches and caches analysis for all 22 Praha wards, building the district comparison dataset proactively instead of on-demand only.
 
 ### Phase B: shadcn Components
 
-- [ ] 5. **Add `Checkbox` component to `src/ui/`** — For multi-select district picker.
-- [ ] 6. **Add `Switch` component to `src/ui/`** — For toggling chart options (show/hide districts, normalize data).
-- [ ] 7. **Add `Slider` component to `src/ui/`** — For timeframe range selection.
-- [ ] 8. **Add `Popover` to `src/ui/`** — For district picker dropdown with checkbox list.
+- [x] 5. **Add `Checkbox` component to `src/ui/`** — For multi-select district picker.
+- [x] 6. **Add `Switch` component to `src/ui/`** — For toggling chart options (show/hide districts, normalize data).
+- [x] 7. **Add `Slider` component to `src/ui/`** — For timeframe range selection.
+- [x] 8. **Add `Popover` to `src/ui/`** — For district picker dropdown with checkbox list.
 
 ### Phase C: District Comparison Components
 
-- [ ] 9. **Build `DistrictPicker` component** — Multi-select district chooser. Shows Praha wards and major Czech districts in grouped sections. Checkboxes for each. Pre-select Praha 1-10 as default. Shows count of selected. Maximum 12 districts for meaningful comparison. Uses shadcn Command (already exists) with multi-select mode.
-- [ ] 10. **Build `DistrictPriceBarChart` component** — Recharts ComposedChart (vertical bars) showing average CZK/m² per selected district. Highlight user's target district. Two ReferenceLines: Prague average and user's property price/m². Color-code bars (darker for user's district). Matches `analysis-letnany.jsx:680-693`.
-- [ ] 11. **Build `DistrictYieldBarChart` component** — Recharts BarChart showing estimated gross rental yield per district. Highlight user's district. ReferenceLine for benchmark yield. Matches `analysis-letnany.jsx:696-707`.
-- [ ] 12. **Build `DistrictTrendOverlay` component** — Recharts LineChart with one line per selected district, showing median CZK/m² trend over time. User can toggle districts on/off. Timeframe selector (3mo, 6mo, 12mo, 24mo). Uses data from `district_snapshots`.
-- [ ] 13. **Build `DistrictRadarChart` component** — Recharts RadarChart comparing 2-4 selected districts across 6 dimensions: Price, Yield, Liquidity (DOM), Discount, Trend, Volume. Normalizes all metrics to 0-100 scale. Missing from Hypoteka but adds significant value for quick comparison.
-- [ ] 14. **Build `DistrictDetailTable` component** — Full DataTable with all selected districts as rows, metrics as columns. Sortable by any metric. Color-code cells (green = good, red = bad for each metric direction). Best/worst badges per column. Matches `ComparisonGrid` data but in tabular form.
-- [ ] 15. **Build `DistrictContextCallout` component** — Per-district contextual information box. Shows: district description, key positives, transport connections, notable developments. Matches `analysis-letnany.jsx:709-716`.
+- [x] 9. **Build `DistrictPicker` component** — Multi-select district chooser. Shows Praha wards and major Czech districts in grouped sections. Checkboxes for each. Pre-select Praha 1-10 as default. Shows count of selected. Maximum 12 districts for meaningful comparison. Uses shadcn Command (already exists) with multi-select mode.
+- [x] 10. **Build `DistrictPriceBarChart` component** — Recharts ComposedChart (vertical bars) showing average CZK/m² per selected district. Highlight user's target district. Two ReferenceLines: Prague average and user's property price/m². Color-code bars (darker for user's district). Matches `analysis-letnany.jsx:680-693`.
+- [x] 11. **Build `DistrictYieldBarChart` component** — Recharts BarChart showing estimated gross rental yield per district. Highlight user's district. ReferenceLine for benchmark yield. Matches `analysis-letnany.jsx:696-707`.
+- [x] 12. **Build `DistrictTrendOverlay` component** — Recharts LineChart with one line per selected district, showing median CZK/m² trend over time. User can toggle districts on/off. Timeframe selector (3mo, 6mo, 12mo, 24mo). Uses data from `district_snapshots`.
+- [x] 13. **Build `DistrictRadarChart` component** — Recharts RadarChart comparing 2-4 selected districts across 6 dimensions: Price, Yield, Liquidity (DOM), Discount, Trend, Volume. Normalizes all metrics to 0-100 scale. Missing from Hypoteka but adds significant value for quick comparison.
+- [x] 14. **Build `DistrictDetailTable` component** — Full DataTable with all selected districts as rows, metrics as columns. Sortable by any metric. Color-code cells (green = good, red = bad for each metric direction). Best/worst badges per column. Matches `ComparisonGrid` data but in tabular form.
+- [x] 15. **Build `DistrictContextCallout` component** — Per-district contextual information box. Shows: district description, key positives, transport connections, notable developments. Matches `analysis-letnany.jsx:709-716`.
 
 ### Phase D: Page Rewrite
 
-- [ ] 16. **Rewrite `/compare` route as multi-section page** — Layout:
+- [x] 16. **Rewrite `/compare` route as multi-section page** — Layout:
   - Top: DistrictPicker (sticky) with selected districts shown as badges
   - Section 1: DistrictPriceBarChart + DistrictYieldBarChart side by side
   - Section 2: DistrictDetailTable (full comparison table)
@@ -57,8 +57,8 @@ Transform the flat `/compare` page into an interactive Prague district compariso
   - Section 4: DistrictRadarChart (for 2-4 selected districts)
   - Section 5: DistrictContextCallout per selected district
   - Footer: Data source attribution with links
-- [ ] 17. **Add URL state for selected districts** — Encode selected districts in URL search params so comparisons are shareable/bookmarkable.
-- [ ] 18. **Add "Compare with this district" action to other pages** — From Analyze results, Watchlist cards, and Listing detail, add button to navigate to Compare with that district pre-selected.
+- [x] 17. **Add URL state for selected districts** — Encode selected districts in URL search params so comparisons are shareable/bookmarkable.
+- [x] 18. **Add "Compare with this district" action to other pages** — From Analyze results, Watchlist cards, and Listing detail, add button to navigate to Compare with that district pre-selected.
 
 ## Verification Criteria
 
