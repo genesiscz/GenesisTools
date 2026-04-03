@@ -8,6 +8,10 @@ export interface AccountConfig {
     label?: string;
 }
 
+/**
+ * @deprecated Use `notificationsConfig.getChannels("claude")` from `@app/utils/notifications` instead.
+ * Kept for backward compatibility with existing config files.
+ */
 export interface NotificationChannels {
     macos: boolean;
     telegram?: { botToken: string; chatId: string };

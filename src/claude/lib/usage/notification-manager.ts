@@ -1,4 +1,4 @@
-import { sendNotification } from "@app/utils/macos/notifications";
+import { dispatchNotification } from "@app/utils/notifications";
 import { BUCKET_LABELS, BUCKET_THRESHOLD_MAP } from "./constants";
 import type { UsageDashboardConfig } from "./dashboard-config";
 
@@ -116,13 +116,11 @@ export class NotificationManager {
                 });
             }
 
-            if (this.config.macos) {
-                sendNotification({
-                    title: "Claude Usage Alert",
-                    message,
-                    sound: this.config.sound || "Purr",
-                });
-            }
+            dispatchNotification({
+                app: "claude",
+                title: "Claude Usage Alert",
+                message,
+            });
         }
     }
 
@@ -191,13 +189,11 @@ export class NotificationManager {
                     });
                 }
 
-                if (this.config.macos) {
-                    sendNotification({
-                        title: "Claude Cache Cooling",
-                        message,
-                        sound: this.config.sound || "Purr",
-                    });
-                }
+                dispatchNotification({
+                    app: "claude",
+                    title: "Claude Cache Cooling",
+                    message,
+                });
             } else if (status === "CRITICAL" && (tracker.lastThreshold === null || tracker.lastThreshold < 5)) {
                 tracker.lastThreshold = 5;
                 tracker.lastMtime = session.mtime;
@@ -217,13 +213,11 @@ export class NotificationManager {
                     });
                 }
 
-                if (this.config.macos) {
-                    sendNotification({
-                        title: "Claude Cache Critical",
-                        message,
-                        sound: this.config.sound || "Purr",
-                    });
-                }
+                dispatchNotification({
+                    app: "claude",
+                    title: "Claude Cache Critical",
+                    message,
+                });
             }
         }
     }

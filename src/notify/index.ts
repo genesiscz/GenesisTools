@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
 import { sendNotification } from "@app/utils/macos/notifications";
+import { notificationsConfig } from "@app/utils/notifications";
 import { withCancel } from "@app/utils/prompts/clack/helpers";
 import { Storage } from "@app/utils/storage/storage";
 import * as p from "@clack/prompts";
@@ -41,8 +42,13 @@ const MACOS_SOUNDS = [
 const storage = new Storage("notify");
 
 async function getConfig(): Promise<NotifyConfig> {
-    const saved = await storage.getConfig<Partial<NotifyConfig>>();
-    return { ...DEFAULT_CONFIG, ...saved };
+    const channels = await notificationsConfig.getChannels("notify");
+    return {
+        title: channels.system.title ?? DEFAULT_CONFIG.title,
+        sound: channels.system.sound ?? DEFAULT_CONFIG.sound,
+        ignoreDnD: channels.system.ignoreDnD ?? DEFAULT_CONFIG.ignoreDnD,
+        say: channels.say.enabled ?? DEFAULT_CONFIG.say,
+    };
 }
 
 async function configCommand(): Promise<void> {
