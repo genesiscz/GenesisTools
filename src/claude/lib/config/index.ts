@@ -25,11 +25,65 @@ export interface NotificationConfig {
     watchInterval: number;
 }
 
+export interface WarmupSchedule {
+    startHour: number; // 0-23
+    endHour: number; // 1-24 (last warmup ping at endHour - 5)
+}
+
+export interface WarmupSessionConfig {
+    enabled: boolean;
+    accounts: string[]; // multiselect from configured accounts
+    schedule: WarmupSchedule;
+    notify: boolean; // notify on warmup
+    notifyOnlyIfUnused: boolean; // only if session was "Not Used" (utilization === null/0)
+}
+
+export interface WarmupWeeklyConfig {
+    enabled: boolean;
+    accounts: string[];
+    notify: boolean;
+}
+
+export interface WarmupTodayEvent {
+    account: string;
+    type: "session" | "weekly";
+    time: string; // "06:00"
+    success: boolean;
+}
+
+export interface WarmupTodayLog {
+    date: string; // "2026-04-04", resets on first warmup of new day
+    events: WarmupTodayEvent[];
+}
+
+export interface WarmupConfig {
+    session: WarmupSessionConfig;
+    weekly: WarmupWeeklyConfig;
+    todayLog: WarmupTodayLog;
+}
+
 export interface ClaudeConfig {
     accounts: Record<string, AccountConfig>;
     defaultAccount?: string;
     notifications: NotificationConfig;
+    warmup?: WarmupConfig;
 }
+
+export const DEFAULT_WARMUP: WarmupConfig = {
+    session: {
+        enabled: false,
+        accounts: [],
+        schedule: { startHour: 6, endHour: 22 },
+        notify: true,
+        notifyOnlyIfUnused: true,
+    },
+    weekly: {
+        enabled: false,
+        accounts: [],
+        notify: true,
+    },
+    todayLog: { date: "", events: [] },
+};
 
 const DEFAULT_NOTIFICATIONS: NotificationConfig = {
     sessionThresholds: [80],
@@ -66,6 +120,13 @@ export async function loadConfig(): Promise<ClaudeConfig> {
                 ...saved.notifications?.channels,
             },
         },
+        warmup: saved.warmup
+            ? {
+                    session: { ...DEFAULT_WARMUP.session, ...saved.warmup.session },
+                    weekly: { ...DEFAULT_WARMUP.weekly, ...saved.warmup.weekly },
+                    todayLog: saved.warmup.todayLog ?? DEFAULT_WARMUP.todayLog,
+                }
+            : undefined,
     };
 }
 
