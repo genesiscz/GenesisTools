@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
 
 import { sendNotification } from "@app/utils/macos/notifications";
-import { notificationsConfig } from "@app/utils/notifications";
 import type { ChannelConfigs } from "@app/utils/notifications";
+import { notificationsConfig } from "@app/utils/notifications";
 import { withCancel } from "@app/utils/prompts/clack/helpers";
 import * as p from "@clack/prompts";
 import { Command } from "commander";
@@ -209,7 +209,9 @@ function showCurrentConfig(channels: ChannelConfigs): void {
     lines.push("");
 
     lines.push(pc.bold("Telegram") + `  ${channelStatus(channels.telegram.enabled)}`);
-    lines.push(`  botToken:  ${channels.telegram.botToken ? pc.dim("••••" + channels.telegram.botToken.slice(-6)) : "—"}`);
+    lines.push(
+        `  botToken:  ${channels.telegram.botToken ? pc.dim("••••" + channels.telegram.botToken.slice(-6)) : "—"}`
+    );
     lines.push(`  chatId:    ${channels.telegram.chatId ?? "—"}`);
     lines.push("");
 
@@ -235,7 +237,11 @@ async function configCommand(): Promise<void> {
             p.select({
                 message: "Configure notification channel",
                 options: [
-                    { value: "system", label: "System (macOS) notifications", hint: channelStatus(channels.system.enabled) },
+                    {
+                        value: "system",
+                        label: "System (macOS) notifications",
+                        hint: channelStatus(channels.system.enabled),
+                    },
                     { value: "telegram", label: "Telegram", hint: channelStatus(channels.telegram.enabled) },
                     { value: "webhook", label: "Webhook", hint: channelStatus(channels.webhook.enabled) },
                     { value: "say", label: "TTS (say)", hint: channelStatus(channels.say.enabled) },
