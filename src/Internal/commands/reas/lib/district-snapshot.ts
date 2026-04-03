@@ -9,6 +9,8 @@ export interface SerializedDistrictSnapshot {
     comparablesCount: number;
     trendDirection: string | null;
     yoyChange: number | null;
+    marketGrossYield: number | null;
+    marketNetYield: number | null;
     snapshotDate: string;
 }
 
@@ -22,6 +24,8 @@ export function serializeDistrictSnapshot(row: DistrictSnapshotRow): SerializedD
         comparablesCount: row.comparables_count,
         trendDirection: row.trend_direction,
         yoyChange: row.yoy_change,
+        marketGrossYield: row.market_gross_yield,
+        marketNetYield: row.market_net_yield,
         snapshotDate: row.snapshot_date,
     };
 }

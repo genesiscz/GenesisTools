@@ -13,6 +13,8 @@ describe("serializeDistrictSnapshot", () => {
             comparables_count: 42,
             trend_direction: "rising",
             yoy_change: 6.4,
+            market_gross_yield: 4.3,
+            market_net_yield: 3.6,
             snapshot_date: "2026-04-01",
             created_at: "2026-04-02 04:00:00",
         };
@@ -26,6 +28,8 @@ describe("serializeDistrictSnapshot", () => {
             comparablesCount: 42,
             trendDirection: "rising",
             yoyChange: 6.4,
+            marketGrossYield: 4.3,
+            marketNetYield: 3.6,
             snapshotDate: "2026-04-01",
         });
     });

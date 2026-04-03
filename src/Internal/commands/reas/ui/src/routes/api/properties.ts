@@ -57,7 +57,11 @@ export const Route = createFileRoute("/api/properties")({
                 }
 
                 const properties = reasDatabase.getProperties();
-                return Response.json({ properties });
+                const historyByProperty = Object.fromEntries(
+                    properties.map((property) => [property.id, reasDatabase.getPropertyAnalysisHistory(property.id, 8)])
+                );
+
+                return Response.json({ properties, historyByProperty });
             }),
 
             POST: apiHandler(async (request) => {
@@ -120,6 +124,36 @@ export const Route = createFileRoute("/api/properties")({
 
                 if (!property) {
                     return Response.json({ error: "Property not found" }, { status: 404 });
+                }
+
+                const contentType = request.headers.get("content-type") ?? "";
+
+                if (contentType.includes("application/json")) {
+                    const body = await jsonBody(request);
+
+                    if (body instanceof Response) {
+                        return body;
+                    }
+
+                    if (body.action === "update-settings") {
+                        const alertYieldFloorValue = body.alertYieldFloor;
+                        const parsedAlertYieldFloor =
+                            alertYieldFloorValue == null || alertYieldFloorValue === ""
+                                ? undefined
+                                : Number(alertYieldFloorValue);
+
+                        if (alertYieldFloorValue != null && alertYieldFloorValue !== "" && !Number.isFinite(parsedAlertYieldFloor)) {
+                            return Response.json({ error: "Invalid alertYieldFloor value" }, { status: 400 });
+                        }
+
+                        reasDatabase.updatePropertySettings(id, {
+                            alertYieldFloor: parsedAlertYieldFloor,
+                            alertGradeChange: body.alertGradeChange === true,
+                        });
+
+                        const updatedProperty = reasDatabase.getProperty(id);
+                        return Response.json({ property: updatedProperty });
+                    }
                 }
 
                 const district = resolveDistrict(property.district);

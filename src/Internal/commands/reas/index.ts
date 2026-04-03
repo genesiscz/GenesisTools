@@ -517,7 +517,7 @@ export function registerReasCommand(program: Command): void {
         .option("--area-min <m2>", "Minimum area filter")
         .option("--area-max <m2>", "Maximum area filter")
         .option("--providers <list>", "Comma-separated providers (reas,sreality,mf)")
-        .option("--format <format>", "Output format: terminal (default), json", "terminal")
+        .option("--format <format>", "Output format: terminal (default), json, pdf", "terminal")
         .option("-o, --output <path>", "Write report to file")
         .option("--refresh", "Force re-fetch (ignore cache)")
         .option("--server", "Start dashboard API server")

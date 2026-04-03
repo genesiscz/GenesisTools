@@ -32,6 +32,18 @@ export interface BezrealitkyRegionNode {
     uri?: string | null;
 }
 
+export interface BezrealitkyImage {
+    id: string;
+    order?: number | null;
+    url: string;
+}
+
+export interface BezrealitkyFormattedParameter {
+    title?: string | null;
+    value?: string | null;
+    valueHref?: string | null;
+}
+
 export interface BezrealitkyMortgageData {
     rateLow: number | null;
     rateHigh: number | null;
@@ -104,6 +116,8 @@ export interface BezrealitkyAdvertDetail {
     links: ProviderLink[];
     poiData?: Record<string, unknown> | null;
     regionTree: BezrealitkyRegionNode[];
+    publicImages: BezrealitkyImage[];
+    formattedAds: BezrealitkyFormattedParameter[];
     relatedAdverts: Array<RentalListing | SaleListing>;
     nemoreport?: unknown;
     coordinates?: BezrealitkyGpsPoint;

@@ -1,4 +1,4 @@
-import type { ListingRow, RentEstimate } from "@app/Internal/commands/reas/lib/store";
+import type { ListingRow, RentEstimate, SavePropertyInput } from "@app/Internal/commands/reas/lib/store";
 
 export interface ImportedPropertyDraft {
     name: string;
@@ -27,5 +27,25 @@ export function buildImportedPropertyDraft(options: {
         targetArea: Math.round(listing.area ?? 0),
         monthlyRent: listing.type === "rental" ? listing.price : Math.round(rentEstimate?.medianRent ?? 0),
         listingUrl: listing.link,
+    };
+}
+
+export function buildSavedPropertyFromListing(options: {
+    listing: ListingRow;
+    rentEstimate: RentEstimate | null;
+    constructionType: string;
+}): SavePropertyInput {
+    const draft = buildImportedPropertyDraft(options);
+
+    return {
+        name: draft.name,
+        district: draft.district,
+        constructionType: options.constructionType,
+        disposition: draft.disposition,
+        targetPrice: draft.targetPrice,
+        targetArea: draft.targetArea,
+        monthlyRent: draft.monthlyRent,
+        monthlyCosts: 0,
+        listingUrl: draft.listingUrl,
     };
 }

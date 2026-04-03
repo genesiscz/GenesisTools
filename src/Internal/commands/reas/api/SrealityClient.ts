@@ -80,14 +80,39 @@ function buildCacheKeyParams(filters: AnalysisFilters, offerType: SrealityOfferT
     };
 }
 
+function normalizeLocalityToken(value: string): string {
+    return value
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toLowerCase();
+}
+
+function isPrahaWard(name: string): boolean {
+    return /^Praha\s+\d+$/i.test(name.trim());
+}
+
+function matchesRequestedDistrict(locality: string, districtName: string): boolean {
+    if (!isPrahaWard(districtName)) {
+        return true;
+    }
+
+    return normalizeLocalityToken(locality).includes(normalizeLocalityToken(districtName));
+}
+
 function buildV2SearchParams(filters: AnalysisFilters, offerType: SrealityOfferType, page: number): URLSearchParams {
     const params = new URLSearchParams();
-    const localityParam =
-        filters.district.srealityLocality === "region" ? "locality_region_id" : "locality_district_id";
+
+    if ("srealityQuarterId" in filters.district && typeof filters.district.srealityQuarterId === "number") {
+        params.set("locality_quarter_id", String(filters.district.srealityQuarterId));
+    } else {
+        const localityParam =
+            filters.district.srealityLocality === "region" ? "locality_region_id" : "locality_district_id";
+
+        params.set(localityParam, String(filters.district.srealityId));
+    }
 
     params.set("category_main_cb", "1");
     params.set("category_type_cb", OFFER_TYPE_CATEGORY_MAP[offerType]);
-    params.set(localityParam, String(filters.district.srealityId));
     params.set("per_page", String(PER_PAGE));
     params.set("page", String(page));
     params.set("tms", String(Date.now()));
@@ -123,6 +148,7 @@ function buildSrealityLink(raw: SrealityEstateRaw, offerType: SrealityOfferType)
 }
 
 function buildV1Path(pathname: string, params: SrealityV1QueryParams): string {
+    const normalizedPathname = pathname.replace(/^\//, "");
     const searchParams = new URLSearchParams();
 
     for (const [key, value] of Object.entries(params)) {
@@ -136,10 +162,10 @@ function buildV1Path(pathname: string, params: SrealityV1QueryParams): string {
     const queryString = searchParams.toString();
 
     if (!queryString) {
-        return pathname;
+        return normalizedPathname;
     }
 
-    return `${pathname}?${queryString}`;
+    return `${normalizedPathname}?${queryString}`;
 }
 
 function mapRentalEstate(raw: SrealityEstateRaw): SrealityRental {
@@ -280,11 +306,15 @@ export class SrealityClient {
 
         while (hasMore) {
             const params = buildV2SearchParams(request.filters, request.offerType, page);
-            const path = `/estates?${params.toString()}`;
+            const path = `estates?${params.toString()}`;
             const body = await this.apiV2.get<SrealityListResponse>(path);
             const estates = body._embedded?.estates ?? [];
 
             for (const estate of estates) {
+                if (!matchesRequestedDistrict(estate.locality, request.filters.district.name)) {
+                    continue;
+                }
+
                 listings.push(request.mapper.mapEstate(estate));
             }
 
@@ -312,13 +342,14 @@ export class SrealityClient {
 }
 
 function buildV2Path(pathname: string, params: Record<string, string | number>): string {
+    const normalizedPathname = pathname.replace(/^\//, "");
     const searchParams = new URLSearchParams();
 
     for (const [key, value] of Object.entries(params)) {
         searchParams.set(key, String(value));
     }
 
-    return `${pathname}?${searchParams.toString()}`;
+    return `${normalizedPathname}?${searchParams.toString()}`;
 }
 
 export type {

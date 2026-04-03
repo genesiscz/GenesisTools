@@ -5,7 +5,9 @@ import type {
     BezrealitkyAdvertRaw,
     BezrealitkyAutocompleteResponse,
     BezrealitkyClientOptions,
+    BezrealitkyFormattedParameter,
     BezrealitkyGraphqlResponse,
+    BezrealitkyImage,
     BezrealitkyListAdvertsData,
     BezrealitkyMortgageData,
     BezrealitkyRegionNode,
@@ -141,6 +143,16 @@ const ADVERT_DETAIL_QUERY = `
                 type
                 status
             }
+            publicImages(limit: 12) {
+                id
+                order
+                url(filter: RECORD_MAIN)
+            }
+            formattedAds(locale: CS) {
+                title
+                value
+                valueHref
+            }
             poiData
             regionTree(locale: CS) {
                 id
@@ -173,12 +185,22 @@ const ADVERT_DETAIL_QUERY = `
                     }
                 }
             }
-            nemoreport
+            nemoreport {
+                id
+                timeCreated
+                resultUrl
+                status
+                message
+            }
         }
     }
 `;
 
 function getAddress(raw: BezrealitkyAdvertRaw): string {
+    if (typeof raw.address === "string") {
+        return raw.address;
+    }
+
     const address = raw['address({"locale":"CS"})'];
 
     if (typeof address === "string") {
@@ -189,6 +211,10 @@ function getAddress(raw: BezrealitkyAdvertRaw): string {
 }
 
 function getImageAltText(raw: BezrealitkyAdvertRaw): string | undefined {
+    if (typeof raw.imageAltText === "string") {
+        return raw.imageAltText;
+    }
+
     const imageAltText = raw['imageAltText({"locale":"CS"})'];
 
     if (typeof imageAltText === "string") {
@@ -199,6 +225,16 @@ function getImageAltText(raw: BezrealitkyAdvertRaw): string | undefined {
 }
 
 function getMortgageData(raw: BezrealitkyAdvertRaw): BezrealitkyMortgageData | null | undefined {
+    if (raw.mortgageData && typeof raw.mortgageData === "object") {
+        const candidate = raw.mortgageData as Record<string, unknown>;
+        return {
+            rateLow: typeof candidate.rateLow === "number" ? candidate.rateLow : null,
+            rateHigh: typeof candidate.rateHigh === "number" ? candidate.rateHigh : null,
+            years: typeof candidate.years === "number" ? candidate.years : null,
+            loan: typeof candidate.loan === "number" ? candidate.loan : null,
+        };
+    }
+
     const mortgageData = raw['mortgageData({"locale":"CS"})'];
 
     if (!mortgageData || typeof mortgageData !== "object") {
@@ -215,6 +251,27 @@ function getMortgageData(raw: BezrealitkyAdvertRaw): BezrealitkyMortgageData | n
 }
 
 function getRegionTree(raw: BezrealitkyAdvertRaw): BezrealitkyRegionNode[] {
+    if (Array.isArray(raw.regionTree)) {
+        return raw.regionTree.flatMap((region) => {
+            if (!region || typeof region !== "object") {
+                return [];
+            }
+
+            const candidate = region as Record<string, unknown>;
+            if (typeof candidate.id !== "string" || typeof candidate.name !== "string") {
+                return [];
+            }
+
+            return [
+                {
+                    id: candidate.id,
+                    name: candidate.name,
+                    uri: typeof candidate.uri === "string" ? candidate.uri : null,
+                },
+            ];
+        });
+    }
+
     const regionTree = raw['regionTree({"locale":"CS"})'];
 
     if (!Array.isArray(regionTree)) {
@@ -242,6 +299,16 @@ function getRegionTree(raw: BezrealitkyAdvertRaw): BezrealitkyRegionNode[] {
 }
 
 function getRelatedAdvertList(raw: BezrealitkyAdvertRaw): BezrealitkyAdvertRaw[] {
+    if (raw.relatedAdverts && typeof raw.relatedAdverts === "object") {
+        const list = (raw.relatedAdverts as Record<string, unknown>).list;
+
+        if (Array.isArray(list)) {
+            return list.filter(
+                (item): item is BezrealitkyAdvertRaw => !!item && typeof item === "object"
+            ) as BezrealitkyAdvertRaw[];
+        }
+    }
+
     const related = raw['relatedAdverts({"limit":6})'];
 
     if (!related || typeof related !== "object") {
@@ -282,6 +349,52 @@ function normalizeLinks(links: ProviderLink[] | null | undefined): ProviderLink[
     }
 
     return links.filter((link) => typeof link?.url === "string");
+}
+
+function getPublicImages(raw: BezrealitkyAdvertRaw): BezrealitkyImage[] {
+    if (!Array.isArray(raw.publicImages)) {
+        return [];
+    }
+
+    return raw.publicImages
+        .flatMap((image) => {
+            if (!image || typeof image !== "object") {
+                return [];
+            }
+
+            const candidate = image as Record<string, unknown>;
+
+            if (typeof candidate.id !== "string" || typeof candidate.url !== "string") {
+                return [];
+            }
+
+            return [{
+                id: candidate.id,
+                order: typeof candidate.order === "number" ? candidate.order : null,
+                url: candidate.url,
+            } satisfies BezrealitkyImage];
+        })
+        .sort((left, right) => (left.order ?? Number.MAX_SAFE_INTEGER) - (right.order ?? Number.MAX_SAFE_INTEGER));
+}
+
+function getFormattedAds(raw: BezrealitkyAdvertRaw): BezrealitkyFormattedParameter[] {
+    if (!Array.isArray(raw.formattedAds)) {
+        return [];
+    }
+
+    return raw.formattedAds.flatMap((entry) => {
+        if (!entry || typeof entry !== "object") {
+            return [];
+        }
+
+        const candidate = entry as Record<string, unknown>;
+
+        return [{
+            title: typeof candidate.title === "string" ? candidate.title : null,
+            value: typeof candidate.value === "string" ? candidate.value : null,
+            valueHref: typeof candidate.valueHref === "string" ? candidate.valueHref : null,
+        } satisfies BezrealitkyFormattedParameter];
+    });
 }
 
 function buildAdvertLink(uri: string): string {
@@ -539,6 +652,8 @@ export class BezrealitkyClient {
             links: normalizeLinks(advert.links),
             poiData: parsePoiData(advert.poiData),
             regionTree: getRegionTree(advert),
+            publicImages: getPublicImages(advert),
+            formattedAds: getFormattedAds(advert),
             relatedAdverts,
             nemoreport: advert.nemoreport,
             coordinates: getCoordinates(advert),

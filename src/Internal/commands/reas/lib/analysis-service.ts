@@ -12,6 +12,7 @@ import { fetchMfRentalData } from "@app/Internal/commands/reas/api/mf-rental";
 import { fetchSoldListings } from "@app/Internal/commands/reas/api/reas-client";
 import { fetchRentalListings, fetchSaleListings } from "@app/Internal/commands/reas/api/sreality-client";
 import { parsePeriods, resolveDistrict } from "@app/Internal/commands/reas/lib/config-builder";
+import { buildListingsFetchFilters, type FetchableListingType, type ListingsFetchInput } from "@app/Internal/commands/reas/lib/listings-fetch";
 import { reasDatabase, type UpsertListingInput } from "@app/Internal/commands/reas/lib/store";
 import type {
     AnalysisFilters,
@@ -468,6 +469,144 @@ export interface SearchListingsOptions {
     periodsStr?: string;
     constructionType?: string;
     refresh?: boolean;
+}
+
+export interface FetchListingsIntoCacheOptions extends ListingsFetchInput {
+    refresh?: boolean;
+}
+
+export interface FetchListingsIntoCacheResult {
+    type: FetchableListingType;
+    district: string;
+    fetchedCount: number;
+    persistedCount: number;
+    providerCount: number;
+    fetchedAt: string;
+    warnings: string[];
+}
+
+export async function fetchListingsIntoCache(
+    options: FetchListingsIntoCacheOptions
+): Promise<FetchListingsIntoCacheResult> {
+    const filters = buildListingsFetchFilters(options);
+    const refresh = options.refresh ?? true;
+    const warnings: string[] = [];
+    const soldListings: ReasListing[] = [];
+    const saleListings: SaleListing[] = [];
+    const rentalListings: RentalListing[] = [];
+
+    if (options.type === "sold") {
+        const soldResults = await Promise.allSettled(filters.periods.map((period) => fetchSoldListings(filters, period, refresh)));
+
+        for (const result of soldResults) {
+            if (result.status === "fulfilled") {
+                soldListings.push(...result.value);
+            } else {
+                warnings.push(result.reason instanceof Error ? result.reason.message : "Failed to fetch sold listings");
+            }
+        }
+    }
+
+    if (options.type === "sale") {
+        const [srealityResult, bezrealitkyResult] = await Promise.allSettled([
+            isProviderEnabled(filters, "sreality") ? fetchSaleListings(filters, refresh) : Promise.resolve([] as SaleListing[]),
+            isProviderEnabled(filters, "bezrealitky")
+                ? fetchBezrealitkySales(filters, refresh)
+                : Promise.resolve([] as SaleListing[]),
+        ]);
+
+        if (srealityResult.status === "fulfilled") {
+            saleListings.push(...srealityResult.value);
+        } else {
+            warnings.push(srealityResult.reason instanceof Error ? srealityResult.reason.message : "Failed to fetch Sreality sales");
+        }
+
+        if (bezrealitkyResult.status === "fulfilled") {
+            saleListings.push(...bezrealitkyResult.value);
+        } else {
+            warnings.push(
+                bezrealitkyResult.reason instanceof Error ? bezrealitkyResult.reason.message : "Failed to fetch Bezrealitky sales"
+            );
+        }
+    }
+
+    if (options.type === "rental") {
+        const [srealityResult, bezrealitkyResult, erealityResult] = await Promise.allSettled([
+            isProviderEnabled(filters, "sreality") ? fetchRentalListings(filters, refresh) : Promise.resolve([] as RentalListing[]),
+            isProviderEnabled(filters, "bezrealitky")
+                ? fetchBezrealitkyRentals(filters, refresh)
+                : Promise.resolve([] as RentalListing[]),
+            isProviderEnabled(filters, "ereality") ? fetchErealityRentals(filters, refresh) : Promise.resolve([] as RentalListing[]),
+        ]);
+
+        if (srealityResult.status === "fulfilled") {
+            rentalListings.push(...srealityResult.value);
+        } else {
+            warnings.push(
+                srealityResult.reason instanceof Error ? srealityResult.reason.message : "Failed to fetch Sreality rentals"
+            );
+        }
+
+        if (bezrealitkyResult.status === "fulfilled") {
+            rentalListings.push(...bezrealitkyResult.value);
+        } else {
+            warnings.push(
+                bezrealitkyResult.reason instanceof Error
+                    ? bezrealitkyResult.reason.message
+                    : "Failed to fetch Bezrealitky rentals"
+            );
+        }
+
+        if (erealityResult.status === "fulfilled") {
+            rentalListings.push(...erealityResult.value);
+        } else {
+            warnings.push(erealityResult.reason instanceof Error ? erealityResult.reason.message : "Failed to fetch eReality rentals");
+        }
+    }
+
+    const fetchedAt = new Date().toISOString();
+    const persistedListings = buildPersistedListings({
+        districtName: filters.district.name,
+        fetchedAt,
+        soldListings,
+        saleListings,
+        rentalListings,
+    });
+
+    const snapshotSources = new Map<string, string | undefined>();
+
+    for (const listing of persistedListings) {
+        const key = `${listing.source}:${listing.type}`;
+
+        if (!snapshotSources.has(key)) {
+            snapshotSources.set(key, listing.sourceContract);
+        }
+    }
+
+    for (const [key, sourceContract] of snapshotSources) {
+        const [source, type] = key.split(":");
+
+        if (type === "sale" || type === "rental" || type === "sold") {
+            reasDatabase.replaceListingsSnapshot({
+                district: filters.district.name,
+                type,
+                source,
+                sourceContract,
+            });
+        }
+    }
+
+    reasDatabase.upsertListings(persistedListings, filters.district.name);
+
+    return {
+        type: options.type,
+        district: filters.district.name,
+        fetchedCount: soldListings.length + saleListings.length + rentalListings.length,
+        persistedCount: persistedListings.length,
+        providerCount: new Set(persistedListings.map((listing) => listing.source)).size,
+        fetchedAt,
+        warnings,
+    };
 }
 
 const SEARCH_DEFAULT_DISTRICT = "Hradec Králové";

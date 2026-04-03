@@ -135,15 +135,26 @@ export interface UpsertListingInput {
     rawJson: string;
 }
 
+export interface ReplaceListingsSnapshotOptions {
+    district: string;
+    type: "sale" | "rental" | "sold";
+    source: string;
+    sourceContract?: string;
+}
+
 export interface GetListingsOptions {
     type?: "sale" | "rental" | "sold";
     district?: string;
     disposition?: string;
+    dispositions?: string[];
     source?: string;
+    sources?: string[];
     priceMin?: number;
     priceMax?: number;
     areaMin?: number;
     areaMax?: number;
+    seenFrom?: string;
+    seenTo?: string;
     sortBy?: "fetched_at" | "sold_at" | "price" | "price_per_m2" | "area";
     sortDir?: "asc" | "desc";
     limit?: number;
@@ -171,6 +182,11 @@ export interface SavePropertyInput {
     notes?: string;
 }
 
+export interface UpdatePropertySettingsInput {
+    alertYieldFloor?: number;
+    alertGradeChange?: boolean;
+}
+
 export interface RentEstimate {
     medianRent: number;
     medianRentPerM2: number;
@@ -184,7 +200,13 @@ export interface ListingsOverview {
     saleLastFetchedAt: string | null;
     rentalLastFetchedAt: string | null;
     soldLastFetchedAt: string | null;
+    lastFetchedAt: string | null;
     sourceCount: number;
+    sources: Array<{
+        source: string;
+        count: number;
+        lastFetchedAt: string | null;
+    }>;
 }
 
 export interface DistrictSnapshotRow {
@@ -196,6 +218,8 @@ export interface DistrictSnapshotRow {
     comparables_count: number;
     trend_direction: string | null;
     yoy_change: number | null;
+    market_gross_yield: number | null;
+    market_net_yield: number | null;
     snapshot_date: string;
     created_at: string;
 }
@@ -328,6 +352,8 @@ export class ReasDatabase extends BaseDatabase {
                 comparables_count INTEGER NOT NULL,
                 trend_direction TEXT,
                 yoy_change REAL,
+                market_gross_yield REAL,
+                market_net_yield REAL,
                 snapshot_date TEXT NOT NULL DEFAULT (date('now')),
                 created_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
@@ -352,6 +378,8 @@ export class ReasDatabase extends BaseDatabase {
         this.ensureColumn("saved_properties", "loan_amount", "REAL");
         this.ensureColumn("saved_properties", "alert_yield_floor", "REAL");
         this.ensureColumn("saved_properties", "alert_grade_change", "INTEGER DEFAULT 0");
+        this.ensureColumn("district_snapshots", "market_gross_yield", "REAL");
+        this.ensureColumn("district_snapshots", "market_net_yield", "REAL");
     }
 
     saveAnalysis(analysis: FullAnalysis): number {
@@ -466,6 +494,22 @@ export class ReasDatabase extends BaseDatabase {
                 | SavedPropertyRow
                 | undefined) ?? null
         );
+    }
+
+    updatePropertySettings(id: number, input: UpdatePropertySettingsInput): void {
+        this.db
+            .prepare(`
+                UPDATE saved_properties SET
+                    alert_yield_floor = $alert_yield_floor,
+                    alert_grade_change = $alert_grade_change,
+                    updated_at = datetime('now')
+                WHERE id = $id
+            `)
+            .run({
+                $id: id,
+                $alert_yield_floor: input.alertYieldFloor ?? null,
+                $alert_grade_change: input.alertGradeChange ? 1 : 0,
+            });
     }
 
     updatePropertyAnalysis(id: number, analysis: FullAnalysis): void {
@@ -676,6 +720,22 @@ export class ReasDatabase extends BaseDatabase {
         }
     }
 
+    replaceListingsSnapshot(options: ReplaceListingsSnapshotOptions): void {
+        const where = ["district = $district", "type = $type", "source = $source"];
+        const params: Record<string, string> = {
+            $district: options.district,
+            $type: options.type,
+            $source: options.source,
+        };
+
+        if (options.sourceContract) {
+            where.push("source_contract = $source_contract");
+            params.$source_contract = options.sourceContract;
+        }
+
+        this.db.prepare(`DELETE FROM listings WHERE ${where.join(" AND ")}`).run(params);
+    }
+
     getListings(options: GetListingsOptions = {}): ListingRow[] {
         const { whereClause, params } = this.buildListingsQuery(options);
         const orderColumn = options.sortBy ?? "fetched_at";
@@ -728,9 +788,27 @@ export class ReasDatabase extends BaseDatabase {
             params.$disposition = options.disposition;
         }
 
+        if (options.dispositions && options.dispositions.length > 0) {
+            const placeholders = options.dispositions.map((_, index) => `$disposition_${index}`);
+            where.push(`disposition IN (${placeholders.join(", ")})`);
+
+            for (const [index, disposition] of options.dispositions.entries()) {
+                params[`$disposition_${index}`] = disposition;
+            }
+        }
+
         if (options.source) {
             where.push("source = $source");
             params.$source = options.source;
+        }
+
+        if (options.sources && options.sources.length > 0) {
+            const placeholders = options.sources.map((_, index) => `$source_${index}`);
+            where.push(`source IN (${placeholders.join(", ")})`);
+
+            for (const [index, source] of options.sources.entries()) {
+                params[`$source_${index}`] = source;
+            }
         }
 
         if (options.priceMin !== undefined) {
@@ -751,6 +829,16 @@ export class ReasDatabase extends BaseDatabase {
         if (options.areaMax !== undefined) {
             where.push("area <= $area_max");
             params.$area_max = options.areaMax;
+        }
+
+        if (options.seenFrom) {
+            where.push("date(COALESCE(sold_at, fetched_at)) >= date($seen_from)");
+            params.$seen_from = options.seenFrom;
+        }
+
+        if (options.seenTo) {
+            where.push("date(COALESCE(sold_at, fetched_at)) <= date($seen_to)");
+            params.$seen_to = options.seenTo;
         }
 
         const whereClause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
@@ -821,6 +909,15 @@ export class ReasDatabase extends BaseDatabase {
         `)
             .all() as Array<{ type: string; count: number; last_fetched_at: string | null }>;
 
+        const sourceRows = this.db
+            .prepare(`
+                SELECT source, COUNT(*) as count, MAX(fetched_at) as last_fetched_at
+                FROM listings
+                GROUP BY source
+                ORDER BY last_fetched_at DESC, source ASC
+            `)
+            .all() as Array<{ source: string; count: number; last_fetched_at: string | null }>;
+
         const sourceRow = this.db.prepare("SELECT COUNT(DISTINCT source) as source_count FROM listings").get() as
             | { source_count: number }
             | undefined;
@@ -832,7 +929,13 @@ export class ReasDatabase extends BaseDatabase {
             saleLastFetchedAt: null,
             rentalLastFetchedAt: null,
             soldLastFetchedAt: null,
+            lastFetchedAt: null,
             sourceCount: sourceRow?.source_count ?? 0,
+            sources: sourceRows.map((row) => ({
+                source: row.source,
+                count: row.count,
+                lastFetchedAt: row.last_fetched_at,
+            })),
         };
 
         for (const row of rows) {
@@ -852,6 +955,8 @@ export class ReasDatabase extends BaseDatabase {
             }
         }
 
+        overview.lastFetchedAt = overview.sources[0]?.lastFetchedAt ?? null;
+
         return overview;
     }
 
@@ -861,11 +966,13 @@ export class ReasDatabase extends BaseDatabase {
                 INSERT INTO district_snapshots (
                     district, construction_type, disposition,
                     median_price_per_m2, comparables_count,
-                    trend_direction, yoy_change
+                    trend_direction, yoy_change,
+                    market_gross_yield, market_net_yield
                 ) VALUES (
                     $district, $construction_type, $disposition,
                     $median_price_per_m2, $comparables_count,
-                    $trend_direction, $yoy_change
+                    $trend_direction, $yoy_change,
+                    $market_gross_yield, $market_net_yield
                 )
             `)
             .run({
@@ -876,6 +983,8 @@ export class ReasDatabase extends BaseDatabase {
                 $comparables_count: analysis.comparables.listings.length,
                 $trend_direction: analysis.trends.direction ?? null,
                 $yoy_change: analysis.trends.yoyChange ?? null,
+                $market_gross_yield: analysis.yield.atMarketPrice.grossYield,
+                $market_net_yield: analysis.yield.atMarketPrice.netYield,
             });
     }
 

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildImportedPropertyDraft } from "@app/Internal/commands/reas/lib/property-form-defaults";
+import { buildImportedPropertyDraft, buildSavedPropertyFromListing } from "@app/Internal/commands/reas/lib/property-form-defaults";
 import type { ListingRow, RentEstimate } from "@app/Internal/commands/reas/lib/store";
 
 function makeListing(overrides?: Partial<ListingRow>): ListingRow {
@@ -69,5 +69,29 @@ describe("buildImportedPropertyDraft", () => {
         expect(draft.targetPrice).toBe(0);
         expect(draft.monthlyRent).toBe(21_000);
         expect(draft.listingUrl).toBe("https://www.sreality.cz/detail/pronajem/byt/praha-2/987");
+    });
+
+    test("builds a watchlist save payload from a listing draft", () => {
+        const input = buildSavedPropertyFromListing({
+            listing: makeListing(),
+            rentEstimate: {
+                medianRent: 24_500,
+                medianRentPerM2: 402,
+                listingCount: 8,
+            },
+            constructionType: "brick",
+        });
+
+        expect(input).toEqual({
+            name: "2+kk · Praha 2, Vinohrady",
+            district: "Praha 2",
+            constructionType: "brick",
+            disposition: "2+kk",
+            targetPrice: 7_450_000,
+            targetArea: 61,
+            monthlyRent: 24_500,
+            monthlyCosts: 0,
+            listingUrl: "https://www.sreality.cz/detail/prodej/byt/praha-2/123",
+        });
     });
 });

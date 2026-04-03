@@ -248,6 +248,20 @@ describe("saved_properties", () => {
         expect(history[0].score).toBe(72);
     });
 
+    test("updatePropertySettings persists alert thresholds for an existing property", () => {
+        const id = db.saveProperty(input);
+
+        db.updatePropertySettings(id, {
+            alertYieldFloor: 3.8,
+            alertGradeChange: false,
+        });
+
+        const row = db.getProperty(id);
+        expect(row).not.toBeNull();
+        expect(row!.alert_yield_floor).toBe(3.8);
+        expect(row!.alert_grade_change).toBe(0);
+    });
+
     test("deleteProperty removes the property", () => {
         const id = db.saveProperty(input);
         expect(db.getProperty(id)).not.toBeNull();
@@ -271,6 +285,8 @@ describe("district_snapshots", () => {
         expect(rows[0].comparables_count).toBe(1);
         expect(rows[0].trend_direction).toBe("rising");
         expect(rows[0].yoy_change).toBe(3.5);
+        expect(rows[0].market_gross_yield).toBe(4.8);
+        expect(rows[0].market_net_yield).toBe(3.6);
     });
 
     test("getDistrictHistory filters by construction type", () => {
@@ -497,5 +513,140 @@ describe("listings", () => {
         expect(overview.rentalLastFetchedAt).toBe("2026-04-03T00:00:00.000Z");
         expect(overview.soldLastFetchedAt).toBe("2026-04-04T00:00:00.000Z");
         expect(overview.sourceCount).toBe(3);
+        expect(overview.lastFetchedAt).toBe("2026-04-04T00:00:00.000Z");
+        expect(overview.sources).toHaveLength(3);
+        expect(overview.sources[0]).toMatchObject({
+            source: "reas",
+            count: 1,
+            lastFetchedAt: "2026-04-04T00:00:00.000Z",
+        });
+    });
+
+    test("filters listings by multiple dispositions, sources, and seen date range", () => {
+        db.upsertListings(
+            [
+                {
+                    source: "sreality",
+                    sourceContract: "sreality-v2",
+                    type: "sale",
+                    sourceId: "301",
+                    district: "Praha 2",
+                    disposition: "2+kk",
+                    area: 61,
+                    price: 6400000,
+                    pricePerM2: 104918,
+                    address: "Praha 2, Vinohrady 1",
+                    link: "https://sreality.cz/301",
+                    status: "active",
+                    fetchedAt: "2026-04-02T00:00:00.000Z",
+                    rawJson: SafeJSON.stringify({ id: 301 }),
+                },
+                {
+                    source: "bezrealitky",
+                    sourceContract: "bezrealitky-graphql",
+                    type: "sale",
+                    sourceId: "302",
+                    district: "Praha 2",
+                    disposition: "3+kk",
+                    area: 74,
+                    price: 8200000,
+                    pricePerM2: 110811,
+                    address: "Praha 2, Vinohrady 2",
+                    link: "https://bezrealitky.cz/302",
+                    status: "active",
+                    fetchedAt: "2026-04-03T00:00:00.000Z",
+                    rawJson: SafeJSON.stringify({ id: 302 }),
+                },
+                {
+                    source: "reas",
+                    sourceContract: "reas-catalog",
+                    type: "sold",
+                    sourceId: "303",
+                    district: "Praha 2",
+                    disposition: "2+kk",
+                    area: 58,
+                    price: 6100000,
+                    pricePerM2: 105172,
+                    address: "Praha 2, Vinohrady 3",
+                    link: "https://reas.cz/303",
+                    status: "sold",
+                    fetchedAt: "2026-04-04T00:00:00.000Z",
+                    soldAt: "2026-03-15T00:00:00.000Z",
+                    rawJson: SafeJSON.stringify({ id: 303 }),
+                },
+            ],
+            "Praha 2"
+        );
+
+        const listings = db.getListings({
+            district: "Praha 2",
+            dispositions: ["2+kk", "3+kk"],
+            sources: ["bezrealitky", "reas"],
+            seenFrom: "2026-03-10",
+            seenTo: "2026-04-03",
+        });
+
+        expect(listings).toHaveLength(2);
+        expect(listings.map((listing) => listing.source)).toEqual(["reas", "bezrealitky"]);
+    });
+
+    test("replaces a district snapshot for the same source and type so stale rows are removed", () => {
+        db.upsertListings(
+            [
+                {
+                    source: "sreality",
+                    sourceContract: "sreality-v2",
+                    type: "sale",
+                    sourceId: "old-1",
+                    district: "Praha 4",
+                    price: 6400000,
+                    address: "Varšavská, Praha 2 - Vinohrady",
+                    link: "https://sreality.cz/old-1",
+                    status: "active",
+                    fetchedAt: "2026-04-02T00:00:00.000Z",
+                    rawJson: SafeJSON.stringify({ id: "old-1" }),
+                },
+                {
+                    source: "sreality",
+                    sourceContract: "sreality-v2",
+                    type: "sale",
+                    sourceId: "old-2",
+                    district: "Praha 4",
+                    price: 8200000,
+                    address: "Baranova, Praha 3 - Žižkov",
+                    link: "https://sreality.cz/old-2",
+                    status: "active",
+                    fetchedAt: "2026-04-02T00:00:00.000Z",
+                    rawJson: SafeJSON.stringify({ id: "old-2" }),
+                },
+            ],
+            "Praha 4"
+        );
+
+        db.replaceListingsSnapshot({ district: "Praha 4", type: "sale", source: "sreality", sourceContract: "sreality-v2" });
+
+        db.upsertListings(
+            [
+                {
+                    source: "sreality",
+                    sourceContract: "sreality-v2",
+                    type: "sale",
+                    sourceId: "new-1",
+                    district: "Praha 4",
+                    price: 14210000,
+                    address: "Mečislavova, Praha 4 - Nusle",
+                    link: "https://sreality.cz/new-1",
+                    status: "active",
+                    fetchedAt: "2026-04-03T00:00:00.000Z",
+                    rawJson: SafeJSON.stringify({ id: "new-1" }),
+                },
+            ],
+            "Praha 4"
+        );
+
+        const listings = db.getListings({ district: "Praha 4", type: "sale", source: "sreality" });
+
+        expect(listings).toHaveLength(1);
+        expect(listings[0]?.address).toBe("Mečislavova, Praha 4 - Nusle");
     });
 });

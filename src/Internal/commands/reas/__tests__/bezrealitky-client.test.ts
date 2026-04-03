@@ -9,15 +9,19 @@ import type { AnalysisFilters } from "@app/Internal/commands/reas/types";
 import { ApiClient, type ApiClientRequestOptions } from "@app/utils/api/ApiClient";
 
 class FakeGraphqlClient extends ApiClient {
+    readonly requests: Array<BodyInit | Record<string, unknown> | unknown[] | null | undefined> = [];
+
     constructor(private readonly responses: unknown[]) {
         super();
     }
 
     override async post<T>(
         _path: string,
-        _body?: BodyInit | Record<string, unknown> | unknown[] | null,
+        body?: BodyInit | Record<string, unknown> | unknown[] | null,
         _options?: ApiClientRequestOptions
     ): Promise<T> {
+        this.requests.push(body);
+
         const response = this.responses.shift();
 
         if (response === undefined) {
@@ -194,8 +198,7 @@ describe("BezrealitkyClient", () => {
     });
 
     test("fetchAdvertDetail maps the validated field subset", async () => {
-        const client = new BezrealitkyClient({
-            graphqlClient: new FakeGraphqlClient([
+        const graphqlClient = new FakeGraphqlClient([
                 {
                     data: {
                         advert: {
@@ -217,6 +220,14 @@ describe("BezrealitkyClient", () => {
                             'imageAltText({"locale":"CS"})': "Pronájem bytu 86 m², Rybná, Praha",
                             'mortgageData({"locale":"CS"})': { rateLow: null, rateHigh: null, years: null, loan: null },
                             links: [{ url: "https://example.test/detail", type: "detail" }],
+                            publicImages: [
+                                { id: "img-1", order: 2, url: "https://example.test/image-2.jpg" },
+                                { id: "img-0", order: 1, url: "https://example.test/image-1.jpg" },
+                            ],
+                            formattedAds: [
+                                { title: "Heating", value: "Central" },
+                                { title: "Transport", value: "Metro A", valueHref: "https://example.test/metro" },
+                            ],
                             poiData: '{"public_transport":{"properties":{"osm_tags":{"name":"Masná"}}}}',
                             'regionTree({"locale":"CS"})': [
                                 { id: "486", name: "Praha", uri: "praha" },
@@ -243,14 +254,30 @@ describe("BezrealitkyClient", () => {
                                     },
                                 ],
                             },
-                            nemoreport: null,
+                            nemoreport: {
+                                id: "nemo-1",
+                                resultUrl: "https://example.test/nemoreport",
+                                status: "DONE",
+                                message: "ready",
+                            },
                         },
                     },
                 },
-            ]),
-        });
+            ]);
+        const client = new BezrealitkyClient({ graphqlClient });
 
         const detail = await client.fetchAdvertDetail("851182");
+
+        const requestBody = graphqlClient.requests[0];
+        expect(requestBody).toBeTruthy();
+
+        const query = (requestBody as { query?: string }).query;
+        expect(query).toContain("nemoreport {");
+        expect(query).toContain("resultUrl");
+        expect(query).toContain("status");
+        expect(query).toContain("publicImages(limit: 12)");
+        expect(query).toContain("url(filter: RECORD_MAIN)");
+        expect(query).toContain("formattedAds(locale: CS)");
 
         expect(detail).toMatchObject({
             id: "851182",
@@ -269,7 +296,20 @@ describe("BezrealitkyClient", () => {
             isDiscounted: false,
             imageAltText: "Pronájem bytu 86 m², Rybná, Praha",
             links: [{ url: "https://example.test/detail", type: "detail" }],
-            nemoreport: null,
+            nemoreport: {
+                id: "nemo-1",
+                resultUrl: "https://example.test/nemoreport",
+                status: "DONE",
+                message: "ready",
+            },
+            publicImages: [
+                { id: "img-0", order: 1, url: "https://example.test/image-1.jpg" },
+                { id: "img-1", order: 2, url: "https://example.test/image-2.jpg" },
+            ],
+            formattedAds: [
+                { title: "Heating", value: "Central", valueHref: null },
+                { title: "Transport", value: "Metro A", valueHref: "https://example.test/metro" },
+            ],
         });
         expect(detail.poiData).toEqual({
             public_transport: {
@@ -280,6 +320,80 @@ describe("BezrealitkyClient", () => {
                 },
             },
         });
+        expect(detail.regionTree).toEqual([
+            { id: "486", name: "Praha", uri: "praha" },
+            { id: "15460", name: "Praha-Staré Město", uri: "praha-stare-mesto" },
+        ]);
+        expect(detail.relatedAdverts).toHaveLength(1);
+        expect(detail.relatedAdverts[0].sourceId).toBe("830720");
+    });
+
+    test("fetchAdvertDetail supports current live GraphQL field names", async () => {
+        const client = new BezrealitkyClient({
+            graphqlClient: new FakeGraphqlClient([
+                {
+                    data: {
+                        advert: {
+                            id: "851182",
+                            uri: "851182-nabidka-pronajem-bytu-rybna-praha",
+                            offerType: "PRONAJEM",
+                            price: 92515,
+                            charges: 16326,
+                            serviceCharges: 0,
+                            utilityCharges: 16326,
+                            deposit: 107000,
+                            availableFrom: 1780524000,
+                            originalPrice: 92617,
+                            isDiscounted: false,
+                            disposition: "UNDEFINED",
+                            surface: 86,
+                            gps: { lat: 50.0882082, lng: 14.4262296 },
+                            address: "Rybná, Praha - Staré Město",
+                            imageAltText: "Pronájem bytu 86 m², Rybná, Praha",
+                            mortgageData: { rateLow: null, rateHigh: null, years: null, loan: null },
+                            links: [],
+                            poiData: '{"school":{"properties":{"osm_tags":{"name":"Gymnázium"}}}}',
+                            regionTree: [
+                                { id: "486", name: "Praha", uri: "praha" },
+                                { id: "15460", name: "Praha-Staré Město", uri: "praha-stare-mesto" },
+                            ],
+                            relatedAdverts: {
+                                list: [
+                                    {
+                                        id: "830720",
+                                        uri: "830720-nabidka-pronajem",
+                                        offerType: "PRONAJEM",
+                                        price: 107960,
+                                        charges: 50482,
+                                        disposition: "UNDEFINED",
+                                        surface: 100,
+                                        reserved: false,
+                                        gps: { lat: 50.09, lng: 14.42 },
+                                        address: "U Milosrdných, Praha",
+                                        imageAltText: "Pronájem bytu 100 m², U Milosrdných, Praha",
+                                        originalPrice: null,
+                                        isDiscounted: false,
+                                        availableFrom: null,
+                                        links: [],
+                                    },
+                                ],
+                            },
+                            nemoreport: {
+                                id: "nemo-1",
+                                resultUrl: "https://example.test/nemoreport",
+                                status: "DONE",
+                                message: "ready",
+                            },
+                        },
+                    },
+                },
+            ]),
+        });
+
+        const detail = await client.fetchAdvertDetail("851182");
+
+        expect(detail.address).toBe("Rybná, Praha - Staré Město");
+        expect(detail.imageAltText).toBe("Pronájem bytu 86 m², Rybná, Praha");
         expect(detail.regionTree).toEqual([
             { id: "486", name: "Praha", uri: "praha" },
             { id: "15460", name: "Praha-Staré Město", uri: "praha-stare-mesto" },
