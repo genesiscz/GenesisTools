@@ -3,7 +3,9 @@ import { applySystemPromptPrefix } from "@app/utils/claude/subscription-billing"
 import { SafeJSON } from "@app/utils/json";
 import { estimateTokens } from "@app/utils/tokens";
 import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
-import type { ChatConfig, ChatMessage, ProviderChoice } from "@ask/types";
+import type { AnthropicModelCategory } from "@ask/providers/ModelResolver";
+import type { ChatConfig, ChatMessage, DetectedProvider, ProviderChoice } from "@ask/types";
+import type { ClaudeAccount } from "@app/utils/claude/ClaudeAccount";
 import type { LanguageModel, LanguageModelUsage } from "ai";
 import { generateText, streamText } from "ai";
 
@@ -18,12 +20,72 @@ export interface ChatResponse {
     }>;
 }
 
+export interface OneShotOptions {
+    /**
+     * ClaudeAccount instance — use `ClaudeAccount.choose("hello")` or `await ClaudeAccount.default()`.
+     * If omitted, falls back to the singleton providerManager (ask config's default account).
+     */
+    account?: ClaudeAccount;
+    /** Model: AnthropicModelCategory ("haiku"/"sonnet"/"opus") or raw model ID string. */
+    model: AnthropicModelCategory | string;
+    /** The message to send. */
+    message: string;
+    systemPrompt?: string;
+    maxTokens?: number;
+    temperature?: number;
+    tools?: Record<string, unknown>;
+    /** Default: false (non-streaming for one-shot). */
+    streaming?: boolean;
+}
+
 export class ChatEngine {
     private config: ChatConfig;
     private conversationHistory: ChatMessage[] = [];
 
     constructor(config: ChatConfig) {
         this.config = { ...config };
+    }
+
+    static async oneShot(options: OneShotOptions): Promise<ChatResponse> {
+        const { resolveModel } = await import("@ask/providers/ModelResolver");
+        const { getLanguageModel } = await import("@ask/types");
+
+        let provider: DetectedProvider;
+
+        if (options.account) {
+            provider = await options.account.provider();
+        } else {
+            const { providerManager } = await import("@ask/providers/ProviderManager");
+            const providers = await providerManager.detectProviders("anthropic");
+            const found = providers.find((p) => p.name === "anthropic");
+
+            if (!found) {
+                throw new Error("No Claude subscription configured. Run `tools ask config` first.");
+            }
+
+            provider = found;
+        }
+
+        const selection = resolveModel(options.model, provider.models);
+
+        if (!selection.model) {
+            const accountHint = options.account ? ` for account "${options.account.name}"` : "";
+            throw new Error(`No "${selection.request}" model available${accountHint}`);
+        }
+
+        const config: ChatConfig = {
+            model: getLanguageModel(provider.provider, selection.model.id),
+            provider: "anthropic",
+            modelName: selection.model.id,
+            streaming: options.streaming ?? false,
+            systemPrompt: options.systemPrompt,
+            maxTokens: options.maxTokens,
+            temperature: options.temperature,
+            providerChoice: { provider, model: selection.model },
+        };
+
+        const engine = new ChatEngine(config);
+        return engine.sendMessage(options.message, options.tools);
     }
 
     private getEffectiveSystemPrompt(): string | undefined {
