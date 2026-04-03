@@ -202,24 +202,24 @@ async function configureSay(channels: ChannelConfigs): Promise<void> {
 function showCurrentConfig(channels: ChannelConfigs): void {
     const lines: string[] = [];
 
-    lines.push(pc.bold("System (macOS)") + `  ${channelStatus(channels.system.enabled)}`);
+    lines.push(`${pc.bold("System (macOS)")}  ${channelStatus(channels.system.enabled)}`);
     lines.push(`  title:     ${channels.system.title ?? "—"}`);
     lines.push(`  sound:     ${channels.system.sound ?? "—"}`);
     lines.push(`  ignoreDnD: ${channels.system.ignoreDnD ? "yes" : "no"}`);
     lines.push("");
 
-    lines.push(pc.bold("Telegram") + `  ${channelStatus(channels.telegram.enabled)}`);
+    lines.push(`${pc.bold("Telegram")}  ${channelStatus(channels.telegram.enabled)}`);
     lines.push(
-        `  botToken:  ${channels.telegram.botToken ? pc.dim("••••" + channels.telegram.botToken.slice(-6)) : "—"}`
+        `  botToken:  ${channels.telegram.botToken ? pc.dim(`••••${channels.telegram.botToken.slice(-6)}`) : "—"}`
     );
     lines.push(`  chatId:    ${channels.telegram.chatId ?? "—"}`);
     lines.push("");
 
-    lines.push(pc.bold("Webhook") + `  ${channelStatus(channels.webhook.enabled)}`);
+    lines.push(`${pc.bold("Webhook")}  ${channelStatus(channels.webhook.enabled)}`);
     lines.push(`  url:       ${channels.webhook.url ?? "—"}`);
     lines.push("");
 
-    lines.push(pc.bold("TTS (say)") + `  ${channelStatus(channels.say.enabled)}`);
+    lines.push(`${pc.bold("TTS (say)")}  ${channelStatus(channels.say.enabled)}`);
     lines.push(`  voice:     ${channels.say.voice ?? "—"}`);
 
     p.note(lines.join("\n"), "Current notification config");
