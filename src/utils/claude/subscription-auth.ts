@@ -1,4 +1,5 @@
 import { loadConfig, saveConfig, withConfigLock } from "@app/claude/lib/config";
+import logger from "@app/logger";
 import { claudeOAuth } from "./auth";
 
 export interface SubscriptionAccount {
@@ -50,6 +51,7 @@ export async function resolveAccountToken(
         const needsRefresh = acc.expiresAt ? claudeOAuth.needsRefresh(acc.expiresAt) : false;
 
         if (needsRefresh) {
+            logger.info(`[token-refresh] ${name}: initiating refresh (reason: subscription-auth, expires ${new Date(acc.expiresAt!).toISOString()})`);
             if (!acc.refreshToken) {
                 throw new Error(
                     `Account "${name}" needs re-authentication (no refresh token). Run \`tools claude login\` first.`
@@ -63,6 +65,7 @@ export async function resolveAccountToken(
                 acc.refreshToken = newTokens.refreshToken;
                 acc.expiresAt = newTokens.expiresAt;
                 await saveConfig(config);
+                logger.info(`[token-refresh] ${name}: refreshed successfully via subscription-auth (new expires ${new Date(newTokens.expiresAt).toISOString()})`);
             } catch (err) {
                 throw new Error(
                     `Failed to refresh token for account "${name}": ${err instanceof Error ? err.message : err}. Run \`tools claude login\` again.`

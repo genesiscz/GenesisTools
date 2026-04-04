@@ -1,5 +1,6 @@
 import type { AccountConfig } from "@app/claude/lib/config";
 import { loadConfig, saveConfig, withConfigLock } from "@app/claude/lib/config";
+import logger from "@app/logger";
 import { refreshOAuthToken } from "@app/utils/claude/auth";
 
 export type { AccountInfo, KeychainCredentials } from "@app/utils/claude/auth";
@@ -75,6 +76,9 @@ async function ensureValidToken(
     }
 
     // Token expired or expiring soon — refresh under file lock
+    const caller = options?.forceRefresh ? "usage-api:force-refresh(429)" : "usage-api:token-expired";
+    logger.info(`[token-refresh] ${accountName}: initiating refresh (reason: ${caller})`);
+
     return withConfigLock(async () => {
         // Re-read config from disk (another process may have refreshed)
         const freshConfig = await loadConfig();
@@ -85,6 +89,7 @@ async function ensureValidToken(
         // - Token is different from ours (another process refreshed for 429 too)
         if (diskAccount?.expiresAt && diskAccount.expiresAt > Date.now() + EXPIRY_BUFFER_MS) {
             if (!options?.forceRefresh || diskAccount.accessToken !== account.accessToken) {
+                logger.info(`[token-refresh] ${accountName}: skipped — another process already refreshed (expires ${new Date(diskAccount.expiresAt).toISOString()})`);
                 account.accessToken = diskAccount.accessToken;
                 account.refreshToken = diskAccount.refreshToken;
                 account.expiresAt = diskAccount.expiresAt;
@@ -107,6 +112,8 @@ async function ensureValidToken(
 
             throw err;
         }
+
+        logger.info(`[token-refresh] ${accountName}: refreshed successfully (new token expires ${new Date(refreshed.expiresAt).toISOString()})`);
 
         // Persist immediately BEFORE using the new token
         freshConfig.accounts[accountName] = {
