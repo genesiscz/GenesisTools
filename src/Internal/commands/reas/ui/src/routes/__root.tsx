@@ -1,6 +1,6 @@
 import { createRootRoute, HeadContent, Outlet, Scripts, useRouter, useRouterState } from "@tanstack/react-router";
 import { DashboardLayout } from "@ui/layouts/DashboardLayout";
-import { BarChart3, Building2, Clock, GitCompare, Search, Star } from "lucide-react";
+import { Activity, BarChart3, Building2, Clock, GitCompare, Search, Star } from "lucide-react";
 import { Toaster } from "sonner";
 import appCss from "../styles.css?url";
 
@@ -10,6 +10,7 @@ const navLinks = [
     { label: "Compare", href: "/compare", icon: <GitCompare className="w-3.5 h-3.5" /> },
     { label: "Watchlist", href: "/watchlist", icon: <Star className="w-3.5 h-3.5" /> },
     { label: "History", href: "/history", icon: <Clock className="w-3.5 h-3.5" /> },
+    { label: "Health", href: "/health", icon: <Activity className="w-3.5 h-3.5" /> },
 ];
 
 export const Route = createRootRoute({
