@@ -1,3 +1,7 @@
+export { AIAccount } from "./AIAccount";
+export { AIConfigStorage, aiConfigStorage } from "./account-storage";
+export type { AIAccountConfig, AIAccountEntry, AIAccountTokens, AIProvider } from "./account-types";
+
 import { Embedder } from "./tasks/Embedder";
 import { Summarizer } from "./tasks/Summarizer";
 import { Transcriber } from "./tasks/Transcriber";

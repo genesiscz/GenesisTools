@@ -1,12 +1,12 @@
 import logger from "@app/logger";
-import type { ClaudeAccount } from "@app/utils/claude/ClaudeAccount";
+import type { AIAccount } from "@app/utils/ai/AIAccount";
 import { applySystemPromptPrefix } from "@app/utils/claude/subscription-billing";
 import { SafeJSON } from "@app/utils/json";
 import { estimateTokens } from "@app/utils/tokens";
 import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
 import type { AnthropicModelCategory } from "@ask/providers/ModelResolver";
 import type { ChatConfig, ChatMessage, DetectedProvider, ProviderChoice } from "@ask/types";
-import type { LanguageModel, LanguageModelUsage } from "ai";
+import type { LanguageModel, LanguageModelUsage, ToolSet } from "ai";
 import { generateText, streamText } from "ai";
 
 export interface ChatResponse {
@@ -22,10 +22,10 @@ export interface ChatResponse {
 
 export interface OneShotOptions {
     /**
-     * ClaudeAccount instance — use `ClaudeAccount.choose("hello")` or `await ClaudeAccount.default()`.
+     * AIAccount instance — use `AIAccount.chooseClaude("hello")` or `await AIAccount.defaultClaude()`.
      * If omitted, falls back to the singleton providerManager (ask config's default account).
      */
-    account?: ClaudeAccount;
+    account?: AIAccount;
     /** Model: AnthropicModelCategory ("haiku"/"sonnet"/"opus") or raw model ID string. */
     model: AnthropicModelCategory | string;
     /** The message to send. */
@@ -33,7 +33,7 @@ export interface OneShotOptions {
     systemPrompt?: string;
     maxTokens?: number;
     temperature?: number;
-    tools?: Record<string, unknown>;
+    tools?: ToolSet;
     /** Default: false (non-streaming for one-shot). */
     streaming?: boolean;
 }
@@ -105,10 +105,12 @@ export class ChatEngine {
 
     async sendMessage(
         message: string,
-        tools?: Record<string, unknown>,
+        tools?: ToolSet,
         callbacks?: {
             onChunk?: (chunk: string) => void;
             onThinking?: (text: string) => void;
+            onToolCall?: (name: string, args: unknown) => void;
+            onToolResult?: (name: string, result: unknown) => void;
         }
     ): Promise<ChatResponse> {
         // Add user message to history
@@ -151,15 +153,19 @@ export class ChatEngine {
 
     private async sendStreamingMessage(
         message: string,
-        _tools?: Record<string, unknown>,
+        tools?: ToolSet,
         callbacks?: {
             onChunk?: (chunk: string) => void;
             onThinking?: (text: string) => void;
+            onToolCall?: (name: string, args: unknown) => void;
+            onToolResult?: (name: string, result: unknown) => void;
         }
     ): Promise<ChatResponse> {
         // Store usage from onFinish callback - this is the most reliable source
         let finishUsage: LanguageModelUsage | undefined;
         let finishCost: number | undefined;
+
+        const hasTools = tools && Object.keys(tools).length > 0;
 
         const result = await streamText({
             model: this.config.model,
@@ -167,6 +173,7 @@ export class ChatEngine {
             system: this.getEffectiveSystemPrompt(),
             temperature: this.config.temperature,
             ...(this.config.maxTokens && { maxOutputTokens: this.config.maxTokens }),
+            ...(hasTools && { tools, maxSteps: 5 }),
             onFinish: async ({ usage }) => {
                 // This is called when the stream completes - usage is available HERE
                 logger.debug(
@@ -222,6 +229,10 @@ export class ChatEngine {
                 fullResponse += part.text;
             } else if (part.type === "reasoning-delta" && callbacks?.onThinking) {
                 callbacks.onThinking(part.text);
+            } else if (part.type === "tool-call") {
+                callbacks?.onToolCall?.(part.toolName, "input" in part ? part.input : undefined);
+            } else if (part.type === "tool-result") {
+                callbacks?.onToolResult?.(part.toolName, "output" in part ? part.output : undefined);
             }
         }
 
@@ -305,13 +316,16 @@ export class ChatEngine {
         };
     }
 
-    private async sendNonStreamingMessage(message: string, _tools?: Record<string, unknown>): Promise<ChatResponse> {
+    private async sendNonStreamingMessage(message: string, tools?: ToolSet): Promise<ChatResponse> {
+        const hasTools = tools && Object.keys(tools).length > 0;
+
         const result = await generateText({
             model: this.config.model,
             prompt: message,
             system: this.getEffectiveSystemPrompt(),
             temperature: this.config.temperature,
             ...(this.config.maxTokens && { maxOutputTokens: this.config.maxTokens }),
+            ...(hasTools && { tools, maxSteps: 5 }),
         });
 
         // DEBUG: Log the full result object structure

@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
 import logger, { configureLogger } from "@app/logger";
+import { SafeJSON } from "@app/utils/json";
 import { input } from "@app/utils/prompts/clack";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { AIChat } from "@ask/AIChat";
@@ -17,6 +18,8 @@ import { modelSelector } from "@ask/providers/ModelSelector";
 import { getLanguageModel } from "@ask/types";
 import { webSearchTool } from "@ask/utils/websearch";
 import * as p from "@clack/prompts";
+import type { ToolSet } from "ai";
+import { tool } from "ai";
 import pc from "picocolors";
 
 // Handle --readme flag early (before Commander parses)
@@ -552,8 +555,19 @@ class ASKTool {
 
                 const startTime = Date.now();
 
-                // Send message
-                const response = await chatEngine.sendMessage(msg, tools);
+                // Send message with tool callbacks
+                const response = await chatEngine.sendMessage(msg, tools, {
+                    onToolCall: (name, args) => {
+                        console.log(pc.dim(`\n🔧 [${name}] ${SafeJSON.stringify(args)}`));
+                    },
+                    onToolResult: (name, result) => {
+                        const summary =
+                            typeof result === "string"
+                                ? result.slice(0, 300)
+                                : SafeJSON.stringify(result).slice(0, 300);
+                        console.log(pc.dim(`✓ [${name}] ${summary}\n`));
+                    },
+                });
 
                 const duration = Date.now() - startTime;
 
@@ -638,48 +652,17 @@ class ASKTool {
         };
     }
 
-    private getAvailableTools():
-        | Record<
-              string,
-              {
-                  description: string;
-                  parameters: {
-                      [key: string]: {
-                          type: string;
-                          description: string;
-                          optional?: boolean;
-                      };
-                  };
-                  execute: (...args: unknown[]) => Promise<unknown>;
-              }
-          >
-        | undefined {
-        const tools: Record<
-            string,
-            {
-                description: string;
-                parameters: {
-                    [key: string]: {
-                        type: string;
-                        description: string;
-                        optional?: boolean;
-                    };
-                };
-                execute: (...args: unknown[]) => Promise<unknown>;
-            }
-        > = {};
+    private getAvailableTools(): ToolSet | undefined {
+        const tools: ToolSet = {};
 
-        // Add web search if available
-        const searchTool = webSearchTool.createSearchTool();
-        if (searchTool) {
-            tools.searchWeb = {
-                description: searchTool.description,
-                parameters: searchTool.parameters,
-                execute: async (...args: unknown[]) => {
-                    const params = args[0] as Parameters<typeof searchTool.execute>[0];
-                    return await searchTool.execute(params);
-                },
-            };
+        const searchToolDef = webSearchTool.createSearchTool();
+
+        if (searchToolDef) {
+            tools.searchWeb = tool({
+                description: searchToolDef.description,
+                inputSchema: searchToolDef.parameters,
+                execute: searchToolDef.execute,
+            });
         }
 
         return Object.keys(tools).length > 0 ? tools : undefined;

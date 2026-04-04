@@ -46,11 +46,11 @@ function shouldWarmWeekly(usage: UsageResponse): boolean {
 
 export async function sendWarmupMessage(accountName: string): Promise<boolean> {
     try {
-        const { ClaudeAccount } = await import("@app/utils/claude/ClaudeAccount");
+        const { AIAccount } = await import("@app/utils/ai/AIAccount");
         const { ChatEngine } = await import("@ask/chat/ChatEngine");
         const { AnthropicModelCategory } = await import("@ask/providers/ModelResolver");
 
-        const account = ClaudeAccount.choose(accountName);
+        const account = AIAccount.chooseClaude(accountName);
         await ChatEngine.oneShot({
             account,
             model: AnthropicModelCategory.Haiku,

@@ -1,18 +1,23 @@
 import type { ModelInfo } from "@ask/types";
 
 export enum AnthropicModelCategory {
-	Haiku = "haiku",
-	Sonnet = "sonnet",
-	Opus = "opus",
+    Haiku = "haiku",
+    Sonnet = "sonnet",
+    Opus = "opus",
+}
+
+export enum OpenAIModelCategory {
+    Mini = "mini", // gpt-4o-mini
+    Standard = "standard", // gpt-4o, gpt-5
 }
 
 export interface ModelSelection {
-	/** The category or raw model ID that was requested */
-	request: string;
-	/** Resolution strategy used */
-	strategy: "latest" | "exact";
-	/** Resolved model, or null if no match */
-	model: ModelInfo | null;
+    /** The category or raw model ID that was requested */
+    request: string;
+    /** Resolution strategy used */
+    strategy: "latest" | "exact";
+    /** Resolved model, or null if no match */
+    model: ModelInfo | null;
 }
 
 /**
@@ -23,22 +28,21 @@ export interface ModelSelection {
  * @param availableModels - Models from a specific provider/account
  */
 export function resolveModel(
-	input: AnthropicModelCategory | string,
-	availableModels: ModelInfo[],
+    input: AnthropicModelCategory | OpenAIModelCategory | string,
+    availableModels: ModelInfo[]
 ): ModelSelection {
-	const categories = Object.values(AnthropicModelCategory) as string[];
-	const isCategory = categories.includes(input);
+    const categories = [...Object.values(AnthropicModelCategory), ...Object.values(OpenAIModelCategory)] as string[];
+    const isCategory = categories.includes(input);
 
-	if (isCategory) {
-		const matches = availableModels
-			.filter((m) => m.id.toLowerCase().includes(input.toLowerCase()))
-			.sort((a, b) => b.id.localeCompare(a.id));
+    if (isCategory) {
+        const matches = availableModels
+            .filter((m) => m.id.toLowerCase().includes(input.toLowerCase()))
+            .sort((a, b) => b.id.localeCompare(a.id));
 
-		return { request: input, strategy: "latest", model: matches[0] ?? null };
-	}
+        return { request: input, strategy: "latest", model: matches[0] ?? null };
+    }
 
-	const exact =
-		availableModels.find((m) => m.id === input || m.name === input) ?? null;
+    const exact = availableModels.find((m) => m.id === input || m.name === input) ?? null;
 
-	return { request: input, strategy: "exact", model: exact };
+    return { request: input, strategy: "exact", model: exact };
 }
