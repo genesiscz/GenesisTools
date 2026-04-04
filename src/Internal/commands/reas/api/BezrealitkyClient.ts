@@ -592,7 +592,7 @@ export class BezrealitkyClient {
     }
 
     async resolveRegionOsmIds(query: string, size = 5): Promise<string[]> {
-        const response = await this.autocompleteClient.get<BezrealitkyAutocompleteResponse>("/autocomplete", {
+        const response = await this.autocompleteClient.get<BezrealitkyAutocompleteResponse & { error?: string }>("/autocomplete", {
             params: {
                 q: query,
                 size,
@@ -600,6 +600,10 @@ export class BezrealitkyClient {
                 preferredCountry: "cz",
             },
         });
+
+        if (response.error) {
+            throw new Error(`Bezrealitky autocomplete failed: ${response.error}`);
+        }
 
         return extractRegionOsmIds(response);
     }
