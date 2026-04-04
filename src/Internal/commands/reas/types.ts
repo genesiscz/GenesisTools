@@ -174,6 +174,7 @@ export interface AnalysisResult {
 
 export interface FullAnalysis {
     comparables: import("@app/Internal/commands/reas/analysis/comparables").ComparablesResult;
+    activeVsSold?: import("@app/Internal/commands/reas/analysis/active-vs-sold").ActiveVsSoldComparison;
     trends: import("@app/Internal/commands/reas/analysis/trends").TrendsResult;
     yield: import("@app/Internal/commands/reas/analysis/rental-yield").YieldResult;
     timeOnMarket: import("@app/Internal/commands/reas/analysis/time-on-market").TimeOnMarketResult;

@@ -44,13 +44,14 @@ describe("buildImportedPropertyDraft", () => {
         };
 
         const draft = buildImportedPropertyDraft({
-            listing: makeListing(),
+            listing: makeListing({ building_type: "panel" }),
             rentEstimate: estimate,
         });
 
         expect(draft).toEqual({
             name: "2+kk · Praha 2, Vinohrady",
             district: "Praha 2",
+            constructionType: "panel",
             disposition: "2+kk",
             targetPrice: 7_450_000,
             targetArea: 61,
@@ -72,6 +73,15 @@ describe("buildImportedPropertyDraft", () => {
         expect(draft.targetPrice).toBe(0);
         expect(draft.monthlyRent).toBe(21_000);
         expect(draft.listingUrl).toBe("https://www.sreality.cz/detail/pronajem/byt/praha-2/987");
+    });
+
+    test("omits construction type when the cached listing does not know it", () => {
+        const draft = buildImportedPropertyDraft({
+            listing: makeListing({ building_type: null }),
+            rentEstimate: null,
+        });
+
+        expect(draft.constructionType).toBeUndefined();
     });
 
     test("builds a watchlist save payload from a listing draft", () => {

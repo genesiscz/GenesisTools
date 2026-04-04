@@ -3,6 +3,7 @@ import type { ListingRow, RentEstimate, SavePropertyInput } from "@app/Internal/
 export interface ImportedPropertyDraft {
     name: string;
     district: string;
+    constructionType?: string;
     disposition?: string;
     targetPrice: number;
     targetArea: number;
@@ -17,11 +18,12 @@ export function buildImportedPropertyDraft(options: {
     const { listing, rentEstimate } = options;
     const address = listing.address.trim();
     const disposition = listing.disposition ?? undefined;
-    const nameParts = [disposition, address].filter((value): value is string => Boolean(value && value.trim()));
+    const nameParts = [disposition, address].filter((value): value is string => Boolean(value?.trim()));
 
     return {
         name: nameParts.join(" · ") || address || `Imported ${listing.type} listing`,
         district: listing.district,
+        constructionType: listing.building_type ?? undefined,
         disposition,
         targetPrice: listing.type === "rental" ? 0 : listing.price,
         targetArea: Math.round(listing.area ?? 0),

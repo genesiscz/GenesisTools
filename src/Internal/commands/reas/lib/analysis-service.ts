@@ -1,3 +1,4 @@
+import { analyzeActiveVsSold } from "@app/Internal/commands/reas/analysis/active-vs-sold";
 import { analyzeComparables } from "@app/Internal/commands/reas/analysis/comparables";
 import { analyzeDiscount } from "@app/Internal/commands/reas/analysis/discount";
 import { computeInvestmentScore } from "@app/Internal/commands/reas/analysis/investment-score";
@@ -197,7 +198,7 @@ export function buildListingsSnapshotTargets({
     }
 
     if ((!listingType || listingType === "sale") && isProviderEnabled(filters, "bezrealitky")) {
-        targets.push(buildSnapshotTarget("sale", "bezrealitky", "graphql:listAdverts"));
+        targets.push(buildSnapshotTarget("sale", "bezrealitky", "graphql:listAdverts:sale"));
     }
 
     if ((!listingType || listingType === "rental") && isProviderEnabled(filters, "sreality")) {
@@ -541,6 +542,10 @@ export async function fetchAndAnalyze(
     });
 
     const comparables = analyzeComparables(allListings, target);
+    const activeVsSold = analyzeActiveVsSold({
+        activeListings: saleListings,
+        soldListings: allListings,
+    });
     const trends = analyzeTrends(allListings);
     const timeOnMarket = analyzeTimeOnMarket(allListings);
     const discount = analyzeDiscount(allListings);
@@ -605,6 +610,7 @@ export async function fetchAndAnalyze(
 
     const result: FullAnalysis = {
         comparables,
+        activeVsSold,
         trends,
         yield: yieldResult,
         timeOnMarket,

@@ -1,3 +1,4 @@
+import { analyzeActiveVsSold } from "@app/Internal/commands/reas/analysis/active-vs-sold";
 import type { AggregatedRentalStats } from "@app/Internal/commands/reas/analysis/rental-aggregation";
 import type {
     AnalysisFilters,
@@ -268,6 +269,15 @@ export interface DashboardExport {
             targetPercentile: number;
             provenance?: DashboardProvenance;
         };
+        activeVsSold?: {
+            activeCount: number;
+            soldCount: number;
+            medianActivePricePerM2: number;
+            medianSoldPricePerM2: number;
+            askingToSoldRatio: number;
+            askingPremiumPct: number;
+            provenance?: DashboardProvenance;
+        };
         trends: Array<{
             period: string;
             medianPricePerM2: number;
@@ -364,6 +374,12 @@ export function isDashboardExport(value: unknown): value is DashboardExport {
 
 export function buildDashboardExport(analysis: FullAnalysis): DashboardExport {
     const { comparables, trends, timeOnMarket, discount, yield: yieldResult } = analysis;
+    const activeVsSold =
+        analysis.activeVsSold ??
+        analyzeActiveVsSold({
+            activeListings: analysis.saleListings ?? [],
+            soldListings: comparables.listings ?? [],
+        });
     const providerSummary = analysis.providerSummary;
     const priceHistogram = buildHistogram(
         (comparables.listings ?? []).map((listing) => listing.pricePerM2 ?? 0).filter((value) => value > 0)
@@ -637,6 +653,23 @@ export function buildDashboardExport(analysis: FullAnalysis): DashboardExport {
                 targetPercentile: comparables.targetPercentile,
                 provenance: comparablesProvenance,
             },
+            activeVsSold: activeVsSold
+                ? {
+                      activeCount: activeVsSold.activeCount,
+                      soldCount: activeVsSold.soldCount,
+                      medianActivePricePerM2: activeVsSold.medianActivePricePerM2,
+                      medianSoldPricePerM2: activeVsSold.medianSoldPricePerM2,
+                      askingToSoldRatio: activeVsSold.askingToSoldRatio,
+                      askingPremiumPct: activeVsSold.askingPremiumPct,
+                      provenance: buildProvenance({
+                          label: "Active vs sold pricing",
+                          providerSummary,
+                          providers: ["reas", "sreality", "bezrealitky"],
+                          count: activeVsSold.activeCount + activeVsSold.soldCount,
+                          note: "Median asking inventory is compared against median sold pricing in the same export.",
+                      }),
+                  }
+                : undefined,
             trends: trendPoints,
             trendProvenance,
             yield: {

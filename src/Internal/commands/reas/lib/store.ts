@@ -503,6 +503,16 @@ export class ReasDatabase extends BaseDatabase {
         );
     }
 
+    getPropertyByListingUrl(listingUrl: string): SavedPropertyRow | null {
+        return (
+            (this.db
+                .prepare(
+                    "SELECT * FROM saved_properties WHERE listing_url = $listing_url ORDER BY updated_at DESC LIMIT 1"
+                )
+                .get({ $listing_url: listingUrl }) as SavedPropertyRow | undefined) ?? null
+        );
+    }
+
     updatePropertySettings(id: number, input: UpdatePropertySettingsInput): void {
         this.db
             .prepare(`
@@ -1059,14 +1069,58 @@ export class ReasDatabase extends BaseDatabase {
             });
     }
 
-    getDistrictHistory(district: string, constructionType: string, days = 365): DistrictSnapshotRow[] {
+    getDistrictHistory(
+        district: string,
+        constructionType: string,
+        days = 365,
+        disposition?: string
+    ): DistrictSnapshotRow[] {
         const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+        const normalizedDisposition = disposition && disposition !== "all" ? disposition : null;
+
+        if (!normalizedDisposition) {
+            return this.db
+                .prepare(`
+                    SELECT * FROM district_snapshots
+                    WHERE district = $district
+                      AND construction_type = $construction_type
+                      AND disposition IS NULL
+                      AND snapshot_date >= $cutoff
+                    ORDER BY snapshot_date ASC
+                `)
+                .all({
+                    $district: district,
+                    $construction_type: constructionType,
+                    $cutoff: cutoff,
+                }) as DistrictSnapshotRow[];
+        }
+
+        const matchingRows = this.db
+            .prepare(`
+                SELECT * FROM district_snapshots
+                WHERE district = $district
+                  AND construction_type = $construction_type
+                  AND disposition = $disposition
+                  AND snapshot_date >= $cutoff
+                ORDER BY snapshot_date ASC
+            `)
+            .all({
+                $district: district,
+                $construction_type: constructionType,
+                $disposition: normalizedDisposition,
+                $cutoff: cutoff,
+            }) as DistrictSnapshotRow[];
+
+        if (matchingRows.length > 0) {
+            return matchingRows;
+        }
 
         return this.db
             .prepare(`
                 SELECT * FROM district_snapshots
                 WHERE district = $district
                   AND construction_type = $construction_type
+                  AND disposition IS NULL
                   AND snapshot_date >= $cutoff
                 ORDER BY snapshot_date ASC
             `)

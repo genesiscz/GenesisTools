@@ -31,7 +31,7 @@ describe("buildListingsSnapshotTargets", () => {
         expect(buildListingsSnapshotTargets({ filters })).toEqual([
             { type: "sold", source: "reas", sourceContract: "reas-catalog" },
             { type: "sale", source: "sreality", sourceContract: "sreality-v2" },
-            { type: "sale", source: "bezrealitky", sourceContract: "graphql:listAdverts" },
+            { type: "sale", source: "bezrealitky", sourceContract: "graphql:listAdverts:sale" },
             { type: "rental", source: "sreality", sourceContract: "sreality-v2" },
             { type: "rental", source: "bezrealitky", sourceContract: "graphql:listAdverts" },
             { type: "rental", source: "ereality", sourceContract: "ereality-html" },

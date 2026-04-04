@@ -279,7 +279,7 @@ describe("district_snapshots", () => {
     test("saveDistrictSnapshot and getDistrictHistory round-trips data", () => {
         db.saveDistrictSnapshot(makeAnalysis());
 
-        const rows = db.getDistrictHistory("Hradec Kralove", "brick");
+        const rows = db.getDistrictHistory("Hradec Kralove", "brick", 365, "3+1");
         expect(rows).toHaveLength(1);
         expect(rows[0].median_price_per_m2).toBe(85000);
         expect(rows[0].comparables_count).toBe(1);
@@ -307,11 +307,50 @@ describe("district_snapshots", () => {
             })
         );
 
-        const brickRows = db.getDistrictHistory("Hradec Kralove", "brick");
+        const brickRows = db.getDistrictHistory("Hradec Kralove", "brick", 365, "3+1");
         expect(brickRows).toHaveLength(1);
 
-        const panelRows = db.getDistrictHistory("Hradec Kralove", "panel");
+        const panelRows = db.getDistrictHistory("Hradec Kralove", "panel", 365, "3+1");
         expect(panelRows).toHaveLength(1);
+    });
+
+    test("getDistrictHistory prefers matching disposition snapshots and falls back to generic history", () => {
+        db.saveDistrictSnapshot(makeAnalysis());
+        db.saveDistrictSnapshot(
+            makeAnalysis({
+                filters: {
+                    estateType: "flat",
+                    constructionType: "brick",
+                    disposition: undefined,
+                    periods: [],
+                    district: { name: "Hradec Kralove", reasId: 1, srealityId: 100, srealityLocality: "district" },
+                    providers: ["reas"],
+                },
+                target: {
+                    price: 4000000,
+                    area: 65,
+                    disposition: "all",
+                    constructionType: "brick",
+                    monthlyRent: 18000,
+                    monthlyCosts: 4000,
+                    district: "Hradec Kralove",
+                    districtId: 1,
+                    srealityDistrictId: 100,
+                },
+            })
+        );
+
+        const exactRows = db.getDistrictHistory("Hradec Kralove", "brick", 365, "3+1");
+        expect(exactRows).toHaveLength(1);
+        expect(exactRows[0].disposition).toBe("3+1");
+
+        const fallbackRows = db.getDistrictHistory("Hradec Kralove", "brick", 365, "2+kk");
+        expect(fallbackRows).toHaveLength(1);
+        expect(fallbackRows[0].disposition).toBeNull();
+
+        const genericRows = db.getDistrictHistory("Hradec Kralove", "brick", 365);
+        expect(genericRows).toHaveLength(1);
+        expect(genericRows[0].disposition).toBeNull();
     });
 });
 

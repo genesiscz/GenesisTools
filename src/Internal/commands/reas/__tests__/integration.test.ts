@@ -148,6 +148,7 @@ describe("integration: full analysis → JSON export pipeline", () => {
         // Analysis
         expect(result.analysis.comparables.median).toBe(55_000);
         expect(result.analysis.comparables.count).toBe(1);
+        expect(result.analysis.activeVsSold?.askingPremiumPct).toBeCloseTo(23.167272727272728);
         expect(result.analysis.trends).toHaveLength(2);
         expect(result.analysis.yield.grossYield).toBe(5.2);
         expect(result.analysis.yield.netYield).toBe(3.8);
