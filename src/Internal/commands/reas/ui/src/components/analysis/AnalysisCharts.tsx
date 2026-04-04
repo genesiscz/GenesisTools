@@ -414,6 +414,128 @@ export function InvestmentSensitivityChart({
     );
 }
 
+const VK_LABELS: Record<string, string> = {
+    VK1: "VK1 · <30 m²",
+    VK2: "VK2 · 30–50 m²",
+    VK3: "VK3 · 50–80 m²",
+    VK4: "VK4 · >80 m²",
+};
+
+interface MfRentComparisonChartProps {
+    mfBenchmarks: DashboardExport["benchmarks"]["mf"];
+    rentalAggregation?: DashboardExport["analysis"]["rentalAggregation"];
+    targetRentPerM2?: number;
+}
+
+export function MfRentComparisonChart({ mfBenchmarks, rentalAggregation, targetRentPerM2 }: MfRentComparisonChartProps) {
+    const chartData = useMemo(() => {
+        const grouped = new Map<string, { mfRef: number; mfMedian: number; marketMedian: number; count: number }>();
+
+        for (const b of mfBenchmarks) {
+            const existing = grouped.get(b.sizeCategory);
+
+            if (existing) {
+                existing.mfRef = (existing.mfRef + b.referencePrice) / 2;
+                existing.mfMedian = (existing.mfMedian + b.median) / 2;
+                existing.count++;
+            } else {
+                grouped.set(b.sizeCategory, {
+                    mfRef: b.referencePrice,
+                    mfMedian: b.median,
+                    marketMedian: 0,
+                    count: 1,
+                });
+            }
+        }
+
+        if (rentalAggregation) {
+            for (const group of rentalAggregation) {
+                for (const [vk, entry] of grouped) {
+                    if (entry.marketMedian === 0 && group.rentPerM2 > 0) {
+                        const vkArea =
+                            vk === "VK1" ? 25 : vk === "VK2" ? 40 : vk === "VK3" ? 65 : 90;
+                        const groupArea = group.medianRent / group.rentPerM2;
+
+                        if (Math.abs(groupArea - vkArea) < 20) {
+                            entry.marketMedian = group.rentPerM2;
+                        }
+                    }
+                }
+            }
+        }
+
+        return Array.from(grouped.entries())
+            .sort(([a], [b]) => a.localeCompare(b))
+            .map(([vk, entry]) => ({
+                category: VK_LABELS[vk] ?? vk,
+                "MF reference": Math.round(entry.mfRef),
+                "MF median": Math.round(entry.mfMedian),
+                "Market median": Math.round(entry.marketMedian),
+            }));
+    }, [mfBenchmarks, rentalAggregation]);
+
+    if (chartData.length === 0) {
+        return null;
+    }
+
+    return (
+        <ChartContainer
+            title="MF vs market rent comparison"
+            description="Government reference prices against observed market rental medians per size category."
+            height={320}
+            className="border-white/5 bg-white/[0.02]"
+        >
+            <BarChart data={chartData} margin={{ top: 10, right: 20, left: 12, bottom: 12 }}>
+                <CartesianGrid {...chartGridProps} />
+                <XAxis {...chartAxisProps} dataKey="category" />
+                <YAxis
+                    {...chartAxisProps}
+                    tickFormatter={(value: number) => `${value} CZK`}
+                    width={72}
+                />
+                <Tooltip content={<MfComparisonTooltip />} />
+                <Bar dataKey="MF reference" fill="#84cc16" radius={[6, 6, 0, 0]} />
+                <Bar dataKey="MF median" fill="#a3e635" radius={[6, 6, 0, 0]} opacity={0.6} />
+                <Bar dataKey="Market median" fill="#22d3ee" radius={[6, 6, 0, 0]} />
+                {targetRentPerM2 ? (
+                    <ReferenceLine
+                        y={targetRentPerM2}
+                        stroke="#f59e0b"
+                        strokeDasharray="4 4"
+                        label={{ value: "Target rent/m²", fill: "#fcd34d", fontSize: 11 }}
+                    />
+                ) : null}
+            </BarChart>
+        </ChartContainer>
+    );
+}
+
+function MfComparisonTooltip({
+    active,
+    payload,
+}: {
+    active?: boolean;
+    payload?: Array<{ name?: string; value?: number; color?: string }>;
+}) {
+    if (!active || !payload || payload.length === 0) {
+        return null;
+    }
+
+    return (
+        <div className="min-w-48 rounded-xl border border-white/10 bg-slate-950/95 px-3 py-2 text-xs shadow-2xl backdrop-blur-sm">
+            {payload.map((entry) => (
+                <div key={entry.name} className="flex items-center justify-between gap-4 font-mono text-slate-200">
+                    <span className="flex items-center gap-2">
+                        <span className="size-2 rounded-full" style={{ backgroundColor: entry.color }} />
+                        <span className="text-slate-400">{entry.name}</span>
+                    </span>
+                    <span>{formatCurrency(entry.value ?? 0)}/m²</span>
+                </div>
+            ))}
+        </div>
+    );
+}
+
 function formatTooltipDate(value: string): string {
     return fmtDateTime(value, {
         month: "2-digit",

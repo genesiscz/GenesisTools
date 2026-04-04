@@ -29,6 +29,7 @@ import {
     DistributionHistogram,
     InvestmentBenchmarkChart,
     InvestmentSensitivityChart,
+    MfRentComparisonChart,
     RentalAggregationChart,
     TrendChartCard,
 } from "./AnalysisCharts";
@@ -1111,6 +1112,18 @@ export function RentalsTab({ data }: AnalysisSectionProps) {
                     </CardContent>
                 </Card>
             </div>
+
+            {data.benchmarks.mf.length > 0 ? (
+                <MfRentComparisonChart
+                    mfBenchmarks={data.benchmarks.mf}
+                    rentalAggregation={aggregated}
+                    targetRentPerM2={
+                        data.meta.target.area > 0
+                            ? data.meta.target.monthlyRent / data.meta.target.area
+                            : undefined
+                    }
+                />
+            ) : null}
 
             <DataProvenance
                 title="Rental provenance"
