@@ -15,11 +15,6 @@ export interface ChatResponse {
     cost?: number;
     /** SDK response messages including tool calls/results — used for multi-turn history. */
     responseMessages?: ModelMessage[];
-    toolCalls?: Array<{
-        toolCallType: "function" | "provider";
-        toolCallId: string;
-        args?: Record<string, unknown>;
-    }>;
 }
 
 export interface OneShotOptions {
@@ -79,7 +74,7 @@ export class ChatEngine {
 
         const config: ChatConfig = {
             model: getLanguageModel(provider.provider, selection.model.id),
-            provider: "anthropic",
+            provider: provider.name,
             modelName: selection.model.id,
             streaming: options.streaming ?? false,
             systemPrompt: options.systemPrompt,
@@ -308,30 +303,9 @@ export class ChatEngine {
 
         return {
             content: fullResponse,
-            usage: usage,
-            cost: cost,
+            usage,
+            cost,
             responseMessages,
-            toolCalls: result.toolCalls
-                ? Array.isArray(result.toolCalls)
-                    ? result.toolCalls.map((tc) => {
-                          const base: {
-                              toolCallType: "function" | "provider";
-                              toolCallId: string;
-                              args?: Record<string, unknown>;
-                          } = {
-                              toolCallType: (tc.type === "tool-call" ? "function" : "provider") as
-                                  | "function"
-                                  | "provider",
-                              toolCallId: tc.toolCallId,
-                          };
-                          // Only include args if it exists on the tool call
-                          if ("args" in tc && tc.args) {
-                              base.args = tc.args as Record<string, unknown>;
-                          }
-                          return base;
-                      })
-                    : []
-                : undefined,
         };
     }
 
@@ -389,27 +363,6 @@ export class ChatEngine {
             usage: result.usage,
             cost,
             responseMessages: result.response.messages as ModelMessage[],
-            toolCalls: result.toolCalls
-                ? Array.isArray(result.toolCalls)
-                    ? result.toolCalls.map((tc) => {
-                          const base: {
-                              toolCallType: "function" | "provider";
-                              toolCallId: string;
-                              args?: Record<string, unknown>;
-                          } = {
-                              toolCallType: (tc.type === "tool-call" ? "function" : "provider") as
-                                  | "function"
-                                  | "provider",
-                              toolCallId: tc.toolCallId,
-                          };
-                          // Only include args if it exists on the tool call
-                          if ("args" in tc && tc.args) {
-                              base.args = tc.args as Record<string, unknown>;
-                          }
-                          return base;
-                      })
-                    : []
-                : undefined,
         };
     }
 
