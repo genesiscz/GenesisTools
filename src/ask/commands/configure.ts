@@ -1,3 +1,5 @@
+import { aiConfigStorage } from "@app/utils/ai/account-storage";
+import type { AIAccountEntry, AIProvider } from "@app/utils/ai/account-types";
 import { loadAskConfig, saveAskConfig } from "@ask/config";
 import { modelSelector } from "@ask/providers/ModelSelector";
 import { providerManager } from "@ask/providers/ProviderManager";
@@ -9,30 +11,16 @@ export async function runConfigureWizard(): Promise<void> {
     p.intro(pc.bgCyan(pc.black(" ask config ")));
 
     const config = await loadAskConfig();
+    const accounts = await aiConfigStorage.listAccounts();
 
     while (true) {
         const action = await p.select({
             message: "What would you like to configure?",
             options: [
                 {
-                    value: "use-claude-account",
-                    label: "Use tools claude account",
-                    hint: "pick from existing claude accounts",
-                },
-                {
-                    value: "auth-subscription",
-                    label: "Auth with Anthropic subscription",
-                    hint: "OAuth login flow",
-                },
-                {
-                    value: "configure-independent",
-                    label: "Configure independently",
-                    hint: "paste API key or token",
-                },
-                {
-                    value: "provider-settings",
-                    label: "Provider settings",
-                    hint: "allow/disable env tokens",
+                    value: "manage-accounts",
+                    label: "Manage accounts",
+                    hint: `${accounts.length} account(s)`,
                 },
                 {
                     value: "default-model",
@@ -40,6 +28,11 @@ export async function runConfigureWizard(): Promise<void> {
                     hint: config.defaultProvider
                         ? `${config.defaultProvider}/${config.defaultModel ?? "auto"}`
                         : "not set",
+                },
+                {
+                    value: "provider-settings",
+                    label: "Provider settings",
+                    hint: "env tokens",
                 },
                 {
                     value: "show-config",
@@ -58,14 +51,8 @@ export async function runConfigureWizard(): Promise<void> {
         }
 
         switch (action) {
-            case "use-claude-account":
-                await configureClaudeAccount(config);
-                break;
-            case "auth-subscription":
-                await authWithSubscription(config);
-                break;
-            case "configure-independent":
-                await configureIndependent(config);
+            case "manage-accounts":
+                await manageAccounts();
                 break;
             case "provider-settings":
                 await configureProviderSettings(config);
@@ -74,13 +61,167 @@ export async function runConfigureWizard(): Promise<void> {
                 await configureDefaultModel(config);
                 break;
             case "show-config":
-                showCurrentConfig(config);
+                await showCurrentConfig(config);
                 break;
         }
     }
 }
 
-async function configureClaudeAccount(config: AskConfig): Promise<void> {
+// ── Account Management ──
+
+async function manageAccounts(): Promise<void> {
+    while (true) {
+        const accounts = await aiConfigStorage.listAccounts();
+
+        const options: Array<{ value: string; label: string; hint?: string }> = accounts.map((a) => ({
+            value: `view:${a.name}`,
+            label: `${a.name} (${a.provider})${a.label ? pc.dim(` · ${a.label}`) : ""}`,
+            hint: a.apps?.join(", "),
+        }));
+
+        options.push({ value: "add", label: pc.green("+ Add new account") }, { value: "back", label: "Back" });
+
+        const choice = await p.select({
+            message: "Accounts",
+            options,
+        });
+
+        if (p.isCancel(choice) || choice === "back") {
+            return;
+        }
+
+        if (choice === "add") {
+            await addAccount();
+            continue;
+        }
+
+        if (typeof choice === "string" && choice.startsWith("view:")) {
+            const name = choice.slice(5);
+            await viewAccount(name);
+        }
+    }
+}
+
+async function viewAccount(name: string): Promise<void> {
+    const account = await aiConfigStorage.getAccount(name);
+
+    if (!account) {
+        p.log.error(`Account "${name}" not found.`);
+        return;
+    }
+
+    const lines = [
+        `${pc.dim("Name:")}     ${account.name}`,
+        `${pc.dim("Provider:")} ${account.provider}`,
+        `${pc.dim("Label:")}    ${account.label ?? pc.dim("none")}`,
+        `${pc.dim("Apps:")}     ${account.apps?.join(", ") ?? pc.dim("none")}`,
+        `${pc.dim("API Key:")}  ${account.tokens.apiKey ? pc.dim("configured") : pc.dim("none")}`,
+        `${pc.dim("OAuth:")}    ${account.tokens.accessToken ? pc.dim("configured") : pc.dim("none")}`,
+    ];
+
+    if (account.tokens.expiresAt) {
+        lines.push(`${pc.dim("Expires:")}  ${new Date(account.tokens.expiresAt).toLocaleString()}`);
+    }
+
+    p.note(lines.join("\n"), account.name);
+
+    const action = await p.select({
+        message: "Action",
+        options: [
+            { value: "remove", label: pc.red("Remove account") },
+            { value: "back", label: "Back" },
+        ],
+    });
+
+    if (p.isCancel(action) || action === "back") {
+        return;
+    }
+
+    if (action === "remove") {
+        const confirm = await p.confirm({
+            message: `Remove account "${name}"?`,
+            initialValue: false,
+        });
+
+        if (!p.isCancel(confirm) && confirm) {
+            await aiConfigStorage.removeAccount(name);
+            p.log.success(`Account "${name}" removed.`);
+        }
+    }
+}
+
+async function addAccount(): Promise<void> {
+    const provider = await p.select({
+        message: "Provider",
+        options: [
+            { value: "anthropic", label: "Anthropic" },
+            { value: "openai", label: "OpenAI / Codex" },
+            { value: "back", label: "Back" },
+        ],
+    });
+
+    if (p.isCancel(provider) || provider === "back") {
+        return;
+    }
+
+    if (provider === "anthropic") {
+        await addAnthropicAccount();
+    } else if (provider === "openai") {
+        await addOpenAIAccount();
+    }
+}
+
+// ── Anthropic Account Flows ──
+
+async function addAnthropicAccount(): Promise<void> {
+    const method = await p.select({
+        message: "Anthropic account type",
+        options: [
+            {
+                value: "from-claude",
+                label: "Add from tools claude account",
+                hint: "pick from existing claude accounts",
+            },
+            {
+                value: "auth-subscription",
+                label: "Auth with Anthropic Max Plan",
+                hint: "OAuth browser flow",
+            },
+            {
+                value: "oauth-key",
+                label: "Add OAuth key",
+                hint: 'from "claude setup-token"',
+            },
+            {
+                value: "api-key",
+                label: "Add API key",
+                hint: "standard sk-ant-api...",
+            },
+            { value: "back", label: "Back" },
+        ],
+    });
+
+    if (p.isCancel(method) || method === "back") {
+        return;
+    }
+
+    switch (method) {
+        case "from-claude":
+            await addFromClaudeAccount();
+            break;
+        case "auth-subscription":
+            await addViaOAuthFlow();
+            break;
+        case "oauth-key":
+            await addOAuthKey();
+            break;
+        case "api-key":
+            await addAnthropicApiKey();
+            break;
+    }
+}
+
+async function addFromClaudeAccount(): Promise<void> {
     const { listAvailableAccounts } = await import("@app/utils/claude/subscription-auth");
     const accounts = await listAvailableAccounts();
 
@@ -91,7 +232,7 @@ async function configureClaudeAccount(config: AskConfig): Promise<void> {
     }
 
     const choice = await p.select({
-        message: "Which account?",
+        message: "Which claude account?",
         options: accounts.map((a) => ({
             value: a.name,
             label: `${a.name}${a.label ? pc.dim(` (${a.label})`) : ""}`,
@@ -103,26 +244,47 @@ async function configureClaudeAccount(config: AskConfig): Promise<void> {
     }
 
     const selected = accounts.find((a) => a.name === choice);
+    const { loadConfig } = await import("@app/claude/lib/config");
+    const claudeConfig = await loadConfig();
+    const claudeAccount = claudeConfig.accounts[choice as string];
 
-    config.claude = {
-        accountRef: choice as string,
-        accountLabel: selected?.label,
-        accountName: choice as string,
-    };
-
-    if (!config.defaultProvider) {
-        config.defaultProvider = "anthropic";
+    if (!claudeAccount) {
+        p.log.error(`Account "${choice}" not found in claude config.`);
+        return;
     }
 
-    await saveAskConfig(config);
+    const entry: AIAccountEntry = {
+        name: choice as string,
+        provider: "anthropic-sub",
+        tokens: {
+            accessToken: claudeAccount.accessToken,
+            refreshToken: claudeAccount.refreshToken,
+            expiresAt: claudeAccount.expiresAt,
+        },
+        label: selected?.label ?? claudeAccount.label,
+        apps: ["ask", "claude"],
+    };
 
-    p.log.success(`Claude account set to "${choice}".`);
+    await aiConfigStorage.addAccount(entry);
 
-    const footerPreview = `Provider: anthropic${selected?.label ? ` (${selected.label})` : ""} · ${choice}`;
-    p.note(pc.dim(footerPreview), "Footer preview");
+    // Also set as ask config's claude account for backward compat
+    const askConfig = await loadAskConfig();
+
+    askConfig.claude = {
+        accountRef: entry.name,
+        accountLabel: entry.label,
+        accountName: entry.name,
+    };
+
+    if (!askConfig.defaultProvider) {
+        askConfig.defaultProvider = "anthropic";
+    }
+
+    await saveAskConfig(askConfig);
+    p.log.success(`Account "${entry.name}" added from tools claude.`);
 }
 
-async function authWithSubscription(config: AskConfig): Promise<void> {
+async function addViaOAuthFlow(): Promise<void> {
     const { claudeOAuth, fetchOAuthProfile } = await import("@app/utils/claude/auth");
 
     const spinner = p.spinner();
@@ -211,22 +373,40 @@ async function authWithSubscription(config: AskConfig): Promise<void> {
 
     p.note(infoLines.join("\n"), "Account Authorized");
 
-    // Determine label
+    // Determine label and name
     const { determineAccountLabel } = await import("@app/claude/lib/config");
     const label = determineAccountLabel(profile ?? undefined);
+    const accountName = tokens.account?.email?.split("@")[0]?.toLowerCase() ?? "subscription";
 
-    config.claude = {
-        independentToken: tokens.accessToken,
-        accountLabel: label,
-        accountName: tokens.account?.email?.split("@")[0]?.toLowerCase() ?? "subscription",
+    const entry: AIAccountEntry = {
+        name: accountName,
+        provider: "anthropic-sub",
+        tokens: {
+            accessToken: tokens.accessToken,
+            refreshToken: tokens.refreshToken,
+            expiresAt: tokens.expiresAt,
+        },
+        label,
+        apps: ["ask", "claude"],
     };
 
-    if (!config.defaultProvider) {
-        config.defaultProvider = "anthropic";
+    await aiConfigStorage.addAccount(entry);
+
+    // Also update ask config for backward compat
+    const askConfig = await loadAskConfig();
+
+    askConfig.claude = {
+        accountRef: entry.name,
+        accountLabel: label,
+        accountName: entry.name,
+    };
+
+    if (!askConfig.defaultProvider) {
+        askConfig.defaultProvider = "anthropic";
     }
 
-    await saveAskConfig(config);
-    p.log.success("Subscription token saved to ask config.");
+    await saveAskConfig(askConfig);
+    p.log.success(`Account "${entry.name}" added via OAuth.`);
 
     // Offer to copy to tools claude
     const copyToClaude = await p.confirm({
@@ -237,7 +417,6 @@ async function authWithSubscription(config: AskConfig): Promise<void> {
     if (!p.isCancel(copyToClaude) && copyToClaude) {
         const { loadConfig: loadClaudeConfig, saveConfig: saveClaudeConfig } = await import("@app/claude/lib/config");
         const claudeConfig = await loadClaudeConfig();
-        const accountName = config.claude.accountName ?? "ask-imported";
 
         claudeConfig.accounts[accountName] = {
             accessToken: tokens.accessToken,
@@ -251,37 +430,14 @@ async function authWithSubscription(config: AskConfig): Promise<void> {
         }
 
         await saveClaudeConfig(claudeConfig);
-
-        // Also save the account ref so it stays synced
-        config.claude.accountRef = accountName;
-        config.claude.independentToken = undefined;
-        await saveAskConfig(config);
-
         p.log.success(`Account copied to tools claude as "${accountName}".`);
-        p.note(
-            "tools claude usage       — Monitor your Claude subscription usage\n" +
-                "tools claude usage watch — Live dashboard with notifications",
-            "What tools claude can do"
-        );
     }
 }
 
-async function configureIndependent(config: AskConfig): Promise<void> {
-    const tokenType = await p.select({
-        message: "What type of token?",
-        options: [
-            { value: "api-key", label: "Anthropic API key", hint: "sk-ant-..." },
-            { value: "oauth-token", label: "OAuth access token", hint: "from Claude subscription" },
-            { value: "back", label: "Back" },
-        ],
-    });
-
-    if (p.isCancel(tokenType) || tokenType === "back") {
-        return;
-    }
-
+async function addOAuthKey(): Promise<void> {
     const token = await p.text({
-        message: tokenType === "api-key" ? "Paste your Anthropic API key:" : "Paste your OAuth access token:",
+        message: "Paste your OAuth access token:",
+        placeholder: "sk-ant-oat01-...",
         validate: (val) => {
             if (!val?.trim()) {
                 return "Token is required";
@@ -293,28 +449,120 @@ async function configureIndependent(config: AskConfig): Promise<void> {
         return;
     }
 
-    if (tokenType === "api-key") {
-        // Set as env-style: user should add to their shell config
-        p.note(
-            `Add this to your shell config (~/.zshrc or ~/.bashrc):\n\n  export ANTHROPIC_API_KEY="<paste your key here>"`,
-            "API Key Setup"
-        );
-        p.log.info("The ask tool will detect it automatically via environment variable.");
-    } else {
-        config.claude = {
-            independentToken: token as string,
-            accountLabel: undefined,
-            accountName: "independent",
-        };
+    const name = await p.text({
+        message: "Account name:",
+        placeholder: "my-claude-sub",
+        validate: (val) => {
+            if (!val?.trim()) {
+                return "Name is required";
+            }
+        },
+    });
 
-        if (!config.defaultProvider) {
-            config.defaultProvider = "anthropic";
-        }
-
-        await saveAskConfig(config);
-        p.log.success("OAuth token saved to ask config.");
+    if (p.isCancel(name)) {
+        return;
     }
+
+    const entry: AIAccountEntry = {
+        name: name as string,
+        provider: "anthropic-sub",
+        tokens: {
+            accessToken: token as string,
+        },
+        apps: ["ask"],
+    };
+
+    await aiConfigStorage.addAccount(entry);
+    p.log.success(`Account "${name}" added with OAuth token.`);
 }
+
+async function addAnthropicApiKey(): Promise<void> {
+    const key = await p.text({
+        message: "Paste your Anthropic API key:",
+        placeholder: "sk-ant-api03-...",
+        validate: (val) => {
+            if (!val?.trim()) {
+                return "API key is required";
+            }
+        },
+    });
+
+    if (p.isCancel(key)) {
+        return;
+    }
+
+    const name = await p.text({
+        message: "Account name:",
+        placeholder: "anthropic-api",
+        validate: (val) => {
+            if (!val?.trim()) {
+                return "Name is required";
+            }
+        },
+    });
+
+    if (p.isCancel(name)) {
+        return;
+    }
+
+    const entry: AIAccountEntry = {
+        name: name as string,
+        provider: "anthropic",
+        tokens: {
+            apiKey: key as string,
+        },
+        apps: ["ask"],
+    };
+
+    await aiConfigStorage.addAccount(entry);
+    p.log.success(`Account "${name}" added with API key.`);
+}
+
+// ── OpenAI Account Flow ──
+
+async function addOpenAIAccount(): Promise<void> {
+    const key = await p.text({
+        message: "Paste your OpenAI API key:",
+        placeholder: "sk-...",
+        validate: (val) => {
+            if (!val?.trim()) {
+                return "API key is required";
+            }
+        },
+    });
+
+    if (p.isCancel(key)) {
+        return;
+    }
+
+    const name = await p.text({
+        message: "Account name:",
+        placeholder: "openai-api",
+        validate: (val) => {
+            if (!val?.trim()) {
+                return "Name is required";
+            }
+        },
+    });
+
+    if (p.isCancel(name)) {
+        return;
+    }
+
+    const entry: AIAccountEntry = {
+        name: name as string,
+        provider: "openai",
+        tokens: {
+            apiKey: key as string,
+        },
+        apps: ["ask"],
+    };
+
+    await aiConfigStorage.addAccount(entry);
+    p.log.success(`Account "${name}" added with OpenAI API key.`);
+}
+
+// ── Provider Settings ──
 
 async function configureProviderSettings(config: AskConfig): Promise<void> {
     const envEnabled = config.envTokens?.enabled !== false;
@@ -329,7 +577,6 @@ async function configureProviderSettings(config: AskConfig): Promise<void> {
     }
 
     if (masterToggle) {
-        // Mirrors PROVIDER_CONFIGS names — update if providers.ts changes
         const allProviders = ["openai", "groq", "openrouter", "anthropic", "google", "xai", "jinaai"];
         const currentlyDisabled = new Set(config.envTokens?.disabledProviders ?? []);
 
@@ -361,6 +608,8 @@ async function configureProviderSettings(config: AskConfig): Promise<void> {
     await saveAskConfig(config);
     p.log.success("Provider settings saved.");
 }
+
+// ── Default Model ──
 
 async function configureDefaultModel(config: AskConfig): Promise<void> {
     const currentInfo = config.defaultProvider
@@ -403,14 +652,13 @@ async function configureDefaultModel(config: AskConfig): Promise<void> {
         return;
     }
 
-    // Set new defaults
     const spinner = p.spinner();
     spinner.start("Detecting providers...");
     const providers = await providerManager.detectProviders();
     spinner.stop(`Found ${providers.length} provider(s).`);
 
     if (providers.length === 0) {
-        p.log.warn("No providers available. Configure API keys or a Claude subscription first.");
+        p.log.warn("No providers available. Configure API keys or a subscription first.");
         return;
     }
 
@@ -427,7 +675,11 @@ async function configureDefaultModel(config: AskConfig): Promise<void> {
     p.log.success(`Default set to ${pc.cyan(modelChoice.provider.name)}/${pc.cyan(modelChoice.model.id)}`);
 }
 
-function showCurrentConfig(config: AskConfig): void {
+// ── Show Config ──
+
+async function showCurrentConfig(config: AskConfig): Promise<void> {
+    const accounts = await aiConfigStorage.listAccounts();
+    const defaultAccount = await aiConfigStorage.getDefaultAccount();
     const lines: string[] = [];
 
     lines.push(pc.bold("Defaults:"));
@@ -437,22 +689,22 @@ function showCurrentConfig(config: AskConfig): void {
     lines.push(`  Tokens:   ${config.maxTokens ?? pc.dim("default")}`);
     lines.push("");
 
-    lines.push(pc.bold("Claude Subscription:"));
+    lines.push(pc.bold(`Accounts (${accounts.length}):`));
 
-    if (config.claude?.accountRef) {
-        lines.push(
-            `  Account:  ${pc.cyan(config.claude.accountRef)}${config.claude.accountLabel ? ` (${config.claude.accountLabel})` : ""}`
-        );
-        lines.push(`  Source:   tools claude config`);
-    } else if (config.claude?.independentToken) {
-        lines.push(`  Token:    ${pc.dim("(configured)")}`);
-        lines.push(`  Name:     ${config.claude.accountName ?? pc.dim("unknown")}`);
+    if (accounts.length === 0) {
+        lines.push(`  ${pc.dim("(none)")}`);
     } else {
-        lines.push(`  ${pc.dim("(not configured)")}`);
+        for (const a of accounts) {
+            const isDefault = a.name === defaultAccount?.name;
+            const marker = isDefault ? pc.green("★") : " ";
+            const providerLabel = formatProvider(a.provider);
+            const label = a.label ? pc.dim(` · ${a.label}`) : "";
+            const apps = a.apps?.length ? pc.dim(` [${a.apps.join(", ")}]`) : "";
+            lines.push(`  ${marker} ${a.name} (${providerLabel})${label}${apps}`);
+        }
     }
 
     lines.push("");
-
     lines.push(pc.bold("Env Tokens:"));
     lines.push(`  Enabled:  ${config.envTokens?.enabled !== false ? pc.green("yes") : pc.red("no")}`);
 
@@ -463,4 +715,12 @@ function showCurrentConfig(config: AskConfig): void {
     }
 
     p.note(lines.join("\n"), "Current Configuration");
+}
+
+function formatProvider(provider: AIProvider): string {
+    const labels: Record<string, string> = {
+        "anthropic-sub": "anthropic subscription",
+        "openai-sub": "openai subscription",
+    };
+    return labels[provider] ?? provider;
 }

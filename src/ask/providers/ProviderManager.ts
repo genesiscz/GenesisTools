@@ -102,7 +102,28 @@ export class ProviderManager {
     }
 
     private async detectAnthropicSubscription(askConfig: AskConfig, detected: DetectedProvider[]): Promise<void> {
+        // Try AIConfigStorage first (new unified storage)
+        const resolved = await this.resolveAnthropicFromAIConfig();
+
+        if (resolved) {
+            const { token, label } = resolved;
+            const hint = label ? ` (${label})` : "";
+
+            try {
+                const detectedProvider = await this.buildSubscriptionProvider(token);
+                detected.push(detectedProvider);
+                this.detectedProviders.set("anthropic", detectedProvider);
+                askUI().logDetectedSubscription({ provider: "anthropic", hint });
+                return;
+            } catch (error) {
+                logger.warn(`Failed to initialize anthropic from AIConfigStorage: ${error}`);
+            }
+        }
+
+        // Fallback: legacy askConfig.claude
         if (!askConfig.claude?.accountRef && !askConfig.claude?.independentToken) {
+            // No subscription configured anywhere — try env key as last resort
+            await this.detectAnthropicEnvKeyFallback(detected);
             return;
         }
 
@@ -117,71 +138,119 @@ export class ProviderManager {
                 token = askConfig.claude.independentToken!;
             }
 
-            const { createAnthropic } = await import("@ai-sdk/anthropic");
-            const provider = createAnthropic({
-                apiKey: "oauth-placeholder",
-                headers: {
-                    Authorization: `Bearer ${token}`,
-                    "anthropic-beta": SUBSCRIPTION_BETAS,
-                },
-                fetch: createSubscriptionFetch(),
-            });
-
-            const allConfigs = getProviderConfigs();
-            const anthropicConfig = allConfigs.find((c) => c.name === "anthropic");
-            if (!anthropicConfig) {
-                throw new Error("anthropic provider config missing from PROVIDER_CONFIGS");
-            }
-
-            const models = await this.getAvailableModels(anthropicConfig, provider);
             const accountLabel = askConfig.claude.accountLabel;
             const hint = accountLabel ? ` (${accountLabel})` : "";
 
-            const detectedProvider: DetectedProvider = {
-                name: "anthropic",
-                type: "anthropic",
-                key: `${token.slice(0, 20)}...`,
-                provider,
-                models,
-                config: anthropicConfig,
-                systemPromptPrefix: SUBSCRIPTION_SYSTEM_PREFIX,
-            };
-
+            const detectedProvider = await this.buildSubscriptionProvider(token);
             detected.push(detectedProvider);
             this.detectedProviders.set("anthropic", detectedProvider);
-
             askUI().logDetectedSubscription({ provider: "anthropic", hint });
         } catch (error) {
             logger.warn(`Failed to initialize anthropic subscription provider: ${error}`);
+            await this.detectAnthropicEnvKeyFallback(detected);
+        }
+    }
 
-            // Fallback: try env-key if subscription detection failed
-            const envKey = process.env.ANTHROPIC_API_KEY;
-            if (envKey) {
-                logger.info("Falling back to ANTHROPIC_API_KEY environment variable");
-                try {
-                    const allConfigs = getProviderConfigs();
-                    const cfg = allConfigs.find((c) => c.name === "anthropic");
-                    if (cfg) {
-                        const provider = await this.createProvider(cfg);
-                        if (provider) {
-                            const models = await this.getAvailableModels(cfg, provider);
-                            const detectedProvider: DetectedProvider = {
-                                name: "anthropic",
-                                type: "anthropic",
-                                key: envKey,
-                                provider,
-                                models,
-                                config: cfg,
-                            };
-                            detected.push(detectedProvider);
-                            this.detectedProviders.set("anthropic", detectedProvider);
-                            askUI().logDetected({ provider: "anthropic", count: models.length });
-                        }
-                    }
-                } catch (fallbackErr) {
-                    logger.warn(`Anthropic env-key fallback also failed: ${fallbackErr}`);
-                }
+    /**
+     * Try to resolve an anthropic-sub account from AIConfigStorage.
+     * Returns the access token and label, or null if no account found.
+     */
+    private async resolveAnthropicFromAIConfig(): Promise<{ token: string; label?: string } | null> {
+        try {
+            const { aiConfigStorage } = await import("@app/utils/ai/account-storage");
+            const accounts = await aiConfigStorage.getAccountsByProvider("anthropic-sub");
+
+            if (accounts.length === 0) {
+                return null;
             }
+
+            // Prefer the default account if it's an anthropic-sub
+            const config = await aiConfigStorage.load();
+            const defaultName = config.defaultAccount;
+            const account = (defaultName && accounts.find((a) => a.name === defaultName)) || accounts[0];
+
+            if (!account.tokens.accessToken) {
+                // Try resolving via tools claude (token refresh)
+                const { resolveAccountToken } = await import("@app/utils/claude/subscription-auth");
+                const result = await resolveAccountToken(account.name);
+                return { token: result.token, label: account.label };
+            }
+
+            return { token: account.tokens.accessToken, label: account.label };
+        } catch {
+            return null;
+        }
+    }
+
+    /**
+     * Build a DetectedProvider for anthropic subscription given an OAuth token.
+     */
+    private async buildSubscriptionProvider(token: string): Promise<DetectedProvider> {
+        const { createAnthropic } = await import("@ai-sdk/anthropic");
+        const provider = createAnthropic({
+            apiKey: "oauth-placeholder",
+            headers: {
+                Authorization: `Bearer ${token}`,
+                "anthropic-beta": SUBSCRIPTION_BETAS,
+            },
+            fetch: createSubscriptionFetch(),
+        });
+
+        const allConfigs = getProviderConfigs();
+        const anthropicConfig = allConfigs.find((c) => c.name === "anthropic");
+
+        if (!anthropicConfig) {
+            throw new Error("anthropic provider config missing from PROVIDER_CONFIGS");
+        }
+
+        const models = await this.getAvailableModels(anthropicConfig, provider);
+
+        return {
+            name: "anthropic",
+            type: "anthropic",
+            key: `${token.slice(0, 20)}...`,
+            provider,
+            models,
+            config: anthropicConfig,
+            systemPromptPrefix: SUBSCRIPTION_SYSTEM_PREFIX,
+        };
+    }
+
+    private async detectAnthropicEnvKeyFallback(detected: DetectedProvider[]): Promise<void> {
+        const envKey = process.env.ANTHROPIC_API_KEY;
+
+        if (!envKey) {
+            return;
+        }
+
+        logger.info("Falling back to ANTHROPIC_API_KEY environment variable");
+
+        try {
+            const allConfigs = getProviderConfigs();
+            const cfg = allConfigs.find((c) => c.name === "anthropic");
+
+            if (!cfg) {
+                return;
+            }
+
+            const provider = await this.createProvider(cfg);
+
+            if (provider) {
+                const models = await this.getAvailableModels(cfg, provider);
+                const detectedProvider: DetectedProvider = {
+                    name: "anthropic",
+                    type: "anthropic",
+                    key: envKey,
+                    provider,
+                    models,
+                    config: cfg,
+                };
+                detected.push(detectedProvider);
+                this.detectedProviders.set("anthropic", detectedProvider);
+                askUI().logDetected({ provider: "anthropic", count: models.length });
+            }
+        } catch (fallbackErr) {
+            logger.warn(`Anthropic env-key fallback also failed: ${fallbackErr}`);
         }
     }
 

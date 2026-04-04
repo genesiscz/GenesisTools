@@ -408,6 +408,14 @@ class ASKTool {
             for await (const event of chat.send(message)) {
                 if (event.isText() && !suppressStreaming) {
                     process.stdout.write(event.text);
+                } else if (event.isToolCall() && !suppressStreaming) {
+                    process.stderr.write(pc.dim(`\n🔧 [${event.name}] ${SafeJSON.stringify(event.input)}\n`));
+                } else if (event.isToolResult() && !suppressStreaming) {
+                    const summary =
+                        typeof event.output === "string"
+                            ? event.output.slice(0, 300)
+                            : SafeJSON.stringify(event.output).slice(0, 300);
+                    process.stderr.write(pc.dim(`✓ [${event.name}] ${summary}\n`));
                 }
 
                 if (event.isDone()) {
