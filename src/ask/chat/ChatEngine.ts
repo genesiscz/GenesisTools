@@ -152,7 +152,7 @@ export class ChatEngine {
     }
 
     private async sendStreamingMessage(
-        message: string,
+        _message: string,
         tools?: ToolSet,
         callbacks?: {
             onChunk?: (chunk: string) => void;
@@ -167,9 +167,15 @@ export class ChatEngine {
 
         const hasTools = tools && Object.keys(tools).length > 0;
 
+        // Build messages from conversation history so the model has context
+        const messages = this.conversationHistory.map((msg) => ({
+            role: msg.role as "user" | "assistant" | "system",
+            content: msg.content,
+        }));
+
         const result = await streamText({
             model: this.config.model,
-            prompt: message,
+            messages,
             system: this.getEffectiveSystemPrompt(),
             temperature: this.config.temperature,
             ...(this.config.maxTokens && { maxOutputTokens: this.config.maxTokens }),
@@ -316,12 +322,18 @@ export class ChatEngine {
         };
     }
 
-    private async sendNonStreamingMessage(message: string, tools?: ToolSet): Promise<ChatResponse> {
+    private async sendNonStreamingMessage(_message: string, tools?: ToolSet): Promise<ChatResponse> {
         const hasTools = tools && Object.keys(tools).length > 0;
+
+        // Build messages from conversation history
+        const messages = this.conversationHistory.map((msg) => ({
+            role: msg.role as "user" | "assistant" | "system",
+            content: msg.content,
+        }));
 
         const result = await generateText({
             model: this.config.model,
-            prompt: message,
+            messages,
             system: this.getEffectiveSystemPrompt(),
             temperature: this.config.temperature,
             ...(this.config.maxTokens && { maxOutputTokens: this.config.maxTokens }),
