@@ -16,6 +16,7 @@ import { Route as CompareRouteImport } from './routes/compare'
 import { Route as AnalyzeRouteImport } from './routes/analyze'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as WatchlistPropertyIdRouteImport } from './routes/watchlist.$propertyId'
+import { Route as ApiProviderHealthRouteImport } from './routes/api/provider-health'
 import { Route as ApiPropertyDetailRouteImport } from './routes/api/property-detail'
 import { Route as ApiPropertiesRouteImport } from './routes/api/properties'
 import { Route as ApiListingsRouteImport } from './routes/api/listings'
@@ -62,6 +63,11 @@ const WatchlistPropertyIdRoute = WatchlistPropertyIdRouteImport.update({
   id: '/$propertyId',
   path: '/$propertyId',
   getParentRoute: () => WatchlistRoute,
+} as any)
+const ApiProviderHealthRoute = ApiProviderHealthRouteImport.update({
+  id: '/api/provider-health',
+  path: '/api/provider-health',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const ApiPropertyDetailRoute = ApiPropertyDetailRouteImport.update({
   id: '/api/property-detail',
@@ -135,6 +141,7 @@ export interface FileRoutesByFullPath {
   '/api/listings': typeof ApiListingsRouteWithChildren
   '/api/properties': typeof ApiPropertiesRouteWithChildren
   '/api/property-detail': typeof ApiPropertyDetailRoute
+  '/api/provider-health': typeof ApiProviderHealthRoute
   '/watchlist/$propertyId': typeof WatchlistPropertyIdRoute
   '/api/listings/$id': typeof ApiListingsIdRoute
   '/api/properties/$id/history': typeof ApiPropertiesIdHistoryRoute
@@ -155,6 +162,7 @@ export interface FileRoutesByTo {
   '/api/listings': typeof ApiListingsRouteWithChildren
   '/api/properties': typeof ApiPropertiesRouteWithChildren
   '/api/property-detail': typeof ApiPropertyDetailRoute
+  '/api/provider-health': typeof ApiProviderHealthRoute
   '/watchlist/$propertyId': typeof WatchlistPropertyIdRoute
   '/api/listings/$id': typeof ApiListingsIdRoute
   '/api/properties/$id/history': typeof ApiPropertiesIdHistoryRoute
@@ -176,6 +184,7 @@ export interface FileRoutesById {
   '/api/listings': typeof ApiListingsRouteWithChildren
   '/api/properties': typeof ApiPropertiesRouteWithChildren
   '/api/property-detail': typeof ApiPropertyDetailRoute
+  '/api/provider-health': typeof ApiProviderHealthRoute
   '/watchlist/$propertyId': typeof WatchlistPropertyIdRoute
   '/api/listings/$id': typeof ApiListingsIdRoute
   '/api/properties/$id/history': typeof ApiPropertiesIdHistoryRoute
@@ -198,6 +207,7 @@ export interface FileRouteTypes {
     | '/api/listings'
     | '/api/properties'
     | '/api/property-detail'
+    | '/api/provider-health'
     | '/watchlist/$propertyId'
     | '/api/listings/$id'
     | '/api/properties/$id/history'
@@ -218,6 +228,7 @@ export interface FileRouteTypes {
     | '/api/listings'
     | '/api/properties'
     | '/api/property-detail'
+    | '/api/provider-health'
     | '/watchlist/$propertyId'
     | '/api/listings/$id'
     | '/api/properties/$id/history'
@@ -238,6 +249,7 @@ export interface FileRouteTypes {
     | '/api/listings'
     | '/api/properties'
     | '/api/property-detail'
+    | '/api/provider-health'
     | '/watchlist/$propertyId'
     | '/api/listings/$id'
     | '/api/properties/$id/history'
@@ -259,6 +271,7 @@ export interface RootRouteChildren {
   ApiListingsRoute: typeof ApiListingsRouteWithChildren
   ApiPropertiesRoute: typeof ApiPropertiesRouteWithChildren
   ApiPropertyDetailRoute: typeof ApiPropertyDetailRoute
+  ApiProviderHealthRoute: typeof ApiProviderHealthRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -311,6 +324,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/watchlist/$propertyId'
       preLoaderRoute: typeof WatchlistPropertyIdRouteImport
       parentRoute: typeof WatchlistRoute
+    }
+    '/api/provider-health': {
+      id: '/api/provider-health'
+      path: '/api/provider-health'
+      fullPath: '/api/provider-health'
+      preLoaderRoute: typeof ApiProviderHealthRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/api/property-detail': {
       id: '/api/property-detail'
@@ -444,6 +464,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiListingsRoute: ApiListingsRouteWithChildren,
   ApiPropertiesRoute: ApiPropertiesRouteWithChildren,
   ApiPropertyDetailRoute: ApiPropertyDetailRoute,
+  ApiProviderHealthRoute: ApiProviderHealthRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

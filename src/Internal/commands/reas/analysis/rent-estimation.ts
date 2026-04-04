@@ -31,9 +31,7 @@ export function estimateRent({
         return undefined;
     }
 
-    const matchingDisposition = disposition
-        ? rentals.filter((listing) => listing.disposition === disposition)
-        : [];
+    const matchingDisposition = disposition ? rentals.filter((listing) => listing.disposition === disposition) : [];
 
     if (matchingDisposition.length >= 3) {
         const rents = matchingDisposition.map((listing) => listing.price).sort((left, right) => left - right);
