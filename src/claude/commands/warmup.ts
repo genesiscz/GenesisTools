@@ -5,108 +5,122 @@ import type { Command } from "commander";
 import pc from "picocolors";
 
 export function registerWarmupCommand(program: Command): void {
-	const warmup = program.command("warmup").description("Manually warm up Claude accounts to start session timers");
+    const warmup = program.command("warmup").description("Manually warm up Claude accounts to start session timers");
 
-	warmup.action(async () => {
-		p.intro(pc.bgCyan(pc.black(" claude warmup ")));
+    warmup
+        .argument("[account]", "Warm up a specific account (skip selection)")
+        .action(async (accountArg?: string) => {
+        p.intro(pc.bgCyan(pc.black(" claude warmup ")));
 
-		const config = await loadConfig();
-		const accountNames = Object.keys(config.accounts);
+        const config = await loadConfig();
+        const accountNames = Object.keys(config.accounts);
 
-		if (accountNames.length === 0) {
-			p.log.error("No accounts configured. Run: tools claude login");
-			p.outro("");
-			return;
-		}
+        if (accountNames.length === 0) {
+            p.log.error("No accounts configured. Run: tools claude login");
+            p.outro("");
+            return;
+        }
 
-		const selected = await p.multiselect({
-			message: "Select accounts to warm up",
-			options: accountNames.map((name) => ({
-				value: name,
-				label: `${name}${config.accounts[name].label ? ` (${config.accounts[name].label})` : ""}`,
-			})),
-			required: true,
-		});
+        let accounts: string[];
 
-		if (p.isCancel(selected)) {
-			p.outro("Cancelled.");
-			return;
-		}
+        if (accountArg) {
+            if (!config.accounts[accountArg]) {
+                p.log.error(`Account "${accountArg}" not found. Available: ${accountNames.join(", ")}`);
+                p.outro("");
+                return;
+            }
 
-		const accounts = selected as string[];
-		const results: Array<{ name: string; success: boolean; duration: number }> = [];
+            accounts = [accountArg];
+        } else {
+            const selected = await p.multiselect({
+                message: "Select accounts to warm up",
+                options: accountNames.map((name) => ({
+                    value: name,
+                    label: `${name}${config.accounts[name].label ? ` (${config.accounts[name].label})` : ""}`,
+                })),
+                required: true,
+            });
 
-		const spinner = p.spinner();
+            if (p.isCancel(selected)) {
+                p.outro("Cancelled.");
+                return;
+            }
 
-		for (const name of accounts) {
-			spinner.start(`Warming up ${pc.cyan(name)}...`);
-			const start = performance.now();
-			const success = await sendWarmupMessage(name);
-			const duration = Math.round(performance.now() - start);
-			results.push({ name, success, duration });
+            accounts = selected as string[];
+        }
+        const results: Array<{ name: string; success: boolean; duration: number }> = [];
 
-			if (success) {
-				spinner.stop(`${pc.cyan(name)} ${pc.green("\u2713")} ${pc.dim(`${duration}ms`)}`);
-			} else {
-				spinner.stop(`${pc.cyan(name)} ${pc.red("\u2717 failed")} ${pc.dim(`${duration}ms`)}`);
-			}
-		}
+        const spinner = p.spinner();
 
-		// Summary
-		const ok = results.filter((r) => r.success).length;
-		const fail = results.filter((r) => !r.success).length;
+        for (const name of accounts) {
+            spinner.start(`Warming up ${pc.cyan(name)}...`);
+            const start = performance.now();
+            const success = await sendWarmupMessage(name);
+            const duration = Math.round(performance.now() - start);
+            results.push({ name, success, duration });
 
-		const lines: string[] = [];
+            if (success) {
+                spinner.stop(`${pc.cyan(name)} ${pc.green("\u2713")} ${pc.dim(`${duration}ms`)}`);
+            } else {
+                spinner.stop(`${pc.cyan(name)} ${pc.red("\u2717 failed")} ${pc.dim(`${duration}ms`)}`);
+            }
+        }
 
-		for (const r of results) {
-			const icon = r.success ? pc.green("\u2713") : pc.red("\u2717");
-			const label = config.accounts[r.name]?.label;
-			const hint = label ? pc.dim(` (${label})`) : "";
-			lines.push(`  ${icon} ${r.name}${hint}  ${pc.dim(`${r.duration}ms`)}`);
-		}
+        // Summary
+        const ok = results.filter((r) => r.success).length;
+        const fail = results.filter((r) => !r.success).length;
 
-		lines.push("");
+        const lines: string[] = [];
 
-		if (fail === 0) {
-			lines.push(pc.green(`All ${ok} account(s) warmed up successfully.`));
-		} else {
-			lines.push(`${pc.green(`${ok} succeeded`)}, ${pc.red(`${fail} failed`)}`);
-		}
+        for (const r of results) {
+            const icon = r.success ? pc.green("\u2713") : pc.red("\u2717");
+            const label = config.accounts[r.name]?.label;
+            const hint = label ? pc.dim(` (${label})`) : "";
+            lines.push(`  ${icon} ${r.name}${hint}  ${pc.dim(`${r.duration}ms`)}`);
+        }
 
-		p.note(lines.join("\n"), "Warmup Results");
-		p.outro("");
-	});
+        lines.push("");
 
-	warmup
-		.command("all")
-		.description("Warm up all configured accounts (non-interactive)")
-		.action(async () => {
-			const config = await loadConfig();
-			const accountNames = Object.keys(config.accounts);
+        if (fail === 0) {
+            lines.push(pc.green(`All ${ok} account(s) warmed up successfully.`));
+        } else {
+            lines.push(`${pc.green(`${ok} succeeded`)}, ${pc.red(`${fail} failed`)}`);
+        }
 
-			if (accountNames.length === 0) {
-				console.error("No accounts configured. Run: tools claude login");
-				process.exit(1);
-			}
+        p.note(lines.join("\n"), "Warmup Results");
+        p.outro("");
+    });
 
-			console.log(`Warming up ${accountNames.length} account(s)...`);
+    warmup
+        .command("all")
+        .description("Warm up all configured accounts (non-interactive)")
+        .action(async () => {
+            const config = await loadConfig();
+            const accountNames = Object.keys(config.accounts);
 
-			let failures = 0;
+            if (accountNames.length === 0) {
+                console.error("No accounts configured. Run: tools claude login");
+                process.exit(1);
+            }
 
-			for (const name of accountNames) {
-				const start = performance.now();
-				const success = await sendWarmupMessage(name);
-				const duration = Math.round(performance.now() - start);
-				const icon = success ? "\u2713" : "\u2717";
-				console.log(`  ${icon} ${name} (${duration}ms)`);
+            console.log(`Warming up ${accountNames.length} account(s)...`);
 
-				if (!success) {
-					failures++;
-				}
-			}
+            let failures = 0;
 
-			if (failures > 0) {
-				process.exit(1);
-			}
-		});
+            for (const name of accountNames) {
+                const start = performance.now();
+                const success = await sendWarmupMessage(name);
+                const duration = Math.round(performance.now() - start);
+                const icon = success ? "\u2713" : "\u2717";
+                console.log(`  ${icon} ${name} (${duration}ms)`);
+
+                if (!success) {
+                    failures++;
+                }
+            }
+
+            if (failures > 0) {
+                process.exit(1);
+            }
+        });
 }

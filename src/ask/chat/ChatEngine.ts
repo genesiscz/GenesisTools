@@ -1,11 +1,11 @@
 import logger from "@app/logger";
+import type { ClaudeAccount } from "@app/utils/claude/ClaudeAccount";
 import { applySystemPromptPrefix } from "@app/utils/claude/subscription-billing";
 import { SafeJSON } from "@app/utils/json";
 import { estimateTokens } from "@app/utils/tokens";
 import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
 import type { AnthropicModelCategory } from "@ask/providers/ModelResolver";
 import type { ChatConfig, ChatMessage, DetectedProvider, ProviderChoice } from "@ask/types";
-import type { ClaudeAccount } from "@app/utils/claude/ClaudeAccount";
 import type { LanguageModel, LanguageModelUsage } from "ai";
 import { generateText, streamText } from "ai";
 
@@ -73,12 +73,17 @@ export class ChatEngine {
             throw new Error(`No "${selection.request}" model available${accountHint}`);
         }
 
+        // Ensure system prompt prefix is applied for subscription providers.
+        // getEffectiveSystemPrompt() only applies the prefix when systemPrompt is truthy,
+        // so we set a minimal system prompt if none was provided.
+        const systemPrompt = options.systemPrompt ?? provider.systemPromptPrefix ?? "Be concise.";
+
         const config: ChatConfig = {
             model: getLanguageModel(provider.provider, selection.model.id),
             provider: "anthropic",
             modelName: selection.model.id,
             streaming: options.streaming ?? false,
-            systemPrompt: options.systemPrompt,
+            systemPrompt,
             maxTokens: options.maxTokens,
             temperature: options.temperature,
             providerChoice: { provider, model: selection.model },
