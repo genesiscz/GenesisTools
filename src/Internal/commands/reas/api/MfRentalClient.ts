@@ -1,4 +1,5 @@
 import { cacheKey, getCached, MF_TTL, setCache } from "@app/Internal/commands/reas/cache/index";
+import { getCadastralMunicipalities } from "@app/Internal/commands/reas/data/cadastral-mapping";
 import type { CacheEntry, MfRentalBenchmark } from "@app/Internal/commands/reas/types";
 import { ApiClient } from "@app/utils/api/ApiClient";
 import * as XLSX from "xlsx";
@@ -148,6 +149,27 @@ export class MfRentalClient {
                 const benchmark = parseVkBlock(sheet, row, vkIndex, cadastralUnit, obec);
 
                 if (benchmark.referencePrice > 0) {
+                    results.push(benchmark);
+                }
+            }
+        }
+
+        return results;
+    }
+
+    async fetchRentalDataForDistrict(districtName: string, refresh = false): Promise<MfRentalBenchmark[]> {
+        const municipalities = getCadastralMunicipalities(districtName);
+        const results: MfRentalBenchmark[] = [];
+        const seen = new Set<string>();
+
+        for (const municipality of municipalities) {
+            const benchmarks = await this.fetchRentalData(municipality, refresh);
+
+            for (const benchmark of benchmarks) {
+                const key = `${benchmark.cadastralUnit}:${benchmark.sizeCategory}`;
+
+                if (!seen.has(key)) {
+                    seen.add(key);
                     results.push(benchmark);
                 }
             }

@@ -9,7 +9,7 @@ import { analyzeTimeOnMarket } from "@app/Internal/commands/reas/analysis/time-o
 import { analyzeTrends } from "@app/Internal/commands/reas/analysis/trends";
 import { fetchBezrealitkyRentals, fetchBezrealitkySales } from "@app/Internal/commands/reas/api/bezrealitky-client";
 import { fetchErealityRentals } from "@app/Internal/commands/reas/api/ereality-client";
-import { fetchMfRentalData } from "@app/Internal/commands/reas/api/mf-rental";
+import { fetchMfRentalDataForDistrict } from "@app/Internal/commands/reas/api/mf-rental";
 import { fetchSoldListings } from "@app/Internal/commands/reas/api/reas-client";
 import { fetchRentalListings, fetchSaleListings } from "@app/Internal/commands/reas/api/sreality-client";
 import { parsePeriods, resolveDistrict } from "@app/Internal/commands/reas/lib/config-builder";
@@ -358,7 +358,7 @@ export async function fetchAndAnalyze(
             ? fetchErealityRentals(filters, refresh)
             : Promise.resolve([] as RentalListing[]),
         isProviderEnabled(filters, "mf")
-            ? fetchMfRentalData(filters.district.name, refresh)
+            ? fetchMfRentalDataForDistrict(filters.district.name, refresh)
             : Promise.resolve([] as MfRentalBenchmark[]),
     ]);
 
