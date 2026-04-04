@@ -69,7 +69,7 @@ export async function sendWarmupMessage(accountName: string): Promise<boolean> {
  * Called by poll-daemon after each usage refresh.
  */
 export async function processWarmupRules(usageResults: AccountUsage[]): Promise<void> {
-    const { loadConfig, saveConfig, withConfigLock } = await import("@app/claude/lib/config");
+    const { loadConfig, updateConfig } = await import("@app/claude/lib/config");
     const config = await loadConfig();
     const warmup = config.warmup;
 
@@ -160,11 +160,8 @@ export async function processWarmupRules(usageResults: AccountUsage[]): Promise<
     }
 
     if (configChanged) {
-        await withConfigLock(async () => {
-            // Re-read from disk to avoid overwriting tokens refreshed by other processes
-            const freshConfig = await loadConfig();
-            freshConfig.warmup = warmup;
-            await saveConfig(freshConfig);
+        await updateConfig((cfg) => {
+            cfg.warmup = warmup;
         });
     }
 }

@@ -122,16 +122,50 @@ export async function loadConfig(): Promise<ClaudeConfig> {
         },
         warmup: saved.warmup
             ? {
-                    session: { ...DEFAULT_WARMUP.session, ...saved.warmup.session },
-                    weekly: { ...DEFAULT_WARMUP.weekly, ...saved.warmup.weekly },
-                    todayLog: saved.warmup.todayLog ?? DEFAULT_WARMUP.todayLog,
-                }
+                  session: { ...DEFAULT_WARMUP.session, ...saved.warmup.session },
+                  weekly: { ...DEFAULT_WARMUP.weekly, ...saved.warmup.weekly },
+                  todayLog: saved.warmup.todayLog ?? DEFAULT_WARMUP.todayLog,
+              }
             : undefined,
     };
 }
 
 export async function saveConfig(config: ClaudeConfig): Promise<void> {
     await storage.setConfig(config);
+}
+
+/**
+ * Atomically read-modify-write the claude config.
+ * Acquires file lock, reads fresh config from disk, calls updater, saves.
+ * Prevents TOCTOU bugs where stale in-memory config overwrites
+ * tokens refreshed by another process (e.g. daemon).
+ */
+export function updateConfig(updater: (config: ClaudeConfig) => void): Promise<ClaudeConfig> {
+    return storage.atomicConfigUpdate<ClaudeConfig>((raw) => {
+        // Apply defaults (same logic as loadConfig) before passing to updater
+        const config: ClaudeConfig = {
+            accounts: raw.accounts ?? {},
+            defaultAccount: raw.defaultAccount,
+            notifications: {
+                ...DEFAULT_NOTIFICATIONS,
+                ...raw.notifications,
+                channels: {
+                    ...DEFAULT_NOTIFICATIONS.channels,
+                    ...raw.notifications?.channels,
+                },
+            },
+            warmup: raw.warmup
+                ? {
+                      session: { ...DEFAULT_WARMUP.session, ...raw.warmup.session },
+                      weekly: { ...DEFAULT_WARMUP.weekly, ...raw.warmup.weekly },
+                      todayLog: raw.warmup.todayLog ?? DEFAULT_WARMUP.todayLog,
+                  }
+                : undefined,
+        };
+        updater(config);
+        // Write back the full merged config
+        Object.assign(raw, config);
+    });
 }
 
 export function determineAccountLabel(profile: OAuthProfileResponse | undefined): string | undefined {
