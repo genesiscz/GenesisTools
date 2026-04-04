@@ -1,5 +1,11 @@
 import { analyzeActiveVsSold } from "@app/Internal/commands/reas/analysis/active-vs-sold";
 import type { AggregatedRentalStats } from "@app/Internal/commands/reas/analysis/rental-aggregation";
+import {
+    computeDispositionYields,
+    estimateRent,
+    type DispositionYieldRow,
+    type RentEstimation,
+} from "@app/Internal/commands/reas/analysis/rent-estimation";
 import type {
     AnalysisFilters,
     FullAnalysis,
@@ -346,6 +352,8 @@ export interface DashboardExport {
         }>;
         rentalAggregation?: Array<AggregatedRentalStats & { provenance?: DashboardProvenance }>;
         rentalAggregationProvenance?: DashboardProvenance;
+        dispositionYields?: DispositionYieldRow[];
+        rentEstimation?: RentEstimation;
     };
     benchmarks: {
         mf: MfRentalBenchmark[];
@@ -723,6 +731,15 @@ export function buildDashboardExport(analysis: FullAnalysis): DashboardExport {
             scatter,
             rentalAggregation: rentalAggregationWithProvenance,
             rentalAggregationProvenance: rentalProvenance,
+            dispositionYields: computeDispositionYields({
+                rentals: analysis.rentalListings,
+                soldListings: comparables.listings ?? [],
+            }),
+            rentEstimation: estimateRent({
+                area: analysis.target.area,
+                disposition: analysis.filters.disposition ?? undefined,
+                rentals: analysis.rentalListings,
+            }),
         },
         benchmarks: {
             mf: analysis.mfBenchmarks,

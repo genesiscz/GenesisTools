@@ -704,6 +704,8 @@ export function ComparablesTab({ data }: AnalysisSectionProps) {
 
 export function RentalsTab({ data }: AnalysisSectionProps) {
     const aggregated = data.analysis.rentalAggregation ?? [];
+    const dispositionYields = data.analysis.dispositionYields ?? [];
+    const rentEstimation = data.analysis.rentEstimation;
     const [dispositionFilter, setDispositionFilter] = useState<string>("all");
     const [sourceFilter, setSourceFilter] = useState<string>("all");
     const [addressQuery, setAddressQuery] = useState("");
@@ -865,6 +867,93 @@ export function RentalsTab({ data }: AnalysisSectionProps) {
                     </Card>
                 )}
             </div>
+
+            {rentEstimation ? (
+                <Card className="border-white/5 bg-white/[0.02]">
+                    <CardHeader className="pb-3">
+                        <CardTitle className="flex items-center gap-2 text-sm font-mono text-white">
+                            <Sparkles className="h-4 w-4 text-purple-300" />
+                            Rent estimation
+                        </CardTitle>
+                        <CardDescription className="font-mono text-xs text-slate-500">
+                            Estimated rent for {data.meta.target.area} m²
+                            {data.meta.target.disposition ? ` · ${data.meta.target.disposition}` : ""} based on{" "}
+                            {rentEstimation.sampleSize} listings ({rentEstimation.method})
+                        </CardDescription>
+                    </CardHeader>
+                    <CardContent className="grid gap-3 md:grid-cols-3">
+                        <AnalysisMetricCard
+                            label="Estimated rent"
+                            value={formatCompactCurrency(rentEstimation.estimatedMonthlyRent)}
+                            hint={`${formatCompactCurrency(rentEstimation.confidenceRange.low)} – ${formatCompactCurrency(rentEstimation.confidenceRange.high)}`}
+                            icon={Landmark}
+                            valueClassName="text-purple-300"
+                        />
+                        <AnalysisMetricCard
+                            label="Est. rent / m²"
+                            value={formatCurrency(rentEstimation.estimatedRentPerM2)}
+                            hint={`${rentEstimation.sampleSize} listings sampled`}
+                            icon={Percent}
+                        />
+                        <AnalysisMetricCard
+                            label="Method"
+                            value={rentEstimation.method.replace(/-/g, " ")}
+                            hint={
+                                rentEstimation.method === "disposition-median"
+                                    ? "Matched by disposition, highest confidence"
+                                    : rentEstimation.method === "area-regression"
+                                      ? "Cross-disposition rent/m² extrapolation"
+                                      : "District-wide fallback, lower confidence"
+                            }
+                            icon={Activity}
+                        />
+                    </CardContent>
+                </Card>
+            ) : null}
+
+            {dispositionYields.length > 0 ? (
+                <Card className="border-white/5 bg-white/[0.02]">
+                    <CardHeader className="pb-3">
+                        <CardTitle className="flex items-center gap-2 text-sm font-mono text-white">
+                            <TrendingUp className="h-4 w-4 text-emerald-300" />
+                            Yield by disposition
+                        </CardTitle>
+                        <CardDescription className="font-mono text-xs text-slate-500">
+                            Gross rental yield per disposition — cross-referencing rental medians with sold price medians.
+                        </CardDescription>
+                    </CardHeader>
+                    <CardContent className="px-0">
+                        <DataTable
+                            columns={[
+                                { key: "disposition", header: "Disp.", className: "text-white" },
+                                { key: "rentLabel", header: "Median rent/m²", align: "right", className: "text-cyan-300" },
+                                {
+                                    key: "soldLabel",
+                                    header: "Median sold/m²",
+                                    align: "right",
+                                    className: "text-slate-300",
+                                },
+                                {
+                                    key: "yieldLabel",
+                                    header: "Gross yield",
+                                    align: "right",
+                                    className: "text-emerald-300",
+                                },
+                                { key: "samplesLabel", header: "Samples", align: "right", className: "text-slate-500" },
+                            ]}
+                            rows={dispositionYields.map((row) => ({
+                                disposition: row.disposition,
+                                rentLabel: `${formatCurrency(row.medianRent)}/m²`,
+                                soldLabel: formatCurrency(row.medianSoldPricePerM2),
+                                yieldLabel: formatPercent(row.grossYieldPct),
+                                samplesLabel: `${row.sampleRentals}r · ${row.sampleSold}s`,
+                            }))}
+                            getRowKey={(row) => String(row.disposition)}
+                            emptyMessage="No cross-referenced yield data available."
+                        />
+                    </CardContent>
+                </Card>
+            ) : null}
 
             <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
                 <Card className="border-white/5 bg-white/[0.02]">

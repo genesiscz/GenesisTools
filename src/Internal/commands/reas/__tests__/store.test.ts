@@ -772,3 +772,70 @@ describe("listings", () => {
         expect(db.getListings({ district: "Praha 4", type: "rental", source: "sreality" })).toHaveLength(1);
     });
 });
+
+describe("provider health monitoring", () => {
+    test("logs provider fetches and returns health summary", () => {
+        db.logProviderFetch({
+            provider: "reas",
+            sourceContract: "reas-catalog",
+            district: "Praha 2",
+            status: "success",
+            listingCount: 42,
+            durationMs: 1200,
+        });
+        db.logProviderFetch({
+            provider: "reas",
+            sourceContract: "reas-catalog",
+            district: "Praha 3",
+            status: "success",
+            listingCount: 18,
+            durationMs: 800,
+        });
+        db.logProviderFetch({
+            provider: "sreality",
+            sourceContract: "sreality-v2",
+            district: "Praha 2",
+            status: "error",
+            listingCount: 0,
+            errorMessage: "Rate limited",
+        });
+
+        const health = db.getProviderHealth(30);
+        expect(health).toHaveLength(2);
+
+        const reas = health.find((h) => h.provider === "reas")!;
+        expect(reas.totalFetches).toBe(2);
+        expect(reas.successCount).toBe(2);
+        expect(reas.errorCount).toBe(0);
+        expect(reas.successRate).toBe(100);
+        expect(reas.avgDurationMs).toBe(1000);
+        expect(reas.avgListingCount).toBe(30);
+
+        const sreality = health.find((h) => h.provider === "sreality")!;
+        expect(sreality.totalFetches).toBe(1);
+        expect(sreality.errorCount).toBe(1);
+        expect(sreality.successRate).toBe(0);
+        expect(sreality.lastError).toBe("Rate limited");
+    });
+
+    test("getRecentFetchLog returns entries in descending order", () => {
+        db.logProviderFetch({
+            provider: "reas",
+            sourceContract: "reas-catalog",
+            status: "success",
+            listingCount: 10,
+        });
+        db.logProviderFetch({
+            provider: "bezrealitky",
+            sourceContract: "graphql:listAdverts",
+            status: "empty",
+            listingCount: 0,
+        });
+
+        const log = db.getRecentFetchLog(10);
+        expect(log).toHaveLength(2);
+        expect(log[0].provider).toBe("bezrealitky");
+        expect(log[0].status).toBe("empty");
+        expect(log[1].provider).toBe("reas");
+    });
+});

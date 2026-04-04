@@ -41,12 +41,29 @@ function buildProviderSummary({
     sourceContract,
     count,
     error,
+    district,
 }: {
     provider: ProviderName;
     sourceContract: string;
     count: number;
     error?: string;
+    district?: string;
 }): ProviderFetchSummary {
+    const status = error ? "error" : count === 0 ? "empty" : "success";
+
+    try {
+        reasDatabase.logProviderFetch({
+            provider,
+            sourceContract,
+            district,
+            status,
+            listingCount: count,
+            errorMessage: error,
+        });
+    } catch {
+        // Non-fatal — logging failure must not break analysis
+    }
+
     return {
         provider,
         sourceContract,
@@ -346,13 +363,18 @@ export async function fetchAndAnalyze(
     ]);
 
     const providerSummary: ProviderFetchSummary[] = [];
+    const districtName = filters.district.name;
+
+    function logProvider(input: { provider: ProviderName; sourceContract: string; count: number; error?: string }) {
+        return buildProviderSummary({ ...input, district: districtName });
+    }
 
     let allListings: ReasListing[] = [];
 
     if (reasResult.status === "fulfilled") {
         allListings = reasResult.value;
         providerSummary.push(
-            buildProviderSummary({
+            logProvider({
                 provider: "reas",
                 sourceContract: "reas-catalog",
                 count: allListings.length,
@@ -363,7 +385,7 @@ export async function fetchAndAnalyze(
             `REAS: ${reasResult.reason instanceof Error ? reasResult.reason.message : String(reasResult.reason)}`
         );
         providerSummary.push(
-            buildProviderSummary({
+            logProvider({
                 provider: "reas",
                 sourceContract: "reas-catalog",
                 count: 0,
@@ -381,7 +403,7 @@ export async function fetchAndAnalyze(
         const nextListings = srealityRentalResult.value.filter((listing) => listing.price >= MIN_RENTAL_PRICE);
         rentalListings.push(...nextListings);
         providerSummary.push(
-            buildProviderSummary({
+            logProvider({
                 provider: "sreality",
                 sourceContract: "sreality-v2",
                 count: nextListings.length,
@@ -392,7 +414,7 @@ export async function fetchAndAnalyze(
             `Sreality rentals: ${srealityRentalResult.reason instanceof Error ? srealityRentalResult.reason.message : String(srealityRentalResult.reason)}`
         );
         providerSummary.push(
-            buildProviderSummary({
+            logProvider({
                 provider: "sreality",
                 sourceContract: "sreality-v2",
                 count: 0,
@@ -407,7 +429,7 @@ export async function fetchAndAnalyze(
     if (srealitySaleResult.status === "fulfilled") {
         saleListings.push(...srealitySaleResult.value);
         providerSummary.push(
-            buildProviderSummary({
+            logProvider({
                 provider: "sreality",
                 sourceContract: "sreality-v2-sale",
                 count: srealitySaleResult.value.length,
@@ -418,7 +440,7 @@ export async function fetchAndAnalyze(
             `Sreality sales: ${srealitySaleResult.reason instanceof Error ? srealitySaleResult.reason.message : String(srealitySaleResult.reason)}`
         );
         providerSummary.push(
-            buildProviderSummary({
+            logProvider({
                 provider: "sreality",
                 sourceContract: "sreality-v2-sale",
                 count: 0,
@@ -434,7 +456,7 @@ export async function fetchAndAnalyze(
         const nextListings = bezrealitkyRentalResult.value.filter((listing) => listing.price >= MIN_RENTAL_PRICE);
         rentalListings.push(...nextListings);
         providerSummary.push(
-            buildProviderSummary({
+            logProvider({
                 provider: "bezrealitky",
                 sourceContract: "graphql:listAdverts",
                 count: nextListings.length,
@@ -445,7 +467,7 @@ export async function fetchAndAnalyze(
             `Bezrealitky rentals: ${bezrealitkyRentalResult.reason instanceof Error ? bezrealitkyRentalResult.reason.message : String(bezrealitkyRentalResult.reason)}`
         );
         providerSummary.push(
-            buildProviderSummary({
+            logProvider({
                 provider: "bezrealitky",
                 sourceContract: "graphql:listAdverts",
                 count: 0,
@@ -460,7 +482,7 @@ export async function fetchAndAnalyze(
     if (bezrealitkySaleResult.status === "fulfilled") {
         saleListings.push(...bezrealitkySaleResult.value);
         providerSummary.push(
-            buildProviderSummary({
+            logProvider({
                 provider: "bezrealitky",
                 sourceContract: "graphql:listAdverts:sale",
                 count: bezrealitkySaleResult.value.length,
@@ -471,7 +493,7 @@ export async function fetchAndAnalyze(
             `Bezrealitky sales: ${bezrealitkySaleResult.reason instanceof Error ? bezrealitkySaleResult.reason.message : String(bezrealitkySaleResult.reason)}`
         );
         providerSummary.push(
-            buildProviderSummary({
+            logProvider({
                 provider: "bezrealitky",
                 sourceContract: "graphql:listAdverts:sale",
                 count: 0,
@@ -487,7 +509,7 @@ export async function fetchAndAnalyze(
         const nextListings = erealityResult.value.filter((listing) => listing.price >= MIN_RENTAL_PRICE);
         rentalListings.push(...nextListings);
         providerSummary.push(
-            buildProviderSummary({
+            logProvider({
                 provider: "ereality",
                 sourceContract: "ereality-html",
                 count: nextListings.length,
@@ -498,7 +520,7 @@ export async function fetchAndAnalyze(
             `eReality rentals: ${erealityResult.reason instanceof Error ? erealityResult.reason.message : String(erealityResult.reason)}`
         );
         providerSummary.push(
-            buildProviderSummary({
+            logProvider({
                 provider: "ereality",
                 sourceContract: "ereality-html",
                 count: 0,
@@ -515,7 +537,7 @@ export async function fetchAndAnalyze(
     if (mfResult.status === "fulfilled") {
         mfBenchmarks = mfResult.value;
         providerSummary.push(
-            buildProviderSummary({
+            logProvider({
                 provider: "mf",
                 sourceContract: "mf-cenova-mapa",
                 count: mfBenchmarks.length,
@@ -526,7 +548,7 @@ export async function fetchAndAnalyze(
             `MF cenova mapa: ${mfResult.reason instanceof Error ? mfResult.reason.message : String(mfResult.reason)}`
         );
         providerSummary.push(
-            buildProviderSummary({
+            logProvider({
                 provider: "mf",
                 sourceContract: "mf-cenova-mapa",
                 count: 0,

@@ -5,12 +5,6 @@ import { cn } from "@ui/lib/utils";
 import { Award, TrendingDown, TrendingUp } from "lucide-react";
 import { GRADE_COLORS, getScoreCardModel } from "./analysis/display-model";
 
-export { GRADE_COLORS } from "./analysis/display-model";
-
-export function computeScore(data: DashboardExport) {
-    return getScoreCardModel(data);
-}
-
 interface ScoreCardProps {
     data: DashboardExport;
 }

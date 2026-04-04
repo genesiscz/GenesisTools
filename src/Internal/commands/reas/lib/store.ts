@@ -231,6 +231,31 @@ export interface DistrictSnapshotRow {
     created_at: string;
 }
 
+export interface ProviderFetchLogRow {
+    id: number;
+    provider: string;
+    source_contract: string;
+    district: string | null;
+    status: "success" | "error" | "empty";
+    listing_count: number;
+    duration_ms: number | null;
+    error_message: string | null;
+    created_at: string;
+}
+
+export interface ProviderHealthSummary {
+    provider: string;
+    totalFetches: number;
+    successCount: number;
+    errorCount: number;
+    emptyCount: number;
+    successRate: number;
+    avgDurationMs: number | null;
+    avgListingCount: number;
+    lastFetchedAt: string | null;
+    lastError: string | null;
+}
+
 export class ReasDatabase extends BaseDatabase {
     constructor(dbPath: string = DEFAULT_DB_PATH) {
         super(dbPath);
@@ -365,6 +390,19 @@ export class ReasDatabase extends BaseDatabase {
                 created_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
             CREATE INDEX IF NOT EXISTS idx_ds_district ON district_snapshots(district, snapshot_date);
+
+            CREATE TABLE IF NOT EXISTS provider_fetch_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                provider TEXT NOT NULL,
+                source_contract TEXT NOT NULL,
+                district TEXT,
+                status TEXT NOT NULL,
+                listing_count INTEGER NOT NULL DEFAULT 0,
+                duration_ms INTEGER,
+                error_message TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_pfl_provider ON provider_fetch_log(provider, created_at DESC);
         `);
 
         this.ensureColumn("saved_properties", "listing_url", "TEXT");
@@ -1129,6 +1167,95 @@ export class ReasDatabase extends BaseDatabase {
                 $construction_type: constructionType,
                 $cutoff: cutoff,
             }) as DistrictSnapshotRow[];
+    }
+
+    logProviderFetch(input: {
+        provider: string;
+        sourceContract: string;
+        district?: string;
+        status: "success" | "error" | "empty";
+        listingCount: number;
+        durationMs?: number;
+        errorMessage?: string;
+    }): void {
+        this.db
+            .prepare(`
+                INSERT INTO provider_fetch_log (provider, source_contract, district, status, listing_count, duration_ms, error_message)
+                VALUES ($provider, $source_contract, $district, $status, $listing_count, $duration_ms, $error_message)
+            `)
+            .run({
+                $provider: input.provider,
+                $source_contract: input.sourceContract,
+                $district: input.district ?? null,
+                $status: input.status,
+                $listing_count: input.listingCount,
+                $duration_ms: input.durationMs ?? null,
+                $error_message: input.errorMessage ?? null,
+            });
+    }
+
+    getProviderHealth(days = 30): ProviderHealthSummary[] {
+        const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+
+        const rows = this.db
+            .prepare(`
+                SELECT
+                    provider,
+                    COUNT(*) as total_fetches,
+                    SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as success_count,
+                    SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) as error_count,
+                    SUM(CASE WHEN status = 'empty' THEN 1 ELSE 0 END) as empty_count,
+                    AVG(CASE WHEN status = 'success' THEN duration_ms ELSE NULL END) as avg_duration_ms,
+                    AVG(CASE WHEN status = 'success' THEN listing_count ELSE NULL END) as avg_listing_count,
+                    MAX(created_at) as last_fetched_at
+                FROM provider_fetch_log
+                WHERE created_at >= $cutoff
+                GROUP BY provider
+                ORDER BY provider
+            `)
+            .all({ $cutoff: cutoff }) as Array<{
+            provider: string;
+            total_fetches: number;
+            success_count: number;
+            error_count: number;
+            empty_count: number;
+            avg_duration_ms: number | null;
+            avg_listing_count: number | null;
+            last_fetched_at: string | null;
+        }>;
+
+        return rows.map((row) => {
+            const lastErrorRow = this.db
+                .prepare(`
+                    SELECT error_message FROM provider_fetch_log
+                    WHERE provider = $provider AND status = 'error' AND created_at >= $cutoff
+                    ORDER BY created_at DESC LIMIT 1
+                `)
+                .get({ $provider: row.provider, $cutoff: cutoff }) as { error_message: string } | undefined;
+
+            return {
+                provider: row.provider,
+                totalFetches: row.total_fetches,
+                successCount: row.success_count,
+                errorCount: row.error_count,
+                emptyCount: row.empty_count,
+                successRate: row.total_fetches > 0 ? (row.success_count / row.total_fetches) * 100 : 0,
+                avgDurationMs: row.avg_duration_ms ? Math.round(row.avg_duration_ms) : null,
+                avgListingCount: Math.round(row.avg_listing_count ?? 0),
+                lastFetchedAt: row.last_fetched_at,
+                lastError: lastErrorRow?.error_message ?? null,
+            };
+        });
+    }
+
+    getRecentFetchLog(limit = 50): ProviderFetchLogRow[] {
+        return this.db
+            .prepare(`
+                SELECT * FROM provider_fetch_log
+                ORDER BY id DESC
+                LIMIT $limit
+            `)
+            .all({ $limit: limit }) as ProviderFetchLogRow[];
     }
 
     private ensureColumn(table: string, column: string, definition: string): void {
