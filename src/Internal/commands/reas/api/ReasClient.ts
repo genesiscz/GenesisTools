@@ -3,7 +3,7 @@ import { matchesRequestedDistrict } from "@app/Internal/commands/reas/lib/distri
 import type { AnalysisFilters, CacheEntry, DateRange, ReasListing } from "@app/Internal/commands/reas/types";
 import { ApiClient } from "@app/utils/api/ApiClient";
 import { SafeJSON } from "@app/utils/json";
-import type { CountResponse, ListingsResponse } from "./ReasClient.types";
+import type { CountResponse, ListingsResponse, PointersAndClustersResponse } from "./ReasClient.types";
 
 const BASE_URL = "https://catalog.reas.cz/catalog";
 const CLIENT_ID = "6988cb437c5b9d2963280369";
@@ -25,6 +25,14 @@ export function buildReasQueryParams(filters: AnalysisFilters, dateRange: DateRa
     params.set("linkedToTransfer", "true");
     params.set("locality", SafeJSON.stringify({ districtId: filters.district.reasId }));
     params.set("clientId", CLIENT_ID);
+
+    if (filters.heatingKind?.length) {
+        params.set("heatingKind", SafeJSON.stringify(filters.heatingKind));
+    }
+
+    if (filters.bounds) {
+        params.set("bounds", SafeJSON.stringify(filters.bounds));
+    }
 
     return params;
 }
@@ -92,6 +100,18 @@ export class ReasClient {
         const body = await this.apiClient.get<CountResponse>("/listings/count", { params });
 
         return body.data.count;
+    }
+
+    async fetchPointersAndClusters(
+        filters: AnalysisFilters,
+        dateRange: DateRange
+    ): Promise<PointersAndClustersResponse["data"]> {
+        const params = this.buildQueryParams(filters, dateRange);
+        const body = await this.apiClient.get<PointersAndClustersResponse>("/listings/pointers-and-clusters", {
+            params,
+        });
+
+        return body.data;
     }
 
     async fetchSoldListings(filters: AnalysisFilters, dateRange: DateRange, refresh = false): Promise<ReasListing[]> {

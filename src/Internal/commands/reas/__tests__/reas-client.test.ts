@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { ReasClient } from "@app/Internal/commands/reas/api/ReasClient";
 import type { ApiClientRequestOptions } from "@app/utils/api/ApiClient";
+import { SafeJSON } from "@app/utils/json";
 
 describe("ReasClient", () => {
     test("filters obvious off-ward Prague sold comps before returning cached results", async () => {
@@ -74,5 +75,84 @@ describe("ReasClient", () => {
         );
 
         expect(listings.map((listing) => listing._id)).toEqual(["keep"]);
+    });
+
+    test("fetchPointersAndClusters calls the correct endpoint and returns data", async () => {
+        const mockData = {
+            pointers: [
+                {
+                    _id: "p1",
+                    point: { type: "Point" as const, coordinates: [14.43, 50.06] as [number, number] },
+                    geohash: "u2fkb",
+                    estatesCount: 3,
+                },
+            ],
+            clusterPointers: [
+                {
+                    geohash: "u2fk",
+                    point: { type: "Point" as const, coordinates: [14.44, 50.07] as [number, number] },
+                    actualPoint: { type: "Point" as const, coordinates: [14.44, 50.07] as [number, number] },
+                    clusterBounds: [
+                        [14.4, 50.0],
+                        [14.5, 50.1],
+                    ] as [[number, number], [number, number]],
+                    amount: 12,
+                },
+            ],
+        };
+
+        let capturedPath = "";
+        const client = new ReasClient({
+            apiClient: {
+                async get<T>(path: string, _options?: ApiClientRequestOptions) {
+                    capturedPath = path;
+                    return { success: true, data: mockData } as T;
+                },
+            },
+        });
+
+        const result = await client.fetchPointersAndClusters(
+            {
+                estateType: "flat",
+                constructionType: "brick",
+                district: { name: "Praha 2", reasId: 5, srealityId: 20, srealityLocality: "district" },
+                periods: [],
+            },
+            { label: "2025", from: new Date("2025-01-01"), to: new Date("2025-12-31") }
+        );
+
+        expect(capturedPath).toBe("/listings/pointers-and-clusters");
+        expect(result.pointers).toHaveLength(1);
+        expect(result.clusterPointers).toHaveLength(1);
+        expect(result.pointers[0].estatesCount).toBe(3);
+        expect(result.clusterPointers[0].amount).toBe(12);
+    });
+
+    test("buildQueryParams includes heatingKind and bounds when set", () => {
+        const client = new ReasClient();
+        const params = client.buildQueryParams(
+            {
+                estateType: "flat",
+                constructionType: "brick",
+                district: { name: "Praha 2", reasId: 5, srealityId: 20, srealityLocality: "district" },
+                periods: [],
+                heatingKind: ["local", "central"],
+                bounds: {
+                    southWestLatitude: 50.0,
+                    southWestLongitude: 14.3,
+                    northEastLatitude: 50.1,
+                    northEastLongitude: 14.5,
+                },
+            },
+            { label: "2025", from: new Date("2025-01-01"), to: new Date("2025-12-31") }
+        );
+
+        expect(params.get("heatingKind")).toBe(SafeJSON.stringify(["local", "central"]));
+        expect(SafeJSON.parse(params.get("bounds")!)).toEqual({
+            southWestLatitude: 50.0,
+            southWestLongitude: 14.3,
+            northEastLatitude: 50.1,
+            northEastLongitude: 14.5,
+        });
     });
 });

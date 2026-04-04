@@ -176,6 +176,8 @@ export interface AnalysisFilters {
     areaMin?: number;
     areaMax?: number;
     providers?: ProviderName[];
+    heatingKind?: string[];
+    bounds?: import("@app/Internal/commands/reas/api/ReasClient.types").ReasBounds;
 }
 
 export interface DateRange {
