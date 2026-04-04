@@ -369,6 +369,7 @@ class ASKTool {
                 temperature: parseTemperature(argv.temperature),
                 maxTokens: parseMaxTokens(argv.maxTokens),
                 logLevel: argv.raw ? "silent" : "info",
+                tools: this.getAIChatTools(),
             });
 
             if (argv.raw) {
@@ -674,6 +675,23 @@ class ASKTool {
         }
 
         return Object.keys(tools).length > 0 ? tools : undefined;
+    }
+
+    /** Returns tools in AIChatTool format (for AIChat constructor). */
+    private getAIChatTools(): Record<string, { description: string; parameters: unknown; execute: (params: Record<string, unknown>) => Promise<unknown> }> | undefined {
+        const searchToolDef = webSearchTool.createSearchTool();
+
+        if (!searchToolDef) {
+            return undefined;
+        }
+
+        return {
+            searchWeb: {
+                description: searchToolDef.description,
+                parameters: searchToolDef.parameters,
+                execute: searchToolDef.execute as (params: Record<string, unknown>) => Promise<unknown>,
+            },
+        };
     }
 
     private async getAccountInfoForFooter(providerName: string): Promise<{ label?: string; name: string } | undefined> {

@@ -169,14 +169,12 @@ export class ProviderManager {
             const defaultName = config.defaultAccount;
             const account = (defaultName && accounts.find((a) => a.name === defaultName)) || accounts[0];
 
-            if (!account.tokens.accessToken) {
-                // Try resolving via tools claude (token refresh)
-                const { resolveAccountToken } = await import("@app/utils/claude/subscription-auth");
-                const result = await resolveAccountToken(account.name);
-                return { token: result.token, label: account.label };
-            }
-
-            return { token: account.tokens.accessToken, label: account.label };
+            // Always resolve through resolveAccountToken for subscription accounts —
+            // it handles token refresh and reads the authoritative claude config.
+            // The AIConfigStorage copy may be stale.
+            const { resolveAccountToken } = await import("@app/utils/claude/subscription-auth");
+            const result = await resolveAccountToken(account.name);
+            return { token: result.token, label: account.label };
         } catch {
             return null;
         }
