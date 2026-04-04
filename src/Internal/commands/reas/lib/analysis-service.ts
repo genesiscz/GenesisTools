@@ -734,6 +734,12 @@ export async function fetchListingsIntoCache(
     let bezrealitkyFetchSucceeded = false;
     let erealityFetchSucceeded = false;
 
+    const districtName = filters.district.name;
+
+    function logFetchProvider(input: { provider: ProviderName; sourceContract: string; count: number; error?: string }) {
+        buildProviderSummary({ ...input, district: districtName });
+    }
+
     if (options.type === "sold") {
         const soldResults = await Promise.allSettled(
             filters.periods.map((period) => fetchSoldListings(filters, period, refresh))
@@ -747,6 +753,13 @@ export async function fetchListingsIntoCache(
                 warnings.push(result.reason instanceof Error ? result.reason.message : "Failed to fetch sold listings");
             }
         }
+
+        logFetchProvider({
+            provider: "reas",
+            sourceContract: "reas-catalog",
+            count: soldListings.length,
+            error: soldFetchSucceeded ? undefined : warnings[warnings.length - 1],
+        });
     }
 
     if (options.type === "sale") {
@@ -770,6 +783,15 @@ export async function fetchListingsIntoCache(
             );
         }
 
+        logFetchProvider({
+            provider: "sreality",
+            sourceContract: "sreality-v2-sale",
+            count: srealityResult.status === "fulfilled" ? srealityResult.value.length : 0,
+            error: srealityResult.status === "rejected"
+                ? (srealityResult.reason instanceof Error ? srealityResult.reason.message : String(srealityResult.reason))
+                : undefined,
+        });
+
         if (bezrealitkyResult.status === "fulfilled") {
             saleListings.push(...bezrealitkyResult.value);
             bezrealitkyFetchSucceeded = true;
@@ -780,6 +802,15 @@ export async function fetchListingsIntoCache(
                     : "Failed to fetch Bezrealitky sales"
             );
         }
+
+        logFetchProvider({
+            provider: "bezrealitky",
+            sourceContract: "graphql:listAdverts:sale",
+            count: bezrealitkyResult.status === "fulfilled" ? bezrealitkyResult.value.length : 0,
+            error: bezrealitkyResult.status === "rejected"
+                ? (bezrealitkyResult.reason instanceof Error ? bezrealitkyResult.reason.message : String(bezrealitkyResult.reason))
+                : undefined,
+        });
     }
 
     if (options.type === "rental") {
@@ -806,6 +837,15 @@ export async function fetchListingsIntoCache(
             );
         }
 
+        logFetchProvider({
+            provider: "sreality",
+            sourceContract: "sreality-v2",
+            count: srealityResult.status === "fulfilled" ? srealityResult.value.length : 0,
+            error: srealityResult.status === "rejected"
+                ? (srealityResult.reason instanceof Error ? srealityResult.reason.message : String(srealityResult.reason))
+                : undefined,
+        });
+
         if (bezrealitkyResult.status === "fulfilled") {
             rentalListings.push(...bezrealitkyResult.value);
             bezrealitkyFetchSucceeded = true;
@@ -817,6 +857,15 @@ export async function fetchListingsIntoCache(
             );
         }
 
+        logFetchProvider({
+            provider: "bezrealitky",
+            sourceContract: "graphql:listAdverts",
+            count: bezrealitkyResult.status === "fulfilled" ? bezrealitkyResult.value.length : 0,
+            error: bezrealitkyResult.status === "rejected"
+                ? (bezrealitkyResult.reason instanceof Error ? bezrealitkyResult.reason.message : String(bezrealitkyResult.reason))
+                : undefined,
+        });
+
         if (erealityResult.status === "fulfilled") {
             rentalListings.push(...erealityResult.value);
             erealityFetchSucceeded = true;
@@ -827,6 +876,15 @@ export async function fetchListingsIntoCache(
                     : "Failed to fetch eReality rentals"
             );
         }
+
+        logFetchProvider({
+            provider: "ereality",
+            sourceContract: "ereality-html",
+            count: erealityResult.status === "fulfilled" ? erealityResult.value.length : 0,
+            error: erealityResult.status === "rejected"
+                ? (erealityResult.reason instanceof Error ? erealityResult.reason.message : String(erealityResult.reason))
+                : undefined,
+        });
     }
 
     const fetchedAt = new Date().toISOString();

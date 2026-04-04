@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsList, TabsTrigger } from "@ui/components/tabs";
 import { toast } from "@ui/index";
 import { cn } from "@ui/lib/utils";
-import { Building2, RefreshCw } from "lucide-react";
+import { Building2, ChevronDown, RefreshCw } from "lucide-react";
 import { type FormEvent, useMemo, useState } from "react";
 import { ListingDetailSheet } from "../components/listings/ListingDetailSheet";
 import { ListingFilters } from "../components/listings/ListingFilters";
@@ -327,6 +327,10 @@ function ListingsPage() {
                                     ))}
                                 </div>
                             )}
+
+                            {overview.districtSources && overview.districtSources.length > 0 && (
+                                <DistrictSourceBreakdown districtSources={overview.districtSources} />
+                            )}
                         </CardContent>
                     </Card>
                 )}
@@ -424,4 +428,101 @@ function getTypeFreshness(
     }
 
     return overview.soldLastFetchedAt;
+}
+
+interface DistrictSourceEntry {
+    district: string;
+    source: string;
+    type: string;
+    count: number;
+    lastFetchedAt: string | null;
+}
+
+function DistrictSourceBreakdown({ districtSources }: { districtSources: DistrictSourceEntry[] }) {
+    const [expanded, setExpanded] = useState(false);
+
+    const grouped = useMemo(() => {
+        const map = new Map<string, DistrictSourceEntry[]>();
+
+        for (const row of districtSources) {
+            const existing = map.get(row.district);
+
+            if (existing) {
+                existing.push(row);
+            } else {
+                map.set(row.district, [row]);
+            }
+        }
+
+        return Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b, "cs"));
+    }, [districtSources]);
+
+    const uniqueDistricts = grouped.length;
+    const displayRows = expanded ? grouped : grouped.slice(0, 6);
+
+    return (
+        <div className="space-y-3">
+            <button
+                type="button"
+                className="flex w-full items-center justify-between text-left"
+                onClick={() => setExpanded(!expanded)}
+            >
+                <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-gray-500">
+                    Per-district breakdown · {uniqueDistricts} districts
+                </span>
+                <ChevronDown
+                    className={cn(
+                        "h-3.5 w-3.5 text-gray-500 transition-transform",
+                        expanded && "rotate-180"
+                    )}
+                />
+            </button>
+
+            <div className="overflow-x-auto">
+                <table className="w-full text-xs font-mono">
+                    <thead>
+                        <tr className="border-b border-white/5 text-left text-[9px] uppercase tracking-[0.2em] text-gray-600">
+                            <th className="px-2 py-1.5">District</th>
+                            <th className="px-2 py-1.5">Source</th>
+                            <th className="px-2 py-1.5">Type</th>
+                            <th className="px-2 py-1.5 text-right">Count</th>
+                            <th className="px-2 py-1.5 text-right">Last fetched</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {displayRows.map(([district, entries]) =>
+                            entries.map((entry, idx) => (
+                                <tr
+                                    key={`${district}-${entry.source}-${entry.type}`}
+                                    className="border-b border-white/[0.03] transition-colors hover:bg-white/[0.02]"
+                                >
+                                    <td className="px-2 py-1.5 text-gray-200">
+                                        {idx === 0 ? district : ""}
+                                    </td>
+                                    <td className="px-2 py-1.5">
+                                        <SourceBadge source={entry.source} />
+                                    </td>
+                                    <td className="px-2 py-1.5 text-gray-400">{entry.type}</td>
+                                    <td className="px-2 py-1.5 text-right text-white">{entry.count}</td>
+                                    <td className="px-2 py-1.5 text-right text-gray-500">
+                                        {entry.lastFetchedAt ? formatShortDateTime(entry.lastFetchedAt) : "never"}
+                                    </td>
+                                </tr>
+                            ))
+                        )}
+                    </tbody>
+                </table>
+            </div>
+
+            {!expanded && grouped.length > 6 && (
+                <button
+                    type="button"
+                    className="w-full text-center font-mono text-[10px] text-cyan-400 hover:text-cyan-300 transition-colors"
+                    onClick={() => setExpanded(true)}
+                >
+                    Show all {uniqueDistricts} districts
+                </button>
+            )}
+        </div>
+    );
 }

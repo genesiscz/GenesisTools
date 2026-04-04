@@ -216,6 +216,15 @@ export interface ListingsOverview {
         count: number;
         lastFetchedAt: string | null;
     }>;
+    districtSources: DistrictSourceRow[];
+}
+
+export interface DistrictSourceRow {
+    district: string;
+    source: string;
+    type: string;
+    count: number;
+    lastFetchedAt: string | null;
 }
 
 export interface DistrictSnapshotRow {
@@ -1047,6 +1056,15 @@ export class ReasDatabase extends BaseDatabase {
             | { source_count: number }
             | undefined;
 
+        const districtSourceRows = this.db
+            .prepare(`
+                SELECT district, source, type, COUNT(*) as count, MAX(fetched_at) as last_fetched_at
+                FROM listings
+                GROUP BY district, source, type
+                ORDER BY district ASC, source ASC, type ASC
+            `)
+            .all() as Array<{ district: string; source: string; type: string; count: number; last_fetched_at: string | null }>;
+
         const overview: ListingsOverview = {
             saleCount: 0,
             rentalCount: 0,
@@ -1058,6 +1076,13 @@ export class ReasDatabase extends BaseDatabase {
             sourceCount: sourceRow?.source_count ?? 0,
             sources: sourceRows.map((row) => ({
                 source: row.source,
+                count: row.count,
+                lastFetchedAt: row.last_fetched_at,
+            })),
+            districtSources: districtSourceRows.map((row) => ({
+                district: row.district,
+                source: row.source,
+                type: row.type,
                 count: row.count,
                 lastFetchedAt: row.last_fetched_at,
             })),
