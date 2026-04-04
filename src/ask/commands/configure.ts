@@ -253,14 +253,12 @@ async function addFromClaudeAccount(): Promise<void> {
         return;
     }
 
+    // Don't store OAuth tokens — they're managed by claude config's refresh pipeline.
+    // AIConfigStorage only stores metadata for subscription accounts.
     const entry: AIAccountEntry = {
         name: choice as string,
         provider: "anthropic-sub",
-        tokens: {
-            accessToken: claudeAccount.accessToken,
-            refreshToken: claudeAccount.refreshToken,
-            expiresAt: claudeAccount.expiresAt,
-        },
+        tokens: {},
         label: selected?.label ?? claudeAccount.label,
         apps: ["ask", "claude"],
     };
@@ -378,14 +376,11 @@ async function addViaOAuthFlow(): Promise<void> {
     const label = determineAccountLabel(profile ?? undefined);
     const accountName = tokens.account?.email?.split("@")[0]?.toLowerCase() ?? "subscription";
 
+    // Metadata only — tokens are stored in claude config and resolved via resolveAccountToken.
     const entry: AIAccountEntry = {
         name: accountName,
         provider: "anthropic-sub",
-        tokens: {
-            accessToken: tokens.accessToken,
-            refreshToken: tokens.refreshToken,
-            expiresAt: tokens.expiresAt,
-        },
+        tokens: {},
         label,
         apps: ["ask", "claude"],
     };

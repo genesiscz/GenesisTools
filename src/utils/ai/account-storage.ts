@@ -138,14 +138,12 @@ export class AIConfigStorage {
             }
 
             for (const [name, account] of Object.entries(claudeConfig.accounts)) {
+                // Don't store OAuth tokens — they're managed by claude config's
+                // refresh pipeline. AIConfigStorage only stores metadata for sub accounts.
                 config.accounts.push({
                     name,
                     provider: "anthropic-sub",
-                    tokens: {
-                        accessToken: account.accessToken,
-                        refreshToken: account.refreshToken,
-                        expiresAt: account.expiresAt,
-                    },
+                    tokens: {},
                     label: account.label,
                     apps: ["claude", "ask"],
                 });
