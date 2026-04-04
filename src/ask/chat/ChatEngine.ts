@@ -5,7 +5,7 @@ import { SafeJSON } from "@app/utils/json";
 import { estimateTokens } from "@app/utils/tokens";
 import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
 import type { AnthropicModelCategory } from "@ask/providers/ModelResolver";
-import type { ChatConfig, ChatMessage, DetectedProvider, ProviderChoice } from "@ask/types";
+import type { APIMessage, ChatConfig, ChatMessage, DetectedProvider, ProviderChoice } from "@ask/types";
 import type { LanguageModel, LanguageModelUsage, ToolSet } from "ai";
 import { generateText, streamText } from "ai";
 
@@ -124,8 +124,8 @@ export class ChatEngine {
         this.conversationHistory.push(userMessage);
 
         // Build messages array from full history (includes the just-pushed user message)
-        const messages = this.conversationHistory.map((msg) => ({
-            role: msg.role as "user" | "assistant" | "system",
+        const messages: APIMessage[] = this.conversationHistory.map((msg) => ({
+            role: msg.role,
             content: msg.content,
         }));
 
@@ -158,7 +158,7 @@ export class ChatEngine {
     }
 
     private async sendStreamingMessage(
-        messages: Array<{ role: "user" | "assistant" | "system"; content: string }>,
+        messages: APIMessage[],
         tools?: ToolSet,
         callbacks?: {
             onChunk?: (chunk: string) => void;
@@ -322,7 +322,7 @@ export class ChatEngine {
     }
 
     private async sendNonStreamingMessage(
-        messages: Array<{ role: "user" | "assistant" | "system"; content: string }>,
+        messages: APIMessage[],
         tools?: ToolSet
     ): Promise<ChatResponse> {
         const hasTools = tools && Object.keys(tools).length > 0;
