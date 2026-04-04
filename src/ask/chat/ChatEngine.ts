@@ -5,14 +5,16 @@ import { SafeJSON } from "@app/utils/json";
 import { estimateTokens } from "@app/utils/tokens";
 import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
 import type { AnthropicModelCategory } from "@ask/providers/ModelResolver";
-import type { APIMessage, ChatConfig, ChatMessage, DetectedProvider, ProviderChoice } from "@ask/types";
-import type { LanguageModel, LanguageModelUsage, ToolSet } from "ai";
+import type { ChatConfig, ChatMessage, DetectedProvider, ProviderChoice } from "@ask/types";
+import type { LanguageModel, LanguageModelUsage, ModelMessage, ToolSet } from "ai";
 import { generateText, streamText } from "ai";
 
 export interface ChatResponse {
     content: string;
     usage?: LanguageModelUsage;
     cost?: number;
+    /** SDK response messages including tool calls/results — used for multi-turn history. */
+    responseMessages?: ModelMessage[];
     toolCalls?: Array<{
         toolCallType: "function" | "provider";
         toolCallId: string;
@@ -41,6 +43,8 @@ export interface OneShotOptions {
 export class ChatEngine {
     private config: ChatConfig;
     private conversationHistory: ChatMessage[] = [];
+    /** SDK-native message array passed to streamText/generateText — includes tool calls/results. */
+    private sdkMessages: ModelMessage[] = [];
 
     constructor(config: ChatConfig) {
         this.config = { ...config };
@@ -123,22 +127,27 @@ export class ChatEngine {
 
         this.conversationHistory.push(userMessage);
 
-        // Build messages array from full history (includes the just-pushed user message)
-        const messages: APIMessage[] = this.conversationHistory.map((msg) => ({
-            role: msg.role,
-            content: msg.content,
-        }));
+        // Push user message to SDK messages (these include tool calls/results across turns)
+        this.sdkMessages.push({ role: "user", content: message });
 
         try {
             let response: ChatResponse;
 
             if (this.config.streaming) {
-                response = await this.sendStreamingMessage(messages, tools, callbacks);
+                response = await this.sendStreamingMessage(this.sdkMessages, tools, callbacks);
             } else {
-                response = await this.sendNonStreamingMessage(messages, tools);
+                response = await this.sendNonStreamingMessage(this.sdkMessages, tools);
             }
 
-            // Add assistant response to history
+            // Append SDK response messages (assistant + tool messages) for next turn context
+            if (response.responseMessages) {
+                this.sdkMessages.push(...response.responseMessages);
+            } else {
+                // Fallback: add plain assistant message if no response messages available
+                this.sdkMessages.push({ role: "assistant", content: response.content });
+            }
+
+            // Add assistant response to display history
             const assistantMessage: ChatMessage = {
                 role: "assistant",
                 content: response.content,
@@ -158,7 +167,7 @@ export class ChatEngine {
     }
 
     private async sendStreamingMessage(
-        messages: APIMessage[],
+        messages: ModelMessage[],
         tools?: ToolSet,
         callbacks?: {
             onChunk?: (chunk: string) => void;
@@ -293,10 +302,15 @@ export class ChatEngine {
             );
         }
 
+        // Get response messages (includes tool calls/results for multi-turn history)
+        const sdkResponse = await result.response;
+        const responseMessages = sdkResponse.messages as ModelMessage[];
+
         return {
             content: fullResponse,
             usage: usage,
             cost: cost,
+            responseMessages,
             toolCalls: result.toolCalls
                 ? Array.isArray(result.toolCalls)
                     ? result.toolCalls.map((tc) => {
@@ -321,10 +335,7 @@ export class ChatEngine {
         };
     }
 
-    private async sendNonStreamingMessage(
-        messages: APIMessage[],
-        tools?: ToolSet
-    ): Promise<ChatResponse> {
+    private async sendNonStreamingMessage(messages: ModelMessage[], tools?: ToolSet): Promise<ChatResponse> {
         const hasTools = tools && Object.keys(tools).length > 0;
 
         const result = await generateText({
@@ -377,6 +388,7 @@ export class ChatEngine {
             content: result.text,
             usage: result.usage,
             cost,
+            responseMessages: result.response.messages as ModelMessage[],
             toolCalls: result.toolCalls
                 ? Array.isArray(result.toolCalls)
                     ? result.toolCalls.map((tc) => {
@@ -411,6 +423,7 @@ export class ChatEngine {
 
     clearConversation(): void {
         this.conversationHistory = [];
+        this.sdkMessages = [];
     }
 
     getConversationLength(): number {
