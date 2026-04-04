@@ -73,10 +73,9 @@ export class ChatEngine {
             throw new Error(`No "${selection.request}" model available${accountHint}`);
         }
 
-        // Ensure system prompt prefix is applied for subscription providers.
-        // getEffectiveSystemPrompt() only applies the prefix when systemPrompt is truthy,
-        // so we set a minimal system prompt if none was provided.
-        const systemPrompt = options.systemPrompt ?? provider.systemPromptPrefix ?? "Be concise.";
+        // getEffectiveSystemPrompt() prepends the subscription prefix only when
+        // systemPrompt is truthy, so ensure we always have one for subscription providers.
+        const systemPrompt = options.systemPrompt ?? provider.systemPromptPrefix;
 
         const config: ChatConfig = {
             model: getLanguageModel(provider.provider, selection.model.id),
