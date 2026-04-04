@@ -73,16 +73,12 @@ export class ChatEngine {
             throw new Error(`No "${selection.request}" model available${accountHint}`);
         }
 
-        // getEffectiveSystemPrompt() prepends the subscription prefix only when
-        // systemPrompt is truthy, so ensure we always have one for subscription providers.
-        const systemPrompt = options.systemPrompt ?? provider.systemPromptPrefix;
-
         const config: ChatConfig = {
             model: getLanguageModel(provider.provider, selection.model.id),
             provider: "anthropic",
             modelName: selection.model.id,
             streaming: options.streaming ?? false,
-            systemPrompt,
+            systemPrompt: options.systemPrompt,
             maxTokens: options.maxTokens,
             temperature: options.temperature,
             providerChoice: { provider, model: selection.model },
@@ -93,13 +89,18 @@ export class ChatEngine {
     }
 
     private getEffectiveSystemPrompt(): string | undefined {
-        const raw = this.config.systemPrompt;
+        const prefix = this.config.providerChoice?.provider.systemPromptPrefix;
+        const userPrompt = this.config.systemPrompt;
 
-        if (!raw) {
-            return raw;
+        if (!prefix && !userPrompt) {
+            return undefined;
         }
 
-        return applySystemPromptPrefix(this.config.providerChoice?.provider.systemPromptPrefix, raw);
+        if (!userPrompt) {
+            return prefix;
+        }
+
+        return applySystemPromptPrefix(prefix, userPrompt);
     }
 
     async sendMessage(
