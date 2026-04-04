@@ -10,6 +10,7 @@ import { registerResumeCommand } from "./commands/resume";
 import { registerSummarizeCommand } from "./commands/summarize";
 import { registerTailCommand } from "./commands/tail";
 import { registerUsageCommand } from "./commands/usage";
+import { registerWarmupCommand } from "./commands/warmup";
 
 const program = new Command();
 
@@ -28,6 +29,7 @@ registerUsageCommand(program);
 registerConfigCommand(program);
 registerDaemonCommand(program);
 registerMigrateCommand(program);
+registerWarmupCommand(program);
 
 async function main(): Promise<void> {
     try {
