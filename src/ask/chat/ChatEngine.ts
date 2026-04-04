@@ -123,13 +123,19 @@ export class ChatEngine {
 
         this.conversationHistory.push(userMessage);
 
+        // Build messages array from full history (includes the just-pushed user message)
+        const messages = this.conversationHistory.map((msg) => ({
+            role: msg.role as "user" | "assistant" | "system",
+            content: msg.content,
+        }));
+
         try {
             let response: ChatResponse;
 
             if (this.config.streaming) {
-                response = await this.sendStreamingMessage(message, tools, callbacks);
+                response = await this.sendStreamingMessage(messages, tools, callbacks);
             } else {
-                response = await this.sendNonStreamingMessage(message, tools);
+                response = await this.sendNonStreamingMessage(messages, tools);
             }
 
             // Add assistant response to history
@@ -152,7 +158,7 @@ export class ChatEngine {
     }
 
     private async sendStreamingMessage(
-        _message: string,
+        messages: Array<{ role: "user" | "assistant" | "system"; content: string }>,
         tools?: ToolSet,
         callbacks?: {
             onChunk?: (chunk: string) => void;
@@ -161,17 +167,10 @@ export class ChatEngine {
             onToolResult?: (name: string, result: unknown) => void;
         }
     ): Promise<ChatResponse> {
-        // Store usage from onFinish callback - this is the most reliable source
         let finishUsage: LanguageModelUsage | undefined;
         let finishCost: number | undefined;
 
         const hasTools = tools && Object.keys(tools).length > 0;
-
-        // Build messages from conversation history so the model has context
-        const messages = this.conversationHistory.map((msg) => ({
-            role: msg.role as "user" | "assistant" | "system",
-            content: msg.content,
-        }));
 
         const result = await streamText({
             model: this.config.model,
@@ -322,14 +321,11 @@ export class ChatEngine {
         };
     }
 
-    private async sendNonStreamingMessage(_message: string, tools?: ToolSet): Promise<ChatResponse> {
+    private async sendNonStreamingMessage(
+        messages: Array<{ role: "user" | "assistant" | "system"; content: string }>,
+        tools?: ToolSet
+    ): Promise<ChatResponse> {
         const hasTools = tools && Object.keys(tools).length > 0;
-
-        // Build messages from conversation history
-        const messages = this.conversationHistory.map((msg) => ({
-            role: msg.role as "user" | "assistant" | "system",
-            content: msg.content,
-        }));
 
         const result = await generateText({
             model: this.config.model,
