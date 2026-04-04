@@ -57,6 +57,46 @@ export async function setCache<T>(key: string, entry: CacheEntry<T>): Promise<vo
     await Bun.write(filePath, SafeJSON.stringify(entry, null, 2));
 }
 
+export async function getCacheAge(key: string): Promise<number | null> {
+    const filePath = join(CACHE_DIR, `${key}.json`);
+    const file = Bun.file(filePath);
+
+    if (!(await file.exists())) {
+        return null;
+    }
+
+    try {
+        const entry: CacheEntry<unknown> = await file.json();
+        return Date.now() - new Date(entry.fetchedAt).getTime();
+    } catch {
+        return null;
+    }
+}
+
+export interface ProviderCacheStatus {
+    provider: string;
+    ttlMs: number;
+    ageMs: number | null;
+    isFresh: boolean;
+}
+
+export async function getProviderCacheStatuses(
+    cacheKeys: Array<{ provider: string; key: string; ttlMs: number }>
+): Promise<ProviderCacheStatus[]> {
+    return Promise.all(
+        cacheKeys.map(async ({ provider, key, ttlMs }) => {
+            const ageMs = await getCacheAge(key);
+
+            return {
+                provider,
+                ttlMs,
+                ageMs,
+                isFresh: ageMs !== null && ageMs <= ttlMs,
+            };
+        })
+    );
+}
+
 export async function clearCache(): Promise<void> {
     if (!existsSync(CACHE_DIR)) {
         return;

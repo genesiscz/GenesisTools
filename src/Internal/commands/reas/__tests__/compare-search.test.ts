@@ -234,6 +234,8 @@ function makeListing(overrides?: Partial<ListingRow>): ListingRow {
         building_type: "brick",
         description: null,
         raw_json: "{}",
+        previous_price: null,
+        price_changed_at: null,
         created_at: "2026-04-03T00:00:00.000Z",
         updated_at: "2026-04-03T00:00:00.000Z",
         ...overrides,

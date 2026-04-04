@@ -108,6 +108,8 @@ export interface ListingRow {
     building_type: string | null;
     description: string | null;
     raw_json: string;
+    previous_price: number | null;
+    price_changed_at: string | null;
     created_at: string;
     updated_at: string;
 }
@@ -425,6 +427,8 @@ export class ReasDatabase extends BaseDatabase {
         this.ensureColumn("saved_properties", "alert_grade_change", "INTEGER DEFAULT 0");
         this.ensureColumn("district_snapshots", "market_gross_yield", "REAL");
         this.ensureColumn("district_snapshots", "market_net_yield", "REAL");
+        this.ensureColumn("listings", "previous_price", "INTEGER");
+        this.ensureColumn("listings", "price_changed_at", "TEXT");
     }
 
     saveAnalysis(analysis: FullAnalysis): number {
@@ -732,6 +736,8 @@ export class ReasDatabase extends BaseDatabase {
                 district = excluded.district,
                 disposition = excluded.disposition,
                 area = excluded.area,
+                previous_price = CASE WHEN listings.price != excluded.price THEN listings.price ELSE listings.previous_price END,
+                price_changed_at = CASE WHEN listings.price != excluded.price THEN datetime('now') ELSE listings.price_changed_at END,
                 price = excluded.price,
                 price_per_m2 = excluded.price_per_m2,
                 address = excluded.address,
@@ -1167,6 +1173,32 @@ export class ReasDatabase extends BaseDatabase {
                 $construction_type: constructionType,
                 $cutoff: cutoff,
             }) as DistrictSnapshotRow[];
+    }
+
+    getListingsWithPriceChanges(options: { district?: string; type?: string; limit?: number } = {}): ListingRow[] {
+        const conditions = ["previous_price IS NOT NULL"];
+        const params: Record<string, unknown> = {};
+
+        if (options.district) {
+            conditions.push("district = $district");
+            params.$district = options.district;
+        }
+
+        if (options.type) {
+            conditions.push("type = $type");
+            params.$type = options.type;
+        }
+
+        const limit = options.limit ?? 100;
+
+        return this.db
+            .prepare(`
+                SELECT * FROM listings
+                WHERE ${conditions.join(" AND ")}
+                ORDER BY price_changed_at DESC
+                LIMIT $limit
+            `)
+            .all({ ...params, $limit: limit }) as ListingRow[];
     }
 
     logProviderFetch(input: {
