@@ -184,4 +184,22 @@ describe("buildPropertyCardModel", () => {
     test("returns null when no stored analysis exists", () => {
         expect(buildPropertyCardModel(makeProperty({ last_analysis_json: null }))).toBeNull();
     });
+
+    test("hides the median price metric when comparable evidence is missing", () => {
+        const analysis = makeAnalysis();
+        analysis.comparables.listings = [];
+        analysis.comparables.pricePerM2.median = 0;
+
+        const model = buildPropertyCardModel(
+            makeProperty({
+                last_analysis_json: SafeJSON.stringify(analysis),
+                comparable_count: 0,
+                last_median_price_per_m2: 0,
+            })
+        );
+
+        expect(model).not.toBeNull();
+        expect(model?.metrics.find((metric) => metric.label === "CZK/m2")?.value).toBe("-");
+        expect(model?.metrics.find((metric) => metric.label === "Comps")?.value).toBe("-");
+    });
 });

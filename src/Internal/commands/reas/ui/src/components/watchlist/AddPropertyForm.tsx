@@ -31,6 +31,16 @@ const PROVIDER_OPTIONS = [
     { value: "ereality", label: "Ereality" },
     { value: "mf", label: "MF benchmark" },
 ] as const;
+const PROVIDER_LABELS = Object.fromEntries(PROVIDER_OPTIONS.map((option) => [option.value, option.label]));
+const PROPERTY_TYPE_LABELS = Object.fromEntries(PROPERTY_TYPES.map((option) => [option.value, option.label]));
+
+interface ImportedListingPreview {
+    source: string;
+    type: string;
+    address: string;
+    constructionType?: string;
+    rentEstimateCount?: number;
+}
 
 export function AddPropertyForm({ onAdd }: AddPropertyFormProps) {
     const [open, setOpen] = useState(false);
@@ -52,9 +62,11 @@ export function AddPropertyForm({ onAdd }: AddPropertyFormProps) {
     const [loanAmount, setLoanAmount] = useState("");
     const [alertYieldFloor, setAlertYieldFloor] = useState("");
     const [alertGradeChange, setAlertGradeChange] = useState(false);
+    const [alertYieldFloorError, setAlertYieldFloorError] = useState<string | null>(null);
     const [notes, setNotes] = useState("");
     const [importing, setImporting] = useState(false);
     const [listingImportMessage, setListingImportMessage] = useState<string | null>(null);
+    const [importedListingPreview, setImportedListingPreview] = useState<ImportedListingPreview | null>(null);
     const lastEstimateSignatureRef = useRef<string | null>(null);
 
     const areaNumber = Number(targetArea);
@@ -127,8 +139,10 @@ export function AddPropertyForm({ onAdd }: AddPropertyFormProps) {
         setLoanAmount("");
         setAlertYieldFloor("");
         setAlertGradeChange(false);
+        setAlertYieldFloorError(null);
         setNotes("");
         setListingImportMessage(null);
+        setImportedListingPreview(null);
         lastEstimateSignatureRef.current = null;
     }, []);
 
@@ -138,6 +152,16 @@ export function AddPropertyForm({ onAdd }: AddPropertyFormProps) {
         if (!canSubmit) {
             return;
         }
+
+        const trimmedAlertYieldFloor = alertYieldFloor.trim();
+        const parsedAlertYieldFloor = trimmedAlertYieldFloor === "" ? undefined : Number(trimmedAlertYieldFloor);
+
+        if (trimmedAlertYieldFloor !== "" && !Number.isFinite(parsedAlertYieldFloor)) {
+            setAlertYieldFloorError("Yield floor must be a valid number.");
+            return;
+        }
+
+        setAlertYieldFloorError(null);
 
         setSubmitting(true);
 
@@ -158,7 +182,7 @@ export function AddPropertyForm({ onAdd }: AddPropertyFormProps) {
                 mortgageTerm: Number(mortgageTerm) || undefined,
                 downPayment: Number(downPayment) || undefined,
                 loanAmount: Number(loanAmount) || undefined,
-                alertYieldFloor: Number(alertYieldFloor) || undefined,
+                alertYieldFloor: parsedAlertYieldFloor,
                 alertGradeChange,
                 notes: notes.trim() || undefined,
             });
@@ -231,11 +255,18 @@ export function AddPropertyForm({ onAdd }: AddPropertyFormProps) {
                 draft?: {
                     name: string;
                     district: string;
+                    constructionType?: string;
                     disposition?: string;
                     targetPrice: number;
                     targetArea: number;
                     monthlyRent: number;
                     listingUrl: string;
+                };
+                listing?: {
+                    source: string;
+                    type: string;
+                    address: string;
+                    building_type: string | null;
                 };
                 rentEstimate?: {
                     listingCount: number;
@@ -248,17 +279,35 @@ export function AddPropertyForm({ onAdd }: AddPropertyFormProps) {
 
             setName(body.draft.name);
             setDistrict(body.draft.district);
+            setConstructionType(body.draft.constructionType ?? "brick");
             setDisposition(body.draft.disposition ?? "all");
             setTargetPrice(body.draft.targetPrice > 0 ? String(body.draft.targetPrice) : "");
             setTargetArea(body.draft.targetArea > 0 ? String(body.draft.targetArea) : "");
             setMonthlyRent(body.draft.monthlyRent > 0 ? String(body.draft.monthlyRent) : "");
             setListingUrl(body.draft.listingUrl);
-            setListingImportMessage(
-                body.rentEstimate
-                    ? `Imported from cache. Rent estimate used ${body.rentEstimate.listingCount} rental comps.`
-                    : "Imported from cache."
+            setImportedListingPreview(
+                body.listing
+                    ? {
+                          source: body.listing.source,
+                          type: body.listing.type,
+                          address: body.listing.address,
+                          constructionType: body.draft.constructionType ?? body.listing.building_type ?? undefined,
+                          rentEstimateCount: body.rentEstimate?.listingCount ?? undefined,
+                      }
+                    : null
             );
+
+            if (body.listing?.type === "rental") {
+                setListingImportMessage("Imported from cache. Monthly rent was copied from the rental listing.");
+            } else if (body.rentEstimate) {
+                setListingImportMessage(
+                    `Imported from cache. Rent estimate used ${body.rentEstimate.listingCount} rental comps.`
+                );
+            } else {
+                setListingImportMessage("Imported from cache.");
+            }
         } catch (error) {
+            setImportedListingPreview(null);
             setListingImportMessage(error instanceof Error ? error.message : "Failed to import listing");
         } finally {
             setImporting(false);
@@ -432,7 +481,11 @@ export function AddPropertyForm({ onAdd }: AddPropertyFormProps) {
                                 id="prop-url"
                                 type="url"
                                 value={listingUrl}
-                                onChange={(e) => setListingUrl(e.target.value)}
+                                onChange={(e) => {
+                                    setListingUrl(e.target.value);
+                                    setImportedListingPreview(null);
+                                    setListingImportMessage(null);
+                                }}
                                 placeholder="https://www.sreality.cz/..."
                                 className="h-8 text-xs font-mono bg-black/20 border-white/10"
                             />
@@ -448,6 +501,34 @@ export function AddPropertyForm({ onAdd }: AddPropertyFormProps) {
                         </div>
                         {listingImportMessage && (
                             <p className="mt-2 text-[10px] font-mono text-cyan-300">{listingImportMessage}</p>
+                        )}
+                        {importedListingPreview && (
+                            <div className="mt-2 rounded border border-cyan-500/20 bg-cyan-500/5 px-3 py-2 text-[10px] font-mono text-cyan-100">
+                                <div className="uppercase tracking-[0.18em] text-cyan-300/80">
+                                    Cached listing imported
+                                </div>
+                                <div className="mt-1 text-gray-300">{importedListingPreview.address}</div>
+                                <div className="mt-2 flex flex-wrap gap-2 text-[10px]">
+                                    <span className="rounded border border-white/10 bg-black/20 px-2 py-1 text-gray-300">
+                                        {PROVIDER_LABELS[importedListingPreview.source] ??
+                                            importedListingPreview.source}
+                                    </span>
+                                    <span className="rounded border border-white/10 bg-black/20 px-2 py-1 text-gray-300">
+                                        {importedListingPreview.type}
+                                    </span>
+                                    {importedListingPreview.constructionType && (
+                                        <span className="rounded border border-white/10 bg-black/20 px-2 py-1 text-gray-300">
+                                            {PROPERTY_TYPE_LABELS[importedListingPreview.constructionType] ??
+                                                importedListingPreview.constructionType}
+                                        </span>
+                                    )}
+                                    {importedListingPreview.rentEstimateCount != null && (
+                                        <span className="rounded border border-white/10 bg-black/20 px-2 py-1 text-gray-300">
+                                            Rent comps {importedListingPreview.rentEstimateCount}
+                                        </span>
+                                    )}
+                                </div>
+                            </div>
                         )}
                     </div>
 
@@ -581,10 +662,16 @@ export function AddPropertyForm({ onAdd }: AddPropertyFormProps) {
                                     id="prop-alert-yield"
                                     type="number"
                                     value={alertYieldFloor}
-                                    onChange={(e) => setAlertYieldFloor(e.target.value)}
+                                    onChange={(e) => {
+                                        setAlertYieldFloor(e.target.value);
+                                        setAlertYieldFloorError(null);
+                                    }}
                                     placeholder="4.5"
                                     className="h-8 border-white/10 bg-black/20 text-xs font-mono"
                                 />
+                                {alertYieldFloorError && (
+                                    <p className="mt-2 text-[10px] font-mono text-rose-300">{alertYieldFloorError}</p>
+                                )}
                             </div>
                             <label className="flex items-center gap-2 rounded border border-white/10 bg-black/20 px-3 py-2 text-[11px] font-mono text-gray-300">
                                 <Checkbox

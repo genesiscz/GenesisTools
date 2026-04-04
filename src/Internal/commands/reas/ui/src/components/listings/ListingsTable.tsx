@@ -14,6 +14,7 @@ import { Skeleton } from "@ui/components/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@ui/components/table";
 import { cn } from "@ui/lib/utils";
 import { ExternalLink, MoreHorizontal, RefreshCw, SlidersHorizontal } from "lucide-react";
+import { StalenessIndicator } from "../StalenessIndicator";
 import {
     formatArea,
     formatMarketMetric,
@@ -151,15 +152,51 @@ export function ListingsTable({
                             </TableHeader>
                             <TableBody>
                                 {listings.map((listing) => (
-                                    <TableRow key={listing.id} className="border-white/5 hover:bg-white/[0.03]">
+                                    <TableRow
+                                        key={listing.id}
+                                        tabIndex={0}
+                                        className="cursor-pointer border-white/5 hover:bg-white/[0.03] focus-visible:bg-white/[0.04] focus-visible:outline-none"
+                                        onClick={() => onSelectListing(listing.id)}
+                                        onKeyDown={(event) => {
+                                            if (isNestedInteractiveTarget(event.target)) {
+                                                return;
+                                            }
+
+                                            if (event.key !== "Enter" && event.key !== " ") {
+                                                return;
+                                            }
+
+                                            event.preventDefault();
+                                            onSelectListing(listing.id);
+                                        }}
+                                    >
                                         <TableCell>
-                                            <SourceBadge source={listing.source} />
+                                            <div className="flex flex-col items-start gap-2">
+                                                <SourceBadge source={listing.source} href={listing.link} />
+                                                <Badge
+                                                    variant="outline"
+                                                    className={cn(
+                                                        "text-[10px] font-mono uppercase tracking-[0.18em]",
+                                                        listing.status === "sold" &&
+                                                            "border-amber-500/30 bg-amber-500/10 text-amber-300",
+                                                        listing.status === "active" &&
+                                                            "border-emerald-500/30 bg-emerald-500/10 text-emerald-300",
+                                                        listing.status === "removed" &&
+                                                            "border-red-500/30 bg-red-500/10 text-red-300"
+                                                    )}
+                                                >
+                                                    {listing.status}
+                                                </Badge>
+                                            </div>
                                         </TableCell>
                                         <TableCell className="max-w-[280px] whitespace-normal">
                                             <div className="flex items-start gap-2">
                                                 <button
                                                     type="button"
-                                                    onClick={() => onSelectListing(listing.id)}
+                                                    onClick={(event) => {
+                                                        event.stopPropagation();
+                                                        onSelectListing(listing.id);
+                                                    }}
                                                     className="text-left font-mono text-xs text-gray-100 transition-colors hover:text-amber-300"
                                                 >
                                                     {listing.address}
@@ -170,12 +207,15 @@ export function ListingsTable({
                                                     rel="noreferrer"
                                                     className="mt-0.5 text-gray-500 transition-colors hover:text-cyan-300"
                                                     aria-label={`Open ${listing.address} source listing`}
+                                                    onClick={(event) => {
+                                                        event.stopPropagation();
+                                                    }}
                                                 >
                                                     <ExternalLink className="h-3.5 w-3.5" />
                                                 </a>
                                             </div>
                                             <div className="mt-1 text-[11px] font-mono text-gray-500">
-                                                {listing.status}
+                                                {listing.source_contract}
                                             </div>
                                         </TableCell>
                                         <TableCell className="font-mono text-xs text-gray-300">
@@ -197,9 +237,14 @@ export function ListingsTable({
                                             {formatMarketMetric(listing.days_on_market)}
                                         </TableCell>
                                         <TableCell className="text-right font-mono text-xs text-gray-400">
-                                            {formatShortDate(
-                                                listing.type === "sold" ? listing.sold_at : listing.fetched_at
-                                            )}
+                                            <div className="flex flex-col items-end gap-1">
+                                                <span>
+                                                    {formatShortDate(
+                                                        listing.type === "sold" ? listing.sold_at : listing.fetched_at
+                                                    )}
+                                                </span>
+                                                <StalenessIndicator generatedAt={listing.fetched_at} />
+                                            </div>
                                         </TableCell>
                                         <TableCell className="text-right">
                                             <RowActions listing={listing} onSelectListing={onSelectListing} />
@@ -277,6 +322,9 @@ function RowActions({
                     variant="outline"
                     size="icon"
                     className="size-8 border-white/10 bg-white/[0.02] text-gray-300 hover:bg-white/[0.04]"
+                    onClick={(event) => {
+                        event.stopPropagation();
+                    }}
                 >
                     <MoreHorizontal className="h-4 w-4" />
                     <span className="sr-only">Listing actions</span>
@@ -294,4 +342,12 @@ function RowActions({
             </DropdownMenuContent>
         </DropdownMenu>
     );
+}
+
+function isNestedInteractiveTarget(target: EventTarget | null) {
+    if (!(target instanceof HTMLElement)) {
+        return false;
+    }
+
+    return target.closest("a, button, input, select, textarea, summary, [role='button'], [role='menuitem']") !== null;
 }

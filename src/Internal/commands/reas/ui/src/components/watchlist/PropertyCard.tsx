@@ -3,9 +3,11 @@ import { Link } from "@tanstack/react-router";
 import { Badge } from "@ui/components/badge";
 import { Button } from "@ui/components/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
+import { Checkbox } from "@ui/components/checkbox";
+import { Input } from "@ui/components/input";
 import { cn } from "@ui/lib/utils";
 import { CheckSquare, ChevronDown, ChevronUp, ExternalLink, Loader2, RefreshCw, Square, Trash2 } from "lucide-react";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { buildCompareSearchParams } from "../compare/compare-query";
 import { PropertyMortgageCard } from "./PropertyMortgageCard";
 import { PropertyVerdictMini } from "./PropertyVerdictMini";
@@ -31,6 +33,7 @@ interface PropertyCardProps {
     history: PropertyAnalysisHistoryRow[];
     onRefresh: (id: number) => Promise<void>;
     onDelete: (id: number) => void;
+    onUpdateAlerts?: (options: { id: number; alertYieldFloor?: number; alertGradeChange: boolean }) => Promise<void>;
     selectedForCompare?: boolean;
     onToggleCompare?: (id: number) => void;
 }
@@ -66,17 +69,23 @@ export function PropertyCard({
     history,
     onRefresh,
     onDelete,
+    onUpdateAlerts,
     selectedForCompare = false,
     onToggleCompare,
 }: PropertyCardProps) {
     const [refreshing, setRefreshing] = useState(false);
     const [confirmDelete, setConfirmDelete] = useState(false);
     const [expanded, setExpanded] = useState(false);
+    const [alertYieldFloor, setAlertYieldFloor] = useState("");
+    const [alertGradeChange, setAlertGradeChange] = useState(false);
+    const [savingAlerts, setSavingAlerts] = useState(false);
+    const [alertValidationMessage, setAlertValidationMessage] = useState<string | null>(null);
 
     const staleness = getStalenessInfo(property.last_analyzed_at);
     const gradeStyle = property.last_grade ? (GRADE_COLORS[property.last_grade] ?? "") : "";
     const providers = parseSavedProviders(property.providers);
     const cardModel = buildPropertyCardModel(property);
+    const canExpand = Boolean(cardModel || onUpdateAlerts);
     const compareHref = `/compare?${buildCompareSearchParams({
         districts: [property.district],
         propertyType: property.construction_type,
@@ -84,6 +93,16 @@ export function PropertyCard({
         price: property.target_price,
         area: property.target_area,
     }).toString()}`;
+    const alertYieldTriggered =
+        property.alert_yield_floor != null &&
+        property.last_net_yield != null &&
+        property.last_net_yield < property.alert_yield_floor;
+
+    useEffect(() => {
+        setAlertYieldFloor(property.alert_yield_floor != null ? String(property.alert_yield_floor) : "");
+        setAlertGradeChange(Boolean(property.alert_grade_change));
+        setAlertValidationMessage(null);
+    }, [property.alert_grade_change, property.alert_yield_floor]);
 
     const handleRefresh = useCallback(async () => {
         setRefreshing(true);
@@ -105,6 +124,34 @@ export function PropertyCard({
         setConfirmDelete(true);
         setTimeout(() => setConfirmDelete(false), 3000);
     }, [property.id, onDelete, confirmDelete]);
+
+    const handleSaveAlerts = useCallback(async () => {
+        if (!onUpdateAlerts) {
+            return;
+        }
+
+        const trimmedYieldFloor = alertYieldFloor.trim();
+        const parsedYieldFloor = trimmedYieldFloor ? Number(trimmedYieldFloor) : undefined;
+
+        if (trimmedYieldFloor && !Number.isFinite(parsedYieldFloor)) {
+            setAlertValidationMessage("Yield floor must be a valid number.");
+            return;
+        }
+
+        setAlertValidationMessage(null);
+
+        setSavingAlerts(true);
+
+        try {
+            await onUpdateAlerts({
+                id: property.id,
+                alertYieldFloor: parsedYieldFloor,
+                alertGradeChange,
+            });
+        } finally {
+            setSavingAlerts(false);
+        }
+    }, [alertGradeChange, alertYieldFloor, onUpdateAlerts, property.id]);
 
     return (
         <Card className="border-white/10 bg-white/[0.02] hover:border-amber-500/30 hover:shadow-[0_0_20px_rgba(245,158,11,0.07)] transition-all duration-200">
@@ -215,13 +262,117 @@ export function PropertyCard({
                                 </div>
                             ))}
                         </div>
+                    </>
+                )}
 
+                {canExpand && (
+                    <>
                         {expanded && (
-                            <div className="grid gap-3 xl:grid-cols-3">
-                                <PropertyVerdictMini grade={property.last_grade} model={cardModel} />
-                                <PropertyYieldBreakdown model={cardModel} />
-                                <PropertyMortgageCard mortgage={cardModel.mortgage} />
-                            </div>
+                            <>
+                                {cardModel ? (
+                                    <div className="grid gap-3 xl:grid-cols-3">
+                                        <PropertyVerdictMini grade={property.last_grade} model={cardModel} />
+                                        <PropertyYieldBreakdown model={cardModel} />
+                                        <PropertyMortgageCard mortgage={cardModel.mortgage} />
+                                    </div>
+                                ) : (
+                                    <div className="rounded-lg border border-dashed border-white/10 bg-black/20 px-3 py-4 text-[11px] font-mono text-gray-400">
+                                        This card has no stored analysis yet. You can still manage alerts now and
+                                        refresh later to unlock the full dossier.
+                                    </div>
+                                )}
+
+                                {onUpdateAlerts && (
+                                    <div className="rounded-lg border border-white/5 bg-black/20 p-3">
+                                        <div className="flex flex-wrap items-start justify-between gap-3">
+                                            <div>
+                                                <div className="text-[10px] font-mono uppercase tracking-[0.18em] text-gray-500">
+                                                    Alerts
+                                                </div>
+                                                <div className="mt-1 text-[11px] font-mono text-gray-400">
+                                                    Keep thresholds attached to the watchlist card while you screen.
+                                                </div>
+                                            </div>
+
+                                            <div className="flex flex-wrap gap-2 text-[10px] font-mono">
+                                                <Badge
+                                                    variant="outline"
+                                                    className={cn(
+                                                        "bg-white/[0.02]",
+                                                        alertYieldTriggered
+                                                            ? "border-rose-500/30 text-rose-300"
+                                                            : "border-white/10 text-gray-400"
+                                                    )}
+                                                >
+                                                    Current {formatYield(property.last_net_yield)}
+                                                </Badge>
+                                                <Badge
+                                                    variant="outline"
+                                                    className={cn(
+                                                        "bg-white/[0.02]",
+                                                        property.alert_grade_change
+                                                            ? "border-amber-500/20 text-amber-300"
+                                                            : "border-white/10 text-gray-500"
+                                                    )}
+                                                >
+                                                    Grade change {property.alert_grade_change ? "on" : "off"}
+                                                </Badge>
+                                            </div>
+                                        </div>
+
+                                        <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,160px)_1fr_auto] md:items-end">
+                                            <div>
+                                                <label
+                                                    htmlFor={`property-alert-yield-${property.id}`}
+                                                    className="mb-1 block text-[10px] font-mono text-gray-500"
+                                                >
+                                                    Yield floor (%)
+                                                </label>
+                                                <Input
+                                                    id={`property-alert-yield-${property.id}`}
+                                                    type="number"
+                                                    value={alertYieldFloor}
+                                                    onChange={(event) => {
+                                                        setAlertYieldFloor(event.target.value);
+                                                        setAlertValidationMessage(null);
+                                                    }}
+                                                    placeholder="4.5"
+                                                    className="h-8 border-white/10 bg-black/20 text-xs font-mono"
+                                                />
+                                            </div>
+
+                                            <label className="flex h-8 items-center gap-2 rounded border border-white/10 bg-black/20 px-3 text-[11px] font-mono text-gray-300">
+                                                <Checkbox
+                                                    id={`property-alert-grade-${property.id}`}
+                                                    checked={alertGradeChange}
+                                                    onCheckedChange={(checked) => {
+                                                        setAlertGradeChange(checked === true);
+                                                        setAlertValidationMessage(null);
+                                                    }}
+                                                />
+                                                <span>Alert on grade change</span>
+                                            </label>
+
+                                            <Button
+                                                type="button"
+                                                size="sm"
+                                                variant="outline"
+                                                onClick={handleSaveAlerts}
+                                                disabled={savingAlerts}
+                                                className="h-8 border-amber-500/30 text-xs font-mono text-amber-300 hover:bg-amber-500/10"
+                                            >
+                                                {savingAlerts ? "Saving..." : "Save Alerts"}
+                                            </Button>
+                                        </div>
+
+                                        {alertValidationMessage && (
+                                            <p className="mt-2 text-[10px] font-mono text-rose-300">
+                                                {alertValidationMessage}
+                                            </p>
+                                        )}
+                                    </div>
+                                )}
+                            </>
                         )}
 
                         <Button
@@ -232,7 +383,7 @@ export function PropertyCard({
                             className="h-8 border-white/10 text-xs font-mono text-gray-300 hover:bg-white/[0.04]"
                         >
                             {expanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                            {expanded ? "Collapse Analysis" : "Expand Analysis"}
+                            {expanded ? "Collapse Card" : cardModel ? "Expand Analysis" : "Expand Alerts"}
                         </Button>
                     </>
                 )}

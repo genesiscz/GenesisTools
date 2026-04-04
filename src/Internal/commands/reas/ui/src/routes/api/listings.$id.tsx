@@ -1,6 +1,7 @@
 import { fetchBezrealitkyAdvertDetail } from "@app/Internal/commands/reas/api/bezrealitky-client";
 import { buildSavedPropertyFromListing } from "@app/Internal/commands/reas/lib/property-form-defaults";
 import { reasDatabase } from "@app/Internal/commands/reas/lib/store";
+import logger from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import { createFileRoute } from "@tanstack/react-router";
 import { apiHandler, jsonBody } from "../../server/api-utils";
@@ -23,12 +24,24 @@ export const Route = createFileRoute("/api/listings/$id")({
                     return Response.json({ error: "Listing not found" }, { status: 404 });
                 }
 
+                const linkedProperty = reasDatabase.getPropertyByListingUrl(listing.link);
+
                 let hydratedDetail: unknown = null;
 
                 if (listing.source === "bezrealitky" && listing.status === "active") {
                     try {
                         hydratedDetail = await fetchBezrealitkyAdvertDetail(listing.source_id);
-                    } catch {
+                    } catch (error) {
+                        logger.warn(
+                            {
+                                error,
+                                listingId,
+                                source: listing.source,
+                                sourceId: listing.source_id,
+                            },
+                            "Failed to hydrate Bezrealitky listing detail"
+                        );
+
                         hydratedDetail = null;
                     }
                 }
@@ -37,6 +50,12 @@ export const Route = createFileRoute("/api/listings/$id")({
                     listing,
                     raw: SafeJSON.parse(listing.raw_json),
                     hydratedDetail,
+                    linkedProperty: linkedProperty
+                        ? {
+                              id: linkedProperty.id,
+                              name: linkedProperty.name,
+                          }
+                        : null,
                 });
             }),
 
@@ -73,6 +92,19 @@ export const Route = createFileRoute("/api/listings/$id")({
                     area: listing.area ?? undefined,
                 });
 
+                const existingProperty = reasDatabase.getPropertyByListingUrl(listing.link);
+
+                if (existingProperty) {
+                    return Response.json(
+                        {
+                            id: existingProperty.id,
+                            name: existingProperty.name,
+                            alreadyExists: true,
+                        },
+                        { status: 200 }
+                    );
+                }
+
                 const id = reasDatabase.saveProperty(
                     buildSavedPropertyFromListing({
                         listing,
@@ -81,7 +113,16 @@ export const Route = createFileRoute("/api/listings/$id")({
                     })
                 );
 
-                return Response.json({ id }, { status: 201 });
+                const property = reasDatabase.getProperty(id);
+
+                return Response.json(
+                    {
+                        id,
+                        name: property?.name ?? null,
+                        alreadyExists: false,
+                    },
+                    { status: 201 }
+                );
             }),
         },
     },

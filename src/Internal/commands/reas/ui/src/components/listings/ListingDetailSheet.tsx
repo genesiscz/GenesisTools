@@ -29,6 +29,10 @@ interface ListingDetailResponse {
     listing: ListingRow;
     raw: unknown;
     hydratedDetail: BezrealitkyAdvertDetail | null;
+    linkedProperty: {
+        id: number;
+        name: string;
+    } | null;
 }
 
 interface ListingDetailSheetProps {
@@ -80,6 +84,7 @@ export function ListingDetailSheet({ listingId, open, onOpenChange }: ListingDet
     const providerLinks = hydratedDetail?.links ?? [];
     const regionTree = hydratedDetail?.regionTree ?? [];
     const relatedAdverts = hydratedDetail?.relatedAdverts ?? [];
+    const linkedProperty = detailQuery.data?.linkedProperty ?? null;
     const poiHighlights = extractPoiHighlights(hydratedDetail?.poiData);
     const reportLinks = extractNemoreportLinks(hydratedDetail?.nemoreport);
     const imageGallery = mergeImageGallery({
@@ -107,15 +112,37 @@ export function ListingDetailSheet({ listingId, open, onOpenChange }: ListingDet
                 headers: { "Content-Type": "application/json" },
                 body: globalThis.JSON.stringify({ constructionType }),
             });
-            const body = (await response.json()) as { error?: string };
+            const body = (await response.json()) as {
+                error?: string;
+                id?: number;
+                name?: string | null;
+                alreadyExists?: boolean;
+            };
 
             if (!response.ok) {
                 throw new Error(body.error ?? "Failed to add listing to watchlist");
             }
+
+            if (!body.id) {
+                throw new Error("Property id missing from watchlist response");
+            }
+
+            return {
+                id: body.id,
+                name: body.name ?? "Saved property",
+                alreadyExists: body.alreadyExists === true,
+            };
         },
-        onSuccess: async () => {
+        onSuccess: async (result) => {
             await queryClient.invalidateQueries({ queryKey: ["properties"] });
-            toast.success("Listing added to watchlist");
+            await queryClient.invalidateQueries({ queryKey: ["listing-detail", listingId] });
+
+            if (result.alreadyExists) {
+                toast.success(`Already in watchlist as ${result.name}`);
+                return;
+            }
+
+            toast.success(`Added to watchlist as ${result.name}`);
         },
         onError: (error: Error) => {
             toast.error(error.message);
@@ -130,7 +157,11 @@ export function ListingDetailSheet({ listingId, open, onOpenChange }: ListingDet
                         <div className="flex flex-wrap items-center gap-2">
                             {listing && (
                                 <>
-                                    <SourceBadge source={listing.source} className="tracking-[0.2em]" />
+                                    <SourceBadge
+                                        source={listing.source}
+                                        href={listing.link}
+                                        className="tracking-[0.2em]"
+                                    />
                                     <Badge
                                         variant="outline"
                                         className={cn(
@@ -146,6 +177,21 @@ export function ListingDetailSheet({ listingId, open, onOpenChange }: ListingDet
                                     >
                                         {listing.type}
                                     </Badge>
+                                    {linkedProperty && (
+                                        <Button
+                                            asChild
+                                            size="sm"
+                                            variant="outline"
+                                            className="h-7 border-cyan-500/20 bg-cyan-500/5 px-2.5 text-[10px] font-mono uppercase tracking-[0.18em] text-cyan-300 hover:bg-cyan-500/10"
+                                        >
+                                            <Link
+                                                to="/watchlist/$propertyId"
+                                                params={{ propertyId: String(linkedProperty.id) }}
+                                            >
+                                                In watchlist
+                                            </Link>
+                                        </Button>
+                                    )}
                                 </>
                             )}
                         </div>
@@ -186,6 +232,37 @@ export function ListingDetailSheet({ listingId, open, onOpenChange }: ListingDet
                                     <Metric label="Source contract" value={listing.source_contract} />
                                     <Metric label="Source id" value={listing.source_id} />
                                 </section>
+
+                                {linkedProperty && (
+                                    <section className="rounded-xl border border-cyan-500/15 bg-cyan-500/[0.03] p-4">
+                                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                                            <div>
+                                                <div className="text-[11px] font-mono uppercase tracking-[0.24em] text-cyan-300">
+                                                    Watchlist link
+                                                </div>
+                                                <p className="mt-1 font-mono text-sm text-gray-200">
+                                                    {linkedProperty.name}
+                                                </p>
+                                                <p className="mt-1 font-mono text-xs text-gray-400">
+                                                    This listing already has a saved property entry.
+                                                </p>
+                                            </div>
+                                            <Button
+                                                asChild
+                                                size="sm"
+                                                variant="outline"
+                                                className="border-cyan-500/20 bg-cyan-500/5 text-cyan-300 hover:bg-cyan-500/10"
+                                            >
+                                                <Link
+                                                    to="/watchlist/$propertyId"
+                                                    params={{ propertyId: String(linkedProperty.id) }}
+                                                >
+                                                    Open watchlist
+                                                </Link>
+                                            </Button>
+                                        </div>
+                                    </section>
+                                )}
 
                                 <section className="rounded-xl border border-white/5 bg-white/[0.02] p-4">
                                     <div className="mb-2 text-[11px] font-mono uppercase tracking-[0.24em] text-gray-500">
@@ -487,11 +564,17 @@ export function ListingDetailSheet({ listingId, open, onOpenChange }: ListingDet
                                             <Button
                                                 size="sm"
                                                 variant="outline"
-                                                onClick={() => saveToWatchlistMutation.mutate()}
-                                                disabled={saveToWatchlistMutation.isPending}
+                                                onClick={() => {
+                                                    saveToWatchlistMutation.mutate();
+                                                }}
+                                                disabled={saveToWatchlistMutation.isPending || linkedProperty !== null}
                                                 className="border-amber-500/20 bg-amber-500/5 text-amber-300 hover:bg-amber-500/10"
                                             >
-                                                {saveToWatchlistMutation.isPending ? "Saving..." : "Add to watchlist"}
+                                                {linkedProperty
+                                                    ? "Saved to watchlist"
+                                                    : saveToWatchlistMutation.isPending
+                                                      ? "Saving..."
+                                                      : "Add to watchlist"}
                                             </Button>
                                             <Button
                                                 asChild

@@ -1,4 +1,5 @@
 import type { ProviderName } from "@app/Internal/commands/reas/types";
+import { fmt, fmtDateTime, pct } from "../../lib/format";
 
 export { GRADE_COLORS } from "../analysis/display-model";
 
@@ -75,10 +76,10 @@ export function formatCurrencyCompact(value: number | null | undefined): string 
         return "-";
     }
 
-    return new Intl.NumberFormat("cs-CZ", {
+    return fmt(value, {
         notation: "compact",
         maximumFractionDigits: 1,
-    }).format(value);
+    });
 }
 
 export function formatCurrencyFull(value: number | null | undefined): string {
@@ -86,7 +87,7 @@ export function formatCurrencyFull(value: number | null | undefined): string {
         return "-";
     }
 
-    return `${Math.round(value).toLocaleString("cs-CZ")} CZK`;
+    return `${fmt(Math.round(value))} CZK`;
 }
 
 export function formatNumber(value: number | null | undefined, digits = 0): string {
@@ -94,7 +95,7 @@ export function formatNumber(value: number | null | undefined, digits = 0): stri
         return "-";
     }
 
-    return value.toLocaleString("cs-CZ", {
+    return fmt(value, {
         minimumFractionDigits: digits,
         maximumFractionDigits: digits,
     });
@@ -105,7 +106,7 @@ export function formatYield(value: number | null | undefined): string {
         return "-";
     }
 
-    return `${value.toFixed(1)}%`;
+    return pct(value, { digits: 1 });
 }
 
 export function formatPercent(value: number | null | undefined): string {
@@ -113,7 +114,7 @@ export function formatPercent(value: number | null | undefined): string {
         return "-";
     }
 
-    return `${value.toFixed(0)}%`;
+    return pct(value, { digits: 0 });
 }
 
 export function formatDateTime(value: string | null | undefined): string {
@@ -121,10 +122,10 @@ export function formatDateTime(value: string | null | undefined): string {
         return "-";
     }
 
-    return new Intl.DateTimeFormat("en-GB", {
+    return fmtDateTime(value, {
         dateStyle: "medium",
         timeStyle: "short",
-    }).format(new Date(value));
+    });
 }
 
 export function formatDateShort(value: string | null | undefined): string {
@@ -132,11 +133,13 @@ export function formatDateShort(value: string | null | undefined): string {
         return "-";
     }
 
-    return new Intl.DateTimeFormat("en-GB", {
+    return fmtDateTime(value, {
         day: "2-digit",
         month: "short",
         year: "numeric",
-    }).format(new Date(value));
+        hour: undefined,
+        minute: undefined,
+    });
 }
 
 export function formatConstructionType(value: string): string {

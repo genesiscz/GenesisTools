@@ -4,6 +4,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { cn } from "@ui/lib/utils";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useMemo, useState } from "react";
+import { fmt, fmtDateTime, pct } from "../../lib/format";
 import { GRADE_COLORS } from "../analysis/display-model";
 
 interface HistoryEntry {
@@ -92,12 +93,10 @@ export function HistoryTable({ entries, districtFilter }: HistoryTableProps) {
                                 )}
                             </TableCell>
                             <TableCell className="text-xs font-mono text-cyan-400 text-right">
-                                {entry.netYield !== null ? `${entry.netYield.toFixed(1)}%` : "--"}
+                                {entry.netYield !== null ? pct(entry.netYield, { digits: 1 }) : "--"}
                             </TableCell>
                             <TableCell className="text-xs font-mono text-gray-300 text-right">
-                                {entry.medianPricePerM2 !== null
-                                    ? entry.medianPricePerM2.toLocaleString("cs-CZ")
-                                    : "--"}
+                                {entry.medianPricePerM2 !== null ? fmt(entry.medianPricePerM2) : "--"}
                             </TableCell>
                             <TableCell className="text-xs font-mono text-gray-400 text-right">
                                 {entry.comparablesCount ?? "--"}
@@ -140,11 +139,11 @@ export function HistoryTable({ entries, districtFilter }: HistoryTableProps) {
 }
 
 function formatDate(iso: string): string {
-    const d = new Date(iso);
-    const year = d.getFullYear();
-    const month = String(d.getMonth() + 1).padStart(2, "0");
-    const day = String(d.getDate()).padStart(2, "0");
-    const hours = String(d.getHours()).padStart(2, "0");
-    const minutes = String(d.getMinutes()).padStart(2, "0");
-    return `${year}-${month}-${day} ${hours}:${minutes}`;
+    return fmtDateTime(iso, {
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+    });
 }

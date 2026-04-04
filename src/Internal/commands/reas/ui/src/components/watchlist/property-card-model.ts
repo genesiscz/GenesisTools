@@ -46,8 +46,11 @@ export function buildPropertyCardModel(property: SavedPropertyRow): PropertyCard
 
     const analysis = SafeJSON.parse(property.last_analysis_json) as FullAnalysis;
     const percentile = analysis.comparables.targetPercentile ?? property.percentile ?? null;
-    const medianPrice = analysis.comparables.pricePerM2.median ?? property.last_median_price_per_m2 ?? null;
     const comparablesCount = analysis.comparables.listings.length || property.comparable_count || 0;
+    const medianPrice =
+        comparablesCount > 0
+            ? analysis.comparables.pricePerM2.median || property.last_median_price_per_m2 || null
+            : null;
     const momentumDirection = analysis.momentum?.direction ?? property.momentum ?? null;
     const netYield = analysis.yield.netYield ?? property.last_net_yield ?? null;
     const mortgageModel = buildMortgageModel(property);

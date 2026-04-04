@@ -155,6 +155,33 @@ function WatchlistIndexPage() {
         },
     });
 
+    const updateAlertsMutation = useMutation({
+        mutationFn: async (options: { id: number; alertYieldFloor?: number; alertGradeChange: boolean }) => {
+            const response = await fetch(`/api/properties?id=${options.id}`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: globalThis.JSON.stringify({
+                    action: "update-settings",
+                    alertYieldFloor: options.alertYieldFloor ?? null,
+                    alertGradeChange: options.alertGradeChange,
+                }),
+            });
+
+            const body = (await response.json()) as { error?: string };
+
+            if (!response.ok) {
+                throw new Error(body.error ?? "Failed to update alerts");
+            }
+        },
+        onSuccess: async () => {
+            await queryClient.invalidateQueries({ queryKey: ["properties"] });
+            toast.success("Alert settings updated");
+        },
+        onError: (error: Error) => {
+            toast.error(error.message);
+        },
+    });
+
     const handleRefresh = useCallback(
         async (id: number) => {
             const res = await fetch(`/api/properties?id=${id}`, {
@@ -189,6 +216,13 @@ function WatchlistIndexPage() {
             deleteMutation.mutate(id);
         },
         [deleteMutation]
+    );
+
+    const handleUpdateAlerts = useCallback(
+        async (options: { id: number; alertYieldFloor?: number; alertGradeChange: boolean }) => {
+            await updateAlertsMutation.mutateAsync(options);
+        },
+        [updateAlertsMutation]
     );
 
     const handleAdd = useCallback(
@@ -591,6 +625,7 @@ function WatchlistIndexPage() {
                             history={historyByProperty[property.id] ?? []}
                             onRefresh={handleRefresh}
                             onDelete={handleDelete}
+                            onUpdateAlerts={handleUpdateAlerts}
                             selectedForCompare={selectedCompareIds.includes(property.id)}
                             onToggleCompare={toggleCompareSelection}
                         />

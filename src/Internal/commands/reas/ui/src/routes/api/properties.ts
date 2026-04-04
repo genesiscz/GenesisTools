@@ -74,6 +74,11 @@ export const Route = createFileRoute("/api/properties")({
                 const name = body.name as string | undefined;
                 const district = body.district as string | undefined;
                 const constructionType = body.constructionType as string | undefined;
+                const alertYieldFloorValue = body.alertYieldFloor;
+                const parsedAlertYieldFloor =
+                    alertYieldFloorValue == null || alertYieldFloorValue === ""
+                        ? undefined
+                        : Number(alertYieldFloorValue);
 
                 if (!name || !district || !constructionType) {
                     return Response.json(
@@ -98,7 +103,7 @@ export const Route = createFileRoute("/api/properties")({
                     mortgageTerm: body.mortgageTerm ? Number(body.mortgageTerm) : undefined,
                     downPayment: body.downPayment ? Number(body.downPayment) : undefined,
                     loanAmount: body.loanAmount ? Number(body.loanAmount) : undefined,
-                    alertYieldFloor: body.alertYieldFloor ? Number(body.alertYieldFloor) : undefined,
+                    alertYieldFloor: parsedAlertYieldFloor,
                     alertGradeChange: body.alertGradeChange === true,
                     notes: body.notes as string | undefined,
                 });
