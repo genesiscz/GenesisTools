@@ -16,9 +16,9 @@ function createTestStorage(): AIConfigStorage {
         string,
         CallableFunction
     >;
-    internalStorage.getConfig = async () => mockData["config"] ?? null;
+    internalStorage.getConfig = async () => mockData.config ?? null;
     internalStorage.setConfig = async (data: unknown) => {
-        mockData["config"] = data;
+        mockData.config = data;
     };
     internalStorage.withConfigLock = async (fn: () => Promise<void>) => fn();
 

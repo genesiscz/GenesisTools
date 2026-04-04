@@ -27,12 +27,21 @@ export async function dispatchNotification(event: NotificationEvent): Promise<vo
     try {
         const channels = await notificationsConfig.getChannels(event.app);
 
-        await Promise.allSettled([
+        const channelNames = ["system", "telegram", "webhook", "say"] as const;
+        const results = await Promise.allSettled([
             dispatchSystem(event, channels.system),
             dispatchTelegram(event, channels.telegram),
             dispatchWebhook(event, channels.webhook),
             dispatchSay(event.message, channels.say),
         ]);
+
+        for (let i = 0; i < results.length; i++) {
+            const r = results[i];
+
+            if (r.status === "rejected") {
+                logger.warn({ err: r.reason, app: event.app, channel: channelNames[i] }, "Channel dispatch failed");
+            }
+        }
     } catch (err) {
         logger.warn({ err, app: event.app }, "Notification dispatch failed");
     }

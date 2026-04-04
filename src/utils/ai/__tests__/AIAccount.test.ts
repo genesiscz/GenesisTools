@@ -30,9 +30,9 @@ describe("AIAccount", () => {
     describe("invalidate()", () => {
         it("clears cached provider", () => {
             const account = AIAccount.chooseClaude("hello");
-            // Access private field to verify
+            // Prime the cached field so invalidate() has something to clear
             // biome-ignore lint: test needs private access
-            expect((account as unknown as Record<string, unknown>)["_provider"]).toBeNull();
+            (account as unknown as Record<string, unknown>)["_provider"] = { mocked: true };
             account.invalidate();
             // biome-ignore lint: test needs private access
             expect((account as unknown as Record<string, unknown>)["_provider"]).toBeNull();

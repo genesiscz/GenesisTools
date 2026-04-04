@@ -504,14 +504,16 @@ export class Storage {
             fn: async () => {
                 let config: T;
 
-                try {
-                    if (existsSync(this.configPath)) {
-                        const content = await Bun.file(this.configPath).text();
-                        config = (SafeJSON.parse(content) as T) ?? ({} as T);
-                    } else {
-                        config = {} as T;
+                if (existsSync(this.configPath)) {
+                    const content = await Bun.file(this.configPath).text();
+                    const parsed = SafeJSON.parse(content);
+
+                    if (parsed == null || typeof parsed !== "object" || Array.isArray(parsed)) {
+                        throw new Error(`Invalid config at ${this.configPath}: expected JSON object`);
                     }
-                } catch {
+
+                    config = parsed as T;
+                } else {
                     config = {} as T;
                 }
 

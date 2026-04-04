@@ -162,7 +162,7 @@ export class WebSearchTool {
             description: "Search the web for current information using Brave Search",
             parameters: z.object({
                 query: z.string().describe("The search query to look up"),
-                numResults: z.number().optional().default(5).describe("Number of results (max 10)"),
+                numResults: z.number().int().min(1).max(10).default(5).describe("Number of results (max 10)"),
                 safeSearch: z.enum(["off", "moderate", "strict"]).optional().describe("Safe search level"),
             }),
             execute: async (params: { query: string; numResults?: number; safeSearch?: string }): Promise<string> => {
