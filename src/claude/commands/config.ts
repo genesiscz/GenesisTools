@@ -3,7 +3,7 @@ import {
     DEFAULT_WARMUP,
     determineAccountLabel,
     loadConfig,
-    saveConfig,
+    updateConfig,
 } from "@app/claude/lib/config";
 import { fetchUsage } from "@app/claude/lib/usage/api";
 import { claudeOAuth, fetchOAuthProfile, getClaudeJsonAccount } from "@app/utils/claude/auth";
@@ -179,18 +179,20 @@ async function addAccountViaOAuth(config: ClaudeConfig): Promise<void> {
         return;
     }
 
-    config.accounts[name] = {
+    const accountData = {
         accessToken: tokens.accessToken,
         refreshToken: tokens.refreshToken,
         expiresAt: tokens.expiresAt,
         label: determineAccountLabel(profile),
     };
 
-    if (!config.defaultAccount) {
-        config.defaultAccount = name;
-    }
-
-    await saveConfig(config);
+    const updated = await updateConfig((cfg) => {
+        cfg.accounts[name] = accountData;
+        if (!cfg.defaultAccount) {
+            cfg.defaultAccount = name;
+        }
+    });
+    Object.assign(config, updated);
     p.log.success(`Account "${name}" saved with auto-refresh support.`);
 }
 
@@ -296,14 +298,20 @@ async function manageAccounts(config: ClaudeConfig): Promise<void> {
             placeholder: "max",
         });
 
-        config.accounts[name as string] = {
-            accessToken: token as string,
-            label: p.isCancel(label) ? undefined : (label as string) || undefined,
-        };
-        if (!config.defaultAccount) {
-            config.defaultAccount = name as string;
-        }
-        await saveConfig(config);
+        const accountLabel = p.isCancel(label) ? undefined : (label as string) || undefined;
+        const accountName = name as string;
+        const accountToken = token as string;
+
+        const updated = await updateConfig((cfg) => {
+            cfg.accounts[accountName] = {
+                accessToken: accountToken,
+                label: accountLabel,
+            };
+            if (!cfg.defaultAccount) {
+                cfg.defaultAccount = accountName;
+            }
+        });
+        Object.assign(config, updated);
         p.log.success(`Account "${name}" saved.`);
     } else if (action === "remove") {
         const accounts = Object.keys(config.accounts);
@@ -325,11 +333,14 @@ async function manageAccounts(config: ClaudeConfig): Promise<void> {
             return;
         }
 
-        delete config.accounts[toRemove as string];
-        if (config.defaultAccount === toRemove) {
-            config.defaultAccount = Object.keys(config.accounts)[0];
-        }
-        await saveConfig(config);
+        const removeName = toRemove as string;
+        const updated = await updateConfig((cfg) => {
+            delete cfg.accounts[removeName];
+            if (cfg.defaultAccount === removeName) {
+                cfg.defaultAccount = Object.keys(cfg.accounts)[0];
+            }
+        });
+        Object.assign(config, updated);
         p.log.success(`Account "${toRemove}" removed.`);
     }
 }
@@ -367,19 +378,25 @@ async function manageNotifications(config: ClaudeConfig): Promise<void> {
         return;
     }
 
-    config.notifications.sessionThresholds = (sessionThresholds as string)
+    const parsedSessionThresholds = (sessionThresholds as string)
         .split(",")
         .map((s) => parseInt(s.trim(), 10))
         .filter((n) => !Number.isNaN(n) && n >= 0 && n <= 100);
-    config.notifications.weeklyThresholds = (weeklyThresholds as string)
+    const parsedWeeklyThresholds = (weeklyThresholds as string)
         .split(",")
         .map((s) => parseInt(s.trim(), 10))
         .filter((n) => !Number.isNaN(n) && n >= 0 && n <= 100);
     const parsedInterval = parseInt(interval as string, 10);
-    config.notifications.watchInterval = Number.isFinite(parsedInterval) && parsedInterval > 0 ? parsedInterval : 60;
-    config.notifications.channels.macos = macosEnabled as boolean;
+    const resolvedInterval = Number.isFinite(parsedInterval) && parsedInterval > 0 ? parsedInterval : 60;
+    const resolvedMacos = macosEnabled as boolean;
 
-    await saveConfig(config);
+    const updated = await updateConfig((cfg) => {
+        cfg.notifications.sessionThresholds = parsedSessionThresholds;
+        cfg.notifications.weeklyThresholds = parsedWeeklyThresholds;
+        cfg.notifications.watchInterval = resolvedInterval;
+        cfg.notifications.channels.macos = resolvedMacos;
+    });
+    Object.assign(config, updated);
     p.log.success("Notification settings saved.");
 }
 
@@ -434,13 +451,16 @@ async function configureSessionWarmup(config: ClaudeConfig, accountNames: string
         return;
     }
 
-    warmup.session.enabled = enabled;
-
     if (!enabled) {
-        await saveConfig(config);
+        const updated = await updateConfig((cfg) => {
+            cfg.warmup!.session.enabled = false;
+        });
+        Object.assign(config, updated);
         p.log.success("Session warmup disabled.");
         return;
     }
+
+    warmup.session.enabled = enabled;
 
     // Account selection (multiselect)
     const accounts = await p.multiselect({
@@ -514,6 +534,8 @@ async function configureSessionWarmup(config: ClaudeConfig, accountNames: string
 
     warmup.session.notify = notify;
 
+    let resolvedNotifyOnlyIfUnused = warmup.session.notifyOnlyIfUnused;
+
     if (notify) {
         const onlyIfUnused = await p.confirm({
             message: "Only notify if session was unused?",
@@ -523,12 +545,20 @@ async function configureSessionWarmup(config: ClaudeConfig, accountNames: string
             return;
         }
 
-        warmup.session.notifyOnlyIfUnused = onlyIfUnused;
+        resolvedNotifyOnlyIfUnused = onlyIfUnused;
     }
 
-    await saveConfig(config);
+    const sessionAccounts = warmup.session.accounts;
+    const updated = await updateConfig((cfg) => {
+        cfg.warmup!.session.enabled = true;
+        cfg.warmup!.session.accounts = sessionAccounts;
+        cfg.warmup!.session.schedule = { startHour: start, endHour: end };
+        cfg.warmup!.session.notify = notify;
+        cfg.warmup!.session.notifyOnlyIfUnused = resolvedNotifyOnlyIfUnused;
+    });
+    Object.assign(config, updated);
 
-    const accountList = warmup.session.accounts.join(", ");
+    const accountList = sessionAccounts.join(", ");
     p.log.success(
         `Session warmup enabled for ${accountList}. Blocks: ${blocks.join(", ")}. ` +
             `I will automatically start sessions within ${start}:00\u2013${end}:00.`
@@ -546,13 +576,16 @@ async function configureWeeklyWarmup(config: ClaudeConfig, accountNames: string[
         return;
     }
 
-    warmup.weekly.enabled = enabled;
-
     if (!enabled) {
-        await saveConfig(config);
+        const updated = await updateConfig((cfg) => {
+            cfg.warmup!.weekly.enabled = false;
+        });
+        Object.assign(config, updated);
         p.log.success("Weekly warmup disabled.");
         return;
     }
+
+    warmup.weekly.enabled = enabled;
 
     const accounts = await p.multiselect({
         message: "Which accounts to warm up at weekly reset?",
@@ -567,7 +600,7 @@ async function configureWeeklyWarmup(config: ClaudeConfig, accountNames: string[
         return;
     }
 
-    warmup.weekly.accounts = accounts as string[];
+    const weeklyAccounts = accounts as string[];
 
     const notify = await p.confirm({
         message: "Notify on weekly warmup?",
@@ -576,12 +609,14 @@ async function configureWeeklyWarmup(config: ClaudeConfig, accountNames: string[
     if (p.isCancel(notify)) {
         return;
     }
-
-    warmup.weekly.notify = notify;
-
-    await saveConfig(config);
+    const updated = await updateConfig((cfg) => {
+        cfg.warmup!.weekly.enabled = true;
+        cfg.warmup!.weekly.accounts = weeklyAccounts;
+        cfg.warmup!.weekly.notify = notify;
+    });
+    Object.assign(config, updated);
     p.log.success(
-        `Weekly warmup enabled for ${(accounts as string[]).join(", ")}. ` +
+        `Weekly warmup enabled for ${weeklyAccounts.join(", ")}. ` +
             "I will automatically notify you whenever a weekly session is started."
     );
 }
@@ -722,11 +757,13 @@ export function registerConfigCommand(program: Command): void {
                 process.exit(1);
             }
 
-            config.accounts[name] = { accessToken: opts.token };
-            if (!config.defaultAccount) {
-                config.defaultAccount = name;
-            }
-            await saveConfig(config);
+            const token = opts.token;
+            await updateConfig((cfg) => {
+                cfg.accounts[name] = { accessToken: token };
+                if (!cfg.defaultAccount) {
+                    cfg.defaultAccount = name;
+                }
+            });
             p.log.success(`Account "${name}" added.`);
         });
 
@@ -739,11 +776,12 @@ export function registerConfigCommand(program: Command): void {
                 p.log.error(`Account "${name}" not found.`);
                 process.exit(1);
             }
-            delete config.accounts[name];
-            if (config.defaultAccount === name) {
-                config.defaultAccount = Object.keys(config.accounts)[0];
-            }
-            await saveConfig(config);
+            await updateConfig((cfg) => {
+                delete cfg.accounts[name];
+                if (cfg.defaultAccount === name) {
+                    cfg.defaultAccount = Object.keys(cfg.accounts)[0];
+                }
+            });
             p.log.success(`Account "${name}" removed.`);
         });
 
@@ -821,17 +859,17 @@ export function registerConfigCommand(program: Command): void {
             const profile = await fetchOAuthProfile(tokens.accessToken);
             const label = determineAccountLabel(profile);
 
-            // Save
-            config.accounts[accountName] = {
-                accessToken: tokens.accessToken,
-                refreshToken: tokens.refreshToken,
-                expiresAt: tokens.expiresAt,
-                label,
-            };
-            if (!config.defaultAccount) {
-                config.defaultAccount = accountName;
-            }
-            await saveConfig(config);
+            await updateConfig((cfg) => {
+                cfg.accounts[accountName] = {
+                    accessToken: tokens.accessToken,
+                    refreshToken: tokens.refreshToken,
+                    expiresAt: tokens.expiresAt,
+                    label,
+                };
+                if (!cfg.defaultAccount) {
+                    cfg.defaultAccount = accountName;
+                }
+            });
 
             console.log();
             console.log(pc.green(`✓ Account "${accountName}" saved with auto-refresh.`));
