@@ -919,14 +919,20 @@ export function RentalsTab({ data }: AnalysisSectionProps) {
                             Yield by disposition
                         </CardTitle>
                         <CardDescription className="font-mono text-xs text-slate-500">
-                            Gross rental yield per disposition — cross-referencing rental medians with sold price medians.
+                            Gross rental yield per disposition — cross-referencing rental medians with sold price
+                            medians.
                         </CardDescription>
                     </CardHeader>
                     <CardContent className="px-0">
                         <DataTable
                             columns={[
                                 { key: "disposition", header: "Disp.", className: "text-white" },
-                                { key: "rentLabel", header: "Median rent/m²", align: "right", className: "text-cyan-300" },
+                                {
+                                    key: "rentLabel",
+                                    header: "Median rent/m²",
+                                    align: "right",
+                                    className: "text-cyan-300",
+                                },
                                 {
                                     key: "soldLabel",
                                     header: "Median sold/m²",
@@ -1026,36 +1032,82 @@ export function RentalsTab({ data }: AnalysisSectionProps) {
                     <CardHeader className="pb-3">
                         <CardTitle className="flex items-center gap-2 text-sm font-mono text-white">
                             <Landmark className="h-4 w-4 text-lime-300" />
-                            MF benchmarks
+                            MF government benchmarks
                         </CardTitle>
                         <CardDescription className="font-mono text-xs text-slate-500">
-                            Reference price inputs returned alongside rental analysis.
+                            MF cenova mapa reference prices vs market median — government rental benchmarks per
+                            cadastral unit.
                         </CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-3">
-                        {data.benchmarks.mf.slice(0, 8).map((benchmark) => (
-                            <div
-                                key={`${benchmark.cadastralUnit}-${benchmark.sizeCategory}`}
-                                className="rounded-lg border border-white/5 bg-slate-950/50 px-3 py-2"
-                            >
-                                <div className="flex items-center justify-between gap-4">
-                                    <div>
-                                        <div className="text-xs font-mono text-slate-200">{benchmark.municipality}</div>
-                                        <div className="text-[11px] font-mono uppercase tracking-[0.2em] text-slate-500">
-                                            {benchmark.cadastralUnit} · {benchmark.sizeCategory}
+                        {(() => {
+                            const marketMedianRent =
+                                aggregated.length > 0
+                                    ? aggregated.reduce((sum, group) => sum + group.rentPerM2, 0) / aggregated.length
+                                    : 0;
+
+                            return data.benchmarks.mf.slice(0, 8).map((benchmark) => {
+                                const diff =
+                                    marketMedianRent > 0
+                                        ? ((marketMedianRent - benchmark.referencePrice) / benchmark.referencePrice) *
+                                          100
+                                        : 0;
+
+                                return (
+                                    <div
+                                        key={`${benchmark.cadastralUnit}-${benchmark.sizeCategory}`}
+                                        className="rounded-lg border border-white/5 bg-slate-950/50 px-3 py-2.5"
+                                    >
+                                        <div className="flex items-center justify-between gap-4">
+                                            <div>
+                                                <div className="text-xs font-mono text-slate-200">
+                                                    {benchmark.municipality}
+                                                </div>
+                                                <div className="text-[11px] font-mono uppercase tracking-[0.2em] text-slate-500">
+                                                    {benchmark.cadastralUnit} · {benchmark.sizeCategory}
+                                                </div>
+                                            </div>
+                                            <div className="text-right font-mono">
+                                                <div className="text-sm text-lime-300">
+                                                    {formatCompactCurrency(benchmark.referencePrice)}/m²
+                                                </div>
+                                                <div className="text-[11px] text-slate-500">
+                                                    coverage {benchmark.coverageScore}
+                                                </div>
+                                            </div>
+                                        </div>
+                                        {marketMedianRent > 0 ? (
+                                            <div className="mt-2 flex items-center gap-3">
+                                                <div className="flex-1 h-1.5 rounded-full bg-white/5 overflow-hidden">
+                                                    <div
+                                                        className="h-full rounded-full bg-lime-500/60"
+                                                        style={{
+                                                            width: `${Math.min(100, (benchmark.referencePrice / Math.max(marketMedianRent, benchmark.referencePrice)) * 100)}%`,
+                                                        }}
+                                                    />
+                                                </div>
+                                                <span
+                                                    className={cn(
+                                                        "text-[11px] font-mono",
+                                                        diff > 0 ? "text-amber-300" : "text-emerald-300"
+                                                    )}
+                                                >
+                                                    market {diff >= 0 ? "+" : ""}
+                                                    {diff.toFixed(1)}%
+                                                </span>
+                                            </div>
+                                        ) : null}
+                                        <div className="mt-1.5 flex gap-4 text-[11px] font-mono text-slate-600">
+                                            <span>
+                                                conf {formatCompactCurrency(benchmark.confidenceMin)}–
+                                                {formatCompactCurrency(benchmark.confidenceMax)}
+                                            </span>
+                                            <span>new-build {formatCompactCurrency(benchmark.newBuildPrice)}</span>
                                         </div>
                                     </div>
-                                    <div className="text-right font-mono">
-                                        <div className="text-sm text-lime-300">
-                                            {formatCompactCurrency(benchmark.referencePrice)}
-                                        </div>
-                                        <div className="text-[11px] text-slate-500">
-                                            coverage {benchmark.coverageScore}
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        ))}
+                                );
+                            });
+                        })()}
                     </CardContent>
                 </Card>
             </div>

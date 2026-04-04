@@ -36,6 +36,33 @@ export interface SrealityRental {
     link?: string;
 }
 
+export interface UnifiedListing {
+    id: string;
+    source: ProviderName;
+    sourceId: string;
+    sourceContract: string;
+    type: "sale" | "rental" | "sold";
+    price: number;
+    pricePerM2?: number;
+    address: string;
+    disposition?: string;
+    area?: number;
+    link: string;
+    coordinates?: ListingCoordinates;
+    buildingType?: string;
+    description?: string;
+    images?: string[];
+    originalPrice?: number;
+    isDiscounted?: boolean;
+    uri?: string;
+    links?: ProviderLink[];
+    fetchedAt?: string;
+    soldAt?: string;
+    daysOnMarket?: number;
+    discount?: number;
+    rawData?: unknown;
+}
+
 export interface ProviderLink {
     url: string;
     type?: string;
