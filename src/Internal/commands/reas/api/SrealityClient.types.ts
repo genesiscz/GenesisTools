@@ -1,10 +1,11 @@
 import type { AnalysisFilters, CacheEntry, SaleListing, SrealityRental } from "@app/Internal/commands/reas/types";
 import type { ApiClient } from "@app/utils/api/ApiClient";
+import { SOURCE_CONTRACTS } from "./source-contracts";
 
-export const SREALITY_V2_SOURCE_CONTRACT = "sreality-v2";
-export const SREALITY_V1_HISTOGRAM_SOURCE_CONTRACT = "sreality-v1-histogram";
-export const SREALITY_V1_CLUSTERS_SOURCE_CONTRACT = "sreality-v1-clusters";
-export const SREALITY_V1_GEOMETRIES_SOURCE_CONTRACT = "sreality-v1-geometries";
+export const SREALITY_V2_SOURCE_CONTRACT = SOURCE_CONTRACTS.SREALITY_V2;
+export const SREALITY_V1_HISTOGRAM_SOURCE_CONTRACT = SOURCE_CONTRACTS.SREALITY_V1_HISTOGRAM;
+export const SREALITY_V1_CLUSTERS_SOURCE_CONTRACT = SOURCE_CONTRACTS.SREALITY_V1_CLUSTERS;
+export const SREALITY_V1_GEOMETRIES_SOURCE_CONTRACT = SOURCE_CONTRACTS.SREALITY_V1_GEOMETRIES;
 
 export type SrealityOfferType = "rental" | "sale";
 
