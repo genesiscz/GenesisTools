@@ -7,6 +7,7 @@ export const GRADE_COLORS: Record<string, string> = {
     C: "text-amber-400 border-amber-500/30 bg-amber-500/10",
     D: "text-orange-400 border-orange-500/30 bg-orange-500/10",
     F: "text-red-400 border-red-500/30 bg-red-500/10",
+    "N/A": "text-slate-300 border-white/10 bg-white/5",
 };
 
 export const GRADE_GLOW: Record<string, string> = {
@@ -15,6 +16,7 @@ export const GRADE_GLOW: Record<string, string> = {
     C: "drop-shadow-[0_0_8px_rgba(251,191,36,0.4)]",
     D: "drop-shadow-[0_0_8px_rgba(251,146,60,0.4)]",
     F: "drop-shadow-[0_0_8px_rgba(248,113,113,0.4)]",
+    "N/A": "",
 };
 
 export const RECOMMENDATION_COLORS: Record<string, { bg: string; text: string }> = {
@@ -31,6 +33,7 @@ export const RECOMMENDATION_LABELS: Record<string, string> = {
     hold: "Hold",
     avoid: "Avoid",
     "strong-avoid": "Strong Avoid",
+    unavailable: "Unavailable",
 };
 
 export function getScoreCardModel(data: DashboardExport) {
@@ -45,7 +48,7 @@ export function getScoreCardModel(data: DashboardExport) {
         scoreToneClassName: getScoreTone(summary.overall),
         recommendation,
         recommendationLabel: RECOMMENDATION_LABELS[recommendation],
-        recommendationClassName: RECOMMENDATION_COLORS[recommendation],
+        recommendationClassName: RECOMMENDATION_COLORS[recommendation] ?? RECOMMENDATION_COLORS.hold,
         reasoning: summary.reasoning,
         isPositive: summary.overall >= 50,
     };

@@ -23,7 +23,7 @@ describe("compare-query", () => {
         });
 
         expect(params.toString()).toBe(
-            "districts=Praha+2%2CPraha+3&type=brick&disposition=2%2Bkk&periods=2024%2C2025%2C2026&price=5000000&area=80"
+            "districts=Praha+2%2CPraha+3&type=brick&disposition=2%2Bkk&periods=2024%2C2025%2C2026&price=5000000&area=80&resolution=monthly"
         );
     });
 
@@ -40,6 +40,7 @@ describe("compare-query", () => {
             periods: "2024,2025",
             price: "6100000",
             area: "92",
+            snapshotResolution: "monthly",
         });
     });
 
@@ -117,7 +118,9 @@ describe("compare-query", () => {
             maxDistricts: 12,
         });
 
-        expect(params.toString()).toBe("districts=&type=brick&periods=2024%2C2025%2C2026&price=5000000&area=80");
+        expect(params.toString()).toBe(
+            "districts=&type=brick&periods=2024%2C2025%2C2026&price=5000000&area=80&resolution=monthly"
+        );
         expect(parsed.districts).toEqual([]);
     });
 

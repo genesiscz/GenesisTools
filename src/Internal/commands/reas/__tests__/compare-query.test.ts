@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import type { SavedPropertyRow } from "@app/Internal/commands/reas/lib/store";
-import { getDefaultComparePeriods } from "@app/Internal/commands/reas/ui/src/components/compare/compare-query";
+import {
+    buildCompareSearchParams,
+    getDefaultComparePeriods,
+    parseCompareSearchParams,
+} from "@app/Internal/commands/reas/ui/src/components/compare/compare-query";
 import { buildWatchlistCompareQuery } from "@app/Internal/commands/reas/ui/src/components/watchlist/compare-query";
 
 function makeProperty(overrides?: Partial<SavedPropertyRow>): SavedPropertyRow {
@@ -80,5 +84,25 @@ describe("buildWatchlistCompareQuery", () => {
         ]);
 
         expect(params.get("periods")).toBe("2022,2023");
+    });
+});
+
+describe("compare search params", () => {
+    test("persists snapshot resolution in the compare URL state", () => {
+        const params = buildCompareSearchParams({
+            districts: ["Praha 2", "Praha 3"],
+            snapshotResolution: "daily",
+        });
+
+        expect(params.get("resolution")).toBe("daily");
+    });
+
+    test("defaults snapshot resolution to monthly when the URL does not specify one", () => {
+        const parsed = parseCompareSearchParams({
+            search: "?districts=Praha%202,Praha%203&type=brick",
+            maxDistricts: 12,
+        });
+
+        expect(parsed.snapshotResolution).toBe("monthly");
     });
 });

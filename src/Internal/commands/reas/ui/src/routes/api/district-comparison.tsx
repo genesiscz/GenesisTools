@@ -1,10 +1,17 @@
 import { fetchAndAnalyze } from "@app/Internal/commands/reas/lib/analysis-service";
 import { buildDashboardExport } from "@app/Internal/commands/reas/lib/api-export";
 import { buildConfig, resolveDistrict } from "@app/Internal/commands/reas/lib/config-builder";
-import { serializeDistrictSnapshot } from "@app/Internal/commands/reas/lib/district-snapshot";
+import {
+    collapseDistrictSnapshots,
+    type DistrictSnapshotResolution,
+} from "@app/Internal/commands/reas/lib/district-snapshot";
 import { reasDatabase } from "@app/Internal/commands/reas/lib/store";
 import { createFileRoute } from "@tanstack/react-router";
 import { apiHandler, jsonBody } from "../../server/api-utils";
+
+function parseSnapshotResolution(value: unknown): DistrictSnapshotResolution {
+    return value === "daily" ? "daily" : "monthly";
+}
 
 export const Route = createFileRoute("/api/district-comparison")({
     server: {
@@ -29,6 +36,7 @@ export const Route = createFileRoute("/api/district-comparison")({
                 const periods = body.periods as string | undefined;
                 const price = Number(body.price ?? 5000000);
                 const area = Number(body.area ?? 80);
+                const snapshotResolution = parseSnapshotResolution(body.snapshotResolution);
 
                 const comparisons = await Promise.all(
                     districts.map(async (districtName) => {
@@ -46,9 +54,10 @@ export const Route = createFileRoute("/api/district-comparison")({
                         });
                         const analysis = await fetchAndAnalyze(filters, target, body.refresh === true);
                         const exportData = buildDashboardExport(analysis);
-                        const snapshots = reasDatabase
-                            .getDistrictHistory(district.name, constructionType, 730)
-                            .map(serializeDistrictSnapshot);
+                        const snapshots = collapseDistrictSnapshots({
+                            rows: reasDatabase.getDistrictHistory(district.name, constructionType, 730, disposition),
+                            resolution: snapshotResolution,
+                        });
 
                         return {
                             district: district.name,

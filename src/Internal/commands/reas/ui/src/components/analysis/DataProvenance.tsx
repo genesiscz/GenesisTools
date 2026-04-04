@@ -3,16 +3,11 @@ import type { ProviderFetchSummary } from "@app/Internal/commands/reas/types";
 import { Badge } from "@ui/components/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
 import { cn } from "@ui/lib/utils";
+import { fmtDateTime } from "../../lib/format";
 import { summarizeProviderMessage } from "./shared";
 
 function formatFetchedAt(value: string): string {
-    const parsed = new Date(value);
-
-    if (Number.isNaN(parsed.getTime())) {
-        return value;
-    }
-
-    return parsed.toLocaleString("en-GB", {
+    return fmtDateTime(value, {
         year: "numeric",
         month: "2-digit",
         day: "2-digit",

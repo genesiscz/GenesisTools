@@ -11,7 +11,8 @@ import {
     Store,
     TrendingUp,
 } from "lucide-react";
-import { computeScore, GRADE_COLORS } from "../ScoreCard";
+import { fmt, pct } from "../../lib/format";
+import { GRADE_COLORS, getScoreCardModel } from "../analysis/display-model";
 import { ComparisonMetric } from "./ComparisonMetric";
 import type { DistrictComparison } from "./types";
 
@@ -24,7 +25,7 @@ function formatCzk(value: number | null | undefined): string {
         return "--";
     }
 
-    return `${Math.round(value).toLocaleString("cs-CZ")} CZK`;
+    return `${fmt(Math.round(value))} CZK`;
 }
 
 function formatPercent(value: number | null | undefined): string {
@@ -32,7 +33,7 @@ function formatPercent(value: number | null | undefined): string {
         return "--";
     }
 
-    return `${value.toFixed(1)}%`;
+    return pct(value, { digits: 1 });
 }
 
 function formatDays(value: number | null | undefined): string {
@@ -106,7 +107,7 @@ export function ComparisonGrid({ comparisons }: ComparisonGridProps) {
         return null;
     }
 
-    const scores = comparisons.map((comparison) => computeScore(comparison.exportData).grade);
+    const scores = comparisons.map((comparison) => getScoreCardModel(comparison.exportData).grade);
     const medians = comparisons.map((comparison) => comparison.summary.medianPricePerM2);
     const netYields = comparisons.map((comparison) => comparison.summary.netYield);
     const grossYields = comparisons.map((comparison) => comparison.summary.grossYield);

@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import type { DashboardExport } from "@app/Internal/commands/reas/lib/api-export";
-import { getProviderCounts } from "@app/Internal/commands/reas/ui/src/components/analysis/utils";
+import {
+    getComparableGapSummary,
+    getComparableNarrative,
+    getProviderCounts,
+} from "@app/Internal/commands/reas/ui/src/components/analysis/utils";
 
 function makeExport(providerSummary: NonNullable<DashboardExport["meta"]["providerSummary"]>): DashboardExport {
     return {
@@ -75,5 +79,37 @@ describe("getProviderCounts()", () => {
         expect(counts.uniqueProviders).toBe(3);
         expect(counts.healthy).toBe(2);
         expect(counts.total).toBe(16);
+    });
+});
+
+describe("analysis overview helpers", () => {
+    test("returns a sold-comparables fallback narrative when sold evidence is missing", () => {
+        const exportData = makeExport([]);
+        exportData.analysis.comparables = {
+            ...exportData.analysis.comparables,
+            count: 0,
+            median: 0,
+            targetPercentile: 0,
+        };
+
+        expect(getComparableNarrative(exportData)).toBe(
+            "Sold comparable evidence is currently unavailable for the selected horizon."
+        );
+        expect(getComparableGapSummary(exportData)).toBe("No sold comparable evidence returned");
+    });
+
+    test("returns an above-market gap summary when sold evidence exists", () => {
+        const exportData = makeExport([]);
+        exportData.meta.target.price = 7800000;
+        exportData.meta.target.area = 60;
+        exportData.analysis.comparables = {
+            ...exportData.analysis.comparables,
+            count: 16,
+            median: 120000,
+            targetPercentile: 74,
+        };
+
+        expect(getComparableNarrative(exportData)).toBe("The target sits at 74th percentile of sold comparables.");
+        expect(getComparableGapSummary(exportData)).toBe("Above sold median by 10k CZK");
     });
 });

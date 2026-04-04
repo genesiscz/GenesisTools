@@ -8,9 +8,10 @@ import type { DistrictComparison } from "./types";
 
 interface ComparisonTrendSectionProps {
     comparisons: DistrictComparison[];
+    snapshotResolution: "daily" | "monthly";
 }
 
-export function ComparisonTrendSection({ comparisons }: ComparisonTrendSectionProps) {
+export function ComparisonTrendSection({ comparisons, snapshotResolution }: ComparisonTrendSectionProps) {
     const availableDistricts = useMemo(() => comparisons.map((comparison) => comparison.district), [comparisons]);
     const [timeframeDays, setTimeframeDays] = useState<number>(DISTRICT_TREND_TIMEFRAMES[2].days);
     const [visibleDistricts, setVisibleDistricts] = useState<string[]>(availableDistricts);
@@ -67,6 +68,7 @@ export function ComparisonTrendSection({ comparisons }: ComparisonTrendSectionPr
                                 key={timeframe.days}
                                 type="button"
                                 onClick={() => setTimeframeDays(timeframe.days)}
+                                aria-pressed={timeframeDays === timeframe.days}
                                 className={cn(
                                     "rounded-md border px-2.5 py-1 text-[10px] font-mono uppercase tracking-wider transition-colors",
                                     timeframeDays === timeframe.days
@@ -78,6 +80,11 @@ export function ComparisonTrendSection({ comparisons }: ComparisonTrendSectionPr
                             </button>
                         ))}
                     </div>
+                    <div className="rounded-lg border border-white/5 bg-black/20 px-3 py-2 text-[10px] font-mono uppercase tracking-[0.24em] text-gray-400">
+                        {snapshotResolution === "monthly"
+                            ? "Monthly snapshots loaded for smoother district overlays"
+                            : "Daily snapshots loaded for high-frequency market reads"}
+                    </div>
                     <div className="flex flex-wrap gap-2">
                         {availableDistricts.map((district) => {
                             const isVisible = visibleDistricts.includes(district);
@@ -87,6 +94,7 @@ export function ComparisonTrendSection({ comparisons }: ComparisonTrendSectionPr
                                     key={district}
                                     type="button"
                                     onClick={() => toggleDistrict(district)}
+                                    aria-pressed={isVisible}
                                     className={cn(
                                         "rounded-md border px-2.5 py-1 text-[10px] font-mono transition-colors",
                                         isVisible

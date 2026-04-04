@@ -2,8 +2,9 @@ import { Badge } from "@ui/components/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
 import { cn } from "@ui/lib/utils";
 import { ArrowDownRight, ArrowUpRight, BarChart3, Clock3, Percent } from "lucide-react";
+import { fmt, pct } from "../../lib/format";
+import { GRADE_COLORS, getScoreCardModel } from "../analysis/display-model";
 import { ExportButton } from "../ExportButton";
-import { computeScore, GRADE_COLORS } from "../ScoreCard";
 import type { DistrictComparison } from "./types";
 
 interface ComparisonOverviewProps {
@@ -15,7 +16,7 @@ export function ComparisonOverview({ comparisons }: ComparisonOverviewProps) {
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
             {comparisons.map((comparison) => {
                 const { exportData, snapshots, summary } = comparison;
-                const { grade, score } = computeScore(exportData);
+                const { grade, score } = getScoreCardModel(exportData);
                 const latestSnapshot = snapshots[snapshots.length - 1] ?? null;
                 const yoyChange = latestSnapshot?.yoyChange ?? null;
                 const trendDirection =
@@ -52,12 +53,12 @@ export function ComparisonOverview({ comparisons }: ComparisonOverviewProps) {
                             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                                 <OverviewStat
                                     label="Median Price"
-                                    value={`${Math.round(summary.medianPricePerM2).toLocaleString("cs-CZ")} CZK/m²`}
+                                    value={`${fmt(Math.round(summary.medianPricePerM2))} CZK/m²`}
                                     icon={<BarChart3 className="w-3.5 h-3.5 text-cyan-400" />}
                                 />
                                 <OverviewStat
                                     label="Net Yield"
-                                    value={`${summary.netYield.toFixed(2)}%`}
+                                    value={pct(summary.netYield, { digits: 2 })}
                                     icon={<Percent className="w-3.5 h-3.5 text-emerald-400" />}
                                 />
                                 <OverviewStat

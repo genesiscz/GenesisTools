@@ -63,6 +63,33 @@ export function getTargetPricePerM2(data: DashboardExport): number {
     return data.meta.target.price / data.meta.target.area;
 }
 
+export function hasSoldComparableEvidence(data: DashboardExport): boolean {
+    return data.analysis.comparables.count > 0 && data.analysis.comparables.median > 0;
+}
+
+export function getComparableNarrative(data: DashboardExport): string {
+    if (!hasSoldComparableEvidence(data)) {
+        return "Sold comparable evidence is currently unavailable for the selected horizon.";
+    }
+
+    return `The target sits at ${formatPercentile(data.analysis.comparables.targetPercentile)} of sold comparables.`;
+}
+
+export function getComparableGapSummary(data: DashboardExport): string {
+    if (!hasSoldComparableEvidence(data)) {
+        return "No sold comparable evidence returned";
+    }
+
+    const priceGap = getTargetPricePerM2(data) - data.analysis.comparables.median;
+
+    if (priceGap === 0) {
+        return "At the sold median";
+    }
+
+    const direction = priceGap > 0 ? "Above" : "Below";
+    return `${direction} sold median by ${formatCompactCurrency(Math.abs(priceGap))}`;
+}
+
 export function getInvestmentSummary(data: DashboardExport): InvestmentSummary {
     const existing = data.analysis.investmentScore;
 
@@ -75,78 +102,11 @@ export function getInvestmentSummary(data: DashboardExport): InvestmentSummary {
         };
     }
 
-    let score = 50;
-    const reasoning: string[] = [];
-    const grossYield = data.analysis.yield.grossYield;
-
-    if (grossYield >= 6) {
-        score += 20;
-        reasoning.push(`Strong gross yield at ${formatPercent(grossYield)}`);
-    } else if (grossYield >= 4) {
-        score += 10;
-        reasoning.push(`Healthy gross yield at ${formatPercent(grossYield)}`);
-    } else if (grossYield < 3) {
-        score -= 10;
-        reasoning.push(`Weak gross yield at ${formatPercent(grossYield)}`);
-    }
-
-    const percentile = data.analysis.comparables.targetPercentile;
-
-    if (percentile < 30) {
-        score += 15;
-        reasoning.push(`Target pricing sits below market at the ${percentile.toFixed(0)}th percentile`);
-    } else if (percentile > 70) {
-        score -= 15;
-        reasoning.push(`Target pricing sits above market at the ${percentile.toFixed(0)}th percentile`);
-    } else {
-        reasoning.push(`Target pricing is near the market midpoint at the ${percentile.toFixed(0)}th percentile`);
-    }
-
-    const comparableCount = data.analysis.comparables.count;
-
-    if (comparableCount >= 20) {
-        score += 5;
-        reasoning.push(`Signal quality is strong with ${comparableCount} sold comparables`);
-    } else if (comparableCount < 5) {
-        score -= 10;
-        reasoning.push(`Signal quality is weak with only ${comparableCount} sold comparables`);
-    }
-
-    const averageDiscount = data.analysis.discount.avgDiscount;
-
-    if (averageDiscount > 10) {
-        score += 5;
-        reasoning.push(`Average listing discount of ${formatPercent(averageDiscount)} suggests pricing flexibility`);
-    }
-
-    const medianDom = data.analysis.timeOnMarket.median;
-
-    if (medianDom < 30) {
-        score += 5;
-        reasoning.push(`Fast absorption with ${formatDays(medianDom)} median time on market`);
-    } else if (medianDom > 120) {
-        score -= 5;
-        reasoning.push(`Slow absorption with ${formatDays(medianDom)} median time on market`);
-    }
-
-    const overall = Math.max(0, Math.min(100, score));
-    const grade = overall >= 80 ? "A" : overall >= 65 ? "B" : overall >= 50 ? "C" : overall >= 35 ? "D" : "F";
-    const recommendation =
-        overall >= 80
-            ? "Strong Buy"
-            : overall >= 65
-              ? "Buy"
-              : overall >= 45
-                ? "Hold"
-                : overall >= 30
-                  ? "Avoid"
-                  : "Strong Avoid";
-
     return {
-        overall,
-        grade,
-        reasoning,
-        recommendation,
+        overall: 0,
+        grade: "N/A",
+        reasoning: ["Investment score was not included in this dashboard export."],
+        recommendation: "Unavailable",
     };
 }
 

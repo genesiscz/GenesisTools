@@ -20,6 +20,7 @@ import {
     XAxis,
     YAxis,
 } from "recharts";
+import { fmtDateTime } from "../../lib/format";
 import { formatCurrency, formatInteger, formatPercent, formatSignedPercent, getTargetPricePerM2 } from "./utils";
 
 const HISTOGRAM_COLORS = ["#f59e0b", "#14b8a6", "#38bdf8", "#818cf8", "#c084fc", "#f472b6"];
@@ -414,13 +415,7 @@ export function InvestmentSensitivityChart({
 }
 
 function formatTooltipDate(value: string): string {
-    const parsed = new Date(value);
-
-    if (Number.isNaN(parsed.getTime())) {
-        return value;
-    }
-
-    return parsed.toLocaleString("en-GB", {
+    return fmtDateTime(value, {
         month: "2-digit",
         day: "2-digit",
         hour: "2-digit",

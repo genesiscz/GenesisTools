@@ -8,7 +8,10 @@ const DEFAULT_COMPARE_STATE = {
     disposition: "all",
     price: "5000000",
     area: "80",
+    snapshotResolution: "monthly",
 } as const;
+
+export type CompareSnapshotResolution = "daily" | "monthly";
 
 export const DEFAULT_COMPARE_DISTRICTS = [
     "Praha 1",
@@ -122,6 +125,10 @@ function normalizeNumberString(value: string | number | null | undefined, fallba
     return /^\d+$/.test(normalized) ? normalized : fallback;
 }
 
+function normalizeSnapshotResolution(value: string | null | undefined): CompareSnapshotResolution {
+    return value === "daily" ? "daily" : DEFAULT_COMPARE_STATE.snapshotResolution;
+}
+
 export function buildCompareSearchParams({
     districts,
     propertyType,
@@ -129,6 +136,7 @@ export function buildCompareSearchParams({
     periods,
     price,
     area,
+    snapshotResolution,
 }: {
     districts: string[];
     propertyType?: string;
@@ -136,6 +144,7 @@ export function buildCompareSearchParams({
     periods?: string | null;
     price?: string | number | null;
     area?: string | number | null;
+    snapshotResolution?: CompareSnapshotResolution | null;
 }) {
     const params = new URLSearchParams();
     const normalizedDistricts = normalizeDistricts({ districts });
@@ -151,6 +160,7 @@ export function buildCompareSearchParams({
 
     params.set("price", normalizeNumberString(price, DEFAULT_COMPARE_STATE.price));
     params.set("area", normalizeNumberString(area, DEFAULT_COMPARE_STATE.area));
+    params.set("resolution", normalizeSnapshotResolution(snapshotResolution));
 
     return params;
 }
@@ -175,6 +185,7 @@ export function parseCompareSearchParams({ search, maxDistricts }: { search: str
         periods: params.get("periods")?.trim() || getDefaultComparePeriods(),
         price: normalizeNumberString(params.get("price"), DEFAULT_COMPARE_STATE.price),
         area: normalizeNumberString(params.get("area"), DEFAULT_COMPARE_STATE.area),
+        snapshotResolution: normalizeSnapshotResolution(params.get("resolution")),
     };
 }
 

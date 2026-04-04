@@ -1,12 +1,15 @@
 import { DISPOSITIONS, PROPERTY_TYPES } from "@app/Internal/commands/reas/lib/config-builder";
 import { createFileRoute, useRouter, useRouterState } from "@tanstack/react-router";
+import { Alert, AlertDescription, AlertTitle } from "@ui/components/alert";
 import { Badge } from "@ui/components/badge";
 import { Button } from "@ui/components/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
 import { Input } from "@ui/components/input";
 import { Separator } from "@ui/components/separator";
 import { Skeleton } from "@ui/components/skeleton";
-import { GitCompare, Loader2, X } from "lucide-react";
+import { cn } from "@ui/lib/utils";
+import { Database, GitCompare, History, Loader2, Sparkles, X } from "lucide-react";
+import type { ReactNode } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ComparisonGrid } from "../components/compare/ComparisonGrid";
 import { ComparisonMarketTable } from "../components/compare/ComparisonMarketTable";
@@ -41,6 +44,13 @@ interface DistrictComparisonResponse {
     comparisons: DistrictComparison[];
 }
 
+interface DistrictPreseedResponse {
+    total: number;
+    succeeded: number;
+    failed: number;
+    warnings: string[];
+}
+
 function ComparePage() {
     const MAX_DISTRICTS = 12;
     const MIN_DISTRICTS = 2;
@@ -54,9 +64,13 @@ function ComparePage() {
     const [periods, setPeriods] = useState(initialSearchState.periods);
     const [price, setPrice] = useState(initialSearchState.price);
     const [area, setArea] = useState(initialSearchState.area);
+    const [snapshotResolution, setSnapshotResolution] = useState(initialSearchState.snapshotResolution);
     const [isComparing, setIsComparing] = useState(false);
+    const [isPreseeding, setIsPreseeding] = useState(false);
     const [results, setResults] = useState<DistrictComparisonResult[]>([]);
     const [appliedSearch, setAppliedSearch] = useState<string | null>(search);
+    const [preseedResult, setPreseedResult] = useState<DistrictPreseedResponse | null>(null);
+    const [preseedError, setPreseedError] = useState<string | null>(null);
     const lastSyncedSearchRef = useRef<string | null>(null);
     const periodControlOptions = buildComparePeriodControlOptions(periods);
 
@@ -69,6 +83,9 @@ function ComparePage() {
         setPeriods((current) => (current === parsed.periods ? current : parsed.periods));
         setPrice((current) => (current === parsed.price ? current : parsed.price));
         setArea((current) => (current === parsed.area ? current : parsed.area));
+        setSnapshotResolution((current) =>
+            current === parsed.snapshotResolution ? current : parsed.snapshotResolution
+        );
         setAppliedSearch(search);
     }, [MAX_DISTRICTS, search]);
 
@@ -84,6 +101,7 @@ function ComparePage() {
             periods,
             price,
             area,
+            snapshotResolution,
         }).toString();
         const currentSearch = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search).toString();
 
@@ -97,7 +115,7 @@ function ComparePage() {
             to: nextSearch ? `/compare?${nextSearch}` : "/compare",
             replace: true,
         });
-    }, [area, disposition, periods, price, propertyType, router, search, selectedDistricts]);
+    }, [area, disposition, periods, price, propertyType, router, search, selectedDistricts, snapshotResolution]);
 
     const removeDistrict = useCallback((district: string) => {
         setSelectedDistricts((prev) => prev.filter((value) => value !== district));
@@ -129,6 +147,7 @@ function ComparePage() {
                     periods,
                     price,
                     area,
+                    snapshotResolution,
                 }),
             });
 
@@ -175,27 +194,134 @@ function ComparePage() {
         } finally {
             setIsComparing(false);
         }
-    }, [selectedDistricts, propertyType, disposition, periods, price, area]);
+    }, [selectedDistricts, propertyType, disposition, periods, price, area, snapshotResolution]);
+
+    const runPrahaPreseed = useCallback(async () => {
+        setIsPreseeding(true);
+        setPreseedError(null);
+
+        try {
+            const response = await fetch("/api/district-snapshots", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: globalThis.JSON.stringify({
+                    action: "preseed-praha",
+                    type: propertyType,
+                    disposition: disposition === "all" ? undefined : disposition,
+                    periods,
+                    price,
+                    area,
+                }),
+            });
+            const body = (await response.json()) as DistrictPreseedResponse | { error?: string };
+
+            if (!response.ok) {
+                const message =
+                    "error" in body && typeof body.error === "string" ? body.error : `HTTP ${response.status}`;
+
+                throw new Error(message);
+            }
+
+            setPreseedResult(body as DistrictPreseedResponse);
+
+            if (selectedDistricts.length >= MIN_DISTRICTS) {
+                await runComparison();
+            }
+        } catch (error) {
+            setPreseedError(error instanceof Error ? error.message : "Unknown error");
+        } finally {
+            setIsPreseeding(false);
+        }
+    }, [area, disposition, periods, price, propertyType, runComparison, selectedDistricts.length]);
 
     const canCompare = selectedDistricts.length >= MIN_DISTRICTS && !isComparing;
     const loadedComparisons = results.flatMap((result) => (result.comparison ? [result.comparison] : []));
     const errors = results.filter((result) => result.error);
     const targetDistrict = selectedDistricts[0];
     const targetPricePerM2 = Number(price) > 0 && Number(area) > 0 ? Number(price) / Number(area) : undefined;
+    const selectedPrahaWards = selectedDistricts.filter((district) => district.startsWith("Praha ")).length;
+    const selectedRegionalDistricts = selectedDistricts.length - selectedPrahaWards;
+    const resolutionLabel = snapshotResolution === "monthly" ? "Monthly snapshots" : "Daily snapshots";
 
     return (
         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
-            <div className="flex items-center gap-3 mb-6">
-                <div className="p-2 rounded bg-amber-500/10 border border-amber-500/30">
-                    <GitCompare className="w-5 h-5 text-amber-400" />
+            <section className="relative mb-6 overflow-hidden rounded-3xl border border-white/8 bg-[#09101b] px-5 py-6 sm:px-7 sm:py-7">
+                <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(34,211,238,0.18),_transparent_42%),radial-gradient(circle_at_bottom_right,_rgba(245,158,11,0.18),_transparent_36%)]" />
+                <div className="relative grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px] xl:items-start">
+                    <div className="flex flex-col gap-4">
+                        <div className="flex items-center gap-3">
+                            <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-2.5 shadow-[0_0_32px_rgba(245,158,11,0.15)]">
+                                <GitCompare className="h-5 w-5 text-amber-300" />
+                            </div>
+                            <div>
+                                <div className="text-[11px] font-mono uppercase tracking-[0.32em] text-cyan-300/80">
+                                    District intelligence
+                                </div>
+                                <h1 className="text-2xl font-mono font-bold text-white sm:text-3xl">
+                                    Compare Prague wards and market leaders in one command deck
+                                </h1>
+                            </div>
+                        </div>
+
+                        <p className="max-w-3xl text-sm font-mono leading-6 text-slate-300/80">
+                            Stack districts into a shared basket, flip the trend cadence between monthly and daily
+                            snapshots, and warm the Praha cache before visual review so the comparison story lands fast.
+                        </p>
+
+                        <div className="flex flex-wrap gap-2">
+                            <Badge
+                                variant="outline"
+                                className="border-cyan-500/30 bg-cyan-500/10 font-mono text-[10px] text-cyan-200"
+                            >
+                                Shareable URL state
+                            </Badge>
+                            <Badge
+                                variant="outline"
+                                className="border-amber-500/30 bg-amber-500/10 font-mono text-[10px] text-amber-200"
+                            >
+                                {resolutionLabel}
+                            </Badge>
+                            <Badge
+                                variant="outline"
+                                className="border-white/10 bg-white/[0.04] font-mono text-[10px] text-slate-300"
+                            >
+                                Praha wards {selectedPrahaWards}
+                            </Badge>
+                            <Badge
+                                variant="outline"
+                                className="border-white/10 bg-white/[0.04] font-mono text-[10px] text-slate-300"
+                            >
+                                Regional districts {selectedRegionalDistricts}
+                            </Badge>
+                        </div>
+                    </div>
+
+                    <div className="grid gap-3 sm:grid-cols-3 xl:grid-cols-1">
+                        <HeroMetricCard
+                            icon={<Sparkles className="h-4 w-4 text-cyan-300" />}
+                            label="Basket"
+                            value={`${selectedDistricts.length}/${MAX_DISTRICTS}`}
+                            detail="Balanced side-by-side reads"
+                        />
+                        <HeroMetricCard
+                            icon={<History className="h-4 w-4 text-amber-300" />}
+                            label="Trend mode"
+                            value={snapshotResolution === "monthly" ? "Monthly" : "Daily"}
+                            detail="Overlay chart cadence"
+                        />
+                        <HeroMetricCard
+                            icon={<Database className="h-4 w-4 text-emerald-300" />}
+                            label="Target lens"
+                            value={
+                                targetPricePerM2 ? `${Math.round(targetPricePerM2).toLocaleString("cs-CZ")}` : "Ready"
+                            }
+                            detail={
+                                targetPricePerM2 ? "CZK/m² target marker armed" : "Add price + area for a target line"
+                            }
+                        />
+                    </div>
                 </div>
-                <div>
-                    <h1 className="text-xl font-mono font-bold text-gray-200">Compare</h1>
-                    <p className="text-xs text-gray-500 font-mono">
-                        District comparison with shared filters, rankings, charts, and export-ready summaries
-                    </p>
-                </div>
-            </div>
+            </section>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
                 <div className="lg:col-span-1 self-start" style={{ zIndex: 20 }}>
@@ -208,17 +334,18 @@ function ComparePage() {
 
                 <div className="lg:col-span-2 space-y-4">
                     {selectedDistricts.length > 0 && (
-                        <div className="flex flex-wrap gap-2">
+                        <div className="flex flex-wrap gap-2 rounded-2xl border border-white/5 bg-white/[0.02] p-3">
                             {selectedDistricts.map((district) => (
                                 <Badge
                                     key={district}
                                     variant="outline"
-                                    className="border-amber-500/30 text-amber-400 bg-amber-500/5 text-xs font-mono px-2 py-1 flex items-center gap-1"
+                                    className="border-amber-500/30 bg-amber-500/5 px-2 py-1 text-xs font-mono text-amber-300"
                                 >
-                                    {district}
+                                    <span className="mr-1">{district}</span>
                                     <button
                                         type="button"
                                         onClick={() => removeDistrict(district)}
+                                        aria-label={`Remove ${district} from comparison`}
                                         className="hover:text-red-400"
                                     >
                                         <X className="w-3 h-3" />
@@ -229,10 +356,22 @@ function ComparePage() {
                     )}
 
                     <Card className="border-white/5 bg-white/[0.02]">
-                        <CardHeader className="pb-2">
-                            <CardTitle className="text-xs font-mono text-gray-400">Shared Configuration</CardTitle>
+                        <CardHeader className="gap-3 pb-2">
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+                                <CardTitle className="text-xs font-mono text-gray-300">Shared configuration</CardTitle>
+                                <Badge
+                                    variant="outline"
+                                    className="border-white/10 bg-white/[0.03] font-mono text-[10px] text-slate-300"
+                                >
+                                    URL synced
+                                </Badge>
+                            </div>
+                            <p className="text-xs font-mono text-gray-500">
+                                Keep one pricing lens across every district so the charts, ranks, and context cards stay
+                                aligned.
+                            </p>
                         </CardHeader>
-                        <CardContent>
+                        <CardContent className="flex flex-col gap-4">
                             <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
                                 <label className="block">
                                     <span className="block text-[10px] font-mono text-gray-500 mb-1">
@@ -309,26 +448,102 @@ function ComparePage() {
                                     />
                                 </div>
                             </div>
+
+                            <div className="rounded-2xl border border-white/6 bg-black/20 p-4">
+                                <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                                    <div>
+                                        <div className="text-[10px] font-mono uppercase tracking-[0.3em] text-cyan-300/80">
+                                            Trend cadence
+                                        </div>
+                                        <p className="mt-1 text-xs font-mono text-gray-400">
+                                            Monthly mode smooths the district story for presentations. Daily mode
+                                            exposes every cached swing.
+                                        </p>
+                                    </div>
+
+                                    <div className="flex flex-wrap gap-2">
+                                        {(
+                                            [
+                                                { value: "monthly", label: "Monthly snapshots" },
+                                                { value: "daily", label: "Daily snapshots" },
+                                            ] as const
+                                        ).map((option) => (
+                                            <button
+                                                key={option.value}
+                                                type="button"
+                                                onClick={() => setSnapshotResolution(option.value)}
+                                                aria-pressed={snapshotResolution === option.value}
+                                                className={cn(
+                                                    "rounded-full border px-3 py-1.5 text-[10px] font-mono uppercase tracking-[0.24em] transition-colors",
+                                                    snapshotResolution === option.value
+                                                        ? "border-cyan-400/40 bg-cyan-500/10 text-cyan-200"
+                                                        : "border-white/10 bg-black/20 text-gray-500 hover:border-white/20 hover:text-gray-300"
+                                                )}
+                                            >
+                                                {option.label}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
                         </CardContent>
                     </Card>
 
-                    <Button
-                        onClick={runComparison}
-                        disabled={!canCompare}
-                        className="w-full bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-400 font-mono text-sm"
-                    >
-                        {isComparing ? (
-                            <>
-                                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                                Comparing {selectedDistricts.length} districts...
-                            </>
-                        ) : (
-                            <>
-                                <GitCompare className="w-4 h-4 mr-2" />
-                                Compare {selectedDistricts.length} Districts
-                            </>
-                        )}
-                    </Button>
+                    {(preseedResult || preseedError) && (
+                        <Alert variant={preseedError ? "destructive" : "warning"}>
+                            <AlertTitle className="font-mono text-xs">
+                                {preseedError ? "Praha cache warm-up failed" : "Praha cache warm-up complete"}
+                            </AlertTitle>
+                            <AlertDescription className="font-mono text-xs text-current/80">
+                                {preseedError
+                                    ? preseedError
+                                    : `Seeded ${preseedResult?.succeeded ?? 0}/${preseedResult?.total ?? 0} Praha wards.${preseedResult?.failed ? ` ${preseedResult.failed} district(s) still need a retry.` : ""}`}
+                                {!preseedError && (preseedResult?.warnings.length ?? 0) > 0
+                                    ? ` Latest warning: ${preseedResult?.warnings[0]}`
+                                    : null}
+                            </AlertDescription>
+                        </Alert>
+                    )}
+
+                    <div className="grid gap-3 sm:grid-cols-2">
+                        <Button
+                            onClick={runComparison}
+                            disabled={!canCompare}
+                            className="w-full border border-amber-500/30 bg-amber-500/10 font-mono text-sm text-amber-300 hover:bg-amber-500/20"
+                        >
+                            {isComparing ? (
+                                <>
+                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                    Comparing {selectedDistricts.length} districts...
+                                </>
+                            ) : (
+                                <>
+                                    <GitCompare className="mr-2 h-4 w-4" />
+                                    Compare {selectedDistricts.length} districts
+                                </>
+                            )}
+                        </Button>
+
+                        <Button
+                            type="button"
+                            variant="outline"
+                            onClick={runPrahaPreseed}
+                            disabled={isPreseeding || isComparing}
+                            className="w-full border-cyan-500/30 bg-cyan-500/10 font-mono text-sm text-cyan-200 hover:bg-cyan-500/15"
+                        >
+                            {isPreseeding ? (
+                                <>
+                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                    Warming Praha cache...
+                                </>
+                            ) : (
+                                <>
+                                    <Database className="mr-2 h-4 w-4" />
+                                    Warm Praha 1-22 cache
+                                </>
+                            )}
+                        </Button>
+                    </div>
                 </div>
             </div>
 
@@ -374,7 +589,10 @@ function ComparePage() {
 
                             <DistrictDetailTable comparisons={loadedComparisons} />
 
-                            <ComparisonTrendSection comparisons={loadedComparisons} />
+                            <ComparisonTrendSection
+                                comparisons={loadedComparisons}
+                                snapshotResolution={snapshotResolution}
+                            />
 
                             <DistrictRadarComparison
                                 comparisons={loadedComparisons}
@@ -428,8 +646,8 @@ function ComparePage() {
             )}
 
             {results.length === 0 && !isComparing && (
-                <div className="border border-white/5 rounded-lg p-8 text-center">
-                    <p className="text-sm text-gray-500 font-mono">
+                <div className="rounded-3xl border border-dashed border-white/10 bg-white/[0.02] p-8 text-center">
+                    <p className="text-sm font-mono text-gray-500">
                         {selectedDistricts.length < MIN_DISTRICTS
                             ? `Select at least ${MIN_DISTRICTS} districts to compare`
                             : "Click 'Compare' to run analysis"}
@@ -446,6 +664,29 @@ function arraysEqual(left: string[], right: string[]) {
     }
 
     return left.every((value, index) => value === right[index]);
+}
+
+function HeroMetricCard({
+    icon,
+    label,
+    value,
+    detail,
+}: {
+    icon: ReactNode;
+    label: string;
+    value: string;
+    detail: string;
+}) {
+    return (
+        <div className="rounded-2xl border border-white/8 bg-white/[0.04] p-4 backdrop-blur-sm">
+            <div className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-[0.28em] text-slate-400">
+                {icon}
+                {label}
+            </div>
+            <div className="mt-3 text-lg font-mono font-semibold text-white">{value}</div>
+            <div className="mt-1 text-xs font-mono text-slate-400">{detail}</div>
+        </div>
+    );
 }
 
 function ComparisonLoadingState({ districts }: { districts: string[] }) {

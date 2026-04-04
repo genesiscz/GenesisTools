@@ -22,6 +22,7 @@ import {
     TrendingUp,
 } from "lucide-react";
 import { useMemo, useState } from "react";
+import { fmtDateTime, fmtPercentile } from "../../lib/format";
 import {
     ActiveSalesChart,
     ComparablesScatterChart,
@@ -34,6 +35,7 @@ import {
 import { AnalysisMetricCard } from "./AnalysisMetricCard";
 import { DataProvenance } from "./DataProvenance";
 import { DataTable } from "./DataTable";
+import { getMomentumCardModel, getScoreCardModel } from "./display-model";
 import { InfoBox } from "./InfoBox";
 import { ScoreGauge } from "./ScoreGauge";
 import { SectionTitle } from "./SectionTitle";
@@ -46,6 +48,8 @@ import {
     formatPercent,
     formatPercentile,
     formatSignedPercent,
+    getComparableGapSummary,
+    getComparableNarrative,
     getConfidenceTone,
     getInvestmentSummary,
     getMedianActivePricePerM2,
@@ -54,6 +58,7 @@ import {
     getScoreTone,
     getSentimentTone,
     getTargetPricePerM2,
+    hasSoldComparableEvidence,
 } from "./utils";
 
 interface AnalysisSectionProps {
@@ -61,13 +66,7 @@ interface AnalysisSectionProps {
 }
 
 function formatFetchedAt(value: string): string {
-    const parsed = new Date(value);
-
-    if (Number.isNaN(parsed.getTime())) {
-        return value;
-    }
-
-    return parsed.toLocaleString("en-GB", {
+    return fmtDateTime(value, {
         month: "2-digit",
         day: "2-digit",
         hour: "2-digit",
@@ -87,11 +86,12 @@ function getPrimaryFetchedAt(provenance?: DashboardExport["analysis"]["comparabl
 
 export function OverviewTab({ data }: AnalysisSectionProps) {
     const summary = getInvestmentSummary(data);
+    const scoreModel = getScoreCardModel(data);
     const targetPricePerM2 = getTargetPricePerM2(data);
     const providerCounts = getProviderCounts(data);
     const activeMedian = getMedianActivePricePerM2(data);
     const activeGap = activeMedian > 0 ? ((activeMedian - targetPricePerM2) / activeMedian) * 100 : 0;
-    const priceGap = targetPricePerM2 - data.analysis.comparables.median;
+    const hasSoldEvidence = hasSoldComparableEvidence(data);
 
     return (
         <div className="space-y-4">
@@ -116,25 +116,27 @@ export function OverviewTab({ data }: AnalysisSectionProps) {
                         <div>
                             <h3 className="text-2xl font-semibold tracking-tight text-white">
                                 {data.meta.target.district} is a{" "}
-                                <span className={getScoreTone(summary.overall)}>
-                                    {summary.recommendation.toLowerCase()}
+                                <span className={getScoreTone(scoreModel.score)}>
+                                    {scoreModel.recommendationLabel.toLowerCase()}
                                 </span>{" "}
                                 for this target.
                             </h3>
                             <p className="mt-2 max-w-3xl text-sm font-mono leading-6 text-slate-400">
-                                The target sits at {formatPercentile(data.analysis.comparables.targetPercentile)} of
-                                sold comparables, delivers {formatPercent(data.analysis.yield.netYield)} net yield, and
-                                carries a {summary.grade}
-                                grade with {summary.overall}/100 conviction.
+                                {getComparableNarrative(data)} It delivers {formatPercent(data.analysis.yield.netYield)}{" "}
+                                net yield and carries a {scoreModel.grade} grade with {scoreModel.score}/100 conviction.
                             </p>
                         </div>
                         <div className="grid gap-3 sm:grid-cols-3">
                             <AnalysisMetricCard
                                 label="Target Price / m²"
                                 value={formatCurrency(targetPricePerM2)}
-                                hint={`${priceGap >= 0 ? "Above" : "Below"} sold median by ${formatCompactCurrency(Math.abs(priceGap))}`}
+                                hint={getComparableGapSummary(data)}
                                 icon={Target}
-                                valueClassName={getSentimentTone(-priceGap)}
+                                valueClassName={
+                                    hasSoldEvidence
+                                        ? getSentimentTone(data.analysis.comparables.median - targetPricePerM2)
+                                        : "text-slate-300"
+                                }
                             />
                             <AnalysisMetricCard
                                 label="Net Yield"
@@ -169,16 +171,18 @@ export function OverviewTab({ data }: AnalysisSectionProps) {
                         <CardContent className="space-y-4">
                             <div className="flex flex-col items-center gap-4 sm:flex-row sm:items-center sm:justify-between">
                                 <div>
-                                    <div className={cn("text-5xl font-black font-mono", getScoreTone(summary.overall))}>
-                                        {summary.grade}
+                                    <div
+                                        className={cn("text-5xl font-black font-mono", getScoreTone(scoreModel.score))}
+                                    >
+                                        {scoreModel.grade}
                                     </div>
                                     <div className="mt-1 text-sm font-mono text-slate-400">
-                                        {summary.recommendation}
+                                        {scoreModel.recommendationLabel}
                                     </div>
                                 </div>
-                                <ScoreGauge score={summary.overall} label="Investment score" />
+                                <ScoreGauge score={scoreModel.score} label="Investment score" />
                             </div>
-                            <Progress value={summary.overall} className="h-2 bg-white/5" />
+                            <Progress value={scoreModel.score} className="h-2 bg-white/5" />
                             <InfoBox title="Analyst signal" tone="positive">
                                 {summary.reasoning.slice(0, 3).join(" ")}
                             </InfoBox>
@@ -199,7 +203,11 @@ export function OverviewTab({ data }: AnalysisSectionProps) {
                         <AnalysisMetricCard
                             label="Sold comps"
                             value={String(data.analysis.comparables.count)}
-                            hint={`Median ${formatCurrency(data.analysis.comparables.median)} / m²`}
+                            hint={
+                                hasSoldEvidence
+                                    ? `Median ${formatCurrency(data.analysis.comparables.median)} / m²`
+                                    : "No sold comparable evidence returned"
+                            }
                             icon={BarChart3}
                         />
                         <AnalysisMetricCard
@@ -369,6 +377,7 @@ export function PriceDistributionTab({ data }: AnalysisSectionProps) {
 }
 
 export function TrendTab({ data }: AnalysisSectionProps) {
+    const momentumModel = getMomentumCardModel(data);
     const firstTrend = data.analysis.trends[0];
     const lastTrend = data.analysis.trends[data.analysis.trends.length - 1];
     const totalChange =
@@ -401,20 +410,14 @@ export function TrendTab({ data }: AnalysisSectionProps) {
                 />
                 <AnalysisMetricCard
                     label="Momentum"
-                    value={data.analysis.momentum?.momentum ?? "derived"}
-                    hint={
-                        data.analysis.momentum?.interpretation ?? "Momentum interpretation not returned by the backend"
-                    }
+                    value={momentumModel.momentumLabel}
+                    hint={momentumModel.interpretation}
                     icon={Activity}
                 />
                 <AnalysisMetricCard
                     label="Velocity"
                     value={data.analysis.momentum ? formatSignedPercent(data.analysis.momentum.priceVelocity) : "N/A"}
-                    hint={
-                        data.analysis.momentum
-                            ? `${data.analysis.momentum.direction} with ${data.analysis.momentum.confidence} confidence`
-                            : "Momentum model did not return a score"
-                    }
+                    hint={`${momentumModel.directionLabel} with ${momentumModel.confidencePercent}% confidence`}
                     icon={Sparkles}
                     valueClassName={
                         data.analysis.momentum
@@ -435,6 +438,7 @@ export function TrendTab({ data }: AnalysisSectionProps) {
 }
 
 export function ComparablesTab({ data }: AnalysisSectionProps) {
+    const activeVsSold = data.analysis.activeVsSold;
     const [dispositionFilter, setDispositionFilter] = useState<string>("all");
     const [priceBand, setPriceBand] = useState<string>("all");
     const [addressQuery, setAddressQuery] = useState("");
@@ -588,6 +592,42 @@ export function ComparablesTab({ data }: AnalysisSectionProps) {
                 <ComparablesScatterChart data={{ ...data, analysis: { ...data.analysis, scatter: filteredScatter } }} />
                 <ActiveSalesChart data={data} listings={filteredActiveSales} />
             </div>
+
+            {activeVsSold ? (
+                <Card className="border-white/5 bg-white/[0.02]">
+                    <CardHeader className="pb-3">
+                        <CardTitle className="flex items-center gap-2 text-sm font-mono text-white">
+                            <Layers3 className="h-4 w-4 text-cyan-300" />
+                            Active versus sold snapshot
+                        </CardTitle>
+                        <CardDescription className="font-mono text-xs text-slate-500">
+                            Median asking inventory spread versus realized sold pricing in the same export.
+                        </CardDescription>
+                    </CardHeader>
+                    <CardContent className="grid gap-3 md:grid-cols-3">
+                        <AnalysisMetricCard
+                            label="Ask premium"
+                            value={formatSignedPercent(activeVsSold.askingPremiumPct)}
+                            hint={`${activeVsSold.activeCount} active vs ${activeVsSold.soldCount} sold rows`}
+                            icon={Percent}
+                            valueClassName={getSentimentTone(-activeVsSold.askingPremiumPct)}
+                        />
+                        <AnalysisMetricCard
+                            label="Median asking / m²"
+                            value={formatCurrency(activeVsSold.medianActivePricePerM2)}
+                            hint={`Ratio ${activeVsSold.askingToSoldRatio.toFixed(2)}x versus sold median`}
+                            icon={Layers3}
+                        />
+                        <AnalysisMetricCard
+                            label="Median sold / m²"
+                            value={formatCurrency(activeVsSold.medianSoldPricePerM2)}
+                            hint="REAS realized comparable pricing"
+                            icon={Building2}
+                        />
+                    </CardContent>
+                </Card>
+            ) : null}
+
             <Card className="border-white/5 bg-white/[0.02]">
                 <CardHeader className="pb-3">
                     <CardTitle className="flex items-center gap-2 text-sm font-mono text-white">
@@ -941,7 +981,7 @@ export function RentalsTab({ data }: AnalysisSectionProps) {
 }
 
 export function InvestmentTab({ data }: AnalysisSectionProps) {
-    const summary = getInvestmentSummary(data);
+    const scoreModel = getScoreCardModel(data);
     const targetPricePerM2 = getTargetPricePerM2(data);
     const marketPricePerM2 = data.analysis.yield.atMarketPrice.price / data.meta.target.area;
     const scenarios = getInvestmentScenarioRows(data);
@@ -966,16 +1006,16 @@ export function InvestmentTab({ data }: AnalysisSectionProps) {
                     <CardContent className="space-y-4">
                         <div className="flex flex-col items-center gap-4 sm:flex-row sm:items-center sm:justify-between">
                             <div>
-                                <div className={cn("text-5xl font-black font-mono", getScoreTone(summary.overall))}>
-                                    {summary.grade}
+                                <div className={cn("text-5xl font-black font-mono", getScoreTone(scoreModel.score))}>
+                                    {scoreModel.grade}
                                 </div>
-                                <div className="text-sm font-mono text-slate-400">{summary.recommendation}</div>
+                                <div className="text-sm font-mono text-slate-400">{scoreModel.recommendationLabel}</div>
                             </div>
-                            <ScoreGauge score={summary.overall} label="Overall" />
+                            <ScoreGauge score={scoreModel.score} label="Overall" />
                         </div>
-                        <Progress value={summary.overall} className="h-2 bg-white/5" />
+                        <Progress value={scoreModel.score} className="h-2 bg-white/5" />
                         <div className="space-y-2">
-                            {summary.reasoning.map((item) => (
+                            {scoreModel.reasoning.map((item) => (
                                 <div
                                     key={item}
                                     className="flex items-start gap-2 rounded-lg border border-white/5 bg-slate-950/40 px-3 py-2 text-xs font-mono text-slate-400"
@@ -1187,9 +1227,9 @@ export function InvestmentTab({ data }: AnalysisSectionProps) {
 
             <InfoBox
                 title="Investment read"
-                tone={summary.overall >= 65 ? "positive" : summary.overall >= 45 ? "info" : "warning"}
+                tone={scoreModel.score >= 65 ? "positive" : scoreModel.score >= 45 ? "info" : "warning"}
             >
-                {summary.reasoning.slice(0, 2).join(" ")} The current target price is{" "}
+                {scoreModel.reasoning.slice(0, 2).join(" ")} The current target price is{" "}
                 {formatSignedPercent(data.analysis.yield.netYield - data.analysis.yield.atMarketPrice.netYield)} versus
                 the market-priced case, which is the clearest immediate edge visible in this export.
             </InfoBox>
@@ -1204,15 +1244,15 @@ export function InvestmentTab({ data }: AnalysisSectionProps) {
 }
 
 export function VerdictTab({ data }: AnalysisSectionProps) {
-    const summary = getInvestmentSummary(data);
+    const scoreModel = getScoreCardModel(data);
     const providerCounts = getProviderCounts(data);
     const scoreBreakdown = getScoreBreakdown(data);
     const pros = getVerdictPros(data);
     const cons = getVerdictCons(data);
     const checklist = getVerdictChecklist(data);
     const verdictLines = [
-        `${summary.recommendation} with ${summary.grade} / ${summary.overall} based on current sold and rental evidence.`,
-        `Target pricing sits at the ${data.analysis.comparables.targetPercentile.toFixed(0)}th percentile with ${formatPercent(data.analysis.yield.netYield)} net yield.`,
+        `${scoreModel.recommendationLabel} with ${scoreModel.grade} / ${scoreModel.score} based on current sold and rental evidence.`,
+        `Target pricing sits at the ${fmtPercentile(data.analysis.comparables.targetPercentile)} with ${formatPercent(data.analysis.yield.netYield)} net yield.`,
         `${data.analysis.comparables.count} sold comparables and ${data.listings.rentals.length} rentals were included in this export.`,
         data.analysis.momentum
             ? `Momentum is ${data.analysis.momentum.direction} with ${data.analysis.momentum.confidence} confidence: ${data.analysis.momentum.interpretation}`
@@ -1232,9 +1272,9 @@ export function VerdictTab({ data }: AnalysisSectionProps) {
                             <Badge
                                 className={cn(
                                     "border font-mono text-[10px] uppercase tracking-[0.24em]",
-                                    summary.overall >= 65
+                                    scoreModel.score >= 65
                                         ? "border-green-500/20 bg-green-500/10 text-green-200"
-                                        : summary.overall >= 45
+                                        : scoreModel.score >= 45
                                           ? "border-amber-500/20 bg-amber-500/10 text-amber-200"
                                           : "border-red-500/20 bg-red-500/10 text-red-200"
                                 )}
@@ -1247,7 +1287,7 @@ export function VerdictTab({ data }: AnalysisSectionProps) {
                         </div>
                         <div>
                             <h3 className="text-3xl font-semibold tracking-tight text-white">
-                                {summary.recommendation}
+                                {scoreModel.recommendationLabel}
                             </h3>
                             <p className="mt-3 max-w-3xl text-sm font-mono leading-6 text-slate-400">
                                 {verdictLines[0]} {verdictLines[1]}
@@ -1292,18 +1332,18 @@ export function VerdictTab({ data }: AnalysisSectionProps) {
                     <div className="grid gap-4 sm:grid-cols-2">
                         <Card className="border-white/10 bg-slate-950/60 sm:col-span-2">
                             <CardContent className="flex flex-col items-center gap-3 p-4">
-                                <ScoreGauge score={summary.overall} label="Conviction" />
-                                <div className={cn("text-sm font-mono", getScoreTone(summary.overall))}>
-                                    {summary.grade} grade
+                                <ScoreGauge score={scoreModel.score} label="Conviction" />
+                                <div className={cn("text-sm font-mono", getScoreTone(scoreModel.score))}>
+                                    {scoreModel.grade} grade
                                 </div>
                             </CardContent>
                         </Card>
                         <AnalysisMetricCard
                             label="Conviction"
-                            value={`${summary.overall}/100`}
-                            hint={`${summary.grade} grade from the returned investment score or fallback computation`}
+                            value={`${scoreModel.score}/100`}
+                            hint={`${scoreModel.grade} grade from the backend investment score`}
                             icon={ShieldCheck}
-                            valueClassName={getScoreTone(summary.overall)}
+                            valueClassName={getScoreTone(scoreModel.score)}
                         />
                         <AnalysisMetricCard
                             label="Providers"

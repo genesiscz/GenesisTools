@@ -3,7 +3,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@ui/components/table";
 import { Medal } from "lucide-react";
 import { useMemo } from "react";
-import { computeScore, GRADE_COLORS } from "../ScoreCard";
+import { fmt, pct } from "../../lib/format";
+import { GRADE_COLORS, getScoreCardModel } from "../analysis/display-model";
 import type { DistrictComparison } from "./types";
 
 interface ComparisonRankingsTableProps {
@@ -16,7 +17,7 @@ export function ComparisonRankingsTable({ comparisons }: ComparisonRankingsTable
             [...comparisons]
                 .map((comparison) => ({
                     comparison,
-                    score: computeScore(comparison.exportData),
+                    score: getScoreCardModel(comparison.exportData),
                 }))
                 .sort((a, b) => b.score.score - a.score.score),
         [comparisons]
@@ -71,13 +72,13 @@ export function ComparisonRankingsTable({ comparisons }: ComparisonRankingsTable
                                     {score.score}
                                 </TableCell>
                                 <TableCell className="font-mono text-xs text-right text-cyan-400">
-                                    {Math.round(comparison.summary.medianPricePerM2).toLocaleString("cs-CZ")}
+                                    {fmt(Math.round(comparison.summary.medianPricePerM2))}
                                 </TableCell>
                                 <TableCell className="font-mono text-xs text-right text-emerald-400">
-                                    {comparison.summary.netYield.toFixed(2)}%
+                                    {pct(comparison.summary.netYield, { digits: 2 })}
                                 </TableCell>
                                 <TableCell className="font-mono text-xs text-right text-gray-300">
-                                    {comparison.summary.grossYield.toFixed(2)}%
+                                    {pct(comparison.summary.grossYield, { digits: 2 })}
                                 </TableCell>
                                 <TableCell className="font-mono text-xs text-right text-gray-400">
                                     {Math.round(comparison.summary.daysOnMarket)}d
