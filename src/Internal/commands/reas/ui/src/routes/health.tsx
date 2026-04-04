@@ -34,16 +34,17 @@ function HealthPage() {
     const { data, isLoading, error } = useProviderHealth();
 
     return (
-        <div className="space-y-6">
-            <div>
-                <h1 className="flex items-center gap-3 text-xl font-semibold tracking-tight text-white">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-6">
+            <div className="flex items-center gap-3">
+                <div className="p-2 rounded-lg bg-cyan-500/10 border border-cyan-500/30">
                     <Activity className="h-5 w-5 text-cyan-400" />
-                    Provider Health
-                </h1>
-                <p className="mt-1 max-w-2xl font-mono text-sm text-slate-400">
-                    Real-time monitoring of all data provider endpoints — success rates, response times, and error
-                    history.
-                </p>
+                </div>
+                <div>
+                    <h1 className="text-xl font-mono font-bold text-gray-200">Provider Health</h1>
+                    <p className="text-xs font-mono text-gray-500">
+                        Real-time monitoring of all data provider endpoints
+                    </p>
+                </div>
             </div>
 
             {isLoading ? (
