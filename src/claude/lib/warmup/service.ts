@@ -161,7 +161,10 @@ export async function processWarmupRules(usageResults: AccountUsage[]): Promise<
 
     if (configChanged) {
         await withConfigLock(async () => {
-            await saveConfig(config);
+            // Re-read from disk to avoid overwriting tokens refreshed by other processes
+            const freshConfig = await loadConfig();
+            freshConfig.warmup = warmup;
+            await saveConfig(freshConfig);
         });
     }
 }
