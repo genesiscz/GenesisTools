@@ -1,4 +1,3 @@
-import { Storage } from "@app/utils/storage/storage";
 import type {
     AIAccountEntry,
     AIConfigData,
@@ -10,6 +9,7 @@ import type {
     ProviderConfig,
     TaskConfig,
 } from "@app/utils/config/ai.types";
+import { Storage } from "@app/utils/storage/storage";
 
 const DEFAULT_TASKS: Record<string, TaskConfig> = {
     transcribe: { provider: "local-hf" },
@@ -156,7 +156,7 @@ export class AIConfig {
             return this.data.accounts.find((a) => a.name === name);
         }
 
-        // Fallback: first account (mirrors old AIConfigStorage.getDefaultAccount behavior)
+        // Fallback: first account
         return this.data.accounts[0];
     }
 

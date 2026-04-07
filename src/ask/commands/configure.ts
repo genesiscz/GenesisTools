@@ -28,9 +28,7 @@ export async function runConfigureWizard(): Promise<void> {
                     label: "Default provider & model",
                     hint: (() => {
                         const defaults = aiConfig.getAppDefaults("ask");
-                        return defaults?.provider
-                            ? `${defaults.provider}/${defaults.model ?? "auto"}`
-                            : "not set";
+                        return defaults?.provider ? `${defaults.provider}/${defaults.model ?? "auto"}` : "not set";
                     })(),
                 },
                 {
@@ -261,7 +259,7 @@ async function addFromClaudeAccount(): Promise<void> {
     }
 
     // Don't store OAuth tokens — they're managed by claude config's refresh pipeline.
-    // AIConfigStorage only stores metadata for subscription accounts.
+    // AIConfig only stores metadata for subscription accounts.
     const entry: AIAccountEntry = {
         name: choice as string,
         provider: "anthropic-sub",
@@ -620,9 +618,7 @@ async function configureProviderSettings(_config: AskConfig): Promise<void> {
 async function configureDefaultModel(_config: AskConfig): Promise<void> {
     const aiConfig = await AIConfig.load();
     const askDefaults = aiConfig.getAppDefaults("ask");
-    const currentInfo = askDefaults?.provider
-        ? `${askDefaults.provider}/${askDefaults.model ?? "auto"}`
-        : "not set";
+    const currentInfo = askDefaults?.provider ? `${askDefaults.provider}/${askDefaults.model ?? "auto"}` : "not set";
 
     const action = await p.select({
         message: `Default: ${currentInfo}. What do you want to do?`,

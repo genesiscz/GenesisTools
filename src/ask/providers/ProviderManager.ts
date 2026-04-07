@@ -153,7 +153,7 @@ export class ProviderManager {
     }
 
     /**
-     * Try to resolve an anthropic-sub account from AIConfigStorage.
+     * Try to resolve an anthropic-sub account from AIConfig.
      * Returns the access token and label, or null if no account found.
      */
     private async resolveAnthropicFromAIConfig(): Promise<{ token: string; label?: string } | null> {
@@ -172,7 +172,7 @@ export class ProviderManager {
 
             // Always resolve through resolveAccountToken for subscription accounts —
             // it handles token refresh and reads the authoritative claude config.
-            // The AIConfigStorage copy may be stale.
+            // The AIConfig copy may be stale.
             const { resolveAccountToken } = await import("@app/utils/claude/subscription-auth");
             const result = await resolveAccountToken(account.name);
             return { token: result.token, label: account.label };
