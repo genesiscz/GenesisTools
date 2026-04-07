@@ -384,7 +384,7 @@ class ASKTool {
             // We still need provider/model info for display, so resolve first
             const config = chat.getConfig();
             const accountInfo = await this.getAccountInfoForFooter(config.provider);
-            askUI().logUsing({ provider: config.provider, model: config.model, accountLabel: accountInfo?.label });
+            askUI().logUsing({ provider: config.provider, model: config.model, account: accountInfo });
 
             // Optional: Show cost prediction if --predict-cost flag is set
             if (argv.predictCost) {
@@ -706,12 +706,19 @@ class ASKTool {
     }
 
     private async getAccountInfoForFooter(providerName: string): Promise<{ label?: string; name: string } | undefined> {
-        if (providerName !== "anthropic") {
+        try {
+            const { AIConfig } = await import("@app/utils/ai/AIConfig");
+            const config = await AIConfig.load();
+            const account = config.getDefaultAccount("ask");
+
+            if (!account || account.provider.replace("-sub", "") !== providerName) {
+                return undefined;
+            }
+
+            return { label: account.label, name: account.name };
+        } catch {
             return undefined;
         }
-
-        const { getAccountDisplayInfo } = await import("@app/utils/claude/subscription-auth");
-        return (await getAccountDisplayInfo()) ?? undefined;
     }
 
     private async handleCommandResult(
