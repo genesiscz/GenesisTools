@@ -87,6 +87,41 @@ describe("parseErealityHtml", () => {
         expect(listings).toHaveLength(0);
     });
 
+    test("parses <li> tile elements (current site layout)", () => {
+        const html = `
+            <ul class="ereality-property-list">
+                <li class="d-md-flex ereality-property-tile">
+                    <a href="/detail/byt-2-kk-k-pronajmu-praha-3/abc123" class="ereality-property-description">
+                        <strong class="ereality-property-heading">Byt 2+kk k pronájmu Praha 3</strong>
+                        <p class="ereality-property-locality">Praha 3, okres Hlavní město Praha</p>
+                    </a>
+                    <div class="ereality-property-price">18 000 Kč</div>
+                </li>
+                <li class="d-md-flex ereality-property-tile">
+                    <a href="/detail/pronajem-bytu-3-kk-75m2/def456" class="ereality-property-description">
+                        <strong class="ereality-property-heading">Pronájem bytu 3+kk, 75m2, ul. Italská, Praha 3</strong>
+                        <p class="ereality-property-locality">Praha 3, okres Hlavní město Praha</p>
+                    </a>
+                    <div class="ereality-property-price">25 000 Kč/měsíc</div>
+                </li>
+            </ul>
+        `;
+
+        const listings = parseErealityHtml(html);
+
+        expect(listings).toHaveLength(2);
+
+        // New format: "Byt X+kk k pronájmu" — disposition extracted, area unavailable
+        expect(listings[0].disposition).toBe("2+kk");
+        expect(listings[0].area).toBe(0);
+        expect(listings[0].price).toBe(18000);
+
+        // Old format still in use: "Pronájem bytu X+kk, NNm2"
+        expect(listings[1].disposition).toBe("3+kk");
+        expect(listings[1].area).toBe(75);
+        expect(listings[1].price).toBe(25000);
+    });
+
     test("extracts total count from results header", () => {
         const { extractTotalCount } = require("@app/Internal/commands/reas/api/ErealityClient");
         const html = `

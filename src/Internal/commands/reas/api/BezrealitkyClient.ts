@@ -29,6 +29,8 @@ const AUTOCOMPLETE_URL = "https://autocomplete.bezrealitky.cz";
 const DEFAULT_PAGE_SIZE = 100;
 const MAX_PAGES = 100;
 const CURRENCY = "CZK";
+const BROWSER_USER_AGENT =
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36";
 const RENTAL_CONTRACT = "graphql:listAdverts" as const;
 const DETAIL_CONTRACT = "graphql:advert" as const;
 
@@ -50,7 +52,7 @@ const REVERSE_DISPOSITION_MAP = Object.fromEntries(
 ) as Record<string, string>;
 
 const CONSTRUCTION_MAP: Record<string, string> = {
-    brick: "CIHLA",
+    brick: "BRICK",
     panel: "PANEL",
 };
 
@@ -62,14 +64,14 @@ const ESTATE_TYPE_MAP: Record<string, string> = {
 
 const LIST_ADVERTS_QUERY = `
     query ListAdverts(
-        $limit: Int!
-        $offset: Int!
-        $offerType: [OfferType!]
-        $estateType: [EstateType!]
-        $construction: [ConstructionType!]
+        $limit: Int
+        $offset: Int
+        $offerType: [OfferType]
+        $estateType: [EstateType]
+        $construction: [Construction]
         $currency: Currency
-        $regionOsmIds: [String!]
-        $disposition: [Disposition!]
+        $regionOsmIds: [ID]
+        $disposition: [Disposition]
     ) {
         listAdverts(
             limit: $limit
@@ -579,13 +581,24 @@ export class BezrealitkyClient {
             options.graphqlClient ??
             new ApiClient({
                 baseUrl: GRAPHQL_URL,
-                headers: { "Content-Type": "application/json" },
+                userAgent: BROWSER_USER_AGENT,
+                headers: {
+                    "Content-Type": "application/json",
+                    Origin: "https://www.bezrealitky.cz",
+                    Referer: "https://www.bezrealitky.cz/",
+                    "Accept-Language": "cs",
+                },
                 loggerContext: { provider: "bezrealitky", api: "graphql" },
             });
         this.autocompleteClient =
             options.autocompleteClient ??
             new ApiClient({
                 baseUrl: AUTOCOMPLETE_URL,
+                userAgent: BROWSER_USER_AGENT,
+                headers: {
+                    Referer: "https://www.bezrealitky.cz/",
+                    "Accept-Language": "cs",
+                },
                 loggerContext: { provider: "bezrealitky", api: "autocomplete" },
             });
         this.pageSize = options.pageSize ?? DEFAULT_PAGE_SIZE;

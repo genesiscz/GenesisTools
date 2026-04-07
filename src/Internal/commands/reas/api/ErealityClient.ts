@@ -6,10 +6,12 @@ import type { ErealityListing } from "./ErealityClient.types";
 
 const BASE_URL = "https://www.ereality.cz/pronajem/byty";
 const PER_PAGE = 24;
+const MAX_PAGES = 10;
 const USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko)";
 const CRAWL_DELAY_MS = 2000;
 
-const NAME_REGEX = /Pron[aá]jem\s+bytu\s+(\d\+(?:kk|\d))\s+(\d+)\s*m/i;
+const NAME_REGEX_OLD = /Pron[aá]jem\s+(?:luxusn[ií]ho\s+)?bytu\s+(\d\+(?:kk|\d))[,\s]+(\d+)\s*m/i;
+const NAME_REGEX_NEW = /Byt\s+(\d\+(?:kk|\d))\s+k\s+pron[aá]jmu/i;
 
 export function buildErealityUrl(districtSlug: string, page: number): string {
     return `${BASE_URL}/${districtSlug}?pg=${page}`;
@@ -19,7 +21,7 @@ export function parseErealityHtml(html: string): ErealityListing[] {
     const listings: ErealityListing[] = [];
 
     const tileRegex =
-        /<div[^>]*class="[^"]*ereality-property-tile[^"]*"[^>]*>([\s\S]*?)(?=<div[^>]*class="[^"]*ereality-property-tile|$)/g;
+        /<(?:div|li)[^>]*class="[^"]*ereality-property-tile[^"]*"[^>]*>([\s\S]*?)(?=<(?:div|li)[^>]*class="[^"]*ereality-property-tile|$)/g;
 
     for (const tileMatch of html.matchAll(tileRegex)) {
         const tile = tileMatch[0];
@@ -50,9 +52,10 @@ export function parseErealityHtml(html: string): ErealityListing[] {
             continue;
         }
 
-        const nameMatch = NAME_REGEX.exec(heading);
-        const disposition = nameMatch ? nameMatch[1] : "";
-        const area = nameMatch ? Number(nameMatch[2]) : 0;
+        const oldMatch = NAME_REGEX_OLD.exec(heading);
+        const newMatch = NAME_REGEX_NEW.exec(heading);
+        const disposition = oldMatch ? oldMatch[1] : newMatch ? newMatch[1] : "";
+        const area = oldMatch ? Number(oldMatch[2]) : 0;
         const link = linkMatch ? `https://www.ereality.cz${linkMatch[1]}` : "";
 
         listings.push({
@@ -148,7 +151,7 @@ export class ErealityClient {
         let page = 0;
         let totalCount = Number.POSITIVE_INFINITY;
 
-        while (page * PER_PAGE < totalCount) {
+        while (page * PER_PAGE < totalCount && page < MAX_PAGES) {
             const url = this.buildUrl(slug, page);
             let html: string;
 
