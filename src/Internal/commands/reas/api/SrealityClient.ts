@@ -255,7 +255,7 @@ export class SrealityClient {
     async fetchClusters(params: SrealityV1QueryParams): Promise<SrealityCluster[]> {
         const path = buildV1Path("/estates/search/clusters", params);
         const body = await this.apiV1.get<SrealityClustersResponse>(path);
-        return body.result ?? [];
+        return body.results ?? [];
     }
 
     async fetchGeometries(query: SrealityGeometryQuery): Promise<SrealityGeometry[]> {

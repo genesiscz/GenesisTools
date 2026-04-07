@@ -99,7 +99,7 @@ export interface SrealityCluster {
 }
 
 export interface SrealityClustersResponse {
-    result?: SrealityCluster[];
+    results?: SrealityCluster[];
     status_code?: number;
     status_message?: string;
 }
