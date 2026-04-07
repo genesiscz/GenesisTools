@@ -1,6 +1,6 @@
+import type { AIProvider } from "@app/utils/config/ai.types";
 import type { AnthropicModelCategory, ModelSelection } from "@ask/providers/ModelResolver";
 import type { DetectedProvider, ModelInfo } from "@ask/types";
-import type { AIProvider } from "@app/utils/config/ai.types";
 
 /**
  * A handle to an AI account from AIConfig.

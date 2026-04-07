@@ -1,6 +1,6 @@
+export type { AppConfig, AppDefaults, ProviderConfig } from "@app/utils/config/ai.types";
 export { AIAccount } from "./AIAccount";
 export type { AIAccountConfig, AIAccountEntry, AIAccountTokens, AIProvider } from "./account-types";
-export type { AppConfig, AppDefaults, ProviderConfig } from "@app/utils/config/ai.types";
 
 import { Embedder } from "./tasks/Embedder";
 import { Summarizer } from "./tasks/Summarizer";

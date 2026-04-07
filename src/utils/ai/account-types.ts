@@ -1,5 +1,5 @@
 // Re-export from canonical location for backward compat
-export type { AIProvider, AIAccountTokens, AIAccountEntry } from "@app/utils/config/ai.types";
+export type { AIAccountEntry, AIAccountTokens, AIProvider } from "@app/utils/config/ai.types";
 
 // Keep AIAccountConfig for any remaining callers
 export interface AIAccountConfig {

@@ -23,7 +23,13 @@ export class HuggingFaceResolver implements AccountResolver {
             key: `${entry.tokens.apiKey.slice(0, 8)}...`,
             provider: null as never, // no ai-sdk provider for HF
             models: [],
-            config: { name: "huggingface", type: "huggingface", envKey: "HF_TOKEN", description: "HuggingFace Inference API", priority: 99 },
+            config: {
+                name: "huggingface",
+                type: "huggingface",
+                envKey: "HF_TOKEN",
+                description: "HuggingFace Inference API",
+                priority: 99,
+            },
         };
     }
 }

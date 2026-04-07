@@ -22,7 +22,7 @@ export function getResolver(providerType: AIProvider): AccountResolver {
     if (!resolver) {
         throw new Error(
             `No resolver registered for provider type "${providerType}". ` +
-                `Available: ${[...registry.keys()].join(", ")}`,
+                `Available: ${[...registry.keys()].join(", ")}`
         );
     }
 
