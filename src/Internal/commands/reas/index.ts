@@ -513,7 +513,7 @@ async function runReasAnalysis(options: ReasOptions): Promise<void> {
 }
 
 export function registerReasCommand(program: Command): void {
-    program
+    const reas = program
         .command("reas")
         .description("Real estate investment analyzer (reas.cz + sreality + MF cenová mapa)")
         .option("--district <name>", "District name (e.g. 'Hradec Králové')")
@@ -540,5 +540,237 @@ export function registerReasCommand(program: Command): void {
         .option("--dashboard-port <port>", "Dashboard port", "3072")
         .action(async (opts: ReasOptions) => {
             await runReasAnalysis(opts);
+        });
+
+    // ---- Subcommand: listings ----
+    reas.command("listings")
+        .description("Browse stored listings from the database")
+        .option("--district <name>", "Filter by district name")
+        .option("--type <type>", "Listing type: sale, rental, sold")
+        .option("--source <name>", "Filter by data source")
+        .option("--limit <n>", "Number of rows to show", "20")
+        .option("--page <n>", "Page number (1-based)", "1")
+        .action(async (opts: { district?: string; type?: string; source?: string; limit: string; page: string }) => {
+            const { reasDatabase } = await import("@app/Internal/commands/reas/lib/store");
+
+            const limit = Number(opts.limit);
+            const page = Number(opts.page);
+            const offset = (page - 1) * limit;
+
+            const listings = reasDatabase.getListings({
+                district: opts.district,
+                type: opts.type as "sale" | "rental" | "sold" | undefined,
+                source: opts.source,
+                limit,
+                offset,
+            });
+
+            if (listings.length === 0) {
+                console.log(pc.yellow("No listings found."));
+                return;
+            }
+
+            const rows = listings.map((l) => [
+                String(l.id),
+                l.district,
+                l.source,
+                l.type,
+                l.address.length > 40 ? `${l.address.slice(0, 37)}...` : l.address,
+                l.disposition ?? "—",
+                l.area != null ? String(Math.round(l.area)) : "—",
+                formatCzk(l.price),
+                l.price_per_m2 != null ? formatCzk(Math.round(l.price_per_m2)) : "—",
+                l.fetched_at.slice(0, 10),
+            ]);
+
+            const headers = ["ID", "District", "Source", "Type", "Address", "Disp", "m²", "Price", "CZK/m²", "Date"];
+            const table = formatTable(rows, headers, { alignRight: [0, 6, 7, 8] });
+
+            console.log(`\n${pc.cyan(pc.bold("Listings"))} — page ${pc.bold(String(page))}, ${pc.bold(String(listings.length))} rows\n`);
+            console.log(table);
+            console.log();
+        });
+
+    // ---- Subcommand: districts ----
+    // Uses optional positional [query] instead of --search to avoid conflict with parent's --search flag
+    reas.command("districts [query]")
+        .description("List all districts, or search by name (e.g. reas districts Prah)")
+        .action((query?: string) => {
+            if (query) {
+                const matches = searchDistricts(query);
+
+                if (matches.length === 0) {
+                    console.log(pc.yellow(`No districts matching "${query}".`));
+                    return;
+                }
+
+                console.log(`\n${pc.cyan(pc.bold("District search"))} — "${query}" → ${matches.length} match(es)\n`);
+
+                for (const d of matches) {
+                    console.log(`  ${pc.bold(d.name)}  ${pc.dim(`reasId=${d.reasId}  srealityId=${d.srealityId}`)}`);
+                }
+
+                console.log();
+                return;
+            }
+
+            const prahaNames = getPrahaDistrictNames();
+            const allNames = getAllDistrictNames();
+
+            console.log(`\n${pc.cyan(pc.bold("Available districts"))} (${allNames.length} districts + ${prahaNames.length} Praha wards)\n`);
+            console.log(pc.bold("Praha districts:"));
+
+            for (const name of prahaNames) {
+                console.log(`  ${name}`);
+            }
+
+            console.log();
+            console.log(pc.bold("All districts (alphabetical):"));
+
+            for (const name of allNames) {
+                console.log(`  ${name}`);
+            }
+
+            console.log();
+        });
+
+    // ---- Subcommand: history ----
+    reas.command("history")
+        .description("Show past analysis runs from the database")
+        .option("--district <name>", "Filter by district name")
+        .option("--type <construction>", "Filter by construction type (panel, brick, house)")
+        .option("--limit <n>", "Number of rows", "20")
+        .action(async (opts: { district?: string; type?: string; limit: string }) => {
+            const { reasDatabase } = await import("@app/Internal/commands/reas/lib/store");
+
+            const limit = Number(opts.limit);
+            let rows = reasDatabase.getHistory({ district: opts.district, limit });
+
+            if (opts.type) {
+                rows = rows.filter((r) => r.construction_type === opts.type);
+            }
+
+            if (rows.length === 0) {
+                console.log(pc.yellow("No analysis history found."));
+                return;
+            }
+
+            const tableRows = rows.map((r) => [
+                r.created_at.slice(0, 10),
+                r.district,
+                r.construction_type,
+                r.disposition ?? "all",
+                r.investment_score != null ? String(r.investment_score) : "—",
+                r.investment_grade ?? "—",
+                r.net_yield != null ? `${r.net_yield.toFixed(1)}%` : "—",
+                r.median_price_per_m2 != null ? formatCzk(Math.round(r.median_price_per_m2)) : "—",
+            ]);
+
+            const headers = ["Date", "District", "Type", "Disp", "Score", "Grade", "Net Yield", "Median CZK/m²"];
+            const table = formatTable(tableRows, headers, { alignRight: [4, 6, 7] });
+
+            console.log(`\n${pc.cyan(pc.bold("Analysis history"))} — ${pc.bold(String(rows.length))} entries\n`);
+            console.log(table);
+            console.log();
+        });
+
+    // ---- Subcommand: health ----
+    reas.command("health")
+        .description("Show provider health stats and recent fetch log")
+        .option("--days <n>", "Lookback window in days", "30")
+        .action(async (opts: { days: string }) => {
+            const { reasDatabase } = await import("@app/Internal/commands/reas/lib/store");
+
+            const days = Number(opts.days);
+            const health = reasDatabase.getProviderHealth(days);
+            const recentLog = reasDatabase.getRecentFetchLog(20);
+
+            if (health.length === 0) {
+                console.log(pc.yellow("No provider health data found."));
+                return;
+            }
+
+            // Provider health table
+            const healthRows = health.map((h) => [
+                h.provider,
+                `${h.successRate.toFixed(1)}%`,
+                String(h.avgListingCount),
+                String(h.totalFetches),
+                h.lastError ? (h.lastError.length > 40 ? `${h.lastError.slice(0, 37)}...` : h.lastError) : "—",
+            ]);
+
+            const healthHeaders = ["Provider", "Success%", "Avg Count", "Fetches", "Last Error"];
+            const healthTable = formatTable(healthRows, healthHeaders, { alignRight: [1, 2, 3] });
+
+            console.log(`\n${pc.cyan(pc.bold("Provider health"))} — last ${pc.bold(String(days))} days\n`);
+            console.log(healthTable);
+
+            // Recent fetch log table
+            if (recentLog.length > 0) {
+                const logRows = recentLog.map((l) => {
+                    const statusColor = l.status === "success" ? pc.green : l.status === "error" ? pc.red : pc.yellow;
+                    return [
+                        l.created_at.slice(0, 16).replace("T", " "),
+                        l.provider,
+                        l.source_contract,
+                        l.district ?? "—",
+                        statusColor(l.status),
+                        String(l.listing_count),
+                    ];
+                });
+
+                const logHeaders = ["Timestamp", "Provider", "Contract", "District", "Status", "Count"];
+                const logTable = formatTable(logRows, logHeaders, { alignRight: [5] });
+
+                console.log(`\n${pc.cyan(pc.bold("Recent fetches"))} — last ${pc.bold(String(recentLog.length))}\n`);
+                console.log(logTable);
+            }
+
+            console.log();
+        });
+
+    // ---- Subcommand: compare ----
+    reas.command("compare <districts...>")
+        .description("Compare multiple districts side by side")
+        .option("--type <construction>", "Construction type (panel, brick, house)", "brick")
+        .option("--disposition <disp>", "Disposition filter (e.g. 3+1)")
+        .option("--price <czk>", "Target price in CZK", "5000000")
+        .option("--area <m2>", "Target area in m²", "80")
+        .action(async (districts: string[], opts: { type: string; disposition?: string; price: string; area: string }) => {
+            const { compareDistricts } = await import("@app/Internal/commands/reas/lib/district-comparison-service");
+
+            const spinner = p.spinner();
+            spinner.start(`Comparing ${districts.length} districts...`);
+
+            const results = await compareDistricts({
+                districts,
+                constructionType: opts.type,
+                disposition: opts.disposition,
+                price: Number(opts.price),
+                area: Number(opts.area),
+            });
+
+            spinner.stop(`Compared ${results.length} district(s).`);
+
+            if (results.length === 0) {
+                console.log(pc.yellow("No comparison results."));
+                return;
+            }
+
+            const rows = results.map((r) => [
+                r.district,
+                formatCzk(Math.round(r.summary.medianPricePerM2)),
+                `${r.summary.grossYield.toFixed(1)}%`,
+                `${r.summary.netYield.toFixed(1)}%`,
+                String(r.summary.salesCount),
+                String(r.summary.rentalCount),
+            ]);
+
+            const headers = ["District", "Median CZK/m²", "Gross Yield", "Net Yield", "Sales", "Rentals"];
+            const table = formatTable(rows, headers, { alignRight: [1, 2, 3, 4, 5] });
+
+            console.log(`\n${pc.cyan(pc.bold("District comparison"))} — ${opts.type}, ${formatCzk(Number(opts.price))} CZK, ${opts.area} m²\n`);
+            console.log(table);
+            console.log();
         });
 }

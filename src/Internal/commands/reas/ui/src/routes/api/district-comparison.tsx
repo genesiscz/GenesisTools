@@ -1,17 +1,7 @@
-import { fetchAndAnalyze } from "@app/Internal/commands/reas/lib/analysis-service";
-import { buildDashboardExport } from "@app/Internal/commands/reas/lib/api-export";
-import { buildConfig, resolveDistrict } from "@app/Internal/commands/reas/lib/config-builder";
-import {
-    collapseDistrictSnapshots,
-    type DistrictSnapshotResolution,
-} from "@app/Internal/commands/reas/lib/district-snapshot";
-import { reasDatabase } from "@app/Internal/commands/reas/lib/store";
+import { compareDistricts } from "@app/Internal/commands/reas/lib/district-comparison-service";
+import type { DistrictSnapshotResolution } from "@app/Internal/commands/reas/lib/district-snapshot";
 import { createFileRoute } from "@tanstack/react-router";
 import { apiHandler, jsonBody } from "../../server/api-utils";
-
-function parseSnapshotResolution(value: unknown): DistrictSnapshotResolution {
-    return value === "daily" ? "daily" : "monthly";
-}
 
 export const Route = createFileRoute("/api/district-comparison")({
     server: {
@@ -31,50 +21,19 @@ export const Route = createFileRoute("/api/district-comparison")({
                     return Response.json({ error: "Missing required field: districts" }, { status: 400 });
                 }
 
-                const constructionType = (body.type as string | undefined) ?? "brick";
-                const disposition = body.disposition as string | undefined;
-                const periods = body.periods as string | undefined;
-                const price = Number(body.price ?? 5000000);
-                const area = Number(body.area ?? 80);
-                const snapshotResolution = parseSnapshotResolution(body.snapshotResolution);
-
-                const comparisons = await Promise.all(
-                    districts.map(async (districtName) => {
-                        const district = resolveDistrict(districtName);
-                        const { filters, target } = buildConfig({
-                            district,
-                            constructionType,
-                            disposition,
-                            periodsStr: periods,
-                            price,
-                            area,
-                            rent: body.rent ? Number(body.rent) : undefined,
-                            monthlyCosts: body.monthlyCosts ? Number(body.monthlyCosts) : undefined,
-                            providers: body.providers as string | undefined,
-                        });
-                        const analysis = await fetchAndAnalyze(filters, target, body.refresh === true);
-                        const exportData = buildDashboardExport(analysis);
-                        const snapshots = collapseDistrictSnapshots({
-                            rows: reasDatabase.getDistrictHistory(district.name, constructionType, 730, disposition),
-                            resolution: snapshotResolution,
-                        });
-
-                        return {
-                            district: district.name,
-                            exportData,
-                            snapshots,
-                            summary: {
-                                medianPricePerM2: exportData.analysis.comparables.median,
-                                grossYield: exportData.analysis.yield.grossYield,
-                                netYield: exportData.analysis.yield.netYield,
-                                daysOnMarket: exportData.analysis.timeOnMarket.median,
-                                targetPercentile: exportData.analysis.comparables.targetPercentile,
-                                salesCount: exportData.listings.sold.length,
-                                rentalCount: exportData.listings.rentals.length,
-                            },
-                        };
-                    })
-                );
+                const comparisons = await compareDistricts({
+                    districts,
+                    constructionType: (body.type as string | undefined) ?? "brick",
+                    disposition: body.disposition as string | undefined,
+                    periods: body.periods as string | undefined,
+                    price: Number(body.price ?? 5000000),
+                    area: Number(body.area ?? 80),
+                    rent: body.rent ? Number(body.rent) : undefined,
+                    monthlyCosts: body.monthlyCosts ? Number(body.monthlyCosts) : undefined,
+                    providers: body.providers as string | undefined,
+                    refresh: body.refresh === true,
+                    snapshotResolution: (body.snapshotResolution === "daily" ? "daily" : "monthly") as DistrictSnapshotResolution,
+                });
 
                 return Response.json({ comparisons });
             }),

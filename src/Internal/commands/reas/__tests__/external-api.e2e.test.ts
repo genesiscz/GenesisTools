@@ -6,6 +6,8 @@
  * These tests exercise the actual API client classes (ReasClient, SrealityClient, etc.)
  * against live endpoints. Gated behind E2E=1 so normal test runs skip them.
  */
+
+import { describe, expect, test } from "bun:test";
 import { BezrealitkyClient } from "@app/Internal/commands/reas/api/BezrealitkyClient";
 import { ErealityClient } from "@app/Internal/commands/reas/api/ErealityClient";
 import { MfRentalClient } from "@app/Internal/commands/reas/api/MfRentalClient";
@@ -13,7 +15,6 @@ import { ReasClient } from "@app/Internal/commands/reas/api/ReasClient";
 import { SrealityClient } from "@app/Internal/commands/reas/api/SrealityClient";
 import { getDistrict } from "@app/Internal/commands/reas/data/districts";
 import type { AnalysisFilters, DateRange } from "@app/Internal/commands/reas/types";
-import { describe, expect, test } from "bun:test";
 
 const SKIP = !process.env.E2E;
 

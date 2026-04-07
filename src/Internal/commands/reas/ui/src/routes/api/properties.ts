@@ -1,6 +1,8 @@
-import { fetchAndAnalyze } from "@app/Internal/commands/reas/lib/analysis-service";
-import { buildConfig, resolveDistrict } from "@app/Internal/commands/reas/lib/config-builder";
-import { buildImportedPropertyDraft } from "@app/Internal/commands/reas/lib/property-form-defaults";
+import {
+    getAllPropertiesWithHistory,
+    getPropertyImportDraft,
+    refreshPropertyAnalysis,
+} from "@app/Internal/commands/reas/lib/property-service";
 import { reasDatabase } from "@app/Internal/commands/reas/lib/store";
 import { createFileRoute } from "@tanstack/react-router";
 import { apiHandler, jsonBody } from "../../server/api-utils";
@@ -13,9 +15,9 @@ export const Route = createFileRoute("/api/properties")({
                 const importUrl = url.searchParams.get("listingUrl")?.trim();
 
                 if (importUrl) {
-                    const listing = reasDatabase.getListingByUrl(importUrl);
+                    const result = getPropertyImportDraft(importUrl);
 
-                    if (!listing) {
+                    if (!result) {
                         return Response.json(
                             {
                                 error: "Listing URL was not found in the local cache yet. Refresh analysis first to ingest it.",
@@ -24,17 +26,7 @@ export const Route = createFileRoute("/api/properties")({
                         );
                     }
 
-                    const rentEstimate = reasDatabase.estimateMonthlyRent({
-                        district: listing.district,
-                        disposition: listing.disposition ?? undefined,
-                        area: listing.area ?? undefined,
-                    });
-
-                    return Response.json({
-                        draft: buildImportedPropertyDraft({ listing, rentEstimate }),
-                        listing,
-                        rentEstimate,
-                    });
+                    return Response.json(result);
                 }
 
                 if (url.searchParams.get("estimateRent") === "1") {
@@ -56,12 +48,8 @@ export const Route = createFileRoute("/api/properties")({
                     return Response.json({ estimate });
                 }
 
-                const properties = reasDatabase.getProperties();
-                const historyByProperty = Object.fromEntries(
-                    properties.map((property) => [property.id, reasDatabase.getPropertyAnalysisHistory(property.id, 8)])
-                );
-
-                return Response.json({ properties, historyByProperty });
+                const result = getAllPropertiesWithHistory();
+                return Response.json(result);
             }),
 
             POST: apiHandler(async (request) => {
@@ -165,23 +153,7 @@ export const Route = createFileRoute("/api/properties")({
                     }
                 }
 
-                const district = resolveDistrict(property.district);
-                const { filters, target } = buildConfig({
-                    district,
-                    constructionType: property.construction_type,
-                    disposition: property.disposition ?? undefined,
-                    periodsStr: property.periods ?? undefined,
-                    price: property.target_price,
-                    area: property.target_area,
-                    rent: property.monthly_rent,
-                    monthlyCosts: property.monthly_costs,
-                    providers: property.providers ?? undefined,
-                });
-
-                const analysis = await fetchAndAnalyze(filters, target, true);
-                reasDatabase.updatePropertyAnalysis(id, analysis);
-
-                const updated = reasDatabase.getProperty(id);
+                const updated = await refreshPropertyAnalysis(id);
                 return Response.json({ property: updated });
             }),
 
