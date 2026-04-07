@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import logger, { getLogger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import { type FetchError, ofetch, type ResponseType } from "ofetch";
 
@@ -144,7 +144,8 @@ export class ApiClient {
     private readonly defaultHeaders: Record<string, string>;
     private readonly defaultTimeoutMs: number;
     private readonly defaultRetry: number;
-    private readonly requestLogger: ReturnType<typeof logger.child>;
+    private _requestLogger: ReturnType<typeof logger.child> | null = null;
+    private readonly _loggerContext: Record<string, unknown>;
 
     constructor(config: ApiClientConfig = {}) {
         this.baseUrl = config.baseUrl;
@@ -155,7 +156,15 @@ export class ApiClient {
             "User-Agent": config.userAgent ?? DEFAULT_USER_AGENT,
             ...config.headers,
         };
-        this.requestLogger = logger.child({ component: "ApiClient", ...config.loggerContext });
+        this._loggerContext = { component: "ApiClient", ...config.loggerContext };
+    }
+
+    private get requestLogger() {
+        if (!this._requestLogger) {
+            this._requestLogger = getLogger().child(this._loggerContext);
+        }
+
+        return this._requestLogger;
     }
 
     setHeader(name: string, value: string | undefined): void {
