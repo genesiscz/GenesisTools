@@ -28,7 +28,7 @@ import { ApiClient } from "@app/utils/api/ApiClient";
 
 const V1_BASE_URL = "https://www.sreality.cz/api/v1";
 const V2_BASE_URL = "https://www.sreality.cz/api/cs/v2";
-const PER_PAGE = 60;
+const PER_PAGE = 100;
 const MAX_PAGES = 1000;
 
 const BUILDING_TYPE_MAP: Record<string, number> = {

@@ -26,7 +26,7 @@ import { SafeJSON } from "@app/utils/json";
 
 const GRAPHQL_URL = "https://api.bezrealitky.cz/graphql/";
 const AUTOCOMPLETE_URL = "https://autocomplete.bezrealitky.cz";
-const DEFAULT_PAGE_SIZE = 50;
+const DEFAULT_PAGE_SIZE = 100;
 const MAX_PAGES = 100;
 const CURRENCY = "CZK";
 const RENTAL_CONTRACT = "graphql:listAdverts" as const;
