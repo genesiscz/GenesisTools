@@ -147,6 +147,33 @@ export class AIConfig {
         return [...this.data.accounts];
     }
 
+    /**
+     * Find the account used for a given provider type in a context.
+     * Matches both "anthropic" and "anthropic-sub" variants.
+     * Prefers the context default, falls back to first matching account.
+     */
+    getAccountForProvider(providerName: string, context = "ask"): AIAccountEntry | undefined {
+        const matches = this.data.accounts.filter(
+            (a) => a.provider === providerName || a.provider === `${providerName}-sub`,
+        );
+
+        if (matches.length === 0) {
+            return undefined;
+        }
+
+        const defaultName = this.data.defaultAccounts[context];
+
+        if (defaultName) {
+            const defaultMatch = matches.find((a) => a.name === defaultName);
+
+            if (defaultMatch) {
+                return defaultMatch;
+            }
+        }
+
+        return matches[0];
+    }
+
     // ── Default accounts (per-context) ──
 
     getDefaultAccount(context: string): AIAccountEntry | undefined {
