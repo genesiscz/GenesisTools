@@ -312,4 +312,27 @@ export class AIConfig {
         // Refresh in-memory cache with what was actually written to disk
         this.data = applyDefaults(updated);
     }
+
+    /**
+     * Execute an async operation while holding the config file lock.
+     * Re-reads config from disk inside the lock (prevents TOCTOU).
+     * Caller receives fresh data and a save() callback to persist changes.
+     * Use for operations that need async I/O while holding the lock (e.g. token refresh).
+     */
+    async withLock<T>(
+        fn: (data: AIConfigData, save: (data: AIConfigData) => Promise<void>) => Promise<T>,
+        timeout?: number,
+    ): Promise<T> {
+        return this.storage.withConfigLock(async () => {
+            const fresh = await this.storage.getConfig<Partial<AIConfigData>>();
+            const data = applyDefaults(fresh);
+
+            const save = async (updated: AIConfigData) => {
+                await this.storage.setConfig(updated);
+                this.data = applyDefaults(updated);
+            };
+
+            return fn(data, save);
+        }, timeout);
+    }
 }
