@@ -41,7 +41,7 @@ export function analyzeDiscount(listings: ReasListing[]): DiscountResult {
     return {
         avgDiscount: sum / values.length,
         medianDiscount: computeMedian(values),
-        maxDiscount: values[0],
+        maxDiscount: values[0], // Most negative (deepest) discount — values sorted ascending
         noDiscountCount,
         totalCount: listings.length,
         discounts,

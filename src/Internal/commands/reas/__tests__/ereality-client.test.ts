@@ -88,14 +88,13 @@ describe("parseErealityHtml", () => {
     });
 
     test("extracts total count from results header", () => {
+        const { extractTotalCount } = require("@app/Internal/commands/reas/api/ErealityClient");
         const html = `
             <h2>Byty k pronájmu <span class="ereality-filter-results-count">
                 <small class="text-muted"> &nbsp; (264 inzerátů)</small>
             </span></h2>
         `;
 
-        const countMatch = /\((\d+)\s*inzerát/i.exec(html);
-        expect(countMatch).not.toBeNull();
-        expect(Number(countMatch![1])).toBe(264);
+        expect(extractTotalCount(html)).toBe(264);
     });
 });

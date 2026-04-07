@@ -109,4 +109,19 @@ describe("computeInvestmentScore()", () => {
             }
         }
     });
+
+    test("handles zero districtMedianDays without NaN", () => {
+        const result = computeInvestmentScore({
+            netYield: 4.0,
+            discount: -3,
+            trendDirection: "stable",
+            trendYoY: 0,
+            medianDaysOnMarket: 40,
+            districtMedianDays: 0,
+        });
+
+        expect(Number.isFinite(result.overall)).toBe(true);
+        expect(result.overall).toBeGreaterThanOrEqual(0);
+        expect(result.overall).toBeLessThanOrEqual(100);
+    });
 });

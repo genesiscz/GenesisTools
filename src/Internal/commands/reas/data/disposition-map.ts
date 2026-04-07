@@ -47,8 +47,9 @@ export function normalizeDisposition(raw: string): string {
         return ALIASES[lower];
     }
 
-    // Match pattern like "2+kk", "3+1"
-    const match = lower.match(/^(\d)\+(\d|kk)$/);
+    // Strip internal whitespace around "+" for patterns like "2 + kk" → "2+kk"
+    const collapsed = lower.replace(/\s*\+\s*/g, "+");
+    const match = collapsed.match(/^(\d)\+(\d|kk)$/);
 
     if (match) {
         return `${match[1]}+${match[2]}`;

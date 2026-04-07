@@ -183,9 +183,23 @@ async function runInteractiveWizard(): Promise<{ filters: AnalysisFilters; targe
             process.exit(0);
         }
 
-        district = getDistrict(subDistrict) ?? getDistrict("Praha")!;
+        const resolved = getDistrict(subDistrict) ?? getDistrict("Praha");
+
+        if (!resolved) {
+            p.cancel("Could not resolve district.");
+            process.exit(1);
+        }
+
+        district = resolved;
     } else {
-        district = getDistrict(districtName as string)!;
+        const resolved = getDistrict(districtName as string);
+
+        if (!resolved) {
+            p.cancel(`Unknown district: ${districtName}`);
+            process.exit(1);
+        }
+
+        district = resolved;
     }
 
     const propertyType = await p.select({

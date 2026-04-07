@@ -134,12 +134,9 @@ describe("buildSearchFilters", () => {
 });
 
 describe("resolveAddress", () => {
-    test("calls suggestLocality and cross-references with district DB", async () => {
+    test.skipIf(!process.env.INTEGRATION)("calls suggestLocality and cross-references with district DB", async () => {
         const { resolveAddress } = await import("../lib/address-resolver");
 
-        // This is an integration-like test that hits the real Sreality API.
-        // We test the flow by calling with a known city.
-        // In CI, this would be mocked; here we use a short timeout.
         const results = await resolveAddress("Hradec Králové");
 
         expect(results.length).toBeGreaterThan(0);

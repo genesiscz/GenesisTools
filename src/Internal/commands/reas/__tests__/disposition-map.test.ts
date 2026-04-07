@@ -12,6 +12,8 @@ describe("Disposition Map", () => {
         expect(normalizeDisposition("3+1")).toBe("3+1");
         expect(normalizeDisposition("garsoniera")).toBe("1+kk");
         expect(normalizeDisposition("garsoniéra")).toBe("1+kk");
+        expect(normalizeDisposition("2 + KK")).toBe("2+kk");
+        expect(normalizeDisposition("3 + 1")).toBe("3+1");
     });
 
     test("getSrealityCategorySubCb maps dispositions to Sreality codes", () => {
