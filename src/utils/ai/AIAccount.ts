@@ -1,9 +1,9 @@
 import type { AnthropicModelCategory, ModelSelection } from "@ask/providers/ModelResolver";
 import type { DetectedProvider, ModelInfo } from "@ask/types";
-import type { AIProvider } from "./account-types";
+import type { AIProvider } from "@app/utils/config/ai.types";
 
 /**
- * A handle to an AI account from AIConfigStorage.
+ * A handle to an AI account from AIConfig.
  * Lazy-initialized — no I/O until `.provider()` is called.
  */
 export class AIAccount {
@@ -25,23 +25,21 @@ export class AIAccount {
 
     /** Use the default Claude subscription account. */
     static async defaultClaude(): Promise<AIAccount> {
-        const { aiConfigStorage } = await import("./account-storage");
-        const accounts = await aiConfigStorage.getAccountsByProvider("anthropic-sub");
+        const { AIConfig } = await import("./AIConfig");
+        const config = await AIConfig.load();
+
+        // Try per-context default for "ask" (most common caller)
+        const defaultEntry = config.getDefaultAccount("ask");
+
+        if (defaultEntry?.provider === "anthropic-sub") {
+            return new AIAccount(defaultEntry.name, "anthropic-sub");
+        }
+
+        // Fall back to first anthropic-sub account
+        const accounts = config.getAccountsByProvider("anthropic-sub");
 
         if (accounts.length === 0) {
             throw new Error("No Claude subscription accounts configured. Run `tools ask config` first.");
-        }
-
-        const config = await aiConfigStorage.load();
-        const defaultName = config.defaultAccount;
-
-        // Prefer the default if it's a Claude sub account
-        if (defaultName) {
-            const match = accounts.find((a) => a.name === defaultName);
-
-            if (match) {
-                return new AIAccount(match.name, "anthropic-sub");
-            }
         }
 
         return new AIAccount(accounts[0].name, "anthropic-sub");
@@ -49,8 +47,9 @@ export class AIAccount {
 
     /** List all Claude subscription accounts. */
     static async listClaude(): Promise<AIAccount[]> {
-        const { aiConfigStorage } = await import("./account-storage");
-        const accounts = await aiConfigStorage.getAccountsByProvider("anthropic-sub");
+        const { AIConfig } = await import("./AIConfig");
+        const config = await AIConfig.load();
+        const accounts = config.getAccountsByProvider("anthropic-sub");
         return accounts.map((a) => new AIAccount(a.name, "anthropic-sub"));
     }
 
@@ -63,9 +62,10 @@ export class AIAccount {
 
     /** List all OpenAI/Codex accounts. */
     static async listCodex(): Promise<AIAccount[]> {
-        const { aiConfigStorage } = await import("./account-storage");
-        const apiAccounts = await aiConfigStorage.getAccountsByProvider("openai");
-        const subAccounts = await aiConfigStorage.getAccountsByProvider("openai-sub");
+        const { AIConfig } = await import("./AIConfig");
+        const config = await AIConfig.load();
+        const apiAccounts = config.getAccountsByProvider("openai");
+        const subAccounts = config.getAccountsByProvider("openai-sub");
         return [...apiAccounts, ...subAccounts].map((a) => new AIAccount(a.name, a.provider));
     }
 
@@ -73,15 +73,17 @@ export class AIAccount {
 
     /** List all accounts across all providers. */
     static async list(): Promise<AIAccount[]> {
-        const { aiConfigStorage } = await import("./account-storage");
-        const accounts = await aiConfigStorage.listAccounts();
+        const { AIConfig } = await import("./AIConfig");
+        const config = await AIConfig.load();
+        const accounts = config.listAccounts();
         return accounts.map((a) => new AIAccount(a.name, a.provider));
     }
 
     /** Look up an account by name. */
     static async fromConfig(name: string): Promise<AIAccount> {
-        const { aiConfigStorage } = await import("./account-storage");
-        const entry = await aiConfigStorage.getAccount(name);
+        const { AIConfig } = await import("./AIConfig");
+        const config = await AIConfig.load();
+        const entry = config.getAccount(name);
 
         if (!entry) {
             throw new Error(`Account "${name}" not found. Run \`tools ask config\` to add it.`);
@@ -94,27 +96,18 @@ export class AIAccount {
 
     /**
      * Resolve the DetectedProvider for this account.
-     * Dispatches on providerType. Cached per instance after first call.
+     * Delegates to the resolver registry. Cached per instance after first call.
      */
     async provider(): Promise<DetectedProvider> {
         if (this._provider) {
             return this._provider;
         }
 
-        switch (this.providerType) {
-            case "anthropic-sub":
-                this._provider = await this.resolveAnthropicSubscription();
-                break;
-            case "anthropic":
-                this._provider = await this.resolveAnthropicApiKey();
-                break;
-            case "openai":
-            case "openai-sub":
-                throw new Error(`OpenAI provider not yet implemented. Account: "${this.name}"`);
-            default:
-                throw new Error(`Unsupported provider type: "${this.providerType}" for account "${this.name}"`);
-        }
+        const { ensureResolversInitialized, getResolver } = await import("./resolvers");
+        await ensureResolversInitialized();
 
+        const resolver = getResolver(this.providerType);
+        this._provider = await resolver.resolve(this.name);
         return this._provider;
     }
 
@@ -133,57 +126,5 @@ export class AIAccount {
     /** Invalidate cached provider (force re-resolve on next access). */
     invalidate(): void {
         this._provider = null;
-    }
-
-    // ── Private resolvers ──
-
-    private async resolveAnthropicSubscription(): Promise<DetectedProvider> {
-        const { ProviderManager } = await import("@ask/providers/ProviderManager");
-        const pm = new ProviderManager();
-        const p = await pm.createSubscriptionProvider(this.name);
-
-        if (!p) {
-            throw new Error(`Account "${this.name}" not found or token resolution failed. Run \`tools ask config\`.`);
-        }
-
-        return p;
-    }
-
-    private async resolveAnthropicApiKey(): Promise<DetectedProvider> {
-        const { aiConfigStorage } = await import("./account-storage");
-        const entry = await aiConfigStorage.getAccount(this.name);
-
-        if (!entry?.tokens.apiKey) {
-            throw new Error(`No API key found for account "${this.name}".`);
-        }
-
-        const { createAnthropic } = await import("@ai-sdk/anthropic");
-        const provider = createAnthropic({ apiKey: entry.tokens.apiKey });
-
-        const { getProviderConfigs, KNOWN_MODELS } = await import("@ask/providers/providers");
-        const anthropicConfig = getProviderConfigs().find((c) => c.name === "anthropic");
-
-        if (!anthropicConfig) {
-            throw new Error("anthropic provider config missing from PROVIDER_CONFIGS");
-        }
-
-        // Use known models — same set available via API key or subscription
-        const { dynamicPricingManager } = await import("@ask/providers/DynamicPricing");
-        const models: ModelInfo[] = await Promise.all(
-            KNOWN_MODELS.anthropic.map(async (m) => ({
-                ...m,
-                provider: "anthropic",
-                pricing: (await dynamicPricingManager.getPricing("anthropic", m.id)) || undefined,
-            }))
-        );
-
-        return {
-            name: "anthropic",
-            type: "anthropic",
-            key: `${entry.tokens.apiKey.slice(0, 12)}...`,
-            provider,
-            models,
-            config: anthropicConfig,
-        };
     }
 }
