@@ -314,25 +314,26 @@ export class AIConfig {
     }
 
     /**
-     * Execute an async operation while holding the config file lock.
+     * Like mutate() but the callback is async — can do I/O while holding the lock.
      * Re-reads config from disk inside the lock (prevents TOCTOU).
-     * Caller receives fresh data and a save() callback to persist changes.
+     * Mutate `data` in the callback; it's persisted automatically on return.
      * Use for operations that need async I/O while holding the lock (e.g. token refresh).
      */
     async withLock<T>(
-        fn: (data: AIConfigData, save: (data: AIConfigData) => Promise<void>) => Promise<T>,
+        fn: (data: AIConfigData) => Promise<T>,
         timeout?: number,
     ): Promise<T> {
         return this.storage.withConfigLock(async () => {
             const fresh = await this.storage.getConfig<Partial<AIConfigData>>();
             const data = applyDefaults(fresh);
 
-            const save = async (updated: AIConfigData) => {
-                await this.storage.setConfig(updated);
-                this.data = applyDefaults(updated);
-            };
+            const result = await fn(data);
 
-            return fn(data, save);
+            // Persist whatever the callback mutated
+            await this.storage.setConfig(data);
+            this.data = data;
+
+            return result;
         }, timeout);
     }
 }
