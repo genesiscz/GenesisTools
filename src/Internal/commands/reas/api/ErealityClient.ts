@@ -6,7 +6,7 @@ import type { ErealityListing } from "./ErealityClient.types";
 
 const BASE_URL = "https://www.ereality.cz/pronajem/byty";
 const PER_PAGE = 24;
-const MAX_PAGES = 10;
+const MAX_PAGES = 20;
 const USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko)";
 const CRAWL_DELAY_MS = 2000;
 
