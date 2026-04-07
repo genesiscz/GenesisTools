@@ -346,6 +346,11 @@ export class AIChat {
         return { ...this._options };
     }
 
+    /** Get the account that was resolved for this chat session (if any). */
+    getResolvedAccount(): { name: string; label?: string } | undefined {
+        return this._engine?.getConfig().providerChoice?.provider.account;
+    }
+
     /** Save session and release resources */
     async dispose(): Promise<void> {
         if (this._options.session?.autoSave && this._sessionManager) {

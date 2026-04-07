@@ -30,7 +30,7 @@ export class AnthropicApiKeyResolver implements AccountResolver {
                 ...m,
                 provider: "anthropic" as const,
                 pricing: (await dynamicPricingManager.getPricing("anthropic", m.id)) || undefined,
-            })),
+            }))
         );
 
         return {
@@ -40,6 +40,7 @@ export class AnthropicApiKeyResolver implements AccountResolver {
             provider,
             models,
             config: anthropicConfig,
+            account: { name: entry.name, label: entry.label },
         };
     }
 }

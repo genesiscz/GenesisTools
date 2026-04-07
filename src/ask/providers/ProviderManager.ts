@@ -107,11 +107,10 @@ export class ProviderManager {
         const resolved = await this.resolveAnthropicFromAIConfig();
 
         if (resolved) {
-            const { token, label } = resolved;
-            const hint = label ? ` (${label})` : "";
+            const hint = resolved.account.label ? ` (${resolved.account.label})` : "";
 
             try {
-                const detectedProvider = await this.buildSubscriptionProvider(token);
+                const detectedProvider = await this.buildSubscriptionProvider(resolved.token, resolved.account);
                 detected.push(detectedProvider);
                 this.detectedProviders.set("anthropic", detectedProvider);
                 askUI().logDetectedSubscription({ provider: "anthropic", hint });
@@ -156,7 +155,10 @@ export class ProviderManager {
      * Try to resolve an anthropic-sub account from AIConfig.
      * Returns the access token and label, or null if no account found.
      */
-    private async resolveAnthropicFromAIConfig(): Promise<{ token: string; label?: string } | null> {
+    private async resolveAnthropicFromAIConfig(): Promise<{
+        token: string;
+        account: { name: string; label?: string };
+    } | null> {
         try {
             const { AIConfig } = await import("@app/utils/ai/AIConfig");
             const config = await AIConfig.load();
@@ -170,12 +172,9 @@ export class ProviderManager {
             const defaultAccount = config.getDefaultAccount("ask");
             const account = (defaultAccount && accounts.find((a) => a.name === defaultAccount.name)) || accounts[0];
 
-            // Always resolve through resolveAccountToken for subscription accounts —
-            // it handles token refresh and reads the authoritative claude config.
-            // The AIConfig copy may be stale.
             const { resolveAccountToken } = await import("@app/utils/claude/subscription-auth");
             const result = await resolveAccountToken(account.name);
-            return { token: result.token, label: account.label };
+            return { token: result.token, account: { name: account.name, label: account.label } };
         } catch {
             return null;
         }
@@ -184,7 +183,10 @@ export class ProviderManager {
     /**
      * Build a DetectedProvider for anthropic subscription given an OAuth token.
      */
-    private async buildSubscriptionProvider(token: string): Promise<DetectedProvider> {
+    private async buildSubscriptionProvider(
+        token: string,
+        account?: { name: string; label?: string },
+    ): Promise<DetectedProvider> {
         const { createAnthropic } = await import("@ai-sdk/anthropic");
         const provider = createAnthropic({
             apiKey: "oauth-placeholder",
@@ -212,6 +214,7 @@ export class ProviderManager {
             models,
             config: anthropicConfig,
             systemPromptPrefix: SUBSCRIPTION_SYSTEM_PREFIX,
+            account,
         };
     }
 

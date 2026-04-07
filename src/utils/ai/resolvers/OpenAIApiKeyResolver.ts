@@ -30,7 +30,7 @@ export class OpenAIApiKeyResolver implements AccountResolver {
                 ...m,
                 provider: "openai" as const,
                 pricing: (await dynamicPricingManager.getPricing("openai", m.id)) || undefined,
-            })),
+            }))
         );
 
         return {
@@ -40,6 +40,7 @@ export class OpenAIApiKeyResolver implements AccountResolver {
             provider,
             models,
             config: openaiConfig,
+            account: { name: entry.name, label: entry.label },
         };
     }
 }

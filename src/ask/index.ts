@@ -381,10 +381,8 @@ class ASKTool {
             }
 
             // Streaming mode with UI
-            // We still need provider/model info for display, so resolve first
             const config = chat.getConfig();
-            const accountInfo = await this.getAccountInfoForFooter(config.provider);
-            askUI().logUsing({ provider: config.provider, model: config.model, account: accountInfo });
+            askUI().logUsing({ provider: config.provider, model: config.model, account: chat.getResolvedAccount() });
 
             // Optional: Show cost prediction if --predict-cost flag is set
             if (argv.predictCost) {
@@ -465,9 +463,7 @@ class ASKTool {
                             },
                         ];
 
-                        const accountInfo = await this.getAccountInfoForFooter(config.provider);
-
-                        console.log(await outputManager.formatCostBreakdown(breakdown, accountInfo));
+                        console.log(await outputManager.formatCostBreakdown(breakdown, chat.getResolvedAccount()));
                     }
                 }
             }
@@ -618,9 +614,7 @@ class ASKTool {
                         },
                     ];
 
-                    const footerAccountInfo = await this.getAccountInfoForFooter(modelChoice.provider.name);
-
-                    console.log(await outputManager.formatCostBreakdown(breakdown, footerAccountInfo));
+                    console.log(await outputManager.formatCostBreakdown(breakdown, modelChoice.provider.account));
                 }
 
                 console.log(); // Add spacing
@@ -703,22 +697,6 @@ class ASKTool {
                 execute: searchToolDef.execute as (params: Record<string, unknown>) => Promise<unknown>,
             },
         };
-    }
-
-    private async getAccountInfoForFooter(providerName: string): Promise<{ label?: string; name: string } | undefined> {
-        try {
-            const { AIConfig } = await import("@app/utils/ai/AIConfig");
-            const config = await AIConfig.load();
-            const account = config.getAccountForProvider(providerName);
-
-            if (!account) {
-                return undefined;
-            }
-
-            return { label: account.label, name: account.name };
-        } catch {
-            return undefined;
-        }
     }
 
     private async handleCommandResult(

@@ -7,13 +7,11 @@ export class AnthropicSubResolver implements AccountResolver {
 
     async resolve(accountName: string): Promise<DetectedProvider> {
         const { resolveAccountToken } = await import("@app/utils/claude/subscription-auth");
-        const { token } = await resolveAccountToken(accountName);
+        const { token, account } = await resolveAccountToken(accountName);
 
-        const {
-            createSubscriptionFetch,
-            SUBSCRIPTION_BETAS,
-            SUBSCRIPTION_SYSTEM_PREFIX,
-        } = await import("@app/utils/claude/subscription-billing");
+        const { createSubscriptionFetch, SUBSCRIPTION_BETAS, SUBSCRIPTION_SYSTEM_PREFIX } = await import(
+            "@app/utils/claude/subscription-billing"
+        );
 
         const { createAnthropic } = await import("@ai-sdk/anthropic");
         const provider = createAnthropic({
@@ -38,7 +36,7 @@ export class AnthropicSubResolver implements AccountResolver {
                 ...m,
                 provider: "anthropic" as const,
                 pricing: (await dynamicPricingManager.getPricing("anthropic", m.id)) || undefined,
-            })),
+            }))
         );
 
         return {
@@ -49,6 +47,7 @@ export class AnthropicSubResolver implements AccountResolver {
             models,
             config: anthropicConfig,
             systemPromptPrefix: SUBSCRIPTION_SYSTEM_PREFIX,
+            account: { name: account.name, label: account.label },
         };
     }
 }
