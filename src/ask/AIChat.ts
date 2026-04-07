@@ -62,6 +62,10 @@ export class AIChat {
     }
 
     /** Ensure provider/model are resolved and engine is created */
+    async initialize(): Promise<void> {
+        return this._ensureInitialized();
+    }
+
     private async _ensureInitialized(): Promise<void> {
         if (this._engine) {
             return;

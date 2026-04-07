@@ -380,7 +380,8 @@ class ASKTool {
                 return;
             }
 
-            // Streaming mode with UI
+            // Streaming mode with UI — initialize first so resolved account is available
+            await chat.initialize();
             const config = chat.getConfig();
             askUI().logUsing({ provider: config.provider, model: config.model, account: chat.getResolvedAccount() });
 
