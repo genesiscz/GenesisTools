@@ -306,6 +306,17 @@ export const migrateAI: ConfigMigration = {
             await aiStorage.setConfig(unified);
         });
 
+        // 5. Clean up migrated fields from old configs so they don't confuse users
+        try {
+            const claudeStorage = new Storage("claude");
+            await claudeStorage.atomicConfigUpdate((data: Record<string, unknown>) => {
+                delete data.accounts;
+                delete data.defaultAccount;
+            });
+        } catch {
+            // Old config may not exist — that's fine
+        }
+
         logger.info(
             `Unified AI config written: ${accounts.length} account(s), ` +
                 `${Object.keys(tasks).length} task(s), ` +
