@@ -321,31 +321,112 @@ export const PRAHA_DISTRICTS: Record<string, PrahaDistrictInfo> = {
 
 const PRAHA_NEIGHBORHOOD_TO_WARDS: Record<string, number[]> = {
     // Praha 1
-    "Staré Město": [1], "Malá Strana": [1], "Hradčany": [1], "Josefov": [1],
+    "Staré Město": [1],
+    "Malá Strana": [1],
+    Hradčany: [1],
+    Josefov: [1],
     // Praha 2
-    "Nové Město": [1, 2], "Vyšehrad": [2],
+    "Nové Město": [1, 2],
+    Vyšehrad: [2],
     // Praha 3
-    "Žižkov": [3], "Vinohrady": [2, 3, 10],
+    Žižkov: [3],
+    Vinohrady: [2, 3, 10],
     // Praha 4
-    "Nusle": [4], "Podolí": [4], "Braník": [4], "Krč": [4], "Michle": [4],
-    "Lhotka": [4], "Hodkovičky": [4], "Kunratice": [4], "Modřany": [4], "Chodov": [4],
+    Nusle: [4],
+    Podolí: [4],
+    Braník: [4],
+    Krč: [4],
+    Michle: [4],
+    Lhotka: [4],
+    Hodkovičky: [4],
+    Kunratice: [4],
+    Modřany: [4, 12],
+    Chodov: [4, 11],
     // Praha 5
-    "Smíchov": [5], "Košíře": [5], "Motol": [5], "Jinonice": [5], "Radlice": [5],
-    "Hlubočepy": [5], "Barrandov": [5],
+    Smíchov: [5],
+    Košíře: [5],
+    Motol: [5],
+    Jinonice: [5],
+    Radlice: [5],
+    Hlubočepy: [5],
+    Stodůlky: [5, 13],
+    Barrandov: [5],
     // Praha 6
-    "Dejvice": [6], "Bubeneč": [6], "Vokovice": [6], "Veleslavín": [6],
-    "Břevnov": [6], "Střešovice": [6], "Liboc": [6], "Ruzyně": [6],
+    Dejvice: [6],
+    Bubeneč: [6],
+    Vokovice: [6],
+    Veleslavín: [6],
+    Břevnov: [6],
+    Střešovice: [6],
+    Liboc: [6],
+    Ruzyně: [6],
     // Praha 7
-    "Holešovice": [7], "Letná": [7], "Bubny": [7], "Troja": [7],
+    Holešovice: [7],
+    Letná: [7],
+    Bubny: [7],
+    Troja: [7],
     // Praha 8
-    "Karlín": [8], "Libeň": [8], "Kobylisy": [8], "Bohnice": [8],
-    "Čimice": [8], "Ďáblice": [8], "Dolní Chabry": [8],
+    Karlín: [8],
+    Libeň: [8],
+    Kobylisy: [8],
+    Bohnice: [8],
+    Čimice: [8],
+    Ďáblice: [8],
+    "Dolní Chabry": [8],
     // Praha 9
-    "Vysočany": [9], "Prosek": [9], "Střížkov": [8, 9], "Hloubětín": [9],
-    "Letňany": [9], "Kbely": [9], "Černý Most": [9],
+    Vysočany: [9],
+    Prosek: [9],
+    Střížkov: [8, 9],
+    Hloubětín: [9],
+    Letňany: [9, 18],
+    Kbely: [9, 19],
+    "Černý Most": [9, 14],
     // Praha 10
-    "Vršovice": [10], "Záběhlice": [10], "Malešice": [10], "Strašnice": [3, 10],
-    "Hostivař": [10], "Dolní Měcholupy": [10], "Štěrboholy": [10],
+    Vršovice: [10],
+    Záběhlice: [10],
+    Malešice: [10],
+    Strašnice: [3, 10],
+    Hostivař: [10, 15],
+    "Dolní Měcholupy": [10],
+    Štěrboholy: [10],
+    // Praha 11
+    "Jižní Město": [11],
+    Háje: [11],
+    // Praha 12
+    Komořany: [12],
+    Cholupice: [12],
+    // Praha 13
+    Řeporyje: [13],
+    "Nové Butovice": [13],
+    Třebonice: [13],
+    // Praha 14
+    Kyje: [14],
+    Hostavice: [14],
+    // Praha 15
+    "Horní Měcholupy": [15],
+    Petrovice: [15],
+    // Praha 16
+    Radotín: [16],
+    Zbraslav: [16],
+    Lipence: [16],
+    // Praha 17
+    Řepy: [17],
+    Zličín: [17],
+    // Praha 18
+    Čakovice: [18],
+    // Praha 19
+    Vinoř: [19],
+    Satalice: [19],
+    // Praha 20
+    "Horní Počernice": [20],
+    // Praha 21
+    Újezd: [21],
+    Klánovice: [21],
+    Koloděje: [21],
+    // Praha 22
+    Uhříněves: [22],
+    Pitkovice: [22],
+    Křeslice: [22],
 };
 
 /** Check if a Praha neighborhood belongs to a given ward number. */
