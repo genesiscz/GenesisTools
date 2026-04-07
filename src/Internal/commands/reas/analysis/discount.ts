@@ -27,7 +27,7 @@ export function analyzeDiscount(listings: ReasListing[]): DiscountResult {
             avgDiscount: 0,
             medianDiscount: 0,
             maxDiscount: 0,
-            noDiscountCount: listings.filter((l) => l.soldPrice >= l.originalPrice).length,
+            noDiscountCount: listings.filter((l) => l.originalPrice > 0 && l.soldPrice >= l.originalPrice).length,
             totalCount: listings.length,
             discounts: [],
         };
