@@ -44,7 +44,12 @@ interface OldAskConfig {
 }
 
 interface OldClaudeConfig {
-    accounts: Record<string, { label?: string }>;
+    accounts: Record<string, {
+        accessToken?: string;
+        refreshToken?: string;
+        expiresAt?: number;
+        label?: string;
+    }>;
     defaultAccount?: string;
 }
 
@@ -101,7 +106,7 @@ export const migrateAI: ConfigMigration = {
             return true;
         }
 
-        return (existing._schemaVersion as number) < 2;
+        return (existing._schemaVersion as number) < 3;
     },
 
     async run() {
@@ -142,7 +147,11 @@ export const migrateAI: ConfigMigration = {
                     accounts.push({
                         name,
                         provider: "anthropic-sub",
-                        tokens: {}, // OAuth tokens managed by claude config, not stored here
+                        tokens: {
+                            accessToken: account.accessToken,
+                            refreshToken: account.refreshToken,
+                            expiresAt: account.expiresAt,
+                        },
                         label: account.label,
                         apps: ["claude", "ask"],
                     });
@@ -160,6 +169,23 @@ export const migrateAI: ConfigMigration = {
                         tokens: { apiKey: oldAI.hfToken },
                         apps: ["ai"],
                     });
+                }
+            }
+        }
+
+        // Fill empty tokens from claude config (for users who migrated at v2)
+        if (oldClaude?.accounts) {
+            for (const acc of accounts) {
+                if (acc.provider === "anthropic-sub" && !acc.tokens.accessToken) {
+                    const claudeAcc = oldClaude.accounts[acc.name];
+
+                    if (claudeAcc?.accessToken) {
+                        acc.tokens = {
+                            accessToken: claudeAcc.accessToken,
+                            refreshToken: claudeAcc.refreshToken,
+                            expiresAt: claudeAcc.expiresAt,
+                        };
+                    }
                 }
             }
         }
@@ -268,7 +294,7 @@ export const migrateAI: ConfigMigration = {
 
         // 4. Stamp and write atomically under config lock
         const unified: AIConfigData = {
-            _schemaVersion: 2,
+            _schemaVersion: 3,
             accounts,
             defaultAccounts,
             tasks,
