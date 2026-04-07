@@ -1,11 +1,15 @@
 // Apple Calendar
-export { createCalendarEvent, deleteCalendarEvent, ensureCalendarExists } from "./apple-calendar";
+
+export type { CalendarEventInfo, CalendarInfo, CalendarSaveResult, SourceInfo } from "./apple-calendar";
+export { createCalendarEvent, deleteCalendarEvent, ensureCalendarExists, MacCalendar } from "./apple-calendar";
+export type { ReminderInfo, ReminderListInfo, RemindersSaveResult } from "./apple-reminders";
 // Apple Reminders
 export {
     completeReminder,
     createReminder,
     deleteReminder,
     ensureReminderListExists,
+    MacReminders,
     todoPriorityToApple,
 } from "./apple-reminders";
 // Auth
@@ -29,6 +33,8 @@ export {
     icloudWriteBytes,
     onIcloudFilesChanged,
 } from "./icloud";
+// JXA helpers
+export { ensureMacOS, escapeJxa, runJxa } from "./jxa";
 // MacOS namespace
 export { MacOS } from "./MacOS";
 // NLP

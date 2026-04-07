@@ -1,117 +1,292 @@
-import { spawnSync } from "node:child_process";
+import type { DarwinKit } from "@genesiscz/darwinkit";
 
-import { SafeJSON } from "@app/utils/json";
+import { getDarwinKit } from "./darwinkit";
 
-function ensureMacOS(): void {
-    if (process.platform !== "darwin") {
-        throw new Error("Apple Calendar is only available on macOS");
+// ── DarwinKit Calendar types ────────────────────────────────────────
+// These types will be exported from @genesiscz/darwinkit once the
+// calendar namespace ships. Defined locally until then.
+
+export interface CalendarInfo {
+    identifier: string;
+    title: string;
+    type: string;
+    color: string;
+    source: string;
+    is_immutable: boolean;
+    allows_content_modifications: boolean;
+}
+
+export interface CalendarEventInfo {
+    identifier: string;
+    title: string;
+    start_date: string;
+    end_date: string;
+    is_all_day: boolean;
+    location?: string;
+    notes?: string;
+    calendar_identifier: string;
+    calendar_title: string;
+    url?: string;
+    availability?: string;
+    has_alarms: boolean;
+    alarms?: number[];
+    external_identifier?: string;
+}
+
+export interface CalendarSaveResult {
+    success: boolean;
+    identifier?: string;
+    error?: string;
+}
+
+export interface CalendarOkResult {
+    ok: boolean;
+}
+
+export interface SourceInfo {
+    identifier: string;
+    title: string;
+    source_type: string;
+}
+
+// ── Helper for calling calendar methods on DarwinKit ────────────────
+// The calendar namespace is not yet on the MethodMap type, so we route
+// through a typed helper that delegates to the generic `call()` path.
+
+type CalendarMethod =
+    | "calendar.authorized"
+    | "calendar.calendars"
+    | "calendar.events"
+    | "calendar.event"
+    | "calendar.save_event"
+    | "calendar.remove_event"
+    | "calendar.sources"
+    | "calendar.save_calendar"
+    | "calendar.remove_calendar"
+    | "calendar.default_calendar_events"
+    | "calendar.default_calendar_reminders";
+
+async function callCalendar<T>(
+    dk: DarwinKit,
+    method: CalendarMethod,
+    params: Record<string, unknown> = {}
+): Promise<T> {
+    // DarwinKit.call() accepts any method string at runtime even though
+    // the TS MethodMap hasn't been extended yet.
+    const callFn = dk.call.bind(dk) as (method: string, params: Record<string, unknown>) => Promise<unknown>;
+    return callFn(method, params) as T;
+}
+
+// ── Public option types ─────────────────────────────────────────────
+
+export interface CreateEventOptions {
+    title: string;
+    notes?: string;
+    startDate: Date;
+    endDate?: Date;
+    alerts?: number[];
+    url?: string;
+    location?: string;
+    isAllDay?: boolean;
+    availability?: "free" | "busy" | "tentative" | "unavailable";
+    calendarName?: string;
+}
+
+export interface UpdateEventOptions {
+    title?: string;
+    notes?: string;
+    startDate?: Date;
+    endDate?: Date;
+    alerts?: number[];
+    url?: string;
+    location?: string;
+    isAllDay?: boolean;
+    availability?: "free" | "busy" | "tentative" | "unavailable";
+}
+
+// ── MacCalendar class ───────────────────────────────────────────────
+
+export class MacCalendar {
+    static async ensureAuthorized(): Promise<void> {
+        const dk = getDarwinKit();
+        const auth = await callCalendar<{ status: string; authorized: boolean }>(dk, "calendar.authorized");
+
+        if (!auth.authorized && auth.status !== "writeOnly") {
+            throw new Error(
+                `Calendar access not authorized (status: ${auth.status}). Grant access in System Settings > Privacy & Security > Calendars.`
+            );
+        }
+    }
+
+    static async listCalendars(): Promise<CalendarInfo[]> {
+        const dk = getDarwinKit();
+        const result = await callCalendar<{ calendars: CalendarInfo[] }>(dk, "calendar.calendars");
+        return result.calendars;
+    }
+
+    static async listEvents(options: { calendarName?: string; from?: Date; to?: Date }): Promise<CalendarEventInfo[]> {
+        const dk = getDarwinKit();
+        const from = options.from ?? new Date();
+        const to = options.to ?? new Date(from.getTime() + 30 * 24 * 60 * 60_000);
+
+        let calendarIdentifiers: string[] | undefined;
+
+        if (options.calendarName) {
+            const calendars = await MacCalendar.listCalendars();
+            const match = calendars.find((c) => c.title === options.calendarName);
+
+            if (match) {
+                calendarIdentifiers = [match.identifier];
+            }
+        }
+
+        const result = await callCalendar<{ events: CalendarEventInfo[] }>(dk, "calendar.events", {
+            start_date: from.toISOString(),
+            end_date: to.toISOString(),
+            calendar_identifiers: calendarIdentifiers,
+        });
+        return result.events;
+    }
+
+    static async searchEvents(
+        query: string,
+        options?: { calendarName?: string; from?: Date; to?: Date }
+    ): Promise<CalendarEventInfo[]> {
+        const events = await MacCalendar.listEvents(options ?? {});
+        const q = query.toLowerCase();
+        return events.filter(
+            (e) =>
+                e.title.toLowerCase().includes(q) ||
+                e.notes?.toLowerCase().includes(q) ||
+                e.location?.toLowerCase().includes(q)
+        );
+    }
+
+    static async createEvent(options: CreateEventOptions): Promise<string> {
+        const dk = getDarwinKit();
+        const calendarId = await MacCalendar.resolveCalendarId(options.calendarName ?? "GenesisTools");
+        const startDate = options.startDate;
+        const endDate = options.endDate ?? new Date(startDate.getTime() + 30 * 60_000);
+
+        const result = await callCalendar<CalendarSaveResult>(dk, "calendar.save_event", {
+            calendar_identifier: calendarId,
+            title: options.title,
+            start_date: startDate.toISOString(),
+            end_date: endDate.toISOString(),
+            notes: options.notes,
+            location: options.location,
+            url: options.url,
+            is_all_day: options.isAllDay,
+            availability: options.availability,
+            alarms: options.alerts,
+        });
+
+        if (!result.success || !result.identifier) {
+            throw new Error(`Failed to create event: ${result.error ?? "unknown error"}`);
+        }
+
+        return result.identifier;
+    }
+
+    static async updateEvent(eventId: string, options: UpdateEventOptions): Promise<string> {
+        const dk = getDarwinKit();
+        const existing = await callCalendar<CalendarEventInfo>(dk, "calendar.event", { identifier: eventId });
+
+        const result = await callCalendar<CalendarSaveResult>(dk, "calendar.save_event", {
+            id: eventId,
+            calendar_identifier: existing.calendar_identifier,
+            title: options.title ?? existing.title,
+            start_date: options.startDate?.toISOString() ?? existing.start_date,
+            end_date: options.endDate?.toISOString() ?? existing.end_date,
+            notes: options.notes ?? existing.notes,
+            location: options.location ?? existing.location,
+            url: options.url ?? existing.url,
+            is_all_day: options.isAllDay ?? existing.is_all_day,
+            availability: options.availability ?? existing.availability,
+            alarms: options.alerts ?? existing.alarms,
+        });
+
+        if (!result.success || !result.identifier) {
+            throw new Error(`Failed to update event: ${result.error ?? "unknown error"}`);
+        }
+
+        return result.identifier;
+    }
+
+    static async deleteEvent(options: { eventId: string; calendarName?: string }): Promise<boolean> {
+        const dk = getDarwinKit();
+        const result = await callCalendar<CalendarOkResult>(dk, "calendar.remove_event", {
+            identifier: options.eventId,
+        });
+        return result.ok;
+    }
+
+    static async getSources(): Promise<SourceInfo[]> {
+        const dk = getDarwinKit();
+        const result = await callCalendar<{ sources: SourceInfo[] }>(dk, "calendar.sources");
+        return result.sources;
+    }
+
+    static async ensureCalendarExists(name: string): Promise<string> {
+        const calendars = await MacCalendar.listCalendars();
+        const existing = calendars.find((c) => c.title === name);
+
+        if (existing) {
+            return existing.identifier;
+        }
+
+        const sources = await MacCalendar.getSources();
+        const icloudSource = sources.find(
+            (s) => s.title.toLowerCase().includes("icloud") || s.source_type === "calDAV"
+        );
+        const sourceId = icloudSource?.identifier ?? sources[0]?.identifier;
+
+        if (!sourceId) {
+            throw new Error("No calendar source available");
+        }
+
+        const dk = getDarwinKit();
+        const result = await callCalendar<CalendarSaveResult>(dk, "calendar.save_calendar", {
+            title: name,
+            source_identifier: sourceId,
+        });
+
+        if (!result.success || !result.identifier) {
+            throw new Error(`Failed to create calendar "${name}": ${result.error ?? "unknown error"}`);
+        }
+
+        return result.identifier;
+    }
+
+    private static async resolveCalendarId(calendarName: string): Promise<string> {
+        const calendars = await MacCalendar.listCalendars();
+        const match = calendars.find((c) => c.title === calendarName);
+
+        if (match) {
+            return match.identifier;
+        }
+
+        return MacCalendar.ensureCalendarExists(calendarName);
     }
 }
 
-function runJxa(script: string, timeout = 15_000): string {
-    const proc = spawnSync("osascript", ["-l", "JavaScript", "-e", script], {
-        encoding: "utf-8",
-        timeout,
-    });
+// ── Backward-compatible named exports ───────────────────────────────
 
-    if (proc.status !== 0) {
-        throw new Error(`JXA error: ${proc.stderr?.trim() || "unknown error"}`);
-    }
-
-    return proc.stdout.trim();
+export function ensureCalendarExists(_name: string): void {
+    throw new Error("ensureCalendarExists is no longer synchronous. Use MacCalendar.ensureCalendarExists() instead.");
 }
 
-function escapeJxa(str: string): string {
-    return str.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n").replace(/\r/g, "\\r");
-}
-
-export function ensureCalendarExists(name: string): void {
-    ensureMacOS();
-
-    const escapedName = escapeJxa(name);
-
-    const script = `
-const Calendar = Application("Calendar");
-const calendars = Calendar.calendars.whose({name: "${escapedName}"});
-if (calendars.length === 0) {
-    Calendar.Calendar({name: "${escapedName}"}).make();
-}
-"ok";
-`;
-
-    runJxa(script);
-}
-
-export function createCalendarEvent(options: {
+export async function createCalendarEvent(options: {
     title: string;
     notes?: string;
     startDate: Date;
     endDate?: Date;
     alerts?: number[];
     calendarName?: string;
-}): string {
-    ensureMacOS();
-
-    const calendarName = options.calendarName ?? "GenesisTools";
-    const startMs = options.startDate.getTime();
-    const endMs = options.endDate?.getTime() ?? startMs + 30 * 60_000;
-    const escapedTitle = escapeJxa(options.title);
-    const escapedCalendar = escapeJxa(calendarName);
-    const escapedNotes = options.notes ? escapeJxa(options.notes) : "";
-    const alertsJson = SafeJSON.stringify(options.alerts ?? []);
-
-    const script = `
-const Calendar = Application("Calendar");
-const calendars = Calendar.calendars.whose({name: "${escapedCalendar}"});
-if (calendars.length === 0) {
-    Calendar.Calendar({name: "${escapedCalendar}"}).make();
+}): Promise<string> {
+    return MacCalendar.createEvent(options);
 }
 
-const cal = Calendar.calendars.whose({name: "${escapedCalendar}"})[0];
-const event = Calendar.Event({
-    summary: "${escapedTitle}",
-    startDate: new Date(${startMs}),
-    endDate: new Date(${endMs}),
-    description: "${escapedNotes}"
-});
-cal.events.push(event);
-
-const alerts = ${alertsJson};
-for (const mins of alerts) {
-    const alarm = Calendar.DisplayAlarm({triggerInterval: -mins * 60});
-    event.displayAlarms.push(alarm);
-}
-
-event.uid();
-`;
-
-    return runJxa(script, 30_000);
-}
-
-export function deleteCalendarEvent(options: { eventId: string; calendarName?: string }): boolean {
-    ensureMacOS();
-
-    const calendarName = options.calendarName ?? "GenesisTools";
-    const escapedCalendar = escapeJxa(calendarName);
-    const escapedId = escapeJxa(options.eventId);
-
-    const script = `
-const Calendar = Application("Calendar");
-const calendars = Calendar.calendars.whose({name: "${escapedCalendar}"});
-if (calendars.length === 0) {
-    "false";
-} else {
-    const cal = calendars[0];
-    const events = cal.events.whose({uid: "${escapedId}"});
-    if (events.length === 0) {
-        "false";
-    } else {
-        Calendar.delete(events[0]);
-        "true";
-    }
-}
-`;
-
-    const result = runJxa(script, 30_000);
-    return result === "true";
+export async function deleteCalendarEvent(options: { eventId: string; calendarName?: string }): Promise<boolean> {
+    return MacCalendar.deleteEvent(options);
 }

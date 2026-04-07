@@ -31,6 +31,7 @@ export function createEditCommand(): Command {
         .option("--add-tag <tags>", "Add tags (comma-separated)")
         .option("--remove-tag <tags>", "Remove tags (comma-separated)")
         .option("--add-reminder <time>", "Add a reminder", collect, [])
+        .option("--at <datetime>", "Set event time for calendar sync")
         .option("--add-link <link>", "Add a link", collect, [])
         .option("--session-id <id>", "Set session ID")
         .addOption(new Option("--sync-to <target>", "Auto-sync reminders").choices(["calendar", "reminders", "both"]))
@@ -62,6 +63,10 @@ export function createEditCommand(): Command {
 
             if (opts.sessionId) {
                 patch.sessionId = opts.sessionId;
+            }
+
+            if (opts.at) {
+                patch.at = parseReminderTime(opts.at);
             }
 
             if (opts.addTag || opts.removeTag) {
