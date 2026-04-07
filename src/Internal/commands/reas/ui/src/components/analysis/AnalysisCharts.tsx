@@ -427,7 +427,11 @@ interface MfRentComparisonChartProps {
     targetRentPerM2?: number;
 }
 
-export function MfRentComparisonChart({ mfBenchmarks, rentalAggregation, targetRentPerM2 }: MfRentComparisonChartProps) {
+export function MfRentComparisonChart({
+    mfBenchmarks,
+    rentalAggregation,
+    targetRentPerM2,
+}: MfRentComparisonChartProps) {
     const chartData = useMemo(() => {
         const grouped = new Map<string, { mfRef: number; mfMedian: number; marketMedian: number; count: number }>();
 
@@ -452,8 +456,7 @@ export function MfRentComparisonChart({ mfBenchmarks, rentalAggregation, targetR
             for (const group of rentalAggregation) {
                 for (const [vk, entry] of grouped) {
                     if (entry.marketMedian === 0 && group.rentPerM2 > 0) {
-                        const vkArea =
-                            vk === "VK1" ? 25 : vk === "VK2" ? 40 : vk === "VK3" ? 65 : 90;
+                        const vkArea = vk === "VK1" ? 25 : vk === "VK2" ? 40 : vk === "VK3" ? 65 : 90;
                         const groupArea = group.medianRent / group.rentPerM2;
 
                         if (Math.abs(groupArea - vkArea) < 20) {
@@ -488,11 +491,7 @@ export function MfRentComparisonChart({ mfBenchmarks, rentalAggregation, targetR
             <BarChart data={chartData} margin={{ top: 10, right: 20, left: 12, bottom: 12 }}>
                 <CartesianGrid {...chartGridProps} />
                 <XAxis {...chartAxisProps} dataKey="category" />
-                <YAxis
-                    {...chartAxisProps}
-                    tickFormatter={(value: number) => `${value} CZK`}
-                    width={72}
-                />
+                <YAxis {...chartAxisProps} tickFormatter={(value: number) => `${value} CZK`} width={72} />
                 <Tooltip content={<MfComparisonTooltip />} />
                 <Bar dataKey="MF reference" fill="#84cc16" radius={[6, 6, 0, 0]} />
                 <Bar dataKey="MF median" fill="#a3e635" radius={[6, 6, 0, 0]} opacity={0.6} />

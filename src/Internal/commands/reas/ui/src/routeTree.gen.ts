@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as WatchlistRouteImport } from './routes/watchlist'
 import { Route as ListingsRouteImport } from './routes/listings'
 import { Route as HistoryRouteImport } from './routes/history'
+import { Route as HealthRouteImport } from './routes/health'
 import { Route as CompareRouteImport } from './routes/compare'
 import { Route as AnalyzeRouteImport } from './routes/analyze'
 import { Route as IndexRouteImport } from './routes/index'
@@ -19,6 +20,7 @@ import { Route as WatchlistPropertyIdRouteImport } from './routes/watchlist.$pro
 import { Route as ApiProviderHealthRouteImport } from './routes/api/provider-health'
 import { Route as ApiPropertyDetailRouteImport } from './routes/api/property-detail'
 import { Route as ApiPropertiesRouteImport } from './routes/api/properties'
+import { Route as ApiMapClustersRouteImport } from './routes/api/map-clusters'
 import { Route as ApiListingsRouteImport } from './routes/api/listings'
 import { Route as ApiHistoryRouteImport } from './routes/api/history'
 import { Route as ApiExportPdfRouteImport } from './routes/api/export-pdf'
@@ -42,6 +44,11 @@ const ListingsRoute = ListingsRouteImport.update({
 const HistoryRoute = HistoryRouteImport.update({
   id: '/history',
   path: '/history',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const HealthRoute = HealthRouteImport.update({
+  id: '/health',
+  path: '/health',
   getParentRoute: () => rootRouteImport,
 } as any)
 const CompareRoute = CompareRouteImport.update({
@@ -77,6 +84,11 @@ const ApiPropertyDetailRoute = ApiPropertyDetailRouteImport.update({
 const ApiPropertiesRoute = ApiPropertiesRouteImport.update({
   id: '/api/properties',
   path: '/api/properties',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiMapClustersRoute = ApiMapClustersRouteImport.update({
+  id: '/api/map-clusters',
+  path: '/api/map-clusters',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiListingsRoute = ApiListingsRouteImport.update({
@@ -129,6 +141,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/analyze': typeof AnalyzeRoute
   '/compare': typeof CompareRoute
+  '/health': typeof HealthRoute
   '/history': typeof HistoryRoute
   '/listings': typeof ListingsRoute
   '/watchlist': typeof WatchlistRouteWithChildren
@@ -139,6 +152,7 @@ export interface FileRoutesByFullPath {
   '/api/export-pdf': typeof ApiExportPdfRoute
   '/api/history': typeof ApiHistoryRoute
   '/api/listings': typeof ApiListingsRouteWithChildren
+  '/api/map-clusters': typeof ApiMapClustersRoute
   '/api/properties': typeof ApiPropertiesRouteWithChildren
   '/api/property-detail': typeof ApiPropertyDetailRoute
   '/api/provider-health': typeof ApiProviderHealthRoute
@@ -150,6 +164,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/analyze': typeof AnalyzeRoute
   '/compare': typeof CompareRoute
+  '/health': typeof HealthRoute
   '/history': typeof HistoryRoute
   '/listings': typeof ListingsRoute
   '/watchlist': typeof WatchlistRouteWithChildren
@@ -160,6 +175,7 @@ export interface FileRoutesByTo {
   '/api/export-pdf': typeof ApiExportPdfRoute
   '/api/history': typeof ApiHistoryRoute
   '/api/listings': typeof ApiListingsRouteWithChildren
+  '/api/map-clusters': typeof ApiMapClustersRoute
   '/api/properties': typeof ApiPropertiesRouteWithChildren
   '/api/property-detail': typeof ApiPropertyDetailRoute
   '/api/provider-health': typeof ApiProviderHealthRoute
@@ -172,6 +188,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/analyze': typeof AnalyzeRoute
   '/compare': typeof CompareRoute
+  '/health': typeof HealthRoute
   '/history': typeof HistoryRoute
   '/listings': typeof ListingsRoute
   '/watchlist': typeof WatchlistRouteWithChildren
@@ -182,6 +199,7 @@ export interface FileRoutesById {
   '/api/export-pdf': typeof ApiExportPdfRoute
   '/api/history': typeof ApiHistoryRoute
   '/api/listings': typeof ApiListingsRouteWithChildren
+  '/api/map-clusters': typeof ApiMapClustersRoute
   '/api/properties': typeof ApiPropertiesRouteWithChildren
   '/api/property-detail': typeof ApiPropertyDetailRoute
   '/api/provider-health': typeof ApiProviderHealthRoute
@@ -195,6 +213,7 @@ export interface FileRouteTypes {
     | '/'
     | '/analyze'
     | '/compare'
+    | '/health'
     | '/history'
     | '/listings'
     | '/watchlist'
@@ -205,6 +224,7 @@ export interface FileRouteTypes {
     | '/api/export-pdf'
     | '/api/history'
     | '/api/listings'
+    | '/api/map-clusters'
     | '/api/properties'
     | '/api/property-detail'
     | '/api/provider-health'
@@ -216,6 +236,7 @@ export interface FileRouteTypes {
     | '/'
     | '/analyze'
     | '/compare'
+    | '/health'
     | '/history'
     | '/listings'
     | '/watchlist'
@@ -226,6 +247,7 @@ export interface FileRouteTypes {
     | '/api/export-pdf'
     | '/api/history'
     | '/api/listings'
+    | '/api/map-clusters'
     | '/api/properties'
     | '/api/property-detail'
     | '/api/provider-health'
@@ -237,6 +259,7 @@ export interface FileRouteTypes {
     | '/'
     | '/analyze'
     | '/compare'
+    | '/health'
     | '/history'
     | '/listings'
     | '/watchlist'
@@ -247,6 +270,7 @@ export interface FileRouteTypes {
     | '/api/export-pdf'
     | '/api/history'
     | '/api/listings'
+    | '/api/map-clusters'
     | '/api/properties'
     | '/api/property-detail'
     | '/api/provider-health'
@@ -259,6 +283,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AnalyzeRoute: typeof AnalyzeRoute
   CompareRoute: typeof CompareRoute
+  HealthRoute: typeof HealthRoute
   HistoryRoute: typeof HistoryRoute
   ListingsRoute: typeof ListingsRoute
   WatchlistRoute: typeof WatchlistRouteWithChildren
@@ -269,6 +294,7 @@ export interface RootRouteChildren {
   ApiExportPdfRoute: typeof ApiExportPdfRoute
   ApiHistoryRoute: typeof ApiHistoryRoute
   ApiListingsRoute: typeof ApiListingsRouteWithChildren
+  ApiMapClustersRoute: typeof ApiMapClustersRoute
   ApiPropertiesRoute: typeof ApiPropertiesRouteWithChildren
   ApiPropertyDetailRoute: typeof ApiPropertyDetailRoute
   ApiProviderHealthRoute: typeof ApiProviderHealthRoute
@@ -295,6 +321,13 @@ declare module '@tanstack/react-router' {
       path: '/history'
       fullPath: '/history'
       preLoaderRoute: typeof HistoryRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/health': {
+      id: '/health'
+      path: '/health'
+      fullPath: '/health'
+      preLoaderRoute: typeof HealthRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/compare': {
@@ -344,6 +377,13 @@ declare module '@tanstack/react-router' {
       path: '/api/properties'
       fullPath: '/api/properties'
       preLoaderRoute: typeof ApiPropertiesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/map-clusters': {
+      id: '/api/map-clusters'
+      path: '/api/map-clusters'
+      fullPath: '/api/map-clusters'
+      preLoaderRoute: typeof ApiMapClustersRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/listings': {
@@ -452,6 +492,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AnalyzeRoute: AnalyzeRoute,
   CompareRoute: CompareRoute,
+  HealthRoute: HealthRoute,
   HistoryRoute: HistoryRoute,
   ListingsRoute: ListingsRoute,
   WatchlistRoute: WatchlistRouteWithChildren,
@@ -462,6 +503,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiExportPdfRoute: ApiExportPdfRoute,
   ApiHistoryRoute: ApiHistoryRoute,
   ApiListingsRoute: ApiListingsRouteWithChildren,
+  ApiMapClustersRoute: ApiMapClustersRoute,
   ApiPropertiesRoute: ApiPropertiesRouteWithChildren,
   ApiPropertyDetailRoute: ApiPropertyDetailRoute,
   ApiProviderHealthRoute: ApiProviderHealthRoute,

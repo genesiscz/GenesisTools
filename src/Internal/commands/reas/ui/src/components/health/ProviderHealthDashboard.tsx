@@ -209,9 +209,7 @@ export function ProviderHealthDashboard({ health, recentLog }: ProviderHealthDas
                                         key={row.id}
                                         className="border-b border-white/[0.03] transition-colors hover:bg-white/[0.02]"
                                     >
-                                        <td className="px-4 py-2 text-slate-400">
-                                            {formatTimestamp(row.created_at)}
-                                        </td>
+                                        <td className="px-4 py-2 text-slate-400">{formatTimestamp(row.created_at)}</td>
                                         <td className="px-4 py-2 uppercase tracking-[0.15em] text-slate-200">
                                             {row.provider}
                                         </td>
@@ -231,7 +229,10 @@ export function ProviderHealthDashboard({ health, recentLog }: ProviderHealthDas
                                             </span>
                                         </td>
                                         <td className="px-4 py-2 text-right text-white">{row.listing_count}</td>
-                                        <td className="max-w-[240px] truncate px-4 py-2 text-red-300" title={row.error_message ?? undefined}>
+                                        <td
+                                            className="max-w-[240px] truncate px-4 py-2 text-red-300"
+                                            title={row.error_message ?? undefined}
+                                        >
                                             {row.error_message ?? ""}
                                         </td>
                                     </tr>

@@ -736,7 +736,12 @@ export async function fetchListingsIntoCache(
 
     const districtName = filters.district.name;
 
-    function logFetchProvider(input: { provider: ProviderName; sourceContract: string; count: number; error?: string }) {
+    function logFetchProvider(input: {
+        provider: ProviderName;
+        sourceContract: string;
+        count: number;
+        error?: string;
+    }) {
         buildProviderSummary({ ...input, district: districtName });
     }
 
@@ -787,9 +792,12 @@ export async function fetchListingsIntoCache(
             provider: "sreality",
             sourceContract: "sreality-v2-sale",
             count: srealityResult.status === "fulfilled" ? srealityResult.value.length : 0,
-            error: srealityResult.status === "rejected"
-                ? (srealityResult.reason instanceof Error ? srealityResult.reason.message : String(srealityResult.reason))
-                : undefined,
+            error:
+                srealityResult.status === "rejected"
+                    ? srealityResult.reason instanceof Error
+                        ? srealityResult.reason.message
+                        : String(srealityResult.reason)
+                    : undefined,
         });
 
         if (bezrealitkyResult.status === "fulfilled") {
@@ -807,9 +815,12 @@ export async function fetchListingsIntoCache(
             provider: "bezrealitky",
             sourceContract: "graphql:listAdverts:sale",
             count: bezrealitkyResult.status === "fulfilled" ? bezrealitkyResult.value.length : 0,
-            error: bezrealitkyResult.status === "rejected"
-                ? (bezrealitkyResult.reason instanceof Error ? bezrealitkyResult.reason.message : String(bezrealitkyResult.reason))
-                : undefined,
+            error:
+                bezrealitkyResult.status === "rejected"
+                    ? bezrealitkyResult.reason instanceof Error
+                        ? bezrealitkyResult.reason.message
+                        : String(bezrealitkyResult.reason)
+                    : undefined,
         });
     }
 
@@ -841,9 +852,12 @@ export async function fetchListingsIntoCache(
             provider: "sreality",
             sourceContract: "sreality-v2",
             count: srealityResult.status === "fulfilled" ? srealityResult.value.length : 0,
-            error: srealityResult.status === "rejected"
-                ? (srealityResult.reason instanceof Error ? srealityResult.reason.message : String(srealityResult.reason))
-                : undefined,
+            error:
+                srealityResult.status === "rejected"
+                    ? srealityResult.reason instanceof Error
+                        ? srealityResult.reason.message
+                        : String(srealityResult.reason)
+                    : undefined,
         });
 
         if (bezrealitkyResult.status === "fulfilled") {
@@ -861,9 +875,12 @@ export async function fetchListingsIntoCache(
             provider: "bezrealitky",
             sourceContract: "graphql:listAdverts",
             count: bezrealitkyResult.status === "fulfilled" ? bezrealitkyResult.value.length : 0,
-            error: bezrealitkyResult.status === "rejected"
-                ? (bezrealitkyResult.reason instanceof Error ? bezrealitkyResult.reason.message : String(bezrealitkyResult.reason))
-                : undefined,
+            error:
+                bezrealitkyResult.status === "rejected"
+                    ? bezrealitkyResult.reason instanceof Error
+                        ? bezrealitkyResult.reason.message
+                        : String(bezrealitkyResult.reason)
+                    : undefined,
         });
 
         if (erealityResult.status === "fulfilled") {
@@ -881,9 +898,12 @@ export async function fetchListingsIntoCache(
             provider: "ereality",
             sourceContract: "ereality-html",
             count: erealityResult.status === "fulfilled" ? erealityResult.value.length : 0,
-            error: erealityResult.status === "rejected"
-                ? (erealityResult.reason instanceof Error ? erealityResult.reason.message : String(erealityResult.reason))
-                : undefined,
+            error:
+                erealityResult.status === "rejected"
+                    ? erealityResult.reason instanceof Error
+                        ? erealityResult.reason.message
+                        : String(erealityResult.reason)
+                    : undefined,
         });
     }
 

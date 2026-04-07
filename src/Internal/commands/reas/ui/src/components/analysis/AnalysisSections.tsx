@@ -1118,9 +1118,7 @@ export function RentalsTab({ data }: AnalysisSectionProps) {
                     mfBenchmarks={data.benchmarks.mf}
                     rentalAggregation={aggregated}
                     targetRentPerM2={
-                        data.meta.target.area > 0
-                            ? data.meta.target.monthlyRent / data.meta.target.area
-                            : undefined
+                        data.meta.target.area > 0 ? data.meta.target.monthlyRent / data.meta.target.area : undefined
                     }
                 />
             ) : null}

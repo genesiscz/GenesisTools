@@ -1063,7 +1063,13 @@ export class ReasDatabase extends BaseDatabase {
                 GROUP BY district, source, type
                 ORDER BY district ASC, source ASC, type ASC
             `)
-            .all() as Array<{ district: string; source: string; type: string; count: number; last_fetched_at: string | null }>;
+            .all() as Array<{
+            district: string;
+            source: string;
+            type: string;
+            count: number;
+            last_fetched_at: string | null;
+        }>;
 
         const overview: ListingsOverview = {
             saleCount: 0,

@@ -471,10 +471,7 @@ function DistrictSourceBreakdown({ districtSources }: { districtSources: Distric
                     Per-district breakdown · {uniqueDistricts} districts
                 </span>
                 <ChevronDown
-                    className={cn(
-                        "h-3.5 w-3.5 text-gray-500 transition-transform",
-                        expanded && "rotate-180"
-                    )}
+                    className={cn("h-3.5 w-3.5 text-gray-500 transition-transform", expanded && "rotate-180")}
                 />
             </button>
 
@@ -496,9 +493,7 @@ function DistrictSourceBreakdown({ districtSources }: { districtSources: Distric
                                     key={`${district}-${entry.source}-${entry.type}`}
                                     className="border-b border-white/[0.03] transition-colors hover:bg-white/[0.02]"
                                 >
-                                    <td className="px-2 py-1.5 text-gray-200">
-                                        {idx === 0 ? district : ""}
-                                    </td>
+                                    <td className="px-2 py-1.5 text-gray-200">{idx === 0 ? district : ""}</td>
                                     <td className="px-2 py-1.5">
                                         <SourceBadge source={entry.source} />
                                     </td>
