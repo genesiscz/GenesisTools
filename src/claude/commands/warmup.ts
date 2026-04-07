@@ -1,4 +1,3 @@
-import { loadConfig } from "@app/claude/lib/config";
 import { sendWarmupMessage } from "@app/claude/lib/warmup/service";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
@@ -7,13 +6,13 @@ import pc from "picocolors";
 export function registerWarmupCommand(program: Command): void {
     const warmup = program.command("warmup").description("Manually warm up Claude accounts to start session timers");
 
-    warmup
-        .argument("[account]", "Warm up a specific account (skip selection)")
-        .action(async (accountArg?: string) => {
+    warmup.argument("[account]", "Warm up a specific account (skip selection)").action(async (accountArg?: string) => {
         p.intro(pc.bgCyan(pc.black(" claude warmup ")));
 
-        const config = await loadConfig();
-        const accountNames = Object.keys(config.accounts);
+        const { AIConfig } = await import("@app/utils/ai/AIConfig");
+        const aiConfig = await AIConfig.load();
+        const allAccounts = aiConfig.getAccountsByProvider("anthropic-sub");
+        const accountNames = allAccounts.map((a) => a.name);
 
         if (accountNames.length === 0) {
             p.log.error("No accounts configured. Run: tools claude login");
@@ -21,22 +20,22 @@ export function registerWarmupCommand(program: Command): void {
             return;
         }
 
-        let accounts: string[];
+        let selectedNames: string[];
 
         if (accountArg) {
-            if (!config.accounts[accountArg]) {
+            if (!allAccounts.some((a) => a.name === accountArg)) {
                 p.log.error(`Account "${accountArg}" not found. Available: ${accountNames.join(", ")}`);
                 p.outro("");
                 return;
             }
 
-            accounts = [accountArg];
+            selectedNames = [accountArg];
         } else {
             const selected = await p.multiselect({
                 message: "Select accounts to warm up",
-                options: accountNames.map((name) => ({
-                    value: name,
-                    label: `${name}${config.accounts[name].label ? ` (${config.accounts[name].label})` : ""}`,
+                options: allAccounts.map((a) => ({
+                    value: a.name,
+                    label: `${a.name}${a.label ? ` (${a.label})` : ""}`,
                 })),
                 required: true,
             });
@@ -46,13 +45,14 @@ export function registerWarmupCommand(program: Command): void {
                 return;
             }
 
-            accounts = selected as string[];
+            selectedNames = selected as string[];
         }
+
         const results: Array<{ name: string; success: boolean; duration: number }> = [];
 
         const spinner = p.spinner();
 
-        for (const name of accounts) {
+        for (const name of selectedNames) {
             spinner.start(`Warming up ${pc.cyan(name)}...`);
             const start = performance.now();
             const success = await sendWarmupMessage(name);
@@ -74,7 +74,7 @@ export function registerWarmupCommand(program: Command): void {
 
         for (const r of results) {
             const icon = r.success ? pc.green("\u2713") : pc.red("\u2717");
-            const label = config.accounts[r.name]?.label;
+            const label = allAccounts.find((a) => a.name === r.name)?.label;
             const hint = label ? pc.dim(` (${label})`) : "";
             lines.push(`  ${icon} ${r.name}${hint}  ${pc.dim(`${r.duration}ms`)}`);
         }
@@ -95,8 +95,9 @@ export function registerWarmupCommand(program: Command): void {
         .command("all")
         .description("Warm up all configured accounts (non-interactive)")
         .action(async () => {
-            const config = await loadConfig();
-            const accountNames = Object.keys(config.accounts);
+            const { AIConfig } = await import("@app/utils/ai/AIConfig");
+            const aiConfig = await AIConfig.load();
+            const accountNames = aiConfig.getAccountsByProvider("anthropic-sub").map((a) => a.name);
 
             if (accountNames.length === 0) {
                 console.error("No accounts configured. Run: tools claude login");

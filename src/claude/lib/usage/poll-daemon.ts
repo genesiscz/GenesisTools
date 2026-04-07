@@ -1,5 +1,3 @@
-import type { AccountConfig } from "@app/claude/lib/config";
-import { loadConfig } from "@app/claude/lib/config";
 import { fetchAllAccountsUsage } from "@app/claude/lib/usage/api";
 import { loadDashboardConfig } from "@app/claude/lib/usage/dashboard-config";
 import { UsageHistoryDb } from "@app/claude/lib/usage/history-db";
@@ -7,19 +5,17 @@ import { NotificationManager } from "@app/claude/lib/usage/notification-manager"
 
 async function main(): Promise<void> {
     const dashConfig = await loadDashboardConfig();
-    const cfg = await loadConfig();
-    const accounts: Record<string, AccountConfig> = cfg.accounts;
-
-    if (Object.keys(accounts).length === 0) {
-        console.error("No accounts configured. Run: tools claude login");
-        process.exit(1);
-    }
 
     const db = new UsageHistoryDb();
     const notifManager = new NotificationManager(dashConfig.notifications);
 
     try {
-        const results = await fetchAllAccountsUsage(accounts);
+        const results = await fetchAllAccountsUsage();
+
+        if (results.length === 0) {
+            console.error("No accounts configured. Run: tools claude login");
+            process.exit(1);
+        }
 
         for (const account of results) {
             if (!account.usage) {

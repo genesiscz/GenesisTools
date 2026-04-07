@@ -1,4 +1,4 @@
-import type { AccountConfig } from "@app/claude/lib/config";
+import type { AIAccountEntry } from "@app/utils/config/ai.types";
 import { resolveAccountToken } from "@app/utils/claude/subscription-auth";
 
 export type { AccountInfo, KeychainCredentials } from "@app/utils/claude/auth";
@@ -57,32 +57,41 @@ export async function fetchUsage(accessToken: string, signal?: AbortSignal): Pro
 }
 
 export async function fetchAllAccountsUsage(
-    accounts: Record<string, AccountConfig>,
+    accountFilter?: string | string[],
     signal?: AbortSignal,
 ): Promise<AccountUsage[]> {
-    const entries = Object.entries(accounts);
+    const { AIConfig } = await import("@app/utils/ai/AIConfig");
+    const config = await AIConfig.load();
+    let accounts = config.getAccountsByProvider("anthropic-sub");
 
-    if (entries.length === 0) {
+    if (typeof accountFilter === "string") {
+        accounts = accounts.filter((a) => a.name === accountFilter);
+    } else if (Array.isArray(accountFilter)) {
+        const filterSet = new Set(accountFilter);
+        accounts = accounts.filter((a) => filterSet.has(a.name));
+    }
+
+    if (accounts.length === 0) {
         return [];
     }
 
     const results = await Promise.allSettled(
-        entries.map(async ([name, account]) => {
-            const { token } = await resolveAccountToken(name, {
-                staleAccessToken: account.accessToken,
+        accounts.map(async (account: AIAccountEntry) => {
+            const { token } = await resolveAccountToken(account.name, {
+                staleAccessToken: account.tokens.accessToken,
             });
 
             try {
                 const usage = await fetchUsage(token, signal);
-                return { accountName: name, label: account.label, usage } satisfies AccountUsage;
+                return { accountName: account.name, label: account.label, usage } satisfies AccountUsage;
             } catch (err) {
                 if (!(err instanceof RateLimitError)) {
                     throw err;
                 }
 
                 // 429 — force-refresh token to get fresh rate limit window
-                const { token: freshToken, refreshed } = await resolveAccountToken(name, {
-                    staleAccessToken: account.accessToken,
+                const { token: freshToken, refreshed } = await resolveAccountToken(account.name, {
+                    staleAccessToken: account.tokens.accessToken,
                     forceRefresh: true,
                 });
 
@@ -91,7 +100,7 @@ export async function fetchAllAccountsUsage(
                 }
 
                 const usage = await fetchUsage(freshToken, signal);
-                return { accountName: name, label: account.label, usage } satisfies AccountUsage;
+                return { accountName: account.name, label: account.label, usage } satisfies AccountUsage;
             }
         }),
     );
@@ -99,6 +108,6 @@ export async function fetchAllAccountsUsage(
     return results.map((r, i) =>
         r.status === "fulfilled"
             ? r.value
-            : { accountName: entries[i][0], label: entries[i][1].label, error: String(r.reason) },
+            : { accountName: accounts[i].name, label: accounts[i].label, error: String(r.reason) },
     );
 }
