@@ -195,33 +195,24 @@ export function determineAccountLabel(profile: OAuthProfileResponse | undefined)
  */
 export async function refreshAccountLabels(): Promise<void> {
     const { fetchOAuthProfile } = await import("@app/utils/claude/auth");
+    const { AIConfig } = await import("@app/utils/ai/AIConfig");
 
-    await withConfigLock(async () => {
-        const config = await loadConfig();
-        const entries = Object.entries(config.accounts);
+    const config = await AIConfig.load();
+    const accounts = config.getAccountsByProvider("anthropic-sub");
 
-        if (entries.length === 0) {
-            return;
+    if (accounts.length === 0) {
+        return;
+    }
+
+    const profiles = await Promise.all(
+        accounts.map((acc) => fetchOAuthProfile(acc.tokens.accessToken ?? "").catch(() => undefined))
+    );
+
+    for (let i = 0; i < accounts.length; i++) {
+        const newLabel = determineAccountLabel(profiles[i]);
+
+        if (newLabel && newLabel !== accounts[i].label) {
+            await config.updateAccount(accounts[i].name, { label: newLabel });
         }
-
-        const profiles = await Promise.all(
-            entries.map(([, acc]) => fetchOAuthProfile(acc.accessToken).catch(() => undefined))
-        );
-
-        let changed = false;
-
-        for (let i = 0; i < entries.length; i++) {
-            const profile = profiles[i];
-            const newLabel = determineAccountLabel(profile);
-
-            if (newLabel && newLabel !== entries[i][1].label) {
-                config.accounts[entries[i][0]].label = newLabel;
-                changed = true;
-            }
-        }
-
-        if (changed) {
-            await saveConfig(config);
-        }
-    });
+    }
 }
