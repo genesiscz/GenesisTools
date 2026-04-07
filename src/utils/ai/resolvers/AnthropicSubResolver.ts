@@ -1,6 +1,7 @@
 import type { AIProvider } from "@app/utils/config/ai.types";
 import type { DetectedProvider } from "@ask/types";
 import type { AccountResolver } from "./index";
+import { resolveModelsWithPricing } from "./resolve-models";
 
 export class AnthropicSubResolver implements AccountResolver {
     readonly providerType: AIProvider = "anthropic-sub";
@@ -23,21 +24,7 @@ export class AnthropicSubResolver implements AccountResolver {
             fetch: createSubscriptionFetch(),
         });
 
-        const { getProviderConfigs, KNOWN_MODELS } = await import("@ask/providers/providers");
-        const anthropicConfig = getProviderConfigs().find((c) => c.name === "anthropic");
-
-        if (!anthropicConfig) {
-            throw new Error("anthropic provider config missing from PROVIDER_CONFIGS");
-        }
-
-        const { dynamicPricingManager } = await import("@ask/providers/DynamicPricing");
-        const models = await Promise.all(
-            KNOWN_MODELS.anthropic.map(async (m) => ({
-                ...m,
-                provider: "anthropic" as const,
-                pricing: (await dynamicPricingManager.getPricing("anthropic", m.id)) || undefined,
-            }))
-        );
+        const { models, config: providerConfig } = await resolveModelsWithPricing("anthropic");
 
         return {
             name: "anthropic",
@@ -45,7 +32,7 @@ export class AnthropicSubResolver implements AccountResolver {
             key: `${token.slice(0, 20)}...`,
             provider,
             models,
-            config: anthropicConfig,
+            config: providerConfig,
             systemPromptPrefix: SUBSCRIPTION_SYSTEM_PREFIX,
             account: { name: account.name, label: account.label },
         };

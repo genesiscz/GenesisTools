@@ -31,7 +31,7 @@ function applyDefaults(raw: Partial<AIConfigData> | null): AIConfigData {
     }
 
     return {
-        _schemaVersion: raw?._schemaVersion ?? 2,
+        _schemaVersion: raw?._schemaVersion ?? 3,
         accounts: raw?.accounts ?? [],
         defaultAccounts: raw?.defaultAccounts ?? {},
         tasks,
@@ -104,6 +104,28 @@ export class AIConfig {
 
     getAccountsByApp(app: string): AIAccountEntry[] {
         return this.data.accounts.filter((a) => a.apps?.includes(app));
+    }
+
+    /**
+     * Add an account and set it as default for the given contexts if no default exists yet.
+     * Combines addAccount + setDefaultAccount in a single atomic write.
+     */
+    async addAccountWithDefaults(entry: AIAccountEntry, contexts: string[] = ["claude", "ask"]): Promise<void> {
+        await this.mutate((data) => {
+            const existing = data.accounts.findIndex((a) => a.name === entry.name);
+
+            if (existing >= 0) {
+                data.accounts[existing] = entry;
+            } else {
+                data.accounts.push(entry);
+            }
+
+            for (const ctx of contexts) {
+                if (!data.defaultAccounts[ctx]) {
+                    data.defaultAccounts[ctx] = entry.name;
+                }
+            }
+        });
     }
 
     async addAccount(entry: AIAccountEntry): Promise<void> {
@@ -215,7 +237,16 @@ export class AIConfig {
                 data.apps[app] = {};
             }
 
-            data.apps[app].defaults = { ...data.apps[app].defaults, ...defaults };
+            const merged = { ...data.apps[app].defaults, ...defaults };
+
+            // Remove keys explicitly set to undefined so they don't linger as JSON nulls
+            for (const key of Object.keys(merged) as (keyof AppDefaults)[]) {
+                if (merged[key] === undefined) {
+                    delete merged[key];
+                }
+            }
+
+            data.apps[app].defaults = merged;
         });
     }
 
@@ -282,35 +313,14 @@ export class AIConfig {
         });
     }
 
-    // ── Legacy compat (aliases for existing callers) ──
-
-    /** @deprecated Use getTask() */
-    get(task: AITask): TaskConfig {
-        return this.getTask(task);
-    }
-
-    /** @deprecated Use setTask() */
-    async set(task: AITask, config: Partial<TaskConfig>): Promise<void> {
-        await this.setTask(task, config);
-    }
-
-    /** @deprecated Use getTaskProvider() */
-    getProvider(task: AITask): AIProviderType {
-        return this.getTaskProvider(task);
-    }
-
-    /** @deprecated No-op — all mutations are auto-saved via atomicConfigUpdate */
-    async save(): Promise<void> {
-        // No-op: all mutating methods auto-save via atomicConfigUpdate
-    }
-
     // ── Internal ──
 
     /**
      * Atomically read-modify-write the config, then refresh the in-memory cache.
-     * All mutating methods delegate here.
+     * All mutating methods delegate here. Public so callers can batch multiple updates
+     * into a single disk write (e.g. refreshAccountLabels).
      */
-    private async mutate(updater: (data: AIConfigData) => void): Promise<void> {
+    async mutate(updater: (data: AIConfigData) => void): Promise<void> {
         const updated = await this.storage.atomicConfigUpdate<AIConfigData>((data) => {
             // Ensure defaults exist for the fresh-from-disk data
             if (!data.accounts) {

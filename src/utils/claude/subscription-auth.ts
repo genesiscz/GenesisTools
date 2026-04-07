@@ -209,28 +209,3 @@ export async function resolveAccountToken(accountName?: string, options?: Resolv
     };
 }
 
-/**
- * Get account display info for the ask tool footer.
- * Returns { label, name } or null if no account configured.
- */
-export async function getAccountDisplayInfo(accountName?: string): Promise<{ label?: string; name: string } | null> {
-    try {
-        const { AIConfig } = await import("@app/utils/ai/AIConfig");
-        const config = await AIConfig.load();
-        const name = accountName ?? config.getDefaultAccount("ask")?.name;
-
-        if (!name) {
-            return null;
-        }
-
-        const acc = config.getAccount(name);
-
-        if (!acc) {
-            return null;
-        }
-
-        return { label: acc.label, name: acc.name };
-    } catch {
-        return null;
-    }
-}

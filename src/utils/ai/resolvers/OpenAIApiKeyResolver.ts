@@ -1,6 +1,7 @@
 import type { AIProvider } from "@app/utils/config/ai.types";
-import type { DetectedProvider, ModelInfo } from "@ask/types";
+import type { DetectedProvider } from "@ask/types";
 import type { AccountResolver } from "./index";
+import { resolveModelsWithPricing } from "./resolve-models";
 
 export class OpenAIApiKeyResolver implements AccountResolver {
     readonly providerType: AIProvider = "openai";
@@ -16,22 +17,7 @@ export class OpenAIApiKeyResolver implements AccountResolver {
 
         const { createOpenAI } = await import("@ai-sdk/openai");
         const provider = createOpenAI({ apiKey: entry.tokens.apiKey });
-
-        const { getProviderConfigs, KNOWN_MODELS } = await import("@ask/providers/providers");
-        const openaiConfig = getProviderConfigs().find((c) => c.name === "openai");
-
-        if (!openaiConfig) {
-            throw new Error("openai provider config missing from PROVIDER_CONFIGS");
-        }
-
-        const { dynamicPricingManager } = await import("@ask/providers/DynamicPricing");
-        const models: ModelInfo[] = await Promise.all(
-            KNOWN_MODELS.openai.map(async (m) => ({
-                ...m,
-                provider: "openai" as const,
-                pricing: (await dynamicPricingManager.getPricing("openai", m.id)) || undefined,
-            }))
-        );
+        const { models, config: providerConfig } = await resolveModelsWithPricing("openai");
 
         return {
             name: "openai",
@@ -39,7 +25,7 @@ export class OpenAIApiKeyResolver implements AccountResolver {
             key: `${entry.tokens.apiKey.slice(0, 12)}...`,
             provider,
             models,
-            config: openaiConfig,
+            config: providerConfig,
             account: { name: entry.name, label: entry.label },
         };
     }

@@ -180,7 +180,7 @@ async function addAccountViaOAuth(aiConfig: AIConfig): Promise<void> {
         return;
     }
 
-    await aiConfig.addAccount({
+    await aiConfig.addAccountWithDefaults({
         name,
         provider: "anthropic-sub",
         tokens: {
@@ -191,14 +191,6 @@ async function addAccountViaOAuth(aiConfig: AIConfig): Promise<void> {
         label: determineAccountLabel(profile),
         apps: ["claude", "ask"],
     });
-
-    if (!aiConfig.getDefaultAccount("claude")) {
-        await aiConfig.setDefaultAccount("claude", name);
-    }
-
-    if (!aiConfig.getDefaultAccount("ask")) {
-        await aiConfig.setDefaultAccount("ask", name);
-    }
 
     p.log.success(`Account "${name}" saved with auto-refresh support.`);
 }
@@ -312,21 +304,13 @@ async function manageAccounts(aiConfig: AIConfig): Promise<void> {
         const accountName = name as string;
         const accountToken = token as string;
 
-        await aiConfig.addAccount({
+        await aiConfig.addAccountWithDefaults({
             name: accountName,
             provider: "anthropic-sub",
             tokens: { accessToken: accountToken },
             label: accountLabel,
             apps: ["claude", "ask"],
         });
-
-        if (!aiConfig.getDefaultAccount("claude")) {
-            await aiConfig.setDefaultAccount("claude", accountName);
-        }
-
-        if (!aiConfig.getDefaultAccount("ask")) {
-            await aiConfig.setDefaultAccount("ask", accountName);
-        }
 
         p.log.success(`Account "${name}" saved.`);
     } else if (action === "remove") {
@@ -769,20 +753,12 @@ export function registerConfigCommand(program: Command): void {
                 process.exit(1);
             }
 
-            await aiConfig.addAccount({
+            await aiConfig.addAccountWithDefaults({
                 name,
                 provider: "anthropic-sub",
                 tokens: { accessToken: opts.token },
                 apps: ["claude", "ask"],
             });
-
-            if (!aiConfig.getDefaultAccount("claude")) {
-                await aiConfig.setDefaultAccount("claude", name);
-            }
-
-            if (!aiConfig.getDefaultAccount("ask")) {
-                await aiConfig.setDefaultAccount("ask", name);
-            }
 
             p.log.success(`Account "${name}" added.`);
         });
@@ -877,7 +853,7 @@ export function registerConfigCommand(program: Command): void {
             const profile = await fetchOAuthProfile(tokens.accessToken);
             const label = determineAccountLabel(profile);
 
-            await aiConfig.addAccount({
+            await aiConfig.addAccountWithDefaults({
                 name: accountName,
                 provider: "anthropic-sub",
                 tokens: {
@@ -888,14 +864,6 @@ export function registerConfigCommand(program: Command): void {
                 label,
                 apps: ["claude", "ask"],
             });
-
-            if (!aiConfig.getDefaultAccount("claude")) {
-                await aiConfig.setDefaultAccount("claude", accountName);
-            }
-
-            if (!aiConfig.getDefaultAccount("ask")) {
-                await aiConfig.setDefaultAccount("ask", accountName);
-            }
 
             console.log();
             console.log(pc.green(`✓ Account "${accountName}" saved with auto-refresh.`));

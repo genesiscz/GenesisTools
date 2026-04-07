@@ -395,15 +395,7 @@ async function addViaOAuthFlow(): Promise<void> {
     };
 
     const aiConfig = await AIConfig.load();
-    await aiConfig.addAccount(entry);
-
-    if (!aiConfig.getDefaultAccount("claude")) {
-        await aiConfig.setDefaultAccount("claude", accountName);
-    }
-
-    if (!aiConfig.getDefaultAccount("ask")) {
-        await aiConfig.setDefaultAccount("ask", accountName);
-    }
+    await aiConfig.addAccountWithDefaults(entry);
 
     // Also update ask config for backward compat
     const askConfig = await loadAskConfig();
@@ -587,13 +579,27 @@ async function configureProviderSettings(_config: AskConfig): Promise<void> {
 
         const enabledSet = new Set(enabled as string[]);
 
-        for (const name of allProviders) {
-            await aiConfig.setProviderEnabled(name, enabledSet.has(name));
-        }
+        await aiConfig.mutate((data) => {
+            for (const name of allProviders) {
+                const isEnabled = enabledSet.has(name);
+
+                if (data.providers[name]) {
+                    data.providers[name].enabled = isEnabled;
+                } else {
+                    data.providers[name] = { enabled: isEnabled, envVariable: "" };
+                }
+            }
+        });
     } else {
-        for (const name of allProviders) {
-            await aiConfig.setProviderEnabled(name, false);
-        }
+        await aiConfig.mutate((data) => {
+            for (const name of allProviders) {
+                if (data.providers[name]) {
+                    data.providers[name].enabled = false;
+                } else {
+                    data.providers[name] = { enabled: false, envVariable: "" };
+                }
+            }
+        });
     }
 
     p.log.success("Provider settings saved.");

@@ -202,11 +202,26 @@ export async function refreshAccountLabels(): Promise<void> {
         accounts.map((acc) => fetchOAuthProfile(acc.tokens.accessToken ?? "").catch(() => undefined))
     );
 
+    // Batch all label updates into a single disk write
+    const updates = new Map<string, string>();
+
     for (let i = 0; i < accounts.length; i++) {
         const newLabel = determineAccountLabel(profiles[i]);
 
         if (newLabel && newLabel !== accounts[i].label) {
-            await config.updateAccount(accounts[i].name, { label: newLabel });
+            updates.set(accounts[i].name, newLabel);
         }
+    }
+
+    if (updates.size > 0) {
+        await config.mutate((data) => {
+            for (const [name, label] of updates) {
+                const acc = data.accounts.find((a) => a.name === name);
+
+                if (acc) {
+                    acc.label = label;
+                }
+            }
+        });
     }
 }

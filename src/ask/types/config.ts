@@ -33,7 +33,9 @@ export interface Args extends CLIOptions {
 }
 
 export interface AppConfig {
+    /** @deprecated Use AIConfig.getAppDefaults("ask").provider */
     defaultProvider?: string;
+    /** @deprecated Use AIConfig.getAppDefaults("ask").model */
     defaultModel?: string;
     maxTokens?: number;
     temperature?: number;
@@ -55,6 +57,8 @@ export interface EnvTokenConfig {
 }
 
 export interface AskConfig extends AppConfig {
+    /** @deprecated Tokens and accounts are now in AIConfig. Kept for migration compat. */
     claude?: ClaudeSubscriptionConfig;
+    /** @deprecated Provider enablement is now in AIConfig.providers. Kept for migration compat. */
     envTokens?: EnvTokenConfig;
 }
