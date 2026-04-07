@@ -1,4 +1,3 @@
-import { loadConfig, saveConfig, withConfigLock } from "@app/claude/lib/config";
 import logger from "@app/logger";
 import { retry } from "@app/utils/async";
 import type { OAuthTokens } from "./auth";
@@ -50,17 +49,18 @@ function isTransientRefreshError(error: unknown): boolean {
 }
 
 /**
- * List all accounts from tools claude config.
+ * List all Anthropic subscription accounts from unified AI config.
  * Returns empty array if no accounts configured.
  */
 export async function listAvailableAccounts(): Promise<SubscriptionAccount[]> {
-    const config = await loadConfig();
-    return Object.entries(config.accounts).map(([name, acc]) => ({
-        name,
+    const { AIConfig } = await import("@app/utils/ai/AIConfig");
+    const config = await AIConfig.load();
+    return config.getAccountsByProvider("anthropic-sub").map((acc) => ({
+        name: acc.name,
         label: acc.label,
-        accessToken: acc.accessToken,
-        refreshToken: acc.refreshToken,
-        expiresAt: acc.expiresAt,
+        accessToken: acc.tokens.accessToken ?? "",
+        refreshToken: acc.tokens.refreshToken,
+        expiresAt: acc.tokens.expiresAt,
     }));
 }
 
@@ -76,32 +76,37 @@ export async function listAvailableAccounts(): Promise<SubscriptionAccount[]> {
  * - Detects invalid_grant and provides actionable error message
  * - Persists new tokens to disk immediately after refresh, before returning
  */
-export async function resolveAccountToken(
-    accountName?: string,
-    options?: ResolveOptions,
-): Promise<ResolvedToken> {
+export async function resolveAccountToken(accountName?: string, options?: ResolveOptions): Promise<ResolvedToken> {
     const forceRefresh = options?.forceRefresh ?? false;
     const lockTimeout = options?.lockTimeout ?? 60_000;
 
-    const config = await loadConfig();
-    const name = accountName ?? config.defaultAccount;
+    const { AIConfig } = await import("@app/utils/ai/AIConfig");
+    const aiConfig = await AIConfig.load();
+    const name = accountName ?? aiConfig.getDefaultAccount("ask")?.name;
 
-    if (!name || !config.accounts[name]) {
+    const acc = name ? aiConfig.getAccount(name) : undefined;
+
+    if (!name || !acc) {
         throw new Error(
             accountName
-                ? `Account "${accountName}" not found in tools claude config`
-                : "No default account configured. Run `tools claude login` first.",
+                ? `Account "${accountName}" not found in AI config`
+                : "No default account configured. Run `tools claude login` first."
         );
     }
 
-    const acc = config.accounts[name];
-    const staleAccessToken = options?.staleAccessToken ?? acc.accessToken;
+    const staleAccessToken = options?.staleAccessToken ?? acc.tokens.accessToken;
 
     // Fast path: token is valid and no force-refresh requested
-    if (!forceRefresh && acc.expiresAt && !claudeOAuth.needsRefresh(acc.expiresAt)) {
+    if (!forceRefresh && acc.tokens.expiresAt && !claudeOAuth.needsRefresh(acc.tokens.expiresAt)) {
         return {
-            token: acc.accessToken,
-            account: { name, label: acc.label, accessToken: acc.accessToken, refreshToken: acc.refreshToken, expiresAt: acc.expiresAt },
+            token: acc.tokens.accessToken ?? "",
+            account: {
+                name,
+                label: acc.label,
+                accessToken: acc.tokens.accessToken ?? "",
+                refreshToken: acc.tokens.refreshToken,
+                expiresAt: acc.tokens.expiresAt,
+            },
             refreshed: false,
         };
     }
@@ -110,26 +115,25 @@ export async function resolveAccountToken(
     logger.info(`[token-refresh] ${name}: initiating refresh (reason: ${caller})`);
 
     // Slow path: acquire lock, re-read from disk, refresh
-    const refreshed = await withConfigLock(async () => {
-        const freshConfig = await loadConfig();
-        const diskAccount = freshConfig.accounts[name];
+    const refreshed = await aiConfig.withLock(async (data) => {
+        const diskAccount = data.accounts.find((a) => a.name === name);
 
         if (!diskAccount) {
             throw new Error(`Account "${name}" not found in config`);
         }
 
         // Check if another process already refreshed
-        if (diskAccount.expiresAt && !claudeOAuth.needsRefresh(diskAccount.expiresAt)) {
-            if (!forceRefresh || diskAccount.accessToken !== staleAccessToken) {
+        if (diskAccount.tokens.expiresAt && !claudeOAuth.needsRefresh(diskAccount.tokens.expiresAt)) {
+            if (!forceRefresh || diskAccount.tokens.accessToken !== staleAccessToken) {
                 logger.info(
                     `[token-refresh] ${name}: skipped — another process already refreshed ` +
-                        `(expires ${new Date(diskAccount.expiresAt).toISOString()})`,
+                        `(expires ${new Date(diskAccount.tokens.expiresAt).toISOString()})`
                 );
                 return diskAccount;
             }
         }
 
-        if (!diskAccount.refreshToken) {
+        if (!diskAccount.tokens.refreshToken) {
             logger.warn(`[token-refresh] ${name}: no refresh token available`);
             return null;
         }
@@ -137,7 +141,7 @@ export async function resolveAccountToken(
         // Refresh with retry on transient errors (5xx, network)
         let newTokens: OAuthTokens;
         try {
-            newTokens = await retry(() => claudeOAuth.refresh(diskAccount.refreshToken!), {
+            newTokens = await retry(() => claudeOAuth.refresh(diskAccount.tokens.refreshToken!), {
                 maxAttempts: 3,
                 delay: 1000,
                 backoff: "fixed",
@@ -148,51 +152,58 @@ export async function resolveAccountToken(
             });
         } catch (err) {
             if (String(err).includes("invalid_grant")) {
-                throw new Error(
-                    `Token expired (invalid_grant). Run: tools claude login ${name}`,
-                );
+                throw new Error(`Token expired (invalid_grant). Run: tools claude login ${name}`);
             }
 
             throw new Error(
                 `Failed to refresh token for "${name}": ${err instanceof Error ? err.message : err}. ` +
-                    `Run \`tools claude login ${name}\` if this persists.`,
+                    `Run \`tools claude login ${name}\` if this persists.`
             );
         }
 
-        // Persist immediately BEFORE returning (refresh tokens are single-use)
-        freshConfig.accounts[name] = {
+        // Persist by mutating data in place — withLock handles save automatically
+        const idx = data.accounts.findIndex((a) => a.name === name);
+        data.accounts[idx] = {
             ...diskAccount,
-            accessToken: newTokens.accessToken,
-            refreshToken: newTokens.refreshToken,
-            expiresAt: newTokens.expiresAt,
+            tokens: {
+                ...diskAccount.tokens,
+                accessToken: newTokens.accessToken,
+                refreshToken: newTokens.refreshToken,
+                expiresAt: newTokens.expiresAt,
+            },
         };
-        await saveConfig(freshConfig);
 
         logger.info(
             `[token-refresh] ${name}: refreshed successfully ` +
-                `(new expires ${new Date(newTokens.expiresAt).toISOString()})`,
+                `(new expires ${new Date(newTokens.expiresAt).toISOString()})`
         );
 
-        return freshConfig.accounts[name];
+        return data.accounts[idx];
     }, lockTimeout);
 
     // No refresh token available — return what we have
     if (!refreshed) {
         return {
-            token: acc.accessToken,
-            account: { name, label: acc.label, accessToken: acc.accessToken, refreshToken: acc.refreshToken, expiresAt: acc.expiresAt },
+            token: acc.tokens.accessToken ?? "",
+            account: {
+                name,
+                label: acc.label,
+                accessToken: acc.tokens.accessToken ?? "",
+                refreshToken: acc.tokens.refreshToken,
+                expiresAt: acc.tokens.expiresAt,
+            },
             refreshed: false,
         };
     }
 
     return {
-        token: refreshed.accessToken,
+        token: refreshed.tokens.accessToken ?? "",
         account: {
             name,
             label: refreshed.label ?? acc.label,
-            accessToken: refreshed.accessToken,
-            refreshToken: refreshed.refreshToken,
-            expiresAt: refreshed.expiresAt,
+            accessToken: refreshed.tokens.accessToken ?? "",
+            refreshToken: refreshed.tokens.refreshToken,
+            expiresAt: refreshed.tokens.expiresAt,
         },
         refreshed: true,
     };
@@ -204,17 +215,21 @@ export async function resolveAccountToken(
  */
 export async function getAccountDisplayInfo(accountName?: string): Promise<{ label?: string; name: string } | null> {
     try {
-        const config = await loadConfig();
-        const name = accountName ?? config.defaultAccount;
+        const { AIConfig } = await import("@app/utils/ai/AIConfig");
+        const config = await AIConfig.load();
+        const name = accountName ?? config.getDefaultAccount("ask")?.name;
 
-        if (!name || !config.accounts[name]) {
+        if (!name) {
             return null;
         }
 
-        return {
-            label: config.accounts[name].label,
-            name,
-        };
+        const acc = config.getAccount(name);
+
+        if (!acc) {
+            return null;
+        }
+
+        return { label: acc.label, name: acc.name };
     } catch {
         return null;
     }
