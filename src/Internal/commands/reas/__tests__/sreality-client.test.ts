@@ -106,7 +106,7 @@ describe("SrealityClient", () => {
                 labels: ["novinka"],
                 disposition: "2+kk",
                 area: 54,
-                link: "https://www.sreality.cz/detail/pronajem/byt/praha-4/123",
+                link: "https://www.sreality.cz/detail/pronajem/byt/2-kk/praha-4/123",
             },
         ]);
     });
@@ -161,7 +161,7 @@ describe("SrealityClient", () => {
                 disposition: "3+1",
                 area: 72,
                 pricePerM2: 110972,
-                link: "https://www.sreality.cz/detail/prodej/byt/praha-4/456",
+                link: "https://www.sreality.cz/detail/prodej/byt/3-1/praha-4/456",
                 coordinates: { lat: 50.05, lng: 14.45 },
                 rawData: {
                     hash_id: 456,

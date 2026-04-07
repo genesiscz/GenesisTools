@@ -118,15 +118,42 @@ function buildV2SearchParams(filters: AnalysisFilters, offerType: SrealityOfferT
     return params;
 }
 
+// Reverse map: Sreality category_sub_cb → URL slug
+const CATEGORY_SUB_CB_TO_SLUG: Record<number, string> = {
+    2: "1-kk",
+    3: "1-1",
+    4: "2-kk",
+    5: "2-1",
+    6: "3-kk",
+    7: "3-1",
+    8: "4-kk",
+    9: "4-1",
+    10: "5-kk",
+    11: "5-1",
+    12: "6-kk",
+    16: "atypicky",
+    43: "pokoj",
+    47: "6-1",
+};
+
 function buildSrealityLink(raw: SrealityEstateRaw, offerType: SrealityOfferType): string {
     const contractPath = offerType === "rental" ? "pronajem" : "prodej";
     const seoLocality = raw.seo?.locality ?? "";
+    const subTypeSlug = raw.seo?.category_sub_cb ? CATEGORY_SUB_CB_TO_SLUG[raw.seo.category_sub_cb] : undefined;
 
-    if (seoLocality) {
-        return `https://www.sreality.cz/detail/${contractPath}/byt/${seoLocality}/${raw.hash_id}`;
+    const segments = [`https://www.sreality.cz/detail/${contractPath}/byt`];
+
+    if (subTypeSlug) {
+        segments.push(subTypeSlug);
     }
 
-    return `https://www.sreality.cz/detail/${contractPath}/byt/${raw.hash_id}`;
+    if (seoLocality) {
+        segments.push(seoLocality);
+    }
+
+    segments.push(String(raw.hash_id));
+
+    return segments.join("/");
 }
 
 function buildV1Path(pathname: string, params: SrealityV1QueryParams): string {
