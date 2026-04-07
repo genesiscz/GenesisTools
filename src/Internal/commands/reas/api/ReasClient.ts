@@ -7,7 +7,7 @@ import type { CountResponse, ListingsResponse, PointersAndClustersResponse } fro
 
 const BASE_URL = "https://catalog.reas.cz/catalog";
 const CLIENT_ID = "6988cb437c5b9d2963280369";
-const PAGE_LIMIT = 100;
+const PAGE_LIMIT = 200;
 const MAX_PAGES = 1000;
 
 export function buildReasQueryParams(filters: AnalysisFilters, dateRange: DateRange): URLSearchParams {
