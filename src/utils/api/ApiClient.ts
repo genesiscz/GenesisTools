@@ -132,7 +132,11 @@ function resolveUrl(baseUrl: string | undefined, path: string): string {
         return path;
     }
 
-    return new URL(path, baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`).toString();
+    // Strip leading slash so new URL() treats it as relative to the full base path.
+    // "/foo" is origin-absolute and discards the base path; "foo" is base-relative and preserves it.
+    const relativePath = path.startsWith("/") ? path.slice(1) : path;
+
+    return new URL(relativePath, baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`).toString();
 }
 
 export class ApiClient {

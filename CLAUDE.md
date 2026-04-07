@@ -136,6 +136,7 @@ See `.claude/docs/tool-template.md` for complete templates (@inquirer + @clack/p
 
 ## Code Style Rules
 
+- **Fix bugs at the root, not at every call site.** When the same issue appears in multiple places because of a shared function, fix the shared function — don't patch each caller individually. One fix at the source beats N fixes at the edges.
 - **No file-path comments**: Never add `// src/path/to/file.ts` as first line of files
 - **No obvious comments**: Don't add comments that restate what the code already says (e.g. `// Build initial context` before `buildContext()`)
 - **Concise commit messages**: Just a title line, no per-file breakdown in the body. Keep it short and focused on the "why"
