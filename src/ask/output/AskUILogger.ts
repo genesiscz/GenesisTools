@@ -71,12 +71,13 @@ export class AskUILogger {
         p.log.step(pc.yellow("Thinking..."));
     }
 
-    logUsing({ provider, model }: { provider: string; model: string }): void {
+    logUsing({ provider, model, accountLabel }: { provider: string; model: string; accountLabel?: string }): void {
         if (!this.showProgress) {
             return;
         }
 
-        p.log.info(`Using ${colorizeProvider(provider)}/${model}`);
+        const suffix = accountLabel ? ` (${accountLabel})` : "";
+        p.log.info(`Using ${colorizeProvider(provider)}/${model}${suffix}`);
     }
 
     logStarting({ provider, model }: { provider: string; model: string }): void {

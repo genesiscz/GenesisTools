@@ -383,7 +383,8 @@ class ASKTool {
             // Streaming mode with UI
             // We still need provider/model info for display, so resolve first
             const config = chat.getConfig();
-            askUI().logUsing({ provider: config.provider, model: config.model });
+            const accountInfo = await this.getAccountInfoForFooter(config.provider);
+            askUI().logUsing({ provider: config.provider, model: config.model, accountLabel: accountInfo?.label });
 
             // Optional: Show cost prediction if --predict-cost flag is set
             if (argv.predictCost) {
@@ -709,9 +710,8 @@ class ASKTool {
             return undefined;
         }
 
-        const { loadAskConfig } = await import("@ask/config");
-        const cfg = await loadAskConfig();
-        return cfg.claude?.accountName ? { label: cfg.claude.accountLabel, name: cfg.claude.accountName } : undefined;
+        const { getAccountDisplayInfo } = await import("@app/utils/claude/subscription-auth");
+        return (await getAccountDisplayInfo()) ?? undefined;
     }
 
     private async handleCommandResult(
