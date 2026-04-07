@@ -49,6 +49,10 @@ function extractUrl(links: TodoLink[]): string | undefined {
  * Returns the event identifier.
  */
 async function syncTodoToCalendar(todo: Todo): Promise<string> {
+    if (!todo.at && todo.reminders.length === 0) {
+        throw new Error("Cannot sync to calendar: no event time (--at) or reminders specified");
+    }
+
     const eventStartMs = todo.at
         ? new Date(todo.at).getTime()
         : Math.max(...todo.reminders.map((r) => new Date(r.at).getTime()));

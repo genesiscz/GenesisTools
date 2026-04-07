@@ -1,5 +1,5 @@
-import { MacReminders } from "@app/utils/macos/apple-reminders";
 import { SafeJSON } from "@app/utils/json";
+import { MacReminders } from "@app/utils/macos/apple-reminders";
 import type { Command } from "commander";
 import { formatRemindersTable } from "./format";
 

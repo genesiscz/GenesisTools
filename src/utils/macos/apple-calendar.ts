@@ -113,7 +113,7 @@ export class MacCalendar {
 
         if (!auth.authorized && auth.status !== "writeOnly") {
             throw new Error(
-                `Calendar access not authorized (status: ${auth.status}). Grant access in System Settings > Privacy & Security > Calendars.`
+                `Calendar access not authorized (status: ${auth.status}). Grant at least write access in System Settings > Privacy & Security > Calendars.`
             );
         }
     }
@@ -135,9 +135,11 @@ export class MacCalendar {
             const calendars = await MacCalendar.listCalendars();
             const match = calendars.find((c) => c.title === options.calendarName);
 
-            if (match) {
-                calendarIdentifiers = [match.identifier];
+            if (!match) {
+                return [];
             }
+
+            calendarIdentifiers = [match.identifier];
         }
 
         const result = await callCalendar<{ events: CalendarEventInfo[] }>(dk, "calendar.events", {
@@ -190,7 +192,11 @@ export class MacCalendar {
 
     static async updateEvent(eventId: string, options: UpdateEventOptions): Promise<string> {
         const dk = getDarwinKit();
-        const existing = await callCalendar<CalendarEventInfo>(dk, "calendar.event", { identifier: eventId });
+        const existing = await callCalendar<CalendarEventInfo | null>(dk, "calendar.event", { identifier: eventId });
+
+        if (!existing || !existing.identifier) {
+            throw new Error(`Event not found: ${eventId}`);
+        }
 
         const result = await callCalendar<CalendarSaveResult>(dk, "calendar.save_event", {
             id: eventId,
@@ -213,7 +219,7 @@ export class MacCalendar {
         return result.identifier;
     }
 
-    static async deleteEvent(options: { eventId: string; calendarName?: string }): Promise<boolean> {
+    static async deleteEvent(options: { eventId: string }): Promise<boolean> {
         const dk = getDarwinKit();
         const result = await callCalendar<CalendarOkResult>(dk, "calendar.remove_event", {
             identifier: options.eventId,
@@ -287,6 +293,6 @@ export async function createCalendarEvent(options: {
     return MacCalendar.createEvent(options);
 }
 
-export async function deleteCalendarEvent(options: { eventId: string; calendarName?: string }): Promise<boolean> {
+export async function deleteCalendarEvent(options: { eventId: string }): Promise<boolean> {
     return MacCalendar.deleteEvent(options);
 }

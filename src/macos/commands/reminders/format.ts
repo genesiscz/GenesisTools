@@ -2,23 +2,16 @@ import type { ReminderInfo } from "@app/utils/macos/apple-reminders";
 import { formatTable } from "@app/utils/table";
 
 export function formatPriority(priority: number): string {
-    if (priority === 1) {
-        return "Critical";
+    switch (priority) {
+        case 1:
+            return "Critical";
+        case 5:
+            return "Medium";
+        case 9:
+            return "Low";
+        default:
+            return "None";
     }
-
-    if (priority >= 2 && priority <= 4) {
-        return "High";
-    }
-
-    if (priority >= 5 && priority <= 6) {
-        return "Medium";
-    }
-
-    if (priority >= 7 && priority <= 9) {
-        return "Low";
-    }
-
-    return "None";
 }
 
 export function formatDueDate(iso?: string): string {

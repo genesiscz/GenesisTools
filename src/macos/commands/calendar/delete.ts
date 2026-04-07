@@ -2,21 +2,13 @@ import { MacCalendar } from "@app/utils/macos/apple-calendar";
 import type { Command } from "commander";
 import pc from "picocolors";
 
-interface DeleteOptions {
-    calendar?: string;
-}
-
 export function registerDeleteCommand(program: Command): void {
     program
         .command("delete <event-id>")
         .description("Delete a calendar event by its identifier")
-        .option("--calendar <name>", "Calendar name (for disambiguation)")
-        .action(async (eventId: string, options: DeleteOptions) => {
+        .action(async (eventId: string) => {
             try {
-                const ok = await MacCalendar.deleteEvent({
-                    eventId,
-                    calendarName: options.calendar,
-                });
+                const ok = await MacCalendar.deleteEvent({ eventId });
 
                 if (ok) {
                     console.log(`${pc.green("Event deleted")} — ID: ${eventId}`);

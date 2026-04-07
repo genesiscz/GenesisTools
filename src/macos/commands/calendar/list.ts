@@ -1,6 +1,6 @@
+import { SafeJSON } from "@app/utils/json";
 import type { CalendarEventInfo } from "@app/utils/macos/apple-calendar";
 import { MacCalendar } from "@app/utils/macos/apple-calendar";
-import { SafeJSON } from "@app/utils/json";
 import { formatTable } from "@app/utils/table";
 import type { Command } from "commander";
 
@@ -10,25 +10,7 @@ interface ListOptions {
     format?: string;
 }
 
-function parseDate(input: string): Date {
-    const d = new Date(input);
-
-    if (Number.isNaN(d.getTime())) {
-        throw new Error(`Invalid date: ${input}`);
-    }
-
-    return d;
-}
-
-function formatDateTime(iso: string): string {
-    const d = new Date(iso);
-    return d.toLocaleString("en-US", {
-        month: "short",
-        day: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-    });
-}
+import { formatDateTime, parseDate } from "./format";
 
 function formatEventsTable(events: CalendarEventInfo[]): string {
     const rows = events.map((e) => [

@@ -101,9 +101,11 @@ export class MacReminders {
             const lists = await MacReminders.listLists();
             const match = lists.find((l) => l.title === listName);
 
-            if (match) {
-                listIdentifiers = [match.identifier];
+            if (!match) {
+                return [];
             }
+
+            listIdentifiers = [match.identifier];
         }
 
         if (options?.includeCompleted) {
