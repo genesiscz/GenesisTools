@@ -173,7 +173,7 @@ function WatchlistPropertyDetailPage() {
 
     if (detailQuery.isLoading) {
         return (
-            <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-4">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-4">
                 <Skeleton variant="default" className="h-10 w-40" />
                 <Skeleton variant="default" className="h-28 w-full" />
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
@@ -213,7 +213,7 @@ function WatchlistPropertyDetailPage() {
         property.last_net_yield < property.alert_yield_floor;
 
     return (
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-6">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-6">
             <div className="flex flex-col gap-4">
                 <Button asChild variant="outline" className="w-fit font-mono text-xs border-white/10 text-gray-300">
                     <Link to="/watchlist">
@@ -565,7 +565,7 @@ function WatchlistPropertyDetailPage() {
                                                     className: "text-cyan-400",
                                                 },
                                             ]}
-                                            rows={exportData.listings.rentals.slice(0, 12).map((listing) => ({
+                                            rows={exportData.listings.rentals.slice(0, 12).map(({ provenance: _p, ...listing }) => ({
                                                 ...listing,
                                                 rentLabel: formatCurrencyCompact(listing.rent),
                                                 rentPerM2Label: formatCurrencyCompact(listing.rentPerM2),

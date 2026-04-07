@@ -37,7 +37,7 @@ function IndexPage() {
     const router = useRouter();
 
     return (
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
             <div className="mb-8">
                 <h1 className="text-xl sm:text-2xl font-mono font-bold text-gray-200 mb-2">
                     Real Estate <span className="text-amber-500">Analysis</span>

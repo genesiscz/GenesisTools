@@ -516,7 +516,7 @@ describe("parseBezrealitkyNextData", () => {
                 pageProps: {
                     apolloCache: {
                         ROOT_QUERY: {
-                            'listAdverts({})': {
+                            "listAdverts({})": {
                                 list: [{ __ref: "Advert:999" }],
                             },
                         },

@@ -142,7 +142,7 @@ export function OverviewTab({ data }: AnalysisSectionProps) {
                             <AnalysisMetricCard
                                 label="Net Yield"
                                 value={formatPercent(data.analysis.yield.netYield)}
-                                hint={`Gross ${formatPercent(data.analysis.yield.grossYield)} | Payback ${data.analysis.yield.paybackYears.toFixed(1)}y`}
+                                hint={`Gross ${formatPercent(data.analysis.yield.grossYield)} | Payback ${data.analysis.yield.paybackYears?.toFixed(1) ?? "—"}y`}
                                 icon={Percent}
                                 valueClassName={getScoreTone(data.analysis.yield.netYield * 15)}
                             />
@@ -616,7 +616,7 @@ export function ComparablesTab({ data }: AnalysisSectionProps) {
                         <AnalysisMetricCard
                             label="Median asking / m²"
                             value={formatCurrency(activeVsSold.medianActivePricePerM2)}
-                            hint={`Ratio ${activeVsSold.askingToSoldRatio.toFixed(2)}x versus sold median`}
+                            hint={`Ratio ${activeVsSold.askingToSoldRatio?.toFixed(2) ?? "—"}x versus sold median`}
                             icon={Layers3}
                         />
                         <AnalysisMetricCard
@@ -1206,12 +1206,28 @@ export function InvestmentTab({ data }: AnalysisSectionProps) {
                     />
                     <AnalysisMetricCard
                         label="Payback edge"
-                        value={`${(data.analysis.yield.atMarketPrice.paybackYears - data.analysis.yield.paybackYears).toFixed(1)}y`}
-                        hint={`Target ${data.analysis.yield.paybackYears.toFixed(1)}y vs market ${data.analysis.yield.atMarketPrice.paybackYears.toFixed(1)}y`}
+                        value={
+                            data.analysis.yield.paybackYears != null &&
+                            data.analysis.yield.atMarketPrice.paybackYears != null
+                                ? `${(data.analysis.yield.atMarketPrice.paybackYears - data.analysis.yield.paybackYears).toFixed(1)}y`
+                                : "—"
+                        }
+                        hint={
+                            data.analysis.yield.paybackYears != null &&
+                            data.analysis.yield.atMarketPrice.paybackYears != null
+                                ? `Target ${data.analysis.yield.paybackYears.toFixed(1)}y vs market ${data.analysis.yield.atMarketPrice.paybackYears.toFixed(1)}y`
+                                : "Payback data unavailable"
+                        }
                         icon={Timer}
-                        valueClassName={getSentimentTone(
-                            data.analysis.yield.atMarketPrice.paybackYears - data.analysis.yield.paybackYears
-                        )}
+                        valueClassName={
+                            data.analysis.yield.paybackYears != null &&
+                            data.analysis.yield.atMarketPrice.paybackYears != null
+                                ? getSentimentTone(
+                                      data.analysis.yield.atMarketPrice.paybackYears -
+                                          data.analysis.yield.paybackYears
+                                  )
+                                : undefined
+                        }
                     />
                 </div>
             </div>
@@ -1348,7 +1364,10 @@ export function InvestmentTab({ data }: AnalysisSectionProps) {
                             monthlyCosts: formatCompactCurrency(scenario.monthlyCosts),
                             grossYieldLabel: formatPercent(scenario.grossYield),
                             netYieldLabel: formatPercent(scenario.netYield),
-                            paybackLabel: `${scenario.paybackYears.toFixed(1)}y`,
+                            paybackLabel:
+                                scenario.paybackYears == null || !Number.isFinite(scenario.paybackYears)
+                                    ? "—"
+                                    : `${scenario.paybackYears.toFixed(1)}y`,
                         }))}
                         getRowKey={(row) => String(row.label)}
                         emptyMessage="No scenarios available."

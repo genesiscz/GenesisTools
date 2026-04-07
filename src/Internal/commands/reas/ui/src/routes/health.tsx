@@ -34,7 +34,7 @@ function HealthPage() {
     const { data, isLoading, error } = useProviderHealth();
 
     return (
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-6">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-6">
             <div className="flex items-center gap-3">
                 <div className="p-2 rounded-lg bg-cyan-500/10 border border-cyan-500/30">
                     <Activity className="h-5 w-5 text-cyan-400" />

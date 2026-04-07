@@ -47,7 +47,7 @@ interface MetricItemProps {
 function MetricItem({ label, value, tone = "default" }: MetricItemProps) {
     return (
         <div className="rounded-md border border-white/5 bg-white/[0.02] px-3 py-2">
-            <div className="text-[10px] font-mono uppercase tracking-wider text-gray-600">{label}</div>
+            <div className="text-[10px] font-mono uppercase tracking-wider text-gray-600 truncate">{label}</div>
             <div
                 className={cn(
                     "mt-1 text-sm font-mono font-semibold",
@@ -241,7 +241,7 @@ export function PropertyCard({
 
                 {cardModel && (
                     <>
-                        <div className="grid grid-cols-2 gap-2 xl:grid-cols-6">
+                        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                             {cardModel.metrics.map((metric) => (
                                 <div key={metric.label} className="space-y-1">
                                     <MetricItem label={metric.label} value={metric.value} tone={metric.tone} />
