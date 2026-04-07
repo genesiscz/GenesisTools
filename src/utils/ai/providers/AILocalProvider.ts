@@ -31,6 +31,16 @@ type PipelineInstance = {
 
 const SUPPORTED_TASKS: AITask[] = ["transcribe", "translate", "summarize", "embed"];
 
+// ONNX Runtime 1.24.x has a CPU graph optimization bug: the loop re-runs Level3 after
+// InsertCast, exposing InsertedPrecisionFreeCast nodes to SimplifiedLayerNormFusion which
+// crashes on fp16 models. Workaround: lower graphOptimizationLevel to 'extended' (skips
+// the buggy Level3 re-run). Ref: microsoft/onnxruntime#26631, huggingface/transformers.js#1567
+// Track this set at runtime so the error-recovery path can add models dynamically.
+const FP16_INCOMPATIBLE_ENCODERS = new Set([
+    "onnx-community/whisper-large-v3",
+    "onnx-community/whisper-large-v3-turbo",
+]);
+
 export class AILocalProvider
     implements AITranscriptionProvider, AITranslationProvider, AISummarizationProvider, AIEmbeddingProvider
 {
@@ -346,17 +356,19 @@ export class AILocalProvider
             try {
                 const pipe = (await pipeline(task as Parameters<typeof pipeline>[0], model, {
                     // Whisper (encoder-decoder) is extremely sensitive to encoder quantization.
-                    // HF docs: "encoder-decoder models like Whisper are extremely sensitive to
-                    // quantization settings: especially of the encoder."
-                    // Flat "q4" quantizes BOTH encoder and decoder to 4-bit, corrupting encoder
-                    // hidden states → decoder hallucinates garbage (especially non-English).
                     // Per-module dtype: fp16 encoder (precise) + q4 decoder (compressed).
-                    // For non-ASR tasks (translation, summarization), flat q4 is fine — those
-                    // models are decoder-only and tolerate aggressive quantization.
+                    // For non-ASR tasks, flat q4 is fine (decoder-only models).
                     dtype:
                         task === "automatic-speech-recognition"
                             ? { encoder_model: "fp16", decoder_model_merged: "q4" }
                             : "q4",
+                    // ONNX Runtime 1.24.x bug: Level3 re-runs after InsertCast on fp16 models,
+                    // crashing with InsertedPrecisionFreeCast/SimplifiedLayerNormFusion error.
+                    // Lowering to 'extended' skips the buggy re-run. Only needed for known-bad
+                    // models; turbo variants don't hit this code path.
+                    ...(FP16_INCOMPATIBLE_ENCODERS.has(model)
+                        ? { session_options: { graphOptimizationLevel: "extended" } }
+                        : {}),
                     progress_callback: onProgress
                         ? (info: HfDownloadProgress) => {
                               if (info.status === "progress" && info.loaded != null && info.total) {
@@ -382,6 +394,43 @@ export class AILocalProvider
             } catch (err) {
                 restoreWarnings();
                 const msg = err instanceof Error ? err.message : String(err);
+
+                // ONNX Runtime CPU bug: fp16 models crash with InsertedPrecisionFreeCast
+                // on certain architectures. Auto-retry with lowered graph optimization.
+                if (msg.includes("InsertedPrecisionFreeCast") && !FP16_INCOMPATIBLE_ENCODERS.has(model)) {
+                    logger.warn(
+                        `[getPipeline] fp16 ONNX RT crash for "${model}". Retrying with graphOptimizationLevel=extended.`
+                    );
+                    FP16_INCOMPATIBLE_ENCODERS.add(model);
+
+                    const retryPipe = (await pipeline(task as Parameters<typeof pipeline>[0], model, {
+                        dtype:
+                            task === "automatic-speech-recognition"
+                                ? { encoder_model: "fp16", decoder_model_merged: "q4" }
+                                : "q4",
+                        session_options: { graphOptimizationLevel: "extended" },
+                        progress_callback: onProgress
+                            ? (info: HfDownloadProgress) => {
+                                  if (info.status === "progress" && info.loaded != null && info.total) {
+                                      const pct = Math.round((info.loaded / info.total) * 100);
+                                      const file = info.file?.split("/").pop() ?? "";
+                                      const size = `${formatBytes(info.loaded)}/${formatBytes(info.total)}`;
+
+                                      onProgress({
+                                          phase: "download",
+                                          percent: pct,
+                                          message: `Downloading ${file}... ${pct}% (${size})`,
+                                      });
+                                  } else if (info.status === "ready") {
+                                      onProgress({ phase: "load", percent: 100, message: "Model loaded" });
+                                  }
+                              }
+                            : undefined,
+                    })) as unknown as PipelineInstance;
+
+                    this.pipelines.set(key, retryPipe);
+                    return retryPipe;
+                }
 
                 if (msg.includes("Protobuf parsing failed") || msg.includes("Load model")) {
                     const cacheDir = env.cacheDir;

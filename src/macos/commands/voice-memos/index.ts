@@ -415,6 +415,7 @@ async function transcribeOne(opts: {
 
     const transcribeOpts = {
         language: opts.lang,
+        model: opts.model,
         onProgress: (info: { message: string }) => {
             s.message(info.message);
         },
