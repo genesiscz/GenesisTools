@@ -34,10 +34,9 @@ export async function runMigrations(migrations: ConfigMigration[]): Promise<stri
     const executed: string[] = [];
 
     for (const migration of migrations) {
-        if (record.completed.includes(migration.id)) {
-            continue;
-        }
-
+        // Always check shouldRun() — even if previously completed.
+        // Migrations may bump their schema version (e.g. v2 → v3),
+        // requiring a re-run despite the ID being in the completed list.
         let needsRun: boolean;
 
         try {
@@ -48,9 +47,12 @@ export async function runMigrations(migrations: ConfigMigration[]): Promise<stri
         }
 
         if (!needsRun) {
-            // Target is already in the desired state -- record and skip
-            record.completed.push(migration.id);
-            await migrationStorage.setConfig(record);
+            // Target is already in the desired state — ensure it's recorded
+            if (!record.completed.includes(migration.id)) {
+                record.completed.push(migration.id);
+                await migrationStorage.setConfig(record);
+            }
+
             continue;
         }
 
