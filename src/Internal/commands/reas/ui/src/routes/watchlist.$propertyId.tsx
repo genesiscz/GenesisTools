@@ -565,11 +565,13 @@ function WatchlistPropertyDetailPage() {
                                                     className: "text-cyan-400",
                                                 },
                                             ]}
-                                            rows={exportData.listings.rentals.slice(0, 12).map(({ provenance: _p, ...listing }) => ({
-                                                ...listing,
-                                                rentLabel: formatCurrencyCompact(listing.rent),
-                                                rentPerM2Label: formatCurrencyCompact(listing.rentPerM2),
-                                            }))}
+                                            rows={exportData.listings.rentals
+                                                .slice(0, 12)
+                                                .map(({ provenance: _p, ...listing }) => ({
+                                                    ...listing,
+                                                    rentLabel: formatCurrencyCompact(listing.rent),
+                                                    rentPerM2Label: formatCurrencyCompact(listing.rentPerM2),
+                                                }))}
                                             getRowKey={(row, index) => `${String(row.address)}-${index}`}
                                             emptyMessage="No rental rows stored in this export."
                                         />

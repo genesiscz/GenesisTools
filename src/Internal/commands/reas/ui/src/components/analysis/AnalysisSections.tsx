@@ -1223,8 +1223,7 @@ export function InvestmentTab({ data }: AnalysisSectionProps) {
                             data.analysis.yield.paybackYears != null &&
                             data.analysis.yield.atMarketPrice.paybackYears != null
                                 ? getSentimentTone(
-                                      data.analysis.yield.atMarketPrice.paybackYears -
-                                          data.analysis.yield.paybackYears
+                                      data.analysis.yield.atMarketPrice.paybackYears - data.analysis.yield.paybackYears
                                   )
                                 : undefined
                         }
