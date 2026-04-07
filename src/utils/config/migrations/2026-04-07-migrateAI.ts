@@ -1,13 +1,7 @@
 import logger from "@app/logger";
-import { Storage } from "@app/utils/storage/storage";
+import type { AIAccountEntry, AIConfigData, AppConfig, ProviderConfig, TaskConfig } from "@app/utils/config/ai.types";
 import type { ConfigMigration } from "@app/utils/config/migration";
-import type {
-    AIAccountEntry,
-    AIConfigData,
-    AppConfig,
-    ProviderConfig,
-    TaskConfig,
-} from "@app/utils/config/ai.types";
+import { Storage } from "@app/utils/storage/storage";
 
 // ── Old config shapes (read-only, for deserialization) ──
 
