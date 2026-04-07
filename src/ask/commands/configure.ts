@@ -249,22 +249,22 @@ async function addFromClaudeAccount(): Promise<void> {
     }
 
     const selected = accounts.find((a) => a.name === choice);
-    const { loadConfig } = await import("@app/claude/lib/config");
-    const claudeConfig = await loadConfig();
-    const claudeAccount = claudeConfig.accounts[choice as string];
 
-    if (!claudeAccount) {
-        p.log.error(`Account "${choice}" not found in claude config.`);
+    if (!selected) {
+        p.log.error(`Account "${choice}" not found.`);
         return;
     }
 
-    // Don't store OAuth tokens — they're managed by claude config's refresh pipeline.
-    // AIConfig only stores metadata for subscription accounts.
+    // Tokens are managed by AIConfig's refresh pipeline.
     const entry: AIAccountEntry = {
         name: choice as string,
         provider: "anthropic-sub",
-        tokens: {},
-        label: selected?.label ?? claudeAccount.label,
+        tokens: {
+            accessToken: selected.accessToken || undefined,
+            refreshToken: selected.refreshToken,
+            expiresAt: selected.expiresAt,
+        },
+        label: selected.label,
         apps: ["ask", "claude"],
     };
 
@@ -382,17 +382,28 @@ async function addViaOAuthFlow(): Promise<void> {
     const label = determineAccountLabel(profile ?? undefined);
     const accountName = tokens.account?.email?.split("@")[0]?.toLowerCase() ?? "subscription";
 
-    // Metadata only — tokens are stored in claude config and resolved via resolveAccountToken.
     const entry: AIAccountEntry = {
         name: accountName,
         provider: "anthropic-sub",
-        tokens: {},
+        tokens: {
+            accessToken: tokens.accessToken,
+            refreshToken: tokens.refreshToken,
+            expiresAt: tokens.expiresAt,
+        },
         label,
         apps: ["ask", "claude"],
     };
 
     const aiConfig = await AIConfig.load();
     await aiConfig.addAccount(entry);
+
+    if (!aiConfig.getDefaultAccount("claude")) {
+        await aiConfig.setDefaultAccount("claude", accountName);
+    }
+
+    if (!aiConfig.getDefaultAccount("ask")) {
+        await aiConfig.setDefaultAccount("ask", accountName);
+    }
 
     // Also update ask config for backward compat
     const askConfig = await loadAskConfig();
@@ -409,31 +420,6 @@ async function addViaOAuthFlow(): Promise<void> {
 
     await saveAskConfig(askConfig);
     p.log.success(`Account "${entry.name}" added via OAuth.`);
-
-    // Offer to copy to tools claude
-    const copyToClaude = await p.confirm({
-        message: "Copy this account to `tools claude` for usage monitoring?",
-        initialValue: true,
-    });
-
-    if (!p.isCancel(copyToClaude) && copyToClaude) {
-        const { loadConfig: loadClaudeConfig, saveConfig: saveClaudeConfig } = await import("@app/claude/lib/config");
-        const claudeConfig = await loadClaudeConfig();
-
-        claudeConfig.accounts[accountName] = {
-            accessToken: tokens.accessToken,
-            refreshToken: tokens.refreshToken,
-            expiresAt: tokens.expiresAt,
-            label,
-        };
-
-        if (!claudeConfig.defaultAccount) {
-            claudeConfig.defaultAccount = accountName;
-        }
-
-        await saveClaudeConfig(claudeConfig);
-        p.log.success(`Account copied to tools claude as "${accountName}".`);
-    }
 }
 
 async function addOAuthKey(): Promise<void> {

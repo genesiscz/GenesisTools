@@ -1,6 +1,7 @@
 import type { OAuthProfileResponse } from "@app/utils/claude/auth";
 import { Storage } from "@app/utils/storage/storage";
 
+/** @deprecated Use AIAccountEntry from @app/utils/config/ai.types instead */
 export interface AccountConfig {
     accessToken: string;
     refreshToken?: string;
@@ -63,8 +64,6 @@ export interface WarmupConfig {
 }
 
 export interface ClaudeConfig {
-    accounts: Record<string, AccountConfig>;
-    defaultAccount?: string;
     notifications: NotificationConfig;
     warmup?: WarmupConfig;
 }
@@ -93,7 +92,6 @@ const DEFAULT_NOTIFICATIONS: NotificationConfig = {
 };
 
 const DEFAULT_CONFIG: ClaudeConfig = {
-    accounts: {},
     notifications: DEFAULT_NOTIFICATIONS,
 };
 
@@ -110,8 +108,6 @@ export async function loadConfig(): Promise<ClaudeConfig> {
         return { ...DEFAULT_CONFIG };
     }
     return {
-        accounts: saved.accounts ?? {},
-        defaultAccount: saved.defaultAccount,
         notifications: {
             ...DEFAULT_NOTIFICATIONS,
             ...saved.notifications,
@@ -144,8 +140,6 @@ export function updateConfig(updater: (config: ClaudeConfig) => void): Promise<C
     return storage.atomicConfigUpdate<ClaudeConfig>((raw) => {
         // Apply defaults (same logic as loadConfig) before passing to updater
         const config: ClaudeConfig = {
-            accounts: raw.accounts ?? {},
-            defaultAccount: raw.defaultAccount,
             notifications: {
                 ...DEFAULT_NOTIFICATIONS,
                 ...raw.notifications,
