@@ -705,17 +705,30 @@ class ASKTool {
         };
     }
 
+    /**
+     * Find the account being used for a given provider.
+     * Looks up accounts from AIConfig matching the provider name (both "anthropic" and "anthropic-sub").
+     * Works for any provider type.
+     */
     private async getAccountInfoForFooter(providerName: string): Promise<{ label?: string; name: string } | undefined> {
         try {
             const { AIConfig } = await import("@app/utils/ai/AIConfig");
             const config = await AIConfig.load();
-            const account = config.getDefaultAccount("ask");
 
-            if (!account || account.provider.replace("-sub", "") !== providerName) {
+            // Check both "provider" and "provider-sub" variants
+            const accounts = config.listAccounts().filter(
+                (a) => a.provider === providerName || a.provider === `${providerName}-sub`,
+            );
+
+            if (accounts.length === 0) {
                 return undefined;
             }
 
-            return { label: account.label, name: account.name };
+            // Prefer the default for "ask" context, fall back to first match
+            const defaultAcc = config.getDefaultAccount("ask");
+            const match = (defaultAcc && accounts.find((a) => a.name === defaultAcc.name)) || accounts[0];
+
+            return { label: match.label, name: match.name };
         } catch {
             return undefined;
         }
