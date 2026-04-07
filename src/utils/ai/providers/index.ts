@@ -51,7 +51,7 @@ export function getProvider(type: AIProviderType): AIProvider {
 }
 
 export async function getProviderForTask(task: AITask, config: AIConfig): Promise<AIProvider> {
-    const preferred = config.getProvider(task);
+    const preferred = config.getTaskProvider(task);
     const provider = getProvider(preferred);
 
     if (provider.supports(task) && (await provider.isAvailable())) {

@@ -37,18 +37,19 @@ export class ProviderManager {
             return Array.from(this.detectedProviders.values());
         }
 
-        // Load ask config for env token control and subscription settings
+        // Load ask config for subscription settings
         const { loadAskConfig } = await import("@ask/config");
         const askConfig = await loadAskConfig();
+
+        // Load AIConfig for provider enabled/disabled state
+        const { AIConfig } = await import("@app/utils/ai/AIConfig");
+        const aiConfig = await AIConfig.load();
 
         const configs = getProviderConfigs();
         const detected: DetectedProvider[] = [];
 
         for (const config of configs) {
-            if (
-                askConfig.envTokens?.enabled === false ||
-                askConfig.envTokens?.disabledProviders?.includes(config.name)
-            ) {
+            if (!aiConfig.isProviderEnabled(config.name)) {
                 continue;
             }
 
@@ -102,7 +103,7 @@ export class ProviderManager {
     }
 
     private async detectAnthropicSubscription(askConfig: AskConfig, detected: DetectedProvider[]): Promise<void> {
-        // Try AIConfigStorage first (new unified storage)
+        // Try AIConfig first (unified storage)
         const resolved = await this.resolveAnthropicFromAIConfig();
 
         if (resolved) {
@@ -116,7 +117,7 @@ export class ProviderManager {
                 askUI().logDetectedSubscription({ provider: "anthropic", hint });
                 return;
             } catch (error) {
-                logger.warn(`Failed to initialize anthropic from AIConfigStorage: ${error}`);
+                logger.warn(`Failed to initialize anthropic from AIConfig: ${error}`);
             }
         }
 
@@ -157,17 +158,17 @@ export class ProviderManager {
      */
     private async resolveAnthropicFromAIConfig(): Promise<{ token: string; label?: string } | null> {
         try {
-            const { aiConfigStorage } = await import("@app/utils/ai/account-storage");
-            const accounts = await aiConfigStorage.getAccountsByProvider("anthropic-sub");
+            const { AIConfig } = await import("@app/utils/ai/AIConfig");
+            const config = await AIConfig.load();
+            const accounts = config.getAccountsByProvider("anthropic-sub");
 
             if (accounts.length === 0) {
                 return null;
             }
 
             // Prefer the default account if it's an anthropic-sub
-            const config = await aiConfigStorage.load();
-            const defaultName = config.defaultAccount;
-            const account = (defaultName && accounts.find((a) => a.name === defaultName)) || accounts[0];
+            const defaultAccount = config.getDefaultAccount("ask");
+            const account = (defaultAccount && accounts.find((a) => a.name === defaultAccount.name)) || accounts[0];
 
             // Always resolve through resolveAccountToken for subscription accounts —
             // it handles token refresh and reads the authoritative claude config.

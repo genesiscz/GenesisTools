@@ -87,16 +87,17 @@ class ASKTool {
                 return;
             }
 
-            // Apply config defaults
-            const { loadAskConfig } = await import("@ask/config");
-            const askConfig = await loadAskConfig();
+            // Apply config defaults from unified AIConfig
+            const { AIConfig } = await import("@app/utils/ai/AIConfig");
+            const aiConfig = await AIConfig.load();
+            const askDefaults = aiConfig.getAppDefaults("ask");
 
-            if (!argv.provider && askConfig.defaultProvider) {
-                argv.provider = askConfig.defaultProvider;
+            if (!argv.provider && askDefaults?.provider) {
+                argv.provider = askDefaults.provider;
             }
 
-            if (!argv.model && askConfig.defaultModel) {
-                argv.model = askConfig.defaultModel;
+            if (!argv.model && askDefaults?.model) {
+                argv.model = askDefaults.model;
             }
 
             // Fuzzy model matching: resolve partial model names
@@ -678,7 +679,16 @@ class ASKTool {
     }
 
     /** Returns tools in AIChatTool format (for AIChat constructor). */
-    private getAIChatTools(): Record<string, { description: string; parameters: unknown; execute: (params: Record<string, unknown>) => Promise<unknown> }> | undefined {
+    private getAIChatTools():
+        | Record<
+              string,
+              {
+                  description: string;
+                  parameters: unknown;
+                  execute: (params: Record<string, unknown>) => Promise<unknown>;
+              }
+          >
+        | undefined {
         const searchToolDef = webSearchTool.createSearchTool();
 
         if (!searchToolDef) {

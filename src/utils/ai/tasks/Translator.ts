@@ -14,7 +14,7 @@ export class Translator {
 
         if (options?.provider) {
             const providerType = options.provider as "cloud" | "local-hf" | "darwinkit";
-            config.set("translate", { provider: providerType, model: options.model });
+            await config.setTask("translate", { provider: providerType, model: options.model });
         }
 
         const provider = await getProviderForTask("translate", config);

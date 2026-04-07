@@ -14,7 +14,7 @@ export class Summarizer {
 
         if (options?.provider) {
             const providerType = options.provider as "cloud" | "local-hf" | "darwinkit";
-            config.set("summarize", { provider: providerType, model: options.model });
+            await config.setTask("summarize", { provider: providerType, model: options.model });
         }
 
         const provider = await getProviderForTask("summarize", config);

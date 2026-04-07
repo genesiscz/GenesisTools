@@ -21,7 +21,7 @@ export class Transcriber {
 
         if (options?.provider) {
             const providerType = options.provider as "cloud" | "local-hf" | "darwinkit";
-            config.set("transcribe", { provider: providerType, model: options.model });
+            await config.setTask("transcribe", { provider: providerType, model: options.model });
         }
 
         const provider = await getProviderForTask("transcribe", config);

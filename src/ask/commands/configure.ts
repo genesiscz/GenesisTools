@@ -1,5 +1,5 @@
-import { aiConfigStorage } from "@app/utils/ai/account-storage";
-import type { AIAccountEntry, AIProvider } from "@app/utils/ai/account-types";
+import { AIConfig } from "@app/utils/ai/AIConfig";
+import type { AIAccountEntry, AIProvider } from "@app/utils/config/ai.types";
 import { loadAskConfig, saveAskConfig } from "@ask/config";
 import { modelSelector } from "@ask/providers/ModelSelector";
 import { providerManager } from "@ask/providers/ProviderManager";
@@ -11,7 +11,8 @@ export async function runConfigureWizard(): Promise<void> {
     p.intro(pc.bgCyan(pc.black(" ask config ")));
 
     const config = await loadAskConfig();
-    const accounts = await aiConfigStorage.listAccounts();
+    const aiConfig = await AIConfig.load();
+    const accounts = aiConfig.listAccounts();
 
     while (true) {
         const action = await p.select({
@@ -25,9 +26,12 @@ export async function runConfigureWizard(): Promise<void> {
                 {
                     value: "default-model",
                     label: "Default provider & model",
-                    hint: config.defaultProvider
-                        ? `${config.defaultProvider}/${config.defaultModel ?? "auto"}`
-                        : "not set",
+                    hint: (() => {
+                        const defaults = aiConfig.getAppDefaults("ask");
+                        return defaults?.provider
+                            ? `${defaults.provider}/${defaults.model ?? "auto"}`
+                            : "not set";
+                    })(),
                 },
                 {
                     value: "provider-settings",
@@ -70,8 +74,10 @@ export async function runConfigureWizard(): Promise<void> {
 // ── Account Management ──
 
 async function manageAccounts(): Promise<void> {
+    const aiConfig = await AIConfig.load();
+
     while (true) {
-        const accounts = await aiConfigStorage.listAccounts();
+        const accounts = aiConfig.listAccounts();
 
         const options: Array<{ value: string; label: string; hint?: string }> = accounts.map((a) => ({
             value: `view:${a.name}`,
@@ -103,7 +109,8 @@ async function manageAccounts(): Promise<void> {
 }
 
 async function viewAccount(name: string): Promise<void> {
-    const account = await aiConfigStorage.getAccount(name);
+    const aiConfig = await AIConfig.load();
+    const account = aiConfig.getAccount(name);
 
     if (!account) {
         p.log.error(`Account "${name}" not found.`);
@@ -144,7 +151,7 @@ async function viewAccount(name: string): Promise<void> {
         });
 
         if (!p.isCancel(confirm) && confirm) {
-            await aiConfigStorage.removeAccount(name);
+            await aiConfig.removeAccount(name);
             p.log.success(`Account "${name}" removed.`);
         }
     }
@@ -263,7 +270,8 @@ async function addFromClaudeAccount(): Promise<void> {
         apps: ["ask", "claude"],
     };
 
-    await aiConfigStorage.addAccount(entry);
+    const aiConfig = await AIConfig.load();
+    await aiConfig.addAccount(entry);
 
     // Also set as ask config's claude account for backward compat
     const askConfig = await loadAskConfig();
@@ -385,7 +393,8 @@ async function addViaOAuthFlow(): Promise<void> {
         apps: ["ask", "claude"],
     };
 
-    await aiConfigStorage.addAccount(entry);
+    const aiConfig = await AIConfig.load();
+    await aiConfig.addAccount(entry);
 
     // Also update ask config for backward compat
     const askConfig = await loadAskConfig();
@@ -467,7 +476,8 @@ async function addOAuthKey(): Promise<void> {
         apps: ["ask"],
     };
 
-    await aiConfigStorage.addAccount(entry);
+    const aiConfig = await AIConfig.load();
+    await aiConfig.addAccount(entry);
     p.log.success(`Account "${name}" added with OAuth token.`);
 }
 
@@ -509,7 +519,8 @@ async function addAnthropicApiKey(): Promise<void> {
         apps: ["ask"],
     };
 
-    await aiConfigStorage.addAccount(entry);
+    const aiConfig = await AIConfig.load();
+    await aiConfig.addAccount(entry);
     p.log.success(`Account "${name}" added with API key.`);
 }
 
@@ -553,18 +564,23 @@ async function addOpenAIAccount(): Promise<void> {
         apps: ["ask"],
     };
 
-    await aiConfigStorage.addAccount(entry);
+    const aiConfig = await AIConfig.load();
+    await aiConfig.addAccount(entry);
     p.log.success(`Account "${name}" added with OpenAI API key.`);
 }
 
 // ── Provider Settings ──
 
-async function configureProviderSettings(config: AskConfig): Promise<void> {
-    const envEnabled = config.envTokens?.enabled !== false;
+async function configureProviderSettings(_config: AskConfig): Promise<void> {
+    const aiConfig = await AIConfig.load();
+    const allProviders = ["openai", "groq", "openrouter", "anthropic", "google", "xai", "jinaai"];
+
+    // Determine current state from AIConfig
+    const allDisabled = allProviders.every((name) => !aiConfig.isProviderEnabled(name));
 
     const masterToggle = await p.confirm({
         message: "Enable auto-detection of provider API keys from environment?",
-        initialValue: envEnabled,
+        initialValue: !allDisabled,
     });
 
     if (p.isCancel(masterToggle)) {
@@ -572,16 +588,13 @@ async function configureProviderSettings(config: AskConfig): Promise<void> {
     }
 
     if (masterToggle) {
-        const allProviders = ["openai", "groq", "openrouter", "anthropic", "google", "xai", "jinaai"];
-        const currentlyDisabled = new Set(config.envTokens?.disabledProviders ?? []);
-
         const enabled = await p.multiselect({
             message: "Which providers should use env tokens?",
             options: allProviders.map((name) => ({
                 value: name,
                 label: name,
             })),
-            initialValues: allProviders.filter((name) => !currentlyDisabled.has(name)),
+            initialValues: allProviders.filter((name) => aiConfig.isProviderEnabled(name)),
         });
 
         if (p.isCancel(enabled)) {
@@ -589,26 +602,26 @@ async function configureProviderSettings(config: AskConfig): Promise<void> {
         }
 
         const enabledSet = new Set(enabled as string[]);
-        config.envTokens = {
-            enabled: true,
-            disabledProviders: allProviders.filter((name) => !enabledSet.has(name)),
-        };
+
+        for (const name of allProviders) {
+            await aiConfig.setProviderEnabled(name, enabledSet.has(name));
+        }
     } else {
-        config.envTokens = {
-            enabled: false,
-            disabledProviders: config.envTokens?.disabledProviders,
-        };
+        for (const name of allProviders) {
+            await aiConfig.setProviderEnabled(name, false);
+        }
     }
 
-    await saveAskConfig(config);
     p.log.success("Provider settings saved.");
 }
 
 // ── Default Model ──
 
-async function configureDefaultModel(config: AskConfig): Promise<void> {
-    const currentInfo = config.defaultProvider
-        ? `${config.defaultProvider}/${config.defaultModel ?? "auto"}`
+async function configureDefaultModel(_config: AskConfig): Promise<void> {
+    const aiConfig = await AIConfig.load();
+    const askDefaults = aiConfig.getAppDefaults("ask");
+    const currentInfo = askDefaults?.provider
+        ? `${askDefaults.provider}/${askDefaults.model ?? "auto"}`
         : "not set";
 
     const action = await p.select({
@@ -626,23 +639,19 @@ async function configureDefaultModel(config: AskConfig): Promise<void> {
     }
 
     if (action === "unset-both") {
-        config.defaultProvider = undefined;
-        config.defaultModel = undefined;
-        await saveAskConfig(config);
+        await aiConfig.setAppDefaults("ask", { provider: undefined, model: undefined });
         p.log.success("Default provider and model unset.");
         return;
     }
 
     if (action === "unset-model") {
-        config.defaultModel = undefined;
-        await saveAskConfig(config);
+        await aiConfig.setAppDefaults("ask", { model: undefined });
         p.log.success("Default model unset.");
         return;
     }
 
     if (action === "unset-provider") {
-        config.defaultProvider = undefined;
-        await saveAskConfig(config);
+        await aiConfig.setAppDefaults("ask", { provider: undefined });
         p.log.success("Default provider unset.");
         return;
     }
@@ -663,25 +672,28 @@ async function configureDefaultModel(config: AskConfig): Promise<void> {
         return;
     }
 
-    config.defaultProvider = modelChoice.provider.name;
-    config.defaultModel = modelChoice.model.id;
+    await aiConfig.setAppDefaults("ask", {
+        provider: modelChoice.provider.name,
+        model: modelChoice.model.id,
+    });
 
-    await saveAskConfig(config);
     p.log.success(`Default set to ${pc.cyan(modelChoice.provider.name)}/${pc.cyan(modelChoice.model.id)}`);
 }
 
 // ── Show Config ──
 
-async function showCurrentConfig(config: AskConfig): Promise<void> {
-    const accounts = await aiConfigStorage.listAccounts();
-    const defaultAccount = await aiConfigStorage.getDefaultAccount();
+async function showCurrentConfig(_config: AskConfig): Promise<void> {
+    const aiConfig = await AIConfig.load();
+    const accounts = aiConfig.listAccounts();
+    const defaultAccount = aiConfig.getDefaultAccount("ask");
+    const askDefaults = aiConfig.getAppDefaults("ask");
     const lines: string[] = [];
 
     lines.push(pc.bold("Defaults:"));
-    lines.push(`  Provider: ${config.defaultProvider ?? pc.dim("not set")}`);
-    lines.push(`  Model:    ${config.defaultModel ?? pc.dim("not set")}`);
-    lines.push(`  Temp:     ${config.temperature ?? pc.dim("default")}`);
-    lines.push(`  Tokens:   ${config.maxTokens ?? pc.dim("default")}`);
+    lines.push(`  Provider: ${askDefaults?.provider ?? pc.dim("not set")}`);
+    lines.push(`  Model:    ${askDefaults?.model ?? pc.dim("not set")}`);
+    lines.push(`  Temp:     ${askDefaults?.temperature ?? pc.dim("default")}`);
+    lines.push(`  Tokens:   ${askDefaults?.maxTokens ?? pc.dim("default")}`);
     lines.push("");
 
     lines.push(pc.bold(`Accounts (${accounts.length}):`));
@@ -701,12 +713,14 @@ async function showCurrentConfig(config: AskConfig): Promise<void> {
 
     lines.push("");
     lines.push(pc.bold("Env Tokens:"));
-    lines.push(`  Enabled:  ${config.envTokens?.enabled !== false ? pc.green("yes") : pc.red("no")}`);
 
-    const disabled = config.envTokens?.disabledProviders ?? [];
+    const knownProviders = ["openai", "groq", "openrouter", "anthropic", "google", "xai", "jinaai"];
+    const disabledProviders = knownProviders.filter((name) => !aiConfig.isProviderEnabled(name));
+    const allEnabled = disabledProviders.length === 0;
+    lines.push(`  Enabled:  ${allEnabled ? pc.green("yes") : pc.red("partial")}`);
 
-    if (disabled.length > 0) {
-        lines.push(`  Disabled: ${disabled.join(", ")}`);
+    if (disabledProviders.length > 0) {
+        lines.push(`  Disabled: ${disabledProviders.join(", ")}`);
     }
 
     p.note(lines.join("\n"), "Current Configuration");
