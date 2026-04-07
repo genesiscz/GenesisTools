@@ -312,6 +312,54 @@ export const PRAHA_DISTRICTS: Record<string, PrahaDistrictInfo> = {
 };
 
 // ---------------------------------------------------------------------------
+// Neighborhood → Praha ward mapping
+// ---------------------------------------------------------------------------
+// Bezrealitky, Sreality SSR, and other providers use neighborhood names
+// (e.g. "Praha - Žižkov") instead of ward numbers ("Praha 3").
+// This mapping lets district matching recognize them.
+// Source: https://cs.wikipedia.org/wiki/Městské_části_v_Praze
+
+const PRAHA_NEIGHBORHOOD_TO_WARDS: Record<string, number[]> = {
+    // Praha 1
+    "Staré Město": [1], "Malá Strana": [1], "Hradčany": [1], "Josefov": [1],
+    // Praha 2
+    "Nové Město": [1, 2], "Vyšehrad": [2],
+    // Praha 3
+    "Žižkov": [3], "Vinohrady": [2, 3, 10],
+    // Praha 4
+    "Nusle": [4], "Podolí": [4], "Braník": [4], "Krč": [4], "Michle": [4],
+    "Lhotka": [4], "Hodkovičky": [4], "Kunratice": [4], "Modřany": [4], "Chodov": [4],
+    // Praha 5
+    "Smíchov": [5], "Košíře": [5], "Motol": [5], "Jinonice": [5], "Radlice": [5],
+    "Hlubočepy": [5], "Barrandov": [5],
+    // Praha 6
+    "Dejvice": [6], "Bubeneč": [6], "Vokovice": [6], "Veleslavín": [6],
+    "Břevnov": [6], "Střešovice": [6], "Liboc": [6], "Ruzyně": [6],
+    // Praha 7
+    "Holešovice": [7], "Letná": [7], "Bubny": [7], "Troja": [7],
+    // Praha 8
+    "Karlín": [8], "Libeň": [8], "Kobylisy": [8], "Bohnice": [8],
+    "Čimice": [8], "Ďáblice": [8], "Dolní Chabry": [8],
+    // Praha 9
+    "Vysočany": [9], "Prosek": [9], "Střížkov": [8, 9], "Hloubětín": [9],
+    "Letňany": [9], "Kbely": [9], "Černý Most": [9],
+    // Praha 10
+    "Vršovice": [10], "Záběhlice": [10], "Malešice": [10], "Strašnice": [3, 10],
+    "Hostivař": [10], "Dolní Měcholupy": [10], "Štěrboholy": [10],
+};
+
+/** Check if a Praha neighborhood belongs to a given ward number. */
+export function neighborhoodMatchesWard(neighborhood: string, wardNumber: number): boolean {
+    const wards = PRAHA_NEIGHBORHOOD_TO_WARDS[neighborhood];
+
+    if (!wards) {
+        return false;
+    }
+
+    return wards.includes(wardNumber);
+}
+
+// ---------------------------------------------------------------------------
 // Lookup helpers
 // ---------------------------------------------------------------------------
 

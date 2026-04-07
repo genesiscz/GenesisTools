@@ -1,4 +1,8 @@
-import { getAllDistrictNames, getPrahaDistrictNames } from "@app/Internal/commands/reas/data/districts";
+import {
+    getAllDistrictNames,
+    getPrahaDistrictNames,
+    neighborhoodMatchesWard,
+} from "@app/Internal/commands/reas/data/districts";
 
 const PRAHA_WARD_REGEX = /^Praha\s+\d+$/i;
 
@@ -67,7 +71,21 @@ export function matchesRequestedDistrict({
             return derivedDistrict === "Praha" || isPrahaWardName(derivedDistrict);
         }
 
-        return derivedDistrict === requestedDistrict;
+        if (derivedDistrict === requestedDistrict) {
+            return true;
+        }
+
+        // Bezrealitky uses neighborhood names ("Praha - Žižkov") instead of ward
+        // numbers ("Praha 3"). When derived district is "Praha" but the request
+        // is for a specific ward, check if any neighborhood in the locality maps
+        // to that ward.
+        if (derivedDistrict === "Praha" && isPrahaWardName(requestedDistrict)) {
+            const wardNumber = Number(requestedDistrict.replace(/\D/g, ""));
+
+            return localityContainsMatchingNeighborhood(locality, wardNumber);
+        }
+
+        return false;
     }
 
     const normalizedLocality = normalizeDistrictMatchText(locality);
@@ -94,4 +112,21 @@ export function getListingPersistenceDistrict({
     }
 
     return derivedDistrict;
+}
+
+function localityContainsMatchingNeighborhood(locality: string | null | undefined, wardNumber: number): boolean {
+    if (!locality) {
+        return false;
+    }
+
+    // Extract neighborhood from patterns like "Praha - Žižkov", "Praha, Žižkov"
+    const separatorMatch = /Praha\s*[-–,]\s*(.+)/i.exec(locality);
+
+    if (separatorMatch) {
+        const neighborhood = separatorMatch[1].trim();
+
+        return neighborhoodMatchesWard(neighborhood, wardNumber);
+    }
+
+    return false;
 }
