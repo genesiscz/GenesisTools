@@ -1,11 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import {
-    formatModelTable,
-    getMaxEmbedChars,
-    getModelsForType,
-    getTaskPrefix,
-    MODEL_REGISTRY,
-} from "./model-registry";
+import { formatModelTable, getMaxEmbedChars, getModelsForType, getTaskPrefix, MODEL_REGISTRY } from "./model-registry";
 
 describe("MODEL_REGISTRY", () => {
     it("contains expected number of models", () => {

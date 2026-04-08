@@ -1,8 +1,7 @@
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { Embedder } from "@app/utils/ai/tasks/Embedder";
-import { formatDuration } from "@app/utils/format";
-import { formatBytes } from "@app/utils/format";
+import { formatBytes, formatDuration } from "@app/utils/format";
 import { SafeJSON } from "@app/utils/json";
 import { Storage } from "@app/utils/storage/storage";
 import { formatTable } from "@app/utils/table";
@@ -128,8 +127,8 @@ function generateMailSample(index: number): string {
             ``,
             `Hi team,`,
             ``,
-            `Here's the weekly status update for our project. We've completed ${index % 8 + 2} tasks`,
-            `this week and have ${index % 5 + 1} remaining items in the backlog.`,
+            `Here's the weekly status update for our project. We've completed ${(index % 8) + 2} tasks`,
+            `this week and have ${(index % 5) + 1} remaining items in the backlog.`,
             ``,
             `Key highlights:`,
             `- Feature implementation is on track`,
@@ -152,15 +151,15 @@ function generateMailSample(index: number): string {
         `and strategic initiatives that will shape our direction.`,
         ``,
         `Budget Overview:`,
-        `- Engineering: $${(index % 500 + 200)}K allocated for infrastructure`,
-        `- Product: $${(index % 300 + 100)}K for user research and design`,
-        `- Marketing: $${(index % 200 + 50)}K for campaign launches`,
+        `- Engineering: $${(index % 500) + 200}K allocated for infrastructure`,
+        `- Product: $${(index % 300) + 100}K for user research and design`,
+        `- Marketing: $${(index % 200) + 50}K for campaign launches`,
         ``,
         `Strategic Priorities:`,
         `1. Complete the platform migration by end of quarter`,
         `2. Launch the new analytics dashboard for enterprise clients`,
         `3. Reduce infrastructure costs by ${10 + (index % 20)}%`,
-        `4. Hire ${index % 5 + 2} additional engineers for the growth team`,
+        `4. Hire ${(index % 5) + 2} additional engineers for the growth team`,
         ``,
         `Please review the attached spreadsheet and provide your feedback`,
         `by end of week. We'll discuss in the all-hands on Friday.`,
@@ -429,9 +428,7 @@ async function runCompareProviders(opts: {
                 gpu: prov.gpu,
             });
             results.push(result);
-            spinner.stop(
-                `${prov.label}: ${result.embPerSec} emb/s (${result.totalEmbedded.toLocaleString()} total)`
-            );
+            spinner.stop(`${prov.label}: ${result.embPerSec} emb/s (${result.totalEmbedded.toLocaleString()} total)`);
         } catch (err) {
             spinner.stop(`${prov.label}: FAILED - ${err instanceof Error ? err.message : String(err)}`);
         }
@@ -449,7 +446,8 @@ async function runCompareProviders(opts: {
     // Build table
     const rows = results.map((r, i) => {
         const bullet = i === 0 ? "\u25CF" : "\u25CB";
-        const provLabel = providers.find((pp) => pp.provider === r.provider && pp.model === r.model)?.label ?? r.provider;
+        const provLabel =
+            providers.find((pp) => pp.provider === r.provider && pp.model === r.model)?.label ?? r.provider;
         return [
             `${bullet} ${provLabel}`,
             r.model,
@@ -469,9 +467,7 @@ async function runCompareProviders(opts: {
     console.log();
 
     const best = results[0];
-    p.log.success(
-        `Recommendation: ${best.provider}/${best.model} at ${best.embPerSec.toLocaleString()} emb/s`
-    );
+    p.log.success(`Recommendation: ${best.provider}/${best.model} at ${best.embPerSec.toLocaleString()} emb/s`);
 
     // Save results
     const compareResult: CompareResult = {
@@ -595,14 +591,12 @@ async function runDirBenchmark(
             },
             throughput: {
                 chunksPerSec: chunkMs > 0 ? Math.round((stats.chunksAdded / chunkMs) * 1000) : 0,
-                embeddingsPerSec:
-                    embedMs > 0 ? Math.round((stats.embeddingsGenerated / embedMs) * 1000) : 0,
+                embeddingsPerSec: embedMs > 0 ? Math.round((stats.embeddingsGenerated / embedMs) * 1000) : 0,
             },
             search: {
                 queries: BENCHMARK_QUERIES,
                 latencies: latencies.map((l) => Math.round(l * 100) / 100),
-                avgLatencyMs:
-                    Math.round((latencies.reduce((a, b) => a + b, 0) / latencies.length) * 100) / 100,
+                avgLatencyMs: Math.round((latencies.reduce((a, b) => a + b, 0) / latencies.length) * 100) / 100,
             },
             dbSizeBytes: consistency.dbSizeBytes,
             provider: config.embedding?.provider ?? "default",
