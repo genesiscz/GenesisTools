@@ -1,8 +1,8 @@
+import { getDaemonStatus } from "@app/daemon/lib/launchd";
+import { safeSigterm, waitForDaemonRestart } from "@app/daemon/lib/wait-for-restart";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";
-import { getDaemonStatus } from "@app/daemon/lib/launchd";
-import { safeSigterm, waitForDaemonRestart } from "@app/daemon/lib/wait-for-restart";
 
 export function registerRestartCommand(program: Command): void {
     program
@@ -12,9 +12,7 @@ export function registerRestartCommand(program: Command): void {
             const status = await getDaemonStatus();
 
             if (!status.installed) {
-                p.log.error(
-                    `Daemon is not installed via launchd. Run ${pc.cyan("tools daemon install")} first.`,
-                );
+                p.log.error(`Daemon is not installed via launchd. Run ${pc.cyan("tools daemon install")} first.`);
                 return;
             }
 
@@ -48,7 +46,7 @@ export function registerRestartCommand(program: Command): void {
             } else {
                 s.stop("Restart timed out");
                 p.log.warn(
-                    `Daemon did not restart within 10s. Check: ${pc.cyan("tools daemon status")} or ${pc.cyan("tools daemon logs")}`,
+                    `Daemon did not restart within 10s. Check: ${pc.cyan("tools daemon status")} or ${pc.cyan("tools daemon logs")}`
                 );
             }
         });

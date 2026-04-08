@@ -12,8 +12,8 @@ import {
 import { AI } from "@app/utils/ai/index.ts";
 import { formatOutput, type OutputFormat } from "@app/utils/ai/transcription-format.ts";
 import type { AIProviderType } from "@app/utils/ai/types.ts";
-import { isCloudProvider } from "@app/utils/config/ai.types";
 import { copyToClipboard } from "@app/utils/clipboard.ts";
+import { isCloudProvider } from "@app/utils/config/ai.types";
 import { formatDateTime } from "@app/utils/date.ts";
 import { formatDuration } from "@app/utils/format.ts";
 import {
@@ -65,10 +65,7 @@ export function registerVoiceMemosCommand(program: Command): void {
         .option("--all", "Transcribe all memos")
         .option("--force", "Re-transcribe even if tsrp transcript exists")
         .option("--lang <language>", "Language hint (e.g. cs, en, de) — auto-detected if omitted")
-        .option(
-            "--provider <provider>",
-            "AI provider (local-hf, cloud, openai, groq, openrouter, darwinkit)"
-        )
+        .option("--provider <provider>", "AI provider (local-hf, cloud, openai, groq, openrouter, darwinkit)")
         .option("--local", "Shorthand for --provider local-hf")
         .option("--model <model>", "Model name/id to use")
         .option("--format <format>", "Output format (text, json, srt, vtt)")

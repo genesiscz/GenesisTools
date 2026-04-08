@@ -204,3 +204,5 @@ vercel-skills
 .claude/work/
 
 .playwright-mcp/
+
+.agents/skills/hf-cli/

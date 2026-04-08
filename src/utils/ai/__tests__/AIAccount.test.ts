@@ -81,9 +81,9 @@ describe("AIAccount", () => {
     });
 
     describe("provider() error cases", () => {
-        it("throws for unsupported provider type like openai", async () => {
+        it("throws when API key is missing for cloud provider", async () => {
             const account = AIAccount.chooseCodex("test-codex");
-            expect(account.provider()).rejects.toThrow("not yet implemented");
+            expect(account.provider()).rejects.toThrow("No API key found");
         });
     });
 });

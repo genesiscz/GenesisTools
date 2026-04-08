@@ -40,12 +40,7 @@ export type AIProviderType =
 export type AITask = "transcribe" | "translate" | "summarize" | "classify" | "embed" | "sentiment";
 
 /** All provider types that route to a cloud API (including the "cloud" auto-select alias) */
-export const CLOUD_PROVIDER_TYPES: ReadonlySet<AIProviderType> = new Set([
-    "cloud",
-    "openai",
-    "groq",
-    "openrouter",
-]);
+export const CLOUD_PROVIDER_TYPES: ReadonlySet<AIProviderType> = new Set(["cloud", "openai", "groq", "openrouter"]);
 
 export function isCloudProvider(type: AIProviderType): boolean {
     return CLOUD_PROVIDER_TYPES.has(type);

@@ -28,12 +28,7 @@ const ENV_VAR_MAP: Record<Exclude<CloudType, "auto">, string> = {
     openrouter: "OPENROUTER_API_KEY",
 };
 
-const AUTO_API_KEY_VARS = [
-    ...Object.values(ENV_VAR_MAP),
-    "ASSEMBLYAI_API_KEY",
-    "DEEPGRAM_API_KEY",
-    "GLADIA_API_KEY",
-];
+const AUTO_API_KEY_VARS = [...Object.values(ENV_VAR_MAP), "ASSEMBLYAI_API_KEY", "DEEPGRAM_API_KEY", "GLADIA_API_KEY"];
 
 const CLOUD_TASKS: Record<CloudType, ReadonlySet<AITask>> = {
     openai: new Set(["transcribe", "translate", "summarize", "embed"]),

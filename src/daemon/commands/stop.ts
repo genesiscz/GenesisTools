@@ -1,9 +1,9 @@
-import * as p from "@clack/prompts";
-import type { Command } from "commander";
-import pc from "picocolors";
 import { getDaemonPid } from "@app/daemon/daemon";
 import { getDaemonStatus, uninstallLaunchd } from "@app/daemon/lib/launchd";
 import { safeSigterm, waitForDaemonRestart } from "@app/daemon/lib/wait-for-restart";
+import * as p from "@clack/prompts";
+import type { Command } from "commander";
+import pc from "picocolors";
 
 export function registerStopCommand(program: Command): void {
     program

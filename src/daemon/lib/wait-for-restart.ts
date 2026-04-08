@@ -19,7 +19,7 @@ export function safeSigterm(pid: number): void {
  */
 export async function waitForDaemonRestart(
     oldPid: number | null,
-    timeoutMs = RESTART_TIMEOUT_MS,
+    timeoutMs = RESTART_TIMEOUT_MS
 ): Promise<{ pid: number } | null> {
     const deadline = Date.now() + timeoutMs;
 
