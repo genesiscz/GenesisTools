@@ -40,7 +40,7 @@ function handleModels(args: { type?: "code" | "files" | "mail" | "chat" }): stri
 
         lines.push(`  ${m.id} — ${m.name} (${m.params}, ${m.dimensions}-dim, ${m.speed}, ${runtime})`);
         lines.push(`    ${m.description}`);
-        lines.push(`    Best for: ${m.bestFor.join(", ")}`);
+        lines.push(`    Best for: ${(m.bestFor ?? []).join(", ")}`);
         lines.push("");
     }
 
