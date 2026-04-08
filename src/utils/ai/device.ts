@@ -53,13 +53,17 @@ export async function resolveDevice(): Promise<DeviceResult> {
     // Verify the execution provider is actually available at runtime
     try {
         const onnx = await import("onnxruntime-node");
-        const available = onnx.default?.listSupportedBackends?.() as unknown[] | undefined;
+        const backends = onnx.default?.listSupportedBackends?.() as Array<{ name: string }> | undefined;
 
-        if (available && !available.some((b) => String(b) === preferred.device)) {
-            logger.info(
-                `[device] ${preferred.label} not available (have: ${available.join(", ")}), falling back to CPU`,
-            );
-            return { device: "cpu", label: "CPU (fallback)" };
+        if (backends) {
+            const names = backends.map((b) => b.name);
+
+            if (!names.includes(preferred.device)) {
+                logger.info(
+                    `[device] ${preferred.label} not available (have: ${names.join(", ")}), falling back to CPU`,
+                );
+                return { device: "cpu", label: "CPU (fallback)" };
+            }
         }
     } catch {
         // Can't verify — try the preferred device anyway, pipeline() will

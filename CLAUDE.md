@@ -69,13 +69,15 @@ When spawning tools from shell hooks, always background (`&`) — 86ms Bun start
 
 When creating a new tool and writing helper functions, check if the utility is **general-purpose** (usable by other tools). If so, place it in `src/utils/` instead of inside the tool directory:
 
-- `src/utils/format.ts` - Formatting: bytes, duration, tokens, numbers, lists
+- `src/utils/format.ts` - Formatting: `formatDuration()`, `formatBytes()`, `formatTokens()`, `formatNumber()`, `formatList()`, `formatTimestamp()`, `createStopwatch()`
+- `src/utils/Stopwatch.ts` - High-res stopwatch class: `elapsed()`, `lap()`, `stamp()` (wall-clock + elapsed), `now()` (HH:MM:SS.mmm)
 - `src/utils/table.ts` - Text table formatting
 - `src/utils/string.ts` - String utilities (glob matching, ANSI stripping)
 - `src/utils/cli/executor.ts` - CLI helpers: `suggestCommand()`, `isInteractive()`, `buildCommand()`, `Executor`, `enhanceHelp()`
 - `src/utils/storage/storage.ts` - Config & cache management
-- `src/utils/async.ts` - Async helpers (concurrency, etc.)
+- `src/utils/async.ts` - Async helpers (concurrency, retry, etc.)
 - `src/utils/json-schema.ts` - JSON schema inference: `inferSchema()`, `formatSchema(value, "skeleton"|"typescript"|"schema")`
+- `src/utils/ai/device.ts` - ONNX Runtime device detection: `detectDevice()`, `resolveDevice()` (CoreML/CUDA/DML/CPU)
 
 Tool-specific logic stays in the tool directory (e.g., `src/har-analyzer/core/`).
 

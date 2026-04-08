@@ -1,6 +1,7 @@
 import logger from "@app/logger";
 import { toFloat32Audio } from "@app/utils/audio/converter";
 import { formatBytes } from "@app/utils/format";
+import { Stopwatch } from "@app/utils/Stopwatch";
 import { resolveDevice } from "../device";
 import { ensureHuggingFaceTransformers } from "../ensure-hf";
 import { createLanguageDetector, type LanguageDetector } from "../LanguageDetector";
@@ -117,16 +118,8 @@ export class AILocalProvider
         // 29s instead of 30s: transformers.js bug #1358 causes timestamp collapse at exactly 30s
         const chunkLengthS = 29;
 
+        const sw = new Stopwatch();
         logger.debug(`[transcribe] start: ${Math.round(durationSec)}s audio, lang=${language}, model=${model}`);
-        const transcribeStart = Date.now();
-
-        const formatElapsed = () => {
-            const ms = Date.now() - transcribeStart;
-            const s = Math.floor(ms / 1000);
-            const m = Math.floor(s / 60);
-            const remainder = s % 60;
-            return m > 0 ? `${m}m${String(remainder).padStart(2, "0")}s` : `${s}s`;
-        };
 
         onProgress?.({
             phase: "transcribe",
@@ -161,22 +154,24 @@ export class AILocalProvider
                 const pct = Math.min(99, Math.round((lastTimestamp / durationSec) * 100));
                 const truncated = currentChunkText.length > 60 ? `...${currentChunkText.slice(-57)}` : currentChunkText;
 
-                logger.debug(`[transcribe] progress: ${pct}% ts=${lastTimestamp.toFixed(1)}s elapsed=${formatElapsed()}`);
+                logger.debug(
+                    `[transcribe] progress: ${pct}% ts=${lastTimestamp.toFixed(1)}s elapsed=${sw.elapsed()}`
+                );
 
                 onProgress?.({
                     phase: "transcribe",
                     percent: pct,
-                    message: `[transcribe ${formatElapsed()}] [${language}] ${pct}% — ${truncated.trim()}`,
+                    message: `[transcribe ${sw.elapsed()}] [${language}] ${pct}% — ${truncated.trim()}`,
                 });
             },
             on_chunk_start: (time: number) => {
-                logger.debug(`[transcribe] chunk_start: time=${time.toFixed(2)}s elapsed=${formatElapsed()}`);
+                logger.debug(`[transcribe] chunk_start: time=${time.toFixed(2)}s elapsed=${sw.elapsed()}`);
                 lastTimestamp = time;
                 currentChunkText = "";
             },
             on_chunk_end: (time: number) => {
                 logger.debug(
-                    `[transcribe] chunk_end: time=${time.toFixed(2)}s text="${currentChunkText.slice(0, 80)}" elapsed=${formatElapsed()}`,
+                    `[transcribe] chunk_end: time=${time.toFixed(2)}s text="${currentChunkText.slice(0, 80)}" elapsed=${sw.elapsed()}`
                 );
                 lastTimestamp = time;
 
@@ -191,7 +186,7 @@ export class AILocalProvider
         });
 
         logger.debug(
-            `[transcribe] calling pipeline with ${audioData.length} samples, chunk_length=${chunkLengthS}s, stride=5s`,
+            `[transcribe] calling pipeline with ${audioData.length} samples, chunk_length=${chunkLengthS}s, stride=5s`
         );
         const pipeStart = Date.now();
 
@@ -217,12 +212,11 @@ export class AILocalProvider
         };
 
         const pipeDuration = Date.now() - pipeStart;
-        const totalDuration = Date.now() - transcribeStart;
         logger.debug(
-            `[transcribe] pipeline done: ${pipeDuration}ms, total=${totalDuration}ms, chunks=${result.chunks?.length ?? 0}, text=${result.text.length} chars`,
+            `[transcribe] pipeline done: ${pipeDuration}ms, total=${sw.elapsed()}, chunks=${result.chunks?.length ?? 0}, text=${result.text.length} chars`,
         );
 
-        onProgress?.({ phase: "transcribe", percent: 100, message: `[transcribe ${formatElapsed()}] complete` });
+        onProgress?.({ phase: "transcribe", percent: 100, message: `[transcribe ${sw.elapsed()}] complete` });
 
         const segments = result.chunks?.map((c) => ({
             text: c.text,
