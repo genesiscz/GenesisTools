@@ -60,9 +60,39 @@ export function registerIndexCommand(program: Command): void {
                 const fromDate = parseDate(opts.from, "--from");
                 const toDate = parseDate(opts.to, "--to");
 
-                // Normalize boolean flags from optional CLI args (--provider without value → true)
-                const normalizedModel = typeof opts.model === "string" ? opts.model : undefined;
-                const normalizedProvider = typeof opts.provider === "string" ? opts.provider : undefined;
+                // Resolve provider/model early — interactive prompt if --provider/--model without value
+                let resolvedProvider = typeof opts.provider === "string" ? opts.provider : undefined;
+                let resolvedModel = typeof opts.model === "string" ? opts.model : undefined;
+                const wantsProviderPrompt = opts.provider === true;
+                const wantsModelPrompt = opts.model === true;
+
+                if ((wantsProviderPrompt || wantsModelPrompt) && isInteractive()) {
+                    if (!resolvedProvider && wantsProviderPrompt) {
+                        const selection = await selectEmbeddingProvider();
+
+                        if (!selection) {
+                            p.cancel("Cancelled");
+                            return;
+                        }
+
+                        resolvedProvider = selection.provider;
+
+                        if (!wantsModelPrompt) {
+                            resolvedModel = selection.model;
+                        }
+                    }
+
+                    if (wantsModelPrompt && resolvedProvider) {
+                        const selectedModel = await selectEmbeddingModel(resolvedProvider);
+
+                        if (!selectedModel) {
+                            p.cancel("Cancelled");
+                            return;
+                        }
+
+                        resolvedModel = selectedModel;
+                    }
+                }
 
                 const manager = await IndexerManager.load();
 
@@ -71,14 +101,13 @@ export function registerIndexCommand(program: Command): void {
                     const exists = existingNames.includes(MAIL_INDEX_NAME);
 
                     // Check if user wants to switch provider/model on existing index
-                    if (exists && (opts.provider || opts.model) && !opts.rebuildFulltext && !opts.rebuildEmbeddings) {
+                    const requestedModel = resolvedModel ?? (resolvedProvider ? PROVIDER_DEFAULT_MODELS[resolvedProvider] : undefined);
+
+                    if (exists && requestedModel && !opts.rebuildFulltext && !opts.rebuildEmbeddings) {
                         const meta = manager.listIndexes().find((m) => m.name === MAIL_INDEX_NAME);
                         const currentModel = meta?.indexEmbedding?.model ?? "darwinkit";
-                        const requestedModel =
-                            normalizedModel ??
-                            (normalizedProvider ? PROVIDER_DEFAULT_MODELS[normalizedProvider] : undefined);
 
-                        if (requestedModel && requestedModel !== currentModel) {
+                        if (requestedModel !== currentModel) {
                             const chunkCount = meta?.stats.totalChunks ?? 0;
 
                             if (isInteractive()) {
@@ -102,8 +131,8 @@ export function registerIndexCommand(program: Command): void {
                             p.log.info(`Removing old index and rebuilding with ${pc.bold(requestedModel)}...`);
                             await manager.removeIndex(MAIL_INDEX_NAME);
                             await createAndSync(manager, {
-                                model: normalizedModel ?? requestedModel,
-                                provider: normalizedProvider,
+                                model: resolvedModel ?? requestedModel,
+                                provider: resolvedProvider,
                                 limit: opts.limit,
                                 embed: opts.embed,
                             });
@@ -114,7 +143,7 @@ export function registerIndexCommand(program: Command): void {
                     if (exists && opts.rebuildEmbeddings) {
                         await rebuildEmbeddings(
                             manager,
-                            { model: normalizedModel, force: opts.force },
+                            { model: resolvedModel, force: opts.force },
                             { fromDate, toDate }
                         );
                     } else if (exists && !opts.rebuildFulltext) {
