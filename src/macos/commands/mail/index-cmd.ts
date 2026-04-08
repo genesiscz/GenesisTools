@@ -80,11 +80,10 @@ export function registerIndexCommand(program: Command): void {
 
                         if (requestedModel && requestedModel !== currentModel) {
                             const chunkCount = meta?.stats.totalChunks ?? 0;
-                            const embCount = meta?.stats.totalEmbeddings ?? 0;
 
                             if (isInteractive()) {
                                 const confirmed = await p.confirm({
-                                    message: `Switch from ${pc.bold(currentModel)} to ${pc.bold(requestedModel)}? This will drop ${embCount.toLocaleString()} embeddings from ${chunkCount.toLocaleString()} chunks and re-embed.`,
+                                    message: `Switch from ${pc.bold(currentModel)} to ${pc.bold(requestedModel)}? This will rebuild the index and re-embed ${chunkCount.toLocaleString()} chunks.`,
                                 });
 
                                 if (p.isCancel(confirmed) || !confirmed) {
