@@ -132,7 +132,8 @@ export class AILocalProvider
         // Use the timestamp time to calculate real progress against total duration.
         const { WhisperTextStreamer } = await import("@huggingface/transformers");
         let currentChunkText = "";
-        let lastProgressUpdate = Date.now();
+        let lastProgressUpdate = performance.now();
+        let segmentStart = 0;
         let lastTimestamp = 0;
         const PROGRESS_THROTTLE_MS = 300;
 
@@ -142,9 +143,8 @@ export class AILocalProvider
             skip_special_tokens: true,
             callback_function: (text: string) => {
                 currentChunkText += text;
-                logger.debug(`[transcribe] token: "${text}" (accumulated ${currentChunkText.length} chars)`);
 
-                const now = Date.now();
+                const now = performance.now();
 
                 if (now - lastProgressUpdate < PROGRESS_THROTTLE_MS) {
                     return;
@@ -154,10 +154,6 @@ export class AILocalProvider
                 const pct = Math.min(99, Math.round((lastTimestamp / durationSec) * 100));
                 const truncated = currentChunkText.length > 60 ? `...${currentChunkText.slice(-57)}` : currentChunkText;
 
-                logger.debug(
-                    `[transcribe] progress: ${pct}% ts=${lastTimestamp.toFixed(1)}s elapsed=${sw.elapsed()}`
-                );
-
                 onProgress?.({
                     phase: "transcribe",
                     percent: pct,
@@ -165,20 +161,17 @@ export class AILocalProvider
                 });
             },
             on_chunk_start: (time: number) => {
-                logger.debug(`[transcribe] chunk_start: time=${time.toFixed(2)}s elapsed=${sw.elapsed()}`);
+                segmentStart = time;
                 lastTimestamp = time;
                 currentChunkText = "";
             },
             on_chunk_end: (time: number) => {
-                logger.debug(
-                    `[transcribe] chunk_end: time=${time.toFixed(2)}s text="${currentChunkText.slice(0, 80)}" elapsed=${sw.elapsed()}`
-                );
                 lastTimestamp = time;
 
                 if (currentChunkText.trim()) {
                     options?.onSegment?.({
                         text: currentChunkText.trim(),
-                        start: time - chunkLengthS,
+                        start: segmentStart,
                         end: time,
                     });
                 }
@@ -213,7 +206,7 @@ export class AILocalProvider
 
         const pipeDuration = Date.now() - pipeStart;
         logger.debug(
-            `[transcribe] pipeline done: ${pipeDuration}ms, total=${sw.elapsed()}, chunks=${result.chunks?.length ?? 0}, text=${result.text.length} chars`,
+            `[transcribe] pipeline done: ${pipeDuration}ms, total=${sw.elapsed()}, chunks=${result.chunks?.length ?? 0}, text=${result.text.length} chars`
         );
 
         onProgress?.({ phase: "transcribe", percent: 100, message: `[transcribe ${sw.elapsed()}] complete` });

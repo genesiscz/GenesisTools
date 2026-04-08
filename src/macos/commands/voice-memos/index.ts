@@ -421,7 +421,7 @@ async function transcribeOne(opts: {
         },
         onSegment: (seg: { start: number; text: string }) => {
             const ts = formatDuration(seg.start * 1000, "ms", "tiered");
-            p.log.step(`[${ts}] ${seg.text.trim()}`);
+            process.stderr.write(`${pc.dim(`  [${ts}] ${seg.text.trim()}`)}\n`);
         },
         ...(isTTY && !opts.lang
             ? {
