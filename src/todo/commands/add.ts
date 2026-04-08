@@ -1,6 +1,7 @@
 import { findProjectRoot } from "@app/todo/lib/context";
 import { formatTodo } from "@app/todo/lib/format";
 import { parseLinks } from "@app/todo/lib/links";
+import { parseReminderTime } from "@app/todo/lib/reminders";
 import { TodoStore } from "@app/todo/lib/store";
 import { type SyncTarget, syncTodo } from "@app/todo/lib/sync";
 import type { OutputFormat, TodoPriority } from "@app/todo/lib/types";
@@ -39,6 +40,7 @@ export function createAddCommand(): Command {
         .option("-p, --priority <priority>", "Priority: critical|high|medium|low")
         .option("-t, --tag <tags>", "Comma-separated tags")
         .option("-r, --reminder <time>", "Reminder time (repeatable)", collect, [])
+        .option("--at <datetime>", "Event time for calendar sync (ISO datetime or relative like '3h')")
         .option("-l, --link <link>", "Link (repeatable): pr:123, issue:456, ado:789, URL", collect, [])
         .option("-s, --session-id <id>", "Session ID for tracking")
         .option("-a, --attach <path>", "File path to attach (repeatable)", collect, [])
@@ -132,6 +134,8 @@ export function createAddCommand(): Command {
             const links = linkInputs.length > 0 ? parseLinks(linkInputs) : undefined;
             const attachFiles = parseVariadic(opts.attach);
 
+            const at = opts.at ? parseReminderTime(opts.at) : undefined;
+
             const todo = await store.add({
                 title: title!,
                 description,
@@ -139,6 +143,7 @@ export function createAddCommand(): Command {
                 tags,
                 links,
                 reminders: reminders.length > 0 ? reminders : undefined,
+                at,
                 sessionId: opts.sessionId,
                 attachFiles: attachFiles.length > 0 ? attachFiles : undefined,
                 mdFile: opts.md,
