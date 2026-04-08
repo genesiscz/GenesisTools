@@ -29,8 +29,8 @@ import * as p from "@clack/prompts";
 import { Command } from "commander";
 import pc from "picocolors";
 
-const VALID_PROVIDERS: AIProviderType[] = ["cloud", "local-hf", "darwinkit"];
-const TRANSCRIBE_PROVIDERS: AIProviderType[] = ["local-hf", "cloud"];
+const VALID_PROVIDERS: AIProviderType[] = ["cloud", "local-hf", "darwinkit", "openai", "groq", "openrouter"];
+const TRANSCRIBE_PROVIDERS: AIProviderType[] = ["local-hf", "cloud", "openai", "groq", "openrouter"];
 
 export function registerVoiceMemosCommand(program: Command): void {
     const vm = new Command("voice-memos");
@@ -64,7 +64,10 @@ export function registerVoiceMemosCommand(program: Command): void {
         .option("--all", "Transcribe all memos")
         .option("--force", "Re-transcribe even if tsrp transcript exists")
         .option("--lang <language>", "Language hint (e.g. cs, en, de) — auto-detected if omitted")
-        .option("--provider <provider>", "AI provider (local-hf, cloud)")
+        .option(
+            "--provider <provider>",
+            "AI provider (local-hf, cloud, openai, groq, openrouter, darwinkit)"
+        )
         .option("--local", "Shorthand for --provider local-hf")
         .option("--model <model>", "Model name/id to use")
         .option("--format <format>", "Output format (text, json, srt, vtt)")
@@ -286,10 +289,14 @@ function validateModelOption(model: string | undefined, provider: string | undef
 
     if (!model) {
         const providerType = provider ?? "local-hf";
-        const suggestions =
-            providerType === "cloud"
-                ? "whisper-large-v3-turbo, whisper-large-v3, whisper-1"
-                : "onnx-community/whisper-large-v3-turbo, onnx-community/whisper-small, onnx-community/whisper-base, onnx-community/whisper-tiny";
+        const cloudLike =
+            providerType === "cloud" ||
+            providerType === "openai" ||
+            providerType === "groq" ||
+            providerType === "openrouter";
+        const suggestions = cloudLike
+            ? "whisper-large-v3-turbo, whisper-large-v3, whisper-1"
+            : "onnx-community/whisper-large-v3-turbo, onnx-community/whisper-small, onnx-community/whisper-base, onnx-community/whisper-tiny";
 
         p.log.error(`Invalid --model (empty). Available for ${providerType}: ${suggestions}`);
         process.exit(1);

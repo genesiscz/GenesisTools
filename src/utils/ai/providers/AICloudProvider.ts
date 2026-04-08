@@ -1,7 +1,8 @@
+import { unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import logger from "@app/logger";
-import { TranscriptionManager } from "@ask/audio/TranscriptionManager";
+import type { AIProviderType } from "@app/utils/config/ai.types";
 import type {
     AIEmbeddingProvider,
     AISummarizationProvider,
@@ -16,40 +17,61 @@ import type {
     TranscriptionResult,
     TranslateOptions,
     TranslationResult,
-} from "../types";
+} from "@app/utils/ai/types";
+import { TranscriptionManager } from "@ask/audio/TranscriptionManager";
 
-const API_KEY_ENV_VARS = [
-    "GROQ_API_KEY",
-    "OPENAI_API_KEY",
-    "OPENROUTER_API_KEY",
-    "ASSEMBLYAI_API_KEY",
-    "DEEPGRAM_API_KEY",
-    "GLADIA_API_KEY",
-];
+type CloudType = "openai" | "groq" | "openrouter" | "auto";
 
-const SUPPORTED_TASKS: AITask[] = ["transcribe", "translate", "summarize", "embed"];
+const ENV_VAR_MAP: Record<Exclude<CloudType, "auto">, string> = {
+    openai: "OPENAI_API_KEY",
+    groq: "GROQ_API_KEY",
+    openrouter: "OPENROUTER_API_KEY",
+};
+
+const CLOUD_TASKS: Record<CloudType, AITask[]> = {
+    openai: ["transcribe", "translate", "summarize", "embed"],
+    groq: ["transcribe", "translate", "summarize"],
+    openrouter: ["transcribe", "translate", "summarize"],
+    auto: ["transcribe", "translate", "summarize", "embed"],
+};
+
+const DEFAULT_LLM_MODELS: Record<Exclude<CloudType, "auto">, string> = {
+    groq: "groq/llama-3.1-8b-instant",
+    openrouter: "openrouter/meta-llama/llama-3.1-8b-instant",
+    openai: "openai/gpt-4o-mini",
+};
 
 export class AICloudProvider
     implements AITranscriptionProvider, AITranslationProvider, AISummarizationProvider, AIEmbeddingProvider
 {
-    readonly type = "cloud" as const;
+    readonly type: AIProviderType;
+    private readonly cloudType: CloudType;
     readonly dimensions = 1536;
     private transcriptionManager: TranscriptionManager;
 
-    constructor() {
+    constructor(cloudType: CloudType = "auto") {
+        this.cloudType = cloudType;
+        this.type = cloudType === "auto" ? ("cloud" as AIProviderType) : cloudType;
         this.transcriptionManager = new TranscriptionManager();
     }
 
     async isAvailable(): Promise<boolean> {
-        return API_KEY_ENV_VARS.some((key) => !!process.env[key]);
+        if (this.cloudType === "auto") {
+            return Object.values(ENV_VAR_MAP).some((key) => !!process.env[key]);
+        }
+
+        return !!process.env[ENV_VAR_MAP[this.cloudType]];
     }
 
     supports(task: AITask): boolean {
-        return SUPPORTED_TASKS.includes(task);
+        if (this.cloudType === "auto" && task === "embed") {
+            return !!process.env.OPENAI_API_KEY;
+        }
+
+        return CLOUD_TASKS[this.cloudType].includes(task);
     }
 
     async transcribe(audio: Buffer, options?: TranscribeOptions): Promise<TranscriptionResult> {
-        // TranscriptionManager works with file paths, so write buffer to a temp file
         const tempPath = join(tmpdir(), `ai-transcribe-${Date.now()}.wav`);
         await Bun.write(tempPath, audio);
 
@@ -57,17 +79,15 @@ export class AICloudProvider
             const result = await this.transcriptionManager.transcribeAudio(tempPath, {
                 language: options?.language,
                 model: options?.model,
+                provider: this.cloudType === "auto" ? undefined : this.cloudType,
             });
 
-            // TranscriptionManager doesn't return segments/language yet — pass through what's available
             return {
                 text: result.text,
                 duration: result.duration,
             };
         } finally {
-            // Clean up temp file
             try {
-                const { unlinkSync } = await import("node:fs");
                 unlinkSync(tempPath);
             } catch {
                 logger.debug(`Failed to clean up temp file: ${tempPath}`);
@@ -136,7 +156,6 @@ export class AICloudProvider
         const { createOpenAI } = await import("@ai-sdk/openai");
         const openai = createOpenAI();
 
-        // OpenAI supports up to 2048 inputs per request
         const MAX_BATCH = 2048;
         const results: EmbeddingResult[] = [];
 
@@ -156,9 +175,12 @@ export class AICloudProvider
     private async getLanguageModel(
         modelSpec?: string
     ): Promise<Parameters<typeof import("ai").generateText>[0]["model"]> {
-        // Default: groq > openrouter > openai
         if (modelSpec) {
             return this.resolveModel(modelSpec);
+        }
+
+        if (this.cloudType !== "auto") {
+            return this.resolveModel(DEFAULT_LLM_MODELS[this.cloudType]);
         }
 
         if (process.env.GROQ_API_KEY) {

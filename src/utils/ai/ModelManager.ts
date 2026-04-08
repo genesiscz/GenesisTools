@@ -159,7 +159,13 @@ export function getModelsForTask(task: string, provider: string): ModelInfo[] {
         return LOCAL_MODELS[task] ?? [];
     }
 
-    if (provider === "cloud" && task === "transcribe") {
+    if (
+        (provider === "cloud" ||
+            provider === "openai" ||
+            provider === "groq" ||
+            provider === "openrouter") &&
+        task === "transcribe"
+    ) {
         return getCloudTranscriptionModels();
     }
 

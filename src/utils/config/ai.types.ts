@@ -27,7 +27,16 @@ export interface AIAccountEntry {
 
 // ── Task types (from types.ts) ──
 
-export type AIProviderType = "cloud" | "local-hf" | "darwinkit" | "coreml" | "ollama" | "google";
+export type AIProviderType =
+    | "cloud"
+    | "local-hf"
+    | "darwinkit"
+    | "coreml"
+    | "ollama"
+    | "google"
+    | "openai"
+    | "groq"
+    | "openrouter";
 export type AITask = "transcribe" | "translate" | "summarize" | "classify" | "embed" | "sentiment";
 
 export interface TaskConfig {

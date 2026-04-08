@@ -20,7 +20,16 @@ export function getProvider(type: AIProviderType): AIProvider {
 
     switch (type) {
         case "cloud":
-            provider = new AICloudProvider();
+            provider = new AICloudProvider("auto");
+            break;
+        case "openai":
+            provider = new AICloudProvider("openai");
+            break;
+        case "groq":
+            provider = new AICloudProvider("groq");
+            break;
+        case "openrouter":
+            provider = new AICloudProvider("openrouter");
             break;
         case "local-hf":
             provider = new AILocalProvider();
@@ -80,7 +89,17 @@ export async function getProviderForTask(task: AITask, config: AIConfig): Promis
 }
 
 export function getAllProviders(): AIProvider[] {
-    const types: AIProviderType[] = ["darwinkit", "local-hf", "cloud", "ollama", "google", "coreml"];
+    const types: AIProviderType[] = [
+        "darwinkit",
+        "local-hf",
+        "cloud",
+        "openai",
+        "groq",
+        "openrouter",
+        "ollama",
+        "google",
+        "coreml",
+    ];
     return types.map((type) => getProvider(type));
 }
 

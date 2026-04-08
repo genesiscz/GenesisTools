@@ -178,6 +178,20 @@ export class TranscriptionManager {
             return await this.getSpecificTranscriptionModel(preferredProvider, preferredModel);
         }
 
+        // If only provider is specified, use it with its default model
+        if (preferredProvider) {
+            const model = await this.getSpecificTranscriptionModel(
+                preferredProvider,
+                this.getDefaultModelForProvider(preferredProvider),
+            );
+
+            if (model) {
+                return model;
+            }
+
+            logger.warn(`Preferred cloud provider "${preferredProvider}" not available, falling back`);
+        }
+
         // For large files (>25MB), prioritize providers that support large files
         if (fileSize > 25 * 1024 * 1024) {
             // Try AssemblyAI first (supports large files, high quality)

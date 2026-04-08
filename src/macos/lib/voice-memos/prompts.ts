@@ -312,7 +312,13 @@ function providerLabel(type: AIProviderType): string {
         case "local-hf":
             return "Local (HuggingFace Whisper)";
         case "cloud":
-            return "Cloud (Groq/OpenAI)";
+            return "Cloud (auto-select)";
+        case "openai":
+            return "OpenAI";
+        case "groq":
+            return "Groq";
+        case "openrouter":
+            return "OpenRouter";
         case "darwinkit":
             return "DarwinKit (macOS native)";
         default:
@@ -327,8 +333,13 @@ export async function selectModel(provider: AIProviderType): Promise<string | un
     const knownModels = getModelsForTask("transcribe", provider);
 
     if (knownModels.length === 0) {
-        if (provider === "cloud") {
-            p.log.warning("No cloud API keys found. Set GROQ_API_KEY or OPENAI_API_KEY.");
+        if (
+            provider === "cloud" ||
+            provider === "openai" ||
+            provider === "groq" ||
+            provider === "openrouter"
+        ) {
+            p.log.warning("No cloud API keys found. Set GROQ_API_KEY, OPENROUTER_API_KEY, or OPENAI_API_KEY.");
         }
 
         return undefined;
