@@ -1,19 +1,7 @@
 import type { ReminderInfo } from "@app/utils/macos/apple-reminders";
+import { formatReminderPriority } from "@genesiscz/darwinkit";
 import { formatTable } from "@app/utils/table";
 import { formatDateTime } from "../calendar/format";
-
-export function formatPriority(priority: number): string {
-    switch (priority) {
-        case 1:
-            return "Critical";
-        case 5:
-            return "High";
-        case 9:
-            return "Medium";
-        default:
-            return "None";
-    }
-}
 
 export function formatDueDate(iso?: string): string {
     if (!iso) {
@@ -27,7 +15,7 @@ export function formatRemindersTable(reminders: ReminderInfo[]): string {
     const rows = reminders.map((r) => [
         r.title,
         formatDueDate(r.due_date),
-        formatPriority(r.priority),
+        formatReminderPriority(r.priority),
         r.is_completed ? "Yes" : "No",
         r.list_title,
     ]);

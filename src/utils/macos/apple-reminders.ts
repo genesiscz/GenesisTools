@@ -1,18 +1,13 @@
 import logger from "@app/logger";
 import type { ReminderInfo, ReminderListInfo } from "@genesiscz/darwinkit";
+import { ReminderPriority } from "@genesiscz/darwinkit";
 import { getDarwinKit } from "./darwinkit";
 
 export type { ReminderInfo, ReminderListInfo };
-
-const PRIORITY_MAP: Record<string, number> = {
-    critical: 1,
-    high: 5,
-    medium: 9,
-    low: 0,
-};
+export { ReminderPriority };
 
 export function todoPriorityToApple(priority: "critical" | "high" | "medium" | "low"): number {
-    return PRIORITY_MAP[priority];
+    return ReminderPriority[priority === "critical" ? "high" : priority];
 }
 
 export class MacReminders {

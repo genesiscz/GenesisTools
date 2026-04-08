@@ -1,11 +1,12 @@
 // Apple Calendar
 
-export type { CalendarEventInfo, CalendarInfo } from "./apple-calendar";
+export type { CalendarEventInfo, CalendarInfo, SourceInfo } from "./apple-calendar";
 export { MacCalendar } from "./apple-calendar";
 export type { ReminderInfo, ReminderListInfo } from "./apple-reminders";
 // Apple Reminders
 export {
     MacReminders,
+    ReminderPriority,
     todoPriorityToApple,
 } from "./apple-reminders";
 // Auth

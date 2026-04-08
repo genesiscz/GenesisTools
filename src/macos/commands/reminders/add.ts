@@ -1,5 +1,5 @@
 import { parseDate } from "@app/utils/date";
-import { MacReminders, todoPriorityToApple } from "@app/utils/macos/apple-reminders";
+import { MacReminders, ReminderPriority } from "@app/utils/macos/apple-reminders";
 import { type Command, Option } from "commander";
 import pc from "picocolors";
 
@@ -32,8 +32,8 @@ export function registerAddCommand(program: Command): void {
 
                     const priority =
                         options.priority === "none"
-                            ? 0
-                            : todoPriorityToApple(options.priority as "high" | "medium" | "low");
+                            ? ReminderPriority.none
+                            : ReminderPriority[options.priority as keyof typeof ReminderPriority];
 
                     const reminderId = await MacReminders.createReminder({
                         title,

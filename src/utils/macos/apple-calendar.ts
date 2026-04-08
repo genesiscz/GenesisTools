@@ -1,10 +1,8 @@
-import type { CalendarEventInfo, CalendarInfo, MethodMap } from "@genesiscz/darwinkit";
+import type { CalendarEventInfo, CalendarInfo, SourceInfo } from "@genesiscz/darwinkit";
 
 import { getDarwinKit } from "./darwinkit";
 
-export type { CalendarEventInfo, CalendarInfo };
-
-type SourceInfo = MethodMap["calendar.sources"]["result"]["sources"][number];
+export type { CalendarEventInfo, CalendarInfo, SourceInfo };
 
 export interface CreateEventOptions {
     title: string;
