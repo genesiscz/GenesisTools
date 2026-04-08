@@ -349,6 +349,9 @@ export class AILocalProvider
 
             const { pipeline, env } = await import("@huggingface/transformers");
 
+            // Set HF token for gated models (e.g. whisper-large-v3)
+            await this.ensureHfToken(env);
+
             const restoreWarnings = suppressConsoleWarnings({
                 patterns: ["Unable to determine content-length"],
             });
@@ -394,6 +397,48 @@ export class AILocalProvider
             } catch (err) {
                 restoreWarnings();
                 const msg = err instanceof Error ? err.message : String(err);
+
+                // Gated model — prompt for HF token if not configured
+                if (msg.includes("Unauthorized") || msg.includes("Access denied") || msg.includes("401")) {
+                    const token = await this.promptForHfToken(model, env);
+
+                    if (token) {
+                        // Retry with the new token
+                        const retryPipe = (await pipeline(task as Parameters<typeof pipeline>[0], model, {
+                            dtype:
+                                task === "automatic-speech-recognition"
+                                    ? { encoder_model: "fp16", decoder_model_merged: "q4" }
+                                    : "q4",
+                            ...(FP16_INCOMPATIBLE_ENCODERS.has(model)
+                                ? { session_options: { graphOptimizationLevel: "extended" } }
+                                : {}),
+                            progress_callback: onProgress
+                                ? (info: HfDownloadProgress) => {
+                                      if (info.status === "progress" && info.loaded != null && info.total) {
+                                          const pct = Math.round((info.loaded / info.total) * 100);
+                                          const file = info.file?.split("/").pop() ?? "";
+                                          const size = `${formatBytes(info.loaded)}/${formatBytes(info.total)}`;
+
+                                          onProgress({
+                                              phase: "download",
+                                              percent: pct,
+                                              message: `Downloading ${file}... ${pct}% (${size})`,
+                                          });
+                                      } else if (info.status === "ready") {
+                                          onProgress({ phase: "load", percent: 100, message: "Model loaded" });
+                                      }
+                                  }
+                                : undefined,
+                        })) as unknown as PipelineInstance;
+
+                        this.pipelines.set(key, retryPipe);
+                        return retryPipe;
+                    }
+
+                    throw new Error(
+                        `Model "${model}" requires a HuggingFace token. Run: tools ai config → Hugging Face token`,
+                    );
+                }
 
                 // ONNX Runtime CPU bug: fp16 models crash with InsertedPrecisionFreeCast
                 // on certain architectures. Auto-retry with lowered graph optimization.
@@ -469,6 +514,89 @@ export class AILocalProvider
         } finally {
             this.pendingPipelines.delete(key);
         }
+    }
+
+    /**
+     * Set env.token from AIConfig if available. Called once before first pipeline load.
+     */
+    private async ensureHfToken(env: { token?: string | null }): Promise<void> {
+        if (env.token) {
+            return;
+        }
+
+        const { AIConfig } = await import("../AIConfig");
+        const config = await AIConfig.load();
+        const token = config.getHfToken() ?? process.env.HUGGINGFACE_TOKEN ?? process.env.HF_TOKEN;
+
+        if (token) {
+            env.token = token;
+        }
+    }
+
+    /**
+     * Prompt the user for a HuggingFace token when a gated model returns Unauthorized.
+     * Opens the token page in the browser, saves the token to AIConfig, and sets env.token.
+     */
+    private async promptForHfToken(
+        model: string,
+        env: { token?: string | null },
+    ): Promise<string | null> {
+        const { isInteractive } = await import("@app/utils/cli");
+
+        if (!isInteractive()) {
+            return null;
+        }
+
+        const p = await import("@clack/prompts");
+        const pc = (await import("picocolors")).default;
+        const HF_TOKEN_URL = "https://huggingface.co/settings/tokens";
+
+        p.log.warn(
+            `Model "${model}" is gated and requires a HuggingFace access token.\n` +
+                `Create one at: ${pc.cyan(HF_TOKEN_URL)}\n` +
+                `(select "Read" scope, "Fine-grained" type)`,
+        );
+
+        const openBrowser = await p.confirm({
+            message: "Open HuggingFace token page in browser?",
+            initialValue: true,
+        });
+
+        if (!p.isCancel(openBrowser) && openBrowser) {
+            const { Browser } = await import("@app/utils/browser");
+            await Browser.open(HF_TOKEN_URL);
+        }
+
+        const token = await p.text({
+            message: "Paste your HuggingFace token:",
+            placeholder: "hf_...",
+            validate: (val) => {
+                if (!val?.trim()) {
+                    return "Token is required";
+                }
+
+                if (!val.startsWith("hf_")) {
+                    return "HuggingFace tokens start with hf_";
+                }
+            },
+        });
+
+        if (p.isCancel(token)) {
+            return null;
+        }
+
+        const tokenStr = (token as string).trim();
+
+        // Save to AIConfig as a huggingface account
+        const { AIConfig } = await import("../AIConfig");
+        const config = await AIConfig.load();
+        await config.setHfToken(tokenStr);
+
+        // Set for current session
+        env.token = tokenStr;
+
+        p.log.success("HuggingFace token saved to AI config.");
+        return tokenStr;
     }
 
     dispose(): void {
