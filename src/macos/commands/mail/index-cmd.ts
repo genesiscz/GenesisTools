@@ -61,10 +61,23 @@ export function registerIndexCommand(program: Command): void {
                 const toDate = parseDate(opts.to, "--to");
 
                 // Resolve provider/model early — interactive prompt if --provider/--model without value
-                let resolvedProvider = typeof opts.provider === "string" ? opts.provider : undefined;
-                let resolvedModel = typeof opts.model === "string" ? opts.model : undefined;
-                const wantsProviderPrompt = opts.provider === true;
-                const wantsModelPrompt = opts.model === true;
+                const VALID_PROVIDERS = new Set(["ollama", "darwinkit", "coreml", "local-hf", "cloud", "google"]);
+                let resolvedProvider = typeof opts.provider === "string" && VALID_PROVIDERS.has(opts.provider)
+                    ? opts.provider
+                    : undefined;
+                let resolvedModel = typeof opts.model === "string" && !opts.model.startsWith("-")
+                    ? opts.model
+                    : undefined;
+
+                // Treat invalid string values as "wants interactive prompt"
+                const wantsProviderPrompt = opts.provider === true
+                    || (typeof opts.provider === "string" && !VALID_PROVIDERS.has(opts.provider));
+                const wantsModelPrompt = opts.model === true
+                    || (typeof opts.model === "string" && opts.model.startsWith("-"));
+
+                if (wantsProviderPrompt && typeof opts.provider === "string") {
+                    p.log.warning(`Unknown provider "${opts.provider}". Valid: ${[...VALID_PROVIDERS].join(", ")}`);
+                }
 
                 if ((wantsProviderPrompt || wantsModelPrompt) && isInteractive()) {
                     if (!resolvedProvider && wantsProviderPrompt) {
@@ -101,7 +114,8 @@ export function registerIndexCommand(program: Command): void {
                     const exists = existingNames.includes(MAIL_INDEX_NAME);
 
                     // Check if user wants to switch provider/model on existing index
-                    const requestedModel = resolvedModel ?? (resolvedProvider ? PROVIDER_DEFAULT_MODELS[resolvedProvider] : undefined);
+                    const requestedModel =
+                        resolvedModel ?? (resolvedProvider ? PROVIDER_DEFAULT_MODELS[resolvedProvider] : undefined);
 
                     if (exists && requestedModel && !opts.rebuildFulltext && !opts.rebuildEmbeddings) {
                         const meta = manager.listIndexes().find((m) => m.name === MAIL_INDEX_NAME);
