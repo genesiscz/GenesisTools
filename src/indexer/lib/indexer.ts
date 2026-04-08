@@ -15,7 +15,7 @@ import type { IndexerSource, SourceEntry } from "./sources/source";
 import type { IndexStore } from "./store";
 import { createIndexStore } from "./store";
 import type { ChunkRecord, IndexConfig, IndexStats } from "./types";
-import { DEFAULT_WATCH_INTERVAL_MS, EMBEDDING_BATCH_SIZE } from "./types";
+import { DEFAULT_WATCH_INTERVAL_MS, EMBEDDING_BATCH_SIZE, PROVIDER_BATCH_SIZES } from "./types";
 
 export interface SyncOptions extends IndexerCallbacks {
     scanOptions?: Pick<import("./sources/source").ScanOptions, "fromDate" | "toDate">;
@@ -497,14 +497,7 @@ export class Indexer extends IndexerEventEmitter {
         const maxEmbedChars = getMaxEmbedChars(modelId);
         const taskPrefix = getTaskPrefix(modelId);
         const providerType = this.config.embedding?.provider;
-        const embedBatchSize =
-            providerType === "ollama"
-                ? 500
-                : providerType === "google"
-                  ? 100
-                  : providerType === "cloud"
-                    ? 2048
-                    : EMBEDDING_BATCH_SIZE;
+        const embedBatchSize = PROVIDER_BATCH_SIZES[providerType ?? ""] ?? EMBEDDING_BATCH_SIZE;
         const embedStart = performance.now();
         // Match DB page to batch size so each page = ~1 HTTP call
         const dbPageSize = Math.max(1000, embedBatchSize);
