@@ -350,7 +350,7 @@ export class AILocalProvider
             const { pipeline, env } = await import("@huggingface/transformers");
 
             // Set HF token for gated models (e.g. whisper-large-v3)
-            await this.ensureHfToken(env);
+            await this.ensureHfToken();
 
             const restoreWarnings = suppressConsoleWarnings({
                 patterns: ["Unable to determine content-length"],
@@ -400,7 +400,7 @@ export class AILocalProvider
 
                 // Gated model — prompt for HF token if not configured
                 if (msg.includes("Unauthorized") || msg.includes("Access denied") || msg.includes("401")) {
-                    const token = await this.promptForHfToken(model, env);
+                    const token = await this.promptForHfToken(model);
 
                     if (token) {
                         // Retry with the new token
@@ -436,7 +436,7 @@ export class AILocalProvider
                     }
 
                     throw new Error(
-                        `Model "${model}" requires a HuggingFace token. Run: tools ai config → Hugging Face token`,
+                        `Model "${model}" requires a HuggingFace token. Run: tools ai config → Hugging Face token`
                     );
                 }
 
@@ -517,30 +517,28 @@ export class AILocalProvider
     }
 
     /**
-     * Set env.token from AIConfig if available. Called once before first pipeline load.
+     * Ensure process.env.HF_TOKEN is set from AIConfig.
+     * @huggingface/transformers reads process.env.HF_TOKEN in its fetch wrapper (hub.js).
      */
-    private async ensureHfToken(env: { token?: string | null }): Promise<void> {
-        if (env.token) {
+    private async ensureHfToken(): Promise<void> {
+        if (process.env.HF_TOKEN) {
             return;
         }
 
         const { AIConfig } = await import("../AIConfig");
         const config = await AIConfig.load();
-        const token = config.getHfToken() ?? process.env.HUGGINGFACE_TOKEN ?? process.env.HF_TOKEN;
+        const token = config.getHfToken() ?? process.env.HUGGINGFACE_TOKEN;
 
         if (token) {
-            env.token = token;
+            process.env.HF_TOKEN = token;
         }
     }
 
     /**
      * Prompt the user for a HuggingFace token when a gated model returns Unauthorized.
-     * Opens the token page in the browser, saves the token to AIConfig, and sets env.token.
+     * Opens the token page in the browser, saves the token to AIConfig, and sets process.env.HF_TOKEN.
      */
-    private async promptForHfToken(
-        model: string,
-        env: { token?: string | null },
-    ): Promise<string | null> {
+    private async promptForHfToken(model: string): Promise<string | null> {
         const { isInteractive } = await import("@app/utils/cli");
 
         if (!isInteractive()) {
@@ -554,7 +552,7 @@ export class AILocalProvider
         p.log.warn(
             `Model "${model}" is gated and requires a HuggingFace access token.\n` +
                 `Create one at: ${pc.cyan(HF_TOKEN_URL)}\n` +
-                `(select "Read" scope, "Fine-grained" type)`,
+                `(select "Read" scope, "Fine-grained" type)`
         );
 
         const openBrowser = await p.confirm({
@@ -592,8 +590,8 @@ export class AILocalProvider
         const config = await AIConfig.load();
         await config.setHfToken(tokenStr);
 
-        // Set for current session
-        env.token = tokenStr;
+        // Set for current session — @huggingface/transformers reads this in hub.js
+        process.env.HF_TOKEN = tokenStr;
 
         p.log.success("HuggingFace token saved to AI config.");
         return tokenStr;
