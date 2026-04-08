@@ -1,6 +1,7 @@
 import logger from "@app/logger";
 import { toFloat32Audio } from "@app/utils/audio/converter";
 import { formatBytes } from "@app/utils/format";
+import { resolveDevice } from "../device";
 import { ensureHuggingFaceTransformers } from "../ensure-hf";
 import { createLanguageDetector, type LanguageDetector } from "../LanguageDetector";
 import { getDefaultModel } from "../ModelManager";
@@ -36,9 +37,7 @@ const SUPPORTED_TASKS: AITask[] = ["transcribe", "translate", "summarize", "embe
 // crashes on fp16 models. Workaround: lower graphOptimizationLevel to 'extended' (skips
 // the buggy Level3 re-run). Ref: microsoft/onnxruntime#26631, huggingface/transformers.js#1567
 // Track this set at runtime so the error-recovery path can add models dynamically.
-const FP16_INCOMPATIBLE_ENCODERS = new Set([
-    "onnx-community/whisper-large-v3-turbo",
-]);
+const FP16_INCOMPATIBLE_ENCODERS = new Set(["onnx-community/whisper-large-v3-turbo"]);
 
 export class AILocalProvider
     implements AITranscriptionProvider, AITranslationProvider, AISummarizationProvider, AIEmbeddingProvider
@@ -278,7 +277,7 @@ export class AILocalProvider
     }
 
     async embed(text: string, options?: EmbedOptions): Promise<EmbeddingResult> {
-        const model = options?.model ?? "Xenova/all-MiniLM-L6-v2";
+        const model = options?.model ?? "Xenova/multilingual-e5-small";
         const pipe = await this.getPipeline("feature-extraction", model);
         const result = await pipe(text, { pooling: "mean", normalize: true });
         const data = (result as { data: Float32Array }).data;
@@ -295,7 +294,7 @@ export class AILocalProvider
             return [];
         }
 
-        const model = options?.model ?? "Xenova/all-MiniLM-L6-v2";
+        const model = options?.model ?? "Xenova/multilingual-e5-small";
         const pipe = await this.getPipeline("feature-extraction", model);
 
         // transformers.js feature-extraction pipeline accepts string[]
@@ -348,48 +347,54 @@ export class AILocalProvider
 
             const { pipeline, env } = await import("@huggingface/transformers");
 
-            // Set HF token for gated models (e.g. whisper-large-v3)
             await this.ensureHfToken();
+
+            const { device } = await resolveDevice();
+
+            // Build pipeline options once — reused by retry paths
+            const pipelineOpts = (extraSessionOpts?: Record<string, unknown>) => ({
+                device,
+                dtype:
+                    task === "automatic-speech-recognition"
+                        ? { encoder_model: "fp16", decoder_model_merged: "q4" }
+                        : ("q4" as const),
+                ...(FP16_INCOMPATIBLE_ENCODERS.has(model) || extraSessionOpts
+                    ? {
+                          session_options: {
+                              ...(FP16_INCOMPATIBLE_ENCODERS.has(model)
+                                  ? { graphOptimizationLevel: "extended" }
+                                  : {}),
+                              ...extraSessionOpts,
+                          },
+                      }
+                    : {}),
+                progress_callback: onProgress
+                    ? (info: HfDownloadProgress) => {
+                          if (info.status === "progress" && info.loaded != null && info.total) {
+                              const pct = Math.round((info.loaded / info.total) * 100);
+                              const file = info.file?.split("/").pop() ?? "";
+                              const size = `${formatBytes(info.loaded)}/${formatBytes(info.total)}`;
+                              onProgress({ phase: "download", percent: pct, message: `Downloading ${file}... ${pct}% (${size})` });
+                          } else if (info.status === "ready") {
+                              onProgress({ phase: "load", percent: 100, message: "Model loaded" });
+                          }
+                      }
+                    : undefined,
+            });
+
+            const loadPipeline = async (opts?: Record<string, unknown>) =>
+                (await pipeline(
+                    task as Parameters<typeof pipeline>[0],
+                    model,
+                    pipelineOpts(opts),
+                )) as unknown as PipelineInstance;
 
             const restoreWarnings = suppressConsoleWarnings({
                 patterns: ["Unable to determine content-length"],
             });
 
             try {
-                const pipe = (await pipeline(task as Parameters<typeof pipeline>[0], model, {
-                    // Whisper (encoder-decoder) is extremely sensitive to encoder quantization.
-                    // Per-module dtype: fp16 encoder (precise) + q4 decoder (compressed).
-                    // For non-ASR tasks, flat q4 is fine (decoder-only models).
-                    dtype:
-                        task === "automatic-speech-recognition"
-                            ? { encoder_model: "fp16", decoder_model_merged: "q4" }
-                            : "q4",
-                    // ONNX Runtime 1.24.x bug: Level3 re-runs after InsertCast on fp16 models,
-                    // crashing with InsertedPrecisionFreeCast/SimplifiedLayerNormFusion error.
-                    // Lowering to 'extended' skips the buggy re-run. Only needed for known-bad
-                    // models; turbo variants don't hit this code path.
-                    ...(FP16_INCOMPATIBLE_ENCODERS.has(model)
-                        ? { session_options: { graphOptimizationLevel: "extended" } }
-                        : {}),
-                    progress_callback: onProgress
-                        ? (info: HfDownloadProgress) => {
-                              if (info.status === "progress" && info.loaded != null && info.total) {
-                                  const pct = Math.round((info.loaded / info.total) * 100);
-                                  const file = info.file?.split("/").pop() ?? "";
-                                  const size = `${formatBytes(info.loaded)}/${formatBytes(info.total)}`;
-
-                                  onProgress({
-                                      phase: "download",
-                                      percent: pct,
-                                      message: `Downloading ${file}... ${pct}% (${size})`,
-                                  });
-                              } else if (info.status === "ready") {
-                                  onProgress({ phase: "load", percent: 100, message: "Model loaded" });
-                              }
-                          }
-                        : undefined,
-                })) as unknown as PipelineInstance;
-
+                const pipe = await loadPipeline();
                 restoreWarnings();
                 this.pipelines.set(key, pipe);
                 return pipe;
@@ -402,40 +407,13 @@ export class AILocalProvider
                     const token = await this.promptForHfToken(model);
 
                     if (token) {
-                        // Retry with the new token
-                        const retryPipe = (await pipeline(task as Parameters<typeof pipeline>[0], model, {
-                            dtype:
-                                task === "automatic-speech-recognition"
-                                    ? { encoder_model: "fp16", decoder_model_merged: "q4" }
-                                    : "q4",
-                            ...(FP16_INCOMPATIBLE_ENCODERS.has(model)
-                                ? { session_options: { graphOptimizationLevel: "extended" } }
-                                : {}),
-                            progress_callback: onProgress
-                                ? (info: HfDownloadProgress) => {
-                                      if (info.status === "progress" && info.loaded != null && info.total) {
-                                          const pct = Math.round((info.loaded / info.total) * 100);
-                                          const file = info.file?.split("/").pop() ?? "";
-                                          const size = `${formatBytes(info.loaded)}/${formatBytes(info.total)}`;
-
-                                          onProgress({
-                                              phase: "download",
-                                              percent: pct,
-                                              message: `Downloading ${file}... ${pct}% (${size})`,
-                                          });
-                                      } else if (info.status === "ready") {
-                                          onProgress({ phase: "load", percent: 100, message: "Model loaded" });
-                                      }
-                                  }
-                                : undefined,
-                        })) as unknown as PipelineInstance;
-
+                        const retryPipe = await loadPipeline();
                         this.pipelines.set(key, retryPipe);
                         return retryPipe;
                     }
 
                     throw new Error(
-                        `Model "${model}" requires a HuggingFace token. Run: tools ai config → Hugging Face token`
+                        `Model "${model}" requires a HuggingFace token. Run: tools ai config → Hugging Face token`,
                     );
                 }
 
@@ -443,35 +421,11 @@ export class AILocalProvider
                 // on certain architectures. Auto-retry with lowered graph optimization.
                 if (msg.includes("InsertedPrecisionFreeCast") && !FP16_INCOMPATIBLE_ENCODERS.has(model)) {
                     logger.warn(
-                        `[getPipeline] fp16 ONNX RT crash for "${model}". Retrying with graphOptimizationLevel=extended.`
+                        `[getPipeline] fp16 ONNX RT crash for "${model}". Retrying with graphOptimizationLevel=extended.`,
                     );
                     FP16_INCOMPATIBLE_ENCODERS.add(model);
 
-                    const retryPipe = (await pipeline(task as Parameters<typeof pipeline>[0], model, {
-                        dtype:
-                            task === "automatic-speech-recognition"
-                                ? { encoder_model: "fp16", decoder_model_merged: "q4" }
-                                : "q4",
-                        session_options: { graphOptimizationLevel: "extended" },
-                        progress_callback: onProgress
-                            ? (info: HfDownloadProgress) => {
-                                  if (info.status === "progress" && info.loaded != null && info.total) {
-                                      const pct = Math.round((info.loaded / info.total) * 100);
-                                      const file = info.file?.split("/").pop() ?? "";
-                                      const size = `${formatBytes(info.loaded)}/${formatBytes(info.total)}`;
-
-                                      onProgress({
-                                          phase: "download",
-                                          percent: pct,
-                                          message: `Downloading ${file}... ${pct}% (${size})`,
-                                      });
-                                  } else if (info.status === "ready") {
-                                      onProgress({ phase: "load", percent: 100, message: "Model loaded" });
-                                  }
-                              }
-                            : undefined,
-                    })) as unknown as PipelineInstance;
-
+                    const retryPipe = await loadPipeline({ graphOptimizationLevel: "extended" });
                     this.pipelines.set(key, retryPipe);
                     return retryPipe;
                 }
