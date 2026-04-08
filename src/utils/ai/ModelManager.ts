@@ -24,16 +24,21 @@ export type TranscriptionModelInfo = ModelInfo;
 
 const LOCAL_TRANSCRIPTION_MODELS: ModelInfo[] = [
     {
+        id: "distil-whisper/distil-large-v3",
+        name: "distil-large-v3",
+        description: "fastest high-quality English, ~750MB — 6x faster than large-v3 (English only)",
+    },
+    {
         id: "onnx-community/whisper-large-v3-turbo",
         name: "whisper-large-v3-turbo",
-        description: "best speed/quality, ~1.5GB (fp16 enc + q4 dec)",
+        description: "best multilingual speed/quality, ~1.5GB (fp16 enc + q4 dec)",
     },
     {
         id: "Xenova/whisper-large-v3",
         name: "whisper-large-v3",
-        description: "highest quality, ~3.1GB — slow but best accuracy",
+        description: "highest multilingual quality, ~3.1GB — slow but best accuracy",
     },
-    { id: "onnx-community/whisper-small", name: "whisper-small", description: "good accuracy, ~244MB" },
+    { id: "onnx-community/whisper-small", name: "whisper-small", description: "good multilingual accuracy, ~244MB" },
     { id: "onnx-community/whisper-base", name: "whisper-base", description: "balanced speed/quality, ~145MB" },
     { id: "onnx-community/whisper-tiny", name: "whisper-tiny", description: "fastest, ~75MB" },
 ];
@@ -61,7 +66,17 @@ const LOCAL_EMBEDDING_MODELS: ModelInfo[] = [
     {
         id: "Xenova/multilingual-e5-small",
         name: "multilingual-e5-small",
-        description: "100 languages incl. Czech, ~117MB — recommended default",
+        description: "100 languages incl. Czech, ~117MB — recommended multilingual default",
+    },
+    {
+        id: "nomic-ai/nomic-embed-text-v1.5",
+        name: "nomic-embed-text-v1.5",
+        description: "best English embedding, 10M+ downloads, ~300MB (English only)",
+    },
+    {
+        id: "Snowflake/snowflake-arctic-embed-l-v2.0",
+        name: "snowflake-arctic-embed-l-v2.0",
+        description: "high-quality multilingual, explicitly supports Czech, ~500MB",
     },
     {
         id: "onnx-community/gte-multilingual-base",
@@ -76,7 +91,7 @@ const LOCAL_EMBEDDING_MODELS: ModelInfo[] = [
     },
     { id: "Xenova/multilingual-e5-base", name: "multilingual-e5-base", description: "mid-size multilingual, ~278MB" },
     { id: "Xenova/multilingual-e5-large", name: "multilingual-e5-large", description: "large multilingual, ~560MB" },
-    { id: "Xenova/all-MiniLM-L6-v2", name: "all-MiniLM-L6-v2", description: "English only, ~90MB — legacy default" },
+    { id: "Xenova/all-MiniLM-L6-v2", name: "all-MiniLM-L6-v2", description: "English only, ~90MB — legacy" },
 ];
 
 // ── Translation ──
