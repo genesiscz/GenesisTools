@@ -74,7 +74,9 @@ export function registerIndexCommand(program: Command): void {
                     if (exists && (opts.provider || opts.model) && !opts.rebuildFulltext && !opts.rebuildEmbeddings) {
                         const meta = manager.listIndexes().find((m) => m.name === MAIL_INDEX_NAME);
                         const currentModel = meta?.indexEmbedding?.model ?? "darwinkit";
-                        const requestedModel = normalizedModel ?? (normalizedProvider ? PROVIDER_DEFAULT_MODELS[normalizedProvider] : undefined);
+                        const requestedModel =
+                            normalizedModel ??
+                            (normalizedProvider ? PROVIDER_DEFAULT_MODELS[normalizedProvider] : undefined);
 
                         if (requestedModel && requestedModel !== currentModel) {
                             const chunkCount = meta?.stats.totalChunks ?? 0;
@@ -97,18 +99,25 @@ export function registerIndexCommand(program: Command): void {
                                 process.exit(1);
                             }
 
-                            // User confirmed — rebuild embeddings with new model
-                            await rebuildEmbeddings(
-                                manager,
-                                { model: normalizedModel, provider: normalizedProvider, force: true },
-                                { fromDate, toDate }
-                            );
+                            // User confirmed — remove old index, rebuild with new provider/model
+                            p.log.info(`Removing old index and rebuilding with ${pc.bold(requestedModel)}...`);
+                            await manager.removeIndex(MAIL_INDEX_NAME);
+                            await createAndSync(manager, {
+                                model: normalizedModel ?? requestedModel,
+                                provider: normalizedProvider,
+                                limit: opts.limit,
+                                embed: opts.embed,
+                            });
                             return;
                         }
                     }
 
                     if (exists && opts.rebuildEmbeddings) {
-                        await rebuildEmbeddings(manager, { model: normalizedModel, force: opts.force }, { fromDate, toDate });
+                        await rebuildEmbeddings(
+                            manager,
+                            { model: normalizedModel, force: opts.force },
+                            { fromDate, toDate }
+                        );
                     } else if (exists && !opts.rebuildFulltext) {
                         await incrementalSync(manager, { fromDate, toDate });
                     } else {
