@@ -1,15 +1,64 @@
 import { ModelManager } from "@app/utils/ai/ModelManager";
+import type { ModelEntry } from "@app/utils/ai/types";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { formatModelTable, getModelsForType, MODEL_REGISTRY } from "../lib/model-registry";
+
+const PROVIDER_ORDER = ["ollama", "coreml", "darwinkit", "local-hf", "cloud", "google"];
+const PROVIDER_DISPLAY: Record<string, string> = {
+    ollama: "Ollama (GPU Metal)",
+    coreml: "CoreML (Neural Engine)",
+    darwinkit: "DarwinKit (macOS built-in)",
+    "local-hf": "Local HuggingFace (ONNX)",
+    cloud: "Cloud API",
+    google: "Google API",
+};
+
+function printGroupedByProvider(models: ReadonlyArray<ModelEntry>, mm: ModelManager): void {
+    const grouped = new Map<string, ModelEntry[]>();
+
+    for (const m of models) {
+        const list = grouped.get(m.provider) ?? [];
+        list.push(m);
+        grouped.set(m.provider, list);
+    }
+
+    const sortedProviders = [...grouped.keys()].sort(
+        (a, b) => (PROVIDER_ORDER.indexOf(a) ?? 99) - (PROVIDER_ORDER.indexOf(b) ?? 99)
+    );
+
+    for (const provider of sortedProviders) {
+        const group = grouped.get(provider)!;
+        const label = PROVIDER_DISPLAY[provider] ?? provider;
+        console.log(`  ${pc.bold(label)}`);
+
+        for (const m of group) {
+            const dims = m.dimensions ? `${m.dimensions}-dim` : "";
+            const ctx = m.contextLength ? `${m.contextLength} ctx` : "";
+            const meta = [dims, ctx, m.speed].filter(Boolean).join(", ");
+            const downloaded = m.provider === "local-hf" && mm.isDownloaded(m.id);
+            const status = downloaded ? pc.green(" ✓") : m.provider === "local-hf" ? pc.dim(" (not downloaded)") : "";
+
+            console.log(`    ${m.name}${status}`);
+            console.log(`      ${pc.dim(m.id)}  ${pc.dim(meta)}`);
+
+            if (m.installCmd) {
+                console.log(`      ${pc.dim("$")} ${pc.cyan(m.installCmd)}`);
+            }
+        }
+
+        console.log("");
+    }
+}
 
 export function registerModelsCommand(program: Command): void {
     const cmd = program
         .command("models")
         .description("List available embedding models")
         .option("--type <type>", "Filter by index type: code, files, mail, chat")
-        .action(async (opts: { type?: string }) => {
+        .option("--flat", "Show as flat table instead of grouped by provider")
+        .action(async (opts: { type?: string; flat?: boolean }) => {
             const type = opts.type as "code" | "files" | "mail" | "chat" | undefined;
 
             if (type && !["code", "files", "mail", "chat"].includes(type)) {
@@ -29,25 +78,11 @@ export function registerModelsCommand(program: Command): void {
             }
 
             console.log("");
-            console.log(formatModelTable(models));
-            console.log("");
 
-            const downloaded = models.filter((m) => m.provider === "local-hf" && mm.isDownloaded(m.id));
-
-            if (downloaded.length > 0) {
-                p.log.success(`Downloaded: ${downloaded.map((m) => m.name).join(", ")}`);
-            }
-
-            const cloudModels = models.filter((m) => m.provider === "cloud");
-
-            if (cloudModels.length > 0) {
-                p.log.info(`Cloud models require API keys (no download needed)`);
-            }
-
-            const darwinModels = models.filter((m) => m.provider === "darwinkit");
-
-            if (darwinModels.length > 0 && process.platform === "darwin") {
-                p.log.info(`DarwinKit models use macOS built-in NaturalLanguage framework`);
+            if (opts.flat) {
+                console.log(formatModelTable(models));
+            } else {
+                printGroupedByProvider(models, mm);
             }
 
             console.log("");

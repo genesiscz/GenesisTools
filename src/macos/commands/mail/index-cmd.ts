@@ -34,8 +34,8 @@ export function registerIndexCommand(program: Command): void {
     program
         .command("index")
         .description("Build/update a searchable index of your emails")
-        .option("--model <id>", "Embedding model ID (see: tools indexer models --type mail)")
-        .option("--provider <type>", "Embedding provider (ollama, darwinkit, coreml, cloud)")
+        .option("--model [id]", "Embedding model ID — omit value for interactive selection")
+        .option("--provider [type]", "Embedding provider — omit value for interactive selection")
         .option("--limit <n>", "Max emails to index", parseInt)
         .option("--no-embed", "Disable embeddings (fulltext-only)")
         .option("--rebuild-fulltext", "Drop and re-scan all emails (full reindex)")
@@ -45,8 +45,8 @@ export function registerIndexCommand(program: Command): void {
         .option("--to <date>", "Only index emails up to this date (YYYY-MM-DD)")
         .action(
             async (opts: {
-                model?: string;
-                provider?: string;
+                model?: string | true;
+                provider?: string | true;
                 limit?: number;
                 embed?: boolean;
                 rebuildFulltext?: boolean;
@@ -60,14 +60,55 @@ export function registerIndexCommand(program: Command): void {
                 const fromDate = parseDate(opts.from, "--from");
                 const toDate = parseDate(opts.to, "--to");
 
+                // Normalize boolean flags from optional CLI args (--provider without value → true)
+                const normalizedModel = typeof opts.model === "string" ? opts.model : undefined;
+                const normalizedProvider = typeof opts.provider === "string" ? opts.provider : undefined;
+
                 const manager = await IndexerManager.load();
 
                 try {
                     const existingNames = manager.getIndexNames();
                     const exists = existingNames.includes(MAIL_INDEX_NAME);
 
+                    // Check if user wants to switch provider/model on existing index
+                    if (exists && (opts.provider || opts.model) && !opts.rebuildFulltext && !opts.rebuildEmbeddings) {
+                        const meta = manager.listIndexes().find((m) => m.name === MAIL_INDEX_NAME);
+                        const currentModel = meta?.indexEmbedding?.model ?? "darwinkit";
+                        const requestedModel = normalizedModel ?? (normalizedProvider ? PROVIDER_DEFAULT_MODELS[normalizedProvider] : undefined);
+
+                        if (requestedModel && requestedModel !== currentModel) {
+                            const chunkCount = meta?.stats.totalChunks ?? 0;
+                            const embCount = meta?.stats.totalEmbeddings ?? 0;
+
+                            if (isInteractive()) {
+                                const confirmed = await p.confirm({
+                                    message: `Switch from ${pc.bold(currentModel)} to ${pc.bold(requestedModel)}? This will drop ${embCount.toLocaleString()} embeddings from ${chunkCount.toLocaleString()} chunks and re-embed.`,
+                                });
+
+                                if (p.isCancel(confirmed) || !confirmed) {
+                                    p.log.info("Keeping current model. Running incremental sync.");
+                                    await incrementalSync(manager, { fromDate, toDate });
+                                    return;
+                                }
+                            } else if (!opts.force) {
+                                p.log.error(
+                                    `Index uses ${currentModel}, not ${requestedModel}. Use --rebuild-embeddings --force to switch.`
+                                );
+                                process.exit(1);
+                            }
+
+                            // User confirmed — rebuild embeddings with new model
+                            await rebuildEmbeddings(
+                                manager,
+                                { model: normalizedModel, provider: normalizedProvider, force: true },
+                                { fromDate, toDate }
+                            );
+                            return;
+                        }
+                    }
+
                     if (exists && opts.rebuildEmbeddings) {
-                        await rebuildEmbeddings(manager, opts, { fromDate, toDate });
+                        await rebuildEmbeddings(manager, { model: normalizedModel, force: opts.force }, { fromDate, toDate });
                     } else if (exists && !opts.rebuildFulltext) {
                         await incrementalSync(manager, { fromDate, toDate });
                     } else {
@@ -101,7 +142,12 @@ export function registerIndexCommand(program: Command): void {
                             await manager.removeIndex(MAIL_INDEX_NAME);
                         }
 
-                        await createAndSync(manager, opts);
+                        await createAndSync(manager, {
+                            model: opts.model,
+                            provider: opts.provider,
+                            limit: opts.limit,
+                            embed: opts.embed,
+                        });
                     }
                 } finally {
                     await manager.close();
@@ -212,6 +258,42 @@ async function selectEmbeddingProvider(): Promise<ProviderSelection | null> {
     return choice;
 }
 
+/**
+ * Interactive model selection within a provider.
+ * Shows models from the registry filtered by provider, sorted for mail use.
+ */
+async function selectEmbeddingModel(provider: string): Promise<string | null> {
+    const { getEmbedModelsForType } = await import("@app/utils/ai/ModelRegistry");
+    const allModels = getEmbedModelsForType("mail");
+    const providerModels = allModels.filter((m) => m.provider === provider);
+
+    if (providerModels.length === 0) {
+        p.log.error(`No embedding models found for provider: ${provider}`);
+        return null;
+    }
+
+    if (providerModels.length === 1) {
+        return providerModels[0].id;
+    }
+
+    const options = providerModels.map((m) => ({
+        value: m.id,
+        label: `${m.name} (${m.dimensions ?? "?"}${m.dimensions ? "-dim" : ""})`,
+        hint: m.description,
+    }));
+
+    const choice = await p.select({
+        message: `Model for ${provider}`,
+        options,
+    });
+
+    if (p.isCancel(choice)) {
+        return null;
+    }
+
+    return choice;
+}
+
 /** Log the chosen provider + model in a human-friendly way. */
 function logProviderChoice(provider: string, model: string): void {
     const dimMap: Record<string, string> = {
@@ -229,7 +311,7 @@ function logProviderChoice(provider: string, model: string): void {
 
 async function createAndSync(
     manager: IndexerManager,
-    opts: { model?: string; provider?: string; limit?: number; embed?: boolean }
+    opts: { model?: string | true; provider?: string | true; limit?: number; embed?: boolean }
 ): Promise<void> {
     const mailSource = await MailSource.create();
     const total = await mailSource.estimateTotal();
@@ -238,15 +320,20 @@ async function createAndSync(
     p.log.info(`Found ${pc.bold(String(total))} emails in Mail.app`);
 
     const embeddingEnabled = opts.embed !== false;
-    let model = opts.model;
-    let provider = opts.provider;
+    let model = typeof opts.model === "string" ? opts.model : undefined;
+    let provider = typeof opts.provider === "string" ? opts.provider : undefined;
+    const wantsProviderPrompt = opts.provider === true || (!provider && !model);
+    const wantsModelPrompt = opts.model === true;
 
-    if (embeddingEnabled && !model) {
-        if (provider) {
-            // --provider given without --model: use default model for that provider
-            model = PROVIDER_DEFAULT_MODELS[provider] ?? provider;
-            logProviderChoice(provider, model);
-        } else if (isInteractive()) {
+    if (embeddingEnabled) {
+        // Step 1: Resolve provider
+        if (!provider && wantsProviderPrompt) {
+            if (!isInteractive()) {
+                p.log.error("--provider required in non-interactive mode.");
+                p.log.info(suggestCommand("tools macos mail index", { add: ["--provider", "ollama"] }));
+                process.exit(1);
+            }
+
             const selection = await selectEmbeddingProvider();
 
             if (!selection) {
@@ -256,12 +343,31 @@ async function createAndSync(
             }
 
             provider = selection.provider;
-            model = selection.model;
+
+            if (!wantsModelPrompt) {
+                model = selection.model;
+            }
+        }
+
+        // Step 2: Resolve model (interactive if --model without value, or --provider + --model)
+        if (!model && provider) {
+            if (wantsModelPrompt && isInteractive()) {
+                const selectedModel = await selectEmbeddingModel(provider);
+
+                if (!selectedModel) {
+                    p.log.info("Cancelled");
+                    p.outro("Aborted");
+                    return;
+                }
+
+                model = selectedModel;
+            } else {
+                model = PROVIDER_DEFAULT_MODELS[provider] ?? provider;
+            }
+        }
+
+        if (provider && model) {
             logProviderChoice(provider, model);
-        } else {
-            p.log.error("--provider required in non-interactive mode.");
-            p.log.info(suggestCommand("tools macos mail index", { add: ["--provider", "ollama"] }));
-            process.exit(1);
         }
     }
 
@@ -312,7 +418,7 @@ async function createAndSync(
 
 async function rebuildEmbeddings(
     manager: IndexerManager,
-    opts: { model?: string; force?: boolean },
+    opts: { model?: string; provider?: string; force?: boolean },
     dateRange: DateRange = {}
 ): Promise<void> {
     const metas = manager.listIndexes();
