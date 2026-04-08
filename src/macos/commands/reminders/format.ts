@@ -1,6 +1,6 @@
 import type { ReminderInfo } from "@app/utils/macos/apple-reminders";
-import { formatReminderPriority } from "@genesiscz/darwinkit";
 import { formatTable } from "@app/utils/table";
+import { formatReminderPriority } from "@genesiscz/darwinkit";
 import { formatDateTime } from "../calendar/format";
 
 export function formatDueDate(iso?: string): string {
