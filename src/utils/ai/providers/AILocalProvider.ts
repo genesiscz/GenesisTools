@@ -40,6 +40,26 @@ const SUPPORTED_TASKS: AITask[] = ["transcribe", "translate", "summarize", "embe
 // Track this set at runtime so the error-recovery path can add models dynamically.
 const FP16_INCOMPATIBLE_ENCODERS = new Set(["onnx-community/whisper-large-v3-turbo"]);
 
+/**
+ * Whisper ONNX dtype config per model vendor.
+ * - onnx-community: uses merged decoder files (decoder_model_merged_q4.onnx)
+ * - Xenova: uses separate decoder files (decoder_model_q4.onnx), no merged q4
+ * - distil-whisper: only has fp32 + quantized (int8), no fp16/q4 variants
+ */
+function getWhisperDtype(model: string): Record<string, string> | string {
+    if (model.startsWith("onnx-community/")) {
+        return { encoder_model: "fp16", decoder_model_merged: "q4" };
+    }
+
+    if (model.startsWith("distil-whisper/")) {
+        // distil-whisper only has fp32 and quantized (int8) — no fp16/q4
+        return { encoder_model: "q8", decoder_model_merged: "q8" };
+    }
+
+    // Xenova and others: separate encoder/decoder files
+    return { encoder_model: "fp16", decoder_model: "q4" };
+}
+
 export class AILocalProvider
     implements AITranscriptionProvider, AITranslationProvider, AISummarizationProvider, AIEmbeddingProvider
 {
@@ -344,10 +364,7 @@ export class AILocalProvider
             // Build pipeline options once — reused by retry paths
             const pipelineOpts = (extraSessionOpts?: Record<string, unknown>) => ({
                 device,
-                dtype:
-                    task === "automatic-speech-recognition"
-                        ? { encoder_model: "fp16", decoder_model_merged: "q4" }
-                        : ("q4" as const),
+                dtype: task === "automatic-speech-recognition" ? getWhisperDtype(model) : ("q4" as const),
                 ...(FP16_INCOMPATIBLE_ENCODERS.has(model) || extraSessionOpts
                     ? {
                           session_options: {
