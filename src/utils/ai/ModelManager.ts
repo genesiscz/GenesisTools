@@ -23,7 +23,12 @@ export type TranscriptionModelInfo = ModelInfo;
 // ── Transcription (automatic-speech-recognition) ──
 
 const LOCAL_TRANSCRIPTION_MODELS: ModelInfo[] = [
-    { id: "onnx-community/whisper-large-v3-turbo", name: "whisper-large-v3-turbo", description: "best quality, ~1.5GB (fp16 enc + q4 dec)" },
+    {
+        id: "onnx-community/whisper-large-v3-turbo",
+        name: "whisper-large-v3-turbo",
+        description: "best speed/quality, ~1.5GB (fp16 enc + q4 dec)",
+    },
+    { id: "Xenova/whisper-large-v3", name: "whisper-large-v3", description: "highest quality, ~3.1GB — slow but best accuracy" },
     { id: "onnx-community/whisper-small", name: "whisper-small", description: "good accuracy, ~244MB" },
     { id: "onnx-community/whisper-base", name: "whisper-base", description: "balanced speed/quality, ~145MB" },
     { id: "onnx-community/whisper-tiny", name: "whisper-tiny", description: "fastest, ~75MB" },
@@ -35,7 +40,7 @@ function getCloudTranscriptionModels(): ModelInfo[] {
     if (process.env.GROQ_API_KEY) {
         models.push(
             { id: "whisper-large-v3-turbo", name: "Groq whisper-large-v3-turbo", description: "fast" },
-            { id: "whisper-large-v3", name: "Groq whisper-large-v3", description: "high quality" },
+            { id: "whisper-large-v3", name: "Groq whisper-large-v3", description: "high quality" }
         );
     }
 
@@ -49,10 +54,22 @@ function getCloudTranscriptionModels(): ModelInfo[] {
 // ── Embeddings (feature-extraction) ──
 
 const LOCAL_EMBEDDING_MODELS: ModelInfo[] = [
-    { id: "Xenova/multilingual-e5-small", name: "multilingual-e5-small", description: "100 languages incl. Czech, ~117MB — recommended default" },
-    { id: "onnx-community/gte-multilingual-base", name: "gte-multilingual-base", description: "best multilingual MTEB score, ~305MB" },
+    {
+        id: "Xenova/multilingual-e5-small",
+        name: "multilingual-e5-small",
+        description: "100 languages incl. Czech, ~117MB — recommended default",
+    },
+    {
+        id: "onnx-community/gte-multilingual-base",
+        name: "gte-multilingual-base",
+        description: "best multilingual MTEB score, ~305MB",
+    },
     { id: "Xenova/bge-m3", name: "bge-m3", description: "top quality multilingual, dense+sparse+colbert, ~560MB" },
-    { id: "Xenova/paraphrase-multilingual-MiniLM-L12-v2", name: "paraphrase-multilingual-MiniLM-L12-v2", description: "fast multilingual, 50+ languages, ~117MB" },
+    {
+        id: "Xenova/paraphrase-multilingual-MiniLM-L12-v2",
+        name: "paraphrase-multilingual-MiniLM-L12-v2",
+        description: "fast multilingual, 50+ languages, ~117MB",
+    },
     { id: "Xenova/multilingual-e5-base", name: "multilingual-e5-base", description: "mid-size multilingual, ~278MB" },
     { id: "Xenova/multilingual-e5-large", name: "multilingual-e5-large", description: "large multilingual, ~560MB" },
     { id: "Xenova/all-MiniLM-L6-v2", name: "all-MiniLM-L6-v2", description: "English only, ~90MB — legacy default" },
@@ -63,21 +80,37 @@ const LOCAL_EMBEDDING_MODELS: ModelInfo[] = [
 const LOCAL_TRANSLATION_MODELS: ModelInfo[] = [
     { id: "Xenova/opus-mt-cs-en", name: "opus-mt-cs-en", description: "Czech → English, ~300MB" },
     { id: "Xenova/opus-mt-en-cs", name: "opus-mt-en-cs", description: "English → Czech, ~300MB" },
-    { id: "Xenova/nllb-200-distilled-600M", name: "nllb-200-distilled-600M", description: "200 languages (use ces_Latn for Czech), ~2.4GB" },
+    {
+        id: "Xenova/nllb-200-distilled-600M",
+        name: "nllb-200-distilled-600M",
+        description: "200 languages (use ces_Latn for Czech), ~2.4GB",
+    },
     { id: "Xenova/m2m100_418M", name: "m2m100_418M", description: "100 languages, lighter than NLLB, ~1.8GB" },
 ];
 
 // ── Summarization ──
 
 const LOCAL_SUMMARIZATION_MODELS: ModelInfo[] = [
-    { id: "Xenova/distilbart-cnn-6-6", name: "distilbart-cnn-6-6", description: "English only, ~910MB — translate cs→en first for Czech" },
+    {
+        id: "Xenova/distilbart-cnn-6-6",
+        name: "distilbart-cnn-6-6",
+        description: "English only, ~910MB — translate cs→en first for Czech",
+    },
 ];
 
 // ── Text-to-Speech ──
 
 const LOCAL_TTS_MODELS: ModelInfo[] = [
-    { id: "onnx-community/Kokoro-82M-v1.0-ONNX", name: "Kokoro-82M", description: "best English TTS, ~92MB (q8) — no Czech" },
-    { id: "onnx-community/chatterbox-multilingual-ONNX", name: "chatterbox-multilingual", description: "23 languages (DE/PL/RU but no Czech), ~500MB" },
+    {
+        id: "onnx-community/Kokoro-82M-v1.0-ONNX",
+        name: "Kokoro-82M",
+        description: "best English TTS, ~92MB (q8) — no Czech",
+    },
+    {
+        id: "onnx-community/chatterbox-multilingual-ONNX",
+        name: "chatterbox-multilingual",
+        description: "23 languages (DE/PL/RU but no Czech), ~500MB",
+    },
 ];
 
 // ── Task → model registry ──
