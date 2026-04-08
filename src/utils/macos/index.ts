@@ -1,8 +1,8 @@
 // Apple Calendar
 
-export type { CalendarEventInfo, CalendarInfo, CalendarSaveResult, SourceInfo } from "./apple-calendar";
+export type { CalendarEventInfo, CalendarInfo } from "./apple-calendar";
 export { createCalendarEvent, deleteCalendarEvent, ensureCalendarExists, MacCalendar } from "./apple-calendar";
-export type { ReminderInfo, ReminderListInfo, RemindersSaveResult } from "./apple-reminders";
+export type { ReminderInfo, ReminderListInfo } from "./apple-reminders";
 // Apple Reminders
 export {
     completeReminder,

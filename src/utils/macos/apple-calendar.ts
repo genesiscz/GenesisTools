@@ -1,83 +1,10 @@
-import type { DarwinKit } from "@genesiscz/darwinkit";
+import type { CalendarEventInfo, CalendarInfo, MethodMap } from "@genesiscz/darwinkit";
 
 import { getDarwinKit } from "./darwinkit";
 
-// ── DarwinKit Calendar types ────────────────────────────────────────
-// These types will be exported from @genesiscz/darwinkit once the
-// calendar namespace ships. Defined locally until then.
+export type { CalendarEventInfo, CalendarInfo };
 
-export interface CalendarInfo {
-    identifier: string;
-    title: string;
-    type: string;
-    color: string;
-    source: string;
-    is_immutable: boolean;
-    allows_content_modifications: boolean;
-}
-
-export interface CalendarEventInfo {
-    identifier: string;
-    title: string;
-    start_date: string;
-    end_date: string;
-    is_all_day: boolean;
-    location?: string;
-    notes?: string;
-    calendar_identifier: string;
-    calendar_title: string;
-    url?: string;
-    availability?: string;
-    has_alarms: boolean;
-    alarms?: number[];
-    external_identifier?: string;
-}
-
-export interface CalendarSaveResult {
-    success: boolean;
-    identifier?: string;
-    error?: string;
-}
-
-export interface CalendarOkResult {
-    ok: boolean;
-}
-
-export interface SourceInfo {
-    identifier: string;
-    title: string;
-    source_type: string;
-}
-
-// ── Helper for calling calendar methods on DarwinKit ────────────────
-// The calendar namespace is not yet on the MethodMap type, so we route
-// through a typed helper that delegates to the generic `call()` path.
-
-type CalendarMethod =
-    | "calendar.authorized"
-    | "calendar.calendars"
-    | "calendar.events"
-    | "calendar.event"
-    | "calendar.save_event"
-    | "calendar.remove_event"
-    | "calendar.sources"
-    | "calendar.save_calendar"
-    | "calendar.remove_calendar"
-    | "calendar.default_calendar_events"
-    | "calendar.default_calendar_reminders";
-
-async function callCalendar<T>(
-    dk: DarwinKit,
-    method: CalendarMethod,
-    params: Record<string, unknown> = {}
-): Promise<T> {
-    // DarwinKit.call() accepts any method string at runtime even though
-    // the TS MethodMap hasn't been extended yet.
-    const callFn = dk.call.bind(dk) as (method: string, params: Record<string, unknown>) => Promise<unknown>;
-    return callFn(method, params) as T;
-}
-
-// ── Public option types ─────────────────────────────────────────────
+type SourceInfo = MethodMap["calendar.sources"]["result"]["sources"][number];
 
 export interface CreateEventOptions {
     title: string;
@@ -104,27 +31,29 @@ export interface UpdateEventOptions {
     availability?: "free" | "busy" | "tentative" | "unavailable";
 }
 
-// ── MacCalendar class ───────────────────────────────────────────────
-
 export class MacCalendar {
     static async ensureAuthorized(): Promise<void> {
         const dk = getDarwinKit();
-        const auth = await callCalendar<{ status: string; authorized: boolean }>(dk, "calendar.authorized");
+        const auth = await dk.calendar.authorized();
 
         if (!auth.authorized && auth.status !== "writeOnly") {
             throw new Error(
-                `Calendar access not authorized (status: ${auth.status}). Grant at least write access in System Settings > Privacy & Security > Calendars.`
+                `Calendar access not authorized (status: ${auth.status}). Grant at least write access in System Settings > Privacy & Security > Calendars.`,
             );
         }
     }
 
     static async listCalendars(): Promise<CalendarInfo[]> {
         const dk = getDarwinKit();
-        const result = await callCalendar<{ calendars: CalendarInfo[] }>(dk, "calendar.calendars");
+        const result = await dk.calendar.calendars();
         return result.calendars;
     }
 
-    static async listEvents(options: { calendarName?: string; from?: Date; to?: Date }): Promise<CalendarEventInfo[]> {
+    static async listEvents(options: {
+        calendarName?: string;
+        from?: Date;
+        to?: Date;
+    }): Promise<CalendarEventInfo[]> {
         const dk = getDarwinKit();
         const from = options.from ?? new Date();
         const to = options.to ?? new Date(from.getTime() + 30 * 24 * 60 * 60_000);
@@ -142,7 +71,7 @@ export class MacCalendar {
             calendarIdentifiers = [match.identifier];
         }
 
-        const result = await callCalendar<{ events: CalendarEventInfo[] }>(dk, "calendar.events", {
+        const result = await dk.calendar.events({
             start_date: from.toISOString(),
             end_date: to.toISOString(),
             calendar_identifiers: calendarIdentifiers,
@@ -152,7 +81,7 @@ export class MacCalendar {
 
     static async searchEvents(
         query: string,
-        options?: { calendarName?: string; from?: Date; to?: Date }
+        options?: { calendarName?: string; from?: Date; to?: Date },
     ): Promise<CalendarEventInfo[]> {
         const events = await MacCalendar.listEvents(options ?? {});
         const q = query.toLowerCase();
@@ -160,7 +89,7 @@ export class MacCalendar {
             (e) =>
                 e.title.toLowerCase().includes(q) ||
                 e.notes?.toLowerCase().includes(q) ||
-                e.location?.toLowerCase().includes(q)
+                e.location?.toLowerCase().includes(q),
         );
     }
 
@@ -170,7 +99,7 @@ export class MacCalendar {
         const startDate = options.startDate;
         const endDate = options.endDate ?? new Date(startDate.getTime() + 30 * 60_000);
 
-        const result = await callCalendar<CalendarSaveResult>(dk, "calendar.save_event", {
+        const result = await dk.calendar.saveEvent({
             calendar_identifier: calendarId,
             title: options.title,
             start_date: startDate.toISOString(),
@@ -192,13 +121,13 @@ export class MacCalendar {
 
     static async updateEvent(eventId: string, options: UpdateEventOptions): Promise<string> {
         const dk = getDarwinKit();
-        const existing = await callCalendar<CalendarEventInfo | null>(dk, "calendar.event", { identifier: eventId });
+        const existing = await dk.calendar.event({ identifier: eventId });
 
         if (!existing || !existing.identifier) {
             throw new Error(`Event not found: ${eventId}`);
         }
 
-        const result = await callCalendar<CalendarSaveResult>(dk, "calendar.save_event", {
+        const result = await dk.calendar.saveEvent({
             id: eventId,
             calendar_identifier: existing.calendar_identifier,
             title: options.title ?? existing.title,
@@ -221,7 +150,7 @@ export class MacCalendar {
 
     static async deleteEvent(options: { eventId: string }): Promise<boolean> {
         const dk = getDarwinKit();
-        const result = await callCalendar<CalendarOkResult>(dk, "calendar.remove_event", {
+        const result = await dk.calendar.removeEvent({
             identifier: options.eventId,
         });
         return result.ok;
@@ -229,7 +158,7 @@ export class MacCalendar {
 
     static async getSources(): Promise<SourceInfo[]> {
         const dk = getDarwinKit();
-        const result = await callCalendar<{ sources: SourceInfo[] }>(dk, "calendar.sources");
+        const result = await dk.calendar.sources();
         return result.sources;
     }
 
@@ -243,7 +172,7 @@ export class MacCalendar {
 
         const sources = await MacCalendar.getSources();
         const icloudSource = sources.find(
-            (s) => s.title.toLowerCase().includes("icloud") || s.source_type === "calDAV"
+            (s) => s.title.toLowerCase().includes("icloud") || s.source_type === "calDAV",
         );
         const sourceId = icloudSource?.identifier ?? sources[0]?.identifier;
 
@@ -252,7 +181,7 @@ export class MacCalendar {
         }
 
         const dk = getDarwinKit();
-        const result = await callCalendar<CalendarSaveResult>(dk, "calendar.save_calendar", {
+        const result = await dk.calendar.saveCalendar({
             title: name,
             source_identifier: sourceId,
         });
@@ -276,7 +205,7 @@ export class MacCalendar {
     }
 }
 
-// ── Backward-compatible named exports ───────────────────────────────
+// Backward-compatible named exports
 
 export function ensureCalendarExists(_name: string): void {
     throw new Error("ensureCalendarExists is no longer synchronous. Use MacCalendar.ensureCalendarExists() instead.");

@@ -1,66 +1,8 @@
-import type { DarwinKit } from "@genesiscz/darwinkit";
+import type { ReminderInfo, ReminderListInfo } from "@genesiscz/darwinkit";
 
 import { getDarwinKit } from "./darwinkit";
 
-// ── DarwinKit Reminders types ───────────────────────────────────────
-// These types will be exported from @genesiscz/darwinkit once the
-// reminders namespace ships. Defined locally until then.
-
-export interface ReminderListInfo {
-    identifier: string;
-    title: string;
-    color: string;
-    source: string;
-}
-
-export interface ReminderInfo {
-    identifier: string;
-    title: string;
-    is_completed: boolean;
-    completion_date?: string;
-    due_date?: string;
-    start_date?: string;
-    priority: number;
-    notes?: string;
-    url?: string;
-    list_identifier: string;
-    list_title: string;
-    has_alarms: boolean;
-    external_identifier?: string;
-}
-
-export interface RemindersSaveResult {
-    success: boolean;
-    identifier?: string;
-    error?: string;
-}
-
-interface RemindersOkResult {
-    ok: boolean;
-}
-
-// ── Helper for calling reminders methods on DarwinKit ───────────────
-
-type RemindersMethod =
-    | "reminders.authorized"
-    | "reminders.lists"
-    | "reminders.items"
-    | "reminders.save_item"
-    | "reminders.remove_item"
-    | "reminders.complete_item"
-    | "reminders.incomplete"
-    | "reminders.completed";
-
-async function callReminders<T>(
-    dk: DarwinKit,
-    method: RemindersMethod,
-    params: Record<string, unknown> = {}
-): Promise<T> {
-    const callFn = dk.call.bind(dk) as (method: string, params: Record<string, unknown>) => Promise<unknown>;
-    return callFn(method, params) as T;
-}
-
-// ── Priority mapping ────────────────────────────────────────────────
+export type { ReminderInfo, ReminderListInfo };
 
 const PRIORITY_MAP: Record<string, number> = {
     critical: 1,
@@ -73,23 +15,21 @@ export function todoPriorityToApple(priority: "critical" | "high" | "medium" | "
     return PRIORITY_MAP[priority];
 }
 
-// ── MacReminders class ──────────────────────────────────────────────
-
 export class MacReminders {
     static async ensureAuthorized(): Promise<void> {
         const dk = getDarwinKit();
-        const auth = await callReminders<{ status: string; authorized: boolean }>(dk, "reminders.authorized");
+        const auth = await dk.reminders.authorized();
 
         if (!auth.authorized) {
             throw new Error(
-                `Reminders access not authorized (status: ${auth.status}). Grant access in System Settings > Privacy & Security > Reminders.`
+                `Reminders access not authorized (status: ${auth.status}). Grant access in System Settings > Privacy & Security > Reminders.`,
             );
         }
     }
 
     static async listLists(): Promise<ReminderListInfo[]> {
         const dk = getDarwinKit();
-        const result = await callReminders<{ lists: ReminderListInfo[] }>(dk, "reminders.lists");
+        const result = await dk.reminders.lists();
         return result.lists;
     }
 
@@ -109,13 +49,13 @@ export class MacReminders {
         }
 
         if (options?.includeCompleted) {
-            const result = await callReminders<{ reminders: ReminderInfo[] }>(dk, "reminders.items", {
+            const result = await dk.reminders.items({
                 list_identifiers: listIdentifiers,
             });
             return result.reminders;
         }
 
-        const result = await callReminders<{ reminders: ReminderInfo[] }>(dk, "reminders.incomplete", {
+        const result = await dk.reminders.incomplete({
             list_identifiers: listIdentifiers,
         });
         return result.reminders;
@@ -138,7 +78,7 @@ export class MacReminders {
         const dk = getDarwinKit();
         const listId = await MacReminders.resolveListId(options.listName ?? "GenesisTools");
 
-        const result = await callReminders<RemindersSaveResult>(dk, "reminders.save_item", {
+        const result = await dk.reminders.saveItem({
             calendar_identifier: listId,
             title: options.title,
             notes: options.notes,
@@ -158,7 +98,7 @@ export class MacReminders {
         const dk = getDarwinKit();
 
         try {
-            await callReminders<ReminderInfo>(dk, "reminders.complete_item", {
+            await dk.reminders.completeItem({
                 identifier: options.reminderId,
             });
             return true;
@@ -171,7 +111,7 @@ export class MacReminders {
         const dk = getDarwinKit();
 
         try {
-            const result = await callReminders<RemindersOkResult>(dk, "reminders.remove_item", {
+            const result = await dk.reminders.removeItem({
                 identifier: options.reminderId,
             });
             return result.ok;
@@ -188,10 +128,6 @@ export class MacReminders {
             return existing.identifier;
         }
 
-        // DarwinKit doesn't have a dedicated createList method — use saveItem
-        // to trigger list creation, or rely on the reminders.lists namespace.
-        // For now, create a dummy reminder and delete it to force list creation.
-        // This is a workaround until DarwinKit adds saveList support.
         throw new Error(`Reminder list "${name}" does not exist. Create it manually in Reminders.app.`);
     }
 
@@ -207,7 +143,7 @@ export class MacReminders {
     }
 }
 
-// ── Backward-compatible named exports ───────────────────────────────
+// Backward-compatible named exports
 
 export function ensureReminderListExists(_name: string): void {
     throw new Error("ensureReminderListExists is no longer synchronous. Use MacReminders.ensureListExists() instead.");
