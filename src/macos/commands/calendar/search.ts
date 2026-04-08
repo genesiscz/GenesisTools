@@ -1,7 +1,7 @@
+import { parseDate } from "@app/utils/date";
 import { MacCalendar } from "@app/utils/macos/apple-calendar";
-import { formatTable } from "@app/utils/table";
 import type { Command } from "commander";
-import { formatDateTime, parseDate } from "./format";
+import { formatEventsTable } from "./format";
 
 interface SearchOptions {
     calendar?: string;
@@ -32,16 +32,7 @@ export function registerSearchCommand(program: Command): void {
                     return;
                 }
 
-                const rows = events.map((e) => [
-                    e.title,
-                    e.is_all_day ? "All day" : formatDateTime(e.start_date),
-                    e.is_all_day ? "" : formatDateTime(e.end_date),
-                    e.calendar_title,
-                    e.location ?? "",
-                ]);
-
-                const table = formatTable(rows, ["Title", "Start", "End", "Calendar", "Location"]);
-                console.log(table);
+                console.log(formatEventsTable(events));
             } catch (error) {
                 console.error(error instanceof Error ? error.message : String(error));
                 process.exit(1);

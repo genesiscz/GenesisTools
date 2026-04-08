@@ -38,7 +38,7 @@ export class MacCalendar {
 
         if (!auth.authorized && auth.status !== "writeOnly") {
             throw new Error(
-                `Calendar access not authorized (status: ${auth.status}). Grant at least write access in System Settings > Privacy & Security > Calendars.`,
+                `Calendar access not authorized (status: ${auth.status}). Grant at least write access in System Settings > Privacy & Security > Calendars.`
             );
         }
     }
@@ -49,11 +49,7 @@ export class MacCalendar {
         return result.calendars;
     }
 
-    static async listEvents(options: {
-        calendarName?: string;
-        from?: Date;
-        to?: Date;
-    }): Promise<CalendarEventInfo[]> {
+    static async listEvents(options: { calendarName?: string; from?: Date; to?: Date }): Promise<CalendarEventInfo[]> {
         const dk = getDarwinKit();
         const from = options.from ?? new Date();
         const to = options.to ?? new Date(from.getTime() + 30 * 24 * 60 * 60_000);
@@ -81,7 +77,7 @@ export class MacCalendar {
 
     static async searchEvents(
         query: string,
-        options?: { calendarName?: string; from?: Date; to?: Date },
+        options?: { calendarName?: string; from?: Date; to?: Date }
     ): Promise<CalendarEventInfo[]> {
         const events = await MacCalendar.listEvents(options ?? {});
         const q = query.toLowerCase();
@@ -89,13 +85,13 @@ export class MacCalendar {
             (e) =>
                 e.title.toLowerCase().includes(q) ||
                 e.notes?.toLowerCase().includes(q) ||
-                e.location?.toLowerCase().includes(q),
+                e.location?.toLowerCase().includes(q)
         );
     }
 
     static async createEvent(options: CreateEventOptions): Promise<string> {
         const dk = getDarwinKit();
-        const calendarId = await MacCalendar.resolveCalendarId(options.calendarName ?? "GenesisTools");
+        const calendarId = await MacCalendar.ensureCalendarExists(options.calendarName ?? "GenesisTools");
         const startDate = options.startDate;
         const endDate = options.endDate ?? new Date(startDate.getTime() + 30 * 60_000);
 
@@ -162,9 +158,9 @@ export class MacCalendar {
         return result.sources;
     }
 
-    static async ensureCalendarExists(name: string): Promise<string> {
-        const calendars = await MacCalendar.listCalendars();
-        const existing = calendars.find((c) => c.title === name);
+    static async ensureCalendarExists(name: string, calendars?: CalendarInfo[]): Promise<string> {
+        const allCalendars = calendars ?? await MacCalendar.listCalendars();
+        const existing = allCalendars.find((c) => c.title === name);
 
         if (existing) {
             return existing.identifier;
@@ -172,7 +168,7 @@ export class MacCalendar {
 
         const sources = await MacCalendar.getSources();
         const icloudSource = sources.find(
-            (s) => s.title.toLowerCase().includes("icloud") || s.source_type === "calDAV",
+            (s) => s.title.toLowerCase().includes("icloud") || s.source_type === "calDAV"
         );
         const sourceId = icloudSource?.identifier ?? sources[0]?.identifier;
 
@@ -192,36 +188,4 @@ export class MacCalendar {
 
         return result.identifier;
     }
-
-    private static async resolveCalendarId(calendarName: string): Promise<string> {
-        const calendars = await MacCalendar.listCalendars();
-        const match = calendars.find((c) => c.title === calendarName);
-
-        if (match) {
-            return match.identifier;
-        }
-
-        return MacCalendar.ensureCalendarExists(calendarName);
-    }
-}
-
-// Backward-compatible named exports
-
-export function ensureCalendarExists(_name: string): void {
-    throw new Error("ensureCalendarExists is no longer synchronous. Use MacCalendar.ensureCalendarExists() instead.");
-}
-
-export async function createCalendarEvent(options: {
-    title: string;
-    notes?: string;
-    startDate: Date;
-    endDate?: Date;
-    alerts?: number[];
-    calendarName?: string;
-}): Promise<string> {
-    return MacCalendar.createEvent(options);
-}
-
-export async function deleteCalendarEvent(options: { eventId: string }): Promise<boolean> {
-    return MacCalendar.deleteEvent(options);
 }

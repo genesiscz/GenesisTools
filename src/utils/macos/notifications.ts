@@ -3,7 +3,8 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import logger from "@app/logger";
 import type { DarwinKit } from "@app/utils/macos/darwinkit";
-import { getDarwinKit } from "@app/utils/macos/darwinkit";
+import { getDarwinKit, hasDarwinKit } from "@app/utils/macos/darwinkit";
+import { escapeJxa } from "@app/utils/macos/jxa";
 import { Storage } from "@app/utils/storage/storage";
 
 export interface NotificationOptions {
@@ -160,14 +161,11 @@ function sendViaTerminalNotifier(bin: string, opts: NotificationOptions): boolea
  * Send a notification using osascript as fallback.
  */
 function sendViaOsascript(opts: NotificationOptions): void {
-    const escaped = (s: string) =>
-        s.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n").replace(/\r/g, "\\r");
-
     const params = [
-        `"${escaped(opts.message)}"`,
-        opts.title ? `with title "${escaped(opts.title)}"` : "",
-        opts.subtitle ? `subtitle "${escaped(opts.subtitle)}"` : "",
-        `sound name "${escaped(opts.sound ?? "default")}"`,
+        `"${escapeJxa(opts.message)}"`,
+        opts.title ? `with title "${escapeJxa(opts.title)}"` : "",
+        opts.subtitle ? `subtitle "${escapeJxa(opts.subtitle)}"` : "",
+        `sound name "${escapeJxa(opts.sound ?? "default")}"`,
     ]
         .filter(Boolean)
         .join(" ");
@@ -183,8 +181,14 @@ function sendViaOsascript(opts: NotificationOptions): void {
  * Returns true if successful, false if darwinkit is unavailable or fails.
  */
 async function sendViaDarwinKit(opts: NotificationOptions): Promise<boolean> {
+    if (!hasDarwinKit()) {
+        return false;
+    }
+
     try {
-        const dk = getDarwinKit() as DarwinKit & { notifications?: { send(opts: Record<string, unknown>): Promise<void> } };
+        const dk = getDarwinKit() as DarwinKit & {
+            notifications?: { send(opts: Record<string, unknown>): Promise<void> };
+        };
 
         if (!dk.notifications) {
             return false;

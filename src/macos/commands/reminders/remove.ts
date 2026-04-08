@@ -3,7 +3,6 @@ import type { Command } from "commander";
 import pc from "picocolors";
 
 interface RemoveOptions {
-    list?: string;
     complete?: boolean;
 }
 
@@ -11,14 +10,12 @@ export function registerRemoveCommand(program: Command): void {
     program
         .command("remove <id>")
         .description("Remove a reminder (or mark it as complete)")
-        .option("--list <name>", "Reminder list name (for disambiguation)")
         .option("--complete", "Mark as complete instead of deleting")
         .action(async (id: string, options: RemoveOptions) => {
             try {
                 if (options.complete) {
                     const ok = await MacReminders.completeReminder({
                         reminderId: id,
-                        listName: options.list,
                     });
 
                     if (ok) {
@@ -33,7 +30,6 @@ export function registerRemoveCommand(program: Command): void {
 
                 const ok = await MacReminders.deleteReminder({
                     reminderId: id,
-                    listName: options.list,
                 });
 
                 if (ok) {

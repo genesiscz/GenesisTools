@@ -6,9 +6,9 @@ export type { ReminderInfo, ReminderListInfo };
 
 const PRIORITY_MAP: Record<string, number> = {
     critical: 1,
-    high: 5,
-    medium: 9,
-    low: 0,
+    high: 1,
+    medium: 5,
+    low: 9,
 };
 
 export function todoPriorityToApple(priority: "critical" | "high" | "medium" | "low"): number {
@@ -22,7 +22,7 @@ export class MacReminders {
 
         if (!auth.authorized) {
             throw new Error(
-                `Reminders access not authorized (status: ${auth.status}). Grant access in System Settings > Privacy & Security > Reminders.`,
+                `Reminders access not authorized (status: ${auth.status}). Grant access in System Settings > Privacy & Security > Reminders.`
             );
         }
     }
@@ -76,7 +76,7 @@ export class MacReminders {
         url?: string;
     }): Promise<string> {
         const dk = getDarwinKit();
-        const listId = await MacReminders.resolveListId(options.listName ?? "GenesisTools");
+        const listId = await MacReminders.ensureListExists(options.listName ?? "GenesisTools");
 
         const result = await dk.reminders.saveItem({
             calendar_identifier: listId,
@@ -94,7 +94,7 @@ export class MacReminders {
         return result.identifier;
     }
 
-    static async completeReminder(options: { reminderId: string; listName?: string }): Promise<boolean> {
+    static async completeReminder(options: { reminderId: string }): Promise<boolean> {
         const dk = getDarwinKit();
 
         try {
@@ -107,7 +107,7 @@ export class MacReminders {
         }
     }
 
-    static async deleteReminder(options: { reminderId: string; listName?: string }): Promise<boolean> {
+    static async deleteReminder(options: { reminderId: string }): Promise<boolean> {
         const dk = getDarwinKit();
 
         try {
@@ -120,9 +120,9 @@ export class MacReminders {
         }
     }
 
-    static async ensureListExists(name: string): Promise<string> {
-        const lists = await MacReminders.listLists();
-        const existing = lists.find((l) => l.title === name);
+    static async ensureListExists(name: string, lists?: ReminderListInfo[]): Promise<string> {
+        const allLists = lists ?? await MacReminders.listLists();
+        const existing = allLists.find((l) => l.title === name);
 
         if (existing) {
             return existing.identifier;
@@ -130,39 +130,4 @@ export class MacReminders {
 
         throw new Error(`Reminder list "${name}" does not exist. Create it manually in Reminders.app.`);
     }
-
-    private static async resolveListId(listName: string): Promise<string> {
-        const lists = await MacReminders.listLists();
-        const match = lists.find((l) => l.title === listName);
-
-        if (match) {
-            return match.identifier;
-        }
-
-        return MacReminders.ensureListExists(listName);
-    }
-}
-
-// Backward-compatible named exports
-
-export function ensureReminderListExists(_name: string): void {
-    throw new Error("ensureReminderListExists is no longer synchronous. Use MacReminders.ensureListExists() instead.");
-}
-
-export async function createReminder(options: {
-    title: string;
-    notes?: string;
-    dueDate?: Date;
-    priority?: number;
-    listName?: string;
-}): Promise<string> {
-    return MacReminders.createReminder(options);
-}
-
-export async function completeReminder(options: { reminderId: string; listName?: string }): Promise<boolean> {
-    return MacReminders.completeReminder(options);
-}
-
-export async function deleteReminder(options: { reminderId: string; listName?: string }): Promise<boolean> {
-    return MacReminders.deleteReminder(options);
 }

@@ -1,3 +1,4 @@
+import { parseDate } from "@app/utils/date";
 import { MacReminders, todoPriorityToApple } from "@app/utils/macos/apple-reminders";
 import { type Command, Option } from "commander";
 import pc from "picocolors";
@@ -27,15 +28,7 @@ export function registerAddCommand(program: Command): void {
                 }
             ) => {
                 try {
-                    let dueDate: Date | undefined;
-
-                    if (options.due) {
-                        dueDate = new Date(options.due);
-
-                        if (Number.isNaN(dueDate.getTime())) {
-                            throw new Error(`Invalid due date: ${options.due}`);
-                        }
-                    }
+                    const dueDate = options.due ? parseDate(options.due) : undefined;
 
                     const priority =
                         options.priority === "none"

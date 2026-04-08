@@ -1,27 +1,14 @@
+import { parseDate } from "@app/utils/date";
 import { SafeJSON } from "@app/utils/json";
 import type { CalendarEventInfo } from "@app/utils/macos/apple-calendar";
 import { MacCalendar } from "@app/utils/macos/apple-calendar";
-import { formatTable } from "@app/utils/table";
-import type { Command } from "commander";
+import { type Command, Option } from "commander";
+import { formatDateTime, formatEventsTable } from "./format";
 
 interface ListOptions {
     from?: string;
     to?: string;
     format?: string;
-}
-
-import { formatDateTime, parseDate } from "./format";
-
-function formatEventsTable(events: CalendarEventInfo[]): string {
-    const rows = events.map((e) => [
-        e.title,
-        e.is_all_day ? "All day" : formatDateTime(e.start_date),
-        e.is_all_day ? "" : formatDateTime(e.end_date),
-        e.calendar_title,
-        e.location ?? "",
-    ]);
-
-    return formatTable(rows, ["Title", "Start", "End", "Calendar", "Location"]);
 }
 
 function formatEventsMd(events: CalendarEventInfo[]): string {
@@ -40,7 +27,7 @@ export function registerListCommand(program: Command): void {
         .description("List calendar events (optionally filtered by calendar name)")
         .option("--from <date>", "Start date (e.g. 2026-04-01)")
         .option("--to <date>", "End date (e.g. 2026-04-30)")
-        .option("-f, --format <type>", "Output format: table, json, md", "table")
+        .addOption(new Option("-f, --format <type>", "Output format: table, json, md").choices(["table", "json", "md"]).default("table"))
         .action(async (name: string | undefined, options: ListOptions) => {
             try {
                 const from = options.from ? parseDate(options.from) : undefined;

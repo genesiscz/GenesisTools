@@ -1,10 +1,11 @@
 import type { ReminderInfo } from "@app/utils/macos/apple-reminders";
 import { formatTable } from "@app/utils/table";
+import { formatDateTime } from "../calendar/format";
 
 export function formatPriority(priority: number): string {
     switch (priority) {
         case 1:
-            return "Critical";
+            return "High";
         case 5:
             return "Medium";
         case 9:
@@ -19,13 +20,7 @@ export function formatDueDate(iso?: string): string {
         return "";
     }
 
-    const d = new Date(iso);
-    return d.toLocaleString("en-US", {
-        month: "short",
-        day: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-    });
+    return formatDateTime(iso);
 }
 
 export function formatRemindersTable(reminders: ReminderInfo[]): string {

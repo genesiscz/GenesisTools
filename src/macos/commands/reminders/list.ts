@@ -1,6 +1,6 @@
 import { SafeJSON } from "@app/utils/json";
 import { MacReminders } from "@app/utils/macos/apple-reminders";
-import type { Command } from "commander";
+import { type Command, Option } from "commander";
 import { formatRemindersTable } from "./format";
 
 interface ListOptions {
@@ -13,7 +13,7 @@ export function registerListCommand(program: Command): void {
         .command("list [name]")
         .description("List reminders (optionally filtered by list name)")
         .option("--include-completed", "Include completed reminders")
-        .option("-f, --format <type>", "Output format: table, json", "table")
+        .addOption(new Option("-f, --format <type>", "Output format: table, json").choices(["table", "json"]).default("table"))
         .action(async (name: string | undefined, options: ListOptions) => {
             try {
                 const reminders = await MacReminders.listReminders(name, {

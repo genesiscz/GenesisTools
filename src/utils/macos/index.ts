@@ -1,14 +1,10 @@
 // Apple Calendar
 
 export type { CalendarEventInfo, CalendarInfo } from "./apple-calendar";
-export { createCalendarEvent, deleteCalendarEvent, ensureCalendarExists, MacCalendar } from "./apple-calendar";
+export { MacCalendar } from "./apple-calendar";
 export type { ReminderInfo, ReminderListInfo } from "./apple-reminders";
 // Apple Reminders
 export {
-    completeReminder,
-    createReminder,
-    deleteReminder,
-    ensureReminderListExists,
     MacReminders,
     todoPriorityToApple,
 } from "./apple-reminders";
@@ -17,7 +13,7 @@ export { authenticate, checkBiometry } from "./auth";
 // Classification
 export { classifyBatch, classifyText, groupByCategory } from "./classification";
 export type { DarwinKitOptions } from "./darwinkit";
-export { closeDarwinKit, DarwinKit, DarwinKitError, getDarwinKit } from "./darwinkit";
+export { closeDarwinKit, DarwinKit, DarwinKitError, getDarwinKit, hasDarwinKit } from "./darwinkit";
 // iCloud
 export {
     icloudCopy,

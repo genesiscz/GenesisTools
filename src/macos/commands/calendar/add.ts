@@ -1,6 +1,8 @@
+import { parseDate } from "@app/utils/date";
 import { MacCalendar } from "@app/utils/macos/apple-calendar";
-import { type Command, Option } from "commander";
+import type { Command } from "commander";
 import pc from "picocolors";
+import { createAlertOption } from "./format";
 
 export function registerAddCommand(program: Command): void {
     program
@@ -12,19 +14,7 @@ export function registerAddCommand(program: Command): void {
         .option("--notes <text>", "Event notes")
         .option("--url <url>", "Event URL")
         .option("--location <text>", "Event location")
-        .addOption(
-            new Option("--alert <minutes>", "Alert before event in minutes (repeatable)")
-                .argParser((value: string, previous: number[]) => {
-                    const mins = Number.parseInt(value, 10);
-
-                    if (Number.isNaN(mins)) {
-                        throw new Error(`Invalid alert value: ${value}`);
-                    }
-
-                    return [...(previous ?? []), mins];
-                })
-                .default([])
-        )
+        .addOption(createAlertOption())
         .option("--all-day", "Mark as all-day event")
         .action(
             async (
@@ -41,21 +31,8 @@ export function registerAddCommand(program: Command): void {
                 }
             ) => {
                 try {
-                    const startDate = new Date(options.start);
-
-                    if (Number.isNaN(startDate.getTime())) {
-                        throw new Error(`Invalid start date: ${options.start}`);
-                    }
-
-                    let endDate: Date | undefined;
-
-                    if (options.end) {
-                        endDate = new Date(options.end);
-
-                        if (Number.isNaN(endDate.getTime())) {
-                            throw new Error(`Invalid end date: ${options.end}`);
-                        }
-                    }
+                    const startDate = parseDate(options.start);
+                    const endDate = options.end ? parseDate(options.end) : undefined;
 
                     const eventId = await MacCalendar.createEvent({
                         title,
