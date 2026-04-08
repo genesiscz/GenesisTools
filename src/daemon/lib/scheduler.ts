@@ -89,7 +89,7 @@ async function executeTask(task: DaemonTask, logsBaseDir: string): Promise<void>
     const shouldNotify = task.notify !== false;
 
     if (shouldNotify) {
-        void dispatchNotification({
+        dispatchNotification({
             app: "daemon",
             title: "Daemon",
             subtitle: task.name,
@@ -106,7 +106,7 @@ async function executeTask(task: DaemonTask, logsBaseDir: string): Promise<void>
             log.info({ task: task.name, duration: result.duration_ms }, "Task completed");
 
             if (shouldNotify) {
-                void dispatchNotification({
+                dispatchNotification({
                     app: "daemon",
                     title: "Daemon",
                     subtitle: task.name,
@@ -127,7 +127,7 @@ async function executeTask(task: DaemonTask, logsBaseDir: string): Promise<void>
     }
 
     if (shouldNotify) {
-        void dispatchNotification({
+        dispatchNotification({
             app: "daemon",
             title: "Daemon",
             subtitle: task.name,

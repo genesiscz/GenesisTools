@@ -3,8 +3,7 @@ import type { Storage } from "@app/utils/storage/storage";
 import { BUCKET_LABELS, BUCKET_THRESHOLD_MAP } from "./constants";
 import type { UsageDashboardConfig } from "./dashboard-config";
 
-/** Key in `Storage("claude-usage")` config.json (via {@link Storage.atomicConfigUpdate}) */
-export const NOTIFICATION_POLL_TRACKER_CONFIG_KEY = "notificationPollTracker";
+const NOTIFICATION_POLL_TRACKER_CONFIG_KEY = "notificationPollTracker";
 
 interface TrackerState {
     lastNotifiedThreshold: number | null;
@@ -175,6 +174,7 @@ export class NotificationManager {
             t.restoreState(ts.lastNotifiedThreshold, ts.lastResetEpoch);
             this.trackers.set(key, t);
         }
+
         if (this.trackers.size > 0) {
             this.isFirstPoll = false;
         }

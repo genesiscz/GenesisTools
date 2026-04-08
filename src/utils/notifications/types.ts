@@ -59,4 +59,10 @@ export interface NotificationEvent {
 	group?: string;
 	open?: string;
 	execute?: string;
+	/** Per-call sound override (falls back to channel config) */
+	sound?: string;
+	/** Per-call DnD bypass (falls back to channel config) */
+	ignoreDnD?: boolean;
+	/** Custom icon path/URL (terminal-notifier only) */
+	appIcon?: string;
 }

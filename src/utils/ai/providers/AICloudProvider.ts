@@ -57,7 +57,13 @@ export class AICloudProvider
 
     async isAvailable(): Promise<boolean> {
         if (this.cloudType === "auto") {
-            return Object.values(ENV_VAR_MAP).some((key) => !!process.env[key]);
+            const allKeys = [
+                ...Object.values(ENV_VAR_MAP),
+                "ASSEMBLYAI_API_KEY",
+                "DEEPGRAM_API_KEY",
+                "GLADIA_API_KEY",
+            ];
+            return allKeys.some((key) => !!process.env[key]);
         }
 
         return !!process.env[ENV_VAR_MAP[this.cloudType]];

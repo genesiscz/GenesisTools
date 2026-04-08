@@ -283,24 +283,17 @@ program
                 process.exit(0);
             }
 
-            const deprecated = ["sound", "appIcon", "ignoreDnd", "say"] as const;
-            for (const flag of deprecated) {
-                if (options[flag] !== undefined) {
-                    const cliFlag = flag.replace(/([A-Z])/g, "-$1").toLowerCase();
-                    console.warn(
-                        `Warning: --${cliFlag} is deprecated. Use "tools notify config" to set channel defaults.`,
-                    );
-                }
-            }
-
             await dispatchNotification({
                 app: "notify",
                 message,
                 title: options.title,
                 subtitle: options.subtitle,
+                sound: options.sound,
                 group: options.group,
                 open: options.open,
                 execute: options.execute,
+                appIcon: options.appIcon,
+                ignoreDnD: options.ignoreDnd,
             });
         }
     );
