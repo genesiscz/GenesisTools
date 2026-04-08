@@ -1,14 +1,7 @@
 import { MacCalendar } from "@app/utils/macos/apple-calendar";
 import { formatTable } from "@app/utils/table";
+import chalk from "chalk";
 import type { Command } from "commander";
-import pc from "picocolors";
-
-function colorText(hex: string, text: string): string {
-    const r = Number.parseInt(hex.slice(1, 3), 16);
-    const g = Number.parseInt(hex.slice(3, 5), 16);
-    const b = Number.parseInt(hex.slice(5, 7), 16);
-    return `\x1b[38;2;${r};${g};${b}m${text}\x1b[0m`;
-}
 
 export function registerListCalendarsCommand(program: Command): void {
     program
@@ -24,10 +17,10 @@ export function registerListCalendarsCommand(program: Command): void {
                 }
 
                 const rows = calendars.map((cal) => [
-                    colorText(cal.color, `● ${cal.title}`),
+                    chalk.hex(cal.color)(`● ${cal.title}`),
                     cal.source,
                     cal.type,
-                    cal.allows_content_modifications ? pc.green("Yes") : pc.red("No"),
+                    cal.allows_content_modifications ? chalk.green("Yes") : chalk.red("No"),
                 ]);
 
                 const table = formatTable(rows, ["Title", "Source", "Type", "Editable"]);
