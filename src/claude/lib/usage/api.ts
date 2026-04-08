@@ -1,5 +1,5 @@
-import type { AIAccountEntry } from "@app/utils/config/ai.types";
 import { resolveAccountToken } from "@app/utils/claude/subscription-auth";
+import type { AIAccountEntry } from "@app/utils/config/ai.types";
 
 export type { AccountInfo, KeychainCredentials } from "@app/utils/claude/auth";
 
@@ -58,7 +58,7 @@ export async function fetchUsage(accessToken: string, signal?: AbortSignal): Pro
 
 export async function fetchAllAccountsUsage(
     accountFilter?: string | string[],
-    signal?: AbortSignal,
+    signal?: AbortSignal
 ): Promise<AccountUsage[]> {
     const { AIConfig } = await import("@app/utils/ai/AIConfig");
     const config = await AIConfig.load();
@@ -103,12 +103,12 @@ export async function fetchAllAccountsUsage(
                 const usage = await fetchUsage(freshToken, signal);
                 return { accountName: account.name, label: account.label, usage } satisfies AccountUsage;
             }
-        }),
+        })
     );
 
     return results.map((r, i) =>
         r.status === "fulfilled"
             ? r.value
-            : { accountName: accounts[i].name, label: accounts[i].label, error: String(r.reason) },
+            : { accountName: accounts[i].name, label: accounts[i].label, error: String(r.reason) }
     );
 }

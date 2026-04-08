@@ -28,7 +28,11 @@ const LOCAL_TRANSCRIPTION_MODELS: ModelInfo[] = [
         name: "whisper-large-v3-turbo",
         description: "best speed/quality, ~1.5GB (fp16 enc + q4 dec)",
     },
-    { id: "Xenova/whisper-large-v3", name: "whisper-large-v3", description: "highest quality, ~3.1GB — slow but best accuracy" },
+    {
+        id: "Xenova/whisper-large-v3",
+        name: "whisper-large-v3",
+        description: "highest quality, ~3.1GB — slow but best accuracy",
+    },
     { id: "onnx-community/whisper-small", name: "whisper-small", description: "good accuracy, ~244MB" },
     { id: "onnx-community/whisper-base", name: "whisper-base", description: "balanced speed/quality, ~145MB" },
     { id: "onnx-community/whisper-tiny", name: "whisper-tiny", description: "fastest, ~75MB" },

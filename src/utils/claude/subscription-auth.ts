@@ -185,8 +185,7 @@ export async function resolveAccountToken(accountName?: string, options?: Resolv
     if (!refreshed) {
         if (acc.tokens.expiresAt && claudeOAuth.needsRefresh(acc.tokens.expiresAt)) {
             throw new Error(
-                `Token for "${name}" is expired and no refresh token is available. ` +
-                    `Run: tools claude login ${name}`
+                `Token for "${name}" is expired and no refresh token is available. ` + `Run: tools claude login ${name}`
             );
         }
 
@@ -215,4 +214,3 @@ export async function resolveAccountToken(accountName?: string, options?: Resolv
         refreshed: true,
     };
 }
-

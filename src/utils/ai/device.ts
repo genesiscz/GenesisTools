@@ -60,7 +60,7 @@ export async function resolveDevice(): Promise<DeviceResult> {
 
             if (!names.includes(preferred.device)) {
                 logger.info(
-                    `[device] ${preferred.label} not available (have: ${names.join(", ")}), falling back to CPU`,
+                    `[device] ${preferred.label} not available (have: ${names.join(", ")}), falling back to CPU`
                 );
                 return { device: "cpu", label: "CPU (fallback)" };
             }

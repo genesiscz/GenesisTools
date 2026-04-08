@@ -154,7 +154,9 @@ export const migrateAI: ConfigMigration = {
             if (oldAccounts?.accounts && oldAccounts.accounts.length > 0) {
                 for (const acc of oldAccounts.accounts) {
                     if (!VALID_PROVIDERS.has(acc.provider)) {
-                        logger.warn(`[migration] Skipping account "${acc.name}" with unknown provider "${acc.provider}"`);
+                        logger.warn(
+                            `[migration] Skipping account "${acc.name}" with unknown provider "${acc.provider}"`
+                        );
                         continue;
                     }
 
