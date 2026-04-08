@@ -37,7 +37,6 @@ const SUPPORTED_TASKS: AITask[] = ["transcribe", "translate", "summarize", "embe
 // the buggy Level3 re-run). Ref: microsoft/onnxruntime#26631, huggingface/transformers.js#1567
 // Track this set at runtime so the error-recovery path can add models dynamically.
 const FP16_INCOMPATIBLE_ENCODERS = new Set([
-    "onnx-community/whisper-large-v3",
     "onnx-community/whisper-large-v3-turbo",
 ]);
 
@@ -555,7 +554,7 @@ export class AILocalProvider
                 `  ${pc.cyan(HF_TOKEN_URL)}\n\n` +
                 `Required permissions:\n` +
                 `  ${pc.bold("Repositories")}  → Read access to contents of all repos under your personal namespace\n` +
-                `  ${pc.bold("Inference")}     → Make calls to the serverless Inference API`,
+                `  ${pc.bold("Inference")}     → Make calls to the serverless Inference API`
         );
 
         const openBrowser = await p.confirm({

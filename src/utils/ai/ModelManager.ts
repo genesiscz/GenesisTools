@@ -21,11 +21,11 @@ const LOCAL_TRANSCRIPTION_MODELS: TranscriptionModelInfo[] = [
     {
         id: "onnx-community/whisper-large-v3-turbo",
         name: "whisper-large-v3-turbo",
-        description: "best quality, ~1.5GB",
+        description: "best quality, ~1.5GB (fp16 enc + q4 dec)",
     },
-    { id: "onnx-community/whisper-large-v3", name: "whisper-large-v3", description: "highest quality, ~3GB" },
-    { id: "onnx-community/whisper-small", name: "whisper-small", description: "faster, lower quality" },
-    { id: "onnx-community/whisper-tiny", name: "whisper-tiny", description: "fastest, basic quality" },
+    { id: "onnx-community/whisper-small", name: "whisper-small", description: "good accuracy, ~500MB" },
+    { id: "onnx-community/whisper-base", name: "whisper-base", description: "balanced speed/quality, ~200MB" },
+    { id: "onnx-community/whisper-tiny", name: "whisper-tiny", description: "fastest, ~150MB" },
 ];
 
 function getCloudTranscriptionModels(): TranscriptionModelInfo[] {

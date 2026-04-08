@@ -289,7 +289,7 @@ function validateModelOption(model: string | undefined, provider: string | undef
         const suggestions =
             providerType === "cloud"
                 ? "whisper-large-v3-turbo, whisper-large-v3, whisper-1"
-                : "onnx-community/whisper-large-v3-turbo, onnx-community/whisper-small, onnx-community/whisper-tiny";
+                : "onnx-community/whisper-large-v3-turbo, onnx-community/whisper-small, onnx-community/whisper-base, onnx-community/whisper-tiny";
 
         p.log.error(`Invalid --model (empty). Available for ${providerType}: ${suggestions}`);
         process.exit(1);
