@@ -148,13 +148,11 @@ export function updateConfig(updater: (config: ClaudeConfig) => void): Promise<C
                     ...raw.notifications?.channels,
                 },
             },
-            warmup: raw.warmup
-                ? {
-                      session: { ...DEFAULT_WARMUP.session, ...raw.warmup.session },
-                      weekly: { ...DEFAULT_WARMUP.weekly, ...raw.warmup.weekly },
-                      todayLog: raw.warmup.todayLog ?? DEFAULT_WARMUP.todayLog,
-                  }
-                : undefined,
+            warmup: {
+                session: { ...DEFAULT_WARMUP.session, ...raw.warmup?.session },
+                weekly: { ...DEFAULT_WARMUP.weekly, ...raw.warmup?.weekly },
+                todayLog: raw.warmup?.todayLog ?? DEFAULT_WARMUP.todayLog,
+            },
         };
         updater(config);
         // Write back the full merged config
