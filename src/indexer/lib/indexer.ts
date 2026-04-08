@@ -1,6 +1,7 @@
 import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import logger from "@app/logger";
+import { findModel } from "@app/utils/ai/ModelRegistry";
 import type { Embedder } from "@app/utils/ai/tasks/Embedder";
 import type { WatcherSubscription } from "@app/utils/fs/watcher";
 import { Stopwatch } from "@app/utils/Stopwatch";
@@ -11,7 +12,6 @@ import { chunkFile } from "./chunker";
 import type { EventName, IndexerCallbacks, IndexerEventMap, SyncStats } from "./events";
 import { IndexerEventEmitter } from "./events";
 import type { ModelInfo } from "./model-registry";
-import { findModel } from "@app/utils/ai/ModelRegistry";
 import { formatModelTable, getMaxEmbedChars, getModelsForType, getTaskPrefix } from "./model-registry";
 import { FileSource } from "./sources/file-source";
 import type { IndexerSource, SourceEntry } from "./sources/source";
@@ -101,7 +101,7 @@ export class Indexer extends IndexerEventEmitter {
         const isMessageType = strategy === "message" || this.config.type === "mail" || this.config.type === "chat";
 
         if (!isMessageType) {
-            return DEFAULT_MAX_TOKENS;
+            return this.config.chunkMaxTokens ?? DEFAULT_MAX_TOKENS;
         }
 
         const modelId = this.config.embedding?.model;
@@ -705,7 +705,7 @@ export class Indexer extends IndexerEventEmitter {
         const { mode, callbacks } = opts;
         const syncStart = performance.now();
         const strategy = this.config.chunking ?? "auto";
-        const maxTokens = this.config.chunkMaxTokens ?? this.deriveMaxTokens();
+        const maxTokens = this.deriveMaxTokens();
         const pathHashStore = this.store.getPathHashStore();
 
         // Reset cancellation flag at start of each sync
