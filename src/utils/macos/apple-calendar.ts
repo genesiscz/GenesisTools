@@ -159,7 +159,7 @@ export class MacCalendar {
     }
 
     static async ensureCalendarExists(name: string, calendars?: CalendarInfo[]): Promise<string> {
-        const allCalendars = calendars ?? await MacCalendar.listCalendars();
+        const allCalendars = calendars ?? (await MacCalendar.listCalendars());
         const existing = allCalendars.find((c) => c.title === name);
 
         if (existing) {
@@ -167,9 +167,9 @@ export class MacCalendar {
         }
 
         const sources = await MacCalendar.getSources();
-        const icloudSource = sources.find(
-            (s) => s.title.toLowerCase().includes("icloud") || s.source_type === "calDAV"
-        );
+        const icloudSource =
+            sources.find((s) => s.title.toLowerCase().includes("icloud")) ??
+            sources.find((s) => s.source_type === "calDAV");
         const sourceId = icloudSource?.identifier ?? sources[0]?.identifier;
 
         if (!sourceId) {

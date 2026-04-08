@@ -1,5 +1,6 @@
 import type { ReminderInfo, ReminderListInfo } from "@genesiscz/darwinkit";
 
+import logger from "@app/logger";
 import { getDarwinKit } from "./darwinkit";
 
 export type { ReminderInfo, ReminderListInfo };
@@ -102,7 +103,8 @@ export class MacReminders {
                 identifier: options.reminderId,
             });
             return true;
-        } catch {
+        } catch (error) {
+            logger.error({ error, reminderId: options.reminderId }, "Failed to complete reminder");
             return false;
         }
     }
@@ -115,13 +117,14 @@ export class MacReminders {
                 identifier: options.reminderId,
             });
             return result.ok;
-        } catch {
+        } catch (error) {
+            logger.error({ error, reminderId: options.reminderId }, "Failed to delete reminder");
             return false;
         }
     }
 
     static async ensureListExists(name: string, lists?: ReminderListInfo[]): Promise<string> {
-        const allLists = lists ?? await MacReminders.listLists();
+        const allLists = lists ?? (await MacReminders.listLists());
         const existing = allLists.find((l) => l.title === name);
 
         if (existing) {
