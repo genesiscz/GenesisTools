@@ -352,6 +352,7 @@ const TASK_LABELS: Record<AITask, string> = {
     classify: "Classification",
     embed: "Embedding",
     sentiment: "Sentiment Analysis",
+    tts: "Text-to-Speech",
 };
 
 const PROVIDER_OPTIONS: Array<{ value: AIProviderType; label: string; hint: string }> = [
@@ -366,7 +367,7 @@ async function cmdConfig(): Promise<void> {
     const config = await AIConfig.load();
 
     // Show current config
-    const tasks: AITask[] = ["transcribe", "translate", "summarize", "classify", "embed", "sentiment"];
+    const tasks: AITask[] = ["transcribe", "translate", "summarize", "classify", "embed", "sentiment", "tts"];
     const currentRows = tasks.map((task) => {
         const taskConfig = config.getTask(task);
         return [TASK_LABELS[task], taskConfig.provider, taskConfig.model ?? pc.dim("default")];

@@ -26,6 +26,14 @@ export type {
 } from "./LanguageDetector";
 export { createLanguageDetector, LanguageDetector } from "./LanguageDetector";
 export { ModelManager } from "./ModelManager";
+export {
+    findModel,
+    getEmbedModelsForType,
+    getMaxEmbedChars,
+    getModelsByProvider,
+    getModelsForTask,
+    getTaskPrefix,
+} from "./ModelRegistry";
 export { Embedder } from "./tasks/Embedder";
 export { Summarizer } from "./tasks/Summarizer";
 export { Transcriber } from "./tasks/Transcriber";

@@ -10,6 +10,25 @@ export interface AIProvider {
     dispose?(): void;
 }
 
+/** Unified model metadata — single source of truth for all AI tasks. */
+export interface ModelEntry {
+    id: string;
+    name: string;
+    task: AITask;
+    provider: "ollama" | "local-hf" | "darwinkit" | "coreml" | "cloud" | "google";
+    params?: string;
+    dimensions?: number;
+    contextLength?: number;
+    charsPerToken?: number;
+    speed: "fast" | "medium" | "slow";
+    ramGB: number;
+    license: string;
+    bestFor?: string[];
+    description: string;
+    installCmd?: string;
+    taskPrefix?: { document: string; query: string };
+}
+
 export type ProgressPhase = "download" | "load" | "transcribe";
 
 export interface ProgressInfo {
