@@ -2,6 +2,7 @@ import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import logger from "@app/logger";
 import type { Embedder } from "@app/utils/ai/tasks/Embedder";
+import { Stopwatch } from "@app/utils/Stopwatch";
 import type { WatcherSubscription } from "@app/utils/fs/watcher";
 import type { SearchOptions, SearchResult } from "@app/utils/search/types";
 import { Storage } from "@app/utils/storage/storage";
@@ -499,7 +500,6 @@ export class Indexer extends IndexerEventEmitter {
         const taskPrefix = getTaskPrefix(modelId);
         const providerType = this.config.embedding?.provider;
         const embedBatchSize = PROVIDER_BATCH_SIZES[providerType ?? ""] ?? EMBEDDING_BATCH_SIZE;
-        const embedStart = performance.now();
         // Match DB page to batch size so each page = ~1 HTTP call
         const dbPageSize = Math.max(1000, embedBatchSize);
         let embedded = 0;
@@ -510,21 +510,22 @@ export class Indexer extends IndexerEventEmitter {
         const storage = new Storage("indexer");
         const stopFile = join(storage.getBaseDir(), this.config.name, "stop.signal");
 
+        const embedSw = new Stopwatch();
         logger.debug(
             `[embed] starting: provider=${providerType}, model=${modelId}, batchSize=${embedBatchSize}, pageSize=${dbPageSize}, maxChars=${maxEmbedChars}`
         );
 
         // Stream pages: query -> batch embed -> store -> next page
         while (true) {
-            const dbQueryStart = performance.now();
+            const pageSw = new Stopwatch();
             const page = this.store.getUnembeddedChunksPage(dbPageSize);
-            const dbQueryMs = performance.now() - dbQueryStart;
+            const dbReadLap = pageSw.lap();
 
             if (page.length === 0) {
                 break;
             }
 
-            logger.debug(`[embed] page ${pageCount + 1}: fetched ${page.length} chunks in ${dbQueryMs.toFixed(1)}ms`);
+            logger.debug(`[embed] page ${pageCount + 1}: fetched ${page.length} chunks in ${dbReadLap}`);
 
             const batchEmbeddings = new Map<string, Float32Array>();
             let pageEmbedMs = 0;
@@ -555,16 +556,16 @@ export class Indexer extends IndexerEventEmitter {
 
                 if (textsToEmbed.length > 0) {
                     const avgChars = Math.round(textsToEmbed.reduce((s, t) => s + t.length, 0) / textsToEmbed.length);
-                    const batchEmbedStart = performance.now();
+                    const batchSw = new Stopwatch();
 
                     try {
                         const results = await this.embedder.embedBatch(textsToEmbed);
-                        const batchMs = performance.now() - batchEmbedStart;
+                        const batchMs = batchSw.elapsedMs;
                         pageEmbedMs += batchMs;
 
                         const rate = (textsToEmbed.length / batchMs) * 1000;
                         logger.debug(
-                            `[embed] batch ${Math.floor(i / embedBatchSize) + 1}: ${textsToEmbed.length} texts (avg ${avgChars} chars${skippedShort > 0 ? `, ${skippedShort} skipped` : ""}) → ${batchMs.toFixed(0)}ms (${rate.toFixed(0)} emb/s)`
+                            `[embed] batch ${Math.floor(i / embedBatchSize) + 1}: ${textsToEmbed.length} texts (avg ${avgChars} chars${skippedShort > 0 ? `, ${skippedShort} skipped` : ""}) → ${batchSw.elapsed()} (${rate.toFixed(0)} emb/s)`
                         );
 
                         for (let j = 0; j < results.length; j++) {
@@ -603,17 +604,16 @@ export class Indexer extends IndexerEventEmitter {
             }
 
             // Single DB transaction for all embeddings in this page
-            const dbWriteStart = performance.now();
             await this.store.insertChunks([], batchEmbeddings);
-            const dbWriteMs = performance.now() - dbWriteStart;
+            const dbWriteLap = pageSw.lap();
             embedded += batchEmbeddings.size;
             pageCount++;
 
-            const pageTotal = dbQueryMs + pageEmbedMs + dbWriteMs;
+            const pageTotalMs = pageSw.elapsedMs;
             logger.debug(
                 `[embed] page ${pageCount} done: ${batchEmbeddings.size} embeddings, ` +
-                    `embed=${pageEmbedMs.toFixed(0)}ms, dbRead=${dbQueryMs.toFixed(0)}ms, dbWrite=${dbWriteMs.toFixed(0)}ms, ` +
-                    `total=${pageTotal.toFixed(0)}ms (embed ${((pageEmbedMs / pageTotal) * 100).toFixed(0)}%)`
+                    `embed=${pageEmbedMs.toFixed(0)}ms, dbRead=${dbReadLap}, dbWrite=${dbWriteLap}, ` +
+                    `total=${pageSw.elapsed()} (embed ${((pageEmbedMs / pageTotalMs) * 100).toFixed(0)}%)`
             );
 
             this.emitAndDispatch(
@@ -649,10 +649,10 @@ export class Indexer extends IndexerEventEmitter {
             }
         }
 
-        const embedDuration = performance.now() - embedStart;
-        const overallRate = embedded > 0 ? (embedded / embedDuration) * 1000 : 0;
+        const embedDurationMs = embedSw.elapsedMs;
+        const overallRate = embedded > 0 ? (embedded / embedDurationMs) * 1000 : 0;
         logger.debug(
-            `[embed] complete: ${embedded} embeddings in ${(embedDuration / 1000).toFixed(1)}s ` +
+            `[embed] complete: ${embedded} embeddings in ${embedSw.elapsed()} ` +
                 `(${overallRate.toFixed(0)} emb/s overall, ${pageCount} pages)`
         );
 
@@ -662,7 +662,7 @@ export class Indexer extends IndexerEventEmitter {
                 indexName: this.config.name,
                 embedded,
                 skipped: 0,
-                durationMs: embedDuration,
+                durationMs: embedDurationMs,
             },
             callbacks
         );
@@ -696,6 +696,11 @@ export class Indexer extends IndexerEventEmitter {
             // Skip for sinceId scans — we only process new entries, no deletion detection needed.
             const previousHashes = sinceId ? new Map<string, string>() : pathHashStore.getAllFiles();
 
+            const sw = new Stopwatch();
+            logger.debug(
+                `[scan] starting: mode=${mode}, sinceId=${sinceId ?? "none"}, strategy=${strategy}, maxTokens=${maxTokens}`
+            );
+
             this.emitAndDispatch(
                 "scan:start",
                 {
@@ -711,7 +716,9 @@ export class Indexer extends IndexerEventEmitter {
                 fromDate: opts.scanOptions?.fromDate,
                 toDate: opts.scanOptions?.toDate,
                 onBatch: async (batch) => {
+                    const batchSw = new Stopwatch();
                     const { chunks, pathEntries, perEntry } = await this.chunkEntries(batch, strategy, maxTokens);
+                    const chunkLap = batchSw.lap();
 
                     if (chunks.length > 0) {
                         await this.store.insertChunks(chunks);
@@ -722,12 +729,19 @@ export class Indexer extends IndexerEventEmitter {
                         pathHashStore.upsert(pe.path, pe.hash, true);
                     }
 
+                    const dbLap = batchSw.lap();
+
                     for (const entry of batch) {
                         storedInBatch.add(entry.id);
                     }
 
                     chunksAddedInBatch += chunks.length;
                     batchCount++;
+
+                    logger.debug(
+                        `[scan] batch ${batchCount}: ${batch.length} entries → ${chunks.length} chunks, ` +
+                            `chunk=${chunkLap}, dbWrite=${dbLap}, total=${storedInBatch.size} stored ${sw}`
+                    );
 
                     // Update metadata every 10 batches for crash-recovery display
                     if (batchCount % 10 === 0) {
@@ -778,6 +792,10 @@ export class Indexer extends IndexerEventEmitter {
                     );
                 },
             });
+
+            logger.debug(
+                `[scan] complete: ${sourceEntries.length} entries, ${chunksAddedInBatch} chunks in ${batchCount} batches, ${sw.elapsed()}`
+            );
 
             // ── Phase 2: DETECT CHANGES + STORE REMAINING ────────────
             let chunksFromRemaining = 0;
