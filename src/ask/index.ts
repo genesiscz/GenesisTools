@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import logger, { configureLogger } from "@app/logger";
+import logger from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import { input } from "@app/utils/prompts/clack";
 import { handleReadmeFlag } from "@app/utils/readme";
@@ -44,8 +44,6 @@ import {
     validateOptions,
 } from "@ask/utils/cli";
 import { generateSessionId } from "@ask/utils/helpers";
-
-configureLogger({ logToFile: true });
 
 // Initialize conversation manager
 const convManager = conversationManager;

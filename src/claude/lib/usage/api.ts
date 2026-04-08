@@ -1,12 +1,16 @@
+import logger from "@app/logger";
 import { resolveAccountToken } from "@app/utils/claude/subscription-auth";
 import type { AIAccountEntry } from "@app/utils/config/ai.types";
 
 export type { AccountInfo, KeychainCredentials } from "@app/utils/claude/auth";
 
-export class RateLimitError extends Error {
-    constructor(message: string) {
+export class RetryableApiError extends Error {
+    readonly statusCode: number;
+
+    constructor(statusCode: number, message: string) {
         super(message);
-        this.name = "RateLimitError";
+        this.name = "RetryableApiError";
+        this.statusCode = statusCode;
     }
 }
 
@@ -33,7 +37,11 @@ export interface AccountUsage {
 
 const USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
 
-export async function fetchUsage(accessToken: string, signal?: AbortSignal): Promise<UsageResponse> {
+export async function fetchUsage(accessToken: string, signal?: AbortSignal, accountHint?: string): Promise<UsageResponse> {
+    const tag = accountHint ? `[usage:${accountHint}]` : "[usage]";
+
+    logger.debug(`${tag} fetching ${USAGE_URL}`);
+
     const res = await fetch(USAGE_URL, {
         headers: {
             Authorization: `Bearer ${accessToken}`,
@@ -43,16 +51,20 @@ export async function fetchUsage(accessToken: string, signal?: AbortSignal): Pro
         signal,
     });
 
-    if (res.status === 429) {
+    if (res.status === 401 || res.status === 429) {
         const body = await res.text().catch(() => "");
-        throw new RateLimitError(`Usage API 429: ${body.slice(0, 200)}`);
+        const label = res.status === 429 ? "rate-limited" : "auth failed";
+        logger.warn(`${tag} ${res.status} ${label}: ${body.slice(0, 200)}`);
+        throw new RetryableApiError(res.status, `Usage API ${res.status}: ${body.slice(0, 200)}`);
     }
 
     if (!res.ok) {
         const body = await res.text().catch(() => "");
+        logger.error(`${tag} HTTP ${res.status}: ${body.slice(0, 200)}`);
         throw new Error(`Usage API ${res.status}: ${body.slice(0, 200)}`);
     }
 
+    logger.debug(`${tag} OK (${res.status})`);
     return res.json() as Promise<UsageResponse>;
 }
 
@@ -75,40 +87,54 @@ export async function fetchAllAccountsUsage(
         return [];
     }
 
+    logger.debug(`[usage] polling ${accounts.length} account(s): ${accounts.map((a) => a.name).join(", ")}`);
+
     const results = await Promise.allSettled(
         accounts.map(async (account: AIAccountEntry) => {
-            const { token } = await resolveAccountToken(account.name, {
+            const tag = `[usage:${account.name}]`;
+
+            const { token, refreshed: tokenRefreshed } = await resolveAccountToken(account.name, {
                 staleAccessToken: account.tokens.accessToken,
             });
 
+            if (tokenRefreshed) {
+                logger.info(`${tag} token was refreshed before fetch`);
+            }
+
             try {
-                const usage = await fetchUsage(token, signal);
+                const usage = await fetchUsage(token, signal, account.name);
                 return { accountName: account.name, label: account.label, usage } satisfies AccountUsage;
             } catch (err) {
-                if (!(err instanceof RateLimitError)) {
+                if (!(err instanceof RetryableApiError)) {
+                    logger.error(`${tag} fetch failed: ${err instanceof Error ? err.message : err}`);
                     throw err;
                 }
 
-                // 429 — force-refresh using the token that actually got 429'd,
-                // not the original on-disk token (which may have been refreshed already)
+                // 401/429 — force-refresh token and retry once
+                logger.warn(`${tag} got ${err.statusCode}, attempting force-refresh`);
                 const { token: freshToken, refreshed } = await resolveAccountToken(account.name, {
                     staleAccessToken: token,
                     forceRefresh: true,
                 });
 
                 if (!refreshed) {
+                    logger.warn(`${tag} force-refresh did not produce a new token, re-throwing ${err.statusCode}`);
                     throw err;
                 }
 
-                const usage = await fetchUsage(freshToken, signal);
+                logger.info(`${tag} retrying with refreshed token`);
+                const usage = await fetchUsage(freshToken, signal, account.name);
                 return { accountName: account.name, label: account.label, usage } satisfies AccountUsage;
             }
         })
     );
 
-    return results.map((r, i) =>
-        r.status === "fulfilled"
-            ? r.value
-            : { accountName: accounts[i].name, label: accounts[i].label, error: String(r.reason) }
-    );
+    return results.map((r, i) => {
+        if (r.status === "fulfilled") {
+            return r.value;
+        }
+
+        logger.error(`[usage:${accounts[i].name}] final error: ${r.reason}`);
+        return { accountName: accounts[i].name, label: accounts[i].label, error: String(r.reason) };
+    });
 }

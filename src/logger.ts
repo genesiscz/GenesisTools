@@ -241,8 +241,8 @@ export const createConsoleLoggerRaw = (logLevel: LogLevel = currentLevel): RawCo
 };
 
 // Default logger instances - both use minimalLevels (no level prefix for info/debug/trace)
-let logger = createLogger({ logToFile: false, minimalLevels: true });
-let consoleLog = createLogger({ logToFile: false, minimalLevels: true });
+let logger = createLogger({ logToFile: true, minimalLevels: true });
+let consoleLog = createLogger({ logToFile: true, minimalLevels: true });
 
 /**
  * Configure logger behavior and recreate logger instances
