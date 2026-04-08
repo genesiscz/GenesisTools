@@ -1,5 +1,6 @@
 import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import logger from "@app/logger";
 import type { Embedder } from "@app/utils/ai/tasks/Embedder";
 import type { WatcherSubscription } from "@app/utils/fs/watcher";
 import type { SearchOptions, SearchResult } from "@app/utils/search/types";
@@ -509,25 +510,36 @@ export class Indexer extends IndexerEventEmitter {
         const storage = new Storage("indexer");
         const stopFile = join(storage.getBaseDir(), this.config.name, "stop.signal");
 
+        logger.debug(
+            `[embed] starting: provider=${providerType}, model=${modelId}, batchSize=${embedBatchSize}, pageSize=${dbPageSize}, maxChars=${maxEmbedChars}`
+        );
+
         // Stream pages: query -> batch embed -> store -> next page
         while (true) {
+            const dbQueryStart = performance.now();
             const page = this.store.getUnembeddedChunksPage(dbPageSize);
+            const dbQueryMs = performance.now() - dbQueryStart;
 
             if (page.length === 0) {
                 break;
             }
 
+            logger.debug(`[embed] page ${pageCount + 1}: fetched ${page.length} chunks in ${dbQueryMs.toFixed(1)}ms`);
+
             const batchEmbeddings = new Map<string, Float32Array>();
+            let pageEmbedMs = 0;
 
             // Process page in embedding batches
             for (let i = 0; i < page.length; i += embedBatchSize) {
                 const batch = page.slice(i, i + embedBatchSize);
                 const textsToEmbed: string[] = [];
                 const idsToEmbed: string[] = [];
+                let skippedShort = 0;
 
                 for (const c of batch) {
                     if (c.content.length < 5) {
                         batchEmbeddings.set(c.id, new Float32Array(zeroDims));
+                        skippedShort++;
                         continue;
                     }
 
@@ -542,8 +554,18 @@ export class Indexer extends IndexerEventEmitter {
                 }
 
                 if (textsToEmbed.length > 0) {
+                    const avgChars = Math.round(textsToEmbed.reduce((s, t) => s + t.length, 0) / textsToEmbed.length);
+                    const batchEmbedStart = performance.now();
+
                     try {
                         const results = await this.embedder.embedBatch(textsToEmbed);
+                        const batchMs = performance.now() - batchEmbedStart;
+                        pageEmbedMs += batchMs;
+
+                        const rate = (textsToEmbed.length / batchMs) * 1000;
+                        logger.debug(
+                            `[embed] batch ${Math.floor(i / embedBatchSize) + 1}: ${textsToEmbed.length} texts (avg ${avgChars} chars${skippedShort > 0 ? `, ${skippedShort} skipped` : ""}) → ${batchMs.toFixed(0)}ms (${rate.toFixed(0)} emb/s)`
+                        );
 
                         for (let j = 0; j < results.length; j++) {
                             batchEmbeddings.set(idsToEmbed[j], results[j].vector);
@@ -581,9 +603,18 @@ export class Indexer extends IndexerEventEmitter {
             }
 
             // Single DB transaction for all embeddings in this page
+            const dbWriteStart = performance.now();
             await this.store.insertChunks([], batchEmbeddings);
+            const dbWriteMs = performance.now() - dbWriteStart;
             embedded += batchEmbeddings.size;
             pageCount++;
+
+            const pageTotal = dbQueryMs + pageEmbedMs + dbWriteMs;
+            logger.debug(
+                `[embed] page ${pageCount} done: ${batchEmbeddings.size} embeddings, ` +
+                    `embed=${pageEmbedMs.toFixed(0)}ms, dbRead=${dbQueryMs.toFixed(0)}ms, dbWrite=${dbWriteMs.toFixed(0)}ms, ` +
+                    `total=${pageTotal.toFixed(0)}ms (embed ${((pageEmbedMs / pageTotal) * 100).toFixed(0)}%)`
+            );
 
             this.emitAndDispatch(
                 "embed:progress",
@@ -619,6 +650,11 @@ export class Indexer extends IndexerEventEmitter {
         }
 
         const embedDuration = performance.now() - embedStart;
+        const overallRate = embedded > 0 ? (embedded / embedDuration) * 1000 : 0;
+        logger.debug(
+            `[embed] complete: ${embedded} embeddings in ${(embedDuration / 1000).toFixed(1)}s ` +
+                `(${overallRate.toFixed(0)} emb/s overall, ${pageCount} pages)`
+        );
 
         this.emitAndDispatch(
             "embed:complete",
