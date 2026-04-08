@@ -1,7 +1,25 @@
 import logger from "@app/logger";
-import type { AIAccountEntry, AIConfigData, AppConfig, ProviderConfig, TaskConfig } from "@app/utils/config/ai.types";
+import type {
+    AIAccountEntry,
+    AIConfigData,
+    AIProvider,
+    AppConfig,
+    ProviderConfig,
+    TaskConfig,
+} from "@app/utils/config/ai.types";
 import type { ConfigMigration } from "@app/utils/config/migration";
 import { Storage } from "@app/utils/storage/storage";
+
+const VALID_PROVIDERS = new Set<string>([
+    "anthropic",
+    "anthropic-sub",
+    "openai",
+    "openai-sub",
+    "google",
+    "groq",
+    "elevenlabs",
+    "huggingface",
+]);
 
 // ── Old config shapes (read-only, for deserialization) ──
 
@@ -44,12 +62,15 @@ interface OldAskConfig {
 }
 
 interface OldClaudeConfig {
-    accounts: Record<string, {
-        accessToken?: string;
-        refreshToken?: string;
-        expiresAt?: number;
-        label?: string;
-    }>;
+    accounts: Record<
+        string,
+        {
+            accessToken?: string;
+            refreshToken?: string;
+            expiresAt?: number;
+            label?: string;
+        }
+    >;
     defaultAccount?: string;
 }
 
@@ -129,9 +150,16 @@ export const migrateAI: ConfigMigration = {
         if (existing.accounts && existing.accounts.length > 0) {
             accounts = existing.accounts;
         } else {
-            // Import from old ai-accounts config
+            // Import from old ai-accounts config (validate provider strings)
             if (oldAccounts?.accounts && oldAccounts.accounts.length > 0) {
-                accounts = oldAccounts.accounts as AIAccountEntry[];
+                for (const acc of oldAccounts.accounts) {
+                    if (!VALID_PROVIDERS.has(acc.provider)) {
+                        logger.warn(`[migration] Skipping account "${acc.name}" with unknown provider "${acc.provider}"`);
+                        continue;
+                    }
+
+                    accounts.push({ ...acc, provider: acc.provider as AIProvider } as AIAccountEntry);
+                }
             }
 
             // Import claude accounts as anthropic-sub entries

@@ -125,6 +125,8 @@ export class ChatEngine {
         // Push user message to SDK messages (these include tool calls/results across turns)
         this.sdkMessages.push({ role: "user", content: message });
 
+        const sdkLengthBefore = this.sdkMessages.length;
+
         try {
             let response: ChatResponse;
 
@@ -155,8 +157,9 @@ export class ChatEngine {
 
             return response;
         } catch (error) {
-            // Remove the user message if the request failed
+            // Rollback both histories so they stay in sync
             this.conversationHistory.pop();
+            this.sdkMessages.length = sdkLengthBefore;
             throw error;
         }
     }
@@ -431,8 +434,13 @@ export class ChatEngine {
     importConversation(messages: ChatMessage[]): void {
         this.conversationHistory = messages.map((msg) => ({
             ...msg,
-            timestamp: new Date(msg.timestamp), // Ensure timestamp is a Date object
+            timestamp: new Date(msg.timestamp),
         }));
+
+        // Rebuild sdkMessages from display history so the model gets full context
+        this.sdkMessages = this.conversationHistory
+            .filter((m) => m.role === "user" || m.role === "assistant")
+            .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
     }
 
     // Get conversation summary for display
@@ -457,22 +465,25 @@ export class ChatEngine {
 
     // Remove old messages to keep within context window
     trimToContextWindow(maxTokens: number): void {
+        const lengthBefore = this.conversationHistory.length;
         let currentTokens = this.getTotalTokens();
 
         while (currentTokens > maxTokens && this.conversationHistory.length > 2) {
-            // Remove oldest message pair (user + assistant), but always keep the first message if it's a system message
             if (this.conversationHistory[0].role === "system") {
-                // Remove the second message if first is system
                 const removed = this.conversationHistory.splice(1, 1)[0];
                 currentTokens -= removed.tokens || 0;
             } else {
-                // Remove the first message
                 const removed = this.conversationHistory.shift();
                 currentTokens -= removed?.tokens || 0;
             }
         }
 
-        if (this.conversationHistory.length < this.getConversationLength()) {
+        if (this.conversationHistory.length < lengthBefore) {
+            // Rebuild sdkMessages to stay in sync after trim
+            this.sdkMessages = this.conversationHistory
+                .filter((m) => m.role === "user" || m.role === "assistant")
+                .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
+
             logger.info(
                 `Trimmed conversation to fit within ${dynamicPricingManager.formatTokens(maxTokens)} token limit`
             );

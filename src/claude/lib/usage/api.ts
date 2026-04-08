@@ -89,9 +89,10 @@ export async function fetchAllAccountsUsage(
                     throw err;
                 }
 
-                // 429 — force-refresh token to get fresh rate limit window
+                // 429 — force-refresh using the token that actually got 429'd,
+                // not the original on-disk token (which may have been refreshed already)
                 const { token: freshToken, refreshed } = await resolveAccountToken(account.name, {
-                    staleAccessToken: account.tokens.accessToken,
+                    staleAccessToken: token,
                     forceRefresh: true,
                 });
 
