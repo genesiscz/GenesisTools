@@ -58,13 +58,19 @@ export class MacCalendar {
 
         if (options.calendarName) {
             const calendars = await MacCalendar.listCalendars();
-            const match = calendars.find((c) => c.title === options.calendarName);
+            const filtered = calendars.filter((c) => c.title === options.calendarName);
 
-            if (!match) {
-                return [];
+            if (filtered.length === 0) {
+                throw new Error(`Calendar not found: "${options.calendarName}"`);
             }
 
-            calendarIdentifiers = [match.identifier];
+            if (filtered.length > 1) {
+                throw new Error(
+                    `Multiple calendars found with name "${options.calendarName}". Please use a unique calendar name.`
+                );
+            }
+
+            calendarIdentifiers = [filtered[0].identifier];
         }
 
         const result = await dk.calendar.events({
@@ -176,10 +182,14 @@ export class MacCalendar {
 
     static async ensureCalendarExists(name: string, calendars?: CalendarInfo[]): Promise<string> {
         const allCalendars = calendars ?? (await MacCalendar.listCalendars());
-        const existing = allCalendars.find((c) => c.title === name);
+        const filtered = allCalendars.filter((c) => c.title === name);
 
-        if (existing) {
-            return existing.identifier;
+        if (filtered.length > 1) {
+            throw new Error(`Multiple calendars found with name "${name}". Please use a unique calendar name.`);
+        }
+
+        if (filtered.length === 1) {
+            return filtered[0].identifier;
         }
 
         const sources = await MacCalendar.getSources();
