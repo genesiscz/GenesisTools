@@ -547,12 +547,15 @@ export class AILocalProvider
 
         const p = await import("@clack/prompts");
         const pc = (await import("picocolors")).default;
-        const HF_TOKEN_URL = "https://huggingface.co/settings/tokens";
+        const HF_TOKEN_URL = "https://huggingface.co/settings/tokens/new?tokenType=fineGrained";
 
         p.log.warn(
-            `Model "${model}" is gated and requires a HuggingFace access token.\n` +
-                `Create one at: ${pc.cyan(HF_TOKEN_URL)}\n` +
-                `(select "Read" scope, "Fine-grained" type)`
+            `Model "${model}" is gated and requires a HuggingFace access token.\n\n` +
+                `Create a Fine-grained token at:\n` +
+                `  ${pc.cyan(HF_TOKEN_URL)}\n\n` +
+                `Required permissions:\n` +
+                `  ${pc.bold("Repositories")}  → Read access to contents of all repos under your personal namespace\n` +
+                `  ${pc.bold("Inference")}     → Make calls to the serverless Inference API`,
         );
 
         const openBrowser = await p.confirm({
