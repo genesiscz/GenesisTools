@@ -62,7 +62,7 @@
         "@babel/core": "^7.28.6",
         "@babel/preset-typescript": "^7.28.5",
         "@clack/prompts": "^1.0.0",
-        "@genesiscz/darwinkit": "^0.2.0",
+        "@genesiscz/darwinkit": "0.6.8",
         "@gitbeaker/rest": "^43.5.0",
         "@iarna/toml": "^2.2.5",
         "@inquirer/prompts": "^8.2.0",

@@ -7,6 +7,10 @@ export { DarwinKit, DarwinKitError } from "@genesiscz/darwinkit";
 
 let _instance: DarwinKit | null = null;
 
+export function hasDarwinKit(): boolean {
+    return _instance !== null;
+}
+
 export function getDarwinKit(options?: DarwinKitOptions): DarwinKit {
     if (_instance) {
         if (options && Object.keys(options).length > 0) {

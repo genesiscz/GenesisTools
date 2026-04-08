@@ -2,6 +2,9 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import logger from "@app/logger";
+import type { DarwinKit } from "@app/utils/macos/darwinkit";
+import { getDarwinKit, hasDarwinKit } from "@app/utils/macos/darwinkit";
+import { escapeJxa } from "@app/utils/macos/jxa";
 import { Storage } from "@app/utils/storage/storage";
 
 export interface NotificationOptions {
@@ -15,6 +18,10 @@ export interface NotificationOptions {
     appIcon?: string;
     ignoreDnD?: boolean;
     say?: boolean;
+    /** DarwinKit-exclusive: action buttons via registered category */
+    categoryIdentifier?: string;
+    /** DarwinKit-exclusive: notification attachments (file paths) */
+    attachments?: string[];
 }
 
 const storage = new Storage("notify");
@@ -154,14 +161,11 @@ function sendViaTerminalNotifier(bin: string, opts: NotificationOptions): boolea
  * Send a notification using osascript as fallback.
  */
 function sendViaOsascript(opts: NotificationOptions): void {
-    const escaped = (s: string) =>
-        s.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n").replace(/\r/g, "\\r");
-
     const params = [
-        `"${escaped(opts.message)}"`,
-        opts.title ? `with title "${escaped(opts.title)}"` : "",
-        opts.subtitle ? `subtitle "${escaped(opts.subtitle)}"` : "",
-        `sound name "${escaped(opts.sound ?? "default")}"`,
+        `"${escapeJxa(opts.message)}"`,
+        opts.title ? `with title "${escapeJxa(opts.title)}"` : "",
+        opts.subtitle ? `subtitle "${escapeJxa(opts.subtitle)}"` : "",
+        `sound name "${escapeJxa(opts.sound ?? "default")}"`,
     ]
         .filter(Boolean)
         .join(" ");
@@ -173,25 +177,72 @@ function sendViaOsascript(opts: NotificationOptions): void {
 }
 
 /**
+ * Try sending via DarwinKit's native UNUserNotificationCenter bridge.
+ * Returns true if successful, false if darwinkit is unavailable or fails.
+ */
+async function sendViaDarwinKit(opts: NotificationOptions): Promise<boolean> {
+    if (!hasDarwinKit()) {
+        return false;
+    }
+
+    try {
+        const dk = getDarwinKit() as DarwinKit & {
+            notifications?: { send(opts: Record<string, unknown>): Promise<void> };
+        };
+
+        if (!dk.notifications) {
+            return false;
+        }
+
+        await dk.notifications.send({
+            title: opts.title ?? "GenesisTools",
+            body: opts.message,
+            subtitle: opts.subtitle,
+            sound: opts.sound ? { named: opts.sound } : "default",
+            thread_identifier: opts.group,
+            category_identifier: opts.categoryIdentifier,
+            attachments: opts.attachments,
+            user_info: {
+                ...(opts.open ? { open: opts.open } : {}),
+                ...(opts.execute ? { execute: opts.execute } : {}),
+            },
+        });
+        return true;
+    } catch (error) {
+        logger.debug(`DarwinKit notification failed: ${error instanceof Error ? error.message : error}`);
+        return false;
+    }
+}
+
+/**
  * Send a macOS notification.
- * Primary: terminal-notifier (supports stacking, click actions, DnD bypass).
+ * Primary: DarwinKit native UNUserNotificationCenter (full feature support).
+ * Secondary: terminal-notifier (supports stacking, click actions, DnD bypass).
  * Fallback: osascript.
  */
 export async function sendNotification(opts: NotificationOptions): Promise<void> {
-    const bin = await resolveTerminalNotifier();
+    // Try DarwinKit first (native UNUserNotificationCenter)
+    const sentViaDarwinKit = await sendViaDarwinKit(opts);
 
-    if (bin) {
-        const sent = sendViaTerminalNotifier(bin, opts);
+    if (sentViaDarwinKit) {
+        logger.debug(`Notification sent via DarwinKit: ${opts.message}`);
+    } else {
+        // Fall back to terminal-notifier / osascript
+        const bin = await resolveTerminalNotifier();
 
-        if (sent) {
-            logger.debug(`Notification sent via terminal-notifier: ${opts.message}`);
+        if (bin) {
+            const sent = sendViaTerminalNotifier(bin, opts);
+
+            if (sent) {
+                logger.debug(`Notification sent via terminal-notifier: ${opts.message}`);
+            } else {
+                logger.debug("terminal-notifier failed, falling back to osascript");
+                sendViaOsascript(opts);
+            }
         } else {
-            logger.debug("terminal-notifier failed, falling back to osascript");
+            logger.debug("terminal-notifier not found, using osascript fallback");
             sendViaOsascript(opts);
         }
-    } else {
-        logger.debug("terminal-notifier not found, using osascript fallback");
-        sendViaOsascript(opts);
     }
 
     if (opts.say) {
