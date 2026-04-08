@@ -14,7 +14,7 @@
         "@babel/core": "^7.28.6",
         "@babel/preset-typescript": "^7.28.5",
         "@clack/prompts": "^1.0.0",
-        "@genesiscz/darwinkit": "0.6.3",
+        "@genesiscz/darwinkit": "0.6.4",
         "@gitbeaker/rest": "^43.5.0",
         "@iarna/toml": "^2.2.5",
         "@inquirer/prompts": "^8.2.0",
@@ -344,7 +344,7 @@
 
     "@esbuild/win32-x64": ["@esbuild/win32-x64@0.27.4", "", { "os": "win32", "cpu": "x64" }, "sha512-+knoa0BDoeXgkNvvV1vvbZX4+hizelrkwmGJBdT17t8FNPwG2lKemmuMZlmaNQ3ws3DKKCxpb4zRZEIp3UxFCg=="],
 
-    "@genesiscz/darwinkit": ["@genesiscz/darwinkit@0.6.3", "", { "dependencies": { "tar": "^7.0.0" } }, "sha512-nwqfixo95H+bqAy+DhF8LVFGcOB/WGr8tX4wJVafqiAylfC98utLSpTvBQieloxgN6uC6tr2E4vQBLrIW0Z2lQ=="],
+    "@genesiscz/darwinkit": ["@genesiscz/darwinkit@0.6.4", "", { "dependencies": { "tar": "^7.0.0" } }, "sha512-6dQ+J1NFBktJTXR/PehQIkaI5OJ8IDQwWDmerb9h7I+CGS/lJER3GgP0jlxYnuBZThPz+xgex9dWM/8S00UgfA=="],
 
     "@gitbeaker/core": ["@gitbeaker/core@43.5.0", "", { "dependencies": { "@gitbeaker/requester-utils": "^43.5.0", "qs": "^6.14.0", "xcase": "^2.0.1" } }, "sha512-Lfsl6DE/2RkFvpSEhMEnN6sNuY0IeR68UEQq2qzR0MkUF1RMCmOFlD3OydnT9yY+fkWjB4FPSG4SA/oBVZYTFQ=="],
 
