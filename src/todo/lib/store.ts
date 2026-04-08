@@ -101,7 +101,7 @@ export class TodoStore {
     }
 
     async add(input: AddTodoInput): Promise<Todo> {
-        const id = "todo_" + nanoid(8);
+        const id = `todo_${nanoid(8)}`;
         const context = await captureContext({ projectRoot: this.projectRoot });
         const reminders = parseReminders(input.reminders ?? []);
         const links = input.links ?? [];
@@ -139,6 +139,7 @@ export class TodoStore {
             sessionId: input.sessionId,
             links,
             reminders,
+            at: input.at,
         };
 
         const todos = await this.readTodos();

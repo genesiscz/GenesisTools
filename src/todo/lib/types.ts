@@ -53,6 +53,7 @@ export interface Todo {
     sessionId?: string;
     links: TodoLink[];
     reminders: TodoReminder[];
+    at?: string;
     completedAt?: string;
     completionNote?: string;
 }
@@ -64,6 +65,7 @@ export interface AddTodoInput {
     tags?: string[];
     links?: TodoLink[];
     reminders?: string[];
+    at?: string;
     sessionId?: string;
     attachFiles?: string[];
     mdFile?: string;
