@@ -1,6 +1,20 @@
 import { dispatchNotification } from "@app/utils/notifications";
+import type { Storage } from "@app/utils/storage/storage";
 import { BUCKET_LABELS, BUCKET_THRESHOLD_MAP } from "./constants";
 import type { UsageDashboardConfig } from "./dashboard-config";
+
+/** Key in `Storage("claude-usage")` config.json (via {@link Storage.atomicConfigUpdate}) */
+export const NOTIFICATION_POLL_TRACKER_CONFIG_KEY = "notificationPollTracker";
+
+interface TrackerState {
+    lastNotifiedThreshold: number | null;
+    lastResetEpoch: number | null;
+}
+
+interface PersistedState {
+    trackers: Record<string, TrackerState>;
+    savedAt: string;
+}
 
 type CacheStatus = "HOT" | "COOLING" | "CRITICAL" | "COLD";
 
@@ -31,6 +45,18 @@ class BucketTracker {
         public readonly accountName: string,
         public readonly bucketName: string
     ) {}
+
+    restoreState(threshold: number | null, resetEpoch: number | null): void {
+        this.lastNotifiedThreshold = threshold;
+        this.lastResetEpoch = resetEpoch;
+    }
+
+    getState(): TrackerState {
+        return {
+            lastNotifiedThreshold: this.lastNotifiedThreshold,
+            lastResetEpoch: this.lastResetEpoch,
+        };
+    }
 
     shouldNotify(currentPct: number, resetAt: string | null, thresholds: number[], isFirstPoll: boolean): boolean {
         const resetEpoch = resetAt ? new Date(resetAt).getTime() : null;
@@ -126,6 +152,39 @@ export class NotificationManager {
 
     markFirstPollDone(): void {
         this.isFirstPoll = false;
+    }
+
+    async loadState(storage: Storage): Promise<void> {
+        const saved = (await storage.getConfig<Record<string, unknown>>())?.[NOTIFICATION_POLL_TRACKER_CONFIG_KEY] as
+            | PersistedState
+            | undefined;
+        if (!saved?.trackers) {
+            return;
+        }
+
+        this.applyPersistedTrackers(saved.trackers);
+    }
+
+    private applyPersistedTrackers(byKey: Record<string, TrackerState>): void {
+        for (const [key, ts] of Object.entries(byKey)) {
+            const [accountName, bucketName] = key.split(":");
+            if (!accountName || !bucketName) {
+                continue;
+            }
+            const t = new BucketTracker(accountName, bucketName);
+            t.restoreState(ts.lastNotifiedThreshold, ts.lastResetEpoch);
+            this.trackers.set(key, t);
+        }
+        if (this.trackers.size > 0) {
+            this.isFirstPoll = false;
+        }
+    }
+
+    async saveState(storage: Storage): Promise<void> {
+        const snapshot = Object.fromEntries([...this.trackers.entries()].map(([k, t]) => [k, t.getState()]));
+        await storage.atomicConfigUpdate<Record<string, unknown>>((c) => {
+            c[NOTIFICATION_POLL_TRACKER_CONFIG_KEY] = { trackers: snapshot, savedAt: new Date().toISOString() };
+        });
     }
 
     dismissAlert(alertId: string): void {

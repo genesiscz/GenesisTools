@@ -37,7 +37,11 @@ export interface AccountUsage {
 
 const USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
 
-export async function fetchUsage(accessToken: string, signal?: AbortSignal, accountHint?: string): Promise<UsageResponse> {
+export async function fetchUsage(
+    accessToken: string,
+    signal?: AbortSignal,
+    accountHint?: string
+): Promise<UsageResponse> {
     const tag = accountHint ? `[usage:${accountHint}]` : "[usage]";
 
     logger.debug(`${tag} fetching ${USAGE_URL}`);

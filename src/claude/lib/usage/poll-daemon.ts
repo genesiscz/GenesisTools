@@ -2,12 +2,17 @@ import { fetchAllAccountsUsage } from "@app/claude/lib/usage/api";
 import { loadDashboardConfig } from "@app/claude/lib/usage/dashboard-config";
 import { UsageHistoryDb } from "@app/claude/lib/usage/history-db";
 import { NotificationManager } from "@app/claude/lib/usage/notification-manager";
+import { Storage } from "@app/utils/storage/storage";
 
 async function main(): Promise<void> {
     const dashConfig = await loadDashboardConfig();
 
     const db = new UsageHistoryDb();
     const notifManager = new NotificationManager(dashConfig.notifications);
+    const storage = new Storage("claude-usage");
+
+    await storage.ensureDirs();
+    await notifManager.loadState(storage);
 
     try {
         const results = await fetchAllAccountsUsage();
@@ -42,6 +47,12 @@ async function main(): Promise<void> {
         }
 
         notifManager.markFirstPollDone();
+
+        try {
+            await notifManager.saveState(storage);
+        } catch {
+            // Persistence failure should not fail the poll
+        }
 
         // Warmup hook: check rules against fresh usage data
         try {
