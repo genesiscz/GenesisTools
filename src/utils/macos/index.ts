@@ -48,9 +48,6 @@ export {
     tagText,
     textDistance,
 } from "./nlp";
-export type { NotificationOptions } from "./notifications";
-// Notifications
-export { sendNotification } from "./notifications";
 export type { OcrOptions } from "./ocr";
 // OCR
 export {

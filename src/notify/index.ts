@@ -1,26 +1,11 @@
 #!/usr/bin/env bun
 
-import { sendNotification } from "@app/utils/macos/notifications";
 import type { ChannelConfigs } from "@app/utils/notifications";
-import { notificationsConfig } from "@app/utils/notifications";
+import { dispatchNotification, notificationsConfig } from "@app/utils/notifications";
 import { withCancel } from "@app/utils/prompts/clack/helpers";
 import * as p from "@clack/prompts";
 import { Command } from "commander";
 import pc from "picocolors";
-
-interface NotifyConfig {
-    title: string;
-    sound: string;
-    ignoreDnD: boolean;
-    say: boolean;
-}
-
-const DEFAULT_CONFIG: NotifyConfig = {
-    title: "GenesisTools",
-    sound: "Ping",
-    ignoreDnD: false,
-    say: false,
-};
 
 const MACOS_SOUNDS = [
     "Basso",
@@ -38,16 +23,6 @@ const MACOS_SOUNDS = [
     "Submarine",
     "Tink",
 ];
-
-async function getConfig(): Promise<NotifyConfig> {
-    const channels = await notificationsConfig.getChannels("notify");
-    return {
-        title: channels.system.title ?? DEFAULT_CONFIG.title,
-        sound: channels.system.sound ?? DEFAULT_CONFIG.sound,
-        ignoreDnD: channels.system.ignoreDnD ?? DEFAULT_CONFIG.ignoreDnD,
-        say: channels.say.enabled ?? DEFAULT_CONFIG.say,
-    };
-}
 
 function channelStatus(enabled: boolean): string {
     return enabled ? pc.green("enabled") : pc.dim("disabled");
@@ -308,19 +283,24 @@ program
                 process.exit(0);
             }
 
-            const config = await getConfig();
+            const deprecated = ["sound", "appIcon", "ignoreDnd", "say"] as const;
+            for (const flag of deprecated) {
+                if (options[flag] !== undefined) {
+                    const cliFlag = flag.replace(/([A-Z])/g, "-$1").toLowerCase();
+                    console.warn(
+                        `Warning: --${cliFlag} is deprecated. Use "tools notify config" to set channel defaults.`,
+                    );
+                }
+            }
 
-            await sendNotification({
+            await dispatchNotification({
+                app: "notify",
                 message,
-                title: options.title ?? config.title,
+                title: options.title,
                 subtitle: options.subtitle,
-                sound: options.sound ?? config.sound,
                 group: options.group,
                 open: options.open,
                 execute: options.execute,
-                appIcon: options.appIcon,
-                ignoreDnD: options.ignoreDnd ?? config.ignoreDnD,
-                say: options.say ?? config.say,
             });
         }
     );

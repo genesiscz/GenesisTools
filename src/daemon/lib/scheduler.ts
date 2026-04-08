@@ -1,5 +1,5 @@
 import { createLogger } from "@app/logger";
-import { sendNotification } from "@app/utils/macos/notifications";
+import { dispatchNotification } from "@app/utils/notifications";
 import { loadConfig } from "./config";
 import { computeNextRunAt, parseInterval } from "./interval";
 import { listRunsForTask } from "./log-reader";
@@ -89,11 +89,11 @@ async function executeTask(task: DaemonTask, logsBaseDir: string): Promise<void>
     const shouldNotify = task.notify !== false;
 
     if (shouldNotify) {
-        sendNotification({
+        void dispatchNotification({
+            app: "daemon",
             title: "Daemon",
             subtitle: task.name,
             message: "Task started",
-            sound: "Tink",
         });
     }
 
@@ -106,11 +106,11 @@ async function executeTask(task: DaemonTask, logsBaseDir: string): Promise<void>
             log.info({ task: task.name, duration: result.duration_ms }, "Task completed");
 
             if (shouldNotify) {
-                sendNotification({
+                void dispatchNotification({
+                    app: "daemon",
                     title: "Daemon",
                     subtitle: task.name,
                     message: `Completed in ${formatDurationShort(result.duration_ms)}`,
-                    sound: "Tink",
                 });
             }
 
@@ -127,11 +127,11 @@ async function executeTask(task: DaemonTask, logsBaseDir: string): Promise<void>
     }
 
     if (shouldNotify) {
-        sendNotification({
+        void dispatchNotification({
+            app: "daemon",
             title: "Daemon",
             subtitle: task.name,
             message: `Failed after ${maxAttempts} attempt${maxAttempts > 1 ? "s" : ""}, retries exhausted`,
-            sound: "Basso",
         });
     }
 }

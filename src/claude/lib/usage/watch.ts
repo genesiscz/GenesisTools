@@ -1,5 +1,5 @@
 import type { NotificationConfig } from "@app/claude/lib/config";
-import { sendNotification } from "@app/utils/macos/notifications";
+import { dispatchNotification } from "@app/utils/notifications";
 import { type AccountUsage, fetchAllAccountsUsage } from "./api";
 import { renderAllAccounts } from "./display";
 
@@ -189,29 +189,27 @@ export async function watchUsage(
         const pending = watcher.processResults(results);
 
         // Send notifications (fire and forget)
-        if (pending.length > 0 && notifications.channels.macos) {
+        if (pending.length > 0) {
             const initNotifs = pending.filter((n) => n.reason === "INIT");
             const increaseNotifs = pending.filter((n) => n.reason === "+5%");
 
-            // INIT: send each notification individually so user sees all warnings
             for (const notif of initNotifs) {
-                sendNotification({
+                dispatchNotification({
+                    app: "claude",
                     title: "Claude Usage Alert",
                     message: `[INIT] ${notif.message}`,
-                    sound: "Purr",
                 });
             }
 
-            // +5%: batch these to avoid spam during normal operation
             if (increaseNotifs.length > 0) {
                 const first = increaseNotifs[0];
-                sendNotification({
+                dispatchNotification({
+                    app: "claude",
                     title: "Claude Usage Alert",
                     message:
                         increaseNotifs.length > 1
                             ? `[+5%] ${first.message} (+${increaseNotifs.length - 1} more)`
                             : `[+5%] ${first.message}`,
-                    sound: "Purr",
                 });
             }
         }

@@ -1,4 +1,4 @@
-import { sendNotification } from "@app/utils/macos/notifications";
+import { dispatchNotification } from "@app/utils/notifications";
 import type { ActionHandler } from "../types";
 
 export const handleNotify: ActionHandler = async (message, contact) => {
@@ -6,7 +6,8 @@ export const handleNotify: ActionHandler = async (message, contact) => {
 
     const body = message.mediaDescription ? `[${message.mediaDescription}] ${message.text}`.trim() : message.text;
 
-    sendNotification({
+    dispatchNotification({
+        app: "telegram",
         title: `Telegram: ${contact.displayName}`,
         message: body || "(empty message)",
     });
