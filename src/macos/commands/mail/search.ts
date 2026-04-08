@@ -19,6 +19,7 @@ import type { Command } from "commander";
 
 interface SearchCommandOptions {
     withoutBody?: boolean;
+    jxa?: boolean;
     receiver?: string;
     helpReceivers?: boolean;
     from?: string;
@@ -63,7 +64,8 @@ export function registerSearchCommand(program: Command): void {
     program
         .command("search <query>")
         .description("Search emails by subject, sender, body, and attachment names")
-        .option("--without-body", "Skip body search (faster, SQLite-only)")
+        .option("--without-body", "Skip body search entirely (metadata-only)")
+        .option("--jxa", "Use JXA for body search instead of FTS index")
         .option("--receiver <email>", "Filter by receiver email address")
         .option("--help-receivers", "List all receiver accounts/addresses")
         .option("--from <date>", "Search from date (ISO format, e.g. 2026-01-01)")
@@ -147,29 +149,65 @@ export function registerSearchCommand(program: Command): void {
                     return msg;
                 });
 
-                // Phase 2: JXA body search (unless --without-body)
+                // Phase 2: Body search (unless --without-body)
                 if (!searchOpts.withoutBody && rows.length > 0) {
-                    spinner.start(`Searching body content in ${rows.length} messages (JXA)...`);
+                    if (options.jxa) {
+                        // JXA: slow but works without index
+                        spinner.start(`Searching body content in ${rows.length} messages (JXA)...`);
 
-                    const startJxa = performance.now();
-                    const bodyMatches = await searchBodies(
-                        messages.map((m) => ({
-                            rowid: m.rowid,
-                            subject: m.subject,
-                            mailbox: m.mailbox,
-                        })),
-                        query
-                    );
-                    const jxaMs = performance.now() - startJxa;
+                        const startJxa = performance.now();
+                        const bodyMatches = await searchBodies(
+                            messages.map((m) => ({
+                                rowid: m.rowid,
+                                subject: m.subject,
+                                mailbox: m.mailbox,
+                            })),
+                            query
+                        );
+                        const jxaMs = performance.now() - startJxa;
 
-                    for (const msg of messages) {
-                        msg.bodyMatchesQuery = bodyMatches.has(msg.rowid);
+                        for (const msg of messages) {
+                            msg.bodyMatchesQuery = bodyMatches.has(msg.rowid);
+                        }
+
+                        spinner.stop(
+                            `Body search (JXA): ${bodyMatches.size} matches in ${(jxaMs / 1000).toFixed(1)}s`
+                        );
+                    } else {
+                        // FTS: fast, uses the indexer's fulltext index
+                        try {
+                            const { IndexerManager } = await import("@app/indexer/lib/manager");
+                            const manager = await IndexerManager.load();
+                            const indexNames = manager.getIndexNames();
+
+                            if (indexNames.includes("macos-mail")) {
+                                spinner.start("Searching body content (FTS index)...");
+                                const startFts = performance.now();
+                                const indexer = await manager.getIndex("macos-mail");
+                                const ftsResults = await indexer.search(query, { mode: "fulltext", limit: 1000 });
+                                const ftsMs = performance.now() - startFts;
+
+                                const ftsRowids = new Set(ftsResults.map((r) => r.doc.sourceId).filter(Boolean));
+
+                                for (const msg of messages) {
+                                    msg.bodyMatchesQuery = ftsRowids.has(String(msg.rowid));
+                                }
+
+                                const bodyMatchCount = messages.filter((m) => m.bodyMatchesQuery).length;
+                                spinner.stop(
+                                    `Body search (FTS): ${bodyMatchCount} matches in ${(ftsMs / 1000).toFixed(1)}s`
+                                );
+
+                                await manager.close();
+                            } else {
+                                spinner.stop("No mail index found — skipping body search (use --jxa for JXA fallback)");
+                            }
+                        } catch (err) {
+                            const msg = err instanceof Error ? err.message : String(err);
+                            logger.debug(`[search] FTS body search failed: ${msg}`);
+                            spinner.stop("FTS unavailable — skipping body search (use --jxa for JXA fallback)");
+                        }
                     }
-
-                    const bodyMatchCount = bodyMatches.size;
-                    spinner.stop(
-                        `Body search complete: ${bodyMatchCount} body matches in ${(jxaMs / 1000).toFixed(1)}s`
-                    );
                 }
 
                 // Phase 3: Semantic re-ranking via darwinkit (default ON, opt out with --no-semantic)
