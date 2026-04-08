@@ -16,15 +16,30 @@
  *   tools macos voice-memos transcribe [id] [--all] [--force]
  *   tools macos voice-memos search <query>
  *
+ *   tools macos calendar list-calendars
+ *   tools macos calendar list [name] [--from/--to]
+ *   tools macos calendar search <query>
+ *   tools macos calendar add <title> --start <datetime>
+ *   tools macos calendar update <event-id> [options]
+ *   tools macos calendar delete <event-id>
+ *
+ *   tools macos reminders list-lists
+ *   tools macos reminders list [name] [--include-completed]
+ *   tools macos reminders search <query> [--list <name>]
+ *   tools macos reminders add <title> [--list/--due/--priority/--notes/--url]
+ *   tools macos reminders remove <id> [--complete]
+ *
  * Future subcommands:
- *   tools macos calendar events
  *   tools macos contacts search
  */
 
 import logger from "@app/logger";
+import { registerCalendarCommand } from "@app/macos/commands/calendar/index";
 import { registerMailCommand } from "@app/macos/commands/mail/index";
+import { registerRemindersCommand } from "@app/macos/commands/reminders/index";
 import { registerSleepCommand } from "@app/macos/commands/sleep/index";
 import { registerVoiceMemosCommand } from "@app/macos/commands/voice-memos/index";
+import { closeDarwinKit } from "@app/utils/macos/darwinkit";
 import { Command } from "commander";
 
 const program = new Command();
@@ -35,7 +50,9 @@ program
     .version("1.0.0")
     .showHelpAfterError(true);
 
+registerCalendarCommand(program);
 registerMailCommand(program);
+registerRemindersCommand(program);
 registerSleepCommand(program);
 registerVoiceMemosCommand(program);
 
@@ -54,6 +71,8 @@ async function main(): Promise<void> {
         }
 
         process.exit(1);
+    } finally {
+        closeDarwinKit();
     }
 }
 
