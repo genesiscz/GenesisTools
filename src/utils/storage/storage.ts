@@ -495,6 +495,10 @@ export class Storage {
      *     config.someField = newValue;
      *     // other fields (e.g. tokens) are untouched — fresh from disk
      * });
+     *
+     * @note The underlying file lock is **non-reentrant**. Do not call
+     * `atomicConfigUpdate` (or any code that acquires the same config lock)
+     * from within the `updater` callback — doing so will deadlock until timeout.
      */
     async atomicConfigUpdate<T extends object>(updater: (config: T) => void): Promise<T> {
         await this.ensureDirs();

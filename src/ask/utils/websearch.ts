@@ -165,11 +165,15 @@ export class WebSearchTool {
                 numResults: z.number().int().min(1).max(10).default(5).describe("Number of results (max 10)"),
                 safeSearch: z.enum(["off", "moderate", "strict"]).optional().describe("Safe search level"),
             }),
-            execute: async (params: { query: string; numResults?: number; safeSearch?: string }): Promise<string> => {
+            execute: async (params: {
+                query: string;
+                numResults?: number;
+                safeSearch?: "off" | "moderate" | "strict";
+            }): Promise<string> => {
                 try {
                     const results = await this.searchWeb(params.query, {
                         numResults: params.numResults,
-                        safeSearch: params.safeSearch as WebSearchOptions["safeSearch"],
+                        safeSearch: params.safeSearch,
                     });
 
                     return this.formatSearchResults(results);
