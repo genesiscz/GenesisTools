@@ -448,7 +448,7 @@ async function transcribeOne(opts: {
     };
 
     let transcriber = await AI.Transcriber.create({
-        provider: opts.provider as AIProviderType | undefined,
+        provider: opts.provider,
         model: opts.model,
     });
 
@@ -466,7 +466,7 @@ async function transcribeOne(opts: {
             s.start("Downloading model...");
 
             transcriber = await AI.Transcriber.create({
-                provider: opts.provider as AIProviderType | undefined,
+                provider: opts.provider,
                 model: opts.model,
             });
 
