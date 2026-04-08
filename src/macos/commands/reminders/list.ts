@@ -13,7 +13,9 @@ export function registerListCommand(program: Command): void {
         .command("list [name]")
         .description("List reminders (optionally filtered by list name)")
         .option("--include-completed", "Include completed reminders")
-        .addOption(new Option("-f, --format <type>", "Output format: table, json").choices(["table", "json"]).default("table"))
+        .addOption(
+            new Option("-f, --format <type>", "Output format: table, json").choices(["table", "json"]).default("table")
+        )
         .action(async (name: string | undefined, options: ListOptions) => {
             try {
                 const reminders = await MacReminders.listReminders(name, {

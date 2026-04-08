@@ -3,7 +3,7 @@ import { SafeJSON } from "@app/utils/json";
 import type { CalendarEventInfo } from "@app/utils/macos/apple-calendar";
 import { MacCalendar } from "@app/utils/macos/apple-calendar";
 import { type Command, Option } from "commander";
-import { formatDateTime, formatEventsTable } from "./format";
+import { formatDateTime, formatEventsTable, normalizeEndOfDay } from "./format";
 
 interface ListOptions {
     from?: string;
@@ -27,11 +27,15 @@ export function registerListCommand(program: Command): void {
         .description("List calendar events (optionally filtered by calendar name)")
         .option("--from <date>", "Start date (e.g. 2026-04-01)")
         .option("--to <date>", "End date (e.g. 2026-04-30)")
-        .addOption(new Option("-f, --format <type>", "Output format: table, json, md").choices(["table", "json", "md"]).default("table"))
+        .addOption(
+            new Option("-f, --format <type>", "Output format: table, json, md")
+                .choices(["table", "json", "md"])
+                .default("table")
+        )
         .action(async (name: string | undefined, options: ListOptions) => {
             try {
                 const from = options.from ? parseDate(options.from) : undefined;
-                const to = options.to ? parseDate(options.to) : undefined;
+                const to = options.to ? normalizeEndOfDay(parseDate(options.to)) : undefined;
 
                 const events = await MacCalendar.listEvents({
                     calendarName: name,
@@ -39,12 +43,12 @@ export function registerListCommand(program: Command): void {
                     to,
                 });
 
+                const format = options.format ?? "table";
+
                 if (events.length === 0) {
-                    console.log("No events found.");
+                    console.log(format === "json" ? "[]" : "No events found.");
                     return;
                 }
-
-                const format = options.format ?? "table";
 
                 if (format === "json") {
                     console.log(SafeJSON.stringify(events, null, 2));

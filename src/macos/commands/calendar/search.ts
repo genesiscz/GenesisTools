@@ -1,7 +1,7 @@
 import { parseDate } from "@app/utils/date";
 import { MacCalendar } from "@app/utils/macos/apple-calendar";
 import type { Command } from "commander";
-import { formatEventsTable } from "./format";
+import { formatEventsTable, normalizeEndOfDay } from "./format";
 
 interface SearchOptions {
     calendar?: string;
@@ -19,7 +19,7 @@ export function registerSearchCommand(program: Command): void {
         .action(async (query: string, options: SearchOptions) => {
             try {
                 const from = options.from ? parseDate(options.from) : undefined;
-                const to = options.to ? parseDate(options.to) : undefined;
+                const to = options.to ? normalizeEndOfDay(parseDate(options.to)) : undefined;
 
                 const events = await MacCalendar.searchEvents(query, {
                     calendarName: options.calendar,

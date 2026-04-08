@@ -92,8 +92,17 @@ export class MacCalendar {
     static async createEvent(options: CreateEventOptions): Promise<string> {
         const dk = getDarwinKit();
         const calendarId = await MacCalendar.ensureCalendarExists(options.calendarName ?? "GenesisTools");
-        const startDate = options.startDate;
-        const endDate = options.endDate ?? new Date(startDate.getTime() + 30 * 60_000);
+        let startDate = options.startDate;
+        let endDate = options.endDate ?? new Date(startDate.getTime() + 30 * 60_000);
+
+        if (options.isAllDay) {
+            startDate = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
+            endDate = new Date(startDate.getTime() + 24 * 60 * 60_000);
+        }
+
+        if (endDate.getTime() < startDate.getTime()) {
+            throw new Error("Event end date must be on or after the start date");
+        }
 
         const result = await dk.calendar.saveEvent({
             calendar_identifier: calendarId,
@@ -123,12 +132,19 @@ export class MacCalendar {
             throw new Error(`Event not found: ${eventId}`);
         }
 
+        const startDate = options.startDate ?? new Date(existing.start_date);
+        const endDate = options.endDate ?? new Date(existing.end_date);
+
+        if (endDate.getTime() < startDate.getTime()) {
+            throw new Error("Event end date must be on or after the start date");
+        }
+
         const result = await dk.calendar.saveEvent({
             id: eventId,
             calendar_identifier: existing.calendar_identifier,
             title: options.title ?? existing.title,
-            start_date: options.startDate?.toISOString() ?? existing.start_date,
-            end_date: options.endDate?.toISOString() ?? existing.end_date,
+            start_date: startDate.toISOString(),
+            end_date: endDate.toISOString(),
             notes: options.notes ?? existing.notes,
             location: options.location ?? existing.location,
             url: options.url ?? existing.url,

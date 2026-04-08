@@ -5,11 +5,11 @@ import { formatDateTime } from "../calendar/format";
 export function formatPriority(priority: number): string {
     switch (priority) {
         case 1:
-            return "High";
+            return "Critical";
         case 5:
-            return "Medium";
+            return "High";
         case 9:
-            return "Low";
+            return "Medium";
         default:
             return "None";
     }

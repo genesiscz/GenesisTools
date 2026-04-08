@@ -11,7 +11,6 @@ export function registerUpdateCommand(program: Command): void {
         .option("--title <text>", "New event title")
         .option("--start <datetime>", "New start date/time")
         .option("--end <datetime>", "New end date/time")
-        .option("--calendar <name>", "Move to a different calendar")
         .option("--notes <text>", "Update event notes")
         .option("--url <url>", "Update event URL")
         .option("--location <text>", "Update event location")
@@ -24,7 +23,6 @@ export function registerUpdateCommand(program: Command): void {
                     title?: string;
                     start?: string;
                     end?: string;
-                    calendar?: string;
                     notes?: string;
                     url?: string;
                     location?: string;

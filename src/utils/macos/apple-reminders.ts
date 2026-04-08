@@ -1,15 +1,14 @@
-import type { ReminderInfo, ReminderListInfo } from "@genesiscz/darwinkit";
-
 import logger from "@app/logger";
+import type { ReminderInfo, ReminderListInfo } from "@genesiscz/darwinkit";
 import { getDarwinKit } from "./darwinkit";
 
 export type { ReminderInfo, ReminderListInfo };
 
 const PRIORITY_MAP: Record<string, number> = {
     critical: 1,
-    high: 1,
-    medium: 5,
-    low: 9,
+    high: 5,
+    medium: 9,
+    low: 0,
 };
 
 export function todoPriorityToApple(priority: "critical" | "high" | "medium" | "low"): number {

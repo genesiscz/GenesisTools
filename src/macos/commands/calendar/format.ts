@@ -4,6 +4,11 @@ import { Option } from "commander";
 
 export function formatDateTime(iso: string): string {
     const d = new Date(iso);
+
+    if (Number.isNaN(d.getTime())) {
+        return "";
+    }
+
     return d.toLocaleString("en-US", {
         month: "short",
         day: "numeric",
@@ -12,12 +17,20 @@ export function formatDateTime(iso: string): string {
     });
 }
 
+export function normalizeEndOfDay(date: Date): Date {
+    if (date.getHours() === 0 && date.getMinutes() === 0 && date.getSeconds() === 0) {
+        return new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59, 999);
+    }
+
+    return date;
+}
+
 export function createAlertOption(): Option {
     return new Option("--alert <minutes>", "Alert before event in minutes (repeatable)")
         .argParser((value: string, previous: number[]) => {
-            const mins = Number.parseInt(value, 10);
+            const mins = Number(value);
 
-            if (Number.isNaN(mins)) {
+            if (!Number.isInteger(mins)) {
                 throw new Error(`Invalid alert value: ${value}`);
             }
 
