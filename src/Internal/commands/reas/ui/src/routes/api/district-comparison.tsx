@@ -32,7 +32,9 @@ export const Route = createFileRoute("/api/district-comparison")({
                     monthlyCosts: body.monthlyCosts ? Number(body.monthlyCosts) : undefined,
                     providers: body.providers as string | undefined,
                     refresh: body.refresh === true,
-                    snapshotResolution: (body.snapshotResolution === "daily" ? "daily" : "monthly") as DistrictSnapshotResolution,
+                    snapshotResolution: (body.snapshotResolution === "daily"
+                        ? "daily"
+                        : "monthly") as DistrictSnapshotResolution,
                 });
 
                 return Response.json({ comparisons });

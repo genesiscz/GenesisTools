@@ -240,29 +240,27 @@ export function PropertyCard({
                 </div>
 
                 {cardModel && (
-                    <>
-                        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                            {cardModel.metrics.map((metric) => (
-                                <div key={metric.label} className="space-y-1">
-                                    <MetricItem label={metric.label} value={metric.value} tone={metric.tone} />
-                                    {metric.label === "Net Yield" && (
-                                        <PropertySparkline
-                                            history={history}
-                                            getValue={(row) => row.net_yield}
-                                            stroke="rgb(6 182 212)"
-                                        />
-                                    )}
-                                    {metric.label === "CZK/m2" && (
-                                        <PropertySparkline
-                                            history={history}
-                                            getValue={(row) => row.median_price_per_m2}
-                                            stroke="rgb(148 163 184)"
-                                        />
-                                    )}
-                                </div>
-                            ))}
-                        </div>
-                    </>
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                        {cardModel.metrics.map((metric) => (
+                            <div key={metric.label} className="space-y-1">
+                                <MetricItem label={metric.label} value={metric.value} tone={metric.tone} />
+                                {metric.label === "Net Yield" && (
+                                    <PropertySparkline
+                                        history={history}
+                                        getValue={(row) => row.net_yield}
+                                        stroke="rgb(6 182 212)"
+                                    />
+                                )}
+                                {metric.label === "CZK/m2" && (
+                                    <PropertySparkline
+                                        history={history}
+                                        getValue={(row) => row.median_price_per_m2}
+                                        stroke="rgb(148 163 184)"
+                                    />
+                                )}
+                            </div>
+                        ))}
+                    </div>
                 )}
 
                 {canExpand && (

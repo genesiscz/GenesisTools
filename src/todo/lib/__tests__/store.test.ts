@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { TodoStore } from "../store";
 import type { Todo } from "../types";
 
-const TEST_DIR = join(import.meta.dir, ".test-store-" + Date.now());
+const TEST_DIR = join(import.meta.dir, `.test-store-${Date.now()}`);
 
 let store: TodoStore;
 

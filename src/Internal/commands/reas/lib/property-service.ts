@@ -1,12 +1,15 @@
 import { fetchAndAnalyze } from "@app/Internal/commands/reas/lib/analysis-service";
 import { buildDashboardExport, type DashboardExport } from "@app/Internal/commands/reas/lib/api-export";
 import { buildConfig, resolveDistrict } from "@app/Internal/commands/reas/lib/config-builder";
-import { buildImportedPropertyDraft, type ImportedPropertyDraft } from "@app/Internal/commands/reas/lib/property-form-defaults";
 import {
-    reasDatabase,
+    buildImportedPropertyDraft,
+    type ImportedPropertyDraft,
+} from "@app/Internal/commands/reas/lib/property-form-defaults";
+import {
     type ListingRow,
     type PropertyAnalysisHistoryRow,
     type RentEstimate,
+    reasDatabase,
     type SavedPropertyRow,
 } from "@app/Internal/commands/reas/lib/store";
 import type { FullAnalysis } from "@app/Internal/commands/reas/types";
@@ -38,9 +41,7 @@ export function getPropertyDetail(id: number): PropertyDetail | null {
     }
 
     const history = reasDatabase.getPropertyAnalysisHistory(id);
-    const analysis = property.last_analysis_json
-        ? (SafeJSON.parse(property.last_analysis_json) as FullAnalysis)
-        : null;
+    const analysis = property.last_analysis_json ? (SafeJSON.parse(property.last_analysis_json) as FullAnalysis) : null;
 
     return {
         property,

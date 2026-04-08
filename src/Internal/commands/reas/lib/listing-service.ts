@@ -1,6 +1,6 @@
 import { fetchBezrealitkyAdvertDetail } from "@app/Internal/commands/reas/api/bezrealitky-client";
 import { buildSavedPropertyFromListing } from "@app/Internal/commands/reas/lib/property-form-defaults";
-import { reasDatabase, type ListingRow } from "@app/Internal/commands/reas/lib/store";
+import { type ListingRow, reasDatabase } from "@app/Internal/commands/reas/lib/store";
 import logger from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 
@@ -66,9 +66,7 @@ export function saveListingToWatchlist(listingId: number, constructionType: stri
         area: listing.area ?? undefined,
     });
 
-    const id = reasDatabase.saveProperty(
-        buildSavedPropertyFromListing({ listing, rentEstimate, constructionType })
-    );
+    const id = reasDatabase.saveProperty(buildSavedPropertyFromListing({ listing, rentEstimate, constructionType }));
 
     const property = reasDatabase.getProperty(id);
 

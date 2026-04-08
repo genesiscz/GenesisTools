@@ -51,7 +51,6 @@ export function LogViewer({ lines, maxLines }: LogViewerProps) {
                 const label = LEVEL_LABELS[line.level];
 
                 return (
-                    // biome-ignore lint/suspicious/noArrayIndexKey: static list rendering
                     <Box key={i} gap={0}>
                         {/* Timestamp */}
                         {line.timestamp && <Text color={theme.muted}>{line.timestamp} </Text>}

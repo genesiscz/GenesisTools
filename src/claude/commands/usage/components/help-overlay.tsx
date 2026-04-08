@@ -51,13 +51,11 @@ export function HelpOverlay({ onClose }: HelpOverlayProps) {
             <Text>{""}</Text>
             {KEYBINDINGS.map(([key, desc], i) => {
                 if (!key && !desc) {
-                    // biome-ignore lint/suspicious/noArrayIndexKey: static list rendering
                     return <Text key={i}>{""}</Text>;
                 }
 
                 if (!key) {
                     return (
-                        // biome-ignore lint/suspicious/noArrayIndexKey: static list rendering
                         <Text key={i} bold underline>
                             {desc}
                         </Text>
@@ -65,7 +63,6 @@ export function HelpOverlay({ onClose }: HelpOverlayProps) {
                 }
 
                 return (
-                    // biome-ignore lint/suspicious/noArrayIndexKey: static list rendering
                     <Box key={i}>
                         <Text bold color="yellow">
                             {key.padEnd(12)}

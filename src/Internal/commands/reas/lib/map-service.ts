@@ -1,5 +1,5 @@
 import { reasClient } from "@app/Internal/commands/reas/api/ReasClient";
-import type { ReasBounds, PointersAndClustersResponse } from "@app/Internal/commands/reas/api/ReasClient.types";
+import type { PointersAndClustersResponse, ReasBounds } from "@app/Internal/commands/reas/api/ReasClient.types";
 import { resolveDistrict } from "@app/Internal/commands/reas/lib/config-builder";
 import type { AnalysisFilters, DateRange } from "@app/Internal/commands/reas/types";
 
@@ -11,9 +11,7 @@ export interface MapClusterOptions {
     bounds?: ReasBounds;
 }
 
-export async function fetchMapClusters(
-    options: MapClusterOptions
-): Promise<PointersAndClustersResponse["data"]> {
+export async function fetchMapClusters(options: MapClusterOptions): Promise<PointersAndClustersResponse["data"]> {
     const { district: districtName, from, to, constructionType = "brick", bounds } = options;
 
     const district = resolveDistrict(districtName);

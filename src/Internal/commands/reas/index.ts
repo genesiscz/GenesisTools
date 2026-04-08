@@ -601,7 +601,9 @@ export function registerReasCommand(program: Command): void {
             const headers = ["ID", "District", "Source", "Type", "Address", "Disp", "m²", "Price", "CZK/m²", "Date"];
             const table = formatTable(rows, headers, { alignRight: [0, 6, 7, 8] });
 
-            console.log(`\n${pc.cyan(pc.bold("Listings"))} — page ${pc.bold(String(page))}, ${pc.bold(String(listings.length))} rows\n`);
+            console.log(
+                `\n${pc.cyan(pc.bold("Listings"))} — page ${pc.bold(String(page))}, ${pc.bold(String(listings.length))} rows\n`
+            );
             console.log(table);
             console.log();
         });
@@ -632,7 +634,9 @@ export function registerReasCommand(program: Command): void {
             const prahaNames = getPrahaDistrictNames();
             const allNames = getAllDistrictNames();
 
-            console.log(`\n${pc.cyan(pc.bold("Available districts"))} (${allNames.length} districts + ${prahaNames.length} Praha wards)\n`);
+            console.log(
+                `\n${pc.cyan(pc.bold("Available districts"))} (${allNames.length} districts + ${prahaNames.length} Praha wards)\n`
+            );
             console.log(pc.bold("Praha districts:"));
 
             for (const name of prahaNames) {
@@ -751,41 +755,47 @@ export function registerReasCommand(program: Command): void {
         .option("--disposition <disp>", "Disposition filter (e.g. 3+1)")
         .option("--price <czk>", "Target price in CZK", "5000000")
         .option("--area <m2>", "Target area in m²", "80")
-        .action(async (districts: string[], opts: { type: string; disposition?: string; price: string; area: string }) => {
-            const { compareDistricts } = await import("@app/Internal/commands/reas/lib/district-comparison-service");
+        .action(
+            async (districts: string[], opts: { type: string; disposition?: string; price: string; area: string }) => {
+                const { compareDistricts } = await import(
+                    "@app/Internal/commands/reas/lib/district-comparison-service"
+                );
 
-            const spinner = p.spinner();
-            spinner.start(`Comparing ${districts.length} districts...`);
+                const spinner = p.spinner();
+                spinner.start(`Comparing ${districts.length} districts...`);
 
-            const results = await compareDistricts({
-                districts,
-                constructionType: opts.type,
-                disposition: opts.disposition,
-                price: Number(opts.price),
-                area: Number(opts.area),
-            });
+                const results = await compareDistricts({
+                    districts,
+                    constructionType: opts.type,
+                    disposition: opts.disposition,
+                    price: Number(opts.price),
+                    area: Number(opts.area),
+                });
 
-            spinner.stop(`Compared ${results.length} district(s).`);
+                spinner.stop(`Compared ${results.length} district(s).`);
 
-            if (results.length === 0) {
-                console.log(pc.yellow("No comparison results."));
-                return;
+                if (results.length === 0) {
+                    console.log(pc.yellow("No comparison results."));
+                    return;
+                }
+
+                const rows = results.map((r) => [
+                    r.district,
+                    formatCzk(Math.round(r.summary.medianPricePerM2)),
+                    `${r.summary.grossYield.toFixed(1)}%`,
+                    `${r.summary.netYield.toFixed(1)}%`,
+                    String(r.summary.salesCount),
+                    String(r.summary.rentalCount),
+                ]);
+
+                const headers = ["District", "Median CZK/m²", "Gross Yield", "Net Yield", "Sales", "Rentals"];
+                const table = formatTable(rows, headers, { alignRight: [1, 2, 3, 4, 5] });
+
+                console.log(
+                    `\n${pc.cyan(pc.bold("District comparison"))} — ${opts.type}, ${formatCzk(Number(opts.price))} CZK, ${opts.area} m²\n`
+                );
+                console.log(table);
+                console.log();
             }
-
-            const rows = results.map((r) => [
-                r.district,
-                formatCzk(Math.round(r.summary.medianPricePerM2)),
-                `${r.summary.grossYield.toFixed(1)}%`,
-                `${r.summary.netYield.toFixed(1)}%`,
-                String(r.summary.salesCount),
-                String(r.summary.rentalCount),
-            ]);
-
-            const headers = ["District", "Median CZK/m²", "Gross Yield", "Net Yield", "Sales", "Rentals"];
-            const table = formatTable(rows, headers, { alignRight: [1, 2, 3, 4, 5] });
-
-            console.log(`\n${pc.cyan(pc.bold("District comparison"))} — ${opts.type}, ${formatCzk(Number(opts.price))} CZK, ${opts.area} m²\n`);
-            console.log(table);
-            console.log();
-        });
+        );
 }

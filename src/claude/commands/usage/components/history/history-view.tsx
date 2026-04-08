@@ -85,7 +85,6 @@ export function HistoryView({ db, dbVersion }: HistoryViewProps) {
     const [layout, setLayout] = useState<"stacked" | "side-by-side">("stacked");
     const [timeRange, setTimeRange] = useState(60); // minutes
 
-    // biome-ignore lint/correctness/useExhaustiveDependencies: dbVersion is an intentional cache-busting dep — db ref is stable but DB contents change on each poll
     const allData = useMemo(() => {
         if (!db) {
             return new Map<string, SnapshotWithDelta[]>();

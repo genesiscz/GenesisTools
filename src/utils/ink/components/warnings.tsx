@@ -21,7 +21,6 @@ export function Warnings({ warnings, title = "Warnings" }: WarningsProps) {
                 {symbols.warning} {title}:
             </Text>
             {warnings.map((warning, i) => (
-                // biome-ignore lint/suspicious/noArrayIndexKey: static list rendering
                 <Text key={i} color={colors.warning}>
                     {"  "}
                     {symbols.bullet} {warning}
