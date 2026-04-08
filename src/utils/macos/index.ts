@@ -1,11 +1,12 @@
 // Apple Calendar
-export { createCalendarEvent, deleteCalendarEvent, ensureCalendarExists } from "./apple-calendar";
+
+export type { CalendarEventInfo, CalendarInfo, SourceInfo } from "./apple-calendar";
+export { MacCalendar } from "./apple-calendar";
+export type { ReminderInfo, ReminderListInfo } from "./apple-reminders";
 // Apple Reminders
 export {
-    completeReminder,
-    createReminder,
-    deleteReminder,
-    ensureReminderListExists,
+    MacReminders,
+    ReminderPriority,
     todoPriorityToApple,
 } from "./apple-reminders";
 // Auth
@@ -13,7 +14,7 @@ export { authenticate, checkBiometry } from "./auth";
 // Classification
 export { classifyBatch, classifyText, groupByCategory } from "./classification";
 export type { DarwinKitOptions } from "./darwinkit";
-export { closeDarwinKit, DarwinKit, DarwinKitError, getDarwinKit } from "./darwinkit";
+export { closeDarwinKit, DarwinKit, DarwinKitError, getDarwinKit, hasDarwinKit } from "./darwinkit";
 // iCloud
 export {
     icloudCopy,
@@ -29,6 +30,8 @@ export {
     icloudWriteBytes,
     onIcloudFilesChanged,
 } from "./icloud";
+// JXA helpers
+export { ensureMacOS, escapeJxa, runJxa } from "./jxa";
 // MacOS namespace
 export { MacOS } from "./MacOS";
 // NLP

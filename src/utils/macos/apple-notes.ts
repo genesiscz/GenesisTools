@@ -3,35 +3,17 @@
  * macOS only — uses osascript to interact with the Notes app.
  */
 
-import { spawnSync } from "node:child_process";
 import { unlinkSync, writeFileSync } from "node:fs";
 
 import { SafeJSON } from "@app/utils/json";
+
+import { ensureMacOS, escapeJxa, runJxa } from "./jxa";
 
 export interface AppleNotesFolder {
     name: string;
     id: string;
     noteCount: number;
     account: string;
-}
-
-function ensureMacOS(): void {
-    if (process.platform !== "darwin") {
-        throw new Error("Apple Notes is only available on macOS");
-    }
-}
-
-function runJxa(script: string, timeout = 15_000): string {
-    const proc = spawnSync("osascript", ["-l", "JavaScript", "-e", script], {
-        encoding: "utf-8",
-        timeout,
-    });
-
-    if (proc.status !== 0) {
-        throw new Error(`JXA error: ${proc.stderr?.trim() || "unknown error"}`);
-    }
-
-    return proc.stdout.trim();
 }
 
 /**
@@ -72,8 +54,8 @@ export function createAppleNote(options: { folderId: string; title: string; body
     const tmpFile = `/tmp/apple-note-${Date.now()}.txt`;
     writeFileSync(tmpFile, options.body, "utf-8");
 
-    const escapedTitle = options.title.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-    const escapedFolderId = options.folderId.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    const escapedTitle = escapeJxa(options.title);
+    const escapedFolderId = escapeJxa(options.folderId);
 
     const script = `
 ObjC.import("Foundation");
