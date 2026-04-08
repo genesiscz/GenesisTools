@@ -2,6 +2,7 @@ import { IndexerManager } from "@app/indexer/lib/manager";
 import { createProgressCallbacks } from "@app/indexer/lib/progress";
 import { MailSource } from "@app/indexer/lib/sources/mail-source";
 import type { IndexConfig } from "@app/indexer/lib/types";
+import { isInteractive, suggestCommand } from "@app/utils/cli";
 import { formatBytes, formatDuration } from "@app/utils/format";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
@@ -34,6 +35,7 @@ export function registerIndexCommand(program: Command): void {
         .command("index")
         .description("Build/update a searchable index of your emails")
         .option("--model <id>", "Embedding model ID (see: tools indexer models --type mail)")
+        .option("--provider <type>", "Embedding provider (ollama, darwinkit, coreml, cloud)")
         .option("--limit <n>", "Max emails to index", parseInt)
         .option("--no-embed", "Disable embeddings (fulltext-only)")
         .option("--rebuild-fulltext", "Drop and re-scan all emails (full reindex)")
@@ -44,6 +46,7 @@ export function registerIndexCommand(program: Command): void {
         .action(
             async (opts: {
                 model?: string;
+                provider?: string;
                 limit?: number;
                 embed?: boolean;
                 rebuildFulltext?: boolean;
@@ -109,9 +112,124 @@ export function registerIndexCommand(program: Command): void {
         );
 }
 
+/** Default model per provider when --model is not given. */
+const PROVIDER_DEFAULT_MODELS: Record<string, string> = {
+    ollama: "nomic-embed-text",
+    darwinkit: "darwinkit",
+    coreml: "coreml-contextual",
+};
+
+/** Provider display labels for the selection menu. */
+const PROVIDER_LABELS: Record<string, string> = {
+    "ollama:nomic-embed-text": "Ollama \u2014 nomic-embed-text (768-dim, GPU Metal)",
+    "ollama:snowflake-arctic-embed": "Ollama \u2014 snowflake-arctic-embed (768-dim, GPU)",
+    coreml: "CoreML contextual (512-dim, on-device)",
+    darwinkit: "DarwinKit NL (512-dim, on-device, slow)",
+    cloud: "Cloud \u2014 OpenAI text-embedding-3-small",
+};
+
+interface ProviderSelection {
+    provider: string;
+    model: string;
+}
+
+/** Check if Ollama is running by hitting its API. */
+async function isOllamaRunning(): Promise<boolean> {
+    try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 1000);
+        const res = await fetch("http://localhost:11434/api/tags", { signal: controller.signal });
+        clearTimeout(timeout);
+        return res.ok;
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * Interactive provider selection for embedding.
+ * Returns provider + model, or null if cancelled.
+ */
+async function selectEmbeddingProvider(): Promise<ProviderSelection | null> {
+    const ollamaUp = await isOllamaRunning();
+    const hasOpenAiKey = !!process.env.OPENAI_API_KEY;
+    const isMac = process.platform === "darwin";
+
+    const options: Array<{ value: ProviderSelection; label: string; hint?: string }> = [];
+
+    if (ollamaUp) {
+        options.push({
+            value: { provider: "ollama", model: "nomic-embed-text" },
+            label: PROVIDER_LABELS["ollama:nomic-embed-text"],
+            hint: "recommended",
+        });
+        options.push({
+            value: { provider: "ollama", model: "snowflake-arctic-embed" },
+            label: PROVIDER_LABELS["ollama:snowflake-arctic-embed"],
+        });
+    }
+
+    if (isMac) {
+        options.push({
+            value: { provider: "coreml", model: "coreml-contextual" },
+            label: PROVIDER_LABELS.coreml,
+        });
+        options.push({
+            value: { provider: "darwinkit", model: "darwinkit" },
+            label: PROVIDER_LABELS.darwinkit,
+        });
+    }
+
+    if (hasOpenAiKey) {
+        options.push({
+            value: { provider: "cloud", model: "text-embedding-3-small" },
+            label: PROVIDER_LABELS.cloud,
+        });
+    }
+
+    if (!ollamaUp) {
+        p.log.warning(
+            `Ollama is not running. For best performance:\n` +
+                `  ${pc.dim("$")} ollama serve\n` +
+                `  ${pc.dim("$")} ollama pull nomic-embed-text`
+        );
+    }
+
+    if (options.length === 0) {
+        p.log.error("No embedding providers available. Install Ollama or set OPENAI_API_KEY.");
+        process.exit(1);
+    }
+
+    const choice = await p.select({
+        message: "Embedding provider",
+        options,
+    });
+
+    if (p.isCancel(choice)) {
+        return null;
+    }
+
+    return choice;
+}
+
+/** Log the chosen provider + model in a human-friendly way. */
+function logProviderChoice(provider: string, model: string): void {
+    const dimMap: Record<string, string> = {
+        "nomic-embed-text": "768-dim, GPU",
+        "snowflake-arctic-embed": "768-dim, GPU",
+        darwinkit: "512-dim, on-device",
+        "coreml-contextual": "512-dim, on-device",
+        "text-embedding-3-small": "1536-dim, cloud",
+    };
+    const dim = dimMap[model] ?? "";
+    const suffix = dim ? ` (${dim})` : "";
+    const providerName = provider.charAt(0).toUpperCase() + provider.slice(1);
+    p.log.info(`Using model: ${pc.bold(`${providerName} ${model}`)}${suffix}`);
+}
+
 async function createAndSync(
     manager: IndexerManager,
-    opts: { model?: string; limit?: number; embed?: boolean }
+    opts: { model?: string; provider?: string; limit?: number; embed?: boolean }
 ): Promise<void> {
     const mailSource = await MailSource.create();
     const total = await mailSource.estimateTotal();
@@ -121,14 +239,30 @@ async function createAndSync(
 
     const embeddingEnabled = opts.embed !== false;
     let model = opts.model;
-    let provider: string | undefined;
+    let provider = opts.provider;
 
     if (embeddingEnabled && !model) {
-        // macOS Mail = macOS only → DarwinKit is always available, free, instant, and
-        // trained on general text (perfect for email). No download needed.
-        model = "darwinkit";
-        provider = "darwinkit";
-        p.log.info(`Using model: ${pc.bold("DarwinKit NL")} (512-dim, on-device)`);
+        if (provider) {
+            // --provider given without --model: use default model for that provider
+            model = PROVIDER_DEFAULT_MODELS[provider] ?? provider;
+            logProviderChoice(provider, model);
+        } else if (isInteractive()) {
+            const selection = await selectEmbeddingProvider();
+
+            if (!selection) {
+                p.log.info("Cancelled");
+                p.outro("Aborted");
+                return;
+            }
+
+            provider = selection.provider;
+            model = selection.model;
+            logProviderChoice(provider, model);
+        } else {
+            p.log.error("--provider required in non-interactive mode.");
+            p.log.info(suggestCommand("tools macos mail index", { add: ["--provider", "ollama"] }));
+            process.exit(1);
+        }
     }
 
     if (model && !provider) {
