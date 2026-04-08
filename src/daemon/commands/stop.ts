@@ -3,7 +3,7 @@ import type { Command } from "commander";
 import pc from "picocolors";
 import { getDaemonPid } from "@app/daemon/daemon";
 import { getDaemonStatus, uninstallLaunchd } from "@app/daemon/lib/launchd";
-import { waitForDaemonRestart } from "@app/daemon/lib/wait-for-restart";
+import { safeSigterm, waitForDaemonRestart } from "@app/daemon/lib/wait-for-restart";
 
 export function registerStopCommand(program: Command): void {
     program
@@ -27,13 +27,7 @@ export function registerStopCommand(program: Command): void {
             }
 
             if (pid) {
-                try {
-                    process.kill(pid, "SIGTERM");
-                } catch (err) {
-                    if ((err as NodeJS.ErrnoException).code !== "ESRCH") {
-                        throw err;
-                    }
-                }
+                safeSigterm(pid);
             }
 
             if (!status.installed) {
@@ -44,10 +38,10 @@ export function registerStopCommand(program: Command): void {
             const s = p.spinner();
             s.start("Launchd restarting daemon...");
 
-            const newStatus = await waitForDaemonRestart(pid, 10_000);
+            const result = await waitForDaemonRestart(pid);
 
-            if (newStatus?.running && newStatus.pid) {
-                s.stop(`Daemon bounced (PID ${pid} → ${newStatus.pid})`);
+            if (result) {
+                s.stop(`Daemon bounced (PID ${pid} → ${result.pid})`);
                 p.log.info(pc.dim(`To stop permanently: ${pc.cyan("tools daemon uninstall")}`));
             } else {
                 s.stop("Daemon stopped");

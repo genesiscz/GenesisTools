@@ -2,7 +2,6 @@ import { unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import logger from "@app/logger";
-import type { AIProviderType } from "@app/utils/config/ai.types";
 import type {
     AIEmbeddingProvider,
     AISummarizationProvider,
@@ -18,6 +17,7 @@ import type {
     TranslateOptions,
     TranslationResult,
 } from "@app/utils/ai/types";
+import type { AIProviderType } from "@app/utils/config/ai.types";
 import { TranscriptionManager } from "@ask/audio/TranscriptionManager";
 
 type CloudType = "openai" | "groq" | "openrouter" | "auto";
@@ -28,11 +28,18 @@ const ENV_VAR_MAP: Record<Exclude<CloudType, "auto">, string> = {
     openrouter: "OPENROUTER_API_KEY",
 };
 
-const CLOUD_TASKS: Record<CloudType, AITask[]> = {
-    openai: ["transcribe", "translate", "summarize", "embed"],
-    groq: ["transcribe", "translate", "summarize"],
-    openrouter: ["transcribe", "translate", "summarize"],
-    auto: ["transcribe", "translate", "summarize", "embed"],
+const AUTO_API_KEY_VARS = [
+    ...Object.values(ENV_VAR_MAP),
+    "ASSEMBLYAI_API_KEY",
+    "DEEPGRAM_API_KEY",
+    "GLADIA_API_KEY",
+];
+
+const CLOUD_TASKS: Record<CloudType, ReadonlySet<AITask>> = {
+    openai: new Set(["transcribe", "translate", "summarize", "embed"]),
+    groq: new Set(["transcribe", "translate", "summarize"]),
+    openrouter: new Set(["transcribe", "translate", "summarize"]),
+    auto: new Set(["transcribe", "translate", "summarize", "embed"]),
 };
 
 const DEFAULT_LLM_MODELS: Record<Exclude<CloudType, "auto">, string> = {
@@ -41,29 +48,29 @@ const DEFAULT_LLM_MODELS: Record<Exclude<CloudType, "auto">, string> = {
     openai: "openai/gpt-4o-mini",
 };
 
+const FALLBACK_ORDER: ReadonlyArray<Exclude<CloudType, "auto">> = ["groq", "openrouter", "openai"];
+
 export class AICloudProvider
     implements AITranscriptionProvider, AITranslationProvider, AISummarizationProvider, AIEmbeddingProvider
 {
     readonly type: AIProviderType;
     private readonly cloudType: CloudType;
     readonly dimensions = 1536;
-    private transcriptionManager: TranscriptionManager;
+    private _transcriptionManager?: TranscriptionManager;
 
     constructor(cloudType: CloudType = "auto") {
         this.cloudType = cloudType;
         this.type = cloudType === "auto" ? ("cloud" as AIProviderType) : cloudType;
-        this.transcriptionManager = new TranscriptionManager();
+    }
+
+    private get transcriptionManager(): TranscriptionManager {
+        this._transcriptionManager ??= new TranscriptionManager();
+        return this._transcriptionManager;
     }
 
     async isAvailable(): Promise<boolean> {
         if (this.cloudType === "auto") {
-            const allKeys = [
-                ...Object.values(ENV_VAR_MAP),
-                "ASSEMBLYAI_API_KEY",
-                "DEEPGRAM_API_KEY",
-                "GLADIA_API_KEY",
-            ];
-            return allKeys.some((key) => !!process.env[key]);
+            return AUTO_API_KEY_VARS.some((key) => !!process.env[key]);
         }
 
         return !!process.env[ENV_VAR_MAP[this.cloudType]];
@@ -74,7 +81,7 @@ export class AICloudProvider
             return !!process.env.OPENAI_API_KEY;
         }
 
-        return CLOUD_TASKS[this.cloudType].includes(task);
+        return CLOUD_TASKS[this.cloudType].has(task);
     }
 
     async transcribe(audio: Buffer, options?: TranscribeOptions): Promise<TranscriptionResult> {
@@ -189,16 +196,10 @@ export class AICloudProvider
             return this.resolveModel(DEFAULT_LLM_MODELS[this.cloudType]);
         }
 
-        if (process.env.GROQ_API_KEY) {
-            return this.resolveModel("groq/llama-3.1-8b-instant");
-        }
-
-        if (process.env.OPENROUTER_API_KEY) {
-            return this.resolveModel("openrouter/meta-llama/llama-3.1-8b-instant");
-        }
-
-        if (process.env.OPENAI_API_KEY) {
-            return this.resolveModel("openai/gpt-4o-mini");
+        for (const ct of FALLBACK_ORDER) {
+            if (process.env[ENV_VAR_MAP[ct]]) {
+                return this.resolveModel(DEFAULT_LLM_MODELS[ct]);
+            }
         }
 
         throw new Error("No cloud LLM API key available. Set GROQ_API_KEY, OPENROUTER_API_KEY, or OPENAI_API_KEY.");

@@ -94,6 +94,7 @@ class BucketTracker {
 export class NotificationManager {
     private trackers = new Map<string, BucketTracker>();
     private isFirstPoll = true;
+    private dirty = false;
     private _alerts: UsageAlert[] = [];
     private alertIdCounter = 0;
 
@@ -124,6 +125,7 @@ export class NotificationManager {
         const shouldNotify = tracker.shouldNotify(utilization, resetsAt, thresholds, this.isFirstPoll);
 
         if (shouldNotify) {
+            this.dirty = true;
             const label = BUCKET_LABELS[bucket] ?? bucket;
             const severity = utilization >= 80 ? "critical" : "warning";
             const message = `${accountName}: ${label} ${Math.round(utilization)}%`;
@@ -181,10 +183,15 @@ export class NotificationManager {
     }
 
     async saveState(storage: Storage): Promise<void> {
+        if (!this.dirty) {
+            return;
+        }
+
         const snapshot = Object.fromEntries([...this.trackers.entries()].map(([k, t]) => [k, t.getState()]));
         await storage.atomicConfigUpdate<Record<string, unknown>>((c) => {
             c[NOTIFICATION_POLL_TRACKER_CONFIG_KEY] = { trackers: snapshot, savedAt: new Date().toISOString() };
         });
+        this.dirty = false;
     }
 
     dismissAlert(alertId: string): void {

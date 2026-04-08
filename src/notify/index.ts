@@ -261,8 +261,6 @@ program
     .option("--app-icon <path>", "Custom icon path or URL")
     .option("--ignore-dnd", "Send even in Do Not Disturb mode")
     .option("--no-ignore-dnd", "Cancel ignore-dnd if set in config")
-    .option("--say", "Also speak the message via TTS")
-    .option("--no-say", "Cancel say if set in config")
     .action(
         async (
             message: string | undefined,
@@ -275,7 +273,6 @@ program
                 execute?: string;
                 appIcon?: string;
                 ignoreDnd?: boolean;
-                say?: boolean;
             }
         ) => {
             if (!message) {

@@ -12,6 +12,7 @@ import {
 import { AI } from "@app/utils/ai/index.ts";
 import { formatOutput, type OutputFormat } from "@app/utils/ai/transcription-format.ts";
 import type { AIProviderType } from "@app/utils/ai/types.ts";
+import { isCloudProvider } from "@app/utils/config/ai.types";
 import { copyToClipboard } from "@app/utils/clipboard.ts";
 import { formatDateTime } from "@app/utils/date.ts";
 import { formatDuration } from "@app/utils/format.ts";
@@ -289,12 +290,7 @@ function validateModelOption(model: string | undefined, provider: string | undef
 
     if (!model) {
         const providerType = provider ?? "local-hf";
-        const cloudLike =
-            providerType === "cloud" ||
-            providerType === "openai" ||
-            providerType === "groq" ||
-            providerType === "openrouter";
-        const suggestions = cloudLike
+        const suggestions = isCloudProvider(providerType as AIProviderType)
             ? "whisper-large-v3-turbo, whisper-large-v3, whisper-1"
             : "onnx-community/whisper-large-v3-turbo, onnx-community/whisper-small, onnx-community/whisper-base, onnx-community/whisper-tiny";
 

@@ -2,6 +2,7 @@ import { existsSync, readdirSync, rmdirSync, statSync, unlinkSync } from "node:f
 import { homedir } from "node:os";
 import { join } from "node:path";
 import logger from "@app/logger";
+import { type AIProviderType, isCloudProvider } from "@app/utils/config/ai.types";
 import { formatBytes } from "@app/utils/format";
 import { ensurePackage } from "@app/utils/packages";
 
@@ -159,13 +160,7 @@ export function getModelsForTask(task: string, provider: string): ModelInfo[] {
         return LOCAL_MODELS[task] ?? [];
     }
 
-    if (
-        (provider === "cloud" ||
-            provider === "openai" ||
-            provider === "groq" ||
-            provider === "openrouter") &&
-        task === "transcribe"
-    ) {
+    if (isCloudProvider(provider as AIProviderType) && task === "transcribe") {
         return getCloudTranscriptionModels();
     }
 

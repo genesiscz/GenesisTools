@@ -2,7 +2,7 @@ import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { getDaemonStatus } from "@app/daemon/lib/launchd";
-import { waitForDaemonRestart } from "@app/daemon/lib/wait-for-restart";
+import { safeSigterm, waitForDaemonRestart } from "@app/daemon/lib/wait-for-restart";
 
 export function registerRestartCommand(program: Command): void {
     program
@@ -23,10 +23,10 @@ export function registerRestartCommand(program: Command): void {
 
                 const s = p.spinner();
                 s.start("Waiting for launchd to start...");
-                const newStatus = await waitForDaemonRestart(null, 10_000);
+                const result = await waitForDaemonRestart(null);
 
-                if (newStatus?.running) {
-                    s.stop(`Daemon started (PID ${newStatus.pid})`);
+                if (result) {
+                    s.stop(`Daemon started (PID ${result.pid})`);
                 } else {
                     s.stop("Daemon did not start within 10s");
                     p.log.warn(`Check logs: ${pc.cyan("tools daemon logs")}`);
@@ -36,22 +36,15 @@ export function registerRestartCommand(program: Command): void {
             }
 
             const oldPid = status.pid;
-
-            try {
-                process.kill(oldPid, "SIGTERM");
-            } catch (err) {
-                if ((err as NodeJS.ErrnoException).code !== "ESRCH") {
-                    throw err;
-                }
-            }
+            safeSigterm(oldPid);
 
             const s = p.spinner();
             s.start("Restarting daemon...");
 
-            const newStatus = await waitForDaemonRestart(oldPid, 10_000);
+            const result = await waitForDaemonRestart(oldPid);
 
-            if (newStatus?.running && newStatus.pid) {
-                s.stop(`Daemon restarted (PID ${oldPid} → ${newStatus.pid})`);
+            if (result) {
+                s.stop(`Daemon restarted (PID ${oldPid} → ${result.pid})`);
             } else {
                 s.stop("Restart timed out");
                 p.log.warn(

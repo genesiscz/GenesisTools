@@ -7,6 +7,7 @@ import type { LanguageDetectionResult } from "@app/utils/ai/LanguageDetector.ts"
 import { getModelsForTask, ModelManager } from "@app/utils/ai/ModelManager.ts";
 import type { OutputFormat } from "@app/utils/ai/transcription-format.ts";
 import type { AIProviderType } from "@app/utils/ai/types.ts";
+import { isCloudProvider } from "@app/utils/config/ai.types";
 import { formatDateTime } from "@app/utils/date.ts";
 import { formatDuration } from "@app/utils/format.ts";
 import type { VoiceMemo } from "@app/utils/macos/voice-memos.ts";
@@ -333,12 +334,7 @@ export async function selectModel(provider: AIProviderType): Promise<string | un
     const knownModels = getModelsForTask("transcribe", provider);
 
     if (knownModels.length === 0) {
-        if (
-            provider === "cloud" ||
-            provider === "openai" ||
-            provider === "groq" ||
-            provider === "openrouter"
-        ) {
+        if (isCloudProvider(provider)) {
             p.log.warning("No cloud API keys found. Set GROQ_API_KEY, OPENROUTER_API_KEY, or OPENAI_API_KEY.");
         }
 
