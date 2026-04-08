@@ -2,8 +2,8 @@ import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import logger from "@app/logger";
 import type { Embedder } from "@app/utils/ai/tasks/Embedder";
-import { Stopwatch } from "@app/utils/Stopwatch";
 import type { WatcherSubscription } from "@app/utils/fs/watcher";
+import { Stopwatch } from "@app/utils/Stopwatch";
 import type { SearchOptions, SearchResult } from "@app/utils/search/types";
 import { Storage } from "@app/utils/storage/storage";
 import type { ChunkResult } from "./chunker";
@@ -11,6 +11,7 @@ import { chunkFile } from "./chunker";
 import type { EventName, IndexerCallbacks, IndexerEventMap, SyncStats } from "./events";
 import { IndexerEventEmitter } from "./events";
 import type { ModelInfo } from "./model-registry";
+import { findModel } from "@app/utils/ai/ModelRegistry";
 import { formatModelTable, getMaxEmbedChars, getModelsForType, getTaskPrefix } from "./model-registry";
 import { FileSource } from "./sources/file-source";
 import type { IndexerSource, SourceEntry } from "./sources/source";
@@ -87,6 +88,34 @@ export class Indexer extends IndexerEventEmitter {
         this.store = store;
         this.config = config;
         this.source = source;
+    }
+
+    /**
+     * Derive chunk maxTokens from the embedding model's context window.
+     * For "message" chunking (mail/chat), use the model's full context so each message = 1 chunk.
+     * For code/files, keep the default 500 for fine-grained search.
+     */
+    private deriveMaxTokens(): number {
+        const DEFAULT_MAX_TOKENS = 500;
+        const strategy = this.config.chunking ?? "auto";
+        const isMessageType = strategy === "message" || this.config.type === "mail" || this.config.type === "chat";
+
+        if (!isMessageType) {
+            return DEFAULT_MAX_TOKENS;
+        }
+
+        const modelId = this.config.embedding?.model;
+
+        if (modelId) {
+            const model = findModel(modelId);
+
+            if (model?.contextLength) {
+                return model.contextLength;
+            }
+        }
+
+        // Sensible default for message types — most modern embedding models support 8192
+        return 8192;
     }
 
     static async create(config: IndexConfig): Promise<Indexer> {
@@ -676,7 +705,7 @@ export class Indexer extends IndexerEventEmitter {
         const { mode, callbacks } = opts;
         const syncStart = performance.now();
         const strategy = this.config.chunking ?? "auto";
-        const maxTokens = this.config.chunkMaxTokens ?? 500;
+        const maxTokens = this.config.chunkMaxTokens ?? this.deriveMaxTokens();
         const pathHashStore = this.store.getPathHashStore();
 
         // Reset cancellation flag at start of each sync
