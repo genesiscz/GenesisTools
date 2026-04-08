@@ -70,6 +70,6 @@ export async function resolveDevice(): Promise<DeviceResult> {
         // fall back to CPU internally if the EP isn't loaded
     }
 
-    logger.info(`[device] Using ${preferred.label}`);
+    logger.debug(`[device] Using ${preferred.label}`);
     return preferred;
 }

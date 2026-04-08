@@ -27,6 +27,7 @@ export function registerDaemonCommand(program: Command): void {
                 retries: 1,
                 description: "Poll Claude usage API and record to history DB",
                 overwrite: true,
+                notify: false,
             });
 
             if (created) {

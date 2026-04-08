@@ -10,6 +10,8 @@ export interface RegisterTaskOptions {
     enabled?: boolean;
     description?: string;
     overwrite?: boolean;
+    /** Send macOS notifications on start/complete/fail. Default: true */
+    notify?: boolean;
 }
 
 function validateTaskName(name: string): void {
@@ -36,6 +38,7 @@ export async function registerTask(opts: RegisterTaskOptions): Promise<boolean> 
         retries: opts.retries ?? 3,
         enabled: opts.enabled ?? true,
         description: opts.description,
+        ...(opts.notify === false ? { notify: false } : {}),
     };
 
     await upsertTask(task);

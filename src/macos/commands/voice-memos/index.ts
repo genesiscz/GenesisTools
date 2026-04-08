@@ -417,7 +417,7 @@ async function transcribeOne(opts: {
         language: opts.lang,
         model: opts.model,
         onProgress: (info: { message: string }) => {
-            s.message(info.message);
+            s.message(pc.dim(info.message));
         },
         onSegment: (seg: { start: number; text: string }) => {
             const ts = formatDuration(seg.start * 1000, "ms", "tiered");
