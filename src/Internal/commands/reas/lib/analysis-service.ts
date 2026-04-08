@@ -399,6 +399,10 @@ export async function fetchAndAnalyze(
         );
     }
 
+    // Compute district-wide time-on-market before applying price/area filters,
+    // so it serves as a broad baseline for the investment score velocity factor.
+    const districtTimeOnMarket = analyzeTimeOnMarket(allListings);
+
     allListings = applyListingFilters(allListings, filters);
 
     const rentalListings: RentalListing[] = [];
@@ -596,7 +600,7 @@ export async function fetchAndAnalyze(
         trendDirection: trends.direction,
         trendYoY: trends.yoyChange ?? 0,
         medianDaysOnMarket: timeOnMarket.median,
-        districtMedianDays: timeOnMarket.median,
+        districtMedianDays: districtTimeOnMarket.median,
     });
 
     const rentalAggregation = aggregateRentals([

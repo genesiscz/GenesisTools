@@ -315,6 +315,16 @@ async function runInteractiveWizard(): Promise<{ filters: AnalysisFilters; targe
     return { filters, target, refresh: false };
 }
 
+function parseRequiredNumber(raw: string | undefined, label: string): number {
+    const num = Number(raw);
+
+    if (!Number.isFinite(num) || num < 0) {
+        throw new Error(`Invalid ${label}: "${raw}". Please provide a positive number.`);
+    }
+
+    return num;
+}
+
 export async function buildFromFlags(
     options: ReasOptions
 ): Promise<{ filters: AnalysisFilters; target: TargetProperty }> {
@@ -322,15 +332,20 @@ export async function buildFromFlags(
         ? await resolveDistrictFromAddress(options.address)
         : resolveDistrict(options.district!);
 
+    const price = parseRequiredNumber(options.price, "--price");
+    const area = parseRequiredNumber(options.area, "--area");
+    const rent = options.rent ? parseRequiredNumber(options.rent, "--rent") : 0;
+    const monthlyCosts = options.monthlyCosts ? parseRequiredNumber(options.monthlyCosts, "--monthly-costs") : 0;
+
     return buildConfig({
         district,
         constructionType: options.type!,
         disposition: options.disposition,
         periodsStr: options.periods,
-        price: Number(options.price),
-        area: Number(options.area),
-        rent: Number(options.rent ?? "0"),
-        monthlyCosts: Number(options.monthlyCosts ?? "0"),
+        price,
+        area,
+        rent,
+        monthlyCosts,
         priceMin: options.priceMin,
         priceMax: options.priceMax,
         areaMin: options.areaMin,
