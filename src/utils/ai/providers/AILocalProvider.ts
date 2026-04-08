@@ -117,8 +117,16 @@ export class AILocalProvider
         // 29s instead of 30s: transformers.js bug #1358 causes timestamp collapse at exactly 30s
         const chunkLengthS = 29;
 
-        logger.info(`[transcribe] start: ${Math.round(durationSec)}s audio, lang=${language}, model=${model}`);
+        logger.debug(`[transcribe] start: ${Math.round(durationSec)}s audio, lang=${language}, model=${model}`);
         const transcribeStart = Date.now();
+
+        const formatElapsed = () => {
+            const ms = Date.now() - transcribeStart;
+            const s = Math.floor(ms / 1000);
+            const m = Math.floor(s / 60);
+            const remainder = s % 60;
+            return m > 0 ? `${m}m${String(remainder).padStart(2, "0")}s` : `${s}s`;
+        };
 
         onProgress?.({
             phase: "transcribe",
@@ -131,7 +139,7 @@ export class AILocalProvider
         // Use the timestamp time to calculate real progress against total duration.
         const { WhisperTextStreamer } = await import("@huggingface/transformers");
         let currentChunkText = "";
-        let lastProgressUpdate = 0;
+        let lastProgressUpdate = Date.now();
         let lastTimestamp = 0;
         const PROGRESS_THROTTLE_MS = 300;
 
@@ -149,31 +157,26 @@ export class AILocalProvider
                     return;
                 }
 
-                const elapsed = now - lastProgressUpdate;
                 lastProgressUpdate = now;
                 const pct = Math.min(99, Math.round((lastTimestamp / durationSec) * 100));
                 const truncated = currentChunkText.length > 60 ? `...${currentChunkText.slice(-57)}` : currentChunkText;
 
-                logger.info(
-                    `[transcribe] progress: ${pct}% ts=${lastTimestamp.toFixed(1)}s elapsed_since_last=${elapsed}ms`
-                );
+                logger.debug(`[transcribe] progress: ${pct}% ts=${lastTimestamp.toFixed(1)}s elapsed=${formatElapsed()}`);
 
                 onProgress?.({
                     phase: "transcribe",
                     percent: pct,
-                    message: `[${language}] ${pct}% — ${truncated.trim()}`,
+                    message: `[transcribe ${formatElapsed()}] [${language}] ${pct}% — ${truncated.trim()}`,
                 });
             },
             on_chunk_start: (time: number) => {
-                const elapsed = Date.now() - transcribeStart;
-                logger.info(`[transcribe] chunk_start: time=${time.toFixed(2)}s total_elapsed=${elapsed}ms`);
+                logger.debug(`[transcribe] chunk_start: time=${time.toFixed(2)}s elapsed=${formatElapsed()}`);
                 lastTimestamp = time;
                 currentChunkText = "";
             },
             on_chunk_end: (time: number) => {
-                const elapsed = Date.now() - transcribeStart;
-                logger.info(
-                    `[transcribe] chunk_end: time=${time.toFixed(2)}s text="${currentChunkText.slice(0, 80)}" total_elapsed=${elapsed}ms`
+                logger.debug(
+                    `[transcribe] chunk_end: time=${time.toFixed(2)}s text="${currentChunkText.slice(0, 80)}" elapsed=${formatElapsed()}`,
                 );
                 lastTimestamp = time;
 
@@ -187,8 +190,8 @@ export class AILocalProvider
             },
         });
 
-        logger.info(
-            `[transcribe] calling pipeline with ${audioData.length} samples, chunk_length=${chunkLengthS}s, stride=5s`
+        logger.debug(
+            `[transcribe] calling pipeline with ${audioData.length} samples, chunk_length=${chunkLengthS}s, stride=5s`,
         );
         const pipeStart = Date.now();
 
@@ -215,11 +218,11 @@ export class AILocalProvider
 
         const pipeDuration = Date.now() - pipeStart;
         const totalDuration = Date.now() - transcribeStart;
-        logger.info(
-            `[transcribe] pipeline done: ${pipeDuration}ms, total=${totalDuration}ms, chunks=${result.chunks?.length ?? 0}, text=${result.text.length} chars`
+        logger.debug(
+            `[transcribe] pipeline done: ${pipeDuration}ms, total=${totalDuration}ms, chunks=${result.chunks?.length ?? 0}, text=${result.text.length} chars`,
         );
 
-        onProgress?.({ phase: "transcribe", percent: 100, message: "Transcription complete" });
+        onProgress?.({ phase: "transcribe", percent: 100, message: `[transcribe ${formatElapsed()}] complete` });
 
         const segments = result.chunks?.map((c) => ({
             text: c.text,
@@ -361,9 +364,7 @@ export class AILocalProvider
                 ...(FP16_INCOMPATIBLE_ENCODERS.has(model) || extraSessionOpts
                     ? {
                           session_options: {
-                              ...(FP16_INCOMPATIBLE_ENCODERS.has(model)
-                                  ? { graphOptimizationLevel: "extended" }
-                                  : {}),
+                              ...(FP16_INCOMPATIBLE_ENCODERS.has(model) ? { graphOptimizationLevel: "extended" } : {}),
                               ...extraSessionOpts,
                           },
                       }
@@ -374,7 +375,11 @@ export class AILocalProvider
                               const pct = Math.round((info.loaded / info.total) * 100);
                               const file = info.file?.split("/").pop() ?? "";
                               const size = `${formatBytes(info.loaded)}/${formatBytes(info.total)}`;
-                              onProgress({ phase: "download", percent: pct, message: `Downloading ${file}... ${pct}% (${size})` });
+                              onProgress({
+                                  phase: "download",
+                                  percent: pct,
+                                  message: `Downloading ${file}... ${pct}% (${size})`,
+                              });
                           } else if (info.status === "ready") {
                               onProgress({ phase: "load", percent: 100, message: "Model loaded" });
                           }
@@ -386,7 +391,7 @@ export class AILocalProvider
                 (await pipeline(
                     task as Parameters<typeof pipeline>[0],
                     model,
-                    pipelineOpts(opts),
+                    pipelineOpts(opts)
                 )) as unknown as PipelineInstance;
 
             const restoreWarnings = suppressConsoleWarnings({
@@ -413,7 +418,7 @@ export class AILocalProvider
                     }
 
                     throw new Error(
-                        `Model "${model}" requires a HuggingFace token. Run: tools ai config → Hugging Face token`,
+                        `Model "${model}" requires a HuggingFace token. Run: tools ai config → Hugging Face token`
                     );
                 }
 
@@ -421,7 +426,7 @@ export class AILocalProvider
                 // on certain architectures. Auto-retry with lowered graph optimization.
                 if (msg.includes("InsertedPrecisionFreeCast") && !FP16_INCOMPATIBLE_ENCODERS.has(model)) {
                     logger.warn(
-                        `[getPipeline] fp16 ONNX RT crash for "${model}". Retrying with graphOptimizationLevel=extended.`,
+                        `[getPipeline] fp16 ONNX RT crash for "${model}". Retrying with graphOptimizationLevel=extended.`
                     );
                     FP16_INCOMPATIBLE_ENCODERS.add(model);
 
