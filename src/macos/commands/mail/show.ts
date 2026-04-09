@@ -9,10 +9,9 @@ export function registerShowCommand(program: Command): void {
     program
         .command("show <message-id>")
         .description("Show full email details including body")
-        .option("--body-max-chars <n>", "Max body characters to display", "5000")
-        .option("--raw", "Show raw body (no truncation)")
+        .option("--max-chars <n>", "Truncate body to N characters")
         .option("--json", "Output as JSON")
-        .action(async (messageIdArg: string, options: { bodyMaxChars?: string; raw?: boolean; json?: boolean }) => {
+        .action(async (messageIdArg: string, options: { maxChars?: string; json?: boolean }) => {
             try {
                 const rowid = Number.parseInt(messageIdArg, 10);
 
@@ -41,11 +40,11 @@ export function registerShowCommand(program: Command): void {
                 const body = await emlx.getBody(rowid);
                 emlx.dispose();
 
-                const maxChars = options.raw ? Infinity : Number.parseInt(options.bodyMaxChars ?? "5000", 10);
-                const truncatedBody = body ? truncateBody(body, maxChars) : null;
+                const maxChars = options.maxChars ? Number.parseInt(options.maxChars, 10) : undefined;
+                const displayBody = body && maxChars ? truncateBody(body, maxChars) : body;
 
                 if (options.json) {
-                    console.log(SafeJSON.stringify({ ...msg, body: truncatedBody }, null, 2));
+                    console.log(SafeJSON.stringify({ ...msg, body: displayBody }, null, 2));
                     return;
                 }
 
@@ -86,8 +85,8 @@ export function registerShowCommand(program: Command): void {
 
                 console.log();
 
-                if (truncatedBody) {
-                    console.log(truncatedBody);
+                if (displayBody) {
+                    console.log(displayBody);
                 } else {
                     console.log(dim("(no body content available)"));
                 }
