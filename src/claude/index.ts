@@ -5,6 +5,7 @@ import { registerConfigCommand } from "./commands/config";
 import { registerDaemonCommand } from "./commands/daemon";
 import { registerDesktopCommand } from "./commands/desktop";
 import { registerHistoryCommand } from "./commands/history";
+import { registerMemoryCommand } from "./commands/memory";
 import { registerMigrateCommand } from "./commands/migrate";
 import { registerResumeCommand } from "./commands/resume";
 import { registerSummarizeCommand } from "./commands/summarize";
@@ -21,6 +22,7 @@ program
     .showHelpAfterError(true);
 
 registerHistoryCommand(program);
+registerMemoryCommand(program);
 registerSummarizeCommand(program);
 registerResumeCommand(program);
 registerTailCommand(program);
