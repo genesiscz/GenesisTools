@@ -67,6 +67,18 @@ export function registerIndexCommand(program: Command): void {
                 let resolvedModel =
                     typeof opts.model === "string" && !opts.model.startsWith("-") ? opts.model : undefined;
 
+                // Fall back to stored defaults from previous run
+                if (!resolvedProvider && !opts.provider) {
+                    const { AIConfig } = await import("@app/utils/ai/AIConfig");
+                    const aiConfig = await AIConfig.load();
+                    const stored = aiConfig.getAppDefaults("mail");
+
+                    if (stored?.embeddingProvider) {
+                        resolvedProvider = stored.embeddingProvider;
+                        resolvedModel ??= stored.embeddingModel;
+                    }
+                }
+
                 // Treat invalid string values as "wants interactive prompt"
                 const wantsProviderPrompt =
                     opts.provider === true ||
@@ -197,6 +209,15 @@ export function registerIndexCommand(program: Command): void {
                             provider: opts.provider,
                             limit: opts.limit,
                             embed: opts.embed,
+                        });
+                    }
+                    // Persist chosen provider/model for next run
+                    if (resolvedProvider) {
+                        const { AIConfig } = await import("@app/utils/ai/AIConfig");
+                        const aiConfig = await AIConfig.load();
+                        await aiConfig.setAppDefaults("mail", {
+                            embeddingProvider: resolvedProvider,
+                            embeddingModel: resolvedModel ?? PROVIDER_DEFAULT_MODELS[resolvedProvider],
                         });
                     }
                 } finally {

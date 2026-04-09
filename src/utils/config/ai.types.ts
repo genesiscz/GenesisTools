@@ -60,6 +60,8 @@ export interface AppDefaults {
     temperature?: number;
     maxTokens?: number;
     streaming?: boolean;
+    embeddingProvider?: string;
+    embeddingModel?: string;
 }
 
 /** Per-app settings, namespaced under apps.<name> */
