@@ -95,10 +95,7 @@ const MESSAGE_SELECT = `
     JOIN mailboxes mb ON m.mailbox = mb.ROWID`;
 
 /** Build WHERE clauses + params for date/mailbox/receiver/account filters. */
-function buildFilters(
-    opts: FilterOptions,
-    params: Record<string, string | number>
-): string[] {
+function buildFilters(opts: FilterOptions, params: Record<string, string | number>): string[] {
     const filters: string[] = [];
 
     if (opts.from) {
