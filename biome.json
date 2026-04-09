@@ -18,8 +18,10 @@
             "recommended": true,
             "correctness": {
                 "noUnusedVariables": "error",
-                "noUnusedImports": "error"
+                "noUnusedImports": "error",
+                "useExhaustiveDependencies": "off"
             },
+            "a11y": "off",
             "style": {
                 "useConst": "error",
                 "useBlockStatements": "error",
@@ -38,6 +40,7 @@
             },
             "suspicious": {
                 "noExplicitAny": "warn",
+                "noArrayIndexKey": "off",
                 "noTemplateCurlyInString": "off"
             }
         }

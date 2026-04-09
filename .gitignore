@@ -201,3 +201,6 @@ vercel-skills
 *.har
 
 .claude/worktrees/
+.claude/work/
+
+.playwright-mcp/
