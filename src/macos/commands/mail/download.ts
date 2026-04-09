@@ -1,8 +1,9 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import logger from "@app/logger";
+import { EmlxBodyExtractor } from "@app/macos/lib/mail/emlx";
 import { generateEmailMarkdown, generateIndexMarkdown, generateSlug } from "@app/macos/lib/mail/format";
-import { getMessageBody, saveAttachment } from "@app/macos/lib/mail/jxa";
+import { saveAttachment } from "@app/macos/lib/mail/jxa";
 import { MailStorage } from "@app/macos/lib/mail/mail-storage";
 import { cleanup, getRecipients } from "@app/macos/lib/mail/sqlite";
 import * as p from "@clack/prompts";
@@ -16,6 +17,9 @@ export function registerDownloadCommand(program: Command): void {
         .option("--overwrite", "Overwrite existing index.md")
         .option("--append", "Append to existing index.md")
         .option("--save-attachments", "Download attachments to output-dir/attachments/")
+        .option("--from <date>", "Only download emails sent after date (ISO format)")
+        .option("--to <date>", "Only download emails sent before date (ISO format)")
+        .option("--body-max-chars <n>", "Max body characters per email")
         .action(
             async (
                 outputDirArg: string,
@@ -24,6 +28,9 @@ export function registerDownloadCommand(program: Command): void {
                     overwrite?: boolean;
                     append?: boolean;
                     saveAttachments?: boolean;
+                    from?: string;
+                    to?: string;
+                    bodyMaxChars?: string;
                 }
             ) => {
                 try {
@@ -97,25 +104,60 @@ export function registerDownloadCommand(program: Command): void {
                         mkdirSync(join(outputDir, "attachments"), { recursive: true });
                     }
 
+                    // Apply date filters
+                    let filteredMessages = messages;
+
+                    if (options.from) {
+                        const fromDate = new Date(options.from);
+                        filteredMessages = filteredMessages.filter((m) => m.dateSent >= fromDate);
+                    }
+
+                    if (options.to) {
+                        const toDate = new Date(options.to);
+                        filteredMessages = filteredMessages.filter((m) => m.dateSent <= toDate);
+                    }
+
+                    if (filteredMessages.length === 0) {
+                        p.log.info("No messages match the date filter.");
+                        return;
+                    }
+
+                    if (filteredMessages.length !== messages.length) {
+                        p.log.info(
+                            `Filtered to ${filteredMessages.length} of ${messages.length} messages by date range`
+                        );
+                    }
+
                     // Fetch recipients for all messages
-                    const rowids = messages.map((m) => m.rowid);
+                    const rowids = filteredMessages.map((m) => m.rowid);
                     const recipientsMap = getRecipients(rowids);
+
+                    // Create EmlxBodyExtractor (fast: ~42 msg/s L2, instant L1)
+                    const emlx = await EmlxBodyExtractor.create();
+                    const bodyMaxChars = options.bodyMaxChars
+                        ? Number.parseInt(options.bodyMaxChars, 10)
+                        : undefined;
 
                     // Process each email
                     const spinner = p.spinner();
                     spinner.start("Processing emails...");
                     let processed = 0;
 
-                    for (const msg of messages) {
+                    for (const msg of filteredMessages) {
                         processed++;
-                        spinner.message(`[${processed}/${messages.length}] ${msg.subject.slice(0, 50)}...`);
+                        spinner.message(`[${processed}/${filteredMessages.length}] ${msg.subject.slice(0, 50)}...`);
 
                         // Attach recipients
                         msg.recipients = recipientsMap.get(msg.rowid) ?? [];
 
-                        // Get body via JXA
-                        const body = await getMessageBody(msg.subject, msg.dateSent, msg.senderAddress);
-                        msg.body = body ?? undefined;
+                        // Get body via EmlxBodyExtractor (much faster than JXA)
+                        const body = await emlx.getBody(msg.rowid);
+
+                        if (body && bodyMaxChars && body.length > bodyMaxChars) {
+                            msg.body = `${body.slice(0, bodyMaxChars)}\n... [truncated]`;
+                        } else {
+                            msg.body = body ?? undefined;
+                        }
 
                         // Generate markdown
                         const slug = generateSlug(msg);
@@ -142,10 +184,11 @@ export function registerDownloadCommand(program: Command): void {
                             }
                         }
                     }
+                    emlx.dispose();
                     spinner.stop(`Processed ${processed} emails`);
 
                     // Generate index.md
-                    const indexMd = generateIndexMarkdown(messages);
+                    const indexMd = generateIndexMarkdown(filteredMessages);
                     if (options.append && existsSync(indexPath)) {
                         const existing = readFileSync(indexPath, "utf-8");
                         writeFileSync(indexPath, `${existing}\n\n---\n\n${indexMd}`);
@@ -155,7 +198,7 @@ export function registerDownloadCommand(program: Command): void {
 
                     p.log.success(`Downloaded to ${outputDir}`);
                     p.log.info(`  Index: ${indexPath}`);
-                    p.log.info(`  Emails: ${emailsDir}/ (${messages.length} files)`);
+                    p.log.info(`  Emails: ${emailsDir}/ (${filteredMessages.length} files)`);
                     if (options.saveAttachments) {
                         p.log.info(`  Attachments: ${join(outputDir, "attachments")}/`);
                     }
