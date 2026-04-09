@@ -186,7 +186,6 @@ export function Table({ columns, data, borderColor = "gray", emptyMessage = "No 
             {renderRow({}, true)}
             <Text color={borderColor}>{separatorLine}</Text>
             {data.map((row, i) => (
-                // biome-ignore lint/suspicious/noArrayIndexKey: static list rendering
                 <React.Fragment key={i}>{renderRow(row, false)}</React.Fragment>
             ))}
             <Text color={borderColor}>{bottomLine}</Text>

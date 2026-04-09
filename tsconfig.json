@@ -4,7 +4,8 @@
         "src/claude-history-dashboard",
         "src/fsevents-profile",
         "src/utils/ui",
-        "src/clarity/ui"
+        "src/clarity/ui",
+        "src/Internal/commands/reas/ui"
     ],
     "compilerOptions": {
         // Enable latest features
