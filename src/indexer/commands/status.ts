@@ -40,10 +40,7 @@ function showOverview(manager: IndexerManager): void {
         const lastSync = meta.lastSyncAt ? formatRelativeTime(new Date(meta.lastSyncAt), { compact: true }) : "never";
         const { totalChunks, totalEmbeddings } = meta.stats;
         const embPct = totalChunks > 0 ? Math.round((totalEmbeddings / totalChunks) * 100) : 0;
-        const embLabel =
-            totalEmbeddings > 0
-                ? `${totalEmbeddings.toLocaleString()} (${embPct}%)`
-                : "0";
+        const embLabel = totalEmbeddings > 0 ? `${totalEmbeddings.toLocaleString()} (${embPct}%)` : "0";
 
         return [
             meta.name,

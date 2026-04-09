@@ -1,10 +1,10 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, readdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Storage } from "@app/utils/storage/storage";
 import { Indexer } from "./indexer";
 import { IndexerManager } from "./manager";
+import { getIndexerStorage } from "./storage";
 import type { IndexConfig } from "./types";
 
 let tempDir: string;
@@ -55,18 +55,7 @@ afterAll(async () => {
     await manager.close();
 
     // Clean up stale filesystem leftovers from crashed test runs
-    const storage = new Storage("indexer");
-    const baseDir = storage.getBaseDir();
-
-    try {
-        for (const entry of readdirSync(baseDir)) {
-            if (entry.startsWith("e2e_test_")) {
-                rmSync(join(baseDir, entry), { recursive: true, force: true });
-            }
-        }
-    } catch {
-        // best-effort
-    }
+    getIndexerStorage().cleanStaleDirs("e2e_test_");
 });
 
 describe("E2E: index -> search -> verify", () => {

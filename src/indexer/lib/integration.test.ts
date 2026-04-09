@@ -1,11 +1,11 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Storage } from "@app/utils/storage/storage";
 import type { EventName, IndexerCallbacks, IndexerEventMap } from "./events";
 import { Indexer } from "./indexer";
 import { IndexerManager } from "./manager";
+import { getIndexerStorage } from "./storage";
 import type { IndexConfig } from "./types";
 
 let tempDir: string;
@@ -66,18 +66,8 @@ afterAll(async () => {
     await manager.close();
 
     // Clean up stale filesystem leftovers from crashed test runs
-    const storage = new Storage("indexer");
-    const baseDir = storage.getBaseDir();
-
-    try {
-        for (const entry of readdirSync(baseDir)) {
-            if (entry.startsWith("integration_test_") || entry.startsWith("test_")) {
-                rmSync(join(baseDir, entry), { recursive: true, force: true });
-            }
-        }
-    } catch {
-        // best-effort
-    }
+    getIndexerStorage().cleanStaleDirs("integration_test_");
+    getIndexerStorage().cleanStaleDirs("test_");
 });
 
 describe("IndexerManager lifecycle", () => {

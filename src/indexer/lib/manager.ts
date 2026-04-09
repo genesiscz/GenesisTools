@@ -2,10 +2,11 @@ import { Database } from "bun:sqlite";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@app/utils/json";
-import { Storage } from "@app/utils/storage/storage";
+import type { Storage } from "@app/utils/storage/storage";
 import { CONFIG_FILENAME, ContextArtifactSource, loadContextConfig } from "./context-artifacts";
 import type { IndexerCallbacks, SyncStats } from "./events";
 import { Indexer } from "./indexer";
+import { getIndexerStorage } from "./storage";
 import { searchIndexReadonly } from "./store";
 import { emptyStats, type IndexConfig, type IndexMeta, type IndexStats } from "./types";
 
@@ -76,7 +77,7 @@ export class IndexerManager {
     }
 
     static async load(): Promise<IndexerManager> {
-        const storage = new Storage("indexer");
+        const storage = getIndexerStorage();
         await storage.ensureDirs();
         const manager = new IndexerManager(storage);
         manager._interruptedOnLoad = manager.getInterruptedIndexes();

@@ -8,8 +8,8 @@ import { SearchEngine } from "@app/utils/search/drivers/sqlite-fts5/index";
 import type { QdrantVectorStore } from "@app/utils/search/stores/qdrant-vector-store";
 import type { VectorStore } from "@app/utils/search/stores/vector-store";
 import type { SearchOptions, SearchResult } from "@app/utils/search/types";
-import { Storage } from "@app/utils/storage/storage";
 import { deserializeMerkleTree } from "./merkle";
+import { getIndexerStorage } from "./storage";
 import { PathHashStore } from "./path-hashes";
 import {
     type ChunkRecord,
@@ -174,8 +174,7 @@ export async function searchIndexReadonly(
     query: string,
     opts?: { mode?: "fulltext" | "hybrid" | "vector"; limit?: number }
 ): Promise<SearchResult<ChunkRecord>[]> {
-    const storage = new Storage("indexer");
-    const indexDir = join(storage.getBaseDir(), indexName);
+    const indexDir = getIndexerStorage().getIndexDir(indexName);
     const dbPath = join(indexDir, "index.db");
 
     if (!existsSync(dbPath)) {
@@ -212,8 +211,7 @@ export async function searchIndexReadonly(
 }
 
 export async function createIndexStore(config: IndexConfig, embedder?: Embedder): Promise<IndexStore> {
-    const storage = new Storage("indexer");
-    const indexDir = join(storage.getBaseDir(), config.name);
+    const indexDir = getIndexerStorage().getIndexDir(config.name);
 
     if (!existsSync(indexDir)) {
         mkdirSync(indexDir, { recursive: true });

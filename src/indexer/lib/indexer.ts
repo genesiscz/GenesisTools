@@ -6,7 +6,6 @@ import type { Embedder } from "@app/utils/ai/tasks/Embedder";
 import type { WatcherSubscription } from "@app/utils/fs/watcher";
 import { Stopwatch } from "@app/utils/Stopwatch";
 import type { SearchOptions, SearchResult } from "@app/utils/search/types";
-import { Storage } from "@app/utils/storage/storage";
 import type { ChunkResult } from "./chunker";
 import { chunkFile } from "./chunker";
 import type { EventName, IndexerCallbacks, IndexerEventMap, SyncStats } from "./events";
@@ -17,6 +16,7 @@ import { FileSource } from "./sources/file-source";
 import type { IndexerSource, SourceEntry } from "./sources/source";
 import type { IndexStore } from "./store";
 import { createIndexStore } from "./store";
+import { getIndexerStorage } from "./storage";
 import type { ChunkRecord, IndexConfig, IndexStats } from "./types";
 import { DEFAULT_WATCH_INTERVAL_MS, EMBEDDING_BATCH_SIZE, PROVIDER_BATCH_SIZES } from "./types";
 
@@ -536,8 +536,7 @@ export class Indexer extends IndexerEventEmitter {
         const zeroDims = this.embedder.dimensions;
 
         // Stop signal file for cross-process cancellation
-        const storage = new Storage("indexer");
-        const stopFile = join(storage.getBaseDir(), this.config.name, "stop.signal");
+        const stopFile = join(getIndexerStorage().getIndexDir(this.config.name), "stop.signal");
 
         const embedSw = new Stopwatch();
         logger.debug(

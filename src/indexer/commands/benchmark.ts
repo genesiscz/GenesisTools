@@ -1,10 +1,10 @@
-import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { Embedder } from "@app/utils/ai/tasks/Embedder";
 import { formatBytes, formatDuration } from "@app/utils/format";
 import { SafeJSON } from "@app/utils/json";
-import { Storage } from "@app/utils/storage/storage";
 import { formatTable } from "@app/utils/table";
+import { getIndexerStorage } from "../lib/storage";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -486,8 +486,7 @@ async function runCompareProviders(opts: {
         recommendation: `${best.provider}/${best.model}`,
     };
 
-    const storage = new Storage("indexer");
-    const benchDir = join(storage.getBaseDir(), "benchmarks");
+    const benchDir = getIndexerStorage().getBenchmarkDir();
 
     if (!existsSync(benchDir)) {
         mkdirSync(benchDir, { recursive: true });
@@ -631,19 +630,7 @@ async function runDirBenchmark(
     p.intro(pc.bgCyan(pc.white(` benchmark ${basename(absDir)} `)));
 
     // Clean up stale bench_ dirs from previous crashed runs
-    {
-        const indexerDir = new Storage("indexer").getBaseDir();
-
-        try {
-            for (const entry of readdirSync(indexerDir)) {
-                if (entry.startsWith("bench_")) {
-                    rmSync(join(indexerDir, entry), { recursive: true, force: true });
-                }
-            }
-        } catch {
-            // best-effort
-        }
-    }
+    getIndexerStorage().cleanStaleDirs("bench_");
 
     const benchName = `bench_${Date.now()}`;
     const config: IndexConfig = {
@@ -751,8 +738,7 @@ async function runDirBenchmark(
         await indexer.close();
 
         // Clean up benchmark index files directly (not registered with manager)
-        const storage = new Storage("indexer");
-        const indexDir = join(storage.getBaseDir(), benchName);
+        const indexDir = getIndexerStorage().getIndexDir(benchName);
 
         if (existsSync(indexDir)) {
             rmSync(indexDir, { recursive: true, force: true });
