@@ -845,7 +845,7 @@ export function registerReasCommand(program: Command): void {
 
             if (result.hydratedDetail !== null) {
                 const raw = SafeJSON.stringify(result.hydratedDetail);
-                const truncated = raw.length > 300 ? raw.slice(0, 300) + "…" : raw;
+                const truncated = raw.length > 300 ? `${raw.slice(0, 300)}…` : raw;
                 console.log(`\nLive detail: ${truncated}`);
             }
 
@@ -885,8 +885,8 @@ export function registerReasCommand(program: Command): void {
                 ["Costs", formatCzk(prop.monthly_costs)],
                 ["Score", prop.last_score != null ? String(prop.last_score) : "—"],
                 ["Grade", prop.last_grade ?? "—"],
-                ["Net Yield", prop.last_net_yield != null ? prop.last_net_yield.toFixed(1) + "%" : "—"],
-                ["Gross Yield", prop.last_gross_yield != null ? prop.last_gross_yield.toFixed(1) + "%" : "—"],
+                ["Net Yield", prop.last_net_yield != null ? `${prop.last_net_yield.toFixed(1)}%` : "—"],
+                ["Gross Yield", prop.last_gross_yield != null ? `${prop.last_gross_yield.toFixed(1)}%` : "—"],
                 [
                     "Median CZK/m²",
                     prop.last_median_price_per_m2 != null ? formatCzk(Math.round(prop.last_median_price_per_m2)) : "—",
@@ -904,8 +904,8 @@ export function registerReasCommand(program: Command): void {
                     h.analyzed_at.slice(0, 10),
                     h.grade ?? "—",
                     h.score != null ? String(h.score) : "—",
-                    h.net_yield != null ? h.net_yield.toFixed(1) + "%" : "—",
-                    h.gross_yield != null ? h.gross_yield.toFixed(1) + "%" : "—",
+                    h.net_yield != null ? `${h.net_yield.toFixed(1)}%` : "—",
+                    h.gross_yield != null ? `${h.gross_yield.toFixed(1)}%` : "—",
                     h.median_price_per_m2 != null ? formatCzk(Math.round(h.median_price_per_m2)) : "—",
                     h.comparable_count != null ? String(h.comparable_count) : "—",
                 ]);
@@ -971,9 +971,9 @@ export function registerReasCommand(program: Command): void {
                     s.snapshotDate,
                     formatCzk(Math.round(s.medianPricePerM2)),
                     s.trendDirection ?? "—",
-                    s.yoyChange != null ? s.yoyChange.toFixed(1) + "%" : "—",
-                    s.marketGrossYield != null ? s.marketGrossYield.toFixed(1) + "%" : "—",
-                    s.marketNetYield != null ? s.marketNetYield.toFixed(1) + "%" : "—",
+                    s.yoyChange != null ? `${s.yoyChange.toFixed(1)}%` : "—",
+                    s.marketGrossYield != null ? `${s.marketGrossYield.toFixed(1)}%` : "—",
+                    s.marketNetYield != null ? `${s.marketNetYield.toFixed(1)}%` : "—",
                     String(s.comparablesCount),
                 ]);
 
