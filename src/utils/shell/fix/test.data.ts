@@ -1631,6 +1631,35 @@ export const testCases: TestCase[] = [
         expectedPretty: 'echo "test --verbose output" \\\n  --silent',
         tags: ["review-fix", "quote-aware-prettify"],
     },
+
+    // ── Section 21: Multi-command pastes with newlines inside quotes ──────
+    // Bug: multi-line echo "..." inside broken redirect commands gets mangled.
+    // The newline inside "..." is part of the string literal and must be preserved
+    // when the wrap is NOT mid-word (prev non-alnum OR current non-alnum).
+    // Blank lines followed by unindented lines → command-group separators.
+    {
+        name: "echo with literal newline after colon inside double quotes preserved",
+        input: 'echo "key:\n  value"',
+        expected: 'echo "key:\n  value"',
+        expectedPretty: 'echo "key:\n  value"',
+        tags: ["multi-command", "quoted-newline"],
+    },
+    {
+        name: "two command groups separated by blank line preserved as newline",
+        input: "echo one\n\necho two",
+        expected: "echo one\necho two",
+        expectedPretty: "echo one\necho two",
+        tags: ["multi-command", "blank-line-separator"],
+    },
+    {
+        name: "gpg apt-key multi-command paste with quoted newlines and blank-line groups",
+        input: 'gpg --dearmor < /tmp/elastic.gpg.asc >\n  /etc/apt/keyrings/elastic-7.gpg && chmod a+r\n  /etc/apt/keyrings/elastic-7.gpg && echo "Elastic key:\n  OK"\n\n  apt-key export 923F6CA9 | gpg --dearmor >\n  /etc/apt/keyrings/ethereum.gpg && chmod a+r\n  /etc/apt/keyrings/ethereum.gpg && echo "Ethereum key:\n  OK"',
+        expected:
+            'gpg --dearmor < /tmp/elastic.gpg.asc > /etc/apt/keyrings/elastic-7.gpg && chmod a+r /etc/apt/keyrings/elastic-7.gpg && echo "Elastic key:\n  OK"\napt-key export 923F6CA9 | gpg --dearmor > /etc/apt/keyrings/ethereum.gpg && chmod a+r /etc/apt/keyrings/ethereum.gpg && echo "Ethereum key:\n  OK"',
+        expectedPretty:
+            'gpg --dearmor < /tmp/elastic.gpg.asc > /etc/apt/keyrings/elastic-7.gpg && chmod a+r /etc/apt/keyrings/elastic-7.gpg && echo "Elastic key:\n  OK"\napt-key export 923F6CA9 | gpg --dearmor > /etc/apt/keyrings/ethereum.gpg && chmod a+r /etc/apt/keyrings/ethereum.gpg && echo "Ethereum key:\n  OK"',
+        tags: ["multi-command", "quoted-newline", "blank-line-separator", "real-world"],
+    },
 ];
 
 // ── Stats ──────────────────────────────────────────────────────────────
