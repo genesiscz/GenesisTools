@@ -21,7 +21,6 @@ import {
     parsePeriod,
     resolveDistrict,
 } from "@app/Internal/commands/reas/lib/config-builder";
-import { getPropertyDetail } from "@app/Internal/commands/reas/lib/property-service";
 import type { AnalysisFilters, FullAnalysis, TargetProperty } from "@app/Internal/commands/reas/types";
 import { isInteractive, suggestCommand } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
@@ -856,7 +855,9 @@ export function registerReasCommand(program: Command): void {
     // ---- Subcommand: property ----
     reas.command("property <id>")
         .description("Show detail for a saved watchlist property by ID")
-        .action((idStr: string) => {
+        .action(async (idStr: string) => {
+            const { getPropertyDetail } = await import("@app/Internal/commands/reas/lib/property-service");
+
             const id = Number(idStr);
 
             if (Number.isNaN(id)) {
