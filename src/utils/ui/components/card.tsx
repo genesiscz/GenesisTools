@@ -9,8 +9,8 @@ interface CardProps extends React.ComponentProps<"div"> {
     variant?: CardVariant;
     /**
      * Tints the card's static border, hover glow ring, and box-shadow with the
-     * chosen color. Works on any variant that uses the wow glow (default, wow,
-     * wow-static). No-op on `cyber` / `plain`.
+     * chosen color. Works on `wow` and `wow-static` variants. No-op on
+     * `default`, `cyber`, and `plain`.
      */
     accent?: CardAccent;
 }

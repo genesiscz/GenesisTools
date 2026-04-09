@@ -21,11 +21,9 @@ export function VideoMockup({ title, rightSlot, children, className }: VideoMock
                 <div className="w-3 h-3 rounded-full bg-red-500" />
                 <div className="w-3 h-3 rounded-full bg-yellow-500" />
                 <div className="w-3 h-3 rounded-full bg-green-500" />
-                {title && (
-                    <div className="flex-1 text-center">
-                        <span className="text-xs text-muted-foreground font-medium">{title}</span>
-                    </div>
-                )}
+                <div className="flex-1 text-center">
+                    {title && <span className="text-xs text-muted-foreground font-medium">{title}</span>}
+                </div>
                 {rightSlot}
             </div>
             {children}

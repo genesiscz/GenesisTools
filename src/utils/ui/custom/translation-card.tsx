@@ -16,11 +16,11 @@ export function TranslationCard({ sourceLang, targetLang, detectedText, translat
                 <p className="text-xs text-muted-foreground leading-relaxed">{detectedText}</p>
             </div>
             <div className="flex items-center justify-center">
-                <div className="size-7 rounded-full bg-orange-500/10 flex items-center justify-center">
-                    <ArrowDown size={14} className="text-orange-500" />
+                <div className="size-7 rounded-full bg-primary/10 flex items-center justify-center">
+                    <ArrowDown size={14} className="text-primary" />
                 </div>
             </div>
-            <div className="bg-background/60 rounded-xl p-3 border border-orange-500/20">
+            <div className="bg-background/60 rounded-xl p-3 border border-primary/20">
                 <p className="text-xs text-foreground leading-relaxed">{translatedText}</p>
             </div>
         </div>

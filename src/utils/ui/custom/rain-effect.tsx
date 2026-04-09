@@ -10,7 +10,10 @@ interface RainEffectProps {
  * Parent must be `position: relative` for the drops to layer correctly.
  * Uses `.rain-bg` and `.rain-drop` classes from wow-components.css.
  */
+const MAX_DROPS = 200;
+
 export function RainEffect({ dropCount = 50 }: RainEffectProps) {
+    const safeCount = Math.min(Math.max(0, dropCount), MAX_DROPS);
     const containerRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
@@ -19,7 +22,7 @@ export function RainEffect({ dropCount = 50 }: RainEffectProps) {
             return;
         }
 
-        for (let i = 0; i < dropCount; i++) {
+        for (let i = 0; i < safeCount; i++) {
             const drop = document.createElement("div");
             drop.className = "rain-drop";
             drop.style.left = `${Math.random() * 100}%`;
@@ -33,7 +36,7 @@ export function RainEffect({ dropCount = 50 }: RainEffectProps) {
         return () => {
             container.innerHTML = "";
         };
-    }, [dropCount]);
+    }, [safeCount]);
 
     return <div ref={containerRef} className="rain-bg" />;
 }

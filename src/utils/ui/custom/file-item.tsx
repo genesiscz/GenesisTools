@@ -33,21 +33,30 @@ interface FileItemProps {
 }
 
 export function FileItem({ name, size, icon, variant = "default", rightElement, onClick, className }: FileItemProps) {
-    return (
-        <div
-            onClick={onClick}
-            className={cn(
-                "flex items-center gap-3 px-3.5 py-2.5 rounded-[10px] border transition-all duration-200 cursor-pointer",
-                variants[variant],
-                className
-            )}
-        >
+    const rowClass = cn(
+        "flex w-full items-center gap-3 px-3.5 py-2.5 rounded-[10px] border text-left transition-all duration-200",
+        variants[variant],
+        className
+    );
+
+    const content = (
+        <>
             <div className={cn("size-4 flex-shrink-0", iconVariants[variant])}>
                 {icon ?? <FileText className="w-full h-full" />}
             </div>
             <span className={cn("text-sm flex-1 truncate", textVariants[variant])}>{name}</span>
-            {size && <span className="text-xs text-zinc-600 flex-shrink-0">{size}</span>}
+            {size && <span className="text-xs text-muted-foreground flex-shrink-0">{size}</span>}
             {rightElement}
-        </div>
+        </>
     );
+
+    if (onClick) {
+        return (
+            <button type="button" onClick={onClick} className={cn(rowClass, "cursor-pointer")}>
+                {content}
+            </button>
+        );
+    }
+
+    return <div className={rowClass}>{content}</div>;
 }

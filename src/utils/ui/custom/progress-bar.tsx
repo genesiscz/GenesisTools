@@ -17,7 +17,8 @@ export function ProgressBar({
     color = "linear-gradient(90deg, #7c3aed, #8b5cf6)",
 }: ProgressBarProps) {
     const [width, setWidth] = useState(0);
-    const pct = Math.min(100, Math.max(0, (value / max) * 100));
+    const safeMax = Math.max(max, 1);
+    const pct = Math.min(100, Math.max(0, (value / safeMax) * 100));
 
     useEffect(() => {
         const timer = setTimeout(() => setWidth(pct), 100);

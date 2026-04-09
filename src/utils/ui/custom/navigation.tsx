@@ -24,6 +24,7 @@ export function Navigation({ brand = "Wow", links = [], cta, className }: Naviga
 
     useEffect(() => {
         const handleScroll = () => setScrolled(window.scrollY > 20);
+        handleScroll();
         window.addEventListener("scroll", handleScroll);
         return () => window.removeEventListener("scroll", handleScroll);
     }, []);
@@ -69,6 +70,8 @@ export function Navigation({ brand = "Wow", links = [], cta, className }: Naviga
                                 className="lg:hidden text-foreground p-2"
                                 onClick={() => setMobileOpen((v) => !v)}
                                 aria-label="Toggle menu"
+                                aria-expanded={mobileOpen}
+                                aria-controls="wow-nav-mobile-menu"
                             >
                                 <svg
                                     width="20"
@@ -90,7 +93,7 @@ export function Navigation({ brand = "Wow", links = [], cta, className }: Naviga
                 </div>
 
                 {mobileOpen && links.length > 0 && (
-                    <div className="lg:hidden pb-4 border-t border-border mt-2">
+                    <div id="wow-nav-mobile-menu" className="lg:hidden pb-4 border-t border-border mt-2">
                         <div className="flex flex-col gap-2 pt-4">
                             {links.map((link) => (
                                 <a

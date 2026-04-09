@@ -17,11 +17,13 @@ interface TestimonialCardProps {
 export function TestimonialCard({
     quote,
     author,
-    rating = 5,
+    rating: rawRating = 5,
     featured = false,
     verified = false,
     className,
 }: TestimonialCardProps) {
+    const rating = Math.min(Math.max(0, Math.round(rawRating)), 10);
+
     if (featured) {
         return (
             <Card className={cn("rounded-[20px] p-6 gap-4", className)}>

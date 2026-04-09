@@ -23,11 +23,11 @@ export function StarRating({ rating, maxStars = 5, size = "md", showValue = fals
                     key={i}
                     className={cn(
                         sizes[size],
-                        i < Math.floor(rating) ? "fill-amber-400 text-amber-400" : "fill-zinc-700 text-zinc-700"
+                        i < Math.floor(rating) ? "fill-primary text-primary" : "fill-muted text-muted"
                     )}
                 />
             ))}
-            {showValue && <span className="ml-2 text-sm font-medium text-zinc-300">{rating.toFixed(1)}</span>}
+            {showValue && <span className="ml-2 text-sm font-medium text-muted-foreground">{rating.toFixed(1)}</span>}
         </div>
     );
 }

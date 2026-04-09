@@ -19,7 +19,7 @@ export function VoiceWave({ className }: VoiceWaveProps) {
                     key={i}
                     className="w-1 h-6 rounded-full bg-gradient-to-t from-violet-400 to-primary"
                     style={{
-                        animation: `voiceBar ${0.8 + i * 0.15}s ease-in-out ${i * 0.1}s infinite`,
+                        animation: `voice-bar ${0.8 + i * 0.15}s ease-in-out ${i * 0.1}s infinite`,
                         transform: `scaleY(${scale})`,
                     }}
                 />

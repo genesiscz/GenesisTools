@@ -502,7 +502,7 @@ function DistrictCommandSelect(props: DistrictCommandSelectProps) {
                             {visibleOther.length > 0 && (
                                 <CommandGroup
                                     heading="Districts"
-                                    className="[&_[cmdk-group-heading]]:text-primary [&_[cmdk-group-heading]]:font-mono [&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-wider"
+                                    className="[&_[cmdk-group-heading]]:text-primary [&_[cmdk-group-heading]]:font-mono [&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-wider"
                                 >
                                     {visibleOther.map((district) => renderListItem(district))}
                                 </CommandGroup>

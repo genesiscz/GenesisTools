@@ -405,7 +405,7 @@
   border-radius: 50%;
   pointer-events: none;
   filter: blur(100px);
-  animation: glowPulse 3s ease-in-out infinite;
+  animation: glow-pulse 3s ease-in-out infinite;
 }
 
 /* Navigation backdrop blur */
@@ -498,26 +498,26 @@
   100% { transform: translateY(100vh); opacity: 0; }
 }
 
-@keyframes voiceBar {
+@keyframes voice-bar {
   0%, 100% { transform: scaleY(0.3); }
   50%      { transform: scaleY(1); }
 }
 
-@keyframes timerPulse {
+@keyframes timer-pulse {
   0%, 100% { opacity: 1; }
   50%      { opacity: 0.7; }
 }
 
-@keyframes glowPulse {
+@keyframes glow-pulse {
   0%, 100% { opacity: 0.4; }
   50%      { opacity: 0.8; }
 }
 
-@keyframes fadeUp {
+@keyframes fade-up {
   0%   { opacity: 0; transform: translateY(20px); }
   100% { opacity: 1; transform: translateY(0); }
 }
 
-.animate-fade-up      { animation: fadeUp 0.6s ease-out forwards; }
-.animate-timer-pulse  { animation: timerPulse 2s ease-in-out infinite; }
-.animate-glow-pulse   { animation: glowPulse 3s ease-in-out infinite; }
+.animate-fade-up      { animation: fade-up 0.6s ease-out forwards; }
+.animate-timer-pulse  { animation: timer-pulse 2s ease-in-out infinite; }
+.animate-glow-pulse   { animation: glow-pulse 3s ease-in-out infinite; }

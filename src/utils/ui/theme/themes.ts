@@ -1,12 +1,12 @@
 // ============================================================================
 // UI THEMES
 // Apply via className on <html> or any wrapping element:
-//   <html className="vowen">   → Vowen violet/purple palette
+//   <html className="wow">     → Wow violet/purple palette
 //   <html className="cyberpunk"> → Cyberpunk amber/cyan palette
 //   (no class) → default dark palette
 // ============================================================================
 
-export type ThemeName = "wow" | "cyberpunk" | "default";
+export type ThemeName = "wow" | "cyberpunk";
 
 export const wowTheme = {
     name: "wow" as const,

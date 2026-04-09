@@ -280,7 +280,7 @@ function ImportPage() {
                             {!showConfirm ? (
                                 <Button
                                     onClick={() => setShowConfirm(true)}
-                                    className="bg-primary/20 border border-primary/40 text-primary hover:bg-primary/30 hover:neon-glow font-mono tracking-wider px-8 py-3 text-sm"
+                                    className="bg-primary/20 border border-primary/40 text-primary hover:bg-primary/30 hover:shadow-[0_0_12px_color-mix(in_oklch,var(--color-primary)_45%,transparent)] font-mono tracking-wider px-8 py-3 text-sm"
                                 >
                                     <Play className="w-4 h-4 mr-2" />
                                     Execute Fill ({selectedWeeks.size} week{selectedWeeks.size > 1 ? "s" : ""})

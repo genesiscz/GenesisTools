@@ -78,7 +78,7 @@ export function DateRangePicker({ value, onChange, className }: DateRangePickerP
                     onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleCustomChange("from", e.target.value)}
                     className="h-7 w-32 text-xs px-2"
                 />
-                <span className="text-cyan-400">→</span>
+                <span className="text-primary">→</span>
                 <Input
                     type="date"
                     value={value.to}

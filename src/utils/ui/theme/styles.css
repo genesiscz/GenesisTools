@@ -152,6 +152,16 @@ code {
   --chart-4: oklch(0.72 0.17 200);           /* cyan */
   --chart-5: oklch(0.62 0.19 250);           /* blue */
   --radius: 0.75rem;
+
+  /* Sidebar */
+  --sidebar: oklch(0.05 0.008 280);
+  --sidebar-foreground: oklch(0.85 0.003 0);
+  --sidebar-primary: oklch(0.50 0.26 290);
+  --sidebar-primary-foreground: oklch(0.96 0.002 0);
+  --sidebar-accent: oklch(0.72 0.17 200);
+  --sidebar-accent-foreground: oklch(0.03 0.005 280);
+  --sidebar-border: oklch(0.14 0.012 280);
+  --sidebar-ring: oklch(0.50 0.26 290);
 }
 
 /* Cyberpunk theme - dark mode by default */

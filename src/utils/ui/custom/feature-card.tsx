@@ -29,8 +29,24 @@ export function FeatureCard({
     className,
 }: FeatureCardProps) {
     // Auto-derive icon color from accent if not explicitly overridden.
-    const effectiveIconVariant: IconContainerVariant =
-        iconVariant ?? ((accent === "violet" ? "purple" : accent) as IconContainerVariant) ?? "purple";
+    // `CardAccent` includes "amber" which IconContainer doesn't support — map it to orange.
+    const accentToIcon = (a: CardAccent | undefined): IconContainerVariant => {
+        if (!a) {
+            return "purple";
+        }
+
+        if (a === "violet") {
+            return "purple";
+        }
+
+        if (a === "amber") {
+            return "orange";
+        }
+
+        return a;
+    };
+
+    const effectiveIconVariant: IconContainerVariant = iconVariant ?? accentToIcon(accent);
 
     return (
         <Card accent={accent} className={cn("rounded-[20px] p-6 gap-4", className)}>

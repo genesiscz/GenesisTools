@@ -9,6 +9,8 @@ interface SectionLabelProps {
     className?: string;
 }
 
+export type { SectionLabelColor };
+
 export function SectionLabel({ children, color = "emerald", className }: SectionLabelProps) {
     return <p className={cn("section-label", `section-label-${color}`, className)}>{children}</p>;
 }

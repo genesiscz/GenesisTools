@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 
 interface TimerProps {
     /** Starting seconds (counts down). Default 1500 (25 min Pomodoro). */
@@ -18,12 +18,18 @@ export function Timer({
     gradientFrom = "#ef4444",
     gradientTo = "#f97316",
 }: TimerProps) {
-    const [seconds, setSeconds] = useState(initialSeconds);
+    const safeInit = Math.max(1, initialSeconds);
+    const [seconds, setSeconds] = useState(safeInit);
+    const gradientId = useId();
     const radius = (size - 8) / 2;
     const circumference = 2 * Math.PI * radius;
-    const progress = ((initialSeconds - seconds) / initialSeconds) * circumference;
+    const progress = ((safeInit - seconds) / safeInit) * circumference;
     const minutes = Math.floor(seconds / 60);
     const secs = seconds % 60;
+
+    useEffect(() => {
+        setSeconds(Math.max(1, initialSeconds));
+    }, [initialSeconds]);
 
     useEffect(() => {
         if (seconds <= 0) {
@@ -48,7 +54,7 @@ export function Timer({
                         cx={size / 2}
                         cy={size / 2}
                         r={radius}
-                        stroke="url(#timerGradient)"
+                        stroke={`url(#${gradientId})`}
                         strokeWidth="4"
                         fill="none"
                         strokeLinecap="round"
@@ -57,7 +63,7 @@ export function Timer({
                         className="timer-progress"
                     />
                     <defs>
-                        <linearGradient id="timerGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                        <linearGradient id={gradientId} x1="0%" y1="0%" x2="100%" y2="0%">
                             <stop offset="0%" stopColor={gradientFrom} />
                             <stop offset="100%" stopColor={gradientTo} />
                         </linearGradient>
