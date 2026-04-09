@@ -26,29 +26,55 @@ export interface DashboardViteConfig {
 }
 
 /**
- * Vite plugin that ensures bare module imports from shared UI files
- * resolve against the dashboard's node_modules, not the file's location.
+ * Path to the browser-safe polyfill for node:async_hooks.
+ *
+ * TanStack Start imports AsyncLocalStorage at module level in code paths that
+ * run on both server and browser. In the browser Vite replaces node:async_hooks
+ * with a stub that throws on use. This polyfill provides a no-op implementation
+ * that satisfies the import without crashing. Used via resolve.alias below;
+ * ssr.external ensures the real Node.js module is used during SSR.
  */
-function resolveSharedDeps(appRoot: string): Plugin {
-    const uiDir = resolve(__dirname, ".");
+const BROWSER_ASYNC_HOOKS_POLYFILL = resolve(__dirname, "browser-async-hooks.ts");
 
+/**
+ * Vite plugin that pins ALL bare-module resolution to the dashboard's own
+ * directory tree (walking up to its nearest `node_modules/`).
+ *
+ * Problem: When a dashboard's source lives in a git worktree, the worktree
+ * has its own `node_modules/react` but TanStack Start (in the main repo's
+ * `node_modules/`) loads `react-dom` from the *main* repo.  Two different
+ * React instances → "Invalid hook call" crash during SSR.
+ *
+ * Fix: Resolve every bare import (`react`, `@tanstack/…`, etc.) from the
+ * dashboard root, which walks up to the worktree's `node_modules/`.  This
+ * guarantees a single copy of React regardless of where the importer lives.
+ *
+ * When not in a worktree this is a harmless no-op — the dashboard root and
+ * the repo root share the same `node_modules/`.
+ */
+function pinNodeModules(dashboardRoot: string): Plugin {
     return {
-        name: "resolve-shared-ui-deps",
+        name: "pin-node-modules-to-dashboard-root",
         enforce: "pre",
         async resolveId(
             source: string,
             importer: string | undefined,
             options: { isEntry: boolean; [key: string]: unknown }
         ) {
-            if (!importer || !importer.startsWith(uiDir)) {
+            if (
+                !source ||
+                !importer ||
+                source.startsWith(".") ||
+                source.startsWith("/") ||
+                source.startsWith("#") ||
+                source.includes(":") ||
+                source.startsWith("@ui") ||
+                source.startsWith("@app")
+            ) {
                 return null;
             }
 
-            if (source.startsWith(".") || source.startsWith("/") || source.startsWith("@ui")) {
-                return null;
-            }
-
-            const resolved = await this.resolve(source, resolve(appRoot, "src", "_virtual.ts"), {
+            const resolved = await this.resolve(source, resolve(dashboardRoot, "_virtual.ts"), {
                 ...options,
                 skipSelf: true,
             });
@@ -145,12 +171,12 @@ export function createDashboardViteConfig({
     reactOptions,
     watchDirs: extraWatchDirs = [],
 }: DashboardViteConfig): UserConfig {
-    const { plugins: _ignored, resolve: _resolveIgnored, ...rest } = overrides;
+    const { plugins: _ignored, resolve: _resolveIgnored, optimizeDeps: overrideOptimizeDeps, ...rest } = overrides;
     const allAliases: Record<string, string> = { "@app": resolve(root, "src"), ...aliases };
     const appDir = allAliases["@app"];
     const externalWatchDirs = appDir ? deriveWatchDirs(root, appDir, extraWatchDirs) : [];
 
-    const corePlugins: PluginOption[] = [resolveSharedDeps(root), tailwindcss()];
+    const corePlugins: PluginOption[] = [pinNodeModules(root), tailwindcss()];
 
     if (externalWatchDirs.length > 0) {
         corePlugins.push(watchExternalDirs(externalWatchDirs));
@@ -178,8 +204,29 @@ export function createDashboardViteConfig({
         resolve: {
             alias: {
                 "@ui": resolve(__dirname, "."),
+                "node:async_hooks": BROWSER_ASYNC_HOOKS_POLYFILL,
                 ...allAliases,
             },
+        },
+        optimizeDeps: {
+            ...overrideOptimizeDeps,
+            exclude: [
+                "@tanstack/react-start-client",
+                "@tanstack/start-client-core",
+                ...(overrideOptimizeDeps?.exclude ?? []),
+            ],
+            include: [
+                "@tanstack/history",
+                "@tanstack/router-core",
+                "@tanstack/router-core/isServer",
+                "@tanstack/router-core/scroll-restoration-script",
+                "@tanstack/router-core/ssr/client",
+                "seroval",
+                ...(overrideOptimizeDeps?.include ?? []),
+            ],
+        },
+        ssr: {
+            external: ["node:async_hooks"],
         },
         ...rest,
     }) as UserConfig;
