@@ -142,8 +142,9 @@ export function registerSearchCommand(program: Command): void {
                             limit: searchOpts.limit ?? 100,
                         });
                         const ftsMs = performance.now() - startFts;
+                        // DB column is source_id, ChunkRecord type is sourceId
                         const ftsRowids = ftsResults
-                            .map((r) => r.doc.sourceId)
+                            .map((r) => r.doc.sourceId ?? (r.doc as unknown as { source_id?: string }).source_id)
                             .filter(Boolean)
                             .map(Number);
 
