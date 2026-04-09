@@ -172,37 +172,31 @@ export function registerSearchCommand(program: Command): void {
 
                         spinner.stop(`Body search (JXA): ${bodyMatches.size} matches in ${(jxaMs / 1000).toFixed(1)}s`);
                     } else {
-                        // FTS: fast, uses the indexer's fulltext index
+                        // FTS: read-only search — works even while indexer is running
                         try {
-                            const { IndexerManager } = await import("@app/indexer/lib/manager");
-                            const manager = await IndexerManager.load();
-                            const indexNames = manager.getIndexNames();
+                            const { searchIndexReadonly } = await import("@app/indexer/lib/store");
 
-                            if (indexNames.includes("macos-mail")) {
-                                spinner.start("Searching body content (FTS index)...");
-                                const startFts = performance.now();
-                                const indexer = await manager.getIndex("macos-mail");
-                                const ftsResults = await indexer.search(query, { mode: "fulltext", limit: 1000 });
-                                const ftsMs = performance.now() - startFts;
+                            spinner.start("Searching body content (FTS index)...");
+                            const startFts = performance.now();
+                            const ftsResults = await searchIndexReadonly("macos-mail", query, {
+                                mode: "fulltext",
+                                limit: 1000,
+                            });
+                            const ftsMs = performance.now() - startFts;
 
-                                const ftsRowids = new Set(ftsResults.map((r) => r.doc.sourceId).filter(Boolean));
+                            const ftsRowids = new Set(ftsResults.map((r) => r.doc.sourceId).filter(Boolean));
 
-                                for (const msg of messages) {
-                                    msg.bodyMatchesQuery = ftsRowids.has(String(msg.rowid));
-                                }
-
-                                const bodyMatchCount = messages.filter((m) => m.bodyMatchesQuery).length;
-                                spinner.stop(
-                                    `Body search (FTS): ${bodyMatchCount} matches in ${(ftsMs / 1000).toFixed(1)}s`
-                                );
-
-                                await manager.close();
-                            } else {
-                                spinner.stop("No mail index found — skipping body search (use --jxa for JXA fallback)");
+                            for (const msg of messages) {
+                                msg.bodyMatchesQuery = ftsRowids.has(String(msg.rowid));
                             }
+
+                            const bodyMatchCount = messages.filter((m) => m.bodyMatchesQuery).length;
+                            spinner.stop(
+                                `Body search (FTS): ${bodyMatchCount} matches in ${(ftsMs / 1000).toFixed(1)}s`
+                            );
                         } catch (err) {
-                            const msg = err instanceof Error ? err.message : String(err);
-                            logger.debug(`[search] FTS body search failed: ${msg}`);
+                            const errMsg = err instanceof Error ? err.message : String(err);
+                            logger.debug(`[search] FTS body search failed: ${errMsg}`);
                             spinner.stop("FTS unavailable — skipping body search (use --jxa for JXA fallback)");
                         }
                     }

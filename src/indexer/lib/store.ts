@@ -164,6 +164,53 @@ function migrateFromMerkleBlob(db: Database, pathHashStore: PathHashStore): void
     db.run("DROP TABLE merkle_tree");
 }
 
+/**
+ * Search an index in read-only mode — no lock, safe for concurrent access.
+ * Uses SQLite WAL mode's natural concurrent-read support.
+ * Opens the DB, runs the FTS query, and closes immediately.
+ */
+export async function searchIndexReadonly(
+    indexName: string,
+    query: string,
+    opts?: { mode?: "fulltext" | "hybrid" | "vector"; limit?: number }
+): Promise<SearchResult<ChunkRecord>[]> {
+    const storage = new Storage("indexer");
+    const indexDir = join(storage.getBaseDir(), indexName);
+    const dbPath = join(indexDir, "index.db");
+
+    if (!existsSync(dbPath)) {
+        throw new Error(`Index "${indexName}" database not found at ${dbPath}`);
+    }
+
+    const db = new Database(dbPath, { readonly: true });
+    const tableName = sanitizeName(indexName);
+
+    const fts = SearchEngine.fromDatabase<ChunkDoc>(db, {
+        tableName,
+        schema: {
+            textFields: ["content", "name", "filePath"],
+            idField: "id",
+            vectorField: "content",
+        },
+        skipSchemaInit: true,
+    });
+
+    try {
+        const results = await fts.search({
+            query,
+            mode: opts?.mode ?? "fulltext",
+            limit: opts?.limit ?? 100,
+        });
+        return results.map((r: SearchResult<ChunkDoc>) => ({
+            doc: r.doc as unknown as ChunkRecord,
+            score: r.score,
+            method: r.method,
+        }));
+    } finally {
+        db.close();
+    }
+}
+
 export async function createIndexStore(config: IndexConfig, embedder?: Embedder): Promise<IndexStore> {
     const storage = new Storage("indexer");
     const indexDir = join(storage.getBaseDir(), config.name);

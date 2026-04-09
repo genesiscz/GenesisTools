@@ -6,6 +6,7 @@ import { Storage } from "@app/utils/storage/storage";
 import { CONFIG_FILENAME, ContextArtifactSource, loadContextConfig } from "./context-artifacts";
 import type { IndexerCallbacks, SyncStats } from "./events";
 import { Indexer } from "./indexer";
+import { searchIndexReadonly } from "./store";
 import { emptyStats, type IndexConfig, type IndexMeta, type IndexStats } from "./types";
 
 function sanitizeName(name: string): string {
@@ -312,6 +313,22 @@ export class IndexerManager {
         }
 
         return Object.keys(managerConfig.indexes);
+    }
+
+    /**
+     * Search an index in read-only mode (no lock required).
+     * Safe to call while the index is being built/synced.
+     */
+    async searchReadonly(
+        name: string,
+        query: string,
+        opts?: { mode?: "fulltext" | "hybrid" | "vector"; limit?: number }
+    ): Promise<import("@app/utils/search/types").SearchResult<import("./types").ChunkRecord>[]> {
+        if (!this.getIndexNames().includes(name)) {
+            throw new Error(`Index "${name}" not found`);
+        }
+
+        return searchIndexReadonly(name, query, opts);
     }
 
     async close(): Promise<void> {
