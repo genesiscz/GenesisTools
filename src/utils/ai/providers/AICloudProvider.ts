@@ -20,30 +20,40 @@ import type {
 import type { AIProviderType } from "@app/utils/config/ai.types";
 import { TranscriptionManager } from "@ask/audio/TranscriptionManager";
 
-type CloudType = "openai" | "groq" | "openrouter" | "auto";
+type LlmCloudType = "openai" | "groq" | "openrouter";
+type TranscribeOnlyCloudType = "assemblyai" | "deepgram" | "gladia";
+type CloudType = LlmCloudType | TranscribeOnlyCloudType | "auto";
 
 const ENV_VAR_MAP: Record<Exclude<CloudType, "auto">, string> = {
     openai: "OPENAI_API_KEY",
     groq: "GROQ_API_KEY",
     openrouter: "OPENROUTER_API_KEY",
+    assemblyai: "ASSEMBLYAI_API_KEY",
+    deepgram: "DEEPGRAM_API_KEY",
+    gladia: "GLADIA_API_KEY",
 };
 
-const AUTO_API_KEY_VARS = [...Object.values(ENV_VAR_MAP), "ASSEMBLYAI_API_KEY", "DEEPGRAM_API_KEY", "GLADIA_API_KEY"];
+const AUTO_API_KEY_VARS = Object.values(ENV_VAR_MAP);
+
+const TRANSCRIBE_ONLY: ReadonlySet<AITask> = new Set(["transcribe"]);
 
 const CLOUD_TASKS: Record<CloudType, ReadonlySet<AITask>> = {
     openai: new Set(["transcribe", "translate", "summarize", "embed"]),
     groq: new Set(["transcribe", "translate", "summarize"]),
     openrouter: new Set(["transcribe", "translate", "summarize"]),
+    assemblyai: TRANSCRIBE_ONLY,
+    deepgram: TRANSCRIBE_ONLY,
+    gladia: TRANSCRIBE_ONLY,
     auto: new Set(["transcribe", "translate", "summarize", "embed"]),
 };
 
-const DEFAULT_LLM_MODELS: Record<Exclude<CloudType, "auto">, string> = {
-    groq: "groq/llama-3.1-8b-instant",
-    openrouter: "openrouter/meta-llama/llama-3.1-8b-instant",
+const DEFAULT_LLM_MODELS: Record<LlmCloudType, string> = {
+    groq: "groq/llama-3.3-70b-versatile",
+    openrouter: "openrouter/meta-llama/llama-3-8b-instruct",
     openai: "openai/gpt-4o-mini",
 };
 
-const FALLBACK_ORDER: ReadonlyArray<Exclude<CloudType, "auto">> = ["groq", "openrouter", "openai"];
+const FALLBACK_ORDER: ReadonlyArray<LlmCloudType> = ["groq", "openrouter", "openai"];
 
 export class AICloudProvider
     implements AITranscriptionProvider, AITranslationProvider, AISummarizationProvider, AIEmbeddingProvider
@@ -188,7 +198,14 @@ export class AICloudProvider
         }
 
         if (this.cloudType !== "auto") {
-            return this.resolveModel(DEFAULT_LLM_MODELS[this.cloudType]);
+            if (!(this.cloudType in DEFAULT_LLM_MODELS)) {
+                throw new Error(
+                    `Provider "${this.cloudType}" is transcribe-only and cannot run LLM tasks. ` +
+                        "Use openai/groq/openrouter for summarize/translate."
+                );
+            }
+
+            return this.resolveModel(DEFAULT_LLM_MODELS[this.cloudType as LlmCloudType]);
         }
 
         for (const ct of FALLBACK_ORDER) {

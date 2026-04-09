@@ -1,5 +1,6 @@
 import logger from "@app/logger";
 import type { AIAccount } from "@app/utils/ai/AIAccount";
+import { anthropicCacheControl } from "@app/utils/ai/prompt-caching";
 import { applySystemPromptPrefix } from "@app/utils/claude/subscription-billing";
 import { SafeJSON } from "@app/utils/json";
 import { estimateTokens } from "@app/utils/tokens";
@@ -184,6 +185,7 @@ export class ChatEngine {
             messages,
             system: this.getEffectiveSystemPrompt(),
             temperature: this.config.temperature,
+            providerOptions: anthropicCacheControl(),
             ...(this.config.maxTokens && { maxOutputTokens: this.config.maxTokens }),
             ...(hasTools && { tools, maxSteps: 5 }),
             onFinish: async ({ usage }) => {
@@ -320,6 +322,7 @@ export class ChatEngine {
             messages,
             system: this.getEffectiveSystemPrompt(),
             temperature: this.config.temperature,
+            providerOptions: anthropicCacheControl(),
             ...(this.config.maxTokens && { maxOutputTokens: this.config.maxTokens }),
             ...(hasTools && { tools, maxSteps: 5 }),
         });
