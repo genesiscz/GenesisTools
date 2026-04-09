@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import logger from "@app/logger";
 import { ENVELOPE_INDEX_PATH } from "@app/macos/lib/mail/constants";
 import type {
+    AccountInfo,
     MailAttachment,
     MailMessageRow,
     MailRecipient,
@@ -88,9 +89,7 @@ export function searchMessages(opts: SearchOptions): MailMessageRow[] {
     const params: Record<string, string | number> = {};
 
     // Tokenize query for per-word AND matching (handles "AWS account past due")
-    const tokens = opts.query
-        .split(/\s+/)
-        .filter((t) => t.length > 0);
+    const tokens = opts.query.split(/\s+/).filter((t) => t.length > 0);
     const tokenConditions = tokens.map((_, i) => {
         const key = `$tok${i}`;
         return `(s.subject LIKE ${key} ESCAPE '\\' OR a.address LIKE ${key} ESCAPE '\\' OR a.comment LIKE ${key} ESCAPE '\\')`;
@@ -374,6 +373,86 @@ export function listMailboxes(): Array<{ url: string; totalCount: number; unread
         ORDER BY total_count DESC
     `;
     return db.prepare(sql).all() as Array<{ url: string; totalCount: number; unreadCount: number }>;
+}
+
+/**
+ * Get a single message by ROWID with all metadata.
+ */
+export function getMessageById(rowid: number): MailMessageRow | null {
+    const db = getDatabase();
+    const sql = `
+        SELECT
+            m.ROWID as rowid, s.subject,
+            a.address as senderAddress, a.comment as senderName,
+            m.date_sent as dateSent, m.date_received as dateReceived,
+            mb.url as mailboxUrl, m.read, m.flagged, m.deleted, m.size
+        FROM messages m
+        JOIN subjects s ON m.subject = s.ROWID
+        JOIN addresses a ON m.sender = a.ROWID
+        JOIN mailboxes mb ON m.mailbox = mb.ROWID
+        WHERE m.ROWID = $rowid
+    `;
+    return (db.prepare(sql).get({ $rowid: rowid }) as MailMessageRow) ?? null;
+}
+
+/**
+ * List all mail accounts by parsing mailbox URLs and resolving email addresses.
+ * Maps UUID → most-frequent To recipient in that account's INBOX.
+ */
+export function listAccounts(): AccountInfo[] {
+    const db = getDatabase();
+
+    const mailboxes = db
+        .prepare("SELECT url, total_count as totalCount FROM mailboxes WHERE total_count > 0")
+        .all() as Array<{ url: string; totalCount: number }>;
+
+    // Group by account UUID extracted from mailbox URLs
+    const accounts = new Map<string, { protocol: string; mailboxCount: number; messageCount: number }>();
+
+    for (const mb of mailboxes) {
+        // URL format: imap://UUID/INBOX or ews://UUID/...
+        const match = mb.url.match(/^(\w+):\/\/([^/]+)\//);
+
+        if (!match) {
+            continue;
+        }
+
+        const protocol = match[1];
+        const uuid = match[2];
+        const existing = accounts.get(uuid) ?? { protocol, mailboxCount: 0, messageCount: 0 };
+        existing.mailboxCount++;
+        existing.messageCount += mb.totalCount;
+        accounts.set(uuid, existing);
+    }
+
+    // For each account, find the most common To address in its INBOX
+    const result: AccountInfo[] = [];
+
+    for (const [uuid, info] of accounts) {
+        const emailRow = db
+            .prepare(
+                `SELECT a.address, COUNT(DISTINCT r.message) as cnt
+                FROM recipients r
+                JOIN addresses a ON r.address = a.ROWID
+                JOIN messages m ON r.message = m.ROWID
+                JOIN mailboxes mb ON m.mailbox = mb.ROWID
+                WHERE r.type = 0 AND mb.url LIKE $pattern ESCAPE '\\'
+                GROUP BY a.address
+                ORDER BY cnt DESC
+                LIMIT 1`
+            )
+            .get({ $pattern: `%${escapeLike(uuid)}%INBOX` }) as { address: string; cnt: number } | null;
+
+        result.push({
+            uuid,
+            protocol: info.protocol,
+            email: emailRow?.address ?? "unknown",
+            mailboxCount: info.mailboxCount,
+            messageCount: info.messageCount,
+        });
+    }
+
+    return result.sort((a, b) => b.messageCount - a.messageCount);
 }
 
 /**

@@ -45,6 +45,14 @@ export interface MailRecipient {
     type: "to" | "cc";
 }
 
+export interface AccountInfo {
+    uuid: string;
+    protocol: string;
+    email: string;
+    mailboxCount: number;
+    messageCount: number;
+}
+
 export interface SearchOptions {
     query: string;
     withoutBody?: boolean;

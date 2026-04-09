@@ -1,6 +1,7 @@
 // src/macos/commands/mail/index.ts
 
 import { Command } from "commander";
+import { registerAccountsCommand } from "./accounts";
 import { registerDownloadCommand } from "./download";
 import { registerIndexCommand } from "./index-cmd";
 import { registerListCommand } from "./list";
@@ -20,6 +21,7 @@ export function registerMailCommand(program: Command): void {
     registerDownloadCommand(mail);
     registerIndexCommand(mail);
     registerMonitorCommand(mail);
+    registerAccountsCommand(mail);
 
     program.addCommand(mail);
 }

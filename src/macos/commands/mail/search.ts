@@ -20,6 +20,7 @@ interface SearchCommandOptions {
     withoutBody?: boolean;
     jxa?: boolean;
     receiver?: string;
+    account?: string;
     helpReceivers?: boolean;
     from?: string;
     to?: string;
@@ -66,6 +67,7 @@ export function registerSearchCommand(program: Command): void {
         .option("--without-body", "Skip body search entirely (metadata-only)")
         .option("--jxa", "Skip FTS index, use SQLite LIKE search only")
         .option("--receiver <email>", "Filter by receiver email address")
+        .option("--account <id>", "Filter by account (email address or UUID prefix)")
         .option("--help-receivers", "List all receiver accounts/addresses")
         .option("--from <date>", "Search from date (ISO format, e.g. 2026-01-01)")
         .option("--to <date>", "Search to date (ISO format)")
@@ -116,6 +118,7 @@ export function registerSearchCommand(program: Command): void {
                     query,
                     withoutBody: options.withoutBody,
                     receiver: options.receiver,
+                    account: options.account,
                     from: parseDate(options.from),
                     to: parseDate(options.to),
                     mailbox: options.mailbox,
@@ -154,9 +157,7 @@ export function registerSearchCommand(program: Command): void {
                                 account: searchOpts.account,
                             });
                             searchMethod = "fts";
-                            spinner.stop(
-                                `FTS: ${rows.length} matches in ${(ftsMs / 1000).toFixed(1)}s`
-                            );
+                            spinner.stop(`FTS: ${rows.length} matches in ${(ftsMs / 1000).toFixed(1)}s`);
                         } else {
                             spinner.stop("FTS: 0 matches — falling back to metadata search");
                             rows = [];
@@ -183,7 +184,9 @@ export function registerSearchCommand(program: Command): void {
                 } else if (rows.length === 0) {
                     // FTS returned 0 results after filtering — try LIKE as fallback
                     const totalMessages = getMessageCount();
-                    spinner.start(`No FTS matches — searching metadata across ${totalMessages.toLocaleString()} messages...`);
+                    spinner.start(
+                        `No FTS matches — searching metadata across ${totalMessages.toLocaleString()} messages...`
+                    );
                     const startSqlite = performance.now();
                     rows = searchMessages(searchOpts);
                     const sqliteMs = performance.now() - startSqlite;
