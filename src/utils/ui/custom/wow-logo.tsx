@@ -6,7 +6,14 @@ interface WowLogoProps {
 
 export function WowLogo({ className }: WowLogoProps) {
     return (
-        <svg className={cn("size-6", className)} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden focusable="false">
+        <svg
+            className={cn("size-6", className)}
+            viewBox="0 0 24 24"
+            fill="none"
+            xmlns="http://www.w3.org/2000/svg"
+            aria-hidden
+            focusable="false"
+        >
             <path
                 d="M7 5L3 12L7 19"
                 stroke="currentColor"
