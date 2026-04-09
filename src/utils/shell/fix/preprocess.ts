@@ -410,6 +410,68 @@ function getQuoteState(s: string): "'" | '"' | "`" | null {
     return state;
 }
 
+/**
+ * Scan `s` and return true if it ends with an unclosed `$(...)` command
+ * substitution. Tracks outer quote state so `$(` inside `''` is ignored.
+ */
+function hasUnclosedCmdSubst(s: string): boolean {
+    let depth = 0;
+    let quote: "'" | '"' | "`" | null = null;
+    let i = 0;
+
+    while (i < s.length) {
+        const ch = s[i];
+
+        if (quote === "'") {
+            if (ch === "'") {
+                quote = null;
+            }
+
+            i++;
+            continue;
+        }
+
+        if (quote === '"' || quote === "`") {
+            if (ch === "\\") {
+                i += 2;
+                continue;
+            }
+
+            if (ch === quote) {
+                quote = null;
+            } else if (ch === "$" && s[i + 1] === "(") {
+                depth++;
+                i += 2;
+                continue;
+            } else if (ch === ")" && depth > 0) {
+                depth--;
+            }
+
+            i++;
+            continue;
+        }
+
+        if (ch === "\\") {
+            i += 2;
+            continue;
+        }
+
+        if (ch === "'" || ch === '"' || ch === "`") {
+            quote = ch;
+        } else if (ch === "$" && s[i + 1] === "(") {
+            depth++;
+            i += 2;
+            continue;
+        } else if (ch === ")" && depth > 0) {
+            depth--;
+        }
+
+        i++;
+    }
+
+    return depth > 0;
+}
+
 // ─── Quote-aware continuation joining (V3, V4, V6) ──────────────────────────
 
 /**
@@ -671,9 +733,37 @@ function joinTerminalWrappedLines(lines: string[]): string {
 
         const prev = resultLines[resultLines.length - 1];
         const trimmedCurrent = raw.replace(/^[ \t]+/, "");
+        const quoteState = getQuoteState(prev);
 
         if (trimmedCurrent.length === 0) {
-            // Blank line — ensure there will be a space before next token
+            // Blank line. If we're OUTSIDE quotes, check whether this is a
+            // command-group separator. Signals: prev ends with closing quote/)
+            // OR the next non-blank line is NOT indented (unindented = new cmd,
+            // indented = continuation wrap).
+            if (quoteState === null) {
+                let nextNonBlankIdx = -1;
+
+                for (let j = i + 1; j < lines.length; j++) {
+                    if (lines[j].replace(/^[ \t]+/, "").length > 0) {
+                        nextNonBlankIdx = j;
+                        break;
+                    }
+                }
+
+                if (nextNonBlankIdx >= 0) {
+                    const nextLine = lines[nextNonBlankIdx];
+                    const nextIsUnindented = !/^[ \t]/.test(nextLine);
+                    const prevEndsWithCloser = /["')]\s*$/.test(prev);
+
+                    if (prevEndsWithCloser || nextIsUnindented) {
+                        resultLines.push("");
+                        i++;
+                        continue;
+                    }
+                }
+            }
+
+            // Otherwise, ensure a space before next token
             if (prev.length > 0 && !/\s$/.test(prev)) {
                 resultLines[resultLines.length - 1] = `${prev} `;
             }
@@ -684,10 +774,68 @@ function joinTerminalWrappedLines(lines: string[]): string {
 
         // Quote-state check: if prev has unclosed single quote and ends with \,
         // the \+newline is literal content inside single quotes — preserve newline
-        const quoteState = getQuoteState(prev);
-
         if (quoteState === "'" && prev.endsWith("\\")) {
             resultLines[resultLines.length - 1] = `${prev}\n${raw}`;
+            i++;
+            continue;
+        }
+
+        // Inside unclosed double quote or backtick: the newline is inside a
+        // string literal. Use mid-word test to distinguish terminal wrap
+        // (merge into word) from intentional multi-line string (preserve newline).
+        // Exception: if we're inside an unclosed $(...) command substitution,
+        // we're in shell-code context, not string-literal context — merge.
+        if (quoteState === '"' || quoteState === "`") {
+            const inCmdSubst = hasUnclosedCmdSubst(prev);
+
+            if (inCmdSubst) {
+                // Inside $() — shell code context, merge with space (like unquoted)
+                resultLines[resultLines.length - 1] = `${prev.trimEnd()} ${trimmedCurrent}`;
+                i++;
+                continue;
+            }
+
+            const prevLastChar = prev[prev.length - 1];
+            const currentFirstChar = trimmedCurrent[0];
+            const isMidWordWrap = /[a-zA-Z0-9]/.test(prevLastChar) && /[a-zA-Z0-9]/.test(currentFirstChar);
+
+            if (isMidWordWrap) {
+                // Terminal-wrapped word inside a quoted string — merge without space
+                resultLines[resultLines.length - 1] = `${prev}${trimmedCurrent}`;
+            } else {
+                // Intentional literal newline inside quoted string — preserve it.
+                // Keep the leading whitespace of the current line (it's literal content).
+                resultLines[resultLines.length - 1] = `${prev}\n${raw}`;
+            }
+
+            i++;
+            continue;
+        }
+
+        // If prev is empty (was just pushed as a group separator), start fresh
+        if (prev.length === 0) {
+            resultLines[resultLines.length - 1] = trimmedCurrent;
+
+            // Also check for heredoc marker on this "first line of group"
+            const heredocDelim = detectHeredocMarker(trimmedCurrent);
+
+            if (heredocDelim !== null) {
+                i++;
+
+                while (i < lines.length) {
+                    resultLines.push(lines[i]);
+
+                    if (lines[i].trim() === heredocDelim) {
+                        i++;
+                        break;
+                    }
+
+                    i++;
+                }
+
+                continue;
+            }
+
             i++;
             continue;
         }
@@ -723,8 +871,11 @@ function joinTerminalWrappedLines(lines: string[]): string {
             const prevTrimmed = prev.trimEnd();
             const fc = trimmedCurrent[0];
 
-            // TIER 1: Always-merge characters
-            const isTier1 = /^[a-zA-Z0-9._]/.test(fc);
+            // TIER 1: Always-merge characters — but only when prev also ends
+            // with a word-like char. "foo" + "bar" merges; `"` + "bar" does not
+            // (closing quote + new alphanum means new argument).
+            const prevLast = prevTrimmed[prevTrimmed.length - 1] ?? "";
+            const isTier1 = /^[a-zA-Z0-9._]/.test(fc) && /[a-zA-Z0-9._/]/.test(prevLast);
 
             // TIER 2: Context-dependent
             const isAfterColon = prevTrimmed.endsWith(":"); // scp host:/path, docker -v
