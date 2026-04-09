@@ -740,37 +740,9 @@ export class ProviderManager {
      */
     async createSubscriptionProvider(accountName: string): Promise<DetectedProvider | null> {
         try {
-            const { resolveAccountToken } = await import("@app/utils/claude/subscription-auth");
-            const { token } = await resolveAccountToken(accountName);
-
-            const { createAnthropic } = await import("@ai-sdk/anthropic");
-            const provider = createAnthropic({
-                apiKey: "oauth-placeholder",
-                headers: {
-                    Authorization: `Bearer ${token}`,
-                    "anthropic-beta": SUBSCRIPTION_BETAS,
-                },
-                fetch: createSubscriptionFetch(),
-            });
-
-            const allConfigs = getProviderConfigs();
-            const anthropicConfig = allConfigs.find((c) => c.name === "anthropic");
-
-            if (!anthropicConfig) {
-                return null;
-            }
-
-            const models = await this.getAvailableModels(anthropicConfig, provider);
-
-            return {
-                name: "anthropic",
-                type: "anthropic",
-                key: `${token.slice(0, 20)}...`,
-                provider,
-                models,
-                config: anthropicConfig,
-                systemPromptPrefix: SUBSCRIPTION_SYSTEM_PREFIX,
-            };
+            const { ensureResolversInitialized, getResolver } = await import("@app/utils/ai/resolvers");
+            await ensureResolversInitialized();
+            return await getResolver("anthropic-sub").resolve(accountName);
         } catch (err) {
             logger.warn(`Failed to create subscription provider for "${accountName}": ${err}`);
             return null;

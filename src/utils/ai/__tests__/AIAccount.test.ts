@@ -1,5 +1,7 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
 import { AIAccount } from "../AIAccount";
+import type { AccountResolver } from "../resolvers";
+import { ensureResolversInitialized, getResolver, registerResolver, resetResolvers } from "../resolvers";
 
 describe("AIAccount", () => {
     describe("chooseClaude()", () => {
@@ -85,5 +87,31 @@ describe("AIAccount", () => {
             const account = AIAccount.chooseCodex("test-codex");
             expect(account.provider()).rejects.toThrow("No API key found");
         });
+    });
+});
+
+describe("AccountResolver registry", () => {
+    afterEach(() => resetResolvers());
+
+    it("throws for unregistered provider type", () => {
+        resetResolvers();
+        expect(() => getResolver("nonexistent-provider-xyz" as never)).toThrow("No resolver registered");
+    });
+
+    it("returns registered resolver", () => {
+        const mock: AccountResolver = {
+            providerType: "anthropic",
+            resolve: async () => ({ name: "test" }) as never,
+        };
+        registerResolver(mock);
+        expect(getResolver("anthropic")).toBe(mock);
+    });
+
+    it("ensureResolversInitialized registers all built-in resolvers", async () => {
+        await ensureResolversInitialized();
+        expect(() => getResolver("anthropic-sub")).not.toThrow();
+        expect(() => getResolver("anthropic")).not.toThrow();
+        expect(() => getResolver("openai")).not.toThrow();
+        expect(() => getResolver("huggingface")).not.toThrow();
     });
 });
