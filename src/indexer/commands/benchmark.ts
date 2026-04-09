@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { Embedder } from "@app/utils/ai/tasks/Embedder";
 import { formatBytes, formatDuration } from "@app/utils/format";
@@ -629,6 +629,21 @@ async function runDirBenchmark(
     }
 
     p.intro(pc.bgCyan(pc.white(` benchmark ${basename(absDir)} `)));
+
+    // Clean up stale bench_ dirs from previous crashed runs
+    {
+        const indexerDir = new Storage("indexer").getBaseDir();
+
+        try {
+            for (const entry of readdirSync(indexerDir)) {
+                if (entry.startsWith("bench_")) {
+                    rmSync(join(indexerDir, entry), { recursive: true, force: true });
+                }
+            }
+        } catch {
+            // best-effort
+        }
+    }
 
     const benchName = `bench_${Date.now()}`;
     const config: IndexConfig = {
