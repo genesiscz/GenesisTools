@@ -227,12 +227,14 @@ export class SearchEngine<TDoc extends Record<string, unknown> = Record<string, 
         }
 
         const forceDriver = this.config.vectorDriver;
+        const skipInit = this.config.skipSchemaInit === true;
 
         // If explicitly set to brute-force, skip sqlite-vec attempt
         if (forceDriver === "sqlite-brute") {
             this._vectorStore = new SqliteVectorStore(this.db, {
                 tableName: this.config.tableName,
                 dimensions: this.embedder.dimensions,
+                skipInit,
             });
             return;
         }
@@ -247,6 +249,7 @@ export class SearchEngine<TDoc extends Record<string, unknown> = Record<string, 
                 this._vectorStore = new SqliteVecVectorStore(this.db, {
                     tableName: this.config.tableName,
                     dimensions: this.embedder.dimensions,
+                    skipInit,
                 });
                 return;
             }
@@ -269,6 +272,7 @@ export class SearchEngine<TDoc extends Record<string, unknown> = Record<string, 
         this._vectorStore = new SqliteVectorStore(this.db, {
             tableName: this.config.tableName,
             dimensions: this.embedder.dimensions,
+            skipInit,
         });
     }
 

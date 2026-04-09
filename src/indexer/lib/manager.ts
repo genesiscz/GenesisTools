@@ -275,7 +275,7 @@ export class IndexerManager {
     async searchReadonly(
         name: string,
         query: string,
-        opts?: { mode?: "fulltext" | "hybrid" | "vector"; limit?: number }
+        opts?: { mode?: "fulltext" | "hybrid" | "vector" | "auto"; limit?: number }
     ): Promise<import("@app/utils/search/types").SearchResult<import("./types").ChunkRecord>[]> {
         if (!this.getIndexNames().includes(name)) {
             throw new Error(`Index "${name}" not found`);

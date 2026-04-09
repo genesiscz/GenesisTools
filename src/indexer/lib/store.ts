@@ -1,11 +1,13 @@
 import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
-import type { Embedder } from "@app/utils/ai/tasks/Embedder";
+import logger from "@app/logger";
+import { Embedder } from "@app/utils/ai/tasks/Embedder";
 import { acquireLock, type LockHandle } from "@app/utils/fs/lock";
 import { SafeJSON } from "@app/utils/json";
 import { SearchEngine } from "@app/utils/search/drivers/sqlite-fts5/index";
 import type { QdrantVectorStore } from "@app/utils/search/stores/qdrant-vector-store";
+import { ensureExtensionCapableSQLite, loadSqliteVec } from "@app/utils/search/stores/sqlite-vec-loader";
 import type { VectorStore } from "@app/utils/search/stores/vector-store";
 import type { SearchOptions, SearchResult } from "@app/utils/search/types";
 import { deserializeMerkleTree } from "./merkle";
@@ -160,15 +162,45 @@ function migrateFromMerkleBlob(db: Database, pathHashStore: PathHashStore): void
     db.run("DROP TABLE merkle_tree");
 }
 
+export type ReadonlySearchMode = "fulltext" | "hybrid" | "vector" | "auto";
+
+export interface ReadonlySearchOptions {
+    mode?: ReadonlySearchMode;
+    limit?: number;
+    /** When false, skip vector-store/embedder construction even if hybrid/vector requested. Default: true. */
+    enableVector?: boolean;
+}
+
+async function createReadonlyEmbedder(meta: IndexMeta): Promise<Embedder | null> {
+    if (!meta.indexEmbedding) {
+        return null;
+    }
+
+    try {
+        return await Embedder.create({
+            provider: meta.indexEmbedding.provider,
+            model: meta.indexEmbedding.model,
+        });
+    } catch (err) {
+        logger.debug(
+            `[searchIndexReadonly] failed to construct embedder (${meta.indexEmbedding.provider}/${meta.indexEmbedding.model}): ${err instanceof Error ? err.message : String(err)}`
+        );
+        return null;
+    }
+}
+
 /**
  * Search an index in read-only mode — no lock, safe for concurrent access.
  * Uses SQLite WAL mode's natural concurrent-read support.
- * Opens the DB, runs the FTS query, and closes immediately.
+ *
+ * Supports fulltext, hybrid, vector, and "auto" (picks hybrid when the index
+ * has stored embeddings and an embedder can be constructed, else fulltext).
+ * Always falls back to fulltext on embedder/extension failure — never throws.
  */
 export async function searchIndexReadonly(
     indexName: string,
     query: string,
-    opts?: { mode?: "fulltext" | "hybrid" | "vector"; limit?: number }
+    opts?: ReadonlySearchOptions
 ): Promise<SearchResult<ChunkRecord>[]> {
     const indexDir = getIndexerStorage().getIndexDir(indexName);
     const dbPath = join(indexDir, "index.db");
@@ -177,25 +209,89 @@ export async function searchIndexReadonly(
         throw new Error(`Index "${indexName}" database not found at ${dbPath}`);
     }
 
+    // sqlite-vec needs extension-capable SQLite loaded BEFORE any Database() in this process.
+    ensureExtensionCapableSQLite();
+
     const db = new Database(dbPath, { readonly: true });
     const tableName = sanitizeName(indexName);
 
-    const fts = SearchEngine.fromDatabase<ChunkDoc>(db, {
-        tableName,
-        schema: {
-            textFields: ["content", "name", "filePath"],
-            idField: "id",
-            vectorField: "content",
-        },
-        skipSchemaInit: true,
-    });
-
     try {
+        const meta = readMeta(db, { name: indexName } as IndexConfig, Date.now());
+        const hasEmbeddings = (meta.stats?.totalEmbeddings ?? 0) > 0 && !!meta.indexEmbedding;
+
+        const requestedMode = opts?.mode ?? "auto";
+        let resolvedMode: "fulltext" | "hybrid" | "vector";
+
+        if (requestedMode === "auto") {
+            resolvedMode = hasEmbeddings ? "hybrid" : "fulltext";
+        } else {
+            resolvedMode = requestedMode;
+        }
+
+        // Construct embedder only when we actually need vectors at query time.
+        let embedder: Embedder | undefined;
+        // Choose vector driver based on which table the index actually uses.
+        let vectorDriver: "sqlite-vec" | "sqlite-brute" | undefined;
+
+        if (resolvedMode !== "fulltext" && opts?.enableVector !== false) {
+            const vecTableExists = !!db
+                .query("SELECT name FROM sqlite_master WHERE type='table' AND name=?")
+                .get(`${tableName}_vec`);
+            const embTableExists = !!db
+                .query("SELECT name FROM sqlite_master WHERE type='table' AND name=?")
+                .get(`${tableName}_embeddings`);
+
+            if (!vecTableExists && !embTableExists) {
+                logger.warn(
+                    `[searchIndexReadonly] index "${indexName}" has no vector tables — falling back to fulltext`
+                );
+                resolvedMode = "fulltext";
+            } else {
+                if (vecTableExists) {
+                    loadSqliteVec(db);
+                    vectorDriver = "sqlite-vec";
+                } else {
+                    vectorDriver = "sqlite-brute";
+                }
+
+                const e = await createReadonlyEmbedder(meta);
+
+                if (!e) {
+                    logger.warn(
+                        `[searchIndexReadonly] index "${indexName}" requested ${resolvedMode} but no embedder available — falling back to fulltext`
+                    );
+                    resolvedMode = "fulltext";
+                    vectorDriver = undefined;
+                } else if (meta.indexEmbedding && e.dimensions !== meta.indexEmbedding.dimensions) {
+                    logger.warn(
+                        `[searchIndexReadonly] embedder dimensions ${e.dimensions} ≠ stored ${meta.indexEmbedding.dimensions} — falling back to fulltext`
+                    );
+                    resolvedMode = "fulltext";
+                    vectorDriver = undefined;
+                } else {
+                    embedder = e;
+                }
+            }
+        }
+
+        const fts = SearchEngine.fromDatabase<ChunkDoc>(db, {
+            tableName,
+            schema: {
+                textFields: ["content", "name", "filePath"],
+                idField: "id",
+                vectorField: "content",
+            },
+            embedder,
+            vectorDriver,
+            skipSchemaInit: true,
+        });
+
         const results = await fts.search({
             query,
-            mode: opts?.mode ?? "fulltext",
+            mode: resolvedMode,
             limit: opts?.limit ?? 100,
         });
+
         return results.map((r: SearchResult<ChunkDoc>) => ({
             doc: r.doc as unknown as ChunkRecord,
             score: r.score,
@@ -237,7 +333,6 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
     // Ensure extension-capable SQLite is loaded BEFORE creating Database instances.
     // Must happen before the first new Database() call in this process.
     if (config.storage?.vectorDriver !== "sqlite-brute" && config.storage?.vectorDriver !== "qdrant") {
-        const { ensureExtensionCapableSQLite } = await import("@app/utils/search/stores/sqlite-vec-loader");
         ensureExtensionCapableSQLite();
     }
 

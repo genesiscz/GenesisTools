@@ -1,3 +1,4 @@
+import { searchIndexReadonly } from "@app/indexer/lib/store";
 import logger from "@app/logger";
 import { ALL_COLUMN_KEYS, type MailColumnKey } from "@app/macos/lib/mail/columns";
 import {
@@ -12,6 +13,7 @@ import {
     cleanup,
     getAttachments,
     getMessageCount,
+    getMessagesByRowids,
     getRecipients,
     listReceivers,
     searchMessages,
@@ -21,6 +23,21 @@ import type { MailMessage, MailMessageRow, SearchOptions } from "@app/macos/lib/
 import { closeDarwinKit, rankBySimilarity } from "@app/utils/macos";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
+
+type MailSearchMode = "auto" | "fulltext" | "hybrid" | "vector";
+const VALID_MAIL_SEARCH_MODES: readonly MailSearchMode[] = ["auto", "fulltext", "hybrid", "vector"];
+
+function resolveMailSearchMode(input: string | undefined): MailSearchMode {
+    if (!input) {
+        return "auto";
+    }
+
+    if ((VALID_MAIL_SEARCH_MODES as readonly string[]).includes(input)) {
+        return input as MailSearchMode;
+    }
+
+    throw new Error(`Unknown --mode: "${input}". Valid: ${VALID_MAIL_SEARCH_MODES.join(", ")}`);
+}
 
 interface SearchCommandOptions {
     withoutBody?: boolean;
@@ -32,6 +49,7 @@ interface SearchCommandOptions {
     to?: string;
     mailbox?: string;
     limit?: string;
+    mode?: string;
     semantic?: boolean;
     maxDistance?: string;
     columns?: string | true;
@@ -41,11 +59,13 @@ interface SearchCommandOptions {
 function buildSearchColumns({
     columns,
     withBody,
+    ftsActive,
     semanticActive,
     columnsExplicit,
 }: {
     columns: MailColumnKey[];
     withBody: boolean;
+    ftsActive: boolean;
     semanticActive: boolean;
     columnsExplicit: boolean;
 }): MailColumnKey[] {
@@ -57,6 +77,10 @@ function buildSearchColumns({
 
     if (withBody && !result.includes("bodyMatch")) {
         result.push("bodyMatch");
+    }
+
+    if (ftsActive && !result.includes("ftsSnippet")) {
+        result.push("ftsSnippet");
     }
 
     if (semanticActive && !result.includes("relevance")) {
@@ -79,6 +103,7 @@ export function registerSearchCommand(program: Command): void {
         .option("--to <date>", "Search to date (ISO format)")
         .option("--mailbox <name>", "Restrict to specific mailbox (e.g. INBOX, Sent)")
         .option("--limit <n>", "Max results", "100")
+        .option("--mode <mode>", "Search mode: auto | fulltext | hybrid | vector (default: auto)", "auto")
         .option("--no-semantic", "Disable semantic re-ranking (faster, uses keyword order only)")
         .option("--max-distance <n>", "Max semantic distance to include (0–2, default: 1.2)", "1.2")
         .option("--columns [cols]", `Columns to show (${ALL_COLUMN_KEYS.join(",")})`)
@@ -121,24 +146,37 @@ export function registerSearchCommand(program: Command): void {
                 let rows: MailMessageRow[];
                 let searchMethod: "fts" | "sqlite" | "jxa" = "sqlite";
 
-                // FTS5 first, then SQLite LIKE fallback
+                const resolvedMode = resolveMailSearchMode(options.mode);
+                const snippetByRowid = new Map<number, string>();
+                let ftsMethodLabel = "";
+
+                // Index-based search first (fulltext / hybrid / vector), SQLite LIKE as fallback
                 if (!options.jxa && !searchOpts.withoutBody) {
                     try {
-                        const { searchIndexReadonly } = await import("@app/indexer/lib/store");
-                        const { getMessagesByRowids } = await import("@app/macos/lib/mail/sqlite");
-
-                        spinner.start("Searching (FTS index)...");
+                        spinner.start(`Searching (${resolvedMode} index)...`);
                         const startFts = performance.now();
                         const ftsResults = await searchIndexReadonly("macos-mail", query, {
-                            mode: "fulltext",
+                            mode: resolvedMode,
                             limit: searchOpts.limit ?? 100,
                         });
                         const ftsMs = performance.now() - startFts;
                         // DB column is source_id, ChunkRecord type is sourceId
-                        const ftsRowids = ftsResults
-                            .map((r) => r.doc.sourceId ?? (r.doc as unknown as { source_id?: string }).source_id)
-                            .filter(Boolean)
-                            .map(Number);
+                        const ftsRowids: number[] = [];
+
+                        for (const r of ftsResults) {
+                            const sid = r.doc.sourceId ?? (r.doc as unknown as { source_id?: string }).source_id;
+
+                            if (!sid) {
+                                continue;
+                            }
+
+                            const rowid = Number(sid);
+                            ftsRowids.push(rowid);
+
+                            if (!snippetByRowid.has(rowid) && typeof r.doc.content === "string") {
+                                snippetByRowid.set(rowid, r.doc.content.replace(/\s+/g, " ").trim().slice(0, 200));
+                            }
+                        }
 
                         if (ftsRowids.length > 0) {
                             rows = getMessagesByRowids(ftsRowids, {
@@ -149,15 +187,16 @@ export function registerSearchCommand(program: Command): void {
                                 account: searchOpts.account,
                             });
                             searchMethod = "fts";
-                            spinner.stop(`FTS: ${rows.length} matches in ${(ftsMs / 1000).toFixed(1)}s`);
+                            ftsMethodLabel = (ftsResults[0]?.method ?? resolvedMode).toUpperCase();
+                            spinner.stop(`${ftsMethodLabel}: ${rows.length} matches in ${(ftsMs / 1000).toFixed(1)}s`);
                         } else {
-                            spinner.stop("FTS: 0 matches — falling back to metadata search");
+                            spinner.stop(`${resolvedMode}: 0 matches — falling back to metadata search`);
                             rows = [];
                         }
                     } catch (err) {
                         const errMsg = err instanceof Error ? err.message : String(err);
-                        logger.debug(`[search] FTS search failed: ${errMsg}`);
-                        spinner.stop("FTS unavailable — using metadata search");
+                        logger.debug(`[search] index search failed: ${errMsg}`);
+                        spinner.stop("Index unavailable — using metadata search");
                         rows = [];
                     }
                 } else {
@@ -190,6 +229,7 @@ export function registerSearchCommand(program: Command): void {
                     const msg = rowToMessage(row);
                     msg.attachments = attachmentsMap.get(row.rowid) ?? [];
                     msg.bodyMatchesQuery = isFts;
+                    msg.ftsSnippet = snippetByRowid.get(row.rowid);
                     return msg;
                 });
 
@@ -207,7 +247,10 @@ export function registerSearchCommand(program: Command): void {
                         const maxDist = parseFloat(options.maxDistance ?? "1.2");
                         const items = messages.map((m) => ({
                             ...m,
-                            text: [m.subject, m.senderName, m.senderAddress].filter(Boolean).join(" "),
+                            text: [m.subject, m.senderName, m.senderAddress, m.ftsSnippet ?? m.body ?? ""]
+                                .filter(Boolean)
+                                .join(" ")
+                                .slice(0, 2000),
                         }));
                         const ranked = await rankBySimilarity(query, items, {
                             maxDistance: maxDist,
@@ -244,6 +287,7 @@ export function registerSearchCommand(program: Command): void {
                 const finalColumns = buildSearchColumns({
                     columns: baseColumns,
                     withBody: !searchOpts.withoutBody,
+                    ftsActive: isFts,
                     semanticActive,
                     columnsExplicit: options.columns !== undefined,
                 });

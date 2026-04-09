@@ -28,6 +28,8 @@ export interface MailMessage {
     size: number;
     attachments: MailAttachment[];
     body?: string;
+    /** First ~200 chars of the FTS/vector hit chunk, surfaced in search results. */
+    ftsSnippet?: string;
     bodyMatchesQuery?: boolean;
     /** Cosine distance from query (0 = identical). Set when semantic ranking is active. */
     semanticScore?: number;

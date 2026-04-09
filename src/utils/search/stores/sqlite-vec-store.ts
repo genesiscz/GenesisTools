@@ -4,6 +4,8 @@ import type { VectorSearchHit, VectorStore } from "./vector-store";
 export interface SqliteVecVectorStoreConfig {
     tableName: string;
     dimensions: number;
+    /** When true, skip CREATE VIRTUAL TABLE — required for read-only DB handles. */
+    skipInit?: boolean;
 }
 
 /**
@@ -27,10 +29,12 @@ export class SqliteVecVectorStore implements VectorStore {
         this.dimensions = config.dimensions;
         this.vecTable = `${config.tableName}_vec`;
 
-        this.db.run(`CREATE VIRTUAL TABLE IF NOT EXISTS ${this.vecTable} USING vec0(
+        if (!config.skipInit) {
+            this.db.run(`CREATE VIRTUAL TABLE IF NOT EXISTS ${this.vecTable} USING vec0(
             doc_id TEXT PRIMARY KEY,
             embedding float[${config.dimensions}] distance_metric=cosine
         )`);
+        }
     }
 
     store(id: string, vector: Float32Array): void {

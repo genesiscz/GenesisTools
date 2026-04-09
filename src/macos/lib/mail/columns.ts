@@ -95,6 +95,10 @@ export const MAIL_COLUMNS = {
         label: "Body Match",
         get: (m: MailMessage) => (m.bodyMatchesQuery ? "yes" : ""),
     },
+    ftsSnippet: {
+        label: "Snippet",
+        get: (m: MailMessage) => m.ftsSnippet ?? "",
+    },
     relevance: {
         label: "Relevance",
         get: (m: MailMessage) => (m.semanticScore !== undefined ? (1 - m.semanticScore / 2).toFixed(2) : ""),
