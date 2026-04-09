@@ -21,6 +21,7 @@ import {
     parsePeriod,
     resolveDistrict,
 } from "@app/Internal/commands/reas/lib/config-builder";
+import { getPropertyDetail } from "@app/Internal/commands/reas/lib/property-service";
 import type { AnalysisFilters, FullAnalysis, TargetProperty } from "@app/Internal/commands/reas/types";
 import { isInteractive, suggestCommand } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
@@ -855,9 +856,7 @@ export function registerReasCommand(program: Command): void {
     // ---- Subcommand: property ----
     reas.command("property <id>")
         .description("Show detail for a saved watchlist property by ID")
-        .action(async (idStr: string) => {
-            const { getPropertyDetail } = await import("@app/Internal/commands/reas/lib/property-service");
-
+        .action((idStr: string) => {
             const id = Number(idStr);
 
             if (Number.isNaN(id)) {
@@ -944,6 +943,13 @@ export function registerReasCommand(program: Command): void {
                 const { reasDatabase } = await import("@app/Internal/commands/reas/lib/store");
                 const { collapseDistrictSnapshots } = await import("@app/Internal/commands/reas/lib/district-snapshot");
 
+                const resolution = opts.resolution;
+
+                if (resolution !== "daily" && resolution !== "monthly") {
+                    console.log(pc.red(`Invalid resolution "${resolution}". Use "daily" or "monthly".`));
+                    return;
+                }
+
                 const rows = reasDatabase.getDistrictHistory(
                     opts.district,
                     opts.type,
@@ -952,7 +958,7 @@ export function registerReasCommand(program: Command): void {
                 );
                 const snapshots = collapseDistrictSnapshots({
                     rows,
-                    resolution: opts.resolution as "daily" | "monthly",
+                    resolution,
                 });
 
                 if (snapshots.length === 0) {
