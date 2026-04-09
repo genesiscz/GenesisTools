@@ -10,6 +10,7 @@ import { ChatEngine } from "@ask/chat/ChatEngine";
 import type { CommandResult } from "@ask/chat/CommandHandler";
 import { commandHandler } from "@ask/chat/CommandHandler";
 import { conversationManager } from "@ask/chat/ConversationManager";
+import { loadAskContext } from "@ask/lib/context-loader";
 import { askUI, initAskUI } from "@ask/output/AskUILogger";
 import { costPredictor } from "@ask/output/CostPredictor";
 import { costTracker } from "@ask/output/CostTracker";
@@ -361,10 +362,14 @@ class ASKTool {
                 }
             }
 
+            const baseSystem = createSystemPrompt(argv.systemPrompt);
+            const contextBlock = argv.noContext ? undefined : await loadAskContext(process.cwd(), 4000);
+            const combinedSystem = [baseSystem, contextBlock].filter(Boolean).join("\n\n") || undefined;
+
             const chat = new AIChat({
                 provider: argv.provider,
                 model: argv.model,
-                systemPrompt: createSystemPrompt(argv.systemPrompt),
+                systemPrompt: combinedSystem,
                 temperature: parseTemperature(argv.temperature),
                 maxTokens: parseMaxTokens(argv.maxTokens),
                 logLevel: argv.raw ? "silent" : "info",
@@ -642,7 +647,9 @@ class ASKTool {
 
     private async createChatConfig(modelChoice: ProviderChoice, argv: CLIOptions): Promise<ChatConfig> {
         const model = getLanguageModel(modelChoice.provider.provider, modelChoice.model.id);
-        this.rawSystemPrompt = createSystemPrompt(argv.systemPrompt) ?? "";
+        const baseSystem = createSystemPrompt(argv.systemPrompt) ?? "";
+        const contextBlock = argv.noContext ? undefined : await loadAskContext(process.cwd(), 4000);
+        this.rawSystemPrompt = [baseSystem, contextBlock].filter(Boolean).join("\n\n");
 
         return {
             model,
