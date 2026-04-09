@@ -170,9 +170,7 @@ export function registerSearchCommand(program: Command): void {
                             msg.bodyMatchesQuery = bodyMatches.has(msg.rowid);
                         }
 
-                        spinner.stop(
-                            `Body search (JXA): ${bodyMatches.size} matches in ${(jxaMs / 1000).toFixed(1)}s`
-                        );
+                        spinner.stop(`Body search (JXA): ${bodyMatches.size} matches in ${(jxaMs / 1000).toFixed(1)}s`);
                     } else {
                         // FTS: fast, uses the indexer's fulltext index
                         try {
@@ -210,7 +208,9 @@ export function registerSearchCommand(program: Command): void {
                     }
                 }
 
-                // Phase 3: Semantic re-ranking via darwinkit (default ON, opt out with --no-semantic)
+                // Phase 3: Semantic re-ranking via Apple NaturalLanguage framework.
+                // Uses on-device sentence similarity (not tied to the indexer's embedding model/provider).
+                // Works regardless of which provider built the index. Opt out with --no-semantic.
                 let semanticActive = false;
 
                 if (options.semantic !== false && messages.length > 0) {

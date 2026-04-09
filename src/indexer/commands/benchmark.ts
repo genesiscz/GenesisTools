@@ -343,6 +343,7 @@ export function registerBenchmarkCommand(program: Command): void {
         .option("-m, --model <model>", "Embedding model")
         .option("--no-embed", "Skip embedding (fulltext-only benchmark)")
         .option("--compare-providers", "Benchmark all available embedding providers")
+        .option("--compare-models", "Benchmark all models for a provider (default: ollama)")
         .option("--duration <seconds>", "Seconds per provider in comparison mode", "30")
         .option("--sample-count <n>", "Number of sample texts to generate", "500")
         .option("--sample-type <type>", "Sample text type: mail, code, general", "mail")
@@ -355,11 +356,17 @@ export function registerBenchmarkCommand(program: Command): void {
                     model?: string;
                     embed?: boolean;
                     compareProviders?: boolean;
+                    compareModels?: boolean;
                     duration?: string;
                     sampleCount?: string;
                     sampleType?: string;
                 }
             ) => {
+                if (opts.compareModels) {
+                    await runCompareModels(opts);
+                    return;
+                }
+
                 if (opts.compareProviders) {
                     await runCompareProviders(opts);
                     return;
@@ -501,6 +508,103 @@ async function runCompareProviders(opts: {
 
         await Bun.write(customPath, SafeJSON.stringify(compareResult, null, 2));
         p.log.success(`Also saved to ${customPath}`);
+    }
+
+    p.outro("Done");
+}
+
+// ── Compare models mode ──
+
+async function runCompareModels(opts: {
+    provider?: string;
+    duration?: string;
+    sampleCount?: string;
+    sampleType?: string;
+    output?: string;
+}): Promise<void> {
+    const provider = opts.provider ?? "ollama";
+    const durationSec = Number.parseInt(opts.duration ?? "30", 10);
+    const sampleCount = Number.parseInt(opts.sampleCount ?? "500", 10);
+    const sampleType = (opts.sampleType ?? "mail") as SampleType;
+
+    p.intro(pc.bgCyan(pc.white(` benchmark --compare-models (${provider}) `)));
+
+    const spinner = p.spinner();
+    spinner.start(`Discovering ${provider} embedding models...`);
+
+    // Get models for this provider
+    const allProviders = await discoverProviders();
+    const models = allProviders.filter((d) => d.provider === provider);
+
+    if (models.length === 0) {
+        spinner.stop("No models found");
+        p.log.error(`No embedding models found for provider "${provider}". Is it running?`);
+        process.exitCode = 1;
+        return;
+    }
+
+    spinner.stop(`Found ${models.length} model${models.length === 1 ? "" : "s"}`);
+
+    p.log.info(`Generating ${sampleCount} ${sampleType} sample texts...`);
+    const sampleTexts = generateSampleTexts(sampleCount, sampleType);
+
+    p.log.info(`Running ${durationSec}s benchmark per model\n`);
+
+    const results: ProviderBenchResult[] = [];
+
+    for (const m of models) {
+        const sp = p.spinner();
+        sp.start(`Benchmarking ${m.model}...`);
+
+        try {
+            const result = await benchProvider({
+                provider: m.provider,
+                model: m.model,
+                sampleTexts,
+                durationMs: durationSec * 1000,
+                gpu: m.gpu,
+            });
+            results.push(result);
+            sp.stop(`${m.model}: ${result.embPerSec} emb/s (${result.totalEmbedded.toLocaleString()} total)`);
+        } catch (err) {
+            sp.stop(`${m.model}: FAILED - ${err instanceof Error ? err.message : String(err)}`);
+        }
+    }
+
+    if (results.length === 0) {
+        p.log.error("All models failed.");
+        process.exitCode = 1;
+        return;
+    }
+
+    results.sort((a, b) => b.embPerSec - a.embPerSec);
+
+    const rows = results.map((r, i) => {
+        const bullet = i === 0 ? "\u25CF" : "\u25CB";
+        return [`${bullet} ${r.model}`, r.embPerSec.toLocaleString(), String(r.dimensions), r.estimate300k, r.gpu];
+    });
+
+    const table = formatTable(rows, ["Model", "emb/s", "Dims", "300K est.", "GPU"], {
+        alignRight: [1, 2],
+    });
+
+    console.log();
+    console.log(table);
+    console.log();
+
+    const best = results[0];
+    p.log.success(`Best model: ${best.model} at ${best.embPerSec.toLocaleString()} emb/s`);
+
+    if (opts.output) {
+        const outPath = resolve(opts.output);
+        const outDir = dirname(outPath);
+
+        if (!existsSync(outDir)) {
+            mkdirSync(outDir, { recursive: true });
+        }
+
+        await Bun.write(outPath, SafeJSON.stringify({ provider, models: results }, null, 2));
+        p.log.success(`Results saved to ${outPath}`);
     }
 
     p.outro("Done");
