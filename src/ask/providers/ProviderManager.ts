@@ -185,7 +185,7 @@ export class ProviderManager {
      */
     private async buildSubscriptionProvider(
         token: string,
-        account?: { name: string; label?: string },
+        account?: { name: string; label?: string }
     ): Promise<DetectedProvider> {
         const { createAnthropic } = await import("@ai-sdk/anthropic");
         const provider = createAnthropic({

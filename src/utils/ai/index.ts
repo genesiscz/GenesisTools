@@ -1,8 +1,8 @@
 export type { AIConfigData, AppConfig, AppDefaults, ProviderConfig } from "@app/utils/config/ai.types";
 export { AIAccount } from "./AIAccount";
 export type { AIAccountEntry, AIAccountTokens, AIProvider } from "./account-types";
-export { ensureResolversInitialized, getResolver, registerResolver, resetResolvers } from "./resolvers";
 export type { AccountResolver } from "./resolvers";
+export { ensureResolversInitialized, getResolver, registerResolver, resetResolvers } from "./resolvers";
 
 import { Embedder } from "./tasks/Embedder";
 import { Summarizer } from "./tasks/Summarizer";

@@ -9,8 +9,8 @@ import type { QdrantVectorStore } from "@app/utils/search/stores/qdrant-vector-s
 import type { VectorStore } from "@app/utils/search/stores/vector-store";
 import type { SearchOptions, SearchResult } from "@app/utils/search/types";
 import { deserializeMerkleTree } from "./merkle";
-import { getIndexerStorage } from "./storage";
 import { PathHashStore } from "./path-hashes";
+import { getIndexerStorage } from "./storage";
 import {
     type ChunkRecord,
     emptyStats,

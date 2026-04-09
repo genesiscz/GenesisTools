@@ -1,5 +1,5 @@
-import type { LanguageModelUsage } from "ai";
 import type { AIAccount } from "@app/utils/ai/AIAccount";
+import type { LanguageModelUsage } from "ai";
 
 // Re-export relevant existing types
 export type { DetectedProvider, ModelInfo, ProviderChoice } from "@ask/types";

@@ -4,12 +4,12 @@ import { Embedder } from "@app/utils/ai/tasks/Embedder";
 import { formatBytes, formatDuration } from "@app/utils/format";
 import { SafeJSON } from "@app/utils/json";
 import { formatTable } from "@app/utils/table";
-import { getIndexerStorage } from "../lib/storage";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { Indexer } from "../lib/indexer";
 import { createProgressCallbacks } from "../lib/progress";
+import { getIndexerStorage } from "../lib/storage";
 import type { IndexConfig } from "../lib/types";
 import { PROVIDER_BATCH_SIZES } from "../lib/types";
 

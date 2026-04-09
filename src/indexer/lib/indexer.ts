@@ -14,9 +14,9 @@ import type { ModelInfo } from "./model-registry";
 import { formatModelTable, getMaxEmbedChars, getModelsForType, getTaskPrefix } from "./model-registry";
 import { FileSource } from "./sources/file-source";
 import type { IndexerSource, SourceEntry } from "./sources/source";
+import { getIndexerStorage } from "./storage";
 import type { IndexStore } from "./store";
 import { createIndexStore } from "./store";
-import { getIndexerStorage } from "./storage";
 import type { ChunkRecord, IndexConfig, IndexStats } from "./types";
 import { DEFAULT_WATCH_INTERVAL_MS, EMBEDDING_BATCH_SIZE, PROVIDER_BATCH_SIZES } from "./types";
 

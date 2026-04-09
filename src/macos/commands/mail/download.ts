@@ -134,9 +134,7 @@ export function registerDownloadCommand(program: Command): void {
 
                     // Create EmlxBodyExtractor (fast: ~42 msg/s L2, instant L1)
                     const emlx = await EmlxBodyExtractor.create();
-                    const bodyMaxChars = options.bodyMaxChars
-                        ? Number.parseInt(options.bodyMaxChars, 10)
-                        : undefined;
+                    const bodyMaxChars = options.bodyMaxChars ? Number.parseInt(options.bodyMaxChars, 10) : undefined;
 
                     // Process each email
                     const spinner = p.spinner();
