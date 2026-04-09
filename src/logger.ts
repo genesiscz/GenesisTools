@@ -65,6 +65,7 @@ export interface LoggerConfig {
     timestampFormat?: string;
     sync?: boolean;
     logToFile?: boolean;
+    level?: LogLevel;
 }
 
 // Global config
@@ -94,10 +95,11 @@ export const createLogger = (options: LoggerOptions = {}): pino.Logger => {
     // File stream (if enabled)
     if (logToFile) {
         const date = new Date().toISOString().split("T")[0];
-        const logFilePath = path.join(__dirname, "..", "logs", `${date}.log`);
+        const logDir = path.join(__dirname, "..", "logs");
+        const logFilePath = path.join(logDir, `${date}.log`);
         streams.push({
             level: streamLevel,
-            stream: pino.destination({ dest: logFilePath, sync: true }),
+            stream: pino.destination({ dest: logFilePath, sync: true, mkdir: true }),
         });
     }
 
@@ -248,10 +250,16 @@ let consoleLog = createLogger({ logToFile: false, minimalLevels: true });
 export const configureLogger = (config: LoggerConfig): void => {
     globalConfig = { ...globalConfig, ...config };
     const logToFile = globalConfig.logToFile ?? false;
-    logger = createLogger({ logToFile, minimalLevels: true });
+    const level = globalConfig.level;
+    logger = createLogger({ logToFile, minimalLevels: true, ...(level && { level }) });
     // consoleLog participates in file logging to capture full session output
-    consoleLog = createLogger({ logToFile, minimalLevels: true });
+    consoleLog = createLogger({ logToFile, minimalLevels: true, ...(level && { level }) });
 };
+
+/** Returns the current logger instance (reflects configureLogger changes) */
+export function getLogger(): pino.Logger {
+    return logger;
+}
 
 export { consoleLog };
 export default logger;
