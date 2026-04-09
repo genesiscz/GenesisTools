@@ -195,6 +195,20 @@ code {
 }
 
 /* ============================================================================
+   SHARED FORM CONTROLS
+   ============================================================================ */
+
+.cyber-select {
+  @apply h-8 w-full rounded bg-black/20 border border-white/10 text-xs font-mono text-gray-300 px-2 transition-colors;
+  @apply hover:border-white/20 focus:border-primary/40 focus:outline-none;
+}
+
+.cyber-select-sm {
+  @apply h-7 rounded bg-black/20 border border-white/10 text-xs font-mono text-gray-300 px-2 transition-colors;
+  @apply hover:border-white/20 focus:border-primary/40 focus:outline-none;
+}
+
+/* ============================================================================
    GRADIENT & EFFECT UTILITIES
    ============================================================================ */
 

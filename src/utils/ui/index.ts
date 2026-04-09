@@ -9,6 +9,7 @@ export {
     CardHeader,
     CardTitle,
 } from "@ui/components/card";
+export { Checkbox } from "@ui/components/checkbox";
 export {
     Command,
     CommandDialog,
@@ -33,10 +34,64 @@ export {
     DialogTitle,
     DialogTrigger,
 } from "@ui/components/dialog";
+export {
+    DropdownMenu,
+    DropdownMenuCheckboxItem,
+    DropdownMenuContent,
+    DropdownMenuGroup,
+    DropdownMenuItem,
+    DropdownMenuLabel,
+    DropdownMenuPortal,
+    DropdownMenuRadioGroup,
+    DropdownMenuRadioItem,
+    DropdownMenuSeparator,
+    DropdownMenuShortcut,
+    DropdownMenuSub,
+    DropdownMenuSubContent,
+    DropdownMenuSubTrigger,
+    DropdownMenuTrigger,
+} from "@ui/components/dropdown-menu";
 export { Input } from "@ui/components/input";
+export {
+    Pagination,
+    PaginationButton,
+    PaginationContent,
+    PaginationEllipsis,
+    PaginationItem,
+    PaginationLink,
+    PaginationNext,
+    PaginationPrevious,
+} from "@ui/components/pagination";
+export { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from "@ui/components/popover";
+export { Progress } from "@ui/components/progress";
 export { ScrollArea, ScrollBar } from "@ui/components/scroll-area";
+export {
+    Select,
+    SelectContent,
+    SelectGroup,
+    SelectItem,
+    SelectLabel,
+    SelectSeparator,
+    SelectTrigger,
+    SelectValue,
+} from "@ui/components/select";
+export { Separator } from "@ui/components/separator";
+export {
+    Sheet,
+    SheetClose,
+    SheetContent,
+    SheetDescription,
+    SheetFooter,
+    SheetHeader,
+    SheetOverlay,
+    SheetPortal,
+    SheetTitle,
+    SheetTrigger,
+} from "@ui/components/sheet";
 export type { SkeletonProps, SkeletonVariant } from "@ui/components/skeleton";
 export { Skeleton } from "@ui/components/skeleton";
+export { Slider } from "@ui/components/slider";
+export { Switch } from "@ui/components/switch";
 export {
     Table,
     TableBody,
@@ -47,8 +102,12 @@ export {
     TableHeader,
     TableRow,
 } from "@ui/components/table";
+export { Tabs, TabsContent, TabsList, TabsTrigger } from "@ui/components/tabs";
+export { Textarea } from "@ui/components/textarea";
+export { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@ui/components/tooltip";
 export type { DashboardAppConfig } from "@ui/create-app";
 export { createDashboardApp } from "@ui/create-app";
+export * from "@ui/graphs";
 export type { DashboardLayoutProps, NavLink } from "@ui/layouts/DashboardLayout";
 export { DashboardLayout } from "@ui/layouts/DashboardLayout";
 export { cn } from "@ui/lib/utils";
