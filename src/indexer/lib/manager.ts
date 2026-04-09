@@ -6,7 +6,55 @@ import { Storage } from "@app/utils/storage/storage";
 import { CONFIG_FILENAME, ContextArtifactSource, loadContextConfig } from "./context-artifacts";
 import type { IndexerCallbacks, SyncStats } from "./events";
 import { Indexer } from "./indexer";
-import { emptyStats, type IndexConfig, type IndexMeta } from "./types";
+import { emptyStats, type IndexConfig, type IndexMeta, type IndexStats } from "./types";
+
+function sanitizeName(name: string): string {
+    return name.replace(/[^a-zA-Z0-9_]/g, "_");
+}
+
+/** Read live counts from an index DB without acquiring a lock. */
+function readLiveStats(db: Database, indexName: string, dbPath: string): Partial<IndexStats> {
+    const tableName = sanitizeName(indexName);
+    const contentTable = `${tableName}_content`;
+    const embTable = `${tableName}_embeddings`;
+
+    const result: Partial<IndexStats> = {};
+
+    try {
+        const row = db.query(`SELECT COUNT(*) AS cnt FROM ${contentTable}`).get() as { cnt: number } | null;
+
+        if (row) {
+            result.totalChunks = row.cnt;
+        }
+    } catch {
+        // Table may not exist
+    }
+
+    try {
+        const row = db.query(`SELECT COUNT(*) AS cnt FROM ${embTable}`).get() as { cnt: number } | null;
+
+        if (row) {
+            result.totalEmbeddings = row.cnt;
+        }
+    } catch {
+        // Table may not exist
+    }
+
+    try {
+        let size = Bun.file(dbPath).size;
+        const walSize = Bun.file(`${dbPath}-wal`).size;
+
+        if (walSize > 0) {
+            size += walSize;
+        }
+
+        result.dbSizeBytes = size;
+    } catch {
+        // File may not exist
+    }
+
+    return result;
+}
 
 interface ManagerConfig {
     indexes: Record<string, IndexConfig>;
@@ -161,10 +209,23 @@ export class IndexerManager {
                 const row = db.query("SELECT value FROM index_meta WHERE key = 'meta'").get() as {
                     value: string;
                 } | null;
-                db.close();
 
                 if (row) {
                     const meta = SafeJSON.parse(row.value) as IndexMeta;
+                    const live = readLiveStats(db, name, dbPath);
+
+                    if (live.totalChunks !== undefined) {
+                        meta.stats.totalChunks = live.totalChunks;
+                    }
+
+                    if (live.totalEmbeddings !== undefined) {
+                        meta.stats.totalEmbeddings = live.totalEmbeddings;
+                    }
+
+                    if (live.dbSizeBytes !== undefined) {
+                        meta.stats.dbSizeBytes = live.dbSizeBytes;
+                    }
+
                     result.push(meta);
                 } else {
                     result.push({
@@ -175,6 +236,8 @@ export class IndexerManager {
                         createdAt: 0,
                     });
                 }
+
+                db.close();
             } catch (err) {
                 console.debug(`Failed to read metadata for index "${name}":`, err);
                 result.push({
