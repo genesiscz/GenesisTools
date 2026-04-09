@@ -49,6 +49,7 @@ export interface SearchOptions {
     query: string;
     withoutBody?: boolean;
     receiver?: string;
+    account?: string;
     from?: Date;
     to?: Date;
     mailbox?: string;

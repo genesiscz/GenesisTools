@@ -86,8 +86,19 @@ export function cleanup(): void {
 export function searchMessages(opts: SearchOptions): MailMessageRow[] {
     const db = getDatabase();
     const params: Record<string, string | number> = {};
-    const queryPattern = `%${escapeLike(opts.query)}%`;
-    params.$query = queryPattern;
+
+    // Tokenize query for per-word AND matching (handles "AWS account past due")
+    const tokens = opts.query
+        .split(/\s+/)
+        .filter((t) => t.length > 0);
+    const tokenConditions = tokens.map((_, i) => {
+        const key = `$tok${i}`;
+        return `(s.subject LIKE ${key} ESCAPE '\\' OR a.address LIKE ${key} ESCAPE '\\' OR a.comment LIKE ${key} ESCAPE '\\')`;
+    });
+
+    for (let i = 0; i < tokens.length; i++) {
+        params[`$tok${i}`] = `%${escapeLike(tokens[i])}%`;
+    }
 
     // Build WHERE clauses for filters
     const filters: string[] = ["m.deleted = 0"];
@@ -96,14 +107,17 @@ export function searchMessages(opts: SearchOptions): MailMessageRow[] {
         filters.push("m.date_sent >= $dateFrom");
         params.$dateFrom = Math.floor(opts.from.getTime() / 1000);
     }
+
     if (opts.to) {
         filters.push("m.date_sent <= $dateTo");
         params.$dateTo = Math.floor(opts.to.getTime() / 1000);
     }
+
     if (opts.mailbox) {
         filters.push("mb.url LIKE $mailbox ESCAPE '\\'");
         params.$mailbox = `%${escapeLike(opts.mailbox)}%`;
     }
+
     if (opts.receiver) {
         filters.push(`m.ROWID IN (
             SELECT r.message FROM recipients r
@@ -111,6 +125,11 @@ export function searchMessages(opts: SearchOptions): MailMessageRow[] {
             WHERE a.address LIKE $receiver ESCAPE '\\'
         )`);
         params.$receiver = `%${escapeLike(opts.receiver)}%`;
+    }
+
+    if (opts.account) {
+        filters.push("mb.url LIKE $account ESCAPE '\\'");
+        params.$account = `%${escapeLike(opts.account)}%`;
     }
 
     const whereClause = filters.length > 0 ? `AND ${filters.join(" AND ")}` : "";
@@ -134,23 +153,88 @@ export function searchMessages(opts: SearchOptions): MailMessageRow[] {
         JOIN addresses a ON m.sender = a.ROWID
         JOIN mailboxes mb ON m.mailbox = mb.ROWID
         WHERE (
-            s.subject LIKE $query ESCAPE '\\'
-            OR a.address LIKE $query ESCAPE '\\'
-            OR a.comment LIKE $query ESCAPE '\\'
-            OR m.ROWID IN (
-                SELECT att.message FROM attachments att
-                WHERE att.name LIKE $query ESCAPE '\\'
-            )
+            ${tokenConditions.join(" AND ")}
         )
         ${whereClause}
         ORDER BY m.date_sent DESC
         LIMIT $limit
     `;
 
-    logger.debug(`Running search query with pattern: ${queryPattern}`);
+    logger.debug(`Running search query with ${tokens.length} token(s): ${tokens.join(", ")}`);
     params.$limit = limit;
     const stmt = db.prepare(sql);
     return stmt.all(params) as MailMessageRow[];
+}
+
+/**
+ * Get messages by ROWIDs with optional date/mailbox/receiver/account filters.
+ * Used after FTS5 returns matching rowids.
+ */
+export function getMessagesByRowids(
+    rowids: number[],
+    opts?: { from?: Date; to?: Date; mailbox?: string; receiver?: string; account?: string }
+): MailMessageRow[] {
+    if (rowids.length === 0) {
+        return [];
+    }
+
+    const db = getDatabase();
+    const params: Record<string, string | number> = {};
+    const filters: string[] = ["m.deleted = 0"];
+
+    // Build ROWID IN (...) with named params to avoid bind limit issues
+    const placeholders = rowids.map((_, i) => `$r${i}`).join(",");
+
+    for (let i = 0; i < rowids.length; i++) {
+        params[`$r${i}`] = rowids[i];
+    }
+
+    filters.push(`m.ROWID IN (${placeholders})`);
+
+    if (opts?.from) {
+        filters.push("m.date_sent >= $dateFrom");
+        params.$dateFrom = Math.floor(opts.from.getTime() / 1000);
+    }
+
+    if (opts?.to) {
+        filters.push("m.date_sent <= $dateTo");
+        params.$dateTo = Math.floor(opts.to.getTime() / 1000);
+    }
+
+    if (opts?.mailbox) {
+        filters.push("mb.url LIKE $mailbox ESCAPE '\\'");
+        params.$mailbox = `%${escapeLike(opts.mailbox)}%`;
+    }
+
+    if (opts?.receiver) {
+        filters.push(`m.ROWID IN (
+            SELECT r.message FROM recipients r
+            JOIN addresses a ON r.address = a.ROWID
+            WHERE a.address LIKE $receiver ESCAPE '\\\\'
+        )`);
+        params.$receiver = `%${escapeLike(opts.receiver)}%`;
+    }
+
+    if (opts?.account) {
+        filters.push("mb.url LIKE $account ESCAPE '\\'");
+        params.$account = `%${escapeLike(opts.account)}%`;
+    }
+
+    const sql = `
+        SELECT DISTINCT
+            m.ROWID as rowid, s.subject,
+            a.address as senderAddress, a.comment as senderName,
+            m.date_sent as dateSent, m.date_received as dateReceived,
+            mb.url as mailboxUrl, m.read, m.flagged, m.deleted, m.size
+        FROM messages m
+        JOIN subjects s ON m.subject = s.ROWID
+        JOIN addresses a ON m.sender = a.ROWID
+        JOIN mailboxes mb ON m.mailbox = mb.ROWID
+        WHERE ${filters.join(" AND ")}
+        ORDER BY m.date_sent DESC
+    `;
+
+    return db.prepare(sql).all(params) as MailMessageRow[];
 }
 
 /**

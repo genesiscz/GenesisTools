@@ -1,7 +1,6 @@
 import logger from "@app/logger";
 import { ALL_COLUMN_KEYS, type MailColumnKey } from "@app/macos/lib/mail/columns";
 import { needsRecipients, outputFormattedResults, resolveColumnsFromFlag } from "@app/macos/lib/mail/command-helpers";
-import { searchBodies } from "@app/macos/lib/mail/jxa";
 import { MailStorage } from "@app/macos/lib/mail/mail-storage";
 import {
     cleanup,
@@ -12,7 +11,7 @@ import {
     searchMessages,
 } from "@app/macos/lib/mail/sqlite";
 import { rowToMessage } from "@app/macos/lib/mail/transform";
-import type { MailMessage, SearchOptions } from "@app/macos/lib/mail/types";
+import type { MailMessage, MailMessageRow, SearchOptions } from "@app/macos/lib/mail/types";
 import { closeDarwinKit, rankBySimilarity } from "@app/utils/macos";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
@@ -65,7 +64,7 @@ export function registerSearchCommand(program: Command): void {
         .command("search <query>")
         .description("Search emails by subject, sender, body, and attachment names")
         .option("--without-body", "Skip body search entirely (metadata-only)")
-        .option("--jxa", "Use JXA for body search instead of FTS index")
+        .option("--jxa", "Skip FTS index, use SQLite LIKE search only")
         .option("--receiver <email>", "Filter by receiver email address")
         .option("--help-receivers", "List all receiver accounts/addresses")
         .option("--from <date>", "Search from date (ISO format, e.g. 2026-01-01)")
@@ -123,16 +122,74 @@ export function registerSearchCommand(program: Command): void {
                     limit: Number.parseInt(options.limit ?? "100", 10),
                 };
 
-                // Phase 1: SQLite metadata search
                 const spinner = p.spinner();
-                const totalMessages = getMessageCount();
-                spinner.start(`Searching metadata across ${totalMessages.toLocaleString()} messages (SQLite)...`);
+                let rows: MailMessageRow[];
+                let searchMethod: "fts" | "sqlite" | "jxa" = "sqlite";
 
-                const startSqlite = performance.now();
-                const rows = searchMessages(searchOpts);
-                const sqliteMs = performance.now() - startSqlite;
+                // Phase 1: Try FTS5 first (searches subject, sender, body — everything)
+                if (!options.jxa && !searchOpts.withoutBody) {
+                    try {
+                        const { searchIndexReadonly } = await import("@app/indexer/lib/store");
+                        const { getMessagesByRowids } = await import("@app/macos/lib/mail/sqlite");
 
-                spinner.stop(`Found ${rows.length} metadata matches in ${(sqliteMs / 1000).toFixed(1)}s`);
+                        spinner.start("Searching (FTS index)...");
+                        const startFts = performance.now();
+                        const ftsResults = await searchIndexReadonly("macos-mail", query, {
+                            mode: "fulltext",
+                            limit: searchOpts.limit ?? 100,
+                        });
+                        const ftsMs = performance.now() - startFts;
+                        const ftsRowids = ftsResults
+                            .map((r) => r.doc.sourceId)
+                            .filter(Boolean)
+                            .map(Number);
+
+                        if (ftsRowids.length > 0) {
+                            // Enrich FTS results with SQLite metadata + apply filters
+                            rows = getMessagesByRowids(ftsRowids, {
+                                from: searchOpts.from,
+                                to: searchOpts.to,
+                                mailbox: searchOpts.mailbox,
+                                receiver: searchOpts.receiver,
+                                account: searchOpts.account,
+                            });
+                            searchMethod = "fts";
+                            spinner.stop(
+                                `FTS: ${rows.length} matches in ${(ftsMs / 1000).toFixed(1)}s`
+                            );
+                        } else {
+                            spinner.stop("FTS: 0 matches — falling back to metadata search");
+                            rows = [];
+                        }
+                    } catch (err) {
+                        const errMsg = err instanceof Error ? err.message : String(err);
+                        logger.debug(`[search] FTS search failed: ${errMsg}`);
+                        spinner.stop("FTS unavailable — using metadata search");
+                        rows = [];
+                    }
+                } else {
+                    rows = [];
+                }
+
+                // Phase 2: Fall back to tokenized SQLite LIKE if FTS didn't produce results
+                if (rows.length === 0 && searchMethod !== "fts") {
+                    const totalMessages = getMessageCount();
+                    spinner.start(`Searching metadata across ${totalMessages.toLocaleString()} messages...`);
+                    const startSqlite = performance.now();
+                    rows = searchMessages(searchOpts);
+                    const sqliteMs = performance.now() - startSqlite;
+                    searchMethod = "sqlite";
+                    spinner.stop(`Found ${rows.length} metadata matches in ${(sqliteMs / 1000).toFixed(1)}s`);
+                } else if (rows.length === 0) {
+                    // FTS returned 0 results after filtering — try LIKE as fallback
+                    const totalMessages = getMessageCount();
+                    spinner.start(`No FTS matches — searching metadata across ${totalMessages.toLocaleString()} messages...`);
+                    const startSqlite = performance.now();
+                    rows = searchMessages(searchOpts);
+                    const sqliteMs = performance.now() - startSqlite;
+                    searchMethod = "sqlite";
+                    spinner.stop(`Found ${rows.length} metadata matches in ${(sqliteMs / 1000).toFixed(1)}s`);
+                }
 
                 if (rows.length === 0) {
                     p.log.info("No messages found matching your query.");
@@ -140,67 +197,22 @@ export function registerSearchCommand(program: Command): void {
                     return;
                 }
 
+                // Mark body matches for FTS results
+                const ftsRowidSet = searchMethod === "fts" ? new Set(rows.map((r) => r.rowid)) : undefined;
+
                 // Enrich with attachments
                 const rowids = rows.map((r) => r.rowid);
                 const attachmentsMap = getAttachments(rowids);
                 const messages: MailMessage[] = rows.map((row) => {
                     const msg = rowToMessage(row);
                     msg.attachments = attachmentsMap.get(row.rowid) ?? [];
+
+                    if (ftsRowidSet) {
+                        msg.bodyMatchesQuery = true;
+                    }
+
                     return msg;
                 });
-
-                // Phase 2: Body search (unless --without-body)
-                if (!searchOpts.withoutBody && rows.length > 0) {
-                    if (options.jxa) {
-                        // JXA: slow but works without index
-                        spinner.start(`Searching body content in ${rows.length} messages (JXA)...`);
-
-                        const startJxa = performance.now();
-                        const bodyMatches = await searchBodies(
-                            messages.map((m) => ({
-                                rowid: m.rowid,
-                                subject: m.subject,
-                                mailbox: m.mailbox,
-                            })),
-                            query
-                        );
-                        const jxaMs = performance.now() - startJxa;
-
-                        for (const msg of messages) {
-                            msg.bodyMatchesQuery = bodyMatches.has(msg.rowid);
-                        }
-
-                        spinner.stop(`Body search (JXA): ${bodyMatches.size} matches in ${(jxaMs / 1000).toFixed(1)}s`);
-                    } else {
-                        // FTS: read-only search — works even while indexer is running
-                        try {
-                            const { searchIndexReadonly } = await import("@app/indexer/lib/store");
-
-                            spinner.start("Searching body content (FTS index)...");
-                            const startFts = performance.now();
-                            const ftsResults = await searchIndexReadonly("macos-mail", query, {
-                                mode: "fulltext",
-                                limit: 1000,
-                            });
-                            const ftsMs = performance.now() - startFts;
-
-                            const ftsRowids = new Set(ftsResults.map((r) => r.doc.sourceId).filter(Boolean));
-
-                            for (const msg of messages) {
-                                msg.bodyMatchesQuery = ftsRowids.has(String(msg.rowid));
-                            }
-
-                            const bodyMatchCount = messages.filter((m) => m.bodyMatchesQuery).length;
-                            spinner.stop(
-                                `Body search (FTS): ${bodyMatchCount} matches in ${(ftsMs / 1000).toFixed(1)}s`
-                            );
-                        } catch (err) {
-                            const errMsg = err instanceof Error ? err.message : String(err);
-                            logger.debug(`[search] FTS body search failed: ${errMsg}`);
-                            spinner.stop("FTS unavailable — skipping body search (use --jxa for JXA fallback)");
-                        }
-                    }
-                }
 
                 // Phase 3: Semantic re-ranking via Apple NaturalLanguage framework.
                 // Uses on-device sentence similarity (not tied to the indexer's embedding model/provider).
