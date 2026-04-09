@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { formatResultsTable } from "@app/macos/lib/mail/format";
 import { MailStorage } from "@app/macos/lib/mail/mail-storage";
 import { cleanup, getAttachments, getRecipients, listMessages } from "@app/macos/lib/mail/sqlite";
-import { rowToMessage } from "@app/macos/lib/mail/transform";
+import { rowToMessage, truncateBody } from "@app/macos/lib/mail/transform";
 import type { MailMessage } from "@app/macos/lib/mail/types";
 import { SafeJSON } from "@app/utils/json";
 import * as p from "@clack/prompts";
@@ -196,7 +196,7 @@ export function registerMonitorCommand(program: Command): void {
                             const body = await emlx.getBody(msg.rowid);
 
                             if (body) {
-                                msg.body = body.length > 200 ? `${body.slice(0, 200)}...` : body;
+                                msg.body = truncateBody(body, 200, "...");
                             }
                         }
 

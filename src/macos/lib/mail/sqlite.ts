@@ -75,32 +75,31 @@ export function cleanup(): void {
     }
 }
 
-/**
- * Search messages by metadata (subject, sender, attachment names).
- * Does NOT search body content -- that requires JXA.
- *
- * The query uses OR to combine:
- * 1. Subject LIKE match
- * 2. Sender address/name LIKE match
- * 3. Attachment name LIKE match
- */
-export function searchMessages(opts: SearchOptions): MailMessageRow[] {
-    const db = getDatabase();
-    const params: Record<string, string | number> = {};
+interface FilterOptions {
+    from?: Date;
+    to?: Date;
+    mailbox?: string;
+    receiver?: string;
+    account?: string;
+}
 
-    // Tokenize query for per-word AND matching (handles "AWS account past due")
-    const tokens = opts.query.split(/\s+/).filter((t) => t.length > 0);
-    const tokenConditions = tokens.map((_, i) => {
-        const key = `$tok${i}`;
-        return `(s.subject LIKE ${key} ESCAPE '\\' OR a.address LIKE ${key} ESCAPE '\\' OR a.comment LIKE ${key} ESCAPE '\\')`;
-    });
+const MESSAGE_SELECT = `
+    SELECT DISTINCT
+        m.ROWID as rowid, s.subject,
+        a.address as senderAddress, a.comment as senderName,
+        m.date_sent as dateSent, m.date_received as dateReceived,
+        mb.url as mailboxUrl, m.read, m.flagged, m.deleted, m.size
+    FROM messages m
+    JOIN subjects s ON m.subject = s.ROWID
+    JOIN addresses a ON m.sender = a.ROWID
+    JOIN mailboxes mb ON m.mailbox = mb.ROWID`;
 
-    for (let i = 0; i < tokens.length; i++) {
-        params[`$tok${i}`] = `%${escapeLike(tokens[i])}%`;
-    }
-
-    // Build WHERE clauses for filters
-    const filters: string[] = ["m.deleted = 0"];
+/** Build WHERE clauses + params for date/mailbox/receiver/account filters. */
+function buildFilters(
+    opts: FilterOptions,
+    params: Record<string, string | number>
+): string[] {
+    const filters: string[] = [];
 
     if (opts.from) {
         filters.push("m.date_sent >= $dateFrom");
@@ -131,109 +130,82 @@ export function searchMessages(opts: SearchOptions): MailMessageRow[] {
         params.$account = `%${escapeLike(opts.account)}%`;
     }
 
+    return filters;
+}
+
+/** Max rowids per SQL IN clause to stay within SQLite bind limits. */
+const SQL_BIND_BATCH = 900;
+
+/**
+ * Search messages by metadata (subject, sender, attachment names).
+ * Tokenizes multi-word queries for per-word AND matching.
+ */
+export function searchMessages(opts: SearchOptions): MailMessageRow[] {
+    const db = getDatabase();
+    const params: Record<string, string | number> = {};
+
+    const tokens = opts.query.split(/\s+/).filter((t) => t.length > 0);
+    const tokenConditions = tokens.map((_, i) => {
+        const key = `$tok${i}`;
+        return `(s.subject LIKE ${key} ESCAPE '\\' OR a.address LIKE ${key} ESCAPE '\\' OR a.comment LIKE ${key} ESCAPE '\\')`;
+    });
+
+    for (let i = 0; i < tokens.length; i++) {
+        params[`$tok${i}`] = `%${escapeLike(tokens[i])}%`;
+    }
+
+    const filters: string[] = ["m.deleted = 0", ...buildFilters(opts, params)];
     const whereClause = filters.length > 0 ? `AND ${filters.join(" AND ")}` : "";
     const limit = opts.limit ?? 200;
+    params.$limit = limit;
 
-    const sql = `
-        SELECT DISTINCT
-            m.ROWID as rowid,
-            s.subject,
-            a.address as senderAddress,
-            a.comment as senderName,
-            m.date_sent as dateSent,
-            m.date_received as dateReceived,
-            mb.url as mailboxUrl,
-            m.read,
-            m.flagged,
-            m.deleted,
-            m.size
-        FROM messages m
-        JOIN subjects s ON m.subject = s.ROWID
-        JOIN addresses a ON m.sender = a.ROWID
-        JOIN mailboxes mb ON m.mailbox = mb.ROWID
-        WHERE (
-            ${tokenConditions.join(" AND ")}
-        )
+    const sql = `${MESSAGE_SELECT}
+        WHERE (${tokenConditions.join(" AND ")})
         ${whereClause}
         ORDER BY m.date_sent DESC
-        LIMIT $limit
-    `;
+        LIMIT $limit`;
 
     logger.debug(`Running search query with ${tokens.length} token(s): ${tokens.join(", ")}`);
-    params.$limit = limit;
-    const stmt = db.prepare(sql);
-    return stmt.all(params) as MailMessageRow[];
+    return db.prepare(sql).all(params) as MailMessageRow[];
 }
 
 /**
- * Get messages by ROWIDs with optional date/mailbox/receiver/account filters.
- * Used after FTS5 returns matching rowids.
+ * Get messages by ROWIDs with optional filters.
+ * Batches rowids to stay within SQLite bind limits (~999).
  */
-export function getMessagesByRowids(
-    rowids: number[],
-    opts?: { from?: Date; to?: Date; mailbox?: string; receiver?: string; account?: string }
-): MailMessageRow[] {
+export function getMessagesByRowids(rowids: number[], opts?: FilterOptions): MailMessageRow[] {
     if (rowids.length === 0) {
         return [];
     }
 
     const db = getDatabase();
-    const params: Record<string, string | number> = {};
-    const filters: string[] = ["m.deleted = 0"];
+    const results: MailMessageRow[] = [];
 
-    // Build ROWID IN (...) with named params to avoid bind limit issues
-    const placeholders = rowids.map((_, i) => `$r${i}`).join(",");
+    for (let offset = 0; offset < rowids.length; offset += SQL_BIND_BATCH) {
+        const batch = rowids.slice(offset, offset + SQL_BIND_BATCH);
+        const params: Record<string, string | number> = {};
+        const filters: string[] = ["m.deleted = 0"];
 
-    for (let i = 0; i < rowids.length; i++) {
-        params[`$r${i}`] = rowids[i];
+        const placeholders = batch.map((_, i) => `$r${i}`).join(",");
+
+        for (let i = 0; i < batch.length; i++) {
+            params[`$r${i}`] = batch[i];
+        }
+
+        filters.push(`m.ROWID IN (${placeholders})`);
+
+        if (opts) {
+            filters.push(...buildFilters(opts, params));
+        }
+
+        const sql = `${MESSAGE_SELECT}
+            WHERE ${filters.join(" AND ")}
+            ORDER BY m.date_sent DESC`;
+
+        results.push(...(db.prepare(sql).all(params) as MailMessageRow[]));
     }
 
-    filters.push(`m.ROWID IN (${placeholders})`);
-
-    if (opts?.from) {
-        filters.push("m.date_sent >= $dateFrom");
-        params.$dateFrom = Math.floor(opts.from.getTime() / 1000);
-    }
-
-    if (opts?.to) {
-        filters.push("m.date_sent <= $dateTo");
-        params.$dateTo = Math.floor(opts.to.getTime() / 1000);
-    }
-
-    if (opts?.mailbox) {
-        filters.push("mb.url LIKE $mailbox ESCAPE '\\'");
-        params.$mailbox = `%${escapeLike(opts.mailbox)}%`;
-    }
-
-    if (opts?.receiver) {
-        filters.push(`m.ROWID IN (
-            SELECT r.message FROM recipients r
-            JOIN addresses a ON r.address = a.ROWID
-            WHERE a.address LIKE $receiver ESCAPE '\\\\'
-        )`);
-        params.$receiver = `%${escapeLike(opts.receiver)}%`;
-    }
-
-    if (opts?.account) {
-        filters.push("mb.url LIKE $account ESCAPE '\\'");
-        params.$account = `%${escapeLike(opts.account)}%`;
-    }
-
-    const sql = `
-        SELECT DISTINCT
-            m.ROWID as rowid, s.subject,
-            a.address as senderAddress, a.comment as senderName,
-            m.date_sent as dateSent, m.date_received as dateReceived,
-            mb.url as mailboxUrl, m.read, m.flagged, m.deleted, m.size
-        FROM messages m
-        JOIN subjects s ON m.subject = s.ROWID
-        JOIN addresses a ON m.sender = a.ROWID
-        JOIN mailboxes mb ON m.mailbox = mb.ROWID
-        WHERE ${filters.join(" AND ")}
-        ORDER BY m.date_sent DESC
-    `;
-
-    return db.prepare(sql).all(params) as MailMessageRow[];
+    return results;
 }
 
 /**
@@ -425,28 +397,41 @@ export function listAccounts(): AccountInfo[] {
         accounts.set(uuid, existing);
     }
 
-    // For each account, find the most common To address in its INBOX
+    // Batch: find the most common To address per account in a single query
+    const inboxEmails = db
+        .prepare(
+            `SELECT mb_url_account AS accountUuid, a.address, COUNT(DISTINCT r.message) AS cnt
+            FROM (
+                SELECT m.ROWID AS mid, SUBSTR(mb.url, INSTR(mb.url, '://') + 3,
+                    INSTR(SUBSTR(mb.url, INSTR(mb.url, '://') + 3), '/') - 1) AS mb_url_account
+                FROM messages m
+                JOIN mailboxes mb ON m.mailbox = mb.ROWID
+                WHERE mb.url LIKE '%/INBOX'
+            ) inb
+            JOIN recipients r ON r.message = inb.mid
+            JOIN addresses a ON r.address = a.ROWID
+            WHERE r.type = 0
+            GROUP BY accountUuid, a.address
+            ORDER BY accountUuid, cnt DESC`
+        )
+        .all() as Array<{ accountUuid: string; address: string; cnt: number }>;
+
+    // Keep only the top address per account
+    const emailByAccount = new Map<string, string>();
+
+    for (const row of inboxEmails) {
+        if (!emailByAccount.has(row.accountUuid)) {
+            emailByAccount.set(row.accountUuid, row.address);
+        }
+    }
+
     const result: AccountInfo[] = [];
 
     for (const [uuid, info] of accounts) {
-        const emailRow = db
-            .prepare(
-                `SELECT a.address, COUNT(DISTINCT r.message) as cnt
-                FROM recipients r
-                JOIN addresses a ON r.address = a.ROWID
-                JOIN messages m ON r.message = m.ROWID
-                JOIN mailboxes mb ON m.mailbox = mb.ROWID
-                WHERE r.type = 0 AND mb.url LIKE $pattern ESCAPE '\\'
-                GROUP BY a.address
-                ORDER BY cnt DESC
-                LIMIT 1`
-            )
-            .get({ $pattern: `%${escapeLike(uuid)}%INBOX` }) as { address: string; cnt: number } | null;
-
         result.push({
             uuid,
             protocol: info.protocol,
-            email: emailRow?.address ?? "unknown",
+            email: emailByAccount.get(uuid) ?? "unknown",
             mailboxCount: info.mailboxCount,
             messageCount: info.messageCount,
         });

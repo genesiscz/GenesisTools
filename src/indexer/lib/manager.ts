@@ -6,13 +6,9 @@ import type { Storage } from "@app/utils/storage/storage";
 import { CONFIG_FILENAME, ContextArtifactSource, loadContextConfig } from "./context-artifacts";
 import type { IndexerCallbacks, SyncStats } from "./events";
 import { Indexer } from "./indexer";
-import { getIndexerStorage } from "./storage";
+import { getDbSizeBytes, getIndexerStorage, sanitizeName } from "./storage";
 import { searchIndexReadonly } from "./store";
 import { emptyStats, type IndexConfig, type IndexMeta, type IndexStats } from "./types";
-
-function sanitizeName(name: string): string {
-    return name.replace(/[^a-zA-Z0-9_]/g, "_");
-}
 
 /** Read live counts from an index DB without acquiring a lock. */
 function readLiveStats(db: Database, indexName: string, dbPath: string): Partial<IndexStats> {
@@ -42,19 +38,7 @@ function readLiveStats(db: Database, indexName: string, dbPath: string): Partial
         // Table may not exist
     }
 
-    try {
-        let size = Bun.file(dbPath).size;
-        const walSize = Bun.file(`${dbPath}-wal`).size;
-
-        if (walSize > 0) {
-            size += walSize;
-        }
-
-        result.dbSizeBytes = size;
-    } catch {
-        // File may not exist
-    }
-
+    result.dbSizeBytes = getDbSizeBytes(dbPath);
     return result;
 }
 

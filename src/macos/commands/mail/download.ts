@@ -6,6 +6,7 @@ import { generateEmailMarkdown, generateIndexMarkdown, generateSlug } from "@app
 import { saveAttachment } from "@app/macos/lib/mail/jxa";
 import { MailStorage } from "@app/macos/lib/mail/mail-storage";
 import { cleanup, getRecipients } from "@app/macos/lib/mail/sqlite";
+import { truncateBody } from "@app/macos/lib/mail/transform";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 
@@ -148,14 +149,8 @@ export function registerDownloadCommand(program: Command): void {
                         // Attach recipients
                         msg.recipients = recipientsMap.get(msg.rowid) ?? [];
 
-                        // Get body via EmlxBodyExtractor (much faster than JXA)
                         const body = await emlx.getBody(msg.rowid);
-
-                        if (body && bodyMaxChars && body.length > bodyMaxChars) {
-                            msg.body = `${body.slice(0, bodyMaxChars)}\n... [truncated]`;
-                        } else {
-                            msg.body = body ?? undefined;
-                        }
+                        msg.body = body && bodyMaxChars ? truncateBody(body, bodyMaxChars) : (body ?? undefined);
 
                         // Generate markdown
                         const slug = generateSlug(msg);

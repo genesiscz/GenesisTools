@@ -172,21 +172,11 @@ export function registerSearchCommand(program: Command): void {
                     rows = [];
                 }
 
-                // Phase 2: Fall back to tokenized SQLite LIKE if FTS didn't produce results
-                if (rows.length === 0 && searchMethod !== "fts") {
+                // Phase 2: Fall back to tokenized SQLite LIKE if FTS produced no results
+                if (rows.length === 0) {
                     const totalMessages = getMessageCount();
-                    spinner.start(`Searching metadata across ${totalMessages.toLocaleString()} messages...`);
-                    const startSqlite = performance.now();
-                    rows = searchMessages(searchOpts);
-                    const sqliteMs = performance.now() - startSqlite;
-                    searchMethod = "sqlite";
-                    spinner.stop(`Found ${rows.length} metadata matches in ${(sqliteMs / 1000).toFixed(1)}s`);
-                } else if (rows.length === 0) {
-                    // FTS returned 0 results after filtering — try LIKE as fallback
-                    const totalMessages = getMessageCount();
-                    spinner.start(
-                        `No FTS matches — searching metadata across ${totalMessages.toLocaleString()} messages...`
-                    );
+                    const label = searchMethod === "fts" ? "No FTS matches — searching" : "Searching";
+                    spinner.start(`${label} metadata across ${totalMessages.toLocaleString()} messages...`);
                     const startSqlite = performance.now();
                     rows = searchMessages(searchOpts);
                     const sqliteMs = performance.now() - startSqlite;
@@ -200,20 +190,14 @@ export function registerSearchCommand(program: Command): void {
                     return;
                 }
 
-                // Mark body matches for FTS results
-                const ftsRowidSet = searchMethod === "fts" ? new Set(rows.map((r) => r.rowid)) : undefined;
-
                 // Enrich with attachments
+                const isFts = searchMethod === "fts";
                 const rowids = rows.map((r) => r.rowid);
                 const attachmentsMap = getAttachments(rowids);
                 const messages: MailMessage[] = rows.map((row) => {
                     const msg = rowToMessage(row);
                     msg.attachments = attachmentsMap.get(row.rowid) ?? [];
-
-                    if (ftsRowidSet) {
-                        msg.bodyMatchesQuery = true;
-                    }
-
+                    msg.bodyMatchesQuery = isFts;
                     return msg;
                 });
 

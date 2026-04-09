@@ -1,6 +1,6 @@
 import { EmlxBodyExtractor } from "@app/macos/lib/mail/emlx";
 import { cleanup, getAttachments, getMessageById, getRecipients } from "@app/macos/lib/mail/sqlite";
-import { rowToMessage } from "@app/macos/lib/mail/transform";
+import { rowToMessage, truncateBody } from "@app/macos/lib/mail/transform";
 import { SafeJSON } from "@app/utils/json";
 import chalk from "chalk";
 import type { Command } from "commander";
@@ -42,11 +42,7 @@ export function registerShowCommand(program: Command): void {
                 emlx.dispose();
 
                 const maxChars = options.raw ? Infinity : Number.parseInt(options.bodyMaxChars ?? "5000", 10);
-                const truncatedBody = body
-                    ? body.length > maxChars
-                        ? `${body.slice(0, maxChars)}\n... [truncated]`
-                        : body
-                    : null;
+                const truncatedBody = body ? truncateBody(body, maxChars) : null;
 
                 if (options.json) {
                     console.log(SafeJSON.stringify({ ...msg, body: truncatedBody }, null, 2));

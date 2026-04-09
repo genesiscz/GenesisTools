@@ -1,6 +1,15 @@
 import { normalizeMailboxName, parseMailboxUrl } from "@app/macos/lib/mail/constants";
 import type { MailMessage, MailMessageRow } from "@app/macos/lib/mail/types";
 
+/** Truncate text to maxChars with a suffix. Returns the original if within limit. */
+export function truncateBody(text: string, maxChars: number, suffix = "... [truncated]"): string {
+    if (text.length <= maxChars) {
+        return text;
+    }
+
+    return text.slice(0, maxChars) + `\n${suffix}`;
+}
+
 /**
  * Convert a raw SQLite row to a MailMessage domain object.
  * Parses mailbox URLs, converts Unix timestamps to Dates, and normalizes booleans.

@@ -10,7 +10,7 @@ import type { VectorStore } from "@app/utils/search/stores/vector-store";
 import type { SearchOptions, SearchResult } from "@app/utils/search/types";
 import { deserializeMerkleTree } from "./merkle";
 import { PathHashStore } from "./path-hashes";
-import { getIndexerStorage } from "./storage";
+import { getDbSizeBytes, getIndexerStorage, sanitizeName } from "./storage";
 import {
     type ChunkRecord,
     emptyStats,
@@ -67,10 +67,6 @@ interface ChunkDoc extends Record<string, unknown> {
     content: string;
     name: string;
     filePath: string;
-}
-
-function sanitizeName(name: string): string {
-    return name.replace(/[^a-zA-Z0-9_]/g, "_");
 }
 
 /** Max bind parameters per SQL IN(...) clause */
@@ -618,19 +614,7 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
                     embeddingCount = embRow.cnt;
                 }
 
-                // Live DB size from filesystem (includes WAL)
-                let dbSizeBytes = 0;
-
-                try {
-                    dbSizeBytes = Bun.file(dbPath).size;
-                    const walSize = Bun.file(`${dbPath}-wal`).size;
-
-                    if (walSize > 0) {
-                        dbSizeBytes += walSize;
-                    }
-                } catch {
-                    // File may not exist yet
-                }
+                const dbSizeBytes = getDbSizeBytes(dbPath);
 
                 const logStats = db
                     .query("SELECT COUNT(*) AS cnt, AVG(duration_ms) AS avg_ms FROM search_log")

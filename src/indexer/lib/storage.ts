@@ -4,6 +4,27 @@ import { Storage } from "@app/utils/storage/storage";
 
 const TOOL_NAME = "indexer";
 
+/** Sanitize an index name for use as a SQLite table name prefix. */
+export function sanitizeName(name: string): string {
+    return name.replace(/[^a-zA-Z0-9_]/g, "_");
+}
+
+/** Get the total DB size including WAL file. Returns 0 if the file doesn't exist. */
+export function getDbSizeBytes(dbPath: string): number {
+    try {
+        let size = Bun.file(dbPath).size;
+        const walSize = Bun.file(`${dbPath}-wal`).size;
+
+        if (walSize > 0) {
+            size += walSize;
+        }
+
+        return size;
+    } catch {
+        return 0;
+    }
+}
+
 /**
  * Indexer-specific storage wrapper.
  * Single source of truth for `new Storage("indexer")` — all indexer code
