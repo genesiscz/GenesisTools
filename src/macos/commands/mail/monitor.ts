@@ -117,6 +117,7 @@ interface MonitorOptions {
     notifyTelegram?: boolean;
     rules?: string;
     dryRun?: boolean;
+    preview?: boolean;
 }
 
 // ─── Register ────────────────────────────────────────────────
@@ -129,6 +130,7 @@ export function registerMonitorCommand(program: Command): void {
         .option("--notify-telegram", "Send a notification via sayy")
         .option("--rules <path>", "Path to custom rules JSON file")
         .option("--dry-run", "Show what would be flagged without updating seen DB")
+        .option("--preview", "Show first 200 chars of body for matched emails")
         .action(async (options: MonitorOptions) => {
             try {
                 const limit = Number.parseInt(options.limit ?? "200", 10);
@@ -185,6 +187,22 @@ export function registerMonitorCommand(program: Command): void {
                 spinner.stop(`${newMessages.length} new message(s), ${important.length} important.`);
 
                 if (important.length > 0) {
+                    // Fetch body previews if requested
+                    if (options.preview) {
+                        const { EmlxBodyExtractor } = await import("@app/macos/lib/mail/emlx");
+                        const emlx = await EmlxBodyExtractor.create();
+
+                        for (const { msg } of important) {
+                            const body = await emlx.getBody(msg.rowid);
+
+                            if (body) {
+                                msg.body = body.length > 200 ? `${body.slice(0, 200)}...` : body;
+                            }
+                        }
+
+                        emlx.dispose();
+                    }
+
                     const importantMsgs = important.map((i) => i.msg);
                     console.log("");
                     console.log(formatResultsTable(importantMsgs, ["date", "from", "subject", "flagged"]));
@@ -194,6 +212,11 @@ export function registerMonitorCommand(program: Command): void {
                         const from = msg.senderName || msg.senderAddress;
                         const subj = msg.subject.length > 50 ? `${msg.subject.slice(0, 50)}...` : msg.subject;
                         p.log.info(`[${ruleName}] ${from}: ${subj}`);
+
+                        if (options.preview && msg.body) {
+                            const preview = msg.body.replace(/\n/g, " ").slice(0, 200);
+                            p.log.message(`  ${preview}`);
+                        }
                     }
                 }
 
