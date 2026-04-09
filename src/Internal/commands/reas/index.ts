@@ -798,4 +798,185 @@ export function registerReasCommand(program: Command): void {
                 console.log();
             }
         );
+
+    // ---- Subcommand: listing ----
+    reas.command("listing <id>")
+        .description("Show detail for a stored listing by ID")
+        .action(async (idStr: string) => {
+            const { getListingDetail } = await import("@app/Internal/commands/reas/lib/listing-service");
+
+            const id = Number(idStr);
+
+            if (Number.isNaN(id)) {
+                console.log(pc.red(`Invalid ID: "${idStr}"`));
+                return;
+            }
+
+            const result = await getListingDetail(id);
+
+            if (result === null) {
+                console.log(pc.yellow(`Listing ${id} not found.`));
+                return;
+            }
+
+            const l = result.listing;
+            const rows = [
+                ["ID", String(l.id)],
+                ["Source", l.source],
+                ["Contract", l.source_contract],
+                ["Type", l.type],
+                ["Status", l.status],
+                ["District", l.district],
+                ["Address", l.address],
+                ["Disposition", l.disposition ?? "—"],
+                ["Area (m²)", l.area != null ? String(l.area) : "—"],
+                ["Price (CZK)", formatCzk(l.price)],
+                ["CZK/m²", l.price_per_m2 != null ? formatCzk(Math.round(l.price_per_m2)) : "—"],
+                ["Link", l.link],
+                ["Fetched", l.fetched_at],
+            ];
+
+            console.log(`\n${pc.cyan(pc.bold(`Listing #${l.id}`))}\n`);
+            console.log(formatTable(rows, [], {}));
+
+            if (result.linkedProperty !== null) {
+                console.log(pc.dim(`Linked property: #${result.linkedProperty.id} ${result.linkedProperty.name}`));
+            }
+
+            if (result.hydratedDetail !== null) {
+                const raw = SafeJSON.stringify(result.hydratedDetail);
+                const truncated = raw.length > 300 ? raw.slice(0, 300) + "…" : raw;
+                console.log(`\nLive detail: ${truncated}`);
+            }
+
+            console.log();
+        });
+
+    // ---- Subcommand: property ----
+    reas.command("property <id>")
+        .description("Show detail for a saved watchlist property by ID")
+        .action(async (idStr: string) => {
+            const { getPropertyDetail } = await import("@app/Internal/commands/reas/lib/property-service");
+
+            const id = Number(idStr);
+
+            if (Number.isNaN(id)) {
+                console.log(pc.red(`Invalid ID: "${idStr}"`));
+                return;
+            }
+
+            const result = getPropertyDetail(id);
+
+            if (result === null) {
+                console.log(pc.yellow(`Property ${id} not found.`));
+                return;
+            }
+
+            const prop = result.property;
+            const rows = [
+                ["ID", String(prop.id)],
+                ["Name", prop.name],
+                ["District", prop.district],
+                ["Type", prop.construction_type],
+                ["Disposition", prop.disposition ?? "—"],
+                ["Price (CZK)", formatCzk(prop.target_price)],
+                ["Area (m²)", String(prop.target_area)],
+                ["Rent", formatCzk(prop.monthly_rent)],
+                ["Costs", formatCzk(prop.monthly_costs)],
+                ["Score", prop.last_score != null ? String(prop.last_score) : "—"],
+                ["Grade", prop.last_grade ?? "—"],
+                ["Net Yield", prop.last_net_yield != null ? prop.last_net_yield.toFixed(1) + "%" : "—"],
+                ["Gross Yield", prop.last_gross_yield != null ? prop.last_gross_yield.toFixed(1) + "%" : "—"],
+                [
+                    "Median CZK/m²",
+                    prop.last_median_price_per_m2 != null ? formatCzk(Math.round(prop.last_median_price_per_m2)) : "—",
+                ],
+                ["Last analyzed", prop.last_analyzed_at ?? "—"],
+            ];
+
+            console.log(`\n${pc.cyan(pc.bold(`Property #${prop.id} — ${prop.name}`))}\n`);
+            console.log(formatTable(rows, [], {}));
+
+            if (result.history.length > 0) {
+                console.log(pc.bold("\nAnalysis history:\n"));
+
+                const historyRows = result.history.map((h) => [
+                    h.analyzed_at.slice(0, 10),
+                    h.grade ?? "—",
+                    h.score != null ? String(h.score) : "—",
+                    h.net_yield != null ? h.net_yield.toFixed(1) + "%" : "—",
+                    h.gross_yield != null ? h.gross_yield.toFixed(1) + "%" : "—",
+                    h.median_price_per_m2 != null ? formatCzk(Math.round(h.median_price_per_m2)) : "—",
+                    h.comparable_count != null ? String(h.comparable_count) : "—",
+                ]);
+
+                const historyHeaders = [
+                    "Date",
+                    "Grade",
+                    "Score",
+                    "Net Yield",
+                    "Gross Yield",
+                    "Median CZK/m²",
+                    "Comparables",
+                ];
+                console.log(formatTable(historyRows, historyHeaders, { alignRight: [2, 3, 4, 5, 6] }));
+            }
+
+            console.log();
+        });
+
+    // ---- Subcommand: snapshots ----
+    reas.command("snapshots")
+        .description("Show historical district price snapshots")
+        .requiredOption("--district <name>", "District name (required)")
+        .option("--type <construction>", "Construction type (panel, brick, house)", "brick")
+        .option("--disposition <disp>", "Disposition filter")
+        .option("--days <n>", "Lookback window in days", "365")
+        .option("--resolution <r>", "daily or monthly", "monthly")
+        .action(
+            async (opts: {
+                district: string;
+                type: string;
+                disposition?: string;
+                days: string;
+                resolution: string;
+            }) => {
+                const { reasDatabase } = await import("@app/Internal/commands/reas/lib/store");
+                const { collapseDistrictSnapshots } = await import("@app/Internal/commands/reas/lib/district-snapshot");
+
+                const rows = reasDatabase.getDistrictHistory(
+                    opts.district,
+                    opts.type,
+                    Number(opts.days),
+                    opts.disposition
+                );
+                const snapshots = collapseDistrictSnapshots({
+                    rows,
+                    resolution: opts.resolution as "daily" | "monthly",
+                });
+
+                if (snapshots.length === 0) {
+                    console.log(pc.yellow(`No snapshots found for ${opts.district}.`));
+                    return;
+                }
+
+                const tableRows = snapshots.map((s) => [
+                    s.snapshotDate,
+                    formatCzk(Math.round(s.medianPricePerM2)),
+                    s.trendDirection ?? "—",
+                    s.yoyChange != null ? s.yoyChange.toFixed(1) + "%" : "—",
+                    s.marketGrossYield != null ? s.marketGrossYield.toFixed(1) + "%" : "—",
+                    s.marketNetYield != null ? s.marketNetYield.toFixed(1) + "%" : "—",
+                    String(s.comparablesCount),
+                ]);
+
+                const headers = ["Date", "Median CZK/m²", "Trend", "YoY%", "Gross Yield%", "Net Yield%", "Count"];
+
+                console.log(
+                    `\n${pc.cyan(pc.bold(`District snapshots — ${opts.district} (${opts.type})`))} — ${snapshots.length} entries (${opts.resolution})\n`
+                );
+                console.log(formatTable(tableRows, headers, { alignRight: [1, 3, 4, 5, 6] }));
+                console.log();
+            }
+        );
 }
