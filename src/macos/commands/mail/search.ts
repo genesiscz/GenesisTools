@@ -1,6 +1,11 @@
 import logger from "@app/logger";
 import { ALL_COLUMN_KEYS, type MailColumnKey } from "@app/macos/lib/mail/columns";
-import { needsRecipients, outputFormattedResults, resolveColumnsFromFlag } from "@app/macos/lib/mail/command-helpers";
+import {
+    enrichWithBodies,
+    needsRecipients,
+    outputFormattedResults,
+    resolveColumnsFromFlag,
+} from "@app/macos/lib/mail/command-helpers";
 import { MailStorage } from "@app/macos/lib/mail/mail-storage";
 import {
     cleanup,
@@ -49,8 +54,8 @@ function buildSearchColumns({
 
     const result = [...columns];
 
-    if (withBody && !result.includes("body")) {
-        result.push("body");
+    if (withBody && !result.includes("bodyMatch")) {
+        result.push("bodyMatch");
     }
 
     if (semanticActive && !result.includes("relevance")) {
@@ -200,6 +205,8 @@ export function registerSearchCommand(program: Command): void {
                     msg.bodyMatchesQuery = isFts;
                     return msg;
                 });
+
+                await enrichWithBodies(messages, baseColumns);
 
                 // Phase 3: Semantic re-ranking via Apple NaturalLanguage framework.
                 // Uses on-device sentence similarity (not tied to the indexer's embedding model/provider).

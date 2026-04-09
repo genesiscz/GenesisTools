@@ -81,6 +81,17 @@ export const MAIL_COLUMNS = {
         get: (m: MailMessage) => (m.attachments.length > 0 ? String(m.attachments.length) : ""),
     },
     body: {
+        label: "Body",
+        get: (m: MailMessage) => {
+            if (!m.body) {
+                return "";
+            }
+
+            const single = m.body.replace(/\s+/g, " ").trim();
+            return single.length > 120 ? `${single.slice(0, 120)}…` : single;
+        },
+    },
+    bodyMatch: {
         label: "Body Match",
         get: (m: MailMessage) => (m.bodyMatchesQuery ? "yes" : ""),
     },

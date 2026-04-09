@@ -5,6 +5,7 @@ import {
     type MailColumnKey,
     RECIPIENT_COLUMNS,
 } from "@app/macos/lib/mail/columns";
+import { EmlxBodyExtractor } from "@app/macos/lib/mail/emlx";
 import { formatResultsTable } from "@app/macos/lib/mail/format";
 import type { MailMessage } from "@app/macos/lib/mail/types";
 import { isInteractive } from "@app/utils/cli";
@@ -83,6 +84,31 @@ export async function resolveColumnsFromFlag(rawColumns: string | true | undefin
 
 export function needsRecipients(columns: MailColumnKey[]): boolean {
     return columns.some((col) => RECIPIENT_COLUMNS.includes(col));
+}
+
+// ─── Body enrichment ────────────────────────────────────────
+
+export async function enrichWithBodies(messages: MailMessage[], columns: MailColumnKey[]): Promise<void> {
+    if (!columns.includes("body") || messages.length === 0) {
+        return;
+    }
+
+    const emlx = await EmlxBodyExtractor.create();
+
+    try {
+        const rowids = messages.map((m) => m.rowid);
+        const bodies = await emlx.getBodies(rowids);
+
+        for (const msg of messages) {
+            const body = bodies.get(msg.rowid);
+
+            if (body) {
+                msg.body = body;
+            }
+        }
+    } finally {
+        emlx.dispose();
+    }
 }
 
 // ─── Output formatting ──────────────────────────────────────

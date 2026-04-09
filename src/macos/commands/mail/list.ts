@@ -1,5 +1,10 @@
 import { ALL_COLUMN_KEYS } from "@app/macos/lib/mail/columns";
-import { needsRecipients, outputFormattedResults, resolveColumnsFromFlag } from "@app/macos/lib/mail/command-helpers";
+import {
+    enrichWithBodies,
+    needsRecipients,
+    outputFormattedResults,
+    resolveColumnsFromFlag,
+} from "@app/macos/lib/mail/command-helpers";
 import { MailStorage } from "@app/macos/lib/mail/mail-storage";
 import { cleanup, getAttachments, getRecipients, listMessages } from "@app/macos/lib/mail/sqlite";
 import { rowToMessage } from "@app/macos/lib/mail/transform";
@@ -61,6 +66,8 @@ export function registerListCommand(program: Command): void {
                     msg.attachments = attachmentsMap.get(row.rowid) ?? [];
                     return msg;
                 });
+
+                await enrichWithBodies(messages, columns);
 
                 // Enrich with recipients if any recipient column is selected
                 if (needsRecipients(columns)) {
