@@ -129,7 +129,7 @@ export function registerSearchCommand(program: Command): void {
                 let rows: MailMessageRow[];
                 let searchMethod: "fts" | "sqlite" | "jxa" = "sqlite";
 
-                // Phase 1: Try FTS5 first (searches subject, sender, body — everything)
+                // FTS5 first, then SQLite LIKE fallback
                 if (!options.jxa && !searchOpts.withoutBody) {
                     try {
                         const { searchIndexReadonly } = await import("@app/indexer/lib/store");
@@ -148,7 +148,6 @@ export function registerSearchCommand(program: Command): void {
                             .map(Number);
 
                         if (ftsRowids.length > 0) {
-                            // Enrich FTS results with SQLite metadata + apply filters
                             rows = getMessagesByRowids(ftsRowids, {
                                 from: searchOpts.from,
                                 to: searchOpts.to,
@@ -172,7 +171,7 @@ export function registerSearchCommand(program: Command): void {
                     rows = [];
                 }
 
-                // Phase 2: Fall back to tokenized SQLite LIKE if FTS produced no results
+                // Fallback to tokenized LIKE
                 if (rows.length === 0) {
                     const totalMessages = getMessageCount();
                     const label = searchMethod === "fts" ? "No FTS matches — searching" : "Searching";

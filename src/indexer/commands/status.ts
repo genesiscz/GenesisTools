@@ -6,6 +6,10 @@ import pc from "picocolors";
 import { IndexerManager } from "../lib/manager";
 import { DEFAULT_WATCH_INTERVAL_MS } from "../lib/types";
 
+function formatEmbeddingPct(totalEmbeddings: number, totalChunks: number): number {
+    return totalChunks > 0 ? Math.round((totalEmbeddings / totalChunks) * 100) : 0;
+}
+
 export function registerStatusCommand(program: Command): void {
     program
         .command("status")
@@ -39,7 +43,7 @@ function showOverview(manager: IndexerManager): void {
     const rows = indexes.map((meta) => {
         const lastSync = meta.lastSyncAt ? formatRelativeTime(new Date(meta.lastSyncAt), { compact: true }) : "never";
         const { totalChunks, totalEmbeddings } = meta.stats;
-        const embPct = totalChunks > 0 ? Math.round((totalEmbeddings / totalChunks) * 100) : 0;
+        const embPct = formatEmbeddingPct(totalEmbeddings, totalChunks);
         const embLabel = totalEmbeddings > 0 ? `${totalEmbeddings.toLocaleString()} (${embPct}%)` : "0";
 
         return [

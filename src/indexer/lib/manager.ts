@@ -6,41 +6,9 @@ import type { Storage } from "@app/utils/storage/storage";
 import { CONFIG_FILENAME, ContextArtifactSource, loadContextConfig } from "./context-artifacts";
 import type { IndexerCallbacks, SyncStats } from "./events";
 import { Indexer } from "./indexer";
-import { getDbSizeBytes, getIndexerStorage, sanitizeName } from "./storage";
+import { getIndexerStorage, readLiveStats } from "./storage";
 import { searchIndexReadonly } from "./store";
-import { emptyStats, type IndexConfig, type IndexMeta, type IndexStats } from "./types";
-
-/** Read live counts from an index DB without acquiring a lock. */
-function readLiveStats(db: Database, indexName: string, dbPath: string): Partial<IndexStats> {
-    const tableName = sanitizeName(indexName);
-    const contentTable = `${tableName}_content`;
-    const embTable = `${tableName}_embeddings`;
-
-    const result: Partial<IndexStats> = {};
-
-    try {
-        const row = db.query(`SELECT COUNT(*) AS cnt FROM ${contentTable}`).get() as { cnt: number } | null;
-
-        if (row) {
-            result.totalChunks = row.cnt;
-        }
-    } catch {
-        // Table may not exist
-    }
-
-    try {
-        const row = db.query(`SELECT COUNT(*) AS cnt FROM ${embTable}`).get() as { cnt: number } | null;
-
-        if (row) {
-            result.totalEmbeddings = row.cnt;
-        }
-    } catch {
-        // Table may not exist
-    }
-
-    result.dbSizeBytes = getDbSizeBytes(dbPath);
-    return result;
-}
+import { emptyStats, type IndexConfig, type IndexMeta } from "./types";
 
 interface ManagerConfig {
     indexes: Record<string, IndexConfig>;

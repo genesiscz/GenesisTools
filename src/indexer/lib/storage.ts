@@ -1,6 +1,8 @@
+import type { Database } from "bun:sqlite";
 import { readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { Storage } from "@app/utils/storage/storage";
+import type { IndexStats } from "./types";
 
 const TOOL_NAME = "indexer";
 
@@ -23,6 +25,41 @@ export function getDbSizeBytes(dbPath: string): number {
     } catch {
         return 0;
     }
+}
+
+/**
+ * Read live chunk/embedding counts + DB size from an open (readonly) database.
+ * Used by listIndexes() to show accurate stats without acquiring the index lock.
+ */
+export function readLiveStats(db: Database, indexName: string, dbPath: string): Partial<IndexStats> {
+    const tableName = sanitizeName(indexName);
+    const contentTable = `${tableName}_content`;
+    const embTable = `${tableName}_embeddings`;
+
+    const result: Partial<IndexStats> = {};
+
+    try {
+        const row = db.query(`SELECT COUNT(*) AS cnt FROM ${contentTable}`).get() as { cnt: number } | null;
+
+        if (row) {
+            result.totalChunks = row.cnt;
+        }
+    } catch {
+        // expected — table created lazily during first sync
+    }
+
+    try {
+        const row = db.query(`SELECT COUNT(*) AS cnt FROM ${embTable}`).get() as { cnt: number } | null;
+
+        if (row) {
+            result.totalEmbeddings = row.cnt;
+        }
+    } catch {
+        // expected — table created lazily during first sync
+    }
+
+    result.dbSizeBytes = getDbSizeBytes(dbPath);
+    return result;
 }
 
 /**

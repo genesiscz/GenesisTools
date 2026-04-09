@@ -606,6 +606,19 @@ export function getModelsByProvider(task: AITask, provider: string): ReadonlyArr
     return ALL_MODELS.filter((m) => m.task === task && m.provider === provider);
 }
 
+/** All distinct provider types that have embedding models registered. */
+export function getEmbeddingProviderTypes(): ReadonlySet<string> {
+    const types = new Set<string>();
+
+    for (const m of ALL_MODELS) {
+        if (m.task === "embed") {
+            types.add(m.provider);
+        }
+    }
+
+    return types;
+}
+
 export function findModel(id: string): ModelEntry | undefined {
     return modelById.get(id) ?? modelById.get(id.replace(/:.*$/, ""));
 }
