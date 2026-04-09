@@ -189,7 +189,7 @@ function MappingsPage() {
         <div className="max-w-6xl mx-auto px-6 py-8">
             <div className="flex items-center justify-between mb-6">
                 <h1 className="text-xl font-mono font-bold text-gray-200">
-                    Work Item <span className="text-amber-500">&harr;</span> Clarity Mappings
+                    Work Item <span className="text-primary">&harr;</span> Clarity Mappings
                 </h1>
                 <div className="flex items-center gap-3">
                     {data?.mappings && (
@@ -207,7 +207,7 @@ function MappingsPage() {
             </div>
 
             {/* Configured Mappings — main view below */}
-            <Card className="border-amber-500/20">
+            <Card className="border-primary/20">
                 <CardHeader className="pb-3">
                     <CardTitle className="text-sm font-mono text-gray-400 flex items-center gap-2">
                         Configured Mappings
@@ -249,10 +249,10 @@ function MappingsPage() {
 
             {/* Add Work Items Dialog */}
             <Dialog open={!!addToTask} onOpenChange={(open: boolean) => !open && setAddToTask(null)}>
-                <DialogContent className="sm:max-w-3xl max-h-[85vh] overflow-y-auto bg-gray-950 border-amber-500/20">
+                <DialogContent className="sm:max-w-3xl max-h-[85vh] overflow-y-auto bg-gray-950 border-primary/20">
                     <DialogHeader>
                         <DialogTitle className="font-mono text-sm text-gray-200">
-                            Add work items to <span className="text-amber-400">{addToTask?.clarityTaskName}</span>
+                            Add work items to <span className="text-primary">{addToTask?.clarityTaskName}</span>
                         </DialogTitle>
                         <DialogDescription className="font-mono text-xs text-gray-500">
                             {addToTask?.clarityTaskCode}

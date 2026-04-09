@@ -51,7 +51,7 @@ export function DateRangePicker({ value, onChange, className }: DateRangePickerP
     return (
         <div className={cn("flex flex-col sm:flex-row items-start sm:items-center gap-4", className)}>
             {/* Preset buttons */}
-            <div className="flex items-center gap-1 p-1 glass-card rounded-lg border border-amber-500/20">
+            <div className="flex items-center gap-1 p-1 glass-card rounded-lg border border-primary/20">
                 {presets.map(({ label, days }) => (
                     <button
                         key={label}
@@ -59,7 +59,7 @@ export function DateRangePicker({ value, onChange, className }: DateRangePickerP
                         className={cn(
                             "h-7 px-3 text-xs font-mono rounded transition-all",
                             activePreset === days
-                                ? "bg-amber-500/20 text-amber-400 neon-glow"
+                                ? "bg-primary/20 text-primary neon-glow"
                                 : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
                         )}
                         onClick={() => handlePresetClick(days)}

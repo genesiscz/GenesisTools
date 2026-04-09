@@ -1,5 +1,7 @@
+export { Avatar, AvatarFallback, AvatarImage } from "@ui/components/avatar";
 export { Badge, badgeVariants } from "@ui/components/badge";
 export { Button, buttonVariants } from "@ui/components/button";
+export type { CardAccent } from "@ui/components/card";
 export {
     Card,
     CardAction,
@@ -53,6 +55,17 @@ export {
 } from "@ui/components/dropdown-menu";
 export { Input } from "@ui/components/input";
 export {
+    NavigationMenu,
+    NavigationMenuContent,
+    NavigationMenuIndicator,
+    NavigationMenuItem,
+    NavigationMenuLink,
+    NavigationMenuList,
+    NavigationMenuTrigger,
+    NavigationMenuViewport,
+    navigationMenuTriggerStyle,
+} from "@ui/components/navigation-menu";
+export {
     Pagination,
     PaginationButton,
     PaginationContent,
@@ -104,13 +117,21 @@ export {
 } from "@ui/components/table";
 export { Tabs, TabsContent, TabsList, TabsTrigger } from "@ui/components/tabs";
 export { Textarea } from "@ui/components/textarea";
+export { Toggle, toggleVariants } from "@ui/components/toggle";
+export { ToggleGroup, ToggleGroupItem } from "@ui/components/toggle-group";
 export { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@ui/components/tooltip";
 export type { DashboardAppConfig } from "@ui/create-app";
 export { createDashboardApp } from "@ui/create-app";
+// Custom Wow components
+export * from "@ui/custom";
 export * from "@ui/graphs";
 export type { DashboardLayoutProps, NavLink } from "@ui/layouts/DashboardLayout";
 export { DashboardLayout } from "@ui/layouts/DashboardLayout";
 export { cn } from "@ui/lib/utils";
+export type { ThemeName } from "@ui/theme/themes";
+
+// Themes — apply via className: "wow" | "cyberpunk"
+export { cyberpunkTheme, themes, wowTheme } from "@ui/theme/themes";
 // vite.base exports are NOT re-exported here — import directly from
 // "@ui/vite.base" in vite.config.ts files to avoid pulling vite types
 // into the component type-check scope.

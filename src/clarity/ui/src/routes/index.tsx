@@ -41,7 +41,7 @@ function IndexPage() {
         <div className="max-w-6xl mx-auto px-6 py-8">
             <div className="mb-8">
                 <h1 className="text-2xl font-mono font-bold text-gray-200 mb-2">
-                    ADO <span className="text-amber-500">&harr;</span> Clarity Sync
+                    ADO <span className="text-primary">&harr;</span> Clarity Sync
                 </h1>
                 <p className="text-sm text-gray-500 font-mono">
                     Manage timelog synchronization between Azure DevOps and CA PPM Clarity
@@ -61,10 +61,10 @@ function IndexPage() {
                         onClick={() => router.navigate({ to: action.href })}
                         className="text-left"
                     >
-                        <Card className="border-white/5 hover:border-amber-500/30 transition-all hover:neon-glow cursor-pointer h-full">
+                        <Card className="border-white/5 hover:border-primary/30 transition-all cursor-pointer h-full">
                             <CardContent className="p-5">
                                 <div className="flex items-start gap-4">
-                                    <div className="p-2 rounded bg-amber-500/10 border border-amber-500/30 text-amber-400">
+                                    <div className="p-2 rounded bg-primary/10 border border-primary/30 text-primary">
                                         {action.icon}
                                     </div>
                                     <div>

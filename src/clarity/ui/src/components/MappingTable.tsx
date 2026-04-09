@@ -84,7 +84,7 @@ export function MappingTable({
         return (
             <div className="text-center py-12 text-gray-500 font-mono text-sm">
                 No mappings configured. Use the form below or{" "}
-                <code className="text-amber-400">tools clarity link-workitems</code> to create mappings.
+                <code className="text-primary">tools clarity link-workitems</code> to create mappings.
             </div>
         );
     }
@@ -150,7 +150,7 @@ export function MappingTable({
                         role="listbox"
                         className={`rounded-lg border transition-colors ${
                             isDropTarget && !containsDraggedItem
-                                ? "border-amber-500/60 bg-amber-500/5"
+                                ? "border-primary/60 bg-primary/5"
                                 : "border-white/10 bg-white/[0.02]"
                         }`}
                         onDragOver={(e) => handleDragOver(e, group.clarityTaskId)}
@@ -176,7 +176,7 @@ export function MappingTable({
                                             variant="ghost"
                                             size="sm"
                                             onClick={() => onAdd(group)}
-                                            className="text-amber-400/60 hover:text-amber-300 hover:bg-amber-500/10 h-7 w-7 p-0"
+                                            className="text-primary/60 hover:text-primary hover:bg-primary/10 h-7 w-7 p-0"
                                         >
                                             <Plus className="w-3.5 h-3.5" />
                                         </Button>
@@ -205,7 +205,7 @@ export function MappingTable({
                                             draggable
                                             onDragStart={(e) => handleDragStart(e, item.adoWorkItemId)}
                                             onDragEnd={handleDragEnd}
-                                            className={`flex items-center gap-3 px-4 py-2.5 hover:bg-amber-500/5 cursor-grab active:cursor-grabbing transition-opacity ${
+                                            className={`flex items-center gap-3 px-4 py-2.5 hover:bg-primary/5 cursor-grab active:cursor-grabbing transition-opacity ${
                                                 draggedItemId === item.adoWorkItemId ? "opacity-40" : ""
                                             }`}
                                             style={

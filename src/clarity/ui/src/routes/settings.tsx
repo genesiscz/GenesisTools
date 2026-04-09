@@ -192,7 +192,7 @@ function SettingsPage() {
     return (
         <div className="max-w-6xl mx-auto px-6 py-8">
             <h1 className="text-xl font-mono font-bold text-gray-200 mb-6">
-                <span className="text-amber-500">Settings</span>
+                <span className="text-primary">Settings</span>
             </h1>
 
             {/* Status section */}
@@ -239,7 +239,7 @@ function SettingsPage() {
             </div>
 
             {/* ADO Configure section */}
-            <Card className="border-amber-500/20 mb-6">
+            <Card className="border-primary/20 mb-6">
                 <CardHeader className="pb-3">
                     <CardTitle className="text-sm font-mono text-gray-400">Azure DevOps Configuration</CardTitle>
                 </CardHeader>
@@ -275,7 +275,7 @@ function SettingsPage() {
                                 <Button
                                     onClick={() => adoMutation.mutate()}
                                     disabled={adoMutation.isPending || !adoUrl.trim()}
-                                    className="bg-amber-500/20 border border-amber-500/40 text-amber-400 hover:bg-amber-500/30 font-mono text-xs"
+                                    className="bg-primary/20 border border-primary/40 text-primary hover:bg-primary/30 font-mono text-xs"
                                 >
                                     {adoMutation.isPending ? "Configuring..." : "Configure"}
                                 </Button>
@@ -291,7 +291,7 @@ function SettingsPage() {
                                     </span>
                                     {adoMutation.error instanceof Error &&
                                         adoMutation.error.message.toLowerCase().includes("not logged in") && (
-                                            <p className="font-mono text-xs text-amber-400/70 mt-1">
+                                            <p className="font-mono text-xs text-primary/70 mt-1">
                                                 Hint: Run{" "}
                                                 <code className="px-1 py-0.5 bg-white/5 rounded">az login</code> in your
                                                 terminal first
@@ -306,7 +306,7 @@ function SettingsPage() {
 
             {/* TimeLog Configure section */}
             {adoConfigured && (
-                <Card className="border-amber-500/20 mb-6">
+                <Card className="border-primary/20 mb-6">
                     <CardHeader className="pb-3">
                         <CardTitle className="text-sm font-mono text-gray-400">TimeLog Configuration</CardTitle>
                     </CardHeader>
@@ -324,7 +324,7 @@ function SettingsPage() {
                                     <Button
                                         onClick={() => timelogKeyMutation.mutate()}
                                         disabled={timelogKeyMutation.isPending}
-                                        className="bg-amber-500/20 border border-amber-500/40 text-amber-400 hover:bg-amber-500/30 font-mono text-xs"
+                                        className="bg-primary/20 border border-primary/40 text-primary hover:bg-primary/30 font-mono text-xs"
                                     >
                                         {timelogKeyMutation.isPending && (
                                             <Loader2 className="w-3.5 h-3.5 mr-2 animate-spin" />
@@ -374,7 +374,7 @@ function SettingsPage() {
                                     {!loadMembers && (
                                         <Button
                                             onClick={() => setLoadMembers(true)}
-                                            className="bg-amber-500/20 border border-amber-500/40 text-amber-400 hover:bg-amber-500/30 font-mono text-xs"
+                                            className="bg-primary/20 border border-primary/40 text-primary hover:bg-primary/30 font-mono text-xs"
                                         >
                                             Load team members
                                         </Button>
@@ -382,7 +382,7 @@ function SettingsPage() {
 
                                     {loadMembers && membersLoading && (
                                         <div className="flex items-center gap-2 py-2">
-                                            <Loader2 className="w-4 h-4 animate-spin text-amber-400" />
+                                            <Loader2 className="w-4 h-4 animate-spin text-primary" />
                                             <span className="font-mono text-xs text-gray-400">
                                                 Loading team members...
                                             </span>
@@ -411,8 +411,8 @@ function SettingsPage() {
                                                             onClick={() => setSelectedMember(member)}
                                                             className={`w-full text-left px-3 py-2 rounded border font-mono text-xs transition-colors ${
                                                                 isSelected
-                                                                    ? "border-amber-500/50 bg-amber-500/10 text-amber-300"
-                                                                    : "border-white/5 bg-black/20 text-gray-400 hover:border-amber-500/20"
+                                                                    ? "border-primary/50 bg-primary/10 text-primary"
+                                                                    : "border-white/5 bg-black/20 text-gray-400 hover:border-primary/20"
                                                             }`}
                                                         >
                                                             <span className="font-bold">{member.displayName}</span>
@@ -443,7 +443,7 @@ function SettingsPage() {
                                                     });
                                                 }}
                                                 disabled={!selectedMember || timelogUserMutation.isPending}
-                                                className="bg-amber-500/20 border border-amber-500/40 text-amber-400 hover:bg-amber-500/30 font-mono text-xs disabled:opacity-40"
+                                                className="bg-primary/20 border border-primary/40 text-primary hover:bg-primary/30 font-mono text-xs disabled:opacity-40"
                                             >
                                                 {timelogUserMutation.isPending ? (
                                                     <>
@@ -472,7 +472,7 @@ function SettingsPage() {
             )}
 
             {/* Update Auth section */}
-            <Card className="border-amber-500/20 mb-6">
+            <Card className="border-primary/20 mb-6">
                 <CardHeader className="pb-3">
                     <CardTitle className="text-sm font-mono text-gray-400">Configure / Update Auth</CardTitle>
                 </CardHeader>
@@ -498,13 +498,13 @@ function SettingsPage() {
                         value={curlInput}
                         onChange={(e) => setCurlInput(e.target.value)}
                         placeholder="curl 'https://...' -H 'authToken: ...' -H 'Cookie: sessionId=...'"
-                        className="w-full h-32 bg-black/30 border border-white/10 rounded px-3 py-2 font-mono text-xs text-gray-300 placeholder:text-gray-600 focus:border-amber-500/40 focus:outline-none resize-none"
+                        className="w-full h-32 bg-black/30 border border-white/10 rounded px-3 py-2 font-mono text-xs text-gray-300 placeholder:text-gray-600 focus:border-primary/40 focus:outline-none resize-none"
                     />
                     <div className="mt-3 flex items-center gap-3">
                         <Button
                             onClick={() => authMutation.mutate()}
                             disabled={authMutation.isPending || !curlInput.trim()}
-                            className="bg-amber-500/20 border border-amber-500/40 text-amber-400 hover:bg-amber-500/30 font-mono text-xs"
+                            className="bg-primary/20 border border-primary/40 text-primary hover:bg-primary/30 font-mono text-xs"
                         >
                             {authMutation.isPending ? "Updating..." : "Update Auth"}
                         </Button>
@@ -536,19 +536,19 @@ function SettingsPage() {
                 <CardContent>
                     <div className="space-y-2 font-mono text-xs">
                         <div className="flex items-center gap-2">
-                            <code className="text-amber-400">tools clarity configure auth</code>
+                            <code className="text-primary">tools clarity configure auth</code>
                             <span className="text-gray-500">Initial setup with base URL and auth</span>
                         </div>
                         <div className="flex items-center gap-2">
-                            <code className="text-amber-400">tools clarity link-workitems</code>
+                            <code className="text-primary">tools clarity link-workitems</code>
                             <span className="text-gray-500">Create ADO-Clarity mappings</span>
                         </div>
                         <div className="flex items-center gap-2">
-                            <code className="text-amber-400">tools clarity fill --month N</code>
+                            <code className="text-primary">tools clarity fill --month N</code>
                             <span className="text-gray-500">Fill timesheets from CLI</span>
                         </div>
                         <div className="flex items-center gap-2">
-                            <code className="text-amber-400">tools clarity timesheet</code>
+                            <code className="text-primary">tools clarity timesheet</code>
                             <span className="text-gray-500">View current timesheet</span>
                         </div>
                     </div>

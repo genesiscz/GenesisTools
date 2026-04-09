@@ -3,7 +3,6 @@
         "src/mcp-tsc/test-dummy*.ts",
         "src/claude-history-dashboard",
         "src/fsevents-profile",
-        "src/utils/ui",
         "src/clarity/ui",
         "src/Internal/commands/reas/ui"
     ],
@@ -35,7 +34,9 @@
         // Path aliases
         "paths": {
             "@app/*": ["./src/*"],
-            "@ask/*": ["./src/ask/*"]
+            "@ask/*": ["./src/ask/*"],
+            "@ui/*": ["./src/utils/ui/*"],
+            "@ui": ["./src/utils/ui/index.ts"]
         }
     },
     "include": ["src/**/*", "./test-*.ts"]

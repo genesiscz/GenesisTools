@@ -25,7 +25,7 @@ export function WorkItemLink({ id, title, adoConfig }: WorkItemLinkProps) {
                     href={url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 font-mono text-sm text-amber-400 hover:text-amber-300 hover:underline"
+                    className="inline-flex items-center gap-1 font-mono text-sm text-primary hover:text-primary hover:underline"
                 >
                     #{id}
                     <ExternalLink className="w-3 h-3" />
@@ -37,7 +37,7 @@ export function WorkItemLink({ id, title, adoConfig }: WorkItemLinkProps) {
 
     return (
         <div className="flex items-center gap-2">
-            <span className="font-mono text-sm text-amber-400">#{id}</span>
+            <span className="font-mono text-sm text-primary">#{id}</span>
             {title && <span className="text-sm text-gray-400">{title}</span>}
         </div>
     );

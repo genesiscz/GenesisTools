@@ -86,7 +86,7 @@ export function AddMappingForm({ onMappingAdded }: AddMappingFormProps) {
         : !!selectedWeek;
 
     return (
-        <Card className="border-amber-500/20">
+        <Card className="border-primary/20">
             <CardHeader className="pb-3">
                 <CardTitle className="text-sm font-mono text-gray-400 flex items-center gap-2">
                     <Plus className="w-4 h-4" />
@@ -106,7 +106,7 @@ export function AddMappingForm({ onMappingAdded }: AddMappingFormProps) {
                                 setSelectedTask(null);
                                 tasksMutation.reset();
                             }}
-                            className="text-[10px] font-mono text-gray-600 hover:text-amber-400 transition-colors"
+                            className="text-[10px] font-mono text-gray-600 hover:text-primary transition-colors"
                         >
                             {useManualId ? "← Show weeks" : "Enter ID manually →"}
                         </button>
@@ -121,7 +121,7 @@ export function AddMappingForm({ onMappingAdded }: AddMappingFormProps) {
                                 onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
                                     setManualTimesheetId(e.target.value)
                                 }
-                                className="flex-1 bg-black/30 border-white/10 font-mono text-sm text-gray-300 placeholder:text-gray-600 focus:border-amber-500/40"
+                                className="flex-1 bg-black/30 border-white/10 font-mono text-sm text-gray-300 placeholder:text-gray-600 focus:border-primary/40"
                             />
                             <Button
                                 onClick={() => {
@@ -129,7 +129,7 @@ export function AddMappingForm({ onMappingAdded }: AddMappingFormProps) {
                                     tasksMutation.mutate();
                                 }}
                                 disabled={!canLoadTasks || tasksMutation.isPending}
-                                className="bg-amber-500/20 border border-amber-500/40 text-amber-400 hover:bg-amber-500/30 font-mono text-xs"
+                                className="bg-primary/20 border border-primary/40 text-primary hover:bg-primary/30 font-mono text-xs"
                             >
                                 {tasksMutation.isPending ? (
                                     <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -150,7 +150,7 @@ export function AddMappingForm({ onMappingAdded }: AddMappingFormProps) {
                             {weeksError instanceof Error && weeksError.message.includes("non-JSON") ? (
                                 <span>
                                     Clarity session expired.{" "}
-                                    <a href="/settings" className="underline text-amber-400 hover:text-amber-300">
+                                    <a href="/settings" className="underline text-primary hover:text-primary">
                                         Re-authenticate in Settings
                                     </a>
                                 </span>
@@ -177,10 +177,10 @@ export function AddMappingForm({ onMappingAdded }: AddMappingFormProps) {
                                         }}
                                         className={`w-full text-left px-3 py-2 rounded border transition-colors font-mono text-xs ${
                                             selected
-                                                ? "border-amber-500/50 bg-amber-500/10 text-amber-300"
+                                                ? "border-primary/50 bg-primary/10 text-primary"
                                                 : current
-                                                  ? "border-amber-500/20 bg-amber-500/5 text-gray-300"
-                                                  : "border-white/5 bg-black/20 text-gray-400 hover:border-amber-500/20 hover:bg-amber-500/5"
+                                                  ? "border-primary/20 bg-primary/5 text-gray-300"
+                                                  : "border-white/5 bg-black/20 text-gray-400 hover:border-primary/20 hover:bg-primary/5"
                                         }`}
                                     >
                                         <div className="flex items-center justify-between">
@@ -224,7 +224,7 @@ export function AddMappingForm({ onMappingAdded }: AddMappingFormProps) {
                                 tasksMutation.mutate();
                             }}
                             disabled={tasksMutation.isPending}
-                            className="mt-2 bg-amber-500/20 border border-amber-500/40 text-amber-400 hover:bg-amber-500/30 font-mono text-xs"
+                            className="mt-2 bg-primary/20 border border-primary/40 text-primary hover:bg-primary/30 font-mono text-xs"
                         >
                             {tasksMutation.isPending ? (
                                 <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
@@ -257,8 +257,8 @@ export function AddMappingForm({ onMappingAdded }: AddMappingFormProps) {
                                     onClick={() => setSelectedTask(task)}
                                     className={`w-full text-left px-3 py-2 rounded border transition-colors font-mono text-xs ${
                                         selectedTask?.taskId === task.taskId
-                                            ? "border-amber-500/50 bg-amber-500/10 text-amber-300"
-                                            : "border-white/5 bg-black/20 text-gray-400 hover:border-amber-500/20 hover:bg-amber-500/5"
+                                            ? "border-primary/50 bg-primary/10 text-primary"
+                                            : "border-white/5 bg-black/20 text-gray-400 hover:border-primary/20 hover:bg-primary/5"
                                     }`}
                                 >
                                     <div className="flex items-center justify-between">

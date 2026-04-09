@@ -1,7 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@ui/components/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
-import { Skeleton } from "@ui/components/skeleton";
 import { AlertTriangle, Shield } from "lucide-react";
 import type { GranularStatus } from "../server/settings";
 
@@ -69,13 +68,14 @@ function timelogDotColor(timelog: GranularStatus["timelog"]): "green" | "amber" 
 
 function DirectoryWarning({ projectCwd }: { projectCwd: string }) {
     return (
-        <div className="flex items-start gap-2 rounded border border-amber-500/30 bg-amber-500/10 px-3 py-2 mb-4">
-            <AlertTriangle className="w-4 h-4 text-amber-400 mt-0.5 shrink-0" />
-            <div className="text-xs text-amber-300/80">
-                <span className="font-mono text-amber-300">{projectCwd}</span>
+        <div className="flex items-start gap-2 rounded border border-primary/20 bg-primary/5 px-3 py-2 mb-4">
+            <AlertTriangle className="size-4 text-primary mt-0.5 shrink-0" />
+            <div className="text-xs text-muted-foreground">
+                <span className="font-mono text-foreground">{projectCwd}</span>
                 <br />
-                Config is read from this directory. Run <span className="font-mono">tools clarity ui</span> from the
-                same folder where you ran <span className="font-mono">tools azure-devops configure</span>.
+                Config is read from this directory. Run{" "}
+                <span className="font-mono text-foreground/80">tools clarity ui</span> from the same folder where you
+                ran <span className="font-mono text-foreground/80">tools azure-devops configure</span>.
             </div>
         </div>
     );
@@ -118,13 +118,13 @@ function AdoSection({ ado }: { ado: GranularStatus["ado"] }) {
                     <div className="text-xs font-mono text-gray-400">Org: {ado.org}</div>
                     <div className="text-xs font-mono text-gray-400">Project: {ado.project}</div>
                     {!ado.hasOrgId && (
-                        <div className="text-xs font-mono text-amber-400/80">
+                        <div className="text-xs font-mono text-muted-foreground">
                             Org ID missing — reconfigure below to fix TimeLog
                         </div>
                     )}
                 </div>
             ) : (
-                <div className="ml-4 text-xs font-mono text-amber-400/80">
+                <div className="ml-4 text-xs font-mono text-muted-foreground">
                     Not configured — set up below or run:{" "}
                     <span className="font-mono">tools azure-devops configure &lt;url&gt;</span>
                 </div>
@@ -156,7 +156,7 @@ function TimelogSection({ timelog }: { timelog: GranularStatus["timelog"] }) {
                     <div className="text-xs font-mono text-gray-400">Default user: not set</div>
                 </div>
             ) : (
-                <div className="ml-4 text-xs font-mono text-amber-400/80">
+                <div className="ml-4 text-xs font-mono text-muted-foreground">
                     Not configured — set up below or run:{" "}
                     <span className="font-mono">tools azure-devops timelog configure</span>
                 </div>
@@ -172,9 +172,12 @@ function CompactStatusCard({ status }: { status: GranularStatus }) {
         timelogDotColor(status.timelog) === "red";
 
     return (
-        <Card className="border-amber-500/20">
+        <Card className="border-primary/20">
             <CardHeader className="pb-3">
-                <CardTitle className="text-sm font-mono text-gray-400 flex items-center gap-2">System status</CardTitle>
+                <CardTitle className="text-sm font-mono text-primary flex items-center gap-2">
+                    <Shield className="w-4 h-4 text-primary" />
+                    System status
+                </CardTitle>
             </CardHeader>
             <CardContent>
                 <div className="space-y-2">
@@ -195,7 +198,7 @@ function CompactStatusCard({ status }: { status: GranularStatus }) {
                         {anyUnconfigured && (
                             <a
                                 href="/settings"
-                                className="text-xs font-mono text-amber-400 hover:text-amber-300 transition-colors"
+                                className="text-xs font-mono text-primary hover:text-primary transition-colors"
                             >
                                 Configure &rarr;
                             </a>
@@ -220,21 +223,18 @@ export function StatusCard({ compact }: StatusCardProps) {
         staleTime: 30_000,
     });
 
+    const title = compact ? "System status" : "Configuration status";
+
     if (isLoading) {
         return (
-            <Card className="border-amber-500/20">
+            <Card className="border-primary/20">
                 <CardHeader className="pb-3">
-                    <CardTitle className="text-sm font-mono text-gray-400 flex items-center gap-2">
-                        <Shield className="w-4 h-4" />
-                        System status
+                    <CardTitle className="text-sm font-mono text-primary flex items-center gap-2">
+                        <Shield className="w-4 h-4 text-primary" />
+                        {title}
                     </CardTitle>
                 </CardHeader>
-                <CardContent>
-                    <div className="space-y-3">
-                        <Skeleton variant="line" />
-                        <Skeleton variant="line" />
-                    </div>
-                </CardContent>
+                <CardContent className={compact ? "min-h-[72px]" : "min-h-[320px]"} />
             </Card>
         );
     }
@@ -243,9 +243,9 @@ export function StatusCard({ compact }: StatusCardProps) {
         return (
             <Card className="border-red-500/20">
                 <CardHeader className="pb-3">
-                    <CardTitle className="text-sm font-mono text-gray-400 flex items-center gap-2">
-                        <Shield className="w-4 h-4" />
-                        System status
+                    <CardTitle className="text-sm font-mono text-primary flex items-center gap-2">
+                        <Shield className="w-4 h-4 text-primary" />
+                        {title}
                     </CardTitle>
                 </CardHeader>
                 <CardContent>
@@ -266,10 +266,10 @@ export function StatusCard({ compact }: StatusCardProps) {
     }
 
     return (
-        <Card className="border-amber-500/20">
+        <Card className="border-primary/20">
             <CardHeader className="pb-3">
-                <CardTitle className="text-sm font-mono text-gray-400 flex items-center gap-2">
-                    <Shield className="w-4 h-4" />
+                <CardTitle className="text-sm font-mono text-primary flex items-center gap-2">
+                    <Shield className="w-4 h-4 text-primary" />
                     Configuration status
                 </CardTitle>
             </CardHeader>

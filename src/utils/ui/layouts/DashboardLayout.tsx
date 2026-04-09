@@ -35,7 +35,7 @@ export function DashboardLayout({
     const displayTitle = titleAccent ? (
         <>
             {title}
-            <span className="text-amber-500">::</span>
+            <span className="text-primary">::</span>
             {titleAccent}
         </>
     ) : (
@@ -43,18 +43,18 @@ export function DashboardLayout({
     );
 
     return (
-        <div className="cyberpunk min-h-screen bg-background text-foreground relative">
+        <div className="min-h-screen bg-background text-foreground relative">
             {/* Ambient glow effects */}
             <div className="fixed inset-0 pointer-events-none z-0">
-                <div className="absolute top-0 left-1/4 w-96 h-96 bg-amber-500/5 rounded-full blur-3xl" />
-                <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-cyan-500/5 rounded-full blur-3xl" />
+                <div className="absolute top-0 left-1/4 w-96 h-96 bg-primary/5 rounded-full blur-3xl" />
+                <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-secondary/5 rounded-full blur-3xl" />
             </div>
 
             {/* Scan lines overlay */}
             <div className="fixed inset-0 scan-lines opacity-[0.02] pointer-events-none z-50" />
 
             {/* Header */}
-            <header className="sticky top-0 z-40 glass-card border-b border-amber-500/20">
+            <header className="sticky top-0 z-40 bg-background/80 backdrop-blur-xl border-b border-primary/20">
                 <div className="max-w-6xl mx-auto px-3 sm:px-6">
                     <div className="flex h-12 items-center justify-between">
                         {/* Logo / Title */}
@@ -65,11 +65,11 @@ export function DashboardLayout({
                             onKeyDown={(e) => e.key === "Enter" && onNavigate?.("/")}
                         >
                             {icon && (
-                                <div className="p-1 rounded bg-amber-500/10 border border-amber-500/30 group-hover:neon-glow transition-all">
+                                <div className="p-1 rounded bg-primary/10 border border-primary/30 transition-all">
                                     {icon}
                                 </div>
                             )}
-                            <span className="font-mono font-bold text-sm text-gray-300 tracking-wider group-hover:text-gray-100 transition-colors hidden sm:inline">
+                            <span className="font-mono font-bold text-sm text-muted-foreground tracking-wider group-hover:text-foreground transition-colors hidden sm:inline">
                                 {displayTitle}
                             </span>
                         </button>
@@ -91,8 +91,8 @@ export function DashboardLayout({
                                             }}
                                             className={`flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1.5 rounded text-xs font-mono tracking-wider transition-all no-underline ${
                                                 isActive
-                                                    ? "bg-amber-500/10 text-amber-400 border border-amber-500/30 neon-glow"
-                                                    : "text-gray-500 hover:text-gray-300 hover:bg-white/5"
+                                                    ? "bg-primary/10 text-primary border border-primary/30"
+                                                    : "text-muted-foreground hover:text-foreground hover:bg-white/5"
                                             }`}
                                             title={label}
                                         >

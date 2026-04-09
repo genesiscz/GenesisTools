@@ -406,14 +406,14 @@ function DistrictCommandSelect(props: DistrictCommandSelectProps) {
                 disabled={disabledItem}
                 className={cn(
                     "cursor-pointer font-mono text-xs",
-                    "data-[selected=true]:bg-amber-500/10 data-[selected=true]:text-amber-300",
-                    isSelected && "text-amber-400",
+                    "data-[selected=true]:bg-primary/10 data-[selected=true]:text-primary/80",
+                    isSelected && "text-primary",
                     disabledItem && "text-gray-600 cursor-not-allowed"
                 )}
             >
-                <MapPin className="h-3 w-3 text-amber-400/60" />
+                <MapPin className="h-3 w-3 text-primary/60" />
                 {district}
-                {isSelected ? <Check className="ml-auto h-3.5 w-3 text-amber-400" /> : null}
+                {isSelected ? <Check className="ml-auto h-3.5 w-3 text-primary" /> : null}
             </CommandItem>
         );
     };
@@ -482,7 +482,7 @@ function DistrictCommandSelect(props: DistrictCommandSelectProps) {
                             {visibleOther.length > 0 && (
                                 <CommandGroup
                                     heading="Districts"
-                                    className="[&_[cmdk-group-heading]]:text-amber-400 [&_[cmdk-group-heading]]:font-mono [&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-wider"
+                                    className="[&_[cmdk-group-heading]]:text-primary [&_[cmdk-group-heading]]:font-mono [&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-wider"
                                 >
                                     {visibleOther.map((district) => renderListItem(district))}
                                 </CommandGroup>
@@ -502,7 +502,7 @@ function DistrictCommandSelect(props: DistrictCommandSelectProps) {
                             {visibleOther.length > 0 && (
                                 <CommandGroup
                                     heading="Districts"
-                                    className="[&_[cmdk-group-heading]]:text-amber-400 [&_[cmdk-group-heading]]:font-mono [&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-wider"
+                                    className="[&_[cmdk-group-heading]]:text-primary [&_[cmdk-group-heading]]:font-mono [&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-wider"
                                 >
                                     {visibleOther.map((district) => renderListItem(district))}
                                 </CommandGroup>
@@ -535,7 +535,7 @@ function DistrictCommandSelect(props: DistrictCommandSelectProps) {
                 )}
             >
                 <span className="flex items-center gap-2 truncate">
-                    <MapPin className="h-3.5 w-3 shrink-0 text-amber-400" />
+                    <MapPin className="h-3.5 w-3 shrink-0 text-primary" />
                     {buttonLabel}
                 </span>
                 <ChevronDown className={cn("h-4 w-4 shrink-0 opacity-60 transition-transform", open && "rotate-180")} />

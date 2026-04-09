@@ -197,7 +197,7 @@ function ImportPage() {
         <div className="max-w-6xl mx-auto px-6 py-8">
             <div className="flex items-center justify-between mb-6">
                 <h1 className="text-xl font-mono font-bold text-gray-200">
-                    Clarity <span className="text-amber-500">Import</span>
+                    Clarity <span className="text-primary">Import</span>
                 </h1>
                 <MonthPicker
                     month={month}
@@ -252,7 +252,7 @@ function ImportPage() {
 
                     {/* Week cards */}
                     {preview.weeks.length === 0 ? (
-                        <Card className="border-amber-500/20">
+                        <Card className="border-primary/20">
                             <CardContent className="p-8 text-center">
                                 <div className="text-gray-500 font-mono text-sm">
                                     {preview.diagnostics?.message ??
@@ -280,15 +280,15 @@ function ImportPage() {
                             {!showConfirm ? (
                                 <Button
                                     onClick={() => setShowConfirm(true)}
-                                    className="bg-amber-500/20 border border-amber-500/40 text-amber-400 hover:bg-amber-500/30 hover:neon-glow font-mono tracking-wider px-8 py-3 text-sm"
+                                    className="bg-primary/20 border border-primary/40 text-primary hover:bg-primary/30 hover:neon-glow font-mono tracking-wider px-8 py-3 text-sm"
                                 >
                                     <Play className="w-4 h-4 mr-2" />
                                     Execute Fill ({selectedWeeks.size} week{selectedWeeks.size > 1 ? "s" : ""})
                                 </Button>
                             ) : (
-                                <Card className="border-amber-500/40 w-full max-w-md">
+                                <Card className="border-primary/40 w-full max-w-md">
                                     <CardHeader>
-                                        <CardTitle className="text-sm font-mono text-amber-400 flex items-center gap-2">
+                                        <CardTitle className="text-sm font-mono text-primary flex items-center gap-2">
                                             <AlertTriangle className="w-4 h-4" />
                                             Confirm Fill
                                         </CardTitle>
@@ -303,7 +303,7 @@ function ImportPage() {
                                                 type="checkbox"
                                                 checked={alsoPostComments}
                                                 onChange={(e) => setAlsoPostComments(e.target.checked)}
-                                                className="accent-amber-500"
+                                                className="accent-primary"
                                             />
                                             Also post weekly comments
                                         </label>
@@ -320,7 +320,7 @@ function ImportPage() {
                                             <Button
                                                 onClick={() => fillMutation.mutate()}
                                                 disabled={fillMutation.isPending}
-                                                className="bg-amber-500/20 border border-amber-500/40 text-amber-400 hover:bg-amber-500/30 font-mono text-xs flex-1"
+                                                className="bg-primary/20 border border-primary/40 text-primary hover:bg-primary/30 font-mono text-xs flex-1"
                                             >
                                                 {fillMutation.isPending ? "Executing..." : "Confirm"}
                                             </Button>
@@ -402,14 +402,14 @@ function FillResultsCard({ result }: { result: ExecuteFillResult }) {
     }
 
     return (
-        <Card className={`mt-6 ${allSuccess ? "border-green-500/20" : "border-amber-500/20"}`}>
+        <Card className={`mt-6 ${allSuccess ? "border-green-500/20" : "border-primary/20"}`}>
             <CardHeader className="pb-3">
                 <div className="flex items-center justify-between">
                     <CardTitle className="text-sm font-mono text-gray-200 flex items-center gap-2">
                         {allSuccess ? (
                             <CheckCircle className="w-5 h-5 text-green-400" />
                         ) : (
-                            <AlertTriangle className="w-5 h-5 text-amber-400" />
+                            <AlertTriangle className="w-5 h-5 text-primary" />
                         )}
                         Fill Results
                     </CardTitle>
@@ -438,7 +438,7 @@ function FillResultsCard({ result }: { result: ExecuteFillResult }) {
                             variant="ghost"
                             size="sm"
                             onClick={() => setShowDebug(!showDebug)}
-                            className={`text-xs font-mono gap-1.5 ${showDebug ? "text-amber-400" : "text-gray-500"}`}
+                            className={`text-xs font-mono gap-1.5 ${showDebug ? "text-primary" : "text-gray-500"}`}
                         >
                             <Bug className="w-3.5 h-3.5" />
                             Debug
@@ -471,7 +471,7 @@ function FillResultsCard({ result }: { result: ExecuteFillResult }) {
                                     {entry.clarityTaskName}
                                 </span>
                                 {entry.totalHours > 0 && (
-                                    <span className="font-mono text-xs text-amber-400 flex-shrink-0">
+                                    <span className="font-mono text-xs text-primary flex-shrink-0">
                                         {entry.totalHours.toFixed(1)}h
                                     </span>
                                 )}
@@ -502,8 +502,7 @@ function FillResultsCard({ result }: { result: ExecuteFillResult }) {
                                             Task Code: <span className="text-gray-400">{entry.clarityTaskCode}</span>
                                         </div>
                                         <div>
-                                            Total:{" "}
-                                            <span className="text-amber-400">{entry.totalHours.toFixed(2)}h</span>
+                                            Total: <span className="text-primary">{entry.totalHours.toFixed(2)}h</span>
                                         </div>
                                     </div>
 
@@ -513,7 +512,7 @@ function FillResultsCard({ result }: { result: ExecuteFillResult }) {
                                             {entry.segments.map((s) => (
                                                 <span
                                                     key={s.date}
-                                                    className="text-xs font-mono px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400"
+                                                    className="text-xs font-mono px-1.5 py-0.5 rounded bg-primary/10 text-primary"
                                                 >
                                                     {s.date.slice(5)} {s.hours.toFixed(1)}h
                                                 </span>
@@ -535,7 +534,7 @@ function FillResultsCard({ result }: { result: ExecuteFillResult }) {
                                                 HTTP Request
                                             </div>
                                             <pre className="text-xs font-mono text-gray-400 overflow-x-auto max-h-48 overflow-y-auto whitespace-pre-wrap">
-                                                <span className="text-amber-400">
+                                                <span className="text-primary">
                                                     {entry.debug!.method} {entry.debug!.url}
                                                 </span>
                                                 {"\n\n"}

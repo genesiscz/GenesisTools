@@ -253,7 +253,7 @@ export function WorkItemSelector({ clarityTask, timesheetId, month, year, onItem
                                     type="checkbox"
                                     checked={showMapped}
                                     onChange={(e) => setShowMapped(e.target.checked)}
-                                    className="accent-amber-500 w-3 h-3"
+                                    className="accent-primary w-3 h-3"
                                 />
                                 Show mapped
                             </label>
@@ -310,7 +310,7 @@ export function WorkItemSelector({ clarityTask, timesheetId, month, year, onItem
                                         onChange={() => toggleTimelogItem(wi)}
                                         className="accent-cyan-500 w-3.5 h-3.5"
                                     />
-                                    <span className="text-amber-400/80">#{wi.id}</span>
+                                    <span className="text-primary/80">#{wi.id}</span>
                                     <span className="flex-1 truncate font-medium">{wi.title}</span>
                                     {wi.type && <TypeBadge typeName={wi.type} color={typeColor} />}
                                     <span className="text-gray-500 tabular-nums">{hours}h</span>
@@ -393,7 +393,7 @@ export function WorkItemSelector({ clarityTask, timesheetId, month, year, onItem
                                               : "border-white/5 bg-black/20 text-gray-400"
                                     }`}
                                 >
-                                    <span className="text-amber-400/80">#{wi.id}</span>
+                                    <span className="text-primary/80">#{wi.id}</span>
                                     <span className="flex-1 truncate font-medium">{wi.title}</span>
                                     {wi.type && <TypeBadge typeName={wi.type} color={typeColor} />}
                                     {isMapped ? (
@@ -437,14 +437,14 @@ export function WorkItemSelector({ clarityTask, timesheetId, month, year, onItem
                     <span className="text-xs font-mono text-gray-500">
                         Selected: <span className="text-cyan-400">{selectedWorkItems.size} items</span>
                         {" → "}
-                        <span className="text-amber-300">{clarityTask.taskName}</span>
+                        <span className="text-primary">{clarityTask.taskName}</span>
                     </span>
                 </div>
 
                 <Button
                     onClick={() => addMutation.mutate()}
                     disabled={!canAdd || addMutation.isPending}
-                    className="bg-amber-500/20 border border-amber-500/40 text-amber-400 hover:bg-amber-500/30 font-mono text-xs"
+                    className="bg-primary/20 border border-primary/40 text-primary hover:bg-primary/30 font-mono text-xs"
                 >
                     {addMutation.isPending ? (
                         <>

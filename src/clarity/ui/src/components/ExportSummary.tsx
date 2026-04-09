@@ -21,7 +21,7 @@ export function ExportSummary({ totalHours, totalEntries, workItemCount, dayCoun
                 <Card key={stat.label} className="border-white/5">
                     <CardContent className="p-4 text-center">
                         <div
-                            className={`font-mono text-2xl font-bold ${stat.accent ? "text-amber-400" : "text-gray-300"}`}
+                            className={`font-mono text-2xl font-bold ${stat.accent ? "text-primary" : "text-gray-300"}`}
                         >
                             {stat.value}
                         </div>
