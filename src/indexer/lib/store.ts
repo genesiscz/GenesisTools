@@ -563,10 +563,26 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
                 const countRow = db.query(`SELECT COUNT(*) AS cnt FROM ${contentTable}`).get() as { cnt: number };
                 const chunkCount = countRow.cnt;
 
+                // Live embedding count from actual table
+                let embeddingCount = 0;
+
+                if (embTableExists) {
+                    const embRow = db.query(`SELECT COUNT(*) AS cnt FROM ${activeEmbTable}`).get() as {
+                        cnt: number;
+                    };
+                    embeddingCount = embRow.cnt;
+                }
+
+                // Live DB size from filesystem (includes WAL)
                 let dbSizeBytes = 0;
 
                 try {
                     dbSizeBytes = Bun.file(dbPath).size;
+                    const walSize = Bun.file(`${dbPath}-wal`).size;
+
+                    if (walSize > 0) {
+                        dbSizeBytes += walSize;
+                    }
                 } catch {
                     // File may not exist yet
                 }
@@ -583,7 +599,7 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
                 return {
                     totalFiles: meta.stats.totalFiles,
                     totalChunks: chunkCount,
-                    totalEmbeddings: meta.stats.totalEmbeddings,
+                    totalEmbeddings: embeddingCount,
                     embeddingDimensions: meta.stats.embeddingDimensions,
                     dbSizeBytes,
                     lastSyncDurationMs: meta.stats.lastSyncDurationMs,
