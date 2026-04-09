@@ -86,6 +86,30 @@ export function needsRecipients(columns: MailColumnKey[]): boolean {
     return columns.some((col) => RECIPIENT_COLUMNS.includes(col));
 }
 
+// ─── Date parsing ───────────────────────────────────────────
+
+/**
+ * Parse a YYYY-MM-DD (or ISO) date string. For `endOfDay=true` bare dates
+ * are bumped to 23:59:59.999 UTC so `--to 2026-04-09` includes the whole day.
+ */
+export function parseMailDate(str: string | undefined, endOfDay = false): Date | undefined {
+    if (!str) {
+        return undefined;
+    }
+
+    const d = new Date(str);
+
+    if (Number.isNaN(d.getTime())) {
+        throw new Error(`Invalid date: "${str}". Use YYYY-MM-DD format.`);
+    }
+
+    if (endOfDay && /^\d{4}-\d{2}-\d{2}$/.test(str)) {
+        d.setUTCHours(23, 59, 59, 999);
+    }
+
+    return d;
+}
+
 // ─── Body enrichment ────────────────────────────────────────
 
 export async function enrichWithBodies(messages: MailMessage[], columns: MailColumnKey[]): Promise<void> {

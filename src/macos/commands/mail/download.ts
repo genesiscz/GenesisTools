@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import logger from "@app/logger";
 import { EmlxBodyExtractor } from "@app/macos/lib/mail/emlx";
+import { parseMailDate } from "@app/macos/lib/mail/command-helpers";
 import { generateEmailMarkdown, generateIndexMarkdown, generateSlug } from "@app/macos/lib/mail/format";
 import { saveAttachment } from "@app/macos/lib/mail/jxa";
 import { MailStorage } from "@app/macos/lib/mail/mail-storage";
@@ -108,13 +109,15 @@ export function registerDownloadCommand(program: Command): void {
                     // Apply date filters
                     let filteredMessages = messages;
 
-                    if (options.from) {
-                        const fromDate = new Date(options.from);
+                    const fromDate = parseMailDate(options.from);
+
+                    if (fromDate) {
                         filteredMessages = filteredMessages.filter((m) => m.dateSent >= fromDate);
                     }
 
-                    if (options.to) {
-                        const toDate = new Date(options.to);
+                    const toDate = parseMailDate(options.to, true);
+
+                    if (toDate) {
                         filteredMessages = filteredMessages.filter((m) => m.dateSent <= toDate);
                     }
 

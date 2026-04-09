@@ -2,6 +2,7 @@ import { IndexerManager } from "@app/indexer/lib/manager";
 import { createProgressCallbacks } from "@app/indexer/lib/progress";
 import { MailSource } from "@app/indexer/lib/sources/mail-source";
 import type { IndexConfig } from "@app/indexer/lib/types";
+import { parseMailDate } from "@app/macos/lib/mail/command-helpers";
 import { isInteractive, suggestCommand } from "@app/utils/cli";
 import { formatBytes, formatDuration } from "@app/utils/format";
 import * as p from "@clack/prompts";
@@ -15,19 +16,13 @@ interface DateRange {
     toDate?: Date;
 }
 
-function parseDate(str: string | undefined, label: string): Date | undefined {
-    if (!str) {
-        return undefined;
-    }
-
-    const d = new Date(str);
-
-    if (Number.isNaN(d.getTime())) {
-        p.log.error(`Invalid ${label} date: "${str}". Use YYYY-MM-DD format.`);
+function parseDate(str: string | undefined, label: string, endOfDay = false): Date | undefined {
+    try {
+        return parseMailDate(str, endOfDay);
+    } catch (err) {
+        p.log.error(`Invalid ${label} ${err instanceof Error ? err.message : String(err)}`);
         process.exit(1);
     }
-
-    return d;
 }
 
 export function registerIndexCommand(program: Command): void {
@@ -58,11 +53,13 @@ export function registerIndexCommand(program: Command): void {
                 p.intro(pc.bgCyan(pc.white(" mail index ")));
 
                 const fromDate = parseDate(opts.from, "--from");
-                const toDate = parseDate(opts.to, "--to");
+                const toDate = parseDate(opts.to, "--to", true);
 
                 // Resolve provider/model early — interactive prompt if --provider/--model without value
                 let resolvedProvider =
-                    typeof opts.provider === "string" && VALID_EMBEDDING_PROVIDERS.has(opts.provider) ? opts.provider : undefined;
+                    typeof opts.provider === "string" && VALID_EMBEDDING_PROVIDERS.has(opts.provider)
+                        ? opts.provider
+                        : undefined;
                 let resolvedModel =
                     typeof opts.model === "string" && !opts.model.startsWith("-") ? opts.model : undefined;
 
@@ -86,7 +83,9 @@ export function registerIndexCommand(program: Command): void {
                     opts.model === true || (typeof opts.model === "string" && opts.model.startsWith("-"));
 
                 if (wantsProviderPrompt && typeof opts.provider === "string") {
-                    p.log.warning(`Unknown provider "${opts.provider}". Valid: ${[...VALID_EMBEDDING_PROVIDERS].join(", ")}`);
+                    p.log.warning(
+                        `Unknown provider "${opts.provider}". Valid: ${[...VALID_EMBEDDING_PROVIDERS].join(", ")}`
+                    );
                 }
 
                 if ((wantsProviderPrompt || wantsModelPrompt) && isInteractive()) {

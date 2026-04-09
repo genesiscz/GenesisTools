@@ -4,6 +4,7 @@ import {
     enrichWithBodies,
     needsRecipients,
     outputFormattedResults,
+    parseMailDate,
     resolveColumnsFromFlag,
 } from "@app/macos/lib/mail/command-helpers";
 import { MailStorage } from "@app/macos/lib/mail/mail-storage";
@@ -98,20 +99,6 @@ export function registerSearchCommand(program: Command): void {
                     return;
                 }
 
-                const parseDate = (s?: string): Date | undefined => {
-                    if (!s) {
-                        return undefined;
-                    }
-
-                    const d = new Date(s);
-
-                    if (Number.isNaN(d.getTime())) {
-                        throw new Error(`Invalid date: ${s}`);
-                    }
-
-                    return d;
-                };
-
                 // Resolve columns
                 const baseColumns = await resolveColumnsFromFlag(options.columns);
 
@@ -124,8 +111,8 @@ export function registerSearchCommand(program: Command): void {
                     withoutBody: options.withoutBody,
                     receiver: options.receiver,
                     account: options.account,
-                    from: parseDate(options.from),
-                    to: parseDate(options.to),
+                    from: parseMailDate(options.from),
+                    to: parseMailDate(options.to, true),
                     mailbox: options.mailbox,
                     limit: Number.parseInt(options.limit ?? "100", 10),
                 };
