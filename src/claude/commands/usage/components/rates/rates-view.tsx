@@ -74,7 +74,6 @@ function AccountRatesRow({
     activeBuckets: string[];
     dbVersion: number;
 }) {
-    // biome-ignore lint/correctness/useExhaustiveDependencies: dbVersion is an intentional cache-busting dep — db ref is stable but DB contents change on each poll
     const bucketRates = useMemo(() => {
         const rates: Record<string, BucketRateInfo> = {};
 
