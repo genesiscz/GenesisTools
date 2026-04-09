@@ -24,6 +24,10 @@ function formatRecipientEmails(msg: MailMessage, type: "to" | "cc"): string {
 }
 
 export const MAIL_COLUMNS = {
+    id: {
+        label: "ID",
+        get: (m: MailMessage) => String(m.rowid),
+    },
     date: {
         label: "Date",
         get: (m: MailMessage) => formatRelativeTime(m.dateSent, { compact: true }),
@@ -87,6 +91,6 @@ export const MAIL_COLUMNS = {
 } as const;
 
 export type MailColumnKey = keyof typeof MAIL_COLUMNS;
-export const DEFAULT_LIST_COLUMNS: MailColumnKey[] = ["date", "from", "subject", "attachments"];
+export const DEFAULT_LIST_COLUMNS: MailColumnKey[] = ["id", "date", "from", "subject", "attachments"];
 export const ALL_COLUMN_KEYS = Object.keys(MAIL_COLUMNS) as MailColumnKey[];
 export const RECIPIENT_COLUMNS: MailColumnKey[] = ["to", "toEmail", "cc"];
