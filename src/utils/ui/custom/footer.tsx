@@ -20,8 +20,9 @@ export function Footer({
         </>
     ),
     links = [],
-    copyright = `© ${new Date().getFullYear()} Wow. All rights reserved.`,
+    copyright,
 }: FooterProps) {
+    const copyrightText = copyright ?? `© ${new Date().getFullYear()} Wow. All rights reserved.`;
     return (
         <footer className="border-t border-border mt-20">
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
@@ -40,7 +41,7 @@ export function Footer({
                             ))}
                         </div>
                     )}
-                    <p className="text-xs text-muted-foreground/50">{copyright}</p>
+                    <p className="text-xs text-muted-foreground/50">{copyrightText}</p>
                 </div>
             </div>
         </footer>

@@ -195,6 +195,19 @@
   box-shadow: 0 20px 40px -12px rgba(124, 58, 237, 0.25);
 }
 
+/* Theme-agnostic hover glow driven by the active theme's --primary.
+   Works both standalone (`.theme-glow-hover:hover`) and inside a
+   `.group` parent (`.group:hover .theme-glow-hover`). */
+.theme-glow-hover {
+  transition: box-shadow 0.3s ease, background-color 0.3s ease, border-color 0.3s ease;
+}
+.theme-glow-hover:hover,
+.group:hover .theme-glow-hover {
+  box-shadow:
+    0 0 12px 0 color-mix(in oklch, var(--color-primary) 45%, transparent),
+    0 0 24px 0 color-mix(in oklch, var(--color-primary) 25%, transparent);
+}
+
 /* ----------------------------------------------------------------------------
    WOW SKELETON — loading state matching the wow card look.
    Same gradient border + bg as `.wow-glow`, plus an animated diagonal sweep

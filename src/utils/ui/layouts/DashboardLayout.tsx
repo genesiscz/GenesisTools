@@ -65,7 +65,7 @@ export function DashboardLayout({
                             onKeyDown={(e) => e.key === "Enter" && onNavigate?.("/")}
                         >
                             {icon && (
-                                <div className="p-1 rounded bg-primary/10 border border-primary/30 transition-all">
+                                <div className="p-1 rounded bg-primary/10 border border-primary/30 theme-glow-hover group-hover:bg-primary/20 group-hover:border-primary/50">
                                     {icon}
                                 </div>
                             )}

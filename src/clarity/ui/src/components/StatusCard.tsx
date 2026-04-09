@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@ui/components/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
+import { Skeleton } from "@ui/components/skeleton";
 import { AlertTriangle, Shield } from "lucide-react";
 import type { GranularStatus } from "../server/settings";
 
@@ -198,7 +199,7 @@ function CompactStatusCard({ status }: { status: GranularStatus }) {
                         {anyUnconfigured && (
                             <a
                                 href="/settings"
-                                className="text-xs font-mono text-primary hover:text-primary transition-colors"
+                                className="text-xs font-mono text-primary hover:text-primary/80 transition-colors"
                             >
                                 Configure &rarr;
                             </a>
@@ -234,7 +235,20 @@ export function StatusCard({ compact }: StatusCardProps) {
                         {title}
                     </CardTitle>
                 </CardHeader>
-                <CardContent className={compact ? "min-h-[72px]" : "min-h-[320px]"} />
+                <CardContent className={compact ? "min-h-[72px]" : "min-h-[320px]"}>
+                    {compact ? (
+                        <div className="flex flex-col gap-2">
+                            <Skeleton variant="line" className="w-2/3" />
+                            <Skeleton variant="line" className="w-1/2" />
+                        </div>
+                    ) : (
+                        <div className="flex flex-col gap-3">
+                            <Skeleton variant="card" className="h-20" />
+                            <Skeleton variant="card" className="h-20" />
+                            <Skeleton variant="card" className="h-20" />
+                        </div>
+                    )}
+                </CardContent>
             </Card>
         );
     }

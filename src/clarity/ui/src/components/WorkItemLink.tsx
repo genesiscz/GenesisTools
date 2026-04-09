@@ -25,7 +25,7 @@ export function WorkItemLink({ id, title, adoConfig }: WorkItemLinkProps) {
                     href={url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 font-mono text-sm text-primary hover:text-primary hover:underline"
+                    className="inline-flex items-center gap-1 font-mono text-sm text-primary hover:text-primary/80 hover:underline transition-colors"
                 >
                     #{id}
                     <ExternalLink className="w-3 h-3" />

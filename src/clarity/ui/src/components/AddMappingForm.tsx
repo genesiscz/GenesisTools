@@ -150,7 +150,7 @@ export function AddMappingForm({ onMappingAdded }: AddMappingFormProps) {
                             {weeksError instanceof Error && weeksError.message.includes("non-JSON") ? (
                                 <span>
                                     Clarity session expired.{" "}
-                                    <a href="/settings" className="underline text-primary hover:text-primary">
+                                    <a href="/settings" className="underline text-primary hover:text-primary/80 transition-colors">
                                         Re-authenticate in Settings
                                     </a>
                                 </span>
