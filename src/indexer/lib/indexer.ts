@@ -774,14 +774,16 @@ export class Indexer extends IndexerEventEmitter {
 
                     // Update metadata every 10 batches for crash-recovery display
                     if (batchCount % 10 === 0) {
+                        const liveStats = this.store.getStats();
+
                         this.store.updateMeta({
                             lastSyncAt: Date.now(),
                             stats: {
                                 totalFiles: pathHashStore.getFileCount(),
-                                totalChunks: this.store.getStats().totalChunks,
-                                totalEmbeddings: 0,
+                                totalChunks: liveStats.totalChunks,
+                                totalEmbeddings: liveStats.totalEmbeddings,
                                 embeddingDimensions: this.embedder?.dimensions ?? 0,
-                                dbSizeBytes: 0,
+                                dbSizeBytes: liveStats.dbSizeBytes,
                                 lastSyncDurationMs: 0,
                                 searchCount: 0,
                                 avgSearchDurationMs: 0,
