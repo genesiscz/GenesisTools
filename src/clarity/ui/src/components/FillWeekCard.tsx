@@ -75,17 +75,12 @@ export function FillWeekCard({
     }
 
     return (
-        <Card className={`border-amber-500/20 ${selected ? "ring-1 ring-amber-500/40" : ""}`}>
+        <Card className={`border-primary/20 ${selected ? "ring-1 ring-primary/40" : ""}`}>
             <CardHeader className="pb-3">
                 <div className="flex items-center justify-between">
                     <CardTitle className="text-sm font-mono text-gray-300 flex items-center gap-3">
                         <label className="flex items-center gap-2 cursor-pointer">
-                            <input
-                                type="checkbox"
-                                checked={selected}
-                                onChange={onToggle}
-                                className="accent-amber-500"
-                            />
+                            <input type="checkbox" checked={selected} onChange={onToggle} className="accent-primary" />
                             Week: {startDate} to {endDate}
                         </label>
                     </CardTitle>
@@ -109,7 +104,7 @@ export function FillWeekCard({
                 ) : (
                     <Table>
                         <TableHeader>
-                            <TableRow className="border-amber-500/20">
+                            <TableRow className="border-primary/20">
                                 <TableHead className="font-mono text-xs text-gray-400">Clarity Task</TableHead>
                                 {workDays.map((d) => {
                                     const dayTotal = entries.reduce((sum, e) => sum + (e.dayValues[d.date] ?? 0), 0);
@@ -117,7 +112,7 @@ export function FillWeekCard({
                                         <TableHead key={d.date} className="font-mono text-xs text-gray-400 text-center">
                                             <div>{d.label}</div>
                                             {dayTotal > 0 && (
-                                                <div className="text-amber-500/60">{(dayTotal / 60).toFixed(1)}h</div>
+                                                <div className="text-primary/60">{(dayTotal / 60).toFixed(1)}h</div>
                                             )}
                                         </TableHead>
                                     );
@@ -133,7 +128,7 @@ export function FillWeekCard({
                                 return (
                                     <Fragment key={entry.clarityTaskCode}>
                                         <TableRow
-                                            className={`border-white/5 ${hasEntries ? "cursor-pointer hover:bg-amber-500/5" : ""}`}
+                                            className={`border-white/5 ${hasEntries ? "cursor-pointer hover:bg-primary/5" : ""}`}
                                             onClick={hasEntries ? () => toggleExpand(entry.clarityTaskCode) : undefined}
                                         >
                                             <TableCell className="font-mono text-sm text-gray-300">
@@ -155,7 +150,7 @@ export function FillWeekCard({
                                                 return (
                                                     <TableCell
                                                         key={d.date}
-                                                        className={`font-mono text-xs text-center ${mins > 0 ? "text-amber-400" : "text-gray-600"}`}
+                                                        className={`font-mono text-xs text-center ${mins > 0 ? "text-primary" : "text-gray-600"}`}
                                                     >
                                                         <div className="flex flex-col items-center">
                                                             {mins > 0 ? `${(mins / 60).toFixed(1)}h` : "-"}
@@ -195,7 +190,7 @@ export function FillWeekCard({
                                     const weekAdoTotal = entries.reduce((sum, e) => sum + e.totalMinutes, 0);
 
                                     return (
-                                        <TableRow className="border-amber-500/20">
+                                        <TableRow className="border-primary/20">
                                             <TableCell className="font-mono text-xs text-gray-400 font-bold">
                                                 Total
                                             </TableCell>
@@ -207,13 +202,13 @@ export function FillWeekCard({
                                                 return (
                                                     <TableCell
                                                         key={d.date}
-                                                        className={`font-mono text-xs text-center font-bold ${dayTotal > 0 ? "text-amber-500" : "text-gray-600"}`}
+                                                        className={`font-mono text-xs text-center font-bold ${dayTotal > 0 ? "text-primary" : "text-gray-600"}`}
                                                     >
                                                         {dayTotal > 0 ? `${(dayTotal / 60).toFixed(1)}h` : "-"}
                                                     </TableCell>
                                                 );
                                             })}
-                                            <TableCell className="font-mono text-sm text-right font-bold text-amber-500">
+                                            <TableCell className="font-mono text-sm text-right font-bold text-primary">
                                                 <div className="flex items-center justify-end gap-1.5">
                                                     {(weekAdoTotal / 60).toFixed(1)}h
                                                     <ClarityStatusIcon
@@ -257,7 +252,7 @@ function DayClarityIndicator({ adoMinutes, clarityMinutes }: { adoMinutes: numbe
 
     // ADO has time but Clarity is 0 — not imported
     if (clarityMinutes === 0 && adoMinutes > 0) {
-        return <XCircle className="w-2.5 h-2.5 text-amber-500/60 mt-0.5" />;
+        return <XCircle className="w-2.5 h-2.5 text-primary/60 mt-0.5" />;
     }
 
     // Clarity has different non-zero value — red warning
@@ -276,7 +271,7 @@ function ClarityStatusIcon({ clarityMinutes, adoMinutes }: { clarityMinutes?: nu
     if (clarityMinutes === 0) {
         return (
             <span className="flex-shrink-0" title="Not imported to Clarity">
-                <XCircle className="w-3.5 h-3.5 text-amber-500/70" />
+                <XCircle className="w-3.5 h-3.5 text-primary/70" />
             </span>
         );
     }
@@ -317,7 +312,7 @@ function TimelogEntriesTable({ entries, adoConfig }: { entries: TimelogEntry[]; 
                     {sorted.map((e, i) => (
                         <TableRow key={`${e.date}-${e.workItemId}-${i}`} className="border-white/5">
                             <TableCell className="font-mono text-xs text-gray-500 py-1">{e.date}</TableCell>
-                            <TableCell className="font-mono text-xs text-amber-400/80 py-1">
+                            <TableCell className="font-mono text-xs text-primary/80 py-1">
                                 {(e.minutes / 60).toFixed(2)}h
                             </TableCell>
                             <TableCell className="py-1">

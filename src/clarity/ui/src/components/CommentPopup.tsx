@@ -86,17 +86,17 @@ export function CommentPopup({ weeks, userId }: CommentPopupProps) {
                 <button
                     type="button"
                     onClick={() => setExpanded(true)}
-                    className="ml-auto flex items-center gap-2 px-4 py-2 rounded-full bg-gray-900 border border-amber-500/30 text-amber-400 font-mono text-sm hover:bg-gray-800 hover:border-amber-500/50 transition-all shadow-lg cursor-pointer"
+                    className="ml-auto flex items-center gap-2 px-4 py-2 rounded-full bg-gray-900 border border-primary/30 text-primary font-mono text-sm hover:bg-gray-800 hover:border-primary/50 transition-all shadow-lg cursor-pointer"
                 >
                     <MessageSquare className="w-4 h-4" />
                     Notes: {weeks.length} week{weeks.length > 1 ? "s" : ""} selected
                     <ChevronUp className="w-3.5 h-3.5" />
                 </button>
             ) : (
-                <Card className="border-amber-500/20 shadow-2xl max-h-[70vh] flex flex-col">
+                <Card className="border-primary/20 shadow-2xl max-h-[70vh] flex flex-col">
                     <CardHeader className="pb-2 flex-shrink-0">
                         <div className="flex items-center justify-between">
-                            <CardTitle className="text-sm font-mono text-amber-400 flex items-center gap-2">
+                            <CardTitle className="text-sm font-mono text-primary flex items-center gap-2">
                                 <MessageSquare className="w-4 h-4" />
                                 Week Notes
                             </CardTitle>
@@ -135,7 +135,7 @@ export function CommentPopup({ weeks, userId }: CommentPopupProps) {
                                         {week.hasNotes && !isPosted && (
                                             <Badge
                                                 variant="outline"
-                                                className="text-[10px] border-amber-500/30 text-amber-400"
+                                                className="text-[10px] border-primary/30 text-primary"
                                             >
                                                 <AlertTriangle className="w-3 h-3 mr-1" />
                                                 has note
@@ -161,7 +161,7 @@ export function CommentPopup({ weeks, userId }: CommentPopupProps) {
                                         }
                                         rows={Math.min(text.split("\n").length + 1, 10)}
                                         disabled={isPosted}
-                                        className="bg-black/40 border-gray-700/50 font-mono text-xs text-gray-300 resize-y focus:border-amber-500/40"
+                                        className="bg-black/40 border-gray-700/50 font-mono text-xs text-gray-300 resize-y focus:border-primary/40"
                                     />
                                     <Button
                                         size="sm"
@@ -173,7 +173,7 @@ export function CommentPopup({ weeks, userId }: CommentPopupProps) {
                                             });
                                         }}
                                         disabled={isPending || isPosted || !text.trim() || !userId}
-                                        className="w-full bg-amber-500/20 border border-amber-500/40 text-amber-400 hover:bg-amber-500/30 font-mono text-xs"
+                                        className="w-full bg-primary/20 border border-primary/40 text-primary hover:bg-primary/30 font-mono text-xs"
                                     >
                                         {isPending ? (
                                             "Posting..."

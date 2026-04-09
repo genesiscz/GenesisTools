@@ -45,7 +45,7 @@ export function ExportTable({ entries, entriesByDay, mappedWorkItemIds, adoConfi
     return (
         <Table>
             <TableHeader>
-                <TableRow className="border-amber-500/20">
+                <TableRow className="border-primary/20">
                     <TableHead className="font-mono text-xs text-gray-400 w-24">Date</TableHead>
                     <TableHead className="font-mono text-xs text-gray-400 w-16">Hours</TableHead>
                     <TableHead className="font-mono text-xs text-gray-400">Work Item</TableHead>
@@ -61,7 +61,7 @@ export function ExportTable({ entries, entriesByDay, mappedWorkItemIds, adoConfi
                     return dayEntries.map((entry, i) => (
                         <TableRow
                             key={`${date}-${entry.workItemId}-${i}`}
-                            className="border-white/5 hover:bg-amber-500/5"
+                            className="border-white/5 hover:bg-primary/5"
                         >
                             <TableCell className="font-mono text-sm text-gray-400">
                                 {i === 0 ? (

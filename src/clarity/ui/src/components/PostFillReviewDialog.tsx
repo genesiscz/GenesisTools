@@ -40,9 +40,9 @@ export function PostFillReviewDialog({ open, onClose, result, commentedWeeks }: 
 
     return (
         <AlertDialog open={open} onOpenChange={(v) => !v && onClose()}>
-            <AlertDialogContent className="bg-gray-950 border-amber-500/30">
+            <AlertDialogContent className="bg-gray-950 border-primary/30">
                 <AlertDialogHeader>
-                    <AlertDialogTitle className="font-mono text-amber-400 flex items-center gap-2">
+                    <AlertDialogTitle className="font-mono text-primary flex items-center gap-2">
                         <AlertTriangle className="w-5 h-5" />
                         Review Required
                     </AlertDialogTitle>
@@ -58,7 +58,7 @@ export function PostFillReviewDialog({ open, onClose, result, commentedWeeks }: 
                             <ul className="list-disc ml-4 flex flex-col gap-1">
                                 <li>
                                     Hours updated for{" "}
-                                    <span className="text-amber-300 font-bold">{successWeeks.length} week(s)</span>.
+                                    <span className="text-primary font-bold">{successWeeks.length} week(s)</span>.
                                 </li>
                                 <li>You MUST review the filled hours in Clarity PPM before submitting.</li>
                                 {hasComments && (
@@ -100,7 +100,7 @@ export function PostFillReviewDialog({ open, onClose, result, commentedWeeks }: 
                 </div>
 
                 <AlertDialogFooter>
-                    <AlertDialogAction className="bg-amber-500/20 border border-amber-500/40 text-amber-400 hover:bg-amber-500/30 font-mono text-sm">
+                    <AlertDialogAction className="bg-primary/20 border border-primary/40 text-primary hover:bg-primary/30 font-mono text-sm">
                         <ExternalLink className="w-4 h-4 mr-2" />I understand, I will review
                     </AlertDialogAction>
                 </AlertDialogFooter>

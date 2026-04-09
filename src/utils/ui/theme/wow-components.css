@@ -1,0 +1,523 @@
+/* ============================================================================
+   WOW COMPONENT STYLES
+   Utility classes for the Vowen-inspired component set.
+   Used by custom components in src/utils/ui/custom/.
+   ============================================================================ */
+
+/* ----------------------------------------------------------------------------
+   THEME-AWARE DEFAULT CARD
+   `<Card variant="default" />` automatically picks its look based on the
+   nearest ancestor `.wow` / `.cyberpunk` theme class.
+   - Inside `.wow`   → wow gradient border + hover glow
+   - Inside `.cyberpunk` → glass-card + amber neon border
+   - Elsewhere → flat themed surface (bg-card + border)
+   ---------------------------------------------------------------------------- */
+
+/* Plain fallback (no theme parent) */
+[data-slot="card"][data-variant="default"] {
+  background-color: var(--card);
+  border: 1px solid var(--border);
+}
+
+/* Inside .wow — apply wow-glow-hover behavior */
+.wow [data-slot="card"][data-variant="default"] {
+  position: relative;
+  border: 1px solid transparent;
+  background-color: transparent;
+  background-image:
+    linear-gradient(135deg, #111116 0%, #0a0a0f 100%),
+    linear-gradient(135deg, rgba(var(--wow-a1, 124, 58, 237), 0.4), rgba(var(--wow-a2, 139, 92, 246), 0.2), rgba(var(--wow-a3, 236, 72, 153), 0.15));
+  background-origin: border-box;
+  background-clip: padding-box, border-box;
+  transition: box-shadow 0.4s ease;
+}
+
+.wow [data-slot="card"][data-variant="default"]::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(135deg, rgb(var(--wow-a1, 124, 58, 237)), rgb(var(--wow-a2, 139, 92, 246)), rgb(var(--wow-a3, 236, 72, 153)));
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  opacity: 0;
+  transition: opacity 0.4s ease;
+  pointer-events: none;
+}
+
+.wow [data-slot="card"][data-variant="default"]:hover::before {
+  opacity: 1;
+}
+
+.wow [data-slot="card"][data-variant="default"]:hover {
+  box-shadow: 0 20px 40px -12px rgba(var(--wow-a1, 124, 58, 237), 0.25);
+}
+
+/* Inside .cyberpunk — apply glass-card + neon-border look + amber glow hover */
+.cyberpunk [data-slot="card"][data-variant="default"] {
+  position: relative;
+  background: rgba(10, 10, 20, 0.9);
+  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 149, 0, 0.3);
+  box-shadow:
+    inset 0 0 20px rgba(255, 149, 0, 0.05),
+    0 0 20px rgba(255, 149, 0, 0.1);
+  transition: box-shadow 0.4s ease;
+}
+
+.cyberpunk [data-slot="card"][data-variant="default"]::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(135deg, #f59e0b, #06b6d4, #f59e0b);
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  opacity: 0;
+  transition: opacity 0.4s ease;
+  pointer-events: none;
+}
+
+.cyberpunk [data-slot="card"][data-variant="default"]:hover::before {
+  opacity: 1;
+}
+
+.cyberpunk [data-slot="card"][data-variant="default"]:hover {
+  box-shadow:
+    inset 0 0 20px rgba(255, 149, 0, 0.08),
+    0 20px 40px -12px rgba(245, 158, 11, 0.3);
+}
+
+/* ----------------------------------------------------------------------------
+   GLOW UTILITIES
+   `.wow-glow`       — gradient background + themed border (no hover).
+   `.wow-glow-hover` — same + lift + gradient-border glow on hover.
+   Apply to any element, e.g. `<Card className="wow-glow-hover" />`.
+   ---------------------------------------------------------------------------- */
+/* Default accent (violet → purple → pink). Override per element via
+   `data-accent="orange|emerald|blue|cyan|red|pink|violet"`. */
+.wow-glow,
+.wow-glow-hover,
+.wow-skeleton {
+  --wow-a1: 124, 58, 237;   /* violet-600 */
+  --wow-a2: 139, 92, 246;   /* violet-500 */
+  --wow-a3: 236, 72, 153;   /* pink-500  */
+}
+
+/* Under .cyberpunk theme — shift wow-skeleton accent to amber/cyan */
+.cyberpunk .wow-skeleton {
+  --wow-a1: 245, 158, 11;   /* amber-500 */
+  --wow-a2: 251, 191, 36;   /* amber-400 */
+  --wow-a3:  6, 182, 212;   /* cyan-500  */
+}
+
+.wow-glow[data-accent="violet"],  .wow-glow-hover[data-accent="violet"],  .wow-skeleton[data-accent="violet"]  { --wow-a1: 124, 58, 237; --wow-a2: 139, 92, 246; --wow-a3: 236, 72, 153; }
+.wow-glow[data-accent="orange"],  .wow-glow-hover[data-accent="orange"],  .wow-skeleton[data-accent="orange"]  { --wow-a1: 249, 115, 22; --wow-a2: 251, 146, 60; --wow-a3: 253, 186, 116; }
+.wow-glow[data-accent="emerald"], .wow-glow-hover[data-accent="emerald"], .wow-skeleton[data-accent="emerald"] { --wow-a1: 16, 185, 129; --wow-a2: 52, 211, 153; --wow-a3: 110, 231, 183; }
+.wow-glow[data-accent="blue"],    .wow-glow-hover[data-accent="blue"],    .wow-skeleton[data-accent="blue"]    { --wow-a1: 59, 130, 246; --wow-a2: 96, 165, 250; --wow-a3: 147, 197, 253; }
+.wow-glow[data-accent="cyan"],    .wow-glow-hover[data-accent="cyan"],    .wow-skeleton[data-accent="cyan"]    { --wow-a1:  6, 182, 212; --wow-a2: 34, 211, 238; --wow-a3: 103, 232, 249; }
+.wow-glow[data-accent="red"],     .wow-glow-hover[data-accent="red"],     .wow-skeleton[data-accent="red"]     { --wow-a1: 239,  68,  68; --wow-a2: 248, 113, 113; --wow-a3: 252, 165, 165; }
+.wow-glow[data-accent="pink"],    .wow-glow-hover[data-accent="pink"],    .wow-skeleton[data-accent="pink"]    { --wow-a1: 236,  72, 153; --wow-a2: 244, 114, 182; --wow-a3: 249, 168, 212; }
+.wow-glow[data-accent="amber"],   .wow-glow-hover[data-accent="amber"],   .wow-skeleton[data-accent="amber"]   { --wow-a1: 245, 158,  11; --wow-a2: 251, 191,  36; --wow-a3: 253, 224, 71;  }
+
+.wow-glow {
+  position: relative;
+  border: 1px solid transparent;
+  background-image:
+    linear-gradient(135deg, #111116 0%, #0a0a0f 100%),
+    linear-gradient(135deg, rgba(var(--wow-a1), 0.4), rgba(var(--wow-a2), 0.2), rgba(var(--wow-a3), 0.15));
+  background-origin: border-box;
+  background-clip: padding-box, border-box;
+}
+
+.wow-glow-hover {
+  position: relative;
+  border: 1px solid transparent;
+  background-image:
+    linear-gradient(135deg, #111116 0%, #0a0a0f 100%),
+    linear-gradient(135deg, rgba(var(--wow-a1), 0.4), rgba(var(--wow-a2), 0.2), rgba(var(--wow-a3), 0.15));
+  background-origin: border-box;
+  background-clip: padding-box, border-box;
+  transition: box-shadow 0.4s ease;
+}
+
+/* Vibrant gradient border overlay, fades in on hover via opacity transition. */
+.wow-glow-hover::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(135deg, rgb(var(--wow-a1)), rgb(var(--wow-a2)), rgb(var(--wow-a3)));
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  opacity: 0;
+  transition: opacity 0.4s ease;
+  pointer-events: none;
+}
+
+.wow-glow-hover:hover::before {
+  opacity: 1;
+}
+
+.wow-glow-hover:hover {
+  box-shadow: 0 20px 40px -12px rgba(var(--wow-a1), 0.25);
+}
+
+/* Lift + glow shadow on hover only (keeps the base background intact).
+   Opt-in utility — e.g. <Card className="wow-hover-lift" /> */
+.wow-hover-lift {
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+.wow-hover-lift:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 20px 40px -12px rgba(124, 58, 237, 0.25);
+}
+
+/* Theme-agnostic hover glow driven by the active theme's --primary.
+   Works both standalone (`.theme-glow-hover:hover`) and inside a
+   `.group` parent (`.group:hover .theme-glow-hover`). */
+.theme-glow-hover {
+  transition: box-shadow 0.3s ease, background-color 0.3s ease, border-color 0.3s ease;
+}
+.theme-glow-hover:hover,
+.group:hover .theme-glow-hover {
+  box-shadow:
+    0 0 12px 0 color-mix(in oklch, var(--color-primary) 45%, transparent),
+    0 0 24px 0 color-mix(in oklch, var(--color-primary) 25%, transparent);
+}
+
+/* ----------------------------------------------------------------------------
+   WOW SKELETON — loading state matching the wow card look.
+   Same gradient border + bg as `.wow-glow`, plus an animated diagonal sweep
+   (DaisyUI-style) using a ::after overlay.
+   ---------------------------------------------------------------------------- */
+.wow-skeleton {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid transparent;
+  background-image:
+    linear-gradient(135deg, #111116 0%, #0a0a0f 100%),
+    linear-gradient(135deg, rgba(var(--wow-a1), 0.4), rgba(var(--wow-a2), 0.2), rgba(var(--wow-a3), 0.15));
+  background-origin: border-box;
+  background-clip: padding-box, border-box;
+}
+
+.wow-skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: linear-gradient(
+    105deg,
+    transparent 0% 40%,
+    rgba(var(--wow-a1), 0.18) 50%,
+    transparent 60% 100%
+  );
+  background-size: 200% 100%;
+  background-repeat: no-repeat;
+  background-position-x: 150%;
+  animation: wow-skeleton-sweep 1.8s ease-in-out infinite;
+}
+
+@keyframes wow-skeleton-sweep {
+  from { background-position-x: 150%; }
+  to   { background-position-x: -50%; }
+}
+
+/* Feature Card — opinionated wrapper (gradient bg + radius + padding + glow hover) */
+.feature-card {
+  position: relative;
+  background: linear-gradient(135deg, #111116 0%, #0a0a0f 100%);
+  border: 1px solid #1e1e28;
+  border-radius: 20px;
+  padding: 24px;
+  transition: all 0.3s ease;
+}
+
+.feature-card:hover {
+  transform: translateY(-4px);
+  border-color: transparent;
+  background-image:
+    linear-gradient(#111116, #0a0a0f),
+    linear-gradient(135deg, #7c3aed, #8b5cf6, #ec4899);
+  background-origin: border-box;
+  background-clip: padding-box, border-box;
+  box-shadow: 0 20px 40px -12px rgba(124, 58, 237, 0.15);
+}
+
+/* Icon Container — colored rounded box for lucide icons */
+.icon-container {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.icon-container-purple  { background: rgba(124, 58, 237, 0.12); color: #8b5cf6; }
+.icon-container-red     { background: rgba(239, 68, 68, 0.12);  color: #ef4444; }
+.icon-container-orange  { background: rgba(249, 115, 22, 0.12); color: #f97316; }
+.icon-container-blue    { background: rgba(59, 130, 246, 0.12); color: #3b82f6; }
+.icon-container-cyan    { background: rgba(6, 182, 212, 0.12);  color: #06b6d4; }
+.icon-container-emerald { background: rgba(16, 185, 129, 0.12); color: #10b981; }
+.icon-container-pink    { background: rgba(236, 72, 153, 0.12); color: #ec4899; }
+.icon-container-violet  { background: rgba(139, 92, 246, 0.12); color: #a78bfa; }
+
+/* Stat Card — gradient background metric card */
+.stat-card {
+  background: linear-gradient(135deg, #111116, #0a0a0f);
+  border: 1px solid #1e1e28;
+  border-radius: 14px;
+  padding: 16px;
+}
+
+/* Video Mockup — macOS-style window (used for Q3 Roadmap Review etc.) */
+.video-mockup {
+  background: #0a0a0f;
+  border: 1px solid #1e1e28;
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+/* Video Participant — square tile inside a video mockup */
+.video-participant {
+  position: relative;
+  aspect-ratio: 1;
+  background: #1a1a22;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.participant-avatar {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  font-weight: 600;
+  color: #52525b;
+  background: linear-gradient(135deg, #1a1a22, #111116);
+}
+
+/* Section Label — uppercase tracking label above section headings */
+.section-label {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #10b981;
+  margin-bottom: 12px;
+}
+.section-label-emerald { color: #10b981; }
+.section-label-cyan    { color: #06b6d4; }
+.section-label-orange  { color: #f97316; }
+.section-label-blue    { color: #3b82f6; }
+.section-label-purple  { color: #a855f7; }
+.section-label-violet  { color: #8b5cf6; }
+.section-label-rose    { color: #f43f5e; }
+
+/* Tag Pills — colored status/category tags */
+.tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 500;
+}
+.tag-emerald { background: rgba(16, 185, 129, 0.12); color: #10b981; }
+.tag-cyan    { background: rgba(6, 182, 212, 0.12);  color: #06b6d4; }
+.tag-orange  { background: rgba(249, 115, 22, 0.12); color: #f97316; }
+.tag-purple  { background: rgba(139, 92, 246, 0.12); color: #8b5cf6; }
+.tag-pink    { background: rgba(236, 72, 153, 0.12); color: #ec4899; }
+.tag-blue    { background: rgba(59, 130, 246, 0.12); color: #3b82f6; }
+.tag-red     { background: rgba(239, 68, 68, 0.12);  color: #ef4444; }
+
+/* File Items — list row with variants */
+.file-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  font-size: 13px;
+  transition: background 0.2s ease;
+}
+.file-item-default { background: rgba(255, 255, 255, 0.03); }
+.file-item-default:hover { background: rgba(255, 255, 255, 0.06); }
+.file-item-active {
+  background: rgba(124, 58, 237, 0.1);
+  border: 1px solid rgba(124, 58, 237, 0.2);
+}
+.file-item-success { background: rgba(16, 185, 129, 0.1); }
+.file-item-highlight {
+  background: rgba(249, 115, 22, 0.08);
+  border: 1px solid rgba(249, 115, 22, 0.15);
+}
+
+/* Language Pills */
+.lang-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 500;
+  background: rgba(255, 255, 255, 0.05);
+  color: #a1a1aa;
+  border: 1px solid #1e1e28;
+  transition: all 0.2s ease;
+}
+.lang-pill-active {
+  background: rgba(124, 58, 237, 0.12);
+  color: #8b5cf6;
+  border-color: rgba(124, 58, 237, 0.3);
+}
+
+/* Glow Orb — soft blurred background orb, used with GlowOrbs component */
+.glow-orb {
+  position: absolute;
+  border-radius: 50%;
+  pointer-events: none;
+  filter: blur(100px);
+  animation: glow-pulse 3s ease-in-out infinite;
+}
+
+/* Navigation backdrop blur */
+.nav-blur {
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  background: rgba(5, 5, 7, 0.8);
+}
+
+/* Buttons */
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 24px;
+  background: linear-gradient(135deg, #7c3aed, #6d28d9);
+  color: white;
+  font-weight: 500;
+  border-radius: 12px;
+  font-size: 14px;
+  transition: all 0.2s ease;
+  border: none;
+  cursor: pointer;
+}
+.btn-primary:hover {
+  box-shadow: 0 8px 25px -5px rgba(124, 58, 237, 0.4);
+  transform: translateY(-1px);
+}
+
+.btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 24px;
+  background: rgba(255, 255, 255, 0.05);
+  color: #f4f4f5;
+  font-weight: 500;
+  border-radius: 12px;
+  font-size: 14px;
+  border: 1px solid #2a2a38;
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+.btn-secondary:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: #3f3f46;
+}
+
+/* Progress Bar */
+.progress-bar {
+  height: 6px;
+  background: #1e1e28;
+  border-radius: 3px;
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: linear-gradient(90deg, #7c3aed, #8b5cf6);
+  width: 0;
+  transition: width 1.5s ease-out;
+}
+
+/* Timer */
+.timer-circle    { transform: rotate(-90deg); }
+.timer-progress  { transition: stroke-dashoffset 1s linear; }
+
+/* Rain Effect */
+.rain-bg {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 1;
+}
+.rain-drop {
+  position: absolute;
+  width: 1px;
+  height: 80px;
+  background: linear-gradient(to bottom, transparent, rgba(124, 58, 237, 0.3), transparent);
+  animation: rain 1.5s linear infinite;
+  pointer-events: none;
+}
+
+/* Animations */
+@keyframes rain {
+  0%   { transform: translateY(-100vh); opacity: 0; }
+  10%  { opacity: 1; }
+  90%  { opacity: 1; }
+  100% { transform: translateY(100vh); opacity: 0; }
+}
+
+@keyframes voice-bar {
+  0%, 100% { transform: scaleY(0.3); }
+  50%      { transform: scaleY(1); }
+}
+
+@keyframes timer-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.7; }
+}
+
+@keyframes glow-pulse {
+  0%, 100% { opacity: 0.4; }
+  50%      { opacity: 0.8; }
+}
+
+@keyframes fade-up {
+  0%   { opacity: 0; transform: translateY(20px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-up      { animation: fade-up 0.6s ease-out forwards; }
+.animate-timer-pulse  { animation: timer-pulse 2s ease-in-out infinite; }
+.animate-glow-pulse   { animation: glow-pulse 3s ease-in-out infinite; }

@@ -92,7 +92,7 @@ function ExportPage() {
         <div className="max-w-6xl mx-auto px-6 py-8">
             <div className="flex items-center justify-between mb-6">
                 <h1 className="text-xl font-mono font-bold text-gray-200">
-                    ADO Timelog <span className="text-amber-500">Export</span>
+                    ADO Timelog <span className="text-primary">Export</span>
                 </h1>
                 <div className="flex items-center gap-2">
                     <MonthPicker month={month} year={year} onChange={setMonthYear} />
@@ -134,9 +134,9 @@ function ExportPage() {
             )}
 
             {mappingsError && (
-                <Card className="border-amber-500/20 mb-4">
+                <Card className="border-primary/20 mb-4">
                     <CardContent className="p-4">
-                        <div className="text-amber-400 font-mono text-sm flex items-center gap-2">
+                        <div className="text-primary font-mono text-sm flex items-center gap-2">
                             <AlertTriangle className="w-4 h-4 flex-shrink-0" />
                             Mappings unavailable:{" "}
                             {mappingsError instanceof Error ? mappingsError.message : "Failed to load mappings"}
@@ -156,7 +156,7 @@ function ExportPage() {
                         />
                     </div>
 
-                    <Card className="border-amber-500/20">
+                    <Card className="border-primary/20">
                         <CardHeader className="pb-3">
                             <CardTitle className="text-sm font-mono text-gray-400">
                                 Entries ({exportData.entries.length})
