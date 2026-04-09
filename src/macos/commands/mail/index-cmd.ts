@@ -62,18 +62,17 @@ export function registerIndexCommand(program: Command): void {
 
                 // Resolve provider/model early — interactive prompt if --provider/--model without value
                 const VALID_PROVIDERS = new Set(["ollama", "darwinkit", "coreml", "local-hf", "cloud", "google"]);
-                let resolvedProvider = typeof opts.provider === "string" && VALID_PROVIDERS.has(opts.provider)
-                    ? opts.provider
-                    : undefined;
-                let resolvedModel = typeof opts.model === "string" && !opts.model.startsWith("-")
-                    ? opts.model
-                    : undefined;
+                let resolvedProvider =
+                    typeof opts.provider === "string" && VALID_PROVIDERS.has(opts.provider) ? opts.provider : undefined;
+                let resolvedModel =
+                    typeof opts.model === "string" && !opts.model.startsWith("-") ? opts.model : undefined;
 
                 // Treat invalid string values as "wants interactive prompt"
-                const wantsProviderPrompt = opts.provider === true
-                    || (typeof opts.provider === "string" && !VALID_PROVIDERS.has(opts.provider));
-                const wantsModelPrompt = opts.model === true
-                    || (typeof opts.model === "string" && opts.model.startsWith("-"));
+                const wantsProviderPrompt =
+                    opts.provider === true ||
+                    (typeof opts.provider === "string" && !VALID_PROVIDERS.has(opts.provider));
+                const wantsModelPrompt =
+                    opts.model === true || (typeof opts.model === "string" && opts.model.startsWith("-"));
 
                 if (wantsProviderPrompt && typeof opts.provider === "string") {
                     p.log.warning(`Unknown provider "${opts.provider}". Valid: ${[...VALID_PROVIDERS].join(", ")}`);
@@ -450,14 +449,14 @@ async function createAndSync(
         spinner.stop("Indexing complete");
 
         p.log.success(
-            `Indexed ${pc.bold(String(stats.totalFiles))} emails, ` +
-                `${pc.bold(String(stats.totalChunks))} chunks, ` +
-                `${pc.bold(formatBytes(stats.dbSizeBytes))} on disk`
+            `Scanned ${pc.bold(stats.totalFiles.toLocaleString())} emails → ` +
+                `${pc.bold(stats.totalChunks.toLocaleString())} chunks`
         );
 
         if (stats.totalEmbeddings > 0) {
             p.log.info(
-                `Generated ${pc.bold(String(stats.totalEmbeddings))} embeddings ` + `(${stats.embeddingDimensions}-dim)`
+                `Embedded: ${stats.totalEmbeddings.toLocaleString()} / ${stats.totalChunks.toLocaleString()} ` +
+                    `(${stats.embeddingDimensions}-dim), ${formatBytes(stats.dbSizeBytes)} on disk`
             );
         }
     } catch (err) {
@@ -584,13 +583,24 @@ async function incrementalSync(manager: IndexerManager, dateRange: DateRange = {
             ? `${meta.indexEmbedding.model} (${meta.indexEmbedding.dimensions}-dim)`
             : "none";
 
+        const { totalFiles, totalChunks, totalEmbeddings, dbSizeBytes } = meta.stats;
+        const embPct = totalChunks > 0 ? Math.round((totalEmbeddings / totalChunks) * 100) : 0;
+
         p.log.info(`Index: ${pc.bold(MAIL_INDEX_NAME)}`);
         p.log.info(
-            `  ${pc.dim("Indexed:")} ${meta.stats.totalFiles.toLocaleString()} messages ` +
-                `(${meta.stats.totalChunks.toLocaleString()} chunks), ` +
-                `${formatBytes(meta.stats.dbSizeBytes)} on disk`
+            `  ${pc.dim("Scanned:")} ${totalFiles.toLocaleString()} emails → ` +
+                `${totalChunks.toLocaleString()} chunks`
         );
+
+        if (totalEmbeddings > 0 || meta.indexEmbedding) {
+            p.log.info(
+                `  ${pc.dim("Embedded:")} ${totalEmbeddings.toLocaleString()} / ` +
+                    `${totalChunks.toLocaleString()} (${embPct}%)`
+            );
+        }
+
         p.log.info(`  ${pc.dim("Model:")} ${model}`);
+        p.log.info(`  ${pc.dim("DB size:")} ${formatBytes(dbSizeBytes)}`);
 
         if (meta.lastSyncAt) {
             const ago = formatDuration(Date.now() - meta.lastSyncAt);
@@ -599,11 +609,9 @@ async function incrementalSync(manager: IndexerManager, dateRange: DateRange = {
     }
 
     if (dateRange.fromDate || dateRange.toDate) {
-        const range = [
-            dateRange.fromDate ? dateRange.fromDate.toISOString().slice(0, 10) : "beginning",
-            dateRange.toDate ? dateRange.toDate.toISOString().slice(0, 10) : "now",
-        ];
-        p.log.info(`  ${pc.dim("Date range:")} ${range[0]} → ${range[1]}`);
+        const from = dateRange.fromDate?.toISOString().slice(0, 10) ?? "beginning";
+        const to = dateRange.toDate?.toISOString().slice(0, 10) ?? "now";
+        p.log.info(`  ${pc.dim("Filter:")} ${from} → ${to}`);
     }
 
     // Get total emails in Mail.app for comparison
@@ -614,13 +622,10 @@ async function incrementalSync(manager: IndexerManager, dateRange: DateRange = {
     const indexed = meta?.stats.totalFiles ?? 0;
     const diff = totalInMail - indexed;
 
-    if (diff > 0) {
-        p.log.info(
-            `  ${pc.dim("Mail.app:")} ${totalInMail.toLocaleString()} emails (${pc.green(`+${diff.toLocaleString()}`)} new)`
-        );
-    } else {
-        p.log.info(`  ${pc.dim("Mail.app:")} ${totalInMail.toLocaleString()} emails`);
-    }
+    p.log.info(
+        `  ${pc.dim("Mail.app:")} ${totalInMail.toLocaleString()} emails` +
+            (diff > 0 ? ` (${pc.green(`+${diff.toLocaleString()}`)} new)` : "")
+    );
 
     const spinner = p.spinner();
     spinner.start("Syncing...");
