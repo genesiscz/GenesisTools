@@ -1,4 +1,5 @@
 import { cn } from "@ui/lib/utils";
+import { FileCode } from "lucide-react";
 import { useMemo } from "react";
 
 import { useExpandable } from "../hooks/useExpandable";
@@ -8,14 +9,18 @@ const DEFAULT_MAX_COLLAPSED = 12;
 
 function lineClass(line: string): string {
     if (line.startsWith("+")) {
-        return "text-green-400";
+        return "text-green-400/90 bg-green-500/10 border-l-2 border-l-green-500/40";
     }
 
     if (line.startsWith("-")) {
-        return "text-red-400";
+        return "text-red-400/90 bg-red-500/10 border-l-2 border-l-red-500/40";
     }
 
-    return "text-muted-foreground";
+    if (line.startsWith("@@")) {
+        return "text-cyan-400/60 bg-cyan-500/[0.04] border-l-2 border-l-cyan-500/20";
+    }
+
+    return "text-muted-foreground/50 border-l-2 border-l-transparent";
 }
 
 export function DiffView({ lines, filePath, maxCollapsedLines }: DiffViewProps) {
@@ -34,26 +39,33 @@ export function DiffView({ lines, filePath, maxCollapsedLines }: DiffViewProps) 
     const hiddenCount = lines.length - limit;
 
     return (
-        <div className="rounded border border-border bg-muted/30 overflow-hidden">
+        <div className="rounded-md border border-white/[0.06] bg-black/40 overflow-hidden">
             {filePath && (
-                <div className="px-3 py-1.5 text-xs text-muted-foreground border-b border-border font-mono truncate">
+                <div className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] text-muted-foreground/50 border-b border-white/[0.06] font-mono truncate bg-black/20">
+                    <FileCode className="w-3 h-3 shrink-0 text-amber-500/40" />
                     {filePath}
                 </div>
             )}
-            <pre className="px-3 py-2 text-xs leading-5 overflow-x-auto">
+
+            <pre className="px-1 py-2 text-xs leading-5 overflow-x-auto">
                 {visibleLines.map((line, idx) => (
-                    <div key={idx} className={cn("font-mono", lineClass(line))}>
-                        {line}
+                    <div key={idx} className={cn("font-mono px-2 py-px rounded-sm", lineClass(line))}>
+                        {line || " "}
                     </div>
                 ))}
             </pre>
+
             {isLong && (
                 <button
                     type="button"
                     onClick={toggle}
-                    className="w-full px-3 py-1.5 text-xs text-primary hover:text-primary/80 border-t border-border text-center cursor-pointer"
+                    className={cn(
+                        "w-full px-3 py-1.5 text-xs font-mono text-center cursor-pointer transition-colors",
+                        "text-amber-500/50 hover:text-amber-400 hover:bg-amber-500/5",
+                        "border-t border-white/[0.06]"
+                    )}
                 >
-                    {expanded ? "Show less" : `Show ${hiddenCount} more line${hiddenCount === 1 ? "" : "s"}`}
+                    {expanded ? "-- show less --" : `-- ${hiddenCount} more line${hiddenCount === 1 ? "" : "s"} --`}
                 </button>
             )}
         </div>

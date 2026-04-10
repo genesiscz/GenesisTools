@@ -4,3 +4,121 @@
 @source "../../../utils/ui";
 
 @custom-variant dark (&:is(.dark *));
+
+/* ─── Agent UI Markdown Rendering ──────────────────────────────────────────── */
+
+.md-prose {
+    color: var(--color-foreground);
+    word-break: break-word;
+    overflow-wrap: break-word;
+}
+
+.md-prose p { margin: 0.5em 0; }
+.md-prose p:first-child { margin-top: 0; }
+.md-prose p:last-child { margin-bottom: 0; }
+
+.md-prose .md-heading { font-weight: 600; margin: 1em 0 0.5em; font-family: var(--font-mono, ui-monospace, monospace); }
+.md-prose .md-h1 { font-size: 1.25em; color: var(--color-amber-400, #fbbf24); }
+.md-prose .md-h2 { font-size: 1.1em; color: var(--color-amber-400, #fbbf24); opacity: 0.9; }
+.md-prose .md-h3 { font-size: 1em; color: var(--color-foreground); opacity: 0.8; }
+
+.md-prose .md-strong { font-weight: 700; color: var(--color-foreground); }
+.md-prose .md-em { font-style: italic; opacity: 0.85; }
+.md-prose .md-del { text-decoration: line-through; opacity: 0.5; }
+
+.md-prose .md-link {
+    color: var(--color-cyan-400, #22d3ee);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    transition: opacity 0.15s;
+}
+.md-prose .md-link:hover { opacity: 0.8; }
+
+.md-prose .md-inline-code {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 4px;
+    padding: 0.15em 0.4em;
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-size: 0.85em;
+    color: var(--color-amber-300, #fcd34d);
+}
+
+.md-prose .md-code-block {
+    position: relative;
+    margin: 0.75em 0;
+}
+
+.md-prose .md-code-lang {
+    position: absolute;
+    top: 0.4em;
+    right: 0.6em;
+    font-size: 0.65em;
+    font-family: var(--font-mono, ui-monospace, monospace);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: rgba(255, 255, 255, 0.25);
+}
+
+.md-prose pre.hljs {
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 6px;
+    padding: 0.75em 1em;
+    overflow-x: auto;
+    font-size: 0.8em;
+    line-height: 1.6;
+    font-family: var(--font-mono, ui-monospace, monospace);
+}
+
+.md-prose .md-list { padding-left: 1.5em; margin: 0.5em 0; }
+.md-prose .md-list-item { margin: 0.25em 0; }
+.md-prose .md-list-item::marker { color: rgba(255, 255, 255, 0.3); }
+
+.md-prose .md-blockquote {
+    border-left: 3px solid rgba(251, 191, 36, 0.3);
+    padding-left: 1em;
+    margin: 0.75em 0;
+    color: rgba(255, 255, 255, 0.6);
+    font-style: italic;
+}
+
+.md-prose .md-hr {
+    border: none;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    margin: 1em 0;
+}
+
+.md-prose .md-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85em;
+    margin: 0.75em 0;
+}
+.md-prose .md-table th {
+    text-align: left;
+    font-weight: 600;
+    padding: 0.4em 0.75em;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    color: var(--color-amber-400, #fbbf24);
+}
+.md-prose .md-table td {
+    padding: 0.4em 0.75em;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+/* highlight.js theme — minimal dark */
+.hljs { color: #c9d1d9; }
+.hljs-keyword, .hljs-selector-tag { color: #ff7b72; }
+.hljs-literal, .hljs-number { color: #79c0ff; }
+.hljs-string, .hljs-attr { color: #a5d6ff; }
+.hljs-built_in { color: #ffa657; }
+.hljs-comment { color: #8b949e; font-style: italic; }
+.hljs-function, .hljs-title { color: #d2a8ff; }
+.hljs-params { color: #c9d1d9; }
+.hljs-type, .hljs-class { color: #ffa657; }
+.hljs-property { color: #79c0ff; }
+.hljs-tag { color: #7ee787; }
+.hljs-name { color: #7ee787; }
+.hljs-addition { color: #aff5b4; background: rgba(63, 185, 80, 0.1); }
+.hljs-deletion { color: #ffa198; background: rgba(248, 81, 73, 0.1); }
