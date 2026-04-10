@@ -1,5 +1,6 @@
 import { SafeJSON } from "@app/utils/json";
 import { truncateText } from "@app/utils/string";
+import { createTwoFilesPatch } from "diff";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -88,8 +89,6 @@ export function formatToolSignature(name: string, input: Record<string, unknown>
 }
 
 export function formatToolDiff(name: string, input: Record<string, unknown>, maxChars: number): string[] | null {
-    const halfMax = Math.floor(maxChars / 2);
-
     if (name === "Edit" || name === "MultiEdit") {
         const oldStr = input.old_string;
         const newStr = input.new_string;
@@ -98,17 +97,38 @@ export function formatToolDiff(name: string, input: Record<string, unknown>, max
             return null;
         }
 
-        const lines: string[] = [];
+        const oldText = typeof oldStr === "string" ? oldStr : "";
+        const newText = typeof newStr === "string" ? newStr : "";
 
-        if (typeof oldStr === "string") {
-            lines.push(`- ${truncateText(oldStr, halfMax)}`);
+        // Compute unified diff with 3 lines of context
+        const patch = createTwoFilesPatch("old", "new", oldText, newText, "", "", { context: 3 });
+
+        // Strip the two-line file header (--- old / +++ new)
+        const patchLines = patch.split("\n");
+        const bodyStart = patchLines.findIndex((l) => l.startsWith("@@"));
+        const diffLines = bodyStart >= 0 ? patchLines.slice(bodyStart) : patchLines.slice(2);
+
+        // Truncate if too long
+        let totalChars = 0;
+        const result: string[] = [];
+
+        for (const line of diffLines) {
+            totalChars += line.length;
+
+            if (totalChars > maxChars) {
+                result.push(`... (diff truncated at ${maxChars} chars)`);
+                break;
+            }
+
+            result.push(line);
         }
 
-        if (typeof newStr === "string") {
-            lines.push(`+ ${truncateText(newStr, halfMax)}`);
+        // Remove trailing empty line
+        if (result.length > 0 && result[result.length - 1] === "") {
+            result.pop();
         }
 
-        return lines;
+        return result.length > 0 ? result : null;
     }
 
     if (name === "Write") {
