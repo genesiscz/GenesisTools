@@ -53,7 +53,12 @@ interface ResultBlockProps {
 function formatContent(raw: string): string {
     const trimmed = raw.trim();
 
-    if ((trimmed.startsWith("{") || trimmed.startsWith("[")) && (trimmed.endsWith("}") || trimmed.endsWith("]"))) {
+    // Only attempt JSON parse for object/array literals (not e.g. "[rerun: b2]")
+    if (
+        (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
+        (trimmed.startsWith("[{") && trimmed.endsWith("]")) ||
+        (trimmed.startsWith("[\"") && trimmed.endsWith("]"))
+    ) {
         const parsed = SafeJSON.parse(trimmed);
 
         if (parsed != null) {
