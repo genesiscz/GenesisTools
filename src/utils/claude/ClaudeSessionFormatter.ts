@@ -1,4 +1,5 @@
 import { createWriteStream, type WriteStream } from "node:fs";
+import { formatToolDiff, formatToolSignature } from "@app/utils/agents/formatters/tool-formatter";
 import { formatDateTime } from "@app/utils/date";
 import { SafeJSON } from "@app/utils/json";
 import { stripAnsi, truncateText } from "@app/utils/string";
@@ -6,7 +7,6 @@ import pc from "picocolors";
 import type { IncludeSpec } from "./cli/dsl";
 import type { TailTarget } from "./session.types";
 import { agentProgressToSubagent, parseAgentCompletionStats } from "./session.utils";
-import { formatToolDiff, formatToolSignature } from "@app/utils/agents/formatters/tool-formatter";
 import { extractToolResultText } from "./session-helpers";
 import { renderMarkdown } from "./terminal-markdown";
 import type {
@@ -393,7 +393,10 @@ export class ClaudeSessionFormatter {
 
             if (block.type === "tool_use" && this.options.includeSpec.shouldShow("tools:in")) {
                 const maxChars = this.options.includeSpec.truncationLength("tools:in");
-                const signature = formatToolSignature(block.name, (block.input ?? {}) as Record<string, unknown>, { primaryMaxChars: maxChars, detailLevel: "summary" });
+                const signature = formatToolSignature(block.name, (block.input ?? {}) as Record<string, unknown>, {
+                    primaryMaxChars: maxChars,
+                    detailLevel: "summary",
+                });
                 const timePrefix = hasTextOutput ? pad.slice(0, -1) : time;
 
                 if (this.options.colors) {
@@ -402,7 +405,7 @@ export class ClaudeSessionFormatter {
                     this.writeLine(`${timePrefix} ⏺ ${signature}`);
                 }
 
-                const diffLines = formatToolDiff(block.name, (block.input ?? {}) as Record<string, unknown>, maxChars);
+                const diffLines = maxChars > 500 ? formatToolDiff(block.name, (block.input ?? {}) as Record<string, unknown>, maxChars) : null;
 
                 if (diffLines) {
                     for (const line of diffLines) {
@@ -433,7 +436,10 @@ export class ClaudeSessionFormatter {
 
             if (block.type === "tool_use" && this.options.includeSpec.shouldShow("tools:in")) {
                 const maxLen = this.options.includeSpec.truncationLength("tools:in");
-                const signature = formatToolSignature(block.name, (block.input ?? {}) as Record<string, unknown>, { primaryMaxChars: maxLen, detailLevel: "summary" });
+                const signature = formatToolSignature(block.name, (block.input ?? {}) as Record<string, unknown>, {
+                    primaryMaxChars: maxLen,
+                    detailLevel: "summary",
+                });
 
                 if (this.options.colors) {
                     toolSummaries.push(this.colorizeSignature(block.name, signature));
@@ -545,7 +551,10 @@ export class ClaudeSessionFormatter {
 
             if (block.type === "tool_use" && this.options.includeSpec.shouldShow("agents:tools:in")) {
                 const maxChars = this.options.includeSpec.truncationLength("agents:tools:in");
-                const signature = formatToolSignature(block.name, (block.input ?? {}) as Record<string, unknown>, { primaryMaxChars: maxChars, detailLevel: "summary" });
+                const signature = formatToolSignature(block.name, (block.input ?? {}) as Record<string, unknown>, {
+                    primaryMaxChars: maxChars,
+                    detailLevel: "summary",
+                });
 
                 if (this.options.colors) {
                     this.writeLine(`${prefix}  ${this.colorizeSignature(block.name, signature)}`);
@@ -553,7 +562,7 @@ export class ClaudeSessionFormatter {
                     this.writeLine(`${prefix}  ⏺ ${signature}`);
                 }
 
-                const diffLines = formatToolDiff(block.name, (block.input ?? {}) as Record<string, unknown>, maxChars);
+                const diffLines = maxChars > 500 ? formatToolDiff(block.name, (block.input ?? {}) as Record<string, unknown>, maxChars) : null;
 
                 if (diffLines) {
                     for (const line of diffLines) {
