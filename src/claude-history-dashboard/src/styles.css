@@ -9,10 +9,120 @@
    FONT OVERRIDES
    ============================================================================ */
 
+body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
 code, pre, .font-mono,
 .md-code-block, .md-code-lang, .md-inline-code,
 .md-prose code:not(pre code) {
     font-family: 'JetBrains Mono', source-code-pro, Menlo, Monaco, Consolas, 'Courier New', monospace !important;
+}
+
+/* ============================================================================
+   CRT SCAN LINES — ::before pseudo-element overlay
+   Uses repeating-linear-gradient; Tailwind cannot express pseudo backgrounds.
+   ============================================================================ */
+
+.scan-lines::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    background: repeating-linear-gradient(
+        0deg,
+        color-mix(in oklch, var(--color-background) 85%, black) 0px,
+        color-mix(in oklch, var(--color-background) 85%, black) 1px,
+        transparent 1px,
+        transparent 3px
+    );
+    pointer-events: none;
+    z-index: 1000;
+}
+
+/* ============================================================================
+   CYBER GRID — fixed background with two linear-gradients
+   Tailwind cannot express multi-stop background-image gradients.
+   ============================================================================ */
+
+.cyber-grid {
+    background-image:
+        linear-gradient(color-mix(in oklch, var(--color-primary) 3%, transparent) 1px, transparent 1px),
+        linear-gradient(90deg, color-mix(in oklch, var(--color-primary) 3%, transparent) 1px, transparent 1px);
+    background-size: 50px 50px;
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+}
+
+/* ============================================================================
+   KEYFRAMES — fadeSlideIn
+   Used by message bubbles entering the viewport.
+   ============================================================================ */
+
+@keyframes fadeSlideIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* ============================================================================
+   NEON TEXT GLOW — text-shadow (Tailwind has no text-shadow utility)
+   ============================================================================ */
+
+.neon-text-primary {
+    text-shadow:
+        0 0 10px color-mix(in oklch, var(--color-primary) 50%, transparent),
+        0 0 20px color-mix(in oklch, var(--color-primary) 30%, transparent);
+}
+
+.neon-text-secondary {
+    text-shadow:
+        0 0 10px color-mix(in oklch, var(--color-secondary) 50%, transparent),
+        0 0 20px color-mix(in oklch, var(--color-secondary) 30%, transparent);
+}
+
+/* ============================================================================
+   COLLAPSIBLE MAX-HEIGHT ANIMATION
+   For tool call cards — Tailwind cannot animate max-height with easing.
+   ============================================================================ */
+
+.collapsible-body {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.4s ease-out;
+}
+
+.collapsible-open .collapsible-body {
+    max-height: 2000px;
+}
+
+/* ============================================================================
+   AMBER SCROLLBAR — ::-webkit-scrollbar (Tailwind has no scrollbar utilities)
+   ============================================================================ */
+
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: color-mix(in oklch, var(--color-background) 80%, black);
+}
+
+::-webkit-scrollbar-thumb {
+    background: color-mix(in oklch, var(--color-primary) 40%, transparent);
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in oklch, var(--color-primary) 60%, transparent);
 }
 
 /* ============================================================================
@@ -37,7 +147,7 @@ code, pre, .font-mono,
     margin-bottom: 0;
 }
 
-/* ─── Headings ─────────────────────────────────────────────────────────────── */
+/* --- Headings ------------------------------------------------------------ */
 
 .md-prose h1,
 .md-prose h2,
@@ -45,45 +155,49 @@ code, pre, .font-mono,
 .md-prose h4,
 .md-prose h5,
 .md-prose h6 {
-    font-weight: 600;
     letter-spacing: -0.025em;
     margin-top: 1.25em;
     margin-bottom: 0.5em;
-    color: var(--color-foreground);
 }
 
 .md-prose h1 {
-    font-size: 1.35em;
-    border-bottom: 1px solid var(--color-border);
-    padding-bottom: 0.3em;
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--color-primary);
 }
 
 .md-prose h2 {
-    font-size: 1.2em;
-    border-bottom: 1px solid color-mix(in oklch, var(--color-border) 60%, transparent);
-    padding-bottom: 0.2em;
+    font-size: 1.3rem;
+    font-weight: 600;
+    color: #ffd700;
 }
 
 .md-prose h3 {
-    font-size: 1.1em;
+    font-size: 1.15rem;
+    font-weight: 600;
+    color: var(--color-secondary);
 }
 
 .md-prose h4 {
-    font-size: 1em;
+    font-size: 1rem;
+    font-weight: 600;
     opacity: 0.85;
+    color: var(--color-foreground);
 }
 
 .md-prose h5,
 .md-prose h6 {
-    font-size: 0.95em;
+    font-size: 0.95rem;
+    font-weight: 600;
     opacity: 0.75;
+    color: var(--color-foreground);
 }
 
-/* ─── Paragraphs ───────────────────────────────────────────────────────────── */
+/* --- Paragraphs ---------------------------------------------------------- */
 
 .md-prose p {
-    margin: 0.5em 0;
-    line-height: 1.7;
+    margin: 0.5rem 0;
+    line-height: 1.75;
 }
 
 .md-prose p:first-child {
@@ -94,17 +208,16 @@ code, pre, .font-mono,
     margin-bottom: 0;
 }
 
-/* ─── Inline formatting ────────────────────────────────────────────────────── */
+/* --- Inline formatting --------------------------------------------------- */
 
 .md-prose strong {
-    font-weight: 700;
-    color: var(--color-foreground);
+    font-weight: 600;
+    color: #fff;
 }
 
 .md-prose em {
     font-style: italic;
-    color: var(--color-foreground);
-    opacity: 0.8;
+    color: #a78bfa;
 }
 
 .md-prose del {
@@ -112,7 +225,7 @@ code, pre, .font-mono,
     opacity: 0.5;
 }
 
-/* ─── Links ────────────────────────────────────────────────────────────────── */
+/* --- Links --------------------------------------------------------------- */
 
 .md-prose a {
     color: var(--color-secondary);
@@ -123,25 +236,23 @@ code, pre, .font-mono,
 }
 
 .md-prose a:hover {
-    color: var(--color-secondary);
-    opacity: 0.8;
-    text-decoration-color: color-mix(in oklch, var(--color-secondary) 60%, transparent);
+    color: var(--color-primary);
+    text-decoration-color: color-mix(in oklch, var(--color-primary) 60%, transparent);
 }
 
-/* ─── Inline code ──────────────────────────────────────────────────────────── */
+/* --- Inline code --------------------------------------------------------- */
 
 .md-prose .md-inline-code,
 .md-prose code:not(pre code) {
-    font-size: 0.85em;
-    padding: 0.15em 0.4em;
+    font-size: 0.9em;
+    padding: 2px 6px;
     border-radius: 4px;
-    background: color-mix(in oklch, var(--color-primary) 8%, var(--color-background));
-    border: 1px solid color-mix(in oklch, var(--color-primary) 15%, transparent);
-    color: var(--color-primary);
+    background: rgba(0, 0, 0, 0.4);
+    color: #f1fa8c;
     word-break: break-word;
 }
 
-/* ─── Code blocks (custom renderer class) ─────────────────────────────────── */
+/* --- Code blocks (custom renderer class) --------------------------------- */
 
 .md-code-block {
     position: relative;
@@ -157,7 +268,6 @@ code, pre, .font-mono,
 .md-code-lang {
     display: block;
     padding: 0.3rem 0.75rem;
-    font-family: 'JetBrains Mono', source-code-pro, Menlo, Monaco, Consolas, 'Courier New', monospace;
     font-size: 0.6rem;
     text-transform: uppercase;
     letter-spacing: 0.1em;
@@ -170,7 +280,6 @@ code, pre, .font-mono,
 .md-code-block pre.hljs {
     margin: 0;
     padding: 0.75rem 1rem;
-    font-family: 'JetBrains Mono', source-code-pro, Menlo, Monaco, Consolas, 'Courier New', monospace;
     font-size: 0.8rem;
     line-height: 1.6;
     overflow-x: auto;
@@ -196,7 +305,6 @@ code, pre, .font-mono,
     backdrop-filter: blur(20px);
     -webkit-backdrop-filter: blur(20px);
     border: 1px solid var(--color-border);
-    font-family: 'JetBrains Mono', source-code-pro, Menlo, Monaco, Consolas, 'Courier New', monospace;
     font-size: 0.8rem;
     line-height: 1.6;
     tab-size: 4;
@@ -211,11 +319,11 @@ code, pre, .font-mono,
     color: inherit;
 }
 
-/* ─── Lists ────────────────────────────────────────────────────────────────── */
+/* --- Lists --------------------------------------------------------------- */
 
 .md-prose ul,
 .md-prose ol {
-    padding-left: 1.5em;
+    padding-left: 1.5rem;
     margin: 0.5em 0;
 }
 
@@ -228,7 +336,7 @@ code, pre, .font-mono,
 }
 
 .md-prose li {
-    margin: 0.25em 0;
+    margin: 0.25rem 0;
     line-height: 1.65;
 }
 
@@ -255,14 +363,14 @@ code, pre, .font-mono,
     accent-color: #4ade80;
 }
 
-/* ─── Blockquote ───────────────────────────────────────────────────────────── */
+/* --- Blockquote ---------------------------------------------------------- */
 
 .md-prose blockquote {
-    border-left: 3px solid color-mix(in oklch, var(--color-primary) 30%, transparent);
+    border-left: 3px solid var(--color-primary);
     padding: 0.4em 0.8em;
     margin: 0.75em 0;
-    background: color-mix(in oklch, var(--color-card) 50%, transparent);
     color: var(--color-muted-foreground);
+    font-style: italic;
     border-radius: 0 4px 4px 0;
 }
 
@@ -270,7 +378,7 @@ code, pre, .font-mono,
     margin: 0.25em 0;
 }
 
-/* ─── Horizontal rule ──────────────────────────────────────────────────────── */
+/* --- Horizontal rule ----------------------------------------------------- */
 
 .md-prose hr {
     border: none;
@@ -278,7 +386,7 @@ code, pre, .font-mono,
     margin: 1em 0;
 }
 
-/* ─── Table ────────────────────────────────────────────────────────────────── */
+/* --- Table --------------------------------------------------------------- */
 
 .md-prose table {
     width: 100%;
@@ -315,7 +423,7 @@ code, pre, .font-mono,
     background: color-mix(in oklch, var(--color-muted) 20%, transparent);
 }
 
-/* ─── Images ───────────────────────────────────────────────────────────────── */
+/* --- Images -------------------------------------------------------------- */
 
 .md-prose img {
     max-width: 100%;
