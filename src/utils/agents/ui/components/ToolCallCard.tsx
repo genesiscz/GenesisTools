@@ -1,4 +1,5 @@
 import { SafeJSON } from "@app/utils/json";
+import { Badge } from "@ui/components/badge";
 import { cn } from "@ui/lib/utils";
 import { ChevronRight, Terminal, XCircle } from "lucide-react";
 
@@ -19,20 +20,16 @@ export function ToolCallCard({
     const hasContent = (diffLines && diffLines.length > 0) || !!resultContent;
 
     return (
-        <div
-            className={cn(
-                "rounded-md overflow-hidden",
-                "border bg-card/40",
-                isError ? "border-destructive/20" : "border-primary/15"
-            )}
-        >
+        <div className={cn("rounded-md overflow-hidden glass-card", isError ? "border-destructive/20" : "border-primary/15")}>
             <details className="group" {...(defaultExpanded && hasContent ? { open: true } : {})}>
                 <summary
                     className={cn(
-                        "flex items-center gap-2 px-3 py-2 list-none text-sm",
-                        "select-none transition-colors",
-                        hasContent && "cursor-pointer",
-                        hasContent && (isError ? "hover:bg-destructive/5" : "hover:bg-primary/5")
+                        "flex items-center gap-2 px-3 py-2 list-none text-sm select-none",
+                        hasContent && "cursor-pointer transition-all duration-200",
+                        hasContent &&
+                            !isError &&
+                            "hover:bg-primary/5 hover:shadow-[0_0_8px_color-mix(in_oklch,var(--color-primary)_15%,transparent)]",
+                        hasContent && isError && "hover:bg-destructive/5"
                     )}
                 >
                     <ChevronRight
@@ -43,47 +40,37 @@ export function ToolCallCard({
                         )}
                     />
 
-                    <Terminal
-                        className={cn(
-                            "w-3 h-3 shrink-0",
-                            isError ? "text-destructive/40" : "text-primary/40"
-                        )}
-                    />
+                    <Terminal className={cn("w-3 h-3 shrink-0", isError ? "text-destructive/40" : "text-primary/40")} />
 
-                    <span
-                        className={cn(
-                            "inline-flex items-center rounded px-1.5 py-0.5 text-[11px] font-mono font-semibold border",
-                            isError
-                                ? "bg-destructive/10 text-destructive border-destructive/20"
-                                : "bg-primary/10 text-primary border-primary/25"
-                        )}
+                    <Badge
+                        variant={isError ? "destructive" : "cyber"}
+                        className="text-[11px] font-mono font-semibold px-1.5 py-0 rounded-md"
                     >
                         {name}
-                    </span>
+                    </Badge>
 
-                    <span className="font-mono text-xs text-muted-foreground/40 truncate min-w-0">
-                        {signature}
-                    </span>
+                    <span className="font-mono text-xs text-muted-foreground/40 truncate min-w-0">{signature}</span>
 
                     {isError && (
-                        <span className="inline-flex items-center gap-1 ml-auto shrink-0 rounded px-1.5 py-0.5 text-[10px] font-mono bg-destructive/10 text-destructive border border-destructive/20">
+                        <Badge variant="destructive" className="ml-auto text-[10px] font-mono gap-1 px-1.5 py-0">
                             <XCircle className="w-3 h-3" />
                             Error
-                        </span>
+                        </Badge>
                     )}
                 </summary>
 
-                <div
-                    className={cn(
-                        "px-3 pb-3 pt-2 space-y-2",
-                        "border-t",
-                        isError ? "border-destructive/10" : "border-primary/10"
-                    )}
-                >
-                    {diffLines && diffLines.length > 0 && <DiffView lines={diffLines} />}
+                {hasContent && (
+                    <div
+                        className={cn(
+                            "px-3 pb-3 pt-2 space-y-2 border-t",
+                            isError ? "border-destructive/10" : "border-primary/10"
+                        )}
+                    >
+                        {diffLines && diffLines.length > 0 && <DiffView lines={diffLines} />}
 
-                    {resultContent && <ResultBlock content={resultContent} isError={isError} />}
-                </div>
+                        {resultContent && <ResultBlock content={resultContent} isError={isError} />}
+                    </div>
+                )}
             </details>
         </div>
     );
@@ -110,9 +97,7 @@ function extractResultText(raw: string): { text: string; isStructured: boolean }
         const parsed = SafeJSON.parse(trimmed) as Array<{ type?: string; text?: string }> | null;
 
         if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].type === "text") {
-            const texts = parsed
-                .filter((b) => b.type === "text" && b.text)
-                .map((b) => b.text as string);
+            const texts = parsed.filter((b) => b.type === "text" && b.text).map((b) => b.text as string);
 
             if (texts.length > 0) {
                 return { text: texts.join("\n\n"), isStructured: true };
@@ -144,10 +129,8 @@ function ResultBlock({ content, isError }: ResultBlockProps) {
         return (
             <div
                 className={cn(
-                    "rounded-md border p-3 overflow-auto",
-                    isError
-                        ? "bg-destructive/[0.04] border-destructive/15"
-                        : "bg-card/60 border-border"
+                    "rounded-md border p-3 overflow-auto glass-card",
+                    isError ? "border-destructive/15" : "border-border"
                 )}
                 style={{ maxHeight: RESULT_MAX_HEIGHT }}
             >
@@ -160,10 +143,8 @@ function ResultBlock({ content, isError }: ResultBlockProps) {
     return (
         <pre
             className={cn(
-                "text-xs p-3 rounded-md overflow-auto whitespace-pre-wrap break-words font-mono border",
-                isError
-                    ? "bg-destructive/[0.04] border-destructive/15 text-destructive/80"
-                    : "bg-card/60 border-border text-muted-foreground/60"
+                "text-xs p-3 rounded-md overflow-auto whitespace-pre-wrap break-words font-mono glass-card border",
+                isError ? "border-destructive/15 text-destructive/80" : "border-border text-muted-foreground/60"
             )}
             style={{ maxHeight: RESULT_MAX_HEIGHT }}
         >

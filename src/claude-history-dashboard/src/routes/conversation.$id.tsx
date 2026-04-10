@@ -5,7 +5,6 @@ import { ArrowLeft, Calendar, FolderOpen, GitBranch } from "lucide-react";
 import { useMemo } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { getConversation } from "@/server/conversations";
 import type { SerializableConversationDetail } from "@/server/serializers";
 
@@ -155,14 +154,12 @@ function ConversationPage() {
 					</div>
 				</div>
 			</header>
-			<ScrollArea className="h-[calc(100vh-160px)]">
-				<div className="max-w-5xl mx-auto px-6 py-6">
-					<SessionTimeline
-						messages={agentMessages}
-						formatOptions={{ showThinking: true, toolDetailLevel: "full" }}
-					/>
-				</div>
-			</ScrollArea>
+			<main className="max-w-5xl mx-auto px-6 py-6 pb-16">
+				<SessionTimeline
+					messages={agentMessages}
+					formatOptions={{ showThinking: true, toolDetailLevel: "full" }}
+				/>
+			</main>
 		</div>
 	);
 }

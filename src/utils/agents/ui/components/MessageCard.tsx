@@ -81,11 +81,7 @@ function RoleLabel({ role }: { role: AgentMessage["role"] }) {
     };
 
     const colorClass =
-        role === "user"
-            ? "text-secondary"
-            : role === "assistant"
-              ? "text-primary"
-              : "text-muted-foreground";
+        role === "user" ? "text-secondary" : role === "assistant" ? "text-primary" : "text-muted-foreground";
 
     return (
         <span className={cn("text-sm font-semibold font-mono tracking-wide uppercase", colorClass)}>
@@ -183,9 +179,7 @@ function BlockRenderer({ block, defaultExpanded }: { block: FormattedBlock; defa
         case "agent-notification":
             return (
                 <Badge variant="cyber-secondary" className="text-xs">
-                    {block.meta?.agentId && (
-                        <span className="font-mono mr-1 text-amber-400">{block.meta.agentId}</span>
-                    )}
+                    {block.meta?.agentId && <span className="font-mono mr-1 text-amber-400">{block.meta.agentId}</span>}
                     {block.content}
                 </Badge>
             );
@@ -236,10 +230,12 @@ export function MessageCard({ message, formatOptions, defaultExpanded = false }:
     return (
         <div
             className={cn(
-                "rounded-lg border overflow-hidden transition-all duration-200",
-                isUser && "border-l-2 border-l-secondary/40 border-secondary/10 bg-secondary/[0.03] hover:bg-secondary/[0.05] hover:border-secondary/20",
-                isAssistant && "border-l-2 border-l-primary/30 border-border bg-card/30 hover:bg-card/50 hover:border-primary/15",
-                !isUser && !isAssistant && "border-border bg-muted/10"
+                "rounded-lg overflow-hidden transition-all duration-200",
+                isUser &&
+                    "border border-l-[3px] border-l-secondary border-secondary/15 bg-secondary/[0.04] hover:bg-secondary/[0.07] hover:border-secondary/25 hover:-translate-y-px",
+                isAssistant &&
+                    "border border-l-[3px] border-l-primary/50 border-border glass-card hover:border-primary/20 hover:-translate-y-px",
+                !isUser && !isAssistant && "border border-border bg-muted/10"
             )}
         >
             {/* Header */}
