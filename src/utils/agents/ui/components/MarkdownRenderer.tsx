@@ -10,14 +10,14 @@ import typescript from "highlight.js/lib/languages/typescript";
 import xml from "highlight.js/lib/languages/xml";
 import yaml from "highlight.js/lib/languages/yaml";
 
-// eslint-disable-next-line @typescript-eslint/no-require-imports -- tsgo can't resolve marked's dual CJS/ESM types
-const { marked } = require("marked") as {
-    marked: {
-        parse: (src: string, options?: Record<string, unknown>) => string;
-        use: (ext: Record<string, unknown>) => void;
-    };
-};
+import { marked as markedRaw } from "marked";
 
+// tsgo resolves `marked` as a function overload, missing .use() and .parse()
+// Cast to the full API shape that marked v17 exports at runtime
+const marked = markedRaw as unknown as {
+    parse: (src: string, options?: { async?: false }) => string;
+    use: (ext: { renderer: Record<string, unknown> }) => void;
+};
 import { useMemo } from "react";
 
 hljs.registerLanguage("typescript", typescript);
