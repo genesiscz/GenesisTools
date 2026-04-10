@@ -1,7 +1,8 @@
 import { SafeJSON } from "@app/utils/json";
 import { Badge } from "@ui/components/badge";
 import { cn } from "@ui/lib/utils";
-import { ChevronRight, Terminal, XCircle } from "lucide-react";
+import { Minus, Plus, Wrench, XCircle } from "lucide-react";
+import { useState } from "react";
 
 import type { ToolCallCardProps } from "../types";
 import { DiffView } from "./DiffView";
@@ -18,51 +19,72 @@ export function ToolCallCard({
     defaultExpanded = false,
 }: ToolCallCardProps) {
     const hasContent = (diffLines && diffLines.length > 0) || !!resultContent;
+    const [isOpen, setIsOpen] = useState(defaultExpanded && hasContent);
+    const status = isError ? "ERROR" : resultContent ? "COMPLETED" : "PENDING";
+    const statusVariant = isError ? "destructive" : "cyber-secondary";
 
     return (
-        <div className={cn("rounded-md overflow-hidden glass-card", isError ? "border-destructive/20" : "border-primary/15")}>
-            <details className="group" {...(defaultExpanded && hasContent ? { open: true } : {})}>
-                <summary
+        <div
+            className={cn(
+                "rounded-lg overflow-hidden border transition-all duration-300",
+                isError ? "border-destructive/20" : "border-primary/20",
+                isOpen && !isError && "border-primary/40",
+                isOpen && isError && "border-destructive/40",
+                isOpen ? "collapsible-open" : ""
+            )}
+        >
+            {/* Header */}
+            <div
+                onClick={hasContent ? () => setIsOpen(!isOpen) : undefined}
+                className={cn(
+                    "flex items-center gap-3 px-4 py-2.5 select-none transition-all",
+                    hasContent && "cursor-pointer",
+                    hasContent && !isError && "hover:bg-primary/[0.06]",
+                    hasContent && isError && "hover:bg-destructive/5",
+                    "bg-primary/[0.03]"
+                )}
+            >
+                {/* +/- toggle icon */}
+                <div
                     className={cn(
-                        "flex items-center gap-2 px-3 py-2 list-none text-sm select-none",
-                        hasContent && "cursor-pointer transition-all duration-200",
-                        hasContent &&
-                            !isError &&
-                            "hover:bg-primary/5 hover:shadow-[0_0_8px_color-mix(in_oklch,var(--color-primary)_15%,transparent)]",
-                        hasContent && isError && "hover:bg-destructive/5"
+                        "w-6 h-6 rounded flex items-center justify-center shrink-0 text-sm",
+                        isError ? "bg-destructive/10 text-destructive" : "bg-primary/10 text-primary",
+                        !hasContent && "invisible"
                     )}
                 >
-                    <ChevronRight
-                        className={cn(
-                            "w-3.5 h-3.5 shrink-0 transition-transform group-open:rotate-90",
-                            isError ? "text-destructive/50" : "text-primary/50",
-                            !hasContent && "invisible"
-                        )}
-                    />
+                    {isOpen ? <Minus className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
+                </div>
 
-                    <Terminal className={cn("w-3 h-3 shrink-0", isError ? "text-destructive/40" : "text-primary/40")} />
+                {/* Wrench icon */}
+                <Wrench className={cn("w-3.5 h-3.5 shrink-0", isError ? "text-destructive/40" : "text-primary/40")} />
 
-                    <Badge
-                        variant={isError ? "destructive" : "cyber"}
-                        className="text-[11px] font-mono font-semibold px-1.5 py-0 rounded-md"
-                    >
-                        {name}
-                    </Badge>
+                {/* Tool name badge */}
+                <Badge
+                    variant={isError ? "destructive" : "cyber"}
+                    className="text-[11px] font-mono font-semibold px-1.5 py-0 rounded-md"
+                >
+                    {name}
+                </Badge>
 
-                    <span className="font-mono text-xs text-muted-foreground/40 truncate min-w-0">{signature}</span>
+                {/* Signature */}
+                <span className="font-mono text-xs text-muted-foreground/40 truncate min-w-0">{signature}</span>
 
-                    {isError && (
-                        <Badge variant="destructive" className="ml-auto text-[10px] font-mono gap-1 px-1.5 py-0">
-                            <XCircle className="w-3 h-3" />
-                            Error
-                        </Badge>
-                    )}
-                </summary>
+                {/* Status badge -- pushed to right */}
+                <Badge
+                    variant={statusVariant}
+                    className={cn("ml-auto text-[10px] font-mono gap-1 px-1.5 py-0 shrink-0", isError && "gap-1")}
+                >
+                    {isError && <XCircle className="w-3 h-3" />}
+                    {status}
+                </Badge>
+            </div>
 
+            {/* Collapsible body -- uses CSS animation from styles.css */}
+            <div className="collapsible-body">
                 {hasContent && (
                     <div
                         className={cn(
-                            "px-3 pb-3 pt-2 space-y-2 border-t",
+                            "px-4 pb-4 pt-3 space-y-2 border-t",
                             isError ? "border-destructive/10" : "border-primary/10"
                         )}
                     >
@@ -71,7 +93,7 @@ export function ToolCallCard({
                         {resultContent && <ResultBlock content={resultContent} isError={isError} />}
                     </div>
                 )}
-            </details>
+            </div>
         </div>
     );
 }
