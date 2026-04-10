@@ -151,8 +151,8 @@ function ResultBlock({ content, isError }: ResultBlockProps) {
         return (
             <div
                 className={cn(
-                    "rounded-md border p-3 overflow-auto glass-card",
-                    isError ? "border-destructive/15" : "border-border"
+                    "rounded-md border p-3 overflow-auto bg-black/40",
+                    isError ? "border-destructive/15" : "border-white/[0.06]"
                 )}
                 style={{ maxHeight: RESULT_MAX_HEIGHT }}
             >
@@ -165,8 +165,8 @@ function ResultBlock({ content, isError }: ResultBlockProps) {
     return (
         <pre
             className={cn(
-                "text-xs p-3 rounded-md overflow-auto whitespace-pre-wrap break-words font-mono glass-card border",
-                isError ? "border-destructive/15 text-destructive/80" : "border-border text-muted-foreground/60"
+                "text-xs p-3 rounded-md overflow-auto whitespace-pre-wrap break-words font-mono bg-black/40 border",
+                isError ? "border-destructive/15 text-destructive/80" : "border-white/[0.06] text-muted-foreground/60"
             )}
             style={{ maxHeight: RESULT_MAX_HEIGHT }}
         >
