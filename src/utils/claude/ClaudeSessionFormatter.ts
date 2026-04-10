@@ -6,7 +6,8 @@ import pc from "picocolors";
 import type { IncludeSpec } from "./cli/dsl";
 import type { TailTarget } from "./session.types";
 import { agentProgressToSubagent, parseAgentCompletionStats } from "./session.utils";
-import { extractToolResultText, formatToolCallDiffBlock, formatToolCallSignature } from "./session-helpers";
+import { formatToolDiff, formatToolSignature } from "@app/utils/agents/formatters/tool-formatter";
+import { extractToolResultText } from "./session-helpers";
 import { renderMarkdown } from "./terminal-markdown";
 import type {
     AssistantMessage,
@@ -392,7 +393,7 @@ export class ClaudeSessionFormatter {
 
             if (block.type === "tool_use" && this.options.includeSpec.shouldShow("tools:in")) {
                 const maxChars = this.options.includeSpec.truncationLength("tools:in");
-                const signature = formatToolCallSignature(block, maxChars);
+                const signature = formatToolSignature(block.name, (block.input ?? {}) as Record<string, unknown>, { primaryMaxChars: maxChars, detailLevel: "summary" });
                 const timePrefix = hasTextOutput ? pad.slice(0, -1) : time;
 
                 if (this.options.colors) {
@@ -401,10 +402,10 @@ export class ClaudeSessionFormatter {
                     this.writeLine(`${timePrefix} ⏺ ${signature}`);
                 }
 
-                const diffBlock = formatToolCallDiffBlock(block, maxChars);
+                const diffLines = formatToolDiff(block.name, (block.input ?? {}) as Record<string, unknown>, maxChars);
 
-                if (diffBlock) {
-                    for (const line of diffBlock.split("\n")) {
+                if (diffLines) {
+                    for (const line of diffLines) {
                         if (this.options.colors) {
                             const colored = line.startsWith("+")
                                 ? pc.green(line)
@@ -432,7 +433,7 @@ export class ClaudeSessionFormatter {
 
             if (block.type === "tool_use" && this.options.includeSpec.shouldShow("tools:in")) {
                 const maxLen = this.options.includeSpec.truncationLength("tools:in");
-                const signature = formatToolCallSignature(block, maxLen);
+                const signature = formatToolSignature(block.name, (block.input ?? {}) as Record<string, unknown>, { primaryMaxChars: maxLen, detailLevel: "summary" });
 
                 if (this.options.colors) {
                     toolSummaries.push(this.colorizeSignature(block.name, signature));
@@ -544,7 +545,7 @@ export class ClaudeSessionFormatter {
 
             if (block.type === "tool_use" && this.options.includeSpec.shouldShow("agents:tools:in")) {
                 const maxChars = this.options.includeSpec.truncationLength("agents:tools:in");
-                const signature = formatToolCallSignature(block, maxChars);
+                const signature = formatToolSignature(block.name, (block.input ?? {}) as Record<string, unknown>, { primaryMaxChars: maxChars, detailLevel: "summary" });
 
                 if (this.options.colors) {
                     this.writeLine(`${prefix}  ${this.colorizeSignature(block.name, signature)}`);
@@ -552,10 +553,10 @@ export class ClaudeSessionFormatter {
                     this.writeLine(`${prefix}  ⏺ ${signature}`);
                 }
 
-                const diffBlock = formatToolCallDiffBlock(block, maxChars);
+                const diffLines = formatToolDiff(block.name, (block.input ?? {}) as Record<string, unknown>, maxChars);
 
-                if (diffBlock) {
-                    for (const line of diffBlock.split("\n")) {
+                if (diffLines) {
+                    for (const line of diffLines) {
                         if (this.options.colors) {
                             const colored = line.startsWith("+")
                                 ? pc.green(line)
