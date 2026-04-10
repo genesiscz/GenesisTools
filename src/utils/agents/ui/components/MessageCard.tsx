@@ -1,7 +1,7 @@
 import { Badge } from "@ui/components/badge";
 import { cn } from "@ui/lib/utils";
-import { Bot, User } from "lucide-react";
-import { useMemo } from "react";
+import { Bot, ChevronDown, User } from "lucide-react";
+import { useCallback, useMemo, useState } from "react";
 
 import { messageToBlocks } from "../../formatters/block-parser";
 import type { FormatOptions, FormattedBlock } from "../../formatters/types";
@@ -17,7 +17,7 @@ const DEFAULT_FORMAT_OPTIONS: FormatOptions = {
     showRoleHeaders: false,
     showTimestamps: true,
     toolInputMaxChars: 300,
-    toolOutputMaxChars: 1000,
+    toolOutputMaxChars: 50_000,
 };
 
 function formatTime(date: Date): string {
@@ -59,15 +59,15 @@ function groupToolBlocks(blocks: FormattedBlock[]): FormattedBlock[][] {
 function RoleIcon({ role }: { role: AgentMessage["role"] }) {
     if (role === "user") {
         return (
-            <div className="flex items-center justify-center w-6 h-6 rounded bg-cyan-500/10 border border-cyan-500/20">
-                <User className="w-3.5 h-3.5 text-cyan-400" />
+            <div className="flex items-center justify-center w-6 h-6 rounded bg-secondary/10 border border-secondary/20">
+                <User className="w-3.5 h-3.5 text-secondary" />
             </div>
         );
     }
 
     return (
-        <div className="flex items-center justify-center w-6 h-6 rounded bg-amber-500/10 border border-amber-500/20">
-            <Bot className="w-3.5 h-3.5 text-amber-400" />
+        <div className="flex items-center justify-center w-6 h-6 rounded bg-primary/10 border border-primary/20">
+            <Bot className="w-3.5 h-3.5 text-primary" />
         </div>
     );
 }
@@ -81,7 +81,11 @@ function RoleLabel({ role }: { role: AgentMessage["role"] }) {
     };
 
     const colorClass =
-        role === "user" ? "text-cyan-400" : role === "assistant" ? "text-amber-400" : "text-muted-foreground";
+        role === "user"
+            ? "text-secondary"
+            : role === "assistant"
+              ? "text-primary"
+              : "text-muted-foreground";
 
     return (
         <span className={cn("text-sm font-semibold font-mono tracking-wide uppercase", colorClass)}>
@@ -115,10 +119,41 @@ function renderBlockGroup(group: FormattedBlock[], groupIdx: number, defaultExpa
     ));
 }
 
+const LONG_TEXT_THRESHOLD = 800;
+
+function CollapsibleText({ content, className }: { content: string; className?: string }) {
+    const isLong = content.length > LONG_TEXT_THRESHOLD;
+    const [expanded, setExpanded] = useState(false);
+    const toggle = useCallback(() => setExpanded((prev) => !prev), []);
+
+    if (!isLong) {
+        return <MarkdownRenderer content={content} className={className} />;
+    }
+
+    return (
+        <div>
+            <div className={expanded ? "message-content-expanded" : "message-content-collapsed"}>
+                <MarkdownRenderer content={content} className={className} />
+            </div>
+            <button
+                type="button"
+                onClick={toggle}
+                className={cn(
+                    "flex items-center gap-1.5 mt-2 text-xs font-mono cursor-pointer transition-colors",
+                    "text-muted-foreground/40 hover:text-muted-foreground/70"
+                )}
+            >
+                <ChevronDown className={cn("w-3 h-3 transition-transform", expanded && "rotate-180")} />
+                {expanded ? "Show less" : `Show more (${content.split("\n").length} lines)`}
+            </button>
+        </div>
+    );
+}
+
 function BlockRenderer({ block, defaultExpanded }: { block: FormattedBlock; defaultExpanded: boolean }) {
     switch (block.type) {
         case "text":
-            return <MarkdownRenderer content={block.content} className="text-sm leading-relaxed" />;
+            return <CollapsibleText content={block.content} className="text-sm leading-relaxed" />;
 
         case "thinking":
             return <ThinkingBlock content={block.content} defaultExpanded={defaultExpanded} />;
@@ -129,8 +164,8 @@ function BlockRenderer({ block, defaultExpanded }: { block: FormattedBlock; defa
                     className={cn(
                         "text-xs p-3 rounded-md overflow-auto whitespace-pre-wrap font-mono border",
                         block.meta?.isError
-                            ? "bg-red-500/5 border-red-500/20 text-red-300"
-                            : "bg-black/20 border-white/5 text-muted-foreground"
+                            ? "bg-red-500/[0.04] border-red-500/20 text-red-300/80"
+                            : "bg-black/30 border-white/[0.06] text-muted-foreground/60"
                     )}
                 >
                     {block.content}
@@ -139,7 +174,7 @@ function BlockRenderer({ block, defaultExpanded }: { block: FormattedBlock; defa
 
         case "image":
             return (
-                <span className="text-xs text-muted-foreground italic flex items-center gap-1.5">
+                <span className="text-xs text-muted-foreground/60 italic flex items-center gap-1.5">
                     <span className="inline-block w-3 h-3 rounded-sm bg-muted-foreground/20" />
                     {block.content}
                 </span>
@@ -148,7 +183,9 @@ function BlockRenderer({ block, defaultExpanded }: { block: FormattedBlock; defa
         case "agent-notification":
             return (
                 <Badge variant="cyber-secondary" className="text-xs">
-                    {block.meta?.agentId && <span className="font-mono mr-1 text-amber-400">{block.meta.agentId}</span>}
+                    {block.meta?.agentId && (
+                        <span className="font-mono mr-1 text-amber-400">{block.meta.agentId}</span>
+                    )}
                     {block.content}
                 </Badge>
             );
@@ -175,10 +212,10 @@ function BlockRenderer({ block, defaultExpanded }: { block: FormattedBlock; defa
             );
 
         case "separator":
-            return <hr className="border-white/5" />;
+            return <hr className="border-white/[0.06] my-1" />;
 
         case "metadata":
-            return <span className="text-xs text-muted-foreground/60 italic">{block.content}</span>;
+            return <span className="text-xs text-muted-foreground/50 italic">{block.content}</span>;
 
         default:
             return null;
@@ -199,10 +236,10 @@ export function MessageCard({ message, formatOptions, defaultExpanded = false }:
     return (
         <div
             className={cn(
-                "rounded-lg border overflow-hidden transition-colors",
-                isUser && "border-l-2 border-l-cyan-500/40 border-cyan-500/10 bg-cyan-500/[0.03]",
-                isAssistant && "border-l-2 border-l-amber-500/30 border-white/[0.04] bg-white/[0.01]",
-                !isUser && !isAssistant && "border-white/[0.06] bg-muted/10"
+                "rounded-lg border overflow-hidden transition-all duration-200",
+                isUser && "border-l-2 border-l-secondary/40 border-secondary/10 bg-secondary/[0.03] hover:bg-secondary/[0.05] hover:border-secondary/20",
+                isAssistant && "border-l-2 border-l-primary/30 border-border bg-card/30 hover:bg-card/50 hover:border-primary/15",
+                !isUser && !isAssistant && "border-border bg-muted/10"
             )}
         >
             {/* Header */}

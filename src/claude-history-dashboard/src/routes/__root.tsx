@@ -39,7 +39,7 @@ function RootDocument({ children }: { children: React.ReactNode }) {
 			<head>
 				<HeadContent />
 			</head>
-			<body className="cyberpunk">
+			<body className="cyberpunk bg-background text-foreground">
 				<Header />
 				{children}
 				{import.meta.env.DEV && (

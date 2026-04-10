@@ -5,120 +5,426 @@
 
 @custom-variant dark (&:is(.dark *));
 
-/* ─── Agent UI Markdown Rendering ──────────────────────────────────────────── */
+/* ============================================================================
+   AGENT UI — MARKDOWN PROSE
+   Targets bare HTML tags inside .md-prose since marked outputs standard HTML.
+   The only custom classes are md-code-block, md-code-lang, md-inline-code
+   which come from MarkdownRenderer's custom renderer overrides.
+   ============================================================================ */
 
 .md-prose {
     color: var(--color-foreground);
+    line-height: 1.7;
     word-break: break-word;
     overflow-wrap: break-word;
 }
 
-.md-prose p { margin: 0.5em 0; }
-.md-prose p:first-child { margin-top: 0; }
-.md-prose p:last-child { margin-bottom: 0; }
+.md-prose > *:first-child {
+    margin-top: 0;
+}
 
-.md-prose .md-heading { font-weight: 600; margin: 1em 0 0.5em; font-family: var(--font-mono, ui-monospace, monospace); }
-.md-prose .md-h1 { font-size: 1.25em; color: var(--color-amber-400, #fbbf24); }
-.md-prose .md-h2 { font-size: 1.1em; color: var(--color-amber-400, #fbbf24); opacity: 0.9; }
-.md-prose .md-h3 { font-size: 1em; color: var(--color-foreground); opacity: 0.8; }
+.md-prose > *:last-child {
+    margin-bottom: 0;
+}
 
-.md-prose .md-strong { font-weight: 700; color: var(--color-foreground); }
-.md-prose .md-em { font-style: italic; opacity: 0.85; }
-.md-prose .md-del { text-decoration: line-through; opacity: 0.5; }
+/* ─── Headings ─────────────────────────────────────────────────────────────── */
 
-.md-prose .md-link {
-    color: var(--color-cyan-400, #22d3ee);
+.md-prose h1,
+.md-prose h2,
+.md-prose h3,
+.md-prose h4,
+.md-prose h5,
+.md-prose h6 {
+    font-weight: 600;
+    letter-spacing: -0.025em;
+    margin-top: 1.25em;
+    margin-bottom: 0.5em;
+    color: var(--color-foreground);
+}
+
+.md-prose h1 {
+    font-size: 1.35em;
+    border-bottom: 1px solid var(--color-border);
+    padding-bottom: 0.3em;
+}
+
+.md-prose h2 {
+    font-size: 1.2em;
+    border-bottom: 1px solid color-mix(in oklch, var(--color-border) 60%, transparent);
+    padding-bottom: 0.2em;
+}
+
+.md-prose h3 {
+    font-size: 1.1em;
+}
+
+.md-prose h4 {
+    font-size: 1em;
+    opacity: 0.85;
+}
+
+.md-prose h5,
+.md-prose h6 {
+    font-size: 0.95em;
+    opacity: 0.75;
+}
+
+/* ─── Paragraphs ───────────────────────────────────────────────────────────── */
+
+.md-prose p {
+    margin: 0.5em 0;
+    line-height: 1.7;
+}
+
+.md-prose p:first-child {
+    margin-top: 0;
+}
+
+.md-prose p:last-child {
+    margin-bottom: 0;
+}
+
+/* ─── Inline formatting ────────────────────────────────────────────────────── */
+
+.md-prose strong {
+    font-weight: 700;
+    color: var(--color-foreground);
+}
+
+.md-prose em {
+    font-style: italic;
+    color: var(--color-foreground);
+    opacity: 0.8;
+}
+
+.md-prose del {
+    text-decoration: line-through;
+    opacity: 0.5;
+}
+
+/* ─── Links ────────────────────────────────────────────────────────────────── */
+
+.md-prose a {
+    color: var(--color-secondary);
     text-decoration: underline;
+    text-decoration-color: color-mix(in oklch, var(--color-secondary) 35%, transparent);
     text-underline-offset: 2px;
-    transition: opacity 0.15s;
+    transition: color 0.15s, text-decoration-color 0.15s;
 }
-.md-prose .md-link:hover { opacity: 0.8; }
 
-.md-prose .md-inline-code {
-    background: rgba(255, 255, 255, 0.06);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 4px;
-    padding: 0.15em 0.4em;
-    font-family: var(--font-mono, ui-monospace, monospace);
+.md-prose a:hover {
+    color: var(--color-secondary);
+    opacity: 0.8;
+    text-decoration-color: color-mix(in oklch, var(--color-secondary) 60%, transparent);
+}
+
+/* ─── Inline code ──────────────────────────────────────────────────────────── */
+
+.md-prose .md-inline-code,
+.md-prose code:not(pre code) {
+    font-family: 'JetBrains Mono', source-code-pro, Menlo, Monaco, Consolas, 'Courier New', monospace;
     font-size: 0.85em;
-    color: var(--color-amber-300, #fcd34d);
+    padding: 0.15em 0.4em;
+    border-radius: 4px;
+    background: var(--color-muted);
+    border: 1px solid var(--color-border);
+    color: var(--color-primary);
+    word-break: break-word;
 }
 
-.md-prose .md-code-block {
+/* ─── Code blocks (custom renderer class) ─────────────────────────────────── */
+
+.md-code-block {
     position: relative;
     margin: 0.75em 0;
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1px solid var(--color-border);
+    background: color-mix(in oklch, var(--color-card) 60%, black);
 }
 
-.md-prose .md-code-lang {
-    position: absolute;
-    top: 0.4em;
-    right: 0.6em;
-    font-size: 0.65em;
-    font-family: var(--font-mono, ui-monospace, monospace);
+.md-code-lang {
+    display: block;
+    padding: 0.3rem 0.75rem;
+    font-family: 'JetBrains Mono', source-code-pro, Menlo, Monaco, Consolas, 'Courier New', monospace;
+    font-size: 0.6rem;
     text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: rgba(255, 255, 255, 0.25);
+    letter-spacing: 0.1em;
+    color: color-mix(in oklch, var(--color-primary) 45%, transparent);
+    background: color-mix(in oklch, var(--color-card) 80%, black);
+    border-bottom: 1px solid var(--color-border);
+    user-select: none;
 }
 
-.md-prose pre.hljs {
-    background: rgba(0, 0, 0, 0.3);
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    border-radius: 6px;
-    padding: 0.75em 1em;
-    overflow-x: auto;
-    font-size: 0.8em;
+.md-code-block pre.hljs {
+    margin: 0;
+    padding: 0.75rem 1rem;
+    font-family: 'JetBrains Mono', source-code-pro, Menlo, Monaco, Consolas, 'Courier New', monospace;
+    font-size: 0.8rem;
     line-height: 1.6;
-    font-family: var(--font-mono, ui-monospace, monospace);
+    overflow-x: auto;
+    background: transparent;
+    tab-size: 4;
 }
 
-.md-prose .md-list { padding-left: 1.5em; margin: 0.5em 0; }
-.md-prose .md-list-item { margin: 0.25em 0; }
-.md-prose .md-list-item::marker { color: rgba(255, 255, 255, 0.3); }
-
-.md-prose .md-blockquote {
-    border-left: 3px solid rgba(251, 191, 36, 0.3);
-    padding-left: 1em;
-    margin: 0.75em 0;
-    color: rgba(255, 255, 255, 0.6);
-    font-style: italic;
-}
-
-.md-prose .md-hr {
+.md-code-block pre.hljs code {
+    font-family: inherit;
+    font-size: inherit;
+    background: none;
     border: none;
-    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    padding: 0;
+}
+
+/* Fallback: bare <pre> blocks without .md-code-block wrapper */
+.md-prose pre {
+    margin: 0.75em 0;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    overflow-x: auto;
+    background: color-mix(in oklch, var(--color-card) 60%, black);
+    border: 1px solid var(--color-border);
+    font-family: 'JetBrains Mono', source-code-pro, Menlo, Monaco, Consolas, 'Courier New', monospace;
+    font-size: 0.8rem;
+    line-height: 1.6;
+    tab-size: 4;
+}
+
+.md-prose pre code {
+    background: none;
+    border: none;
+    padding: 0;
+    font-family: inherit;
+    font-size: inherit;
+    color: inherit;
+}
+
+/* ─── Lists ────────────────────────────────────────────────────────────────── */
+
+.md-prose ul,
+.md-prose ol {
+    padding-left: 1.5em;
+    margin: 0.5em 0;
+}
+
+.md-prose ul {
+    list-style-type: disc;
+}
+
+.md-prose ol {
+    list-style-type: decimal;
+}
+
+.md-prose li {
+    margin: 0.25em 0;
+    line-height: 1.65;
+}
+
+.md-prose li::marker {
+    color: var(--color-muted-foreground);
+    opacity: 0.4;
+}
+
+.md-prose li p {
+    margin: 0.15em 0;
+}
+
+/* Nested lists */
+.md-prose ul ul,
+.md-prose ol ul,
+.md-prose ul ol,
+.md-prose ol ol {
+    margin: 0.25em 0;
+}
+
+/* Task checkboxes (marked renders input[type=checkbox] for - [ ] / - [x]) */
+.md-prose input[type="checkbox"] {
+    margin-right: 0.4em;
+    accent-color: #4ade80;
+}
+
+/* ─── Blockquote ───────────────────────────────────────────────────────────── */
+
+.md-prose blockquote {
+    border-left: 3px solid color-mix(in oklch, var(--color-primary) 30%, transparent);
+    padding: 0.4em 0.8em;
+    margin: 0.75em 0;
+    background: color-mix(in oklch, var(--color-card) 50%, transparent);
+    color: var(--color-muted-foreground);
+    border-radius: 0 4px 4px 0;
+}
+
+.md-prose blockquote p {
+    margin: 0.25em 0;
+}
+
+/* ─── Horizontal rule ──────────────────────────────────────────────────────── */
+
+.md-prose hr {
+    border: none;
+    border-top: 1px solid var(--color-border);
     margin: 1em 0;
 }
 
-.md-prose .md-table {
+/* ─── Table ────────────────────────────────────────────────────────────────── */
+
+.md-prose table {
     width: 100%;
     border-collapse: collapse;
     font-size: 0.85em;
     margin: 0.75em 0;
-}
-.md-prose .md-table th {
-    text-align: left;
-    font-weight: 600;
-    padding: 0.4em 0.75em;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-    color: var(--color-amber-400, #fbbf24);
-}
-.md-prose .md-table td {
-    padding: 0.4em 0.75em;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+    overflow: hidden;
 }
 
-/* highlight.js theme — minimal dark */
-.hljs { color: #c9d1d9; }
-.hljs-keyword, .hljs-selector-tag { color: #ff7b72; }
-.hljs-literal, .hljs-number { color: #79c0ff; }
-.hljs-string, .hljs-attr { color: #a5d6ff; }
-.hljs-built_in { color: #ffa657; }
-.hljs-comment { color: #8b949e; font-style: italic; }
-.hljs-function, .hljs-title { color: #d2a8ff; }
-.hljs-params { color: #c9d1d9; }
-.hljs-type, .hljs-class { color: #ffa657; }
-.hljs-property { color: #79c0ff; }
-.hljs-tag { color: #7ee787; }
-.hljs-name { color: #7ee787; }
-.hljs-addition { color: #aff5b4; background: rgba(63, 185, 80, 0.1); }
-.hljs-deletion { color: #ffa198; background: rgba(248, 81, 73, 0.1); }
+.md-prose th {
+    text-align: left;
+    font-weight: 600;
+    font-size: 0.9em;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 0.5em 0.75em;
+    background: color-mix(in oklch, var(--color-card) 80%, transparent);
+    border-bottom: 1px solid color-mix(in oklch, var(--color-primary) 15%, transparent);
+    color: var(--color-primary);
+}
+
+.md-prose td {
+    padding: 0.45em 0.75em;
+    border-bottom: 1px solid var(--color-border);
+}
+
+.md-prose tr:last-child td {
+    border-bottom: none;
+}
+
+.md-prose tr:hover td {
+    background: color-mix(in oklch, var(--color-muted) 20%, transparent);
+}
+
+/* ─── Images ───────────────────────────────────────────────────────────────── */
+
+.md-prose img {
+    max-width: 100%;
+    height: auto;
+    border-radius: 6px;
+    margin: 0.5em 0;
+    border: 1px solid var(--color-border);
+}
+
+
+/* ============================================================================
+   MESSAGE CARD — LONG CONTENT COLLAPSE
+   ============================================================================ */
+
+.message-content-collapsed {
+    position: relative;
+    max-height: 20rem;
+    overflow: hidden;
+    mask-image: linear-gradient(to bottom, black 60%, transparent 100%);
+    -webkit-mask-image: linear-gradient(to bottom, black 60%, transparent 100%);
+}
+
+.message-content-expanded {
+    max-height: none;
+    mask-image: none;
+    -webkit-mask-image: none;
+}
+
+
+/* ============================================================================
+   HIGHLIGHT.JS SYNTAX THEME — cyberpunk neon dark
+   ============================================================================ */
+
+.hljs {
+    color: #c9d1d9;
+}
+
+.hljs-comment,
+.hljs-quote {
+    color: #6e7681;
+    font-style: italic;
+}
+
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-section {
+    color: #ff7b72;
+}
+
+.hljs-string,
+.hljs-attr {
+    color: #a5d6ff;
+}
+
+.hljs-literal,
+.hljs-number {
+    color: #79c0ff;
+}
+
+.hljs-variable,
+.hljs-template-variable {
+    color: #ffa657;
+}
+
+.hljs-built_in,
+.hljs-type,
+.hljs-class {
+    color: #ffa657;
+}
+
+.hljs-function,
+.hljs-title {
+    color: #d2a8ff;
+}
+
+.hljs-params {
+    color: #c9d1d9;
+}
+
+.hljs-property {
+    color: #79c0ff;
+}
+
+.hljs-tag,
+.hljs-name {
+    color: #7ee787;
+}
+
+.hljs-addition {
+    color: #aff5b4;
+    background: rgba(63, 185, 80, 0.1);
+}
+
+.hljs-deletion {
+    color: #ffa198;
+    background: rgba(248, 81, 73, 0.1);
+}
+
+.hljs-meta,
+.hljs-meta .hljs-keyword {
+    color: #79c0ff;
+}
+
+.hljs-regexp {
+    color: #7ee787;
+}
+
+.hljs-symbol,
+.hljs-attribute {
+    color: #ffa657;
+}
+
+.hljs-punctuation,
+.hljs-operator {
+    color: #8b949e;
+}
+
+.hljs-doctag,
+.hljs-strong {
+    font-weight: 600;
+}
+
+.hljs-emphasis {
+    font-style: italic;
+}

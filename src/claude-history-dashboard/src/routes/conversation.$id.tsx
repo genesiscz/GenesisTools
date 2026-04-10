@@ -111,31 +111,34 @@ function ConversationPage() {
 
 	return (
 		<div className="min-h-screen bg-background">
-			<header className="sticky top-0 z-10 bg-background/95 backdrop-blur border-b border-border">
-				<div className="max-w-5xl mx-auto px-6 py-4">
+			<header className="sticky top-0 z-10 bg-background/80 backdrop-blur-xl border-b border-white/[0.06]">
+				<div className="max-w-5xl mx-auto px-6 py-3">
 					<Link
 						to="/"
-						className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground mb-3"
+						className="inline-flex items-center gap-1.5 text-xs font-mono text-muted-foreground/50 hover:text-foreground transition-colors mb-2"
 					>
-						<ArrowLeft className="w-4 h-4" />
+						<ArrowLeft className="w-3.5 h-3.5" />
 						Back to conversations
 					</Link>
-					<h1 className="text-xl font-bold text-foreground line-clamp-2">
+					<h1 className="text-lg font-bold text-foreground tracking-tight line-clamp-2">
 						{conversation.customTitle || conversation.summary || conversation.sessionId}
 					</h1>
-					<div className="flex flex-wrap items-center gap-3 mt-3 text-xs text-muted-foreground">
-						<Badge variant="cyber-secondary">
+					<div className="flex flex-wrap items-center gap-2.5 mt-2">
+						<Badge variant="cyber-secondary" className="text-[11px]">
 							<FolderOpen className="w-3 h-3 mr-1" />
 							{conversation.project}
 						</Badge>
 						{conversation.gitBranch && (
-							<span className="flex items-center gap-1">
-								<GitBranch className="w-3.5 h-3.5" />
+							<Badge variant="outline" className="text-[11px] font-mono gap-1">
+								<GitBranch className="w-3 h-3" />
 								{conversation.gitBranch}
-							</span>
+							</Badge>
 						)}
-						<span className="flex items-center gap-1">
-							<Calendar className="w-3.5 h-3.5" />
+						<span
+							className="flex items-center gap-1 text-[11px] font-mono text-muted-foreground/40 tabular-nums"
+							suppressHydrationWarning
+						>
+							<Calendar className="w-3 h-3" />
 							{new Date(conversation.timestamp).toLocaleString("en-US", {
 								weekday: "short",
 								month: "short",
@@ -144,7 +147,11 @@ function ConversationPage() {
 								minute: "2-digit",
 							})}
 						</span>
-						{conversation.isSubagent && <Badge>Subagent</Badge>}
+						{conversation.isSubagent && (
+							<Badge variant="outline" className="text-[10px] text-purple-400 border-purple-500/20">
+								Subagent
+							</Badge>
+						)}
 					</div>
 				</div>
 			</header>

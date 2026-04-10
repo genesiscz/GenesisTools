@@ -18,6 +18,7 @@ const marked = markedRaw as unknown as {
     parse: (src: string, options?: { async?: false }) => string;
     use: (ext: { renderer: Record<string, unknown> }) => void;
 };
+
 import { useMemo } from "react";
 
 hljs.registerLanguage("typescript", typescript);
