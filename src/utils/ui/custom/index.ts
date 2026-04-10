@@ -1,3 +1,4 @@
+export { AppleWindow } from "./apple-window";
 export { FeatureCard } from "./feature-card";
 export { FileItem } from "./file-item";
 export { Footer } from "./footer";
@@ -18,7 +19,6 @@ export { Tag } from "./tag";
 export { TestimonialCard } from "./testimonial-card";
 export { Timer } from "./timer";
 export { TranslationCard } from "./translation-card";
-export { VideoMockup } from "./video-mockup";
 export { VideoParticipant } from "./video-participant";
 export { VoiceWave } from "./voice-wave";
 export { WowLogo } from "./wow-logo";

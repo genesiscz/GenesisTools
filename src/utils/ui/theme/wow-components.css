@@ -294,8 +294,8 @@
   padding: 16px;
 }
 
-/* Video Mockup — macOS-style window (used for Q3 Roadmap Review etc.) */
-.video-mockup {
+/* Apple Window — macOS-style window (used for Q3 Roadmap Review etc.) */
+.apple-window {
   background: #0a0a0f;
   border: 1px solid #1e1e28;
   border-radius: 16px;

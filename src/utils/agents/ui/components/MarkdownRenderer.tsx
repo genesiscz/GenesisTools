@@ -68,8 +68,16 @@ function escapeHtml(text: string): string {
 const renderer = {
     code({ text, lang }: { text: string; lang?: string }): string {
         const highlighted = highlightCode(text, lang || undefined);
-        const langLabel = lang ? `<span class="md-code-lang">${escapeHtml(lang)}</span>` : "";
-        return `<div class="md-code-block">${langLabel}<pre class="hljs"><code>${highlighted}</code></pre></div>`;
+        const dotsBar =
+            `<div class="flex items-center gap-2 px-3 py-2 border-b border-white/[0.06]">` +
+            `<div class="w-3 h-3 rounded-full bg-red-500"></div>` +
+            `<div class="w-3 h-3 rounded-full bg-yellow-500"></div>` +
+            `<div class="w-3 h-3 rounded-full bg-green-500"></div>` +
+            (lang
+                ? `<span class="flex-1 text-center text-xs text-muted-foreground/50 font-mono">${escapeHtml(lang)}</span>`
+                : `<span class="flex-1"></span>`) +
+            `</div>`;
+        return `<div class="md-code-block">${dotsBar}<pre class="hljs"><code>${highlighted}</code></pre></div>`;
     },
 
     codespan({ text }: { text: string }): string {

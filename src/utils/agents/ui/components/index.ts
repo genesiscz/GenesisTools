@@ -1,3 +1,4 @@
+export { CodeBlock } from "./CodeBlock";
 export { DiffView } from "./DiffView";
 export { MessageCard } from "./MessageCard";
 export { SessionHeader } from "./SessionHeader";
