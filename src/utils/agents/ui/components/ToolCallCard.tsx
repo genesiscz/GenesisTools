@@ -90,7 +90,9 @@ export function ToolCallCard({
                     >
                         {diffLines && diffLines.length > 0 && <DiffView lines={diffLines} />}
 
-                        {resultContent && <ResultBlock content={resultContent} isError={isError} />}
+                        {resultContent && (
+                            <ResultBlock content={resultContent} isError={isError} toolName={name} signature={signature} />
+                        )}
                     </div>
                 )}
             </div>
@@ -101,6 +103,47 @@ export function ToolCallCard({
 interface ResultBlockProps {
     content: string;
     isError: boolean;
+    toolName?: string;
+    signature?: string;
+}
+
+const EXT_TO_LANG: Record<string, string> = {
+    ts: "typescript",
+    tsx: "typescript",
+    js: "javascript",
+    jsx: "javascript",
+    py: "python",
+    css: "css",
+    html: "html",
+    json: "json",
+    yaml: "yaml",
+    yml: "yaml",
+    sql: "sql",
+    sh: "bash",
+    bash: "bash",
+    zsh: "bash",
+    md: "markdown",
+    xml: "xml",
+};
+
+function inferLanguage(toolName?: string, signature?: string): string | undefined {
+    if (!signature) {
+        return undefined;
+    }
+
+    // Extract file extension from path in signature
+    const pathMatch = signature.match(/[\w/.-]+\.([\w]+)/);
+
+    if (pathMatch) {
+        return EXT_TO_LANG[pathMatch[1].toLowerCase()];
+    }
+
+    // Bash tool results are shell output
+    if (toolName === "Bash") {
+        return "bash";
+    }
+
+    return undefined;
 }
 
 /**
@@ -143,25 +186,47 @@ function extractResultText(raw: string): { text: string; isStructured: boolean }
     return { text: raw, isStructured: false };
 }
 
-function ResultBlock({ content, isError }: ResultBlockProps) {
+function ResultBlock({ content, isError, toolName, signature }: ResultBlockProps) {
     const { text, isStructured } = extractResultText(content);
+    const lang = inferLanguage(toolName, signature);
 
     // Structured text (extracted from Agent SDK blocks) — render as markdown
+    // If we inferred a language, wrap in a fenced code block for syntax highlighting
     if (isStructured) {
+        const rendered = lang ? `\`\`\`${lang}\n${text}\n\`\`\`` : text;
+
         return (
             <div
                 className={cn(
-                    "rounded-md border p-3 overflow-auto bg-black/40",
+                    "rounded-md border overflow-auto bg-black/40",
+                    lang ? "p-0" : "p-3",
                     isError ? "border-destructive/15" : "border-white/[0.06]"
                 )}
                 style={{ maxHeight: RESULT_MAX_HEIGHT }}
             >
-                <MarkdownRenderer content={text} className="text-xs leading-relaxed" />
+                <MarkdownRenderer content={rendered} className="text-xs leading-relaxed" />
             </div>
         );
     }
 
-    // Raw text / JSON — render as code with scroll
+    // Raw text / JSON — wrap in fenced code block for syntax highlighting when language is known
+    if (lang) {
+        const rendered = `\`\`\`${lang}\n${text}\n\`\`\``;
+
+        return (
+            <div
+                className={cn(
+                    "rounded-md border overflow-auto bg-black/40",
+                    isError ? "border-destructive/15" : "border-white/[0.06]"
+                )}
+                style={{ maxHeight: RESULT_MAX_HEIGHT }}
+            >
+                <MarkdownRenderer content={rendered} className="text-xs leading-relaxed" />
+            </div>
+        );
+    }
+
+    // Fallback: raw text without syntax highlighting
     return (
         <pre
             className={cn(

@@ -5,7 +5,7 @@ import { useMemo } from "react";
 import { useExpandable } from "../hooks/useExpandable";
 import type { DiffViewProps } from "../types";
 
-const DEFAULT_MAX_COLLAPSED = 12;
+const DEFAULT_MAX_COLLAPSED = 40;
 
 function lineClass(line: string): string {
     if (line.startsWith("+")) {
