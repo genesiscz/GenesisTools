@@ -42,7 +42,9 @@ function RootDocument({ children }: { children: React.ReactNode }) {
 			<head>
 				<HeadContent />
 			</head>
-			<body className="cyberpunk bg-background text-foreground scan-lines cyber-grid">
+			<body className="cyberpunk bg-background text-foreground">
+				<div className="scan-lines" aria-hidden="true" />
+				<div className="cyber-grid" aria-hidden="true" />
 				<Header />
 				{children}
 				{import.meta.env.DEV && (
