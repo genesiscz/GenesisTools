@@ -21,10 +21,9 @@ const DEFAULT_FORMAT_OPTIONS: FormatOptions = {
 };
 
 function formatTime(date: Date): string {
-    return date.toLocaleTimeString("en-US", {
-        hour: "2-digit",
-        minute: "2-digit",
-    });
+    const h = date.getHours().toString().padStart(2, "0");
+    const m = date.getMinutes().toString().padStart(2, "0");
+    return `${h}:${m}`;
 }
 
 function groupToolBlocks(blocks: FormattedBlock[]): FormattedBlock[][] {
@@ -194,7 +193,9 @@ export function MessageCard({ message, formatOptions, defaultExpanded = false }:
                     )}
 
                     {message.timestamp && (
-                        <span className="text-xs text-muted-foreground ml-auto">{formatTime(message.timestamp)}</span>
+                        <span className="text-xs text-muted-foreground ml-auto" suppressHydrationWarning>
+                            {formatTime(message.timestamp)}
+                        </span>
                     )}
                 </div>
             </CardHeader>

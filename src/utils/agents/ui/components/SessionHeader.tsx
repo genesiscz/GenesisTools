@@ -33,7 +33,7 @@ export function SessionHeader({ sessionInfo }: SessionHeaderProps) {
             )}
 
             {sessionInfo.startedAt && (
-                <Badge variant="outline" className="gap-1 text-xs">
+                <Badge variant="outline" className="gap-1 text-xs" suppressHydrationWarning>
                     <Calendar className="w-3 h-3" />
                     {formatDate(sessionInfo.startedAt)}
                 </Badge>
