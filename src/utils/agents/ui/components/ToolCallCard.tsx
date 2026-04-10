@@ -1,3 +1,4 @@
+import { SafeJSON } from "@app/utils/json";
 import { Badge } from "@ui/components/badge";
 import { ChevronRight, Wrench } from "lucide-react";
 
@@ -18,7 +19,7 @@ export function ToolCallCard({
 
     return (
         <div className="rounded border border-border bg-muted/20 overflow-hidden">
-            <details className="group" open={defaultExpanded}>
+            <details className="group" {...(defaultExpanded ? { open: true } : {})}>
                 <summary className="flex items-center gap-2 px-3 py-2 cursor-pointer list-none text-sm hover:bg-muted/40 select-none">
                     <ChevronRight className="w-4 h-4 shrink-0 transition-transform group-open:rotate-90 text-muted-foreground" />
                     <Wrench className="w-3 h-3 shrink-0 text-muted-foreground" />
@@ -49,19 +50,40 @@ interface ResultBlockProps {
     isLong: boolean;
 }
 
+function formatContent(raw: string): string {
+    const trimmed = raw.trim();
+
+    if ((trimmed.startsWith("{") || trimmed.startsWith("[")) && (trimmed.endsWith("}") || trimmed.endsWith("]"))) {
+        const parsed = SafeJSON.parse(trimmed);
+
+        if (parsed != null) {
+            return SafeJSON.stringify(parsed, null, 2) ?? raw;
+        }
+    }
+
+    return raw;
+}
+
 function ResultBlock({ content, isError, isLong }: ResultBlockProps) {
     const bgClass = isError ? "bg-red-500/10" : "bg-muted/30";
+    const formatted = formatContent(content);
 
     if (!isLong) {
-        return <pre className={`text-xs p-2 rounded overflow-auto whitespace-pre-wrap ${bgClass}`}>{content}</pre>;
+        return (
+            <pre className={`text-xs p-2 rounded overflow-auto whitespace-pre-wrap font-mono ${bgClass}`}>
+                <code>{formatted}</code>
+            </pre>
+        );
     }
 
     return (
         <details className="group/result">
             <summary className="text-xs text-muted-foreground cursor-pointer select-none hover:text-foreground">
-                Result ({content.length} chars) -- click to expand
+                Result ({content.length} chars) — click to expand
             </summary>
-            <pre className={`text-xs p-2 rounded mt-1 overflow-auto whitespace-pre-wrap ${bgClass}`}>{content}</pre>
+            <pre className={`text-xs p-2 rounded mt-1 overflow-auto whitespace-pre-wrap font-mono ${bgClass}`}>
+                <code>{formatted}</code>
+            </pre>
         </details>
     );
 }

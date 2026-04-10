@@ -24,7 +24,9 @@ export const Route = createFileRoute("/conversation/$id")({
 function toAgentMessages(messages: SerializableConversationDetail["messages"]): AgentMessage[] {
 	const result: AgentMessage[] = [];
 
-	for (const msg of messages) {
+	for (let i = 0; i < messages.length; i++) {
+		const msg = messages[i];
+
 		if (msg.type !== "user" && msg.type !== "assistant") {
 			continue;
 		}
@@ -37,38 +39,47 @@ function toAgentMessages(messages: SerializableConversationDetail["messages"]): 
 		}
 
 		if (msg.type === "assistant" && msg.toolUses) {
-			for (const tool of msg.toolUses) {
+			// Look ahead: the next user message's toolResults pair with these tool calls
+			const nextMsg = messages[i + 1];
+			const toolResults = nextMsg?.type === "user" && nextMsg.toolResults ? nextMsg.toolResults : [];
+
+			for (let t = 0; t < msg.toolUses.length; t++) {
+				const tool = msg.toolUses[t];
+				const toolId = `tool-${t}`;
+
 				blocks.push({
 					type: "tool_call",
-					id: `${tool.name}-${blocks.length}`,
+					id: toolId,
 					name: tool.name,
 					input: (tool.input ?? {}) as Record<string, unknown>,
 				});
+
+				// Attach positionally-matched tool result
+				if (t < toolResults.length) {
+					blocks.push({
+						type: "tool_result",
+						toolCallId: toolId,
+						content: toolResults[t].content,
+						isError: toolResults[t].isError,
+					});
+				}
 			}
 		}
 
-		if (msg.type === "user" && msg.toolResults) {
-			for (const tr of msg.toolResults) {
-				blocks.push({
-					type: "tool_result",
-					toolCallId: tr.toolUseId,
-					content: tr.content,
-					isError: tr.isError,
-				});
-			}
+		// Skip user messages that only had tool results (merged into preceding assistant)
+		if (msg.type === "user" && msg.toolResults && msg.toolResults.length > 0 && blocks.length === 0) {
+			continue;
 		}
 
 		if (blocks.length === 0) {
 			continue;
 		}
 
-		const agentMsg: AgentMessage = {
+		result.push({
 			role: msg.type === "user" ? "user" : "assistant",
 			blocks,
 			timestamp: msg.timestamp ? new Date(msg.timestamp) : undefined,
-		};
-
-		result.push(agentMsg);
+		});
 	}
 
 	return result;
