@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
 import logger from "@app/logger";
+import { formatToolSignature } from "@app/utils/agents/formatters/tool-formatter";
 import { SafeJSON } from "@app/utils/json";
 import { input } from "@app/utils/prompts/clack";
 import { handleReadmeFlag } from "@app/utils/readme";
@@ -414,7 +415,12 @@ class ASKTool {
                 if (event.isText() && !suppressStreaming) {
                     process.stdout.write(event.text);
                 } else if (event.isToolCall() && !suppressStreaming) {
-                    process.stderr.write(pc.dim(`\n🔧 [${event.name}] ${SafeJSON.stringify(event.input)}\n`));
+                    const toolInput = (event.input ?? {}) as Record<string, unknown>;
+                    const sig = formatToolSignature(event.name, toolInput, {
+                        primaryMaxChars: 200,
+                        detailLevel: "signature",
+                    });
+                    process.stderr.write(pc.dim(`\n${sig}\n`));
                 } else if (event.isToolResult() && !suppressStreaming) {
                     const summary =
                         typeof event.output === "string"
@@ -569,7 +575,12 @@ class ASKTool {
                 // Send message with tool callbacks
                 const response = await chatEngine.sendMessage(msg, tools, {
                     onToolCall: (name, args) => {
-                        console.log(pc.dim(`\n🔧 [${name}] ${SafeJSON.stringify(args)}`));
+                        const toolInput = (args ?? {}) as Record<string, unknown>;
+                        const sig = formatToolSignature(name, toolInput, {
+                            primaryMaxChars: 200,
+                            detailLevel: "signature",
+                        });
+                        console.log(pc.dim(`\n${sig}`));
                     },
                     onToolResult: (name, result) => {
                         const summary =
