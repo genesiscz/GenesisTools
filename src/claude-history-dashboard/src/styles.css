@@ -32,13 +32,14 @@ code, pre, .font-mono,
     inset: 0;
     background: repeating-linear-gradient(
         0deg,
-        color-mix(in oklch, var(--color-background) 85%, black) 0px,
-        color-mix(in oklch, var(--color-background) 85%, black) 1px,
+        rgba(0, 0, 0, 0.03) 0px,
+        rgba(0, 0, 0, 0.03) 1px,
         transparent 1px,
-        transparent 3px
+        transparent 4px
     );
     pointer-events: none;
     z-index: 1000;
+    opacity: 0.5;
 }
 
 /* ============================================================================
@@ -46,7 +47,8 @@ code, pre, .font-mono,
    Tailwind cannot express multi-stop background-image gradients.
    ============================================================================ */
 
-.cyber-grid {
+.cyber-grid::after {
+    content: "";
     background-image:
         linear-gradient(color-mix(in oklch, var(--color-primary) 3%, transparent) 1px, transparent 1px),
         linear-gradient(90deg, color-mix(in oklch, var(--color-primary) 3%, transparent) 1px, transparent 1px);
@@ -54,6 +56,7 @@ code, pre, .font-mono,
     position: fixed;
     inset: 0;
     z-index: -1;
+    pointer-events: none;
 }
 
 /* ============================================================================

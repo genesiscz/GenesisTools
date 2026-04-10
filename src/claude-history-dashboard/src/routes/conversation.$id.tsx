@@ -109,7 +109,7 @@ function ConversationPage() {
 	}
 
 	return (
-		<div className="min-h-screen bg-background scan-lines cyber-grid">
+		<div className="min-h-screen bg-background">
 			<header className="sticky top-0 z-30 glass-card border-b border-white/5">
 				<div className="max-w-5xl mx-auto px-6 py-3">
 					<Link
