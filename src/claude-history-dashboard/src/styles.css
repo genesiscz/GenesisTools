@@ -104,6 +104,7 @@ code, pre, .font-mono,
 
 .collapsible-open .collapsible-body {
     max-height: 2000px;
+    overflow: visible;
 }
 
 /* ============================================================================
@@ -261,11 +262,12 @@ code, pre, .font-mono,
     position: relative;
     margin: 0.75em 0;
     border-radius: 8px;
-    overflow: hidden;
+    overflow: auto;
     background: rgba(10, 10, 20, 0.9);
     backdrop-filter: blur(20px);
     -webkit-backdrop-filter: blur(20px);
     border: 1px solid var(--color-border);
+    max-height: 30rem;
 }
 
 .md-code-lang {
