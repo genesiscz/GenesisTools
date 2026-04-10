@@ -389,19 +389,30 @@ interface CommitInfo {
 async function getCommitInfo(hashPrefix: string): Promise<CommitInfo | null> {
     try {
         const exec = new Executor({ prefix: "git" });
+
+        // Try git log first (works for reachable commits)
         const result = await exec.exec(["log", "--format=%H|%cI", "-1", hashPrefix]);
 
-        if (!result.success || !result.stdout.trim()) {
-            return null;
+        if (result.success && result.stdout.trim()) {
+            const [fullHash, dateStr] = result.stdout.trim().split("|");
+
+            if (fullHash && dateStr) {
+                return { fullHash, date: new Date(dateStr) };
+            }
         }
 
-        const [fullHash, dateStr] = result.stdout.trim().split("|");
+        // Fallback: git show works for dangling objects (post-rebase, pre-gc)
+        const showResult = await exec.exec(["show", "--format=%H|%cI", "--no-patch", hashPrefix]);
 
-        if (!fullHash || !dateStr) {
-            return null;
+        if (showResult.success && showResult.stdout.trim()) {
+            const [fullHash, dateStr] = showResult.stdout.trim().split("|");
+
+            if (fullHash && dateStr) {
+                return { fullHash, date: new Date(dateStr) };
+            }
         }
 
-        return { fullHash, date: new Date(dateStr) };
+        return null;
     } catch {
         return null;
     }
@@ -428,7 +439,15 @@ async function processFileForCommit(
 
     const rawLower = raw.toLowerCase();
 
-    if (!rawLower.includes(searchHash) && (fullHash ? !rawLower.includes(hashLower) : true)) {
+    // Also check a short prefix — JSONL often has abbreviated hashes (e.g. 10-char from git reflog)
+    // that won't match a full 40-char needle via includes()
+    const shortHash = searchHash.slice(0, 8);
+
+    if (
+        !rawLower.includes(searchHash) &&
+        (fullHash ? !rawLower.includes(hashLower) : true) &&
+        !rawLower.includes(shortHash)
+    ) {
         return null;
     }
 

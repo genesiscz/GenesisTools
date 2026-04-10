@@ -6,7 +6,7 @@ import pc from "picocolors";
 import type { IncludeSpec } from "./cli/dsl";
 import type { TailTarget } from "./session.types";
 import { agentProgressToSubagent, parseAgentCompletionStats } from "./session.utils";
-import { extractToolResultText, formatToolCallSignature } from "./session-helpers";
+import { extractToolResultText, formatToolCallDiffBlock, formatToolCallSignature } from "./session-helpers";
 import { renderMarkdown } from "./terminal-markdown";
 import type {
     AssistantMessage,
@@ -24,6 +24,24 @@ interface ShorthandAssistant {
     type: "A";
     message?: AssistantMessageContent;
     timestamp?: string;
+}
+
+interface TaskNotification {
+    taskId: string;
+    status: string;
+    summary: string;
+}
+
+function parseTaskNotification(text: string): TaskNotification | null {
+    if (!text.includes("<task-notification>")) {
+        return null;
+    }
+
+    const taskId = text.match(/<task-id>([^<]+)<\/task-id>/)?.[1] ?? "unknown";
+    const status = text.match(/<status>([^<]+)<\/status>/)?.[1] ?? "unknown";
+    const summary = text.match(/<summary>([^<]+)<\/summary>/)?.[1] ?? "agent task";
+
+    return { taskId, status, summary };
 }
 
 interface FormatterOptions {
@@ -274,6 +292,23 @@ export class ClaudeSessionFormatter {
             return;
         }
 
+        // Format task-notification XML as a clean one-liner
+        const taskNotif = parseTaskNotification(text);
+
+        if (taskNotif) {
+            const statusIcon = taskNotif.status === "completed" ? "✓" : "…";
+            const line = `  ${statusIcon} Agent ${taskNotif.taskId.slice(0, 8)}: ${taskNotif.summary}`;
+            this.writeLine(this.options.colors ? pc.dim(line) : line);
+            return;
+        }
+
+        // Strip system-reminder blocks — internal noise, not user content
+        text = text.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "").trim();
+
+        if (!text) {
+            return;
+        }
+
         if (this.isMini) {
             const collapsed = text.trim().replace(/\n+/g, " ");
             const truncated = truncateText(collapsed, this.maxChars);
@@ -364,6 +399,23 @@ export class ClaudeSessionFormatter {
                     this.writeLine(`${pc.dim(timePrefix)} ${this.colorizeSignature(block.name, signature)}`);
                 } else {
                     this.writeLine(`${timePrefix} ⏺ ${signature}`);
+                }
+
+                const diffBlock = formatToolCallDiffBlock(block, maxChars);
+
+                if (diffBlock) {
+                    for (const line of diffBlock.split("\n")) {
+                        if (this.options.colors) {
+                            const colored = line.startsWith("+")
+                                ? pc.green(line)
+                                : line.startsWith("-")
+                                  ? pc.red(line)
+                                  : pc.dim(line);
+                            this.writeLine(`${pad} ${colored}`);
+                        } else {
+                            this.writeLine(`${pad} ${line}`);
+                        }
+                    }
                 }
             }
         }
@@ -498,6 +550,23 @@ export class ClaudeSessionFormatter {
                     this.writeLine(`${prefix}  ${this.colorizeSignature(block.name, signature)}`);
                 } else {
                     this.writeLine(`${prefix}  ⏺ ${signature}`);
+                }
+
+                const diffBlock = formatToolCallDiffBlock(block, maxChars);
+
+                if (diffBlock) {
+                    for (const line of diffBlock.split("\n")) {
+                        if (this.options.colors) {
+                            const colored = line.startsWith("+")
+                                ? pc.green(line)
+                                : line.startsWith("-")
+                                  ? pc.red(line)
+                                  : pc.dim(line);
+                            this.writeLine(`${prefix}    ${colored}`);
+                        } else {
+                            this.writeLine(`${prefix}    ${line}`);
+                        }
+                    }
                 }
             }
         }

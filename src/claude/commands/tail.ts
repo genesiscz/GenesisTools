@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, resolve } from "node:path";
+import { basename, resolve, sep } from "node:path";
 import { ClaudeSessionFormatter } from "@app/utils/claude/ClaudeSessionFormatter";
 import { ClaudeSessionTailer } from "@app/utils/claude/ClaudeSessionTailer";
 import { INCLUDE_HELP, IncludeSpec } from "@app/utils/claude/cli/dsl";
@@ -264,6 +264,22 @@ async function resolveTarget(query: string | undefined, opts: TailOptions): Prom
     const projectPath = opts.project ? resolve(opts.project) : undefined;
 
     if (query) {
+        // Direct file path? (contains / or ~ and ends with .jsonl)
+        const expandedPath = query.startsWith("~") ? query.replace(/^~/, homedir()) : query;
+        const resolvedPath = resolve(expandedPath);
+
+        if (resolvedPath.endsWith(".jsonl") && existsSync(resolvedPath)) {
+            const isAgent =
+                resolvedPath.includes(`${sep}subagents${sep}`) || basename(resolvedPath).startsWith("agent-");
+
+            return {
+                filePath: resolvedPath,
+                label: basename(resolvedPath, ".jsonl"),
+                sessionId: basename(resolvedPath, ".jsonl"),
+                isAgent,
+            };
+        }
+
         const sessionTarget = await findSessionByPrefix(query, projectPath);
 
         if (sessionTarget) {
