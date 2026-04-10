@@ -59,15 +59,15 @@ function groupToolBlocks(blocks: FormattedBlock[]): FormattedBlock[][] {
 function RoleIcon({ role }: { role: AgentMessage["role"] }) {
     if (role === "user") {
         return (
-            <div className="flex items-center justify-center w-6 h-6 rounded bg-secondary/10 border border-secondary/20">
-                <User className="w-3.5 h-3.5 text-secondary" />
+            <div className="w-9 h-9 rounded-lg shrink-0 flex items-center justify-center bg-gradient-to-br from-violet-600 to-purple-500 text-white font-semibold text-sm">
+                <User className="w-4 h-4" />
             </div>
         );
     }
 
     return (
-        <div className="flex items-center justify-center w-6 h-6 rounded bg-primary/10 border border-primary/20">
-            <Bot className="w-3.5 h-3.5 text-primary" />
+        <div className="w-9 h-9 rounded-lg shrink-0 flex items-center justify-center bg-gradient-to-br from-amber-500 to-yellow-500 text-black font-semibold text-sm">
+            <Bot className="w-4 h-4" />
         </div>
     );
 }
@@ -228,46 +228,55 @@ export function MessageCard({ message, formatOptions, defaultExpanded = false }:
     const hasContent = blocks.length > 0;
 
     return (
-        <div
-            className={cn(
-                "rounded-lg overflow-hidden transition-all duration-200",
-                isUser &&
-                    "border border-l-[3px] border-l-secondary border-secondary/15 bg-secondary/[0.04] hover:bg-secondary/[0.07] hover:border-secondary/25 hover:-translate-y-px",
-                isAssistant &&
-                    "border border-l-[3px] border-l-primary/50 border-border glass-card hover:border-primary/20 hover:-translate-y-px",
-                !isUser && !isAssistant && "border border-border bg-muted/10"
-            )}
-        >
-            {/* Header */}
-            <div className="flex items-center gap-2.5 px-4 pt-3 pb-2">
+        <div className="mb-4 animate-[fadeSlideIn_0.4s_ease-out]">
+            <div className="flex gap-3">
                 <RoleIcon role={message.role} />
-                <RoleLabel role={message.role} />
 
-                {message.model && (
-                    <Badge variant="outline" className="text-[10px] px-1.5 py-0 ml-1 font-mono opacity-60">
-                        {message.model}
-                    </Badge>
-                )}
-
-                {message.timestamp && (
-                    <span
-                        className="text-[11px] text-muted-foreground/50 ml-auto font-mono tabular-nums"
-                        suppressHydrationWarning
+                <div className="flex-1 min-w-0">
+                    <div
+                        className={cn(
+                            "rounded-xl p-4 relative transition-all duration-200 hover:-translate-y-px",
+                            isUser &&
+                                "bg-gradient-to-br from-violet-600/15 to-purple-500/10 border border-violet-500/30",
+                            isAssistant && "glass-card",
+                            !isUser && !isAssistant && "rounded-lg border border-border bg-muted/10"
+                        )}
                     >
-                        {formatTime(message.timestamp)}
-                    </span>
-                )}
-            </div>
+                        {/* Header */}
+                        <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center gap-2">
+                                <RoleLabel role={message.role} />
 
-            {/* Content */}
-            <div className="px-4 pb-4">
-                {hasContent ? (
-                    <div className="space-y-3">
-                        {groups.map((group, idx) => renderBlockGroup(group, idx, defaultExpanded))}
+                                {message.model && (
+                                    <Badge
+                                        variant="outline"
+                                        className="text-[10px] px-1.5 py-0 ml-1 font-mono opacity-60"
+                                    >
+                                        {message.model}
+                                    </Badge>
+                                )}
+                            </div>
+
+                            {message.timestamp && (
+                                <span
+                                    className="text-[11px] text-muted-foreground/50 font-mono tabular-nums"
+                                    suppressHydrationWarning
+                                >
+                                    {formatTime(message.timestamp)}
+                                </span>
+                            )}
+                        </div>
+
+                        {/* Content */}
+                        {hasContent ? (
+                            <div className="space-y-3">
+                                {groups.map((group, idx) => renderBlockGroup(group, idx, defaultExpanded))}
+                            </div>
+                        ) : (
+                            <span className="text-muted-foreground/40 text-sm italic">(empty)</span>
+                        )}
                     </div>
-                ) : (
-                    <span className="text-muted-foreground/40 text-sm italic">(empty)</span>
-                )}
+                </div>
             </div>
         </div>
     );
