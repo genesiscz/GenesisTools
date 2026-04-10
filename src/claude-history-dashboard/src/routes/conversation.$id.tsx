@@ -109,8 +109,8 @@ function ConversationPage() {
 	}
 
 	return (
-		<div className="min-h-screen bg-background">
-			<header className="sticky top-0 z-10 bg-background/80 backdrop-blur-xl border-b border-white/[0.06]">
+		<div className="min-h-screen bg-background scan-lines cyber-grid">
+			<header className="sticky top-0 z-30 glass-card border-b border-white/5">
 				<div className="max-w-5xl mx-auto px-6 py-3">
 					<Link
 						to="/"
@@ -119,7 +119,7 @@ function ConversationPage() {
 						<ArrowLeft className="w-3.5 h-3.5" />
 						Back to conversations
 					</Link>
-					<h1 className="text-lg font-bold text-foreground tracking-tight line-clamp-2">
+					<h1 className="text-xl font-bold text-primary neon-text-primary tracking-tight line-clamp-2">
 						{conversation.customTitle || conversation.summary || conversation.sessionId}
 					</h1>
 					<div className="flex flex-wrap items-center gap-2.5 mt-2">
@@ -128,7 +128,7 @@ function ConversationPage() {
 							{conversation.project}
 						</Badge>
 						{conversation.gitBranch && (
-							<Badge variant="outline" className="text-[11px] font-mono gap-1">
+							<Badge variant="cyber" className="text-[11px] font-mono gap-1">
 								<GitBranch className="w-3 h-3" />
 								{conversation.gitBranch}
 							</Badge>
