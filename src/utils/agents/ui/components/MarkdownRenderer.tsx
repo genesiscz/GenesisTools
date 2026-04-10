@@ -68,14 +68,16 @@ function escapeHtml(text: string): string {
 const renderer = {
     code({ text, lang }: { text: string; lang?: string }): string {
         const highlighted = highlightCode(text, lang || undefined);
+        const dot = (color: string) =>
+            `<div style="width:12px;height:12px;border-radius:50%;background:${color};flex-shrink:0"></div>`;
         const dotsBar =
-            `<div class="flex items-center gap-2 px-3 py-2 border-b border-white/[0.06]">` +
-            `<div class="w-3 h-3 rounded-full bg-red-500"></div>` +
-            `<div class="w-3 h-3 rounded-full bg-yellow-500"></div>` +
-            `<div class="w-3 h-3 rounded-full bg-green-500"></div>` +
+            `<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid rgba(255,255,255,0.06)">` +
+            dot("#ef4444") +
+            dot("#eab308") +
+            dot("#22c55e") +
             (lang
-                ? `<span class="flex-1 text-center text-xs text-muted-foreground/50 font-mono">${escapeHtml(lang)}</span>`
-                : `<span class="flex-1"></span>`) +
+                ? `<span style="flex:1;text-align:center;font-size:0.75rem;opacity:0.5;font-family:var(--font-mono,monospace)">${escapeHtml(lang)}</span>`
+                : `<span style="flex:1"></span>`) +
             `</div>`;
         return `<div class="md-code-block">${dotsBar}<pre class="hljs"><code>${highlighted}</code></pre></div>`;
     },
