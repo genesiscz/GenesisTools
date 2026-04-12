@@ -122,3 +122,17 @@ export {
     searchMemos,
     VoiceMemosError,
 } from "./voice-memos";
+// iMessage Database
+export { iMessagesDatabase } from "./iMessagesDatabase";
+export type {
+    AttachmentInfo,
+    ChatInfo,
+    ExportConversationOptions,
+    GetMessagesOptions,
+    ListChatsOptions,
+    MessageInfo,
+    SearchMessagesOptions,
+} from "./iMessagesDatabase";
+// Contacts Database
+export { MacContactsDatabase } from "./MacContactsDatabase";
+export type { ContactInfo } from "./MacContactsDatabase";
