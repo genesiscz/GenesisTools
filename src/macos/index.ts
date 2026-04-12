@@ -29,6 +29,10 @@
  *   tools macos reminders add <title> [--list/--due/--priority/--notes/--url]
  *   tools macos reminders remove <id> [--complete]
  *
+ *   tools macos messages list [options]
+ *   tools macos messages search <query> [options]
+ *   tools macos messages show <identifier> [options]
+ *
  * Future subcommands:
  *   tools macos contacts search
  */
@@ -36,6 +40,7 @@
 import logger from "@app/logger";
 import { registerCalendarCommand } from "@app/macos/commands/calendar/index";
 import { registerMailCommand } from "@app/macos/commands/mail/index";
+import { registerMessagesCommand } from "@app/macos/commands/messages/index";
 import { registerRemindersCommand } from "@app/macos/commands/reminders/index";
 import { registerSleepCommand } from "@app/macos/commands/sleep/index";
 import { registerVoiceMemosCommand } from "@app/macos/commands/voice-memos/index";
@@ -52,6 +57,7 @@ program
 
 registerCalendarCommand(program);
 registerMailCommand(program);
+registerMessagesCommand(program);
 registerRemindersCommand(program);
 registerSleepCommand(program);
 registerVoiceMemosCommand(program);
