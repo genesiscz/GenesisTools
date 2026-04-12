@@ -1,7 +1,7 @@
 import { copyFileSync, existsSync } from "node:fs";
 import { basename, resolve } from "node:path";
-import { iMessagesDatabase } from "@app/utils/macos/iMessagesDatabase";
 import { formatBytes } from "@app/utils/format";
+import { iMessagesDatabase } from "@app/utils/macos/iMessagesDatabase";
 import chalk from "chalk";
 import type { Command } from "commander";
 
@@ -48,6 +48,9 @@ export function registerMessagesAttachmentCommand(program: Command): void {
                 console.log(`  Path:  ${att.resolvedPath}`);
                 console.log(`  ID:    #${att.rowid}`);
                 console.log();
+                const base = `tools macos messages attachment ${rowid}`;
+                console.log(chalk.dim(`  ${base} --download [dest]`));
+                console.log(chalk.dim(`  ${base} --open`));
             }
 
             if (opts.download) {
