@@ -515,7 +515,8 @@ export class iMessagesDatabase {
         const messages = this.getMessages(chatIdentifier, {
             from: options?.from,
             to: options?.to,
-            limit: 10_000, // effectively unlimited for export
+            limit: 10_000,
+            includeAttachments: true,
         });
 
         if (messages.length === 0) {
@@ -540,35 +541,76 @@ export class iMessagesDatabase {
             return nameMap.get(sender) ?? sender;
         };
 
+        const isMarkdown = format === "markdown";
         const lines: string[] = [];
         let prevSender = "";
+        let prevDateStr = "";
 
         for (const msg of messages) {
-            if (!msg.text) {
+            const hasAttachments = msg.attachments && msg.attachments.length > 0;
+
+            if (!msg.text && !hasAttachments) {
                 continue;
+            }
+
+            // Date header when the day changes
+            const dateStr = msg.date.toLocaleDateString("en-US", {
+                weekday: "long",
+                year: "numeric",
+                month: "long",
+                day: "numeric",
+            });
+
+            if (dateStr !== prevDateStr) {
+                if (lines.length > 0) {
+                    lines.push("");
+                }
+
+                if (isMarkdown) {
+                    lines.push(`## ${dateStr}`);
+                } else {
+                    lines.push(`── ${dateStr} ──`);
+                }
+
+                lines.push("");
+                prevSender = "";
+                prevDateStr = dateStr;
             }
 
             const senderName = resolveName(msg.sender, msg.isFromMe);
             const time = msg.date.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
 
+            // Build message line
+            let content = msg.text ?? "";
+
+            if (hasAttachments) {
+                const attNames = msg.attachments!
+                    .map((a) => a.transferName ?? a.filename ?? "attachment")
+                    .join(", ");
+
+                if (content) {
+                    content += ` [${attNames}]`;
+                } else {
+                    content = `[${attNames}]`;
+                }
+            }
+
+            const prefix = isMarkdown ? "  - " : "- ";
+
             if (groupByTime && senderName === prevSender) {
-                // Same sender, just add the message
-                const prefix = format === "markdown" ? "  - " : "- ";
-                lines.push(`${prefix}[${time}] ${msg.text}`);
+                lines.push(`${prefix}[${time}] ${content}`);
             } else {
-                // New sender block
-                if (lines.length > 0) {
+                if (lines.length > 0 && prevSender !== "") {
                     lines.push("");
                 }
 
-                if (format === "markdown") {
+                if (isMarkdown) {
                     lines.push(`**${senderName}:**`);
-                    lines.push(`  - [${time}] ${msg.text}`);
                 } else {
                     lines.push(`${senderName}:`);
-                    lines.push(`- [${time}] ${msg.text}`);
                 }
 
+                lines.push(`${prefix}[${time}] ${content}`);
                 prevSender = senderName;
             }
         }

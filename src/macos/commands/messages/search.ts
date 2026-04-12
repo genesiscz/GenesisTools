@@ -20,7 +20,7 @@ export function registerMessagesSearchCommand(program: Command): void {
             const messages = db.searchMessages(query, {
                 chatIdentifier: opts.chat,
                 from: opts.from ? parseMailDate(opts.from) : undefined,
-                to: opts.to ? parseMailDate(opts.to) : undefined,
+                to: opts.to ? parseMailDate(opts.to, true) : undefined,
                 limit: parseInt(opts.limit, 10),
                 page: opts.page ? parseInt(opts.page, 10) : undefined,
             });

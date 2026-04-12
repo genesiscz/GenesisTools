@@ -16,7 +16,7 @@ export function registerMessagesShowCommand(program: Command): void {
 
             const output = db.exportConversation(identifier, {
                 from: opts.from ? parseMailDate(opts.from) : undefined,
-                to: opts.to ? parseMailDate(opts.to) : undefined,
+                to: opts.to ? parseMailDate(opts.to, true) : undefined,
                 format: opts.format,
                 resolveContacts: opts.contacts !== false,
                 groupByTime: opts.group !== false,

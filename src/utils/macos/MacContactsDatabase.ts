@@ -95,30 +95,34 @@ export class MacContactsDatabase {
         const isEmail = identifier.includes("@");
 
         for (const db of this.databases) {
-            const row = isEmail
-                ? (db
-                      .prepare(
-                          `SELECT r.ZFIRSTNAME, r.ZLASTNAME, r.ZNICKNAME, r.ZORGANIZATION
-                           FROM ZABCDRECORD r
-                           JOIN ZABCDEMAILADDRESS e ON e.ZOWNER = r.Z_PK
-                           WHERE e.ZADDRESS = $id OR e.ZADDRESSNORMALIZED = $normalized
-                           LIMIT 1`
-                      )
-                      .get({ $id: identifier, $normalized: normalized }) as ContactRow | null)
-                : (db
-                      .prepare(
-                          `SELECT r.ZFIRSTNAME, r.ZLASTNAME, r.ZNICKNAME, r.ZORGANIZATION
-                           FROM ZABCDRECORD r
-                           JOIN ZABCDPHONENUMBER p ON p.ZOWNER = r.Z_PK
-                           WHERE REPLACE(REPLACE(REPLACE(REPLACE(p.ZFULLNUMBER, ' ', ''), '-', ''), '(', ''), ')', '') = $normalized
-                           LIMIT 1`
-                      )
-                      .get({ $normalized: normalized }) as ContactRow | null);
+            try {
+                const row = isEmail
+                    ? (db
+                          .prepare(
+                              `SELECT r.ZFIRSTNAME, r.ZLASTNAME, r.ZNICKNAME, r.ZORGANIZATION
+                               FROM ZABCDRECORD r
+                               JOIN ZABCDEMAILADDRESS e ON e.ZOWNER = r.Z_PK
+                               WHERE e.ZADDRESS = $id OR e.ZADDRESSNORMALIZED = $normalized
+                               LIMIT 1`
+                          )
+                          .get({ $id: identifier, $normalized: normalized }) as ContactRow | null)
+                    : (db
+                          .prepare(
+                              `SELECT r.ZFIRSTNAME, r.ZLASTNAME, r.ZNICKNAME, r.ZORGANIZATION
+                               FROM ZABCDRECORD r
+                               JOIN ZABCDPHONENUMBER p ON p.ZOWNER = r.Z_PK
+                               WHERE REPLACE(REPLACE(REPLACE(REPLACE(p.ZFULLNUMBER, ' ', ''), '-', ''), '(', ''), ')', '') = $normalized
+                               LIMIT 1`
+                          )
+                          .get({ $normalized: normalized }) as ContactRow | null);
 
-            if (row) {
-                const name = buildDisplayName(row);
-                this.cache.set(identifier, name);
-                return name;
+                if (row) {
+                    const name = buildDisplayName(row);
+                    this.cache.set(identifier, name);
+                    return name;
+                }
+            } catch {
+                // DB may be WAL-locked by Contacts.app — skip this source
             }
         }
 
