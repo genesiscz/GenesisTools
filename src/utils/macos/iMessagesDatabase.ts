@@ -39,6 +39,7 @@ export interface MessageInfo {
 }
 
 export interface AttachmentInfo {
+    rowid: number;
     filename: string | null;
     mimeType: string | null;
     transferName: string | null;
@@ -584,14 +585,14 @@ export class iMessagesDatabase {
             let content = msg.text ?? "";
 
             if (hasAttachments) {
-                const attNames = msg.attachments!
-                    .map((a) => a.transferName ?? a.filename ?? "attachment")
+                const attLabels = msg.attachments!
+                    .map((a) => `${a.transferName ?? a.filename ?? "attachment"} #${a.rowid}`)
                     .join(", ");
 
                 if (content) {
-                    content += ` [${attNames}]`;
+                    content += ` [${attLabels}]`;
                 } else {
-                    content = `[${attNames}]`;
+                    content = `[${attLabels}]`;
                 }
             }
 
@@ -616,6 +617,44 @@ export class iMessagesDatabase {
         }
 
         return lines.join("\n");
+    }
+
+    /**
+     * Get a single attachment by ROWID with its resolved filesystem path.
+     */
+    getAttachment(rowid: number): (AttachmentInfo & { resolvedPath: string }) | null {
+        const db = this.getDb();
+
+        const row = db
+            .prepare(
+                `SELECT a.ROWID as rowid, a.filename, a.mime_type, a.transfer_name, a.total_bytes
+                 FROM attachment a
+                 WHERE a.ROWID = $rowid`
+            )
+            .get({ $rowid: rowid }) as {
+            rowid: number;
+            filename: string | null;
+            mime_type: string | null;
+            transfer_name: string | null;
+            total_bytes: number;
+        } | null;
+
+        if (!row) {
+            return null;
+        }
+
+        const resolvedPath = row.filename
+            ? row.filename.replace(/^~/, homedir())
+            : "";
+
+        return {
+            rowid: row.rowid,
+            filename: row.filename,
+            mimeType: row.mime_type,
+            transferName: row.transfer_name,
+            totalBytes: row.total_bytes,
+            resolvedPath,
+        };
     }
 
     // --- Private helpers ---
@@ -647,7 +686,7 @@ export class iMessagesDatabase {
         const placeholders = rowids.map(() => "?").join(",");
         const rows = db
             .prepare(
-                `SELECT maj.message_id, a.filename, a.mime_type, a.transfer_name, a.total_bytes
+                `SELECT maj.message_id, a.ROWID as attachment_rowid, a.filename, a.mime_type, a.transfer_name, a.total_bytes
                  FROM message_attachment_join maj
                  JOIN attachment a ON maj.attachment_id = a.ROWID
                  WHERE maj.message_id IN (${placeholders})
@@ -655,6 +694,7 @@ export class iMessagesDatabase {
             )
             .all(...rowids) as Array<{
             message_id: number;
+            attachment_rowid: number;
             filename: string | null;
             mime_type: string | null;
             transfer_name: string | null;
@@ -666,6 +706,7 @@ export class iMessagesDatabase {
         for (const row of rows) {
             const list = byMessage.get(row.message_id) ?? [];
             list.push({
+                rowid: row.attachment_rowid,
                 filename: row.filename,
                 mimeType: row.mime_type,
                 transferName: row.transfer_name,
