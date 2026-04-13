@@ -70,6 +70,12 @@ export interface TranscribeOptions {
      * - Clean single-speaker: defaults work well
      */
     thresholds?: WhisperThresholds;
+    /** Enable speaker diarization (AssemblyAI, Deepgram). */
+    diarize?: boolean;
+    /** Request word-level timestamps (Whisper, Deepgram). */
+    wordTimestamps?: boolean;
+    /** Enable smart formatting/punctuation (Deepgram). */
+    smartFormat?: boolean;
 }
 
 export interface WhisperThresholds {
