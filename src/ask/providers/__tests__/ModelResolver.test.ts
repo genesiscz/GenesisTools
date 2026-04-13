@@ -9,6 +9,7 @@ const MOCK_MODELS: ModelInfo[] = [
         contextWindow: 200000,
         capabilities: ["chat"],
         provider: "anthropic",
+        category: "haiku",
     },
     {
         id: "claude-sonnet-4-6",
@@ -16,6 +17,7 @@ const MOCK_MODELS: ModelInfo[] = [
         contextWindow: 200000,
         capabilities: ["chat", "vision"],
         provider: "anthropic",
+        category: "sonnet",
     },
     {
         id: "claude-opus-4-6",
@@ -23,6 +25,7 @@ const MOCK_MODELS: ModelInfo[] = [
         contextWindow: 200000,
         capabilities: ["chat", "vision", "reasoning"],
         provider: "anthropic",
+        category: "opus",
     },
     {
         id: "gpt-4o",
@@ -30,6 +33,7 @@ const MOCK_MODELS: ModelInfo[] = [
         contextWindow: 128000,
         capabilities: ["chat"],
         provider: "openai",
+        category: "standard",
     },
     {
         id: "gpt-4o-mini",
@@ -37,6 +41,7 @@ const MOCK_MODELS: ModelInfo[] = [
         contextWindow: 128000,
         capabilities: ["chat"],
         provider: "openai",
+        category: "mini",
     },
 ];
 
@@ -89,11 +94,50 @@ describe("ModelResolver", () => {
             expect(result.model?.id).toBe("gpt-4o-mini");
         });
 
-        it("resolves standard category — no match if no 'standard' in ID", () => {
+        it("resolves standard category to gpt-4o via category field", () => {
             const result = resolveModel(OpenAIModelCategory.Standard, MOCK_MODELS);
             expect(result.strategy).toBe("latest");
-            // "standard" doesn't appear in any model ID
-            expect(result.model).toBeNull();
+            expect(result.model?.id).toBe("gpt-4o");
+        });
+    });
+
+    describe("resolveModel() category field vs substring fallback", () => {
+        it("uses category field when available", () => {
+            const models: ModelInfo[] = [
+                {
+                    id: "gpt-5",
+                    name: "GPT-5",
+                    contextWindow: 200000,
+                    capabilities: ["chat"],
+                    provider: "openai",
+                    category: "standard",
+                },
+                {
+                    id: "gpt-4o",
+                    name: "GPT-4o",
+                    contextWindow: 128000,
+                    capabilities: ["chat"],
+                    provider: "openai",
+                    category: "standard",
+                },
+            ];
+            const result = resolveModel(OpenAIModelCategory.Standard, models);
+            expect(result.strategy).toBe("latest");
+            expect(result.model?.id).toBe("gpt-5");
+        });
+
+        it("falls back to substring matching when category field missing", () => {
+            const models: ModelInfo[] = [
+                {
+                    id: "claude-haiku-4-5",
+                    name: "Claude Haiku 4.5",
+                    contextWindow: 200000,
+                    capabilities: ["chat"],
+                    provider: "anthropic",
+                },
+            ];
+            const result = resolveModel(AnthropicModelCategory.Haiku, models);
+            expect(result.model?.id).toBe("claude-haiku-4-5");
         });
     });
 

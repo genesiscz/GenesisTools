@@ -35,9 +35,17 @@ export function resolveModel(
     const isCategory = categories.includes(input);
 
     if (isCategory) {
-        const matches = availableModels
-            .filter((m) => m.id.toLowerCase().includes(input.toLowerCase()))
-            .sort((a, b) => b.id.localeCompare(a.id));
+        const inputLower = input.toLowerCase();
+
+        // Primary: match on explicit category field
+        let matches = availableModels.filter((m) => m.category?.toLowerCase() === inputLower);
+
+        // Fallback: substring match on model ID (e.g., "haiku" in "claude-haiku-4-5")
+        if (matches.length === 0) {
+            matches = availableModels.filter((m) => m.id.toLowerCase().includes(inputLower));
+        }
+
+        matches.sort((a, b) => b.id.localeCompare(a.id));
 
         return { request: input, strategy: "latest", model: matches[0] ?? null };
     }

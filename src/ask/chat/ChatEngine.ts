@@ -5,7 +5,7 @@ import { applySystemPromptPrefix } from "@app/utils/claude/subscription-billing"
 import { SafeJSON } from "@app/utils/json";
 import { estimateTokens } from "@app/utils/tokens";
 import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
-import type { AnthropicModelCategory } from "@ask/providers/ModelResolver";
+import type { AnthropicModelCategory, OpenAIModelCategory } from "@ask/providers/ModelResolver";
 import type { ChatConfig, ChatMessage, DetectedProvider, ProviderChoice } from "@ask/types";
 import type { LanguageModel, LanguageModelUsage, ModelMessage, ToolSet } from "ai";
 import { generateText, streamText } from "ai";
@@ -24,8 +24,8 @@ export interface OneShotOptions {
      * If omitted, falls back to detecting the Anthropic provider configured in ask config.
      */
     account?: AIAccount;
-    /** Model: AnthropicModelCategory ("haiku"/"sonnet"/"opus") or raw model ID string. */
-    model: AnthropicModelCategory | string;
+    /** Model: category enum (AnthropicModelCategory / OpenAIModelCategory) or raw model ID string. */
+    model: AnthropicModelCategory | OpenAIModelCategory | string;
     /** The message to send. */
     message: string;
     systemPrompt?: string;
