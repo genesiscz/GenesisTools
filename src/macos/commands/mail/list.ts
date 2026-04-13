@@ -6,9 +6,9 @@ import {
     resolveColumnsFromFlag,
 } from "@app/macos/lib/mail/command-helpers";
 import { MailStorage } from "@app/macos/lib/mail/mail-storage";
-import { MailDatabase } from "@app/utils/macos/MailDatabase";
 import { rowToMessage } from "@app/macos/lib/mail/transform";
 import type { MailMessage } from "@app/macos/lib/mail/types";
+import { MailDatabase } from "@app/utils/macos/MailDatabase";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 

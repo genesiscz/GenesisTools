@@ -1,6 +1,6 @@
+import { parseMailDate } from "@app/macos/lib/mail/command-helpers";
 import { iMessagesDatabase } from "@app/utils/macos/iMessagesDatabase";
 import { MacContactsDatabase } from "@app/utils/macos/MacContactsDatabase";
-import { parseMailDate } from "@app/macos/lib/mail/command-helpers";
 import chalk from "chalk";
 import type { Command } from "commander";
 
@@ -35,13 +35,9 @@ export function registerMessagesListCommand(program: Command): void {
             const nameMap = contacts.resolveAll(allIdentifiers);
 
             for (const chat of chats) {
-                const participantNames = chat.participants
-                    .map((p) => nameMap.get(p) ?? p)
-                    .join(", ");
+                const participantNames = chat.participants.map((p) => nameMap.get(p) ?? p).join(", ");
 
-                const displayName = chat.displayName
-                    ? chalk.bold(chat.displayName)
-                    : chalk.bold(participantNames);
+                const displayName = chat.displayName ? chalk.bold(chat.displayName) : chalk.bold(participantNames);
 
                 const lastMsg = chat.lastMessageDate
                     ? chat.lastMessageDate.toLocaleDateString("en-US", {
@@ -51,9 +47,7 @@ export function registerMessagesListCommand(program: Command): void {
                       })
                     : "—";
 
-                const service = chat.serviceName === "iMessage"
-                    ? chalk.blue("iMessage")
-                    : chalk.green("SMS");
+                const service = chat.serviceName === "iMessage" ? chalk.blue("iMessage") : chalk.green("SMS");
 
                 const count = chalk.dim(`${chat.messageCount} msgs`);
                 const style = chat.style === "group" ? chalk.dim(" [group]") : "";

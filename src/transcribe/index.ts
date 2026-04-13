@@ -271,10 +271,7 @@ const program = new Command()
     .name("transcribe")
     .description("Transcribe audio files using AI (local or cloud)")
     .argument("[file]", "Audio file to transcribe")
-    .option(
-        "--provider <provider>",
-        "AI provider (local-hf, cloud, openai, groq, openrouter, darwinkit)"
-    )
+    .option("--provider <provider>", "AI provider (local-hf, cloud, openai, groq, openrouter, darwinkit)")
     .option("--local", "Shorthand for --provider local-hf")
     .option("--format <format>", "Output format (text, json, srt, vtt)", "text")
     .option("--lang <language>", "Audio language (e.g. en, cs, de)")

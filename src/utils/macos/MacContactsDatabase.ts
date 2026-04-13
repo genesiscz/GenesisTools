@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { existsSync, readdirSync } from "node:fs";
-import { join } from "node:path";
 import { homedir } from "node:os";
+import { join } from "node:path";
 import logger from "@app/logger";
 
 export interface ContactInfo {

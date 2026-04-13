@@ -7,7 +7,7 @@ export function truncateBody(text: string, maxChars: number, suffix = "... [trun
         return text;
     }
 
-    return text.slice(0, maxChars) + `\n${suffix}`;
+    return `${text.slice(0, maxChars)}\n${suffix}`;
 }
 
 /**

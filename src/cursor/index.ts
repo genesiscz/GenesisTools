@@ -52,7 +52,7 @@ const question = positional.join(" ").trim();
 
 if (!question) {
     console.error(pc.red("No question provided."));
-    console.error(pc.dim("Usage: tools cursor \"which service creates the reservation?\""));
+    console.error(pc.dim('Usage: tools cursor "which service creates the reservation?"'));
     process.exit(1);
 }
 
@@ -63,9 +63,11 @@ const cursorArgs = [
     `--mode=${mode}`,
     "--print",
     "--stream-partial-output",
-    "--output-format", "stream-json",
+    "--output-format",
+    "stream-json",
     "--trust",
-    "--workspace", workspace,
+    "--workspace",
+    workspace,
 ];
 
 if (model) {
@@ -102,9 +104,7 @@ try {
 
         buffer += decoder.decode(value, { stream: true });
 
-        let newlineIdx: number;
-
-        while ((newlineIdx = buffer.indexOf("\n")) !== -1) {
+        for (let newlineIdx = buffer.indexOf("\n"); newlineIdx !== -1; newlineIdx = buffer.indexOf("\n")) {
             const line = buffer.slice(0, newlineIdx);
             buffer = buffer.slice(newlineIdx + 1);
 

@@ -23,7 +23,7 @@ export async function dispatchWebhook(event: NotificationEvent, config: WebhookC
         if (!response.ok) {
             logger.warn(
                 { status: response.status, statusText: response.statusText, url: config.url, app: event.app },
-                "Webhook notification returned non-OK status",
+                "Webhook notification returned non-OK status"
             );
         }
     } catch (err) {

@@ -1,10 +1,10 @@
 import { existsSync, readFileSync } from "node:fs";
 import { formatResultsTable } from "@app/macos/lib/mail/format";
 import { MailStorage } from "@app/macos/lib/mail/mail-storage";
-import { MailDatabase } from "@app/utils/macos/MailDatabase";
 import { rowToMessage, truncateBody } from "@app/macos/lib/mail/transform";
 import type { MailMessage } from "@app/macos/lib/mail/types";
 import { SafeJSON } from "@app/utils/json";
+import { MailDatabase } from "@app/utils/macos/MailDatabase";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 

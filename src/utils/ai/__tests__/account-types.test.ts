@@ -68,5 +68,4 @@ describe("account-types", () => {
             expect(entry.apps).toEqual(["ask", "claude"]);
         });
     });
-
 });

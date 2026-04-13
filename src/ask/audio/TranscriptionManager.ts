@@ -182,7 +182,7 @@ export class TranscriptionManager {
         if (preferredProvider) {
             const model = await this.getSpecificTranscriptionModel(
                 preferredProvider,
-                this.getDefaultModelForProvider(preferredProvider),
+                this.getDefaultModelForProvider(preferredProvider)
             );
 
             if (model) {

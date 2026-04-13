@@ -37,7 +37,9 @@ export function registerUsageCommand(program: Command): void {
                 if (accountFilter) {
                     const { AIConfig } = await import("@app/utils/ai/AIConfig");
                     const aiConfig = await AIConfig.load();
-                    const exists = aiConfig.getAccountsByProvider("anthropic-sub").some((a) => a.name === accountFilter);
+                    const exists = aiConfig
+                        .getAccountsByProvider("anthropic-sub")
+                        .some((a) => a.name === accountFilter);
 
                     if (!exists) {
                         console.error(`Unknown account: ${accountFilter}`);

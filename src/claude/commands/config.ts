@@ -7,9 +7,9 @@ import {
 } from "@app/claude/lib/config";
 import { fetchUsage } from "@app/claude/lib/usage/api";
 import { AIConfig } from "@app/utils/ai/AIConfig";
-import { formatLocalDate } from "@app/utils/date";
 import { claudeOAuth, fetchOAuthProfile, getClaudeJsonAccount } from "@app/utils/claude/auth";
 import { copyToClipboard } from "@app/utils/clipboard";
+import { formatLocalDate } from "@app/utils/date";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";

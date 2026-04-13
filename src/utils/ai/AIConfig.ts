@@ -176,7 +176,7 @@ export class AIConfig {
      */
     getAccountForProvider(providerName: string, context = "ask"): AIAccountEntry | undefined {
         const matches = this.data.accounts.filter(
-            (a) => a.provider === providerName || a.provider === `${providerName}-sub`,
+            (a) => a.provider === providerName || a.provider === `${providerName}-sub`
         );
 
         if (matches.length === 0) {
@@ -356,10 +356,7 @@ export class AIConfig {
      * Mutate `data` in the callback; it's persisted automatically on return.
      * Use for operations that need async I/O while holding the lock (e.g. token refresh).
      */
-    async withLock<T>(
-        fn: (data: AIConfigData) => Promise<T>,
-        timeout?: number,
-    ): Promise<T> {
+    async withLock<T>(fn: (data: AIConfigData) => Promise<T>, timeout?: number): Promise<T> {
         return this.storage.withConfigLock(async () => {
             const fresh = await this.storage.getConfig<Partial<AIConfigData>>();
             const data = applyDefaults(fresh);

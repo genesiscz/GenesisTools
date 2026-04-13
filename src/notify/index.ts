@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
 
+import { isInteractive, suggestCommand } from "@app/utils/cli";
 import type { ChannelConfigs } from "@app/utils/notifications";
 import { dispatchNotification, notificationsConfig } from "@app/utils/notifications";
-import { isInteractive, suggestCommand } from "@app/utils/cli";
 import { withCancel } from "@app/utils/prompts/clack/helpers";
 import * as p from "@clack/prompts";
 import { Command } from "commander";

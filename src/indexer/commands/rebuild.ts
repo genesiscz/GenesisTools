@@ -9,7 +9,9 @@ import { createProgressCallbacks } from "../lib/progress";
 export function registerRebuildCommand(program: Command): void {
     program
         .command("rebuild")
-        .description("Full reindex — re-scans source files and re-chunks (does NOT change vector driver; use migrate-vec for that)")
+        .description(
+            "Full reindex — re-scans source files and re-chunks (does NOT change vector driver; use migrate-vec for that)"
+        )
         .argument("[name]", "Index name")
         .action(async (name?: string) => {
             const manager = await IndexerManager.load();

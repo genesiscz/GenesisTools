@@ -1,8 +1,8 @@
-import { findModel, getEmbedModelsForType, getEmbeddingProviderTypes } from "./ModelRegistry";
-import { getProvider } from "./providers";
-import type { ModelEntry } from "./types";
 import * as p from "@clack/prompts";
 import pc from "picocolors";
+import { findModel, getEmbeddingProviderTypes, getEmbedModelsForType } from "./ModelRegistry";
+import { getProvider } from "./providers";
+import type { ModelEntry } from "./types";
 
 // ── Types ──
 
@@ -70,9 +70,7 @@ export async function selectEmbeddingProvider(options?: {
     const allProviders = await discoverEmbeddingProviders(type);
     const available = allProviders.filter((opt) => opt.available);
 
-    const unavailableTypes = new Set(
-        allProviders.filter((opt) => !opt.available).map((opt) => opt.provider)
-    );
+    const unavailableTypes = new Set(allProviders.filter((opt) => !opt.available).map((opt) => opt.provider));
 
     if (unavailableTypes.has("ollama")) {
         p.log.warning(

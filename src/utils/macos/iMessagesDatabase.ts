@@ -529,8 +529,8 @@ export class iMessagesDatabase extends MacDatabase {
             let content = msg.text ?? "";
 
             if (hasAttachments) {
-                const attLabels = msg.attachments!
-                    .map((a) => `${a.transferName ?? a.filename ?? "attachment"} #${a.rowid}`)
+                const attLabels = msg
+                    .attachments!.map((a) => `${a.transferName ?? a.filename ?? "attachment"} #${a.rowid}`)
                     .join(", ");
 
                 if (content) {
@@ -587,9 +587,7 @@ export class iMessagesDatabase extends MacDatabase {
             return null;
         }
 
-        const resolvedPath = row.filename
-            ? row.filename.replace(/^~/, homedir())
-            : "";
+        const resolvedPath = row.filename ? row.filename.replace(/^~/, homedir()) : "";
 
         return {
             rowid: row.rowid,
