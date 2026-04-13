@@ -112,7 +112,8 @@ export class TerminalRenderer {
     }
 
     private renderToolSignature(block: FormattedBlock): string[] {
-        return [this.line(this.colorizeSignature(block))];
+        const icon = this.options.colors ? pc.blue("⏺") : "⏺";
+        return [this.line(`${icon} ${this.colorizeSignature(block)}`)];
     }
 
     private renderToolDiff(block: FormattedBlock): string[] {
