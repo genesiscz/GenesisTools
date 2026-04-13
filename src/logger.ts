@@ -92,13 +92,13 @@ export const createLogger = (options: LoggerOptions = {}): pino.Logger => {
     const streams: pino.StreamEntry[] = [];
     const streamLevel = logLevel as pino.Level;
 
-    // File stream (if enabled)
+    // File stream (if enabled) — always captures debug+ regardless of console level
     if (logToFile) {
         const date = new Date().toISOString().split("T")[0];
         const logDir = path.join(__dirname, "..", "logs");
         const logFilePath = path.join(logDir, `${date}.log`);
         streams.push({
-            level: streamLevel,
+            level: "debug" as pino.Level,
             stream: pino.destination({ dest: logFilePath, sync: true, mkdir: true }),
         });
     }
@@ -135,8 +135,10 @@ export const createLogger = (options: LoggerOptions = {}): pino.Logger => {
         });
     }
 
+    // Set pino base level to the lowest stream level so debug reaches the file stream
+    const effectiveLevel = logToFile ? "debug" : logLevel;
     const baseConfig: pino.LoggerOptions = {
-        level: logLevel,
+        level: effectiveLevel,
         timestamp: includeTimestamp ? pino.stdTimeFunctions.isoTime : false,
         ...(showPid && { base: { pid: process.pid } }),
     };
@@ -241,8 +243,8 @@ export const createConsoleLoggerRaw = (logLevel: LogLevel = currentLevel): RawCo
 };
 
 // Default logger instances - both use minimalLevels (no level prefix for info/debug/trace)
-let logger = createLogger({ logToFile: false, minimalLevels: true });
-let consoleLog = createLogger({ logToFile: false, minimalLevels: true });
+let logger = createLogger({ logToFile: true, minimalLevels: true });
+let consoleLog = createLogger({ logToFile: true, minimalLevels: true });
 
 /**
  * Configure logger behavior and recreate logger instances
