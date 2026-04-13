@@ -3,6 +3,7 @@ import { readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { audioProcessor } from "@app/ask/audio/AudioProcessor";
+import { rateLimitAwareDelay, retry } from "@app/utils/async";
 import { CLOUD_PROVIDER_TYPES } from "@app/utils/config/ai.types";
 import { AIConfig } from "../AIConfig";
 import { getProviderForTask } from "../providers";
@@ -15,6 +16,22 @@ import type {
 } from "../types";
 
 const MAX_CLOUD_BYTES = 24 * 1024 * 1024;
+const RETRY_DELAY = rateLimitAwareDelay();
+
+/** Don't retry permanent errors -- only transient/rate-limit failures are worth retrying */
+function shouldRetryTransient(error: unknown): boolean {
+    const msg = error instanceof Error ? error.message : String(error);
+
+    if (/\b(401|403|404|400)\b/.test(msg)) {
+        return false;
+    }
+
+    if (/\b(invalid.api.key|unauthorized|forbidden|model.not.found)\b/i.test(msg)) {
+        return false;
+    }
+
+    return true;
+}
 
 export class Transcriber {
     private provider: AITranscriptionProvider;
@@ -57,7 +74,11 @@ export class Transcriber {
             return this.transcribeChunked(audio, typeof audioOrPath === "string" ? audioOrPath : undefined, options);
         }
 
-        return this.provider.transcribe(audio, options);
+        return retry(() => this.provider.transcribe(audio, options), {
+            maxAttempts: 3,
+            getDelay: RETRY_DELAY,
+            shouldRetry: shouldRetryTransient,
+        });
     }
 
     private async transcribeChunked(
