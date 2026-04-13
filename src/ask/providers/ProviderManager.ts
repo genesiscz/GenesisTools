@@ -108,48 +108,75 @@ export class ProviderManager {
     }
 
     private async detectAnthropicSubscription(askConfig: AskConfig, detected: DetectedProvider[]): Promise<void> {
-        // Try AIConfig first (unified storage)
-        const resolved = await this.resolveAnthropicFromAIConfig();
+        // Try AIConfig resolver first (unified storage, delegates to AnthropicSubResolver)
+        const resolvedViaConfig = await this.resolveAnthropicViaResolver();
 
-        if (resolved) {
-            const hint = resolved.account.label ? ` (${resolved.account.label})` : "";
-
-            try {
-                const detectedProvider = await this.buildSubscriptionProvider(resolved.token, resolved.account);
-                detected.push(detectedProvider);
-                this.detectedProviders.set("anthropic", detectedProvider);
-                askUI().logDetectedSubscription({ provider: "anthropic", hint });
-                return;
-            } catch (error) {
-                logger.warn(`Failed to initialize anthropic from AIConfig: ${error}`);
-            }
+        if (resolvedViaConfig) {
+            const hint = resolvedViaConfig.account?.label ? ` (${resolvedViaConfig.account.label})` : "";
+            detected.push(resolvedViaConfig);
+            this.detectedProviders.set("anthropic", resolvedViaConfig);
+            askUI().logDetectedSubscription({ provider: "anthropic", hint });
+            return;
         }
 
-        // Fallback: legacy askConfig.claude
+        // Fallback: legacy askConfig.claude (for users who haven't migrated to AIConfig)
         if (!askConfig.claude?.accountRef && !askConfig.claude?.independentToken) {
-            // No subscription configured anywhere — try env key as last resort
             await this.detectAnthropicEnvKeyFallback(detected);
             return;
         }
 
         try {
-            let token: string;
+            let accountName: string | undefined;
 
             if (askConfig.claude.accountRef) {
-                const { resolveAccountToken } = await import("@app/utils/claude/subscription-auth");
-                const result = await resolveAccountToken(askConfig.claude.accountRef);
-                token = result.token;
-            } else {
-                token = askConfig.claude.independentToken!;
+                accountName = askConfig.claude.accountRef;
             }
 
-            const accountLabel = askConfig.claude.accountLabel;
-            const hint = accountLabel ? ` (${accountLabel})` : "";
+            // If we have an account ref, try the resolver
+            if (accountName) {
+                const { ensureResolversInitialized, getResolver } = await import("@app/utils/ai/resolvers");
+                await ensureResolversInitialized();
+                const provider = await getResolver("anthropic-sub").resolve(accountName);
+                const hint = askConfig.claude.accountLabel ? ` (${askConfig.claude.accountLabel})` : "";
+                detected.push(provider);
+                this.detectedProviders.set("anthropic", provider);
+                askUI().logDetectedSubscription({ provider: "anthropic", hint });
+                return;
+            }
 
-            const detectedProvider = await this.buildSubscriptionProvider(token);
+            // Independent token: build provider directly (no account in AIConfig)
+            const token = askConfig.claude.independentToken!;
+            const { createAnthropic } = await import("@ai-sdk/anthropic");
+            const sdkProvider = createAnthropic({
+                apiKey: "oauth-placeholder",
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                    "anthropic-beta": SUBSCRIPTION_BETAS,
+                },
+                fetch: createSubscriptionFetch(),
+            });
+
+            const allConfigs = getProviderConfigs();
+            const anthropicConfig = allConfigs.find((c) => c.name === "anthropic");
+
+            if (!anthropicConfig) {
+                throw new Error("anthropic provider config missing from PROVIDER_CONFIGS");
+            }
+
+            const models = await this.getAvailableModels(anthropicConfig, sdkProvider);
+            const detectedProvider: DetectedProvider = {
+                name: "anthropic",
+                type: "anthropic",
+                key: `${token.slice(0, 20)}...`,
+                provider: sdkProvider,
+                models,
+                config: anthropicConfig,
+                systemPromptPrefix: SUBSCRIPTION_SYSTEM_PREFIX,
+            };
+
             detected.push(detectedProvider);
             this.detectedProviders.set("anthropic", detectedProvider);
-            askUI().logDetectedSubscription({ provider: "anthropic", hint });
+            askUI().logDetectedSubscription({ provider: "anthropic", hint: "" });
         } catch (error) {
             logger.warn(`Failed to initialize anthropic subscription provider: ${error}`);
             await this.detectAnthropicEnvKeyFallback(detected);
@@ -157,13 +184,10 @@ export class ProviderManager {
     }
 
     /**
-     * Try to resolve an anthropic-sub account from AIConfig.
-     * Returns the access token and label, or null if no account found.
+     * Try to resolve an anthropic-sub account from AIConfig via the resolver registry.
+     * Returns the DetectedProvider or null if no account found.
      */
-    private async resolveAnthropicFromAIConfig(): Promise<{
-        token: string;
-        account: { name: string; label?: string };
-    } | null> {
+    private async resolveAnthropicViaResolver(): Promise<DetectedProvider | null> {
         try {
             const { AIConfig } = await import("@app/utils/ai/AIConfig");
             const config = await AIConfig.load();
@@ -177,50 +201,12 @@ export class ProviderManager {
             const defaultAccount = config.getDefaultAccount("ask");
             const account = (defaultAccount && accounts.find((a) => a.name === defaultAccount.name)) || accounts[0];
 
-            const { resolveAccountToken } = await import("@app/utils/claude/subscription-auth");
-            const result = await resolveAccountToken(account.name);
-            return { token: result.token, account: { name: account.name, label: account.label } };
+            const { ensureResolversInitialized, getResolver } = await import("@app/utils/ai/resolvers");
+            await ensureResolversInitialized();
+            return await getResolver("anthropic-sub").resolve(account.name);
         } catch {
             return null;
         }
-    }
-
-    /**
-     * Build a DetectedProvider for anthropic subscription given an OAuth token.
-     */
-    private async buildSubscriptionProvider(
-        token: string,
-        account?: { name: string; label?: string }
-    ): Promise<DetectedProvider> {
-        const { createAnthropic } = await import("@ai-sdk/anthropic");
-        const provider = createAnthropic({
-            apiKey: "oauth-placeholder",
-            headers: {
-                Authorization: `Bearer ${token}`,
-                "anthropic-beta": SUBSCRIPTION_BETAS,
-            },
-            fetch: createSubscriptionFetch(),
-        });
-
-        const allConfigs = getProviderConfigs();
-        const anthropicConfig = allConfigs.find((c) => c.name === "anthropic");
-
-        if (!anthropicConfig) {
-            throw new Error("anthropic provider config missing from PROVIDER_CONFIGS");
-        }
-
-        const models = await this.getAvailableModels(anthropicConfig, provider);
-
-        return {
-            name: "anthropic",
-            type: "anthropic",
-            key: `${token.slice(0, 20)}...`,
-            provider,
-            models,
-            config: anthropicConfig,
-            systemPromptPrefix: SUBSCRIPTION_SYSTEM_PREFIX,
-            account,
-        };
     }
 
     private async detectOpenAISubscription(detected: DetectedProvider[]): Promise<void> {
@@ -233,9 +219,9 @@ export class ProviderManager {
                 return;
             }
 
-            const { AIAccount } = await import("@app/utils/ai/AIAccount");
-            const account = AIAccount.chooseCodex(subAccounts[0].name, "openai-sub");
-            const provider = await account.provider();
+            const { ensureResolversInitialized, getResolver } = await import("@app/utils/ai/resolvers");
+            await ensureResolversInitialized();
+            const provider = await getResolver("openai-sub").resolve(subAccounts[0].name);
 
             detected.push(provider);
             this.detectedProviders.set("openai", provider);
