@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { readdir } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import logger from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
@@ -7,10 +8,12 @@ import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
 import type { ChatMessage, ChatSession, ConversationMetadata } from "@ask/types";
 import { write } from "bun";
 
+const DEFAULT_CONVERSATIONS_DIR = resolve(homedir(), ".genesis-tools", "ask", "conversations");
+
 export class ConversationManager {
     private conversationsDir: string;
 
-    constructor(conversationsDir = "./conversations") {
+    constructor(conversationsDir = DEFAULT_CONVERSATIONS_DIR) {
         this.conversationsDir = resolve(conversationsDir);
         this.ensureDirectoryExists();
     }
