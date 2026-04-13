@@ -136,7 +136,7 @@ async function renderCompactSession(
     for (const excerpt of preview.assistantExcerpts) {
         const collapsed = excerpt.replace(/\n+/g, " ");
         const truncated = truncateText(collapsed, 200);
-        console.log(c ? `   ${pc.dim("│")} ${truncated}` : `   │ ${truncated}`);
+        console.log(c ? `   ${pc.dim("│")} ${pc.dim(truncated)}` : `   │ ${truncated}`);
     }
 
     console.log();
@@ -224,10 +224,15 @@ async function extractSessionPreview(filePath: string): Promise<SessionPreview> 
                     continue;
                 }
 
-                const text = extractUserText(msg.message?.content ?? "");
+                let text = extractUserText(msg.message?.content ?? "");
 
-                if (text.trim()) {
-                    lastUserMessage = text.trim();
+                // Strip system-reminder blocks and task-notification XML
+                text = text.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "");
+                text = text.replace(/<task-notification>[\s\S]*?<\/task-notification>/g, "");
+                text = text.trim();
+
+                if (text) {
+                    lastUserMessage = text;
                 }
             }
 

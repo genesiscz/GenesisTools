@@ -1,5 +1,5 @@
-import type { AccountConfig, NotificationConfig } from "@app/claude/lib/config";
-import { sendNotification } from "@app/utils/macos/notifications";
+import type { NotificationConfig } from "@app/claude/lib/config";
+import { dispatchNotification } from "@app/utils/notifications";
 import { type AccountUsage, fetchAllAccountsUsage } from "./api";
 import { renderAllAccounts } from "./display";
 
@@ -155,9 +155,15 @@ class UsageWatcher {
 }
 
 export async function watchUsage(
-    accounts: Record<string, AccountConfig>,
-    notifications: NotificationConfig
+    accountFilter?: string,
+    notifications?: NotificationConfig,
 ): Promise<never> {
+    if (!notifications) {
+        const { loadConfig } = await import("@app/claude/lib/config");
+        const config = await loadConfig();
+        notifications = config.notifications;
+    }
+
     const watcher = new UsageWatcher(notifications);
     const intervalMs = (notifications.watchInterval || 60) * 1000;
 
@@ -170,7 +176,7 @@ export async function watchUsage(
 
     while (true) {
         // Fetch while showing old data, then clear and render
-        const results = await fetchAllAccountsUsage(accounts);
+        const results = await fetchAllAccountsUsage(accountFilter);
 
         // Clear and render fresh data
         process.stdout.write("\x1B[2J\x1B[H");
@@ -183,29 +189,27 @@ export async function watchUsage(
         const pending = watcher.processResults(results);
 
         // Send notifications (fire and forget)
-        if (pending.length > 0 && notifications.channels.macos) {
+        if (pending.length > 0) {
             const initNotifs = pending.filter((n) => n.reason === "INIT");
             const increaseNotifs = pending.filter((n) => n.reason === "+5%");
 
-            // INIT: send each notification individually so user sees all warnings
             for (const notif of initNotifs) {
-                sendNotification({
+                dispatchNotification({
+                    app: "claude",
                     title: "Claude Usage Alert",
                     message: `[INIT] ${notif.message}`,
-                    sound: "Purr",
                 });
             }
 
-            // +5%: batch these to avoid spam during normal operation
             if (increaseNotifs.length > 0) {
                 const first = increaseNotifs[0];
-                sendNotification({
+                dispatchNotification({
+                    app: "claude",
                     title: "Claude Usage Alert",
                     message:
                         increaseNotifs.length > 1
                             ? `[+5%] ${first.message} (+${increaseNotifs.length - 1} more)`
                             : `[+5%] ${first.message}`,
-                    sound: "Purr",
                 });
             }
         }
