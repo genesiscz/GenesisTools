@@ -21,12 +21,13 @@ export function anthropicCacheControl(): SharedV2ProviderOptions {
 
 /**
  * Build providerOptions for WHAM (OpenAI Codex subscription) requests.
- * WHAM's Responses API requires `store: false`.
+ * WHAM's Responses API requires `store: false` and a non-empty `instructions` field.
  */
 export function whamProviderOptions(): SharedV2ProviderOptions {
     return {
         openai: {
             store: false,
+            instructions: "You are a helpful assistant.",
         },
     };
 }
