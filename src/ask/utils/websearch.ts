@@ -32,8 +32,6 @@ export class WebSearchTool {
         };
 
         try {
-            logger.info(`Searching web for: "${query}"`);
-
             const params = new URLSearchParams();
             params.set("q", searchOptions.query);
             params.set("count", (searchOptions.numResults || 5).toString());
@@ -83,10 +81,10 @@ export class WebSearchTool {
                 publishedDate: result.age ? this.parseAge(result.age) : undefined,
             }));
 
-            logger.info(`Found ${results.length} search results`);
+            logger.debug(`Found ${results.length} search results`);
             return results;
         } catch (error) {
-            logger.error(`Web search failed: ${error}`);
+            logger.debug(`Web search failed: ${error}`);
             throw error;
         }
     }
@@ -178,7 +176,7 @@ export class WebSearchTool {
 
                     return this.formatSearchResults(results);
                 } catch (error) {
-                    logger.error(`Search tool execution failed: ${error}`);
+                    logger.debug(`Search tool execution failed: ${error}`);
                     return `Search failed: ${error instanceof Error ? error.message : String(error)}`;
                 }
             },
