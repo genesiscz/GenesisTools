@@ -1,5 +1,6 @@
 import { rateLimitAwareDelay, retry } from "@app/utils/async";
 import { AIConfig } from "../AIConfig";
+import { findModel } from "../ModelRegistry";
 import { getProviderForTask } from "../providers";
 import type { AIEmbeddingProvider, AIProviderType, EmbeddingResult, EmbedOptions } from "../types";
 
@@ -24,9 +25,11 @@ function shouldRetryEmbedding(error: unknown): boolean {
 
 export class Embedder {
     private provider: AIEmbeddingProvider;
+    private modelId?: string;
 
-    private constructor(provider: AIEmbeddingProvider) {
+    private constructor(provider: AIEmbeddingProvider, modelId?: string) {
         this.provider = provider;
+        this.modelId = modelId;
     }
 
     static async create(options?: { provider?: string; model?: string; persist?: boolean }): Promise<Embedder> {
@@ -70,7 +73,7 @@ export class Embedder {
                 });
             }
 
-            return new Embedder(explicit as AIEmbeddingProvider);
+            return new Embedder(explicit as AIEmbeddingProvider, options.model);
         }
 
         const provider = await getProviderForTask("embed", config);
@@ -79,10 +82,19 @@ export class Embedder {
             throw new Error(`Provider "${provider.type}" does not support embedding`);
         }
 
-        return new Embedder(provider as AIEmbeddingProvider);
+        const taskConfig = config.getTask("embed");
+        return new Embedder(provider as AIEmbeddingProvider, taskConfig?.model);
     }
 
     get dimensions(): number {
+        if (this.modelId) {
+            const entry = findModel(this.modelId);
+
+            if (entry?.dimensions) {
+                return entry.dimensions;
+            }
+        }
+
         return this.provider.dimensions;
     }
 
