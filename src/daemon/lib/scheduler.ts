@@ -1,5 +1,5 @@
 import { createLogger } from "@app/logger";
-import { sendNotification } from "@app/utils/macos/notifications";
+import { dispatchNotification } from "@app/utils/notifications";
 import { loadConfig } from "./config";
 import { computeNextRunAt, parseInterval } from "./interval";
 import { listRunsForTask } from "./log-reader";
@@ -86,12 +86,16 @@ export async function runSchedulerLoop(logsBaseDir: string): Promise<void> {
 async function executeTask(task: DaemonTask, logsBaseDir: string): Promise<void> {
     const maxAttempts = task.retries + 1;
 
-    sendNotification({
-        title: "Daemon",
-        subtitle: task.name,
-        message: "Task started",
-        sound: "Tink",
-    });
+    const shouldNotify = task.notify !== false;
+
+    if (shouldNotify) {
+        dispatchNotification({
+            app: "daemon",
+            title: "Daemon",
+            subtitle: task.name,
+            message: "Task started",
+        });
+    }
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         log.info({ task: task.name, attempt, maxAttempts }, "Running task");
@@ -101,12 +105,14 @@ async function executeTask(task: DaemonTask, logsBaseDir: string): Promise<void>
         if (result.exitCode === 0) {
             log.info({ task: task.name, duration: result.duration_ms }, "Task completed");
 
-            sendNotification({
-                title: "Daemon",
-                subtitle: task.name,
-                message: `Completed in ${formatDurationShort(result.duration_ms)}`,
-                sound: "Tink",
-            });
+            if (shouldNotify) {
+                dispatchNotification({
+                    app: "daemon",
+                    title: "Daemon",
+                    subtitle: task.name,
+                    message: `Completed in ${formatDurationShort(result.duration_ms)}`,
+                });
+            }
 
             return;
         }
@@ -120,12 +126,14 @@ async function executeTask(task: DaemonTask, logsBaseDir: string): Promise<void>
         }
     }
 
-    sendNotification({
-        title: "Daemon",
-        subtitle: task.name,
-        message: `Failed after ${maxAttempts} attempt${maxAttempts > 1 ? "s" : ""}, retries exhausted`,
-        sound: "Basso",
-    });
+    if (shouldNotify) {
+        dispatchNotification({
+            app: "daemon",
+            title: "Daemon",
+            subtitle: task.name,
+            message: `Failed after ${maxAttempts} attempt${maxAttempts > 1 ? "s" : ""}, retries exhausted`,
+        });
+    }
 }
 
 async function initializeTaskStates(taskStates: Map<string, TaskState>, logsBaseDir: string): Promise<void> {

@@ -7,6 +7,7 @@ import pc from "picocolors";
 import { registerConfigCommand } from "./commands/config";
 import { registerInstallCommand } from "./commands/install";
 import { registerLogsCommand } from "./commands/logs";
+import { registerRestartCommand } from "./commands/restart";
 import { registerStartCommand } from "./commands/start";
 import { registerStatusCommand } from "./commands/status";
 import { registerStopCommand } from "./commands/stop";
@@ -25,6 +26,7 @@ program
 
 registerStartCommand(program);
 registerStopCommand(program);
+registerRestartCommand(program);
 registerStatusCommand(program);
 registerInstallCommand(program);
 registerConfigCommand(program);

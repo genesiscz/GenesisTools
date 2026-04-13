@@ -5,6 +5,8 @@ export interface DaemonTask {
     retries: number;
     enabled: boolean;
     description?: string;
+    /** Send macOS notifications on start/complete/fail. Default: true */
+    notify?: boolean;
 }
 
 export interface DaemonConfig {
