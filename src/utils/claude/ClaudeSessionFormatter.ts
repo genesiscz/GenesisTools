@@ -1,4 +1,5 @@
 import { createWriteStream, type WriteStream } from "node:fs";
+import { formatToolDiff, formatToolSignature } from "@app/utils/agents/formatters/tool-formatter";
 import { formatDateTime } from "@app/utils/date";
 import { SafeJSON } from "@app/utils/json";
 import { stripAnsi, truncateText } from "@app/utils/string";
@@ -6,7 +7,7 @@ import pc from "picocolors";
 import type { IncludeSpec } from "./cli/dsl";
 import type { TailTarget } from "./session.types";
 import { agentProgressToSubagent, parseAgentCompletionStats } from "./session.utils";
-import { extractToolResultText, formatToolCallSignature } from "./session-helpers";
+import { extractToolResultText } from "./session-helpers";
 import { renderMarkdown } from "./terminal-markdown";
 import type {
     AssistantMessage,
@@ -24,6 +25,24 @@ interface ShorthandAssistant {
     type: "A";
     message?: AssistantMessageContent;
     timestamp?: string;
+}
+
+interface TaskNotification {
+    taskId: string;
+    status: string;
+    summary: string;
+}
+
+function parseTaskNotification(text: string): TaskNotification | null {
+    if (!text.includes("<task-notification>")) {
+        return null;
+    }
+
+    const taskId = text.match(/<task-id>([^<]+)<\/task-id>/)?.[1] ?? "unknown";
+    const status = text.match(/<status>([^<]+)<\/status>/)?.[1] ?? "unknown";
+    const summary = text.match(/<summary>([^<]+)<\/summary>/)?.[1] ?? "agent task";
+
+    return { taskId, status, summary };
 }
 
 interface FormatterOptions {
@@ -274,6 +293,23 @@ export class ClaudeSessionFormatter {
             return;
         }
 
+        // Format task-notification XML as a clean one-liner
+        const taskNotif = parseTaskNotification(text);
+
+        if (taskNotif) {
+            const statusIcon = taskNotif.status === "completed" ? "✓" : "…";
+            const line = `  ${statusIcon} Agent ${taskNotif.taskId.slice(0, 8)}: ${taskNotif.summary}`;
+            this.writeLine(this.options.colors ? pc.dim(line) : line);
+            return;
+        }
+
+        // Strip system-reminder blocks — internal noise, not user content
+        text = text.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "").trim();
+
+        if (!text) {
+            return;
+        }
+
         if (this.isMini) {
             const collapsed = text.trim().replace(/\n+/g, " ");
             const truncated = truncateText(collapsed, this.maxChars);
@@ -357,13 +393,36 @@ export class ClaudeSessionFormatter {
 
             if (block.type === "tool_use" && this.options.includeSpec.shouldShow("tools:in")) {
                 const maxChars = this.options.includeSpec.truncationLength("tools:in");
-                const signature = formatToolCallSignature(block, maxChars);
+                const signature = formatToolSignature(block.name, (block.input ?? {}) as Record<string, unknown>, {
+                    primaryMaxChars: maxChars,
+                    detailLevel: "summary",
+                });
                 const timePrefix = hasTextOutput ? pad.slice(0, -1) : time;
 
                 if (this.options.colors) {
                     this.writeLine(`${pc.dim(timePrefix)} ${this.colorizeSignature(block.name, signature)}`);
                 } else {
                     this.writeLine(`${timePrefix} ⏺ ${signature}`);
+                }
+
+                const diffLines =
+                    maxChars > 500
+                        ? formatToolDiff(block.name, (block.input ?? {}) as Record<string, unknown>, maxChars)
+                        : null;
+
+                if (diffLines) {
+                    for (const line of diffLines) {
+                        if (this.options.colors) {
+                            const colored = line.startsWith("+")
+                                ? pc.green(line)
+                                : line.startsWith("-")
+                                  ? pc.red(line)
+                                  : pc.dim(line);
+                            this.writeLine(`${pad} ${colored}`);
+                        } else {
+                            this.writeLine(`${pad} ${line}`);
+                        }
+                    }
                 }
             }
         }
@@ -380,7 +439,10 @@ export class ClaudeSessionFormatter {
 
             if (block.type === "tool_use" && this.options.includeSpec.shouldShow("tools:in")) {
                 const maxLen = this.options.includeSpec.truncationLength("tools:in");
-                const signature = formatToolCallSignature(block, maxLen);
+                const signature = formatToolSignature(block.name, (block.input ?? {}) as Record<string, unknown>, {
+                    primaryMaxChars: maxLen,
+                    detailLevel: "summary",
+                });
 
                 if (this.options.colors) {
                     toolSummaries.push(this.colorizeSignature(block.name, signature));
@@ -492,12 +554,35 @@ export class ClaudeSessionFormatter {
 
             if (block.type === "tool_use" && this.options.includeSpec.shouldShow("agents:tools:in")) {
                 const maxChars = this.options.includeSpec.truncationLength("agents:tools:in");
-                const signature = formatToolCallSignature(block, maxChars);
+                const signature = formatToolSignature(block.name, (block.input ?? {}) as Record<string, unknown>, {
+                    primaryMaxChars: maxChars,
+                    detailLevel: "summary",
+                });
 
                 if (this.options.colors) {
                     this.writeLine(`${prefix}  ${this.colorizeSignature(block.name, signature)}`);
                 } else {
                     this.writeLine(`${prefix}  ⏺ ${signature}`);
+                }
+
+                const diffLines =
+                    maxChars > 500
+                        ? formatToolDiff(block.name, (block.input ?? {}) as Record<string, unknown>, maxChars)
+                        : null;
+
+                if (diffLines) {
+                    for (const line of diffLines) {
+                        if (this.options.colors) {
+                            const colored = line.startsWith("+")
+                                ? pc.green(line)
+                                : line.startsWith("-")
+                                  ? pc.red(line)
+                                  : pc.dim(line);
+                            this.writeLine(`${prefix}    ${colored}`);
+                        } else {
+                            this.writeLine(`${prefix}    ${line}`);
+                        }
+                    }
                 }
             }
         }
