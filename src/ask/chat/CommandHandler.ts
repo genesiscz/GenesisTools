@@ -19,8 +19,22 @@ export interface CommandResult {
     showHelp?: boolean;
 }
 
+/** State exposed to introspection commands (/context, /tools, /history, /system). */
+export interface ChatState {
+    systemPrompt?: string;
+    conversationLength: number;
+    totalTokens: number;
+    toolNames: string[];
+    contextBlock?: string;
+}
+
 export class CommandHandler {
-    async handleCommand(command: string, _currentProvider: string, _currentModelName: string): Promise<CommandResult> {
+    async handleCommand(
+        command: string,
+        _currentProvider: string,
+        _currentModelName: string,
+        state?: ChatState
+    ): Promise<CommandResult> {
         const parts = command.trim().split(/\s+/);
         const cmd = parts[0].toLowerCase();
         const args = parts.slice(1);
@@ -40,6 +54,18 @@ export class CommandHandler {
                     return { saveConversation: true };
                 case "/sst":
                     return await this.handleSSTCommand(args);
+                case "/context":
+                    this.handleContextCommand(state);
+                    return {};
+                case "/tools":
+                    this.handleToolsCommand(state);
+                    return {};
+                case "/history":
+                    this.handleHistoryCommand(state);
+                    return {};
+                case "/system":
+                    this.handleSystemCommand(state);
+                    return {};
                 case "/help":
                     return { showHelp: true };
                 default:
@@ -131,6 +157,66 @@ export class CommandHandler {
         return { transcriptionFile: filePath };
     }
 
+    private handleContextCommand(state?: ChatState): void {
+        console.log(pc.cyan("\nLoaded Context:"));
+
+        if (!state?.contextBlock) {
+            console.log(pc.dim("  No context artifacts loaded."));
+            console.log(pc.dim("  Add a .genesistoolscontext.json to your project root."));
+        } else {
+            const lines = state.contextBlock.split("\n");
+            const preview = lines.slice(0, 15).join("\n");
+            console.log(pc.dim(preview));
+
+            if (lines.length > 15) {
+                console.log(pc.dim(`  ... (${lines.length - 15} more lines)`));
+            }
+        }
+
+        console.log();
+    }
+
+    private handleToolsCommand(state?: ChatState): void {
+        console.log(pc.cyan("\nAvailable Tools:"));
+
+        if (!state?.toolNames.length) {
+            console.log(pc.dim("  No tools enabled. Use --no-tools to disable tools."));
+        } else {
+            for (const name of state.toolNames) {
+                console.log(pc.bold(`  ${name}`));
+            }
+        }
+
+        console.log();
+    }
+
+    private handleHistoryCommand(state?: ChatState): void {
+        console.log(pc.cyan("\nConversation History:"));
+
+        if (!state) {
+            console.log(pc.dim("  No state available."));
+        } else {
+            console.log(pc.bold("  Messages: ") + `${state.conversationLength}`);
+            console.log(pc.bold("  Est. tokens: ") + `${state.totalTokens.toLocaleString()}`);
+        }
+
+        console.log();
+    }
+
+    private handleSystemCommand(state?: ChatState): void {
+        console.log(pc.cyan("\nSystem Prompt:"));
+
+        if (!state?.systemPrompt) {
+            console.log(pc.dim("  No system prompt set."));
+        } else {
+            const truncated =
+                state.systemPrompt.length > 500 ? state.systemPrompt.slice(0, 500) + "\n... (truncated)" : state.systemPrompt;
+            console.log(pc.dim(truncated));
+        }
+
+        console.log();
+    }
+
     showHelp(): void {
         console.log(pc.cyan("\nAvailable Commands:"));
         console.log();
@@ -151,6 +237,18 @@ export class CommandHandler {
         console.log(pc.bold("  /sst <file>") + pc.dim("           Transcribe audio file"));
         console.log(pc.dim("    Supports MP3, WAV, M4A, FLAC, OGG, WebM"));
         console.log(pc.dim("    Example: /sst recording.mp3"));
+
+        console.log(pc.bold("  /context") + pc.dim("            Show loaded context artifacts"));
+        console.log(pc.dim("    Displays .genesistoolscontext.json content"));
+
+        console.log(pc.bold("  /tools") + pc.dim("              List available AI tools"));
+        console.log(pc.dim("    Shows readFile, grep, bash, searchWeb, etc."));
+
+        console.log(pc.bold("  /history") + pc.dim("            Show conversation stats"));
+        console.log(pc.dim("    Message count and estimated token usage"));
+
+        console.log(pc.bold("  /system") + pc.dim("             Show current system prompt"));
+        console.log(pc.dim("    Displays the system prompt (truncated to 500 chars)"));
 
         console.log(pc.bold("  /help") + pc.dim("               Show this help message"));
         console.log(pc.dim("    Displays all available commands"));
@@ -174,7 +272,10 @@ export class CommandHandler {
 
         const parts = message.trim().split(/\s+/);
         const cmd = parts[0].toLowerCase();
-        const validCommands = ["/model", "/output", "/quit", "/exit", "/clear", "/save", "/sst", "/help"];
+        const validCommands = [
+            "/model", "/output", "/quit", "/exit", "/clear", "/save", "/sst",
+            "/context", "/tools", "/history", "/system", "/help",
+        ];
 
         return validCommands.includes(cmd);
     }

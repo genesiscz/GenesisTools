@@ -149,6 +149,10 @@ Interactive Chat Commands:
   /clear                  Clear conversation history
   /save                   Save current conversation
   /sst <file>             Transcribe audio file
+  /context                Show loaded context artifacts
+  /tools                  List available AI tools
+  /history                Show conversation stats
+  /system                 Show current system prompt
   /help                   Show available commands
   /quit, /exit            Exit chat
 
