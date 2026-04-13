@@ -2,6 +2,10 @@
 
 export type { CalendarEventInfo, CalendarInfo, SourceInfo } from "./apple-calendar";
 export { MacCalendar } from "./apple-calendar";
+// Database base class
+export { MacDatabase } from "./MacDatabase";
+// Mail Database
+export { MailDatabase } from "./MailDatabase";
 export type { ReminderInfo, ReminderListInfo } from "./apple-reminders";
 // Apple Reminders
 export {
@@ -48,9 +52,6 @@ export {
     tagText,
     textDistance,
 } from "./nlp";
-export type { NotificationOptions } from "./notifications";
-// Notifications
-export { sendNotification } from "./notifications";
 export type { OcrOptions } from "./ocr";
 // OCR
 export {
@@ -125,3 +126,17 @@ export {
     searchMemos,
     VoiceMemosError,
 } from "./voice-memos";
+// iMessage Database
+export { iMessagesDatabase } from "./iMessagesDatabase";
+export type {
+    AttachmentInfo,
+    ChatInfo,
+    ExportConversationOptions,
+    GetMessagesOptions,
+    ListChatsOptions,
+    MessageInfo,
+    SearchMessagesOptions,
+} from "./iMessagesDatabase";
+// Contacts Database
+export { MacContactsDatabase } from "./MacContactsDatabase";
+export type { ContactInfo } from "./MacContactsDatabase";
