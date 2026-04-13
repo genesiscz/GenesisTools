@@ -649,6 +649,7 @@ class ASKTool {
             temperature: parseTemperature(argv.temperature),
             maxTokens: parseMaxTokens(argv.maxTokens),
             providerChoice: modelChoice,
+            providerType: modelChoice.provider.type,
         };
     }
 
