@@ -1,9 +1,12 @@
+import { Database } from "bun:sqlite";
+import { existsSync } from "node:fs";
 import { formatBytes, formatDuration, formatRelativeTime } from "@app/utils/format";
 import { formatTable } from "@app/utils/table";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { IndexerManager } from "../lib/manager";
+import { getIndexerStorage, readSearchStatsByMode } from "../lib/storage";
 import { DEFAULT_WATCH_INTERVAL_MS } from "../lib/types";
 
 function formatEmbeddingPct(totalEmbeddings: number, totalChunks: number): number {
@@ -119,6 +122,26 @@ async function showDetailedStatus(manager: IndexerManager, name: string): Promis
 
     for (const [label, value] of entries) {
         p.log.step(`${pc.bold(label)}: ${value}`);
+    }
+
+    // Per-mode search breakdown
+    const dbPath = getIndexerStorage().getIndexDbPath(name);
+
+    if (existsSync(dbPath)) {
+        try {
+            const db = new Database(dbPath, { readonly: true });
+            const searchStats = readSearchStatsByMode(db);
+            db.close();
+
+            if (searchStats.length > 0) {
+                const modeLines = searchStats.map(
+                    (s) => `${s.mode}: ${s.count} queries, avg ${formatDuration(s.avgDurationMs)}`
+                );
+                p.log.step(`${pc.bold("Search modes")}:\n    ${modeLines.join("\n    ")}`);
+            }
+        } catch {
+            // non-critical — skip if DB can't be opened
+        }
     }
 
     if (meta.indexingStatus === "in-progress" || meta.indexingStatus === "cancelled") {
