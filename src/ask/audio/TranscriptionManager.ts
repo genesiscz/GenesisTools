@@ -19,6 +19,12 @@ export interface TranscriptionOptions {
     model?: string;
     timestamp?: boolean;
     verbose?: boolean;
+    /** Enable speaker diarization (AssemblyAI, Deepgram). */
+    diarize?: boolean;
+    /** Request word-level timestamps (Whisper, Deepgram). */
+    wordTimestamps?: boolean;
+    /** Enable smart formatting/punctuation (Deepgram). */
+    smartFormat?: boolean;
 }
 
 export interface TranscriptionResult {
@@ -76,10 +82,12 @@ export class TranscriptionManager {
 
             // Perform transcription
             const model = getTranscriptionModel(transcriptionModel.providerInstance, transcriptionModel.model);
+            const providerOptions = this.buildProviderOptions(transcriptionModel.provider, options);
             const result = await transcribe({
                 model,
                 audio: audioBuffer,
                 ...(options.language && { language: options.language }),
+                ...(Object.keys(providerOptions).length > 0 && { providerOptions }),
             });
 
             const processingTime = Date.now() - startTime;
@@ -329,6 +337,51 @@ export class TranscriptionManager {
             logger.warn(`Failed to create transcription provider ${providerName}: ${error}`);
             return null;
         }
+    }
+
+    private buildProviderOptions(
+        provider: string,
+        options: TranscriptionOptions
+    ): Record<string, Record<string, import("@ai-sdk/provider").JSONValue>> {
+        const result: Record<string, Record<string, import("@ai-sdk/provider").JSONValue>> = {};
+
+        if (provider === "assemblyai") {
+            const assemblyaiOpts: Record<string, import("@ai-sdk/provider").JSONValue> = {};
+
+            if (options.diarize) {
+                assemblyaiOpts.speaker_labels = true;
+            }
+
+            if (options.wordTimestamps) {
+                assemblyaiOpts.word_boost = [];
+            }
+
+            if (Object.keys(assemblyaiOpts).length > 0) {
+                result.assemblyai = assemblyaiOpts;
+            }
+        }
+
+        if (provider === "deepgram") {
+            const deepgramOpts: Record<string, import("@ai-sdk/provider").JSONValue> = {};
+
+            if (options.diarize) {
+                deepgramOpts.diarize = true;
+            }
+
+            if (options.smartFormat) {
+                deepgramOpts.smart_format = true;
+            }
+
+            if (options.wordTimestamps) {
+                deepgramOpts.timestamps = true;
+            }
+
+            if (Object.keys(deepgramOpts).length > 0) {
+                result.deepgram = deepgramOpts;
+            }
+        }
+
+        return result;
     }
 
     private getDefaultModelForProvider(provider: string): string {
