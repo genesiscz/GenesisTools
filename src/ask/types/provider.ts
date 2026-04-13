@@ -64,6 +64,8 @@ export interface DetectedProvider {
     models: ModelInfo[];
     config: ProviderConfig;
     systemPromptPrefix?: string;
+    /** The account used to create this provider, set at resolution time. */
+    account?: { name: string; label?: string };
 }
 
 export interface PricingInfo {

@@ -1,47 +1,116 @@
 import logger from "@app/logger";
+import type { AIAccount } from "@app/utils/ai/AIAccount";
+import { anthropicCacheControl } from "@app/utils/ai/prompt-caching";
 import { applySystemPromptPrefix } from "@app/utils/claude/subscription-billing";
 import { SafeJSON } from "@app/utils/json";
 import { estimateTokens } from "@app/utils/tokens";
 import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
-import type { ChatConfig, ChatMessage, ProviderChoice } from "@ask/types";
-import type { LanguageModel, LanguageModelUsage } from "ai";
+import type { AnthropicModelCategory, OpenAIModelCategory } from "@ask/providers/ModelResolver";
+import type { ChatConfig, ChatMessage, DetectedProvider, ProviderChoice } from "@ask/types";
+import type { LanguageModel, LanguageModelUsage, ModelMessage, ToolSet } from "ai";
 import { generateText, streamText } from "ai";
 
 export interface ChatResponse {
     content: string;
     usage?: LanguageModelUsage;
     cost?: number;
-    toolCalls?: Array<{
-        toolCallType: "function" | "provider";
-        toolCallId: string;
-        args?: Record<string, unknown>;
-    }>;
+    /** SDK response messages including tool calls/results — used for multi-turn history. */
+    responseMessages?: ModelMessage[];
+}
+
+export interface OneShotOptions {
+    /**
+     * AIAccount instance — use `AIAccount.chooseClaude("hello")` or `await AIAccount.defaultClaude()`.
+     * If omitted, falls back to detecting the Anthropic provider configured in ask config.
+     */
+    account?: AIAccount;
+    /** Model: category enum (AnthropicModelCategory / OpenAIModelCategory) or raw model ID string. */
+    model: AnthropicModelCategory | OpenAIModelCategory | string;
+    /** The message to send. */
+    message: string;
+    systemPrompt?: string;
+    maxTokens?: number;
+    temperature?: number;
+    tools?: ToolSet;
+    /** Default: false (non-streaming for one-shot). */
+    streaming?: boolean;
 }
 
 export class ChatEngine {
     private config: ChatConfig;
     private conversationHistory: ChatMessage[] = [];
+    /** SDK-native message array passed to streamText/generateText — includes tool calls/results. */
+    private sdkMessages: ModelMessage[] = [];
 
     constructor(config: ChatConfig) {
         this.config = { ...config };
     }
 
-    private getEffectiveSystemPrompt(): string | undefined {
-        const raw = this.config.systemPrompt;
+    static async oneShot(options: OneShotOptions): Promise<ChatResponse> {
+        const { resolveModel } = await import("@ask/providers/ModelResolver");
+        const { getLanguageModel } = await import("@ask/types");
 
-        if (!raw) {
-            return raw;
+        let provider: DetectedProvider;
+
+        if (options.account) {
+            provider = await options.account.provider();
+        } else {
+            const { providerManager } = await import("@ask/providers/ProviderManager");
+            const providers = await providerManager.detectProviders("anthropic");
+            const found = providers.find((p) => p.name === "anthropic");
+
+            if (!found) {
+                throw new Error("No Claude subscription configured. Run `tools ask config` first.");
+            }
+
+            provider = found;
         }
 
-        return applySystemPromptPrefix(this.config.providerChoice?.provider.systemPromptPrefix, raw);
+        const selection = resolveModel(options.model, provider.models);
+
+        if (!selection.model) {
+            const accountHint = options.account ? ` for account "${options.account.name}"` : "";
+            throw new Error(`No "${selection.request}" model available${accountHint}`);
+        }
+
+        const config: ChatConfig = {
+            model: getLanguageModel(provider.provider, selection.model.id),
+            provider: provider.name,
+            modelName: selection.model.id,
+            streaming: options.streaming ?? false,
+            systemPrompt: options.systemPrompt,
+            maxTokens: options.maxTokens,
+            temperature: options.temperature,
+            providerChoice: { provider, model: selection.model },
+        };
+
+        const engine = new ChatEngine(config);
+        return engine.sendMessage(options.message, options.tools);
+    }
+
+    private getEffectiveSystemPrompt(): string | undefined {
+        const prefix = this.config.providerChoice?.provider.systemPromptPrefix;
+        const userPrompt = this.config.systemPrompt;
+
+        if (!prefix && !userPrompt) {
+            return undefined;
+        }
+
+        if (!userPrompt) {
+            return prefix;
+        }
+
+        return applySystemPromptPrefix(prefix, userPrompt);
     }
 
     async sendMessage(
         message: string,
-        tools?: Record<string, unknown>,
+        tools?: ToolSet,
         callbacks?: {
             onChunk?: (chunk: string) => void;
             onThinking?: (text: string) => void;
+            onToolCall?: (name: string, args: unknown) => void;
+            onToolResult?: (name: string, result: unknown) => void;
         }
     ): Promise<ChatResponse> {
         // Add user message to history
@@ -54,16 +123,29 @@ export class ChatEngine {
 
         this.conversationHistory.push(userMessage);
 
+        // Push user message to SDK messages (these include tool calls/results across turns)
+        this.sdkMessages.push({ role: "user", content: message });
+
+        const sdkLengthBefore = this.sdkMessages.length;
+
         try {
             let response: ChatResponse;
 
             if (this.config.streaming) {
-                response = await this.sendStreamingMessage(message, tools, callbacks);
+                response = await this.sendStreamingMessage(this.sdkMessages, tools, callbacks);
             } else {
-                response = await this.sendNonStreamingMessage(message, tools);
+                response = await this.sendNonStreamingMessage(this.sdkMessages, tools);
             }
 
-            // Add assistant response to history
+            // Append SDK response messages (assistant + tool messages) for next turn context
+            if (response.responseMessages) {
+                this.sdkMessages.push(...response.responseMessages);
+            } else {
+                // Fallback: add plain assistant message if no response messages available
+                this.sdkMessages.push({ role: "assistant", content: response.content });
+            }
+
+            // Add assistant response to display history
             const assistantMessage: ChatMessage = {
                 role: "assistant",
                 content: response.content,
@@ -76,30 +158,36 @@ export class ChatEngine {
 
             return response;
         } catch (error) {
-            // Remove the user message if the request failed
+            // Rollback both histories so they stay in sync
             this.conversationHistory.pop();
+            this.sdkMessages.length = sdkLengthBefore;
             throw error;
         }
     }
 
     private async sendStreamingMessage(
-        message: string,
-        _tools?: Record<string, unknown>,
+        messages: ModelMessage[],
+        tools?: ToolSet,
         callbacks?: {
             onChunk?: (chunk: string) => void;
             onThinking?: (text: string) => void;
+            onToolCall?: (name: string, args: unknown) => void;
+            onToolResult?: (name: string, result: unknown) => void;
         }
     ): Promise<ChatResponse> {
-        // Store usage from onFinish callback - this is the most reliable source
         let finishUsage: LanguageModelUsage | undefined;
         let finishCost: number | undefined;
 
+        const hasTools = tools && Object.keys(tools).length > 0;
+
         const result = await streamText({
             model: this.config.model,
-            prompt: message,
+            messages,
             system: this.getEffectiveSystemPrompt(),
             temperature: this.config.temperature,
+            providerOptions: anthropicCacheControl(),
             ...(this.config.maxTokens && { maxOutputTokens: this.config.maxTokens }),
+            ...(hasTools && { tools, maxSteps: 5 }),
             onFinish: async ({ usage }) => {
                 // This is called when the stream completes - usage is available HERE
                 logger.debug(
@@ -155,6 +243,10 @@ export class ChatEngine {
                 fullResponse += part.text;
             } else if (part.type === "reasoning-delta" && callbacks?.onThinking) {
                 callbacks.onThinking(part.text);
+            } else if (part.type === "tool-call") {
+                callbacks?.onToolCall?.(part.toolName, "input" in part ? part.input : undefined);
+            } else if (part.type === "tool-result") {
+                callbacks?.onToolResult?.(part.toolName, "output" in part ? part.output : undefined);
             }
         }
 
@@ -210,41 +302,29 @@ export class ChatEngine {
             );
         }
 
+        // Get response messages (includes tool calls/results for multi-turn history)
+        const sdkResponse = await result.response;
+        const responseMessages = sdkResponse.messages as ModelMessage[];
+
         return {
             content: fullResponse,
-            usage: usage,
-            cost: cost,
-            toolCalls: result.toolCalls
-                ? Array.isArray(result.toolCalls)
-                    ? result.toolCalls.map((tc) => {
-                          const base: {
-                              toolCallType: "function" | "provider";
-                              toolCallId: string;
-                              args?: Record<string, unknown>;
-                          } = {
-                              toolCallType: (tc.type === "tool-call" ? "function" : "provider") as
-                                  | "function"
-                                  | "provider",
-                              toolCallId: tc.toolCallId,
-                          };
-                          // Only include args if it exists on the tool call
-                          if ("args" in tc && tc.args) {
-                              base.args = tc.args as Record<string, unknown>;
-                          }
-                          return base;
-                      })
-                    : []
-                : undefined,
+            usage,
+            cost,
+            responseMessages,
         };
     }
 
-    private async sendNonStreamingMessage(message: string, _tools?: Record<string, unknown>): Promise<ChatResponse> {
+    private async sendNonStreamingMessage(messages: ModelMessage[], tools?: ToolSet): Promise<ChatResponse> {
+        const hasTools = tools && Object.keys(tools).length > 0;
+
         const result = await generateText({
             model: this.config.model,
-            prompt: message,
+            messages,
             system: this.getEffectiveSystemPrompt(),
             temperature: this.config.temperature,
+            providerOptions: anthropicCacheControl(),
             ...(this.config.maxTokens && { maxOutputTokens: this.config.maxTokens }),
+            ...(hasTools && { tools, maxSteps: 5 }),
         });
 
         // DEBUG: Log the full result object structure
@@ -288,27 +368,7 @@ export class ChatEngine {
             content: result.text,
             usage: result.usage,
             cost,
-            toolCalls: result.toolCalls
-                ? Array.isArray(result.toolCalls)
-                    ? result.toolCalls.map((tc) => {
-                          const base: {
-                              toolCallType: "function" | "provider";
-                              toolCallId: string;
-                              args?: Record<string, unknown>;
-                          } = {
-                              toolCallType: (tc.type === "tool-call" ? "function" : "provider") as
-                                  | "function"
-                                  | "provider",
-                              toolCallId: tc.toolCallId,
-                          };
-                          // Only include args if it exists on the tool call
-                          if ("args" in tc && tc.args) {
-                              base.args = tc.args as Record<string, unknown>;
-                          }
-                          return base;
-                      })
-                    : []
-                : undefined,
+            responseMessages: result.response.messages as ModelMessage[],
         };
     }
 
@@ -322,6 +382,7 @@ export class ChatEngine {
 
     clearConversation(): void {
         this.conversationHistory = [];
+        this.sdkMessages = [];
     }
 
     getConversationLength(): number {
@@ -376,8 +437,15 @@ export class ChatEngine {
     importConversation(messages: ChatMessage[]): void {
         this.conversationHistory = messages.map((msg) => ({
             ...msg,
-            timestamp: new Date(msg.timestamp), // Ensure timestamp is a Date object
+            timestamp: new Date(msg.timestamp),
         }));
+
+        // Rebuild sdkMessages from display history — tool_call/tool_result entries from prior
+        // turns are lost since conversationHistory only stores user/assistant/system messages.
+        // This is acceptable: imported sessions resume as plain text context without active tool chains.
+        this.sdkMessages = this.conversationHistory
+            .filter((m) => m.role === "user" || m.role === "assistant")
+            .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
     }
 
     // Get conversation summary for display
@@ -402,22 +470,26 @@ export class ChatEngine {
 
     // Remove old messages to keep within context window
     trimToContextWindow(maxTokens: number): void {
+        const lengthBefore = this.conversationHistory.length;
         let currentTokens = this.getTotalTokens();
 
         while (currentTokens > maxTokens && this.conversationHistory.length > 2) {
-            // Remove oldest message pair (user + assistant), but always keep the first message if it's a system message
             if (this.conversationHistory[0].role === "system") {
-                // Remove the second message if first is system
                 const removed = this.conversationHistory.splice(1, 1)[0];
                 currentTokens -= removed.tokens || 0;
             } else {
-                // Remove the first message
                 const removed = this.conversationHistory.shift();
                 currentTokens -= removed?.tokens || 0;
             }
         }
 
-        if (this.conversationHistory.length < this.getConversationLength()) {
+        if (this.conversationHistory.length < lengthBefore) {
+            // Rebuild sdkMessages to stay in sync after trim — tool_call/tool_result entries
+            // from pruned turns are dropped (trimmed context resumes without active tool chains)
+            this.sdkMessages = this.conversationHistory
+                .filter((m) => m.role === "user" || m.role === "assistant")
+                .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
+
             logger.info(
                 `Trimmed conversation to fit within ${dynamicPricingManager.formatTokens(maxTokens)} token limit`
             );
