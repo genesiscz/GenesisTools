@@ -4,9 +4,7 @@ import pc from "picocolors";
 import { appendMemory, getMemoryPath, grepMemory, readMemory } from "../lib/memory";
 
 export function registerMemoryCommand(program: Command): void {
-    const memory = program
-        .command("memory")
-        .description("Read/search/append project-scoped MEMORY.md");
+    const memory = program.command("memory").description("Read/search/append project-scoped MEMORY.md");
 
     memory
         .command("path")

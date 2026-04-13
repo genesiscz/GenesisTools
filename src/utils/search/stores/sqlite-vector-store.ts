@@ -44,7 +44,7 @@ export class SqliteVectorStore implements VectorStore {
         if (!this.warnedLargeScan && rows.length > 10_000) {
             console.warn(
                 `[indexer] Brute-force vector scan (${rows.length} vectors). ` +
-                    `Run "tools indexer rebuild" to migrate to sqlite-vec for faster search.`
+                    `Run "tools indexer migrate-vec" to convert to sqlite-vec for faster search.`
             );
             this.warnedLargeScan = true;
         }

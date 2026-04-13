@@ -5,7 +5,7 @@ export function createFTS5Table(opts: { db: Database; tableName: string; fields:
     const contentTable = `${tableName}_content`;
     const ftsTable = `${tableName}_fts`;
     // remove_diacritics 2 folds é/à/ř/ž/etc. to the ASCII form so
-     // "zarizeni" matches "zařízení". Only applies to newly CREATEd FTS5 tables.
+    // "zarizeni" matches "zařízení". Only applies to newly CREATEd FTS5 tables.
     const tokenizerClause = tokenizer ?? "unicode61 remove_diacritics 2";
 
     db.run(`CREATE TABLE IF NOT EXISTS ${contentTable} (

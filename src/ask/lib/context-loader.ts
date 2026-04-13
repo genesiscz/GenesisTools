@@ -40,7 +40,9 @@ export async function loadAskContext(cwd: string, budgetTokens: number): Promise
     try {
         config = await loadContextConfig(projectRoot);
     } catch (err) {
-        logger.debug(`[ask:context] failed to parse ${CONFIG_FILENAME}: ${err instanceof Error ? err.message : String(err)}`);
+        logger.debug(
+            `[ask:context] failed to parse ${CONFIG_FILENAME}: ${err instanceof Error ? err.message : String(err)}`
+        );
         return undefined;
     }
 
