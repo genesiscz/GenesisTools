@@ -354,6 +354,7 @@ async function transcribeAction(urlArg: string | undefined, options: TranscribeO
 
         const transcriber = await AI.Transcriber.create({
             provider: options.provider as AIProviderType | undefined,
+            persist: true,
         });
 
         try {

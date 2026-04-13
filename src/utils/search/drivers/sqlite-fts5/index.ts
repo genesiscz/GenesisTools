@@ -339,7 +339,8 @@ export class SearchEngine<TDoc extends Record<string, unknown> = Record<string, 
         const filterParams = filters?.params ?? [];
 
         const sql = `
-            SELECT c.*, ${rankExpr} AS rank
+            SELECT c.*, ${rankExpr} AS rank,
+                   snippet(${ftsTable}, 0, '', '', '...', 40) AS fts_snippet
             FROM ${ftsTable} fts
             JOIN ${contentTable} c ON c.rowid = fts.rowid
             WHERE ${ftsTable} MATCH ?${filterClause}
@@ -348,15 +349,16 @@ export class SearchEngine<TDoc extends Record<string, unknown> = Record<string, 
         `;
 
         const rows = this.db.query(sql).all(ftsQuery, ...filterParams, limit) as Array<
-            Record<string, unknown> & { rank: number }
+            Record<string, unknown> & { rank: number; fts_snippet: string }
         >;
 
         return rows.map((row) => {
-            const { rank, ...rest } = row;
+            const { rank, fts_snippet, ...rest } = row;
             return {
                 doc: rest as TDoc,
                 score: -rank,
                 method: "bm25" as const,
+                ftsSnippet: fts_snippet || undefined,
             };
         });
     }

@@ -28,6 +28,8 @@ export interface SearchResult<TDoc> {
     doc: TDoc;
     score: number;
     method: "bm25" | "cosine" | "rrf";
+    /** FTS5 native snippet excerpt (only present for BM25/fulltext results) */
+    ftsSnippet?: string;
 }
 
 export interface SearchEngineConfig {
