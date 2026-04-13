@@ -1,7 +1,7 @@
 import type { AgentContentBlock, AgentMessage } from "@app/utils/agents/types";
 import { SessionTimeline } from "@app/utils/agents/ui/components/SessionTimeline";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { ArrowLeft, Calendar, FolderOpen, GitBranch } from "lucide-react";
+import { Calendar, FolderOpen, GitBranch } from "lucide-react";
 import { useMemo } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
@@ -100,8 +100,8 @@ function ConversationPage() {
 			<div className="min-h-screen bg-background flex items-center justify-center">
 				<Card className="p-8">
 					<p className="text-muted-foreground">Conversation not found</p>
-					<Link to="/" className="mt-4 text-primary hover:underline flex items-center gap-2">
-						<ArrowLeft className="w-4 h-4" /> Back to conversations
+					<Link to="/" className="mt-4 text-primary hover:underline text-sm">
+						Back to conversations
 					</Link>
 				</Card>
 			</div>
@@ -110,15 +110,8 @@ function ConversationPage() {
 
 	return (
 		<div className="min-h-screen bg-background">
-			<header className="sticky top-0 z-30 glass-card border-b border-white/5">
-				<div className="max-w-5xl mx-auto px-6 py-3">
-					<Link
-						to="/"
-						className="inline-flex items-center gap-1.5 text-xs font-mono text-muted-foreground/50 hover:text-foreground transition-colors mb-2"
-					>
-						<ArrowLeft className="w-3.5 h-3.5" />
-						Back to conversations
-					</Link>
+			<header className="sticky top-0 z-30 glass-card border-b border-amber-500/10 shadow-[0_1px_12px_color-mix(in_oklch,var(--color-primary)_8%,transparent)]">
+				<div className="max-w-5xl mx-auto px-6 py-3.5">
 					<h1 className="text-xl font-bold text-primary neon-text-primary tracking-tight line-clamp-2">
 						{conversation.customTitle || conversation.summary || conversation.sessionId}
 					</h1>

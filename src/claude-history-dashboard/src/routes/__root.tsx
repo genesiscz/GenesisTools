@@ -1,8 +1,9 @@
 import { TanStackDevtools } from "@tanstack/react-devtools";
 import type { QueryClient } from "@tanstack/react-query";
-import { createRootRouteWithContext, HeadContent, Scripts } from "@tanstack/react-router";
+import { createRootRouteWithContext, HeadContent, Scripts, useRouterState } from "@tanstack/react-router";
 import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools";
 import Header from "../components/Header";
+import { Sidebar } from "../components/sidebar/Sidebar";
 import TanStackQueryDevtools from "../integrations/tanstack-query/devtools";
 import appCss from "../styles.css?url";
 
@@ -36,6 +37,27 @@ export const Route = createRootRouteWithContext<MyRouterContext>()({
 	shellComponent: RootDocument,
 });
 
+function RootContent({ children }: { children: React.ReactNode }) {
+	const pathname = useRouterState({ select: (s) => s.location.pathname });
+	const showSidebar = pathname.startsWith("/conversation/");
+
+	if (showSidebar) {
+		return (
+			<>
+				<Sidebar />
+				<div className="ml-72">{children}</div>
+			</>
+		);
+	}
+
+	return (
+		<>
+			<Header />
+			{children}
+		</>
+	);
+}
+
 function RootDocument({ children }: { children: React.ReactNode }) {
 	return (
 		<html lang="en">
@@ -45,8 +67,7 @@ function RootDocument({ children }: { children: React.ReactNode }) {
 			<body className="cyberpunk bg-background text-foreground">
 				<div className="scan-lines" aria-hidden="true" />
 				<div className="cyber-grid" aria-hidden="true" />
-				<Header />
-				{children}
+				<RootContent>{children}</RootContent>
 				{import.meta.env.DEV && (
 					<TanStackDevtools
 						config={{
