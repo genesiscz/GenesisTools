@@ -394,7 +394,7 @@ async function manageNotifications(config: ClaudeConfig): Promise<void> {
 
 async function manageWarmup(config: ClaudeConfig, aiConfig: AIConfig): Promise<void> {
     if (!config.warmup) {
-        config.warmup = { ...DEFAULT_WARMUP };
+        config.warmup = structuredClone(DEFAULT_WARMUP);
     }
 
     const action = await p.select({

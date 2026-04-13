@@ -21,7 +21,7 @@ export interface ChatResponse {
 export interface OneShotOptions {
     /**
      * AIAccount instance — use `AIAccount.chooseClaude("hello")` or `await AIAccount.defaultClaude()`.
-     * If omitted, falls back to the singleton providerManager (ask config's default account).
+     * If omitted, falls back to detecting the Anthropic provider configured in ask config.
      */
     account?: AIAccount;
     /** Model: AnthropicModelCategory ("haiku"/"sonnet"/"opus") or raw model ID string. */

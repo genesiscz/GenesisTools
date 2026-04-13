@@ -674,20 +674,30 @@ class ASKTool {
         };
     }
 
-    private getAvailableTools(): ToolSet | undefined {
-        const tools: ToolSet = {};
-
+    private getBaseToolRegistry() {
         const searchToolDef = webSearchTool.createSearchTool();
 
-        if (searchToolDef) {
-            tools.searchWeb = tool({
-                description: searchToolDef.description,
-                inputSchema: searchToolDef.parameters,
-                execute: searchToolDef.execute,
-            });
+        if (!searchToolDef) {
+            return null;
         }
 
-        return Object.keys(tools).length > 0 ? tools : undefined;
+        return { searchWeb: searchToolDef };
+    }
+
+    private getAvailableTools(): ToolSet | undefined {
+        const registry = this.getBaseToolRegistry();
+
+        if (!registry) {
+            return undefined;
+        }
+
+        return {
+            searchWeb: tool({
+                description: registry.searchWeb.description,
+                inputSchema: registry.searchWeb.parameters,
+                execute: registry.searchWeb.execute,
+            }),
+        };
     }
 
     /** Returns tools in AIChatTool format (for AIChat constructor). */
@@ -701,17 +711,17 @@ class ASKTool {
               }
           >
         | undefined {
-        const searchToolDef = webSearchTool.createSearchTool();
+        const registry = this.getBaseToolRegistry();
 
-        if (!searchToolDef) {
+        if (!registry) {
             return undefined;
         }
 
         return {
             searchWeb: {
-                description: searchToolDef.description,
-                parameters: searchToolDef.parameters,
-                execute: searchToolDef.execute as (params: Record<string, unknown>) => Promise<unknown>,
+                description: registry.searchWeb.description,
+                parameters: registry.searchWeb.parameters,
+                execute: registry.searchWeb.execute as (params: Record<string, unknown>) => Promise<unknown>,
             },
         };
     }

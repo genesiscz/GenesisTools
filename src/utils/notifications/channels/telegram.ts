@@ -8,10 +8,18 @@ export async function dispatchTelegram(event: NotificationEvent, config: Telegra
 
     try {
         const { createApi, sendMessage } = await import("@app/telegram-bot/lib/api");
+        const { escapeMarkdownV2 } = await import("@app/telegram-bot/lib/formatting");
         const api = createApi(config.botToken);
 
-        const text = event.title ? `*${event.title}*\n${event.message}` : event.message;
+        const title = event.title ? `*${escapeMarkdownV2(event.title)}*` : "";
+        const body = escapeMarkdownV2(event.message);
+        const text = title ? `${title}\n${body}` : body;
         const chatId = Number(config.chatId);
+
+        if (Number.isNaN(chatId)) {
+            logger.warn({ chatId: config.chatId, app: event.app }, "Invalid Telegram chatId");
+            return;
+        }
 
         await sendMessage(api, chatId, text, "MarkdownV2");
     } catch (err) {

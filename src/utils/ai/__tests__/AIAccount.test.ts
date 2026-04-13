@@ -78,14 +78,14 @@ describe("AIAccount", () => {
         });
 
         it("throws for non-existent account", async () => {
-            expect(AIAccount.fromConfig("definitely-does-not-exist-account-xyz")).rejects.toThrow("not found");
+            await expect(AIAccount.fromConfig("definitely-does-not-exist-account-xyz")).rejects.toThrow("not found");
         });
     });
 
     describe("provider() error cases", () => {
         it("throws when API key is missing for cloud provider", async () => {
             const account = AIAccount.chooseCodex("test-codex");
-            expect(account.provider()).rejects.toThrow("No API key found");
+            await expect(account.provider()).rejects.toThrow("No API key found");
         });
     });
 });

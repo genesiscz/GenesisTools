@@ -2,6 +2,7 @@
 
 import type { ChannelConfigs } from "@app/utils/notifications";
 import { dispatchNotification, notificationsConfig } from "@app/utils/notifications";
+import { isInteractive, suggestCommand } from "@app/utils/cli";
 import { withCancel } from "@app/utils/prompts/clack/helpers";
 import * as p from "@clack/prompts";
 import { Command } from "commander";
@@ -201,6 +202,12 @@ function showCurrentConfig(channels: ChannelConfigs): void {
 }
 
 async function configCommand(): Promise<void> {
+    if (!isInteractive()) {
+        console.error("notify config requires an interactive terminal.");
+        console.info(suggestCommand("tools notify", { add: ["--title", "Test", "Hello"] }));
+        return;
+    }
+
     p.intro(pc.bgCyan(pc.black(" notify config ")));
 
     while (true) {

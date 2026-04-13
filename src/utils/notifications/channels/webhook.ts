@@ -8,7 +8,7 @@ export async function dispatchWebhook(event: NotificationEvent, config: WebhookC
     }
 
     try {
-        await fetch(config.url, {
+        const response = await fetch(config.url, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: SafeJSON.stringify({
@@ -19,6 +19,13 @@ export async function dispatchWebhook(event: NotificationEvent, config: WebhookC
                 timestamp: new Date().toISOString(),
             }),
         });
+
+        if (!response.ok) {
+            logger.warn(
+                { status: response.status, statusText: response.statusText, url: config.url, app: event.app },
+                "Webhook notification returned non-OK status",
+            );
+        }
     } catch (err) {
         logger.warn({ err, app: event.app }, "Webhook notification dispatch failed");
     }
