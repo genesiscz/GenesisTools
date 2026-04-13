@@ -1,8 +1,6 @@
 #!/usr/bin/env bun
 
 import logger from "@app/logger";
-import { formatToolSignature } from "@app/utils/agents/formatters/tool-formatter";
-import { SafeJSON } from "@app/utils/json";
 import { input } from "@app/utils/prompts/clack";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { AIChat } from "@ask/AIChat";
@@ -12,6 +10,7 @@ import type { CommandResult } from "@ask/chat/CommandHandler";
 import { commandHandler } from "@ask/chat/CommandHandler";
 import { conversationManager } from "@ask/chat/ConversationManager";
 import { loadAskContext } from "@ask/lib/context-loader";
+import { AskStreamRenderer } from "@ask/output/AskStreamRenderer";
 import { askUI, initAskUI } from "@ask/output/AskUILogger";
 import { costPredictor } from "@ask/output/CostPredictor";
 import { costTracker } from "@ask/output/CostTracker";
@@ -410,29 +409,15 @@ class ASKTool {
             const outputConfig = getOutputFormat(argv);
             const suppressStreaming = outputConfig?.type != null && outputConfig.type !== "text";
 
+            const streamRenderer = suppressStreaming ? null : new AskStreamRenderer();
+
             // Stream the response
             for await (const event of chat.send(message)) {
-                if (event.isText() && !suppressStreaming) {
-                    process.stdout.write(event.text);
-                } else if (event.isToolCall() && !suppressStreaming) {
-                    const toolInput = (event.input ?? {}) as Record<string, unknown>;
-                    const sig = formatToolSignature(event.name, toolInput, {
-                        primaryMaxChars: 200,
-                        detailLevel: "signature",
-                    });
-                    process.stderr.write(pc.dim(`\n${sig}\n`));
-                } else if (event.isToolResult() && !suppressStreaming) {
-                    const summary =
-                        typeof event.output === "string"
-                            ? event.output.slice(0, 300)
-                            : SafeJSON.stringify(event.output).slice(0, 300);
-                    process.stderr.write(pc.dim(`✓ [${event.name}] ${summary}\n`));
+                if (streamRenderer) {
+                    streamRenderer.renderEvent(event);
                 }
 
                 if (event.isDone()) {
-                    if (!suppressStreaming) {
-                        process.stdout.write("\n");
-                    }
                     const response = event.response;
 
                     // Track usage
@@ -572,22 +557,15 @@ class ASKTool {
 
                 const startTime = Date.now();
 
+                const interactiveRenderer = new AskStreamRenderer();
+
                 // Send message with tool callbacks
                 const response = await chatEngine.sendMessage(msg, tools, {
                     onToolCall: (name, args) => {
-                        const toolInput = (args ?? {}) as Record<string, unknown>;
-                        const sig = formatToolSignature(name, toolInput, {
-                            primaryMaxChars: 200,
-                            detailLevel: "signature",
-                        });
-                        console.log(pc.dim(`\n${sig}`));
+                        interactiveRenderer.renderToolCall(name, args);
                     },
                     onToolResult: (name, result) => {
-                        const summary =
-                            typeof result === "string"
-                                ? result.slice(0, 300)
-                                : SafeJSON.stringify(result).slice(0, 300);
-                        console.log(pc.dim(`✓ [${name}] ${summary}\n`));
+                        interactiveRenderer.renderToolResult(name, result);
                     },
                 });
 
