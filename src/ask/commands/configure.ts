@@ -503,6 +503,192 @@ async function addAnthropicApiKey(): Promise<void> {
 // ── OpenAI Account Flow ──
 
 async function addOpenAIAccount(): Promise<void> {
+    const method = await p.select({
+        message: "OpenAI account type",
+        options: [
+            {
+                value: "import-codex",
+                label: "Import from Codex CLI",
+                hint: "reads ~/.codex/auth.json",
+            },
+            {
+                value: "oauth-login",
+                label: "Sign in with ChatGPT",
+                hint: "OAuth browser flow",
+            },
+            {
+                value: "api-key",
+                label: "Add API key",
+                hint: "standard sk-...",
+            },
+            { value: "back", label: "Back" },
+        ],
+    });
+
+    if (p.isCancel(method) || method === "back") {
+        return;
+    }
+
+    switch (method) {
+        case "import-codex":
+            await importFromCodexCli();
+            break;
+        case "oauth-login":
+            await addViaCodexOAuth();
+            break;
+        case "api-key":
+            await addOpenAIApiKey();
+            break;
+    }
+}
+
+async function importFromCodexCli(): Promise<void> {
+    const { readCodexAuthJson, extractEmail, extractPlanType, CODEX_AUTH_PATH } = await import(
+        "@app/utils/ai/openai/codex-auth"
+    );
+
+    const spinner = p.spinner();
+    spinner.start("Reading Codex CLI credentials...");
+    const tokens = await readCodexAuthJson();
+
+    if (!tokens) {
+        spinner.stop("No credentials found.");
+        p.log.warn(`No valid auth.json at ${CODEX_AUTH_PATH}`);
+        p.log.info(pc.dim("Run `codex login` first, then retry."));
+        return;
+    }
+
+    const email = extractEmail(tokens.accessToken);
+    const planType = extractPlanType(tokens.accessToken);
+    spinner.stop("Credentials found.");
+
+    const infoLines: string[] = [];
+
+    if (email) {
+        infoLines.push(`${pc.dim("Email:")} ${pc.cyan(email)}`);
+    }
+
+    if (planType) {
+        infoLines.push(`${pc.dim("Plan:")}  ${planType}`);
+    }
+
+    infoLines.push(`${pc.dim("Expires:")} ${new Date(tokens.expiresAt).toLocaleString()}`);
+    infoLines.push(`${pc.dim("Refresh:")} ${tokens.refreshToken ? pc.green("available") : pc.red("missing")}`);
+    p.note(infoLines.join("\n"), "Codex CLI Credentials");
+
+    const accountName = email?.split("@")[0]?.toLowerCase() ?? "codex";
+
+    const entry: AIAccountEntry = {
+        name: accountName,
+        provider: "openai-sub",
+        tokens: {
+            accessToken: tokens.accessToken,
+            refreshToken: tokens.refreshToken,
+            expiresAt: tokens.expiresAt,
+        },
+        label: planType ?? "codex",
+        apps: ["ask"],
+    };
+
+    const aiConfig = await AIConfig.load();
+    await aiConfig.addAccount(entry);
+    p.log.success(`Account "${accountName}" imported from Codex CLI.`);
+}
+
+async function addViaCodexOAuth(): Promise<void> {
+    const { codexOAuth, extractEmail, extractPlanType } = await import("@app/utils/ai/openai/codex-auth");
+
+    const spinner = p.spinner();
+    spinner.start("Generating authorization URL...");
+    const authUrl = await codexOAuth.startLogin();
+    spinner.stop("Authorization URL ready.");
+
+    p.note(
+        [
+            "1. Open the URL below in your browser",
+            "2. Sign in with your ChatGPT account",
+            "3. Authorize the Codex CLI",
+            "4. Copy the code from the callback page",
+        ].join("\n"),
+        "OpenAI OAuth Login"
+    );
+
+    console.log();
+    console.log(`  ${pc.cyan(authUrl)}`);
+    console.log();
+
+    const openBrowser = await p.confirm({
+        message: "Open URL in browser?",
+        initialValue: true,
+    });
+
+    if (p.isCancel(openBrowser)) {
+        return;
+    }
+
+    if (openBrowser) {
+        const { Browser } = await import("@app/utils/browser");
+        await Browser.open(authUrl);
+    }
+
+    const code = await p.text({
+        message: "Paste the authorization code:",
+        validate: (val) => {
+            if (!val?.trim()) {
+                return "Code is required";
+            }
+        },
+    });
+
+    if (p.isCancel(code)) {
+        return;
+    }
+
+    spinner.start("Exchanging code for tokens...");
+
+    try {
+        const tokens = await codexOAuth.exchangeCode(code as string);
+        spinner.stop("Tokens received.");
+
+        const email = extractEmail(tokens.accessToken);
+        const planType = extractPlanType(tokens.accessToken);
+
+        const infoLines: string[] = [];
+
+        if (email) {
+            infoLines.push(`${pc.dim("Email:")} ${pc.cyan(email)}`);
+        }
+
+        if (planType) {
+            infoLines.push(`${pc.dim("Plan:")}  ${planType}`);
+        }
+
+        infoLines.push(`${pc.dim("Expires:")} ${new Date(tokens.expiresAt).toLocaleString()}`);
+        p.note(infoLines.join("\n"), "Account Authorized");
+
+        const accountName = email?.split("@")[0]?.toLowerCase() ?? "codex";
+
+        const entry: AIAccountEntry = {
+            name: accountName,
+            provider: "openai-sub",
+            tokens: {
+                accessToken: tokens.accessToken,
+                refreshToken: tokens.refreshToken,
+                expiresAt: tokens.expiresAt,
+            },
+            label: planType ?? "codex",
+            apps: ["ask"],
+        };
+
+        const aiConfig = await AIConfig.load();
+        await aiConfig.addAccount(entry);
+        p.log.success(`Account "${accountName}" added via OAuth.`);
+    } catch (err) {
+        spinner.stop(`Token exchange failed: ${err}`);
+    }
+}
+
+async function addOpenAIApiKey(): Promise<void> {
     const key = await p.text({
         message: "Paste your OpenAI API key:",
         placeholder: "sk-...",

@@ -62,7 +62,7 @@ export class CommandHandler {
 
         p.log.success(`Switched to ${newChoice.provider.name}/${newChoice.model.name}`);
 
-        const model = getLanguageModel(newChoice.provider.provider, newChoice.model.id);
+        const model = getLanguageModel(newChoice.provider.provider, newChoice.model.id, newChoice.provider.type);
         return {
             newModel: model,
             newProvider: newChoice.provider.name,

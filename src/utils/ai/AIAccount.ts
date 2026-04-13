@@ -1,5 +1,5 @@
 import type { AIProvider } from "@app/utils/config/ai.types";
-import type { AnthropicModelCategory, ModelSelection } from "@ask/providers/ModelResolver";
+import type { AnthropicModelCategory, ModelSelection, OpenAIModelCategory } from "@ask/providers/ModelResolver";
 import type { DetectedProvider, ModelInfo } from "@ask/types";
 
 /**
@@ -56,8 +56,35 @@ export class AIAccount {
     // ── Codex factories (stub) ──
 
     /** Choose a specific OpenAI/Codex account by name. Synchronous — no I/O. */
-    static chooseCodex(name: string): AIAccount {
-        return new AIAccount(name, "openai");
+    static chooseCodex(name: string, providerType: AIProvider = "openai-sub"): AIAccount {
+        return new AIAccount(name, providerType);
+    }
+
+    /** Use the default OpenAI/Codex account. */
+    static async defaultCodex(): Promise<AIAccount> {
+        const { AIConfig } = await import("./AIConfig");
+        const config = await AIConfig.load();
+
+        const defaultEntry = config.getDefaultAccount("ask");
+
+        if (defaultEntry?.provider === "openai-sub") {
+            return new AIAccount(defaultEntry.name, "openai-sub");
+        }
+
+        // Fall back to first openai-sub account, then first openai account
+        const subAccounts = config.getAccountsByProvider("openai-sub");
+
+        if (subAccounts.length > 0) {
+            return new AIAccount(subAccounts[0].name, "openai-sub");
+        }
+
+        const apiAccounts = config.getAccountsByProvider("openai");
+
+        if (apiAccounts.length > 0) {
+            return new AIAccount(apiAccounts[0].name, "openai");
+        }
+
+        throw new Error("No OpenAI accounts configured. Run `tools ask config` first.");
     }
 
     /** List all OpenAI/Codex accounts. */
@@ -117,7 +144,7 @@ export class AIAccount {
     }
 
     /** Resolve a model by category (e.g. "haiku") or exact ID. */
-    async model(selection: AnthropicModelCategory | string): Promise<ModelSelection> {
+    async model(selection: AnthropicModelCategory | OpenAIModelCategory | string): Promise<ModelSelection> {
         const { resolveModel } = await import("@ask/providers/ModelResolver");
         const models = await this.models();
         return resolveModel(selection, models);

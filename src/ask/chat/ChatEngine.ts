@@ -74,7 +74,7 @@ export class ChatEngine {
         }
 
         const config: ChatConfig = {
-            model: getLanguageModel(provider.provider, selection.model.id),
+            model: getLanguageModel(provider.provider, selection.model.id, provider.type),
             provider: provider.name,
             modelName: selection.model.id,
             streaming: options.streaming ?? false,

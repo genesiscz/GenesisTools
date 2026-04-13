@@ -26,15 +26,20 @@ import type { ModelInfo } from "./chat";
 // Only applied when the provider is OpenAI (has both .chat() and .responses()).
 const RESPONSES_ONLY_PATTERNS = [/codex/i, /^gpt-5(?:\.\d+)?-pro$/i];
 
-export function getLanguageModel(provider: ProviderV2, modelId: string): LanguageModel {
+/**
+ * Get a LanguageModel instance for the given provider and model ID.
+ *
+ * @param providerType - Optional: pass "openai-sub" for WHAM/Codex subscription
+ *   providers, which require the Responses API for ALL models (not just codex/pro).
+ */
+export function getLanguageModel(provider: ProviderV2, modelId: string, providerType?: string): LanguageModel {
     // For OpenAI-like providers that expose both .chat() and .responses()
     if ("chat" in provider && typeof provider.chat === "function") {
-        // Check if this model needs the Responses API endpoint
-        if (
-            "responses" in provider &&
-            typeof provider.responses === "function" &&
-            RESPONSES_ONLY_PATTERNS.some((p) => p.test(modelId))
-        ) {
+        const hasResponses = "responses" in provider && typeof provider.responses === "function";
+
+        // WHAM (Codex subscription) requires Responses API for ALL models.
+        // Standard OpenAI API only needs it for codex/pro models.
+        if (hasResponses && (providerType === "openai-sub" || RESPONSES_ONLY_PATTERNS.some((p) => p.test(modelId)))) {
             return (provider.responses as (id: string) => LanguageModel)(modelId);
         }
 
