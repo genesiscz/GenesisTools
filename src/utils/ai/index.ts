@@ -20,6 +20,14 @@ import type {
 } from "./types";
 
 export { AIConfig } from "./AIConfig";
+export {
+    discoverEmbeddingProviders,
+    getDefaultModel,
+    logProviderChoice,
+    selectEmbeddingModel,
+    selectEmbeddingProvider,
+} from "./embedding-selection";
+export type { EmbeddingProviderOption, EmbeddingSelection } from "./embedding-selection";
 export type {
     LanguageDetectionDriver,
     LanguageDetectionResult,
