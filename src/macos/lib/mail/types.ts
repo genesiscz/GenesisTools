@@ -28,6 +28,8 @@ export interface MailMessage {
     size: number;
     attachments: MailAttachment[];
     body?: string;
+    /** First ~200 chars of the FTS/vector hit chunk, surfaced in search results. */
+    ftsSnippet?: string;
     bodyMatchesQuery?: boolean;
     /** Cosine distance from query (0 = identical). Set when semantic ranking is active. */
     semanticScore?: number;
@@ -45,14 +47,24 @@ export interface MailRecipient {
     type: "to" | "cc";
 }
 
+export interface AccountInfo {
+    uuid: string;
+    protocol: string;
+    email: string;
+    mailboxCount: number;
+    messageCount: number;
+}
+
 export interface SearchOptions {
     query: string;
     withoutBody?: boolean;
     receiver?: string;
+    account?: string;
     from?: Date;
     to?: Date;
     mailbox?: string;
     limit?: number;
+    offset?: number;
 }
 
 export interface ReceiverInfo {
