@@ -17,9 +17,12 @@ function mergeConsecutiveToolMessages(messages: AgentMessage[]): AgentMessage[] 
 
     for (const msg of messages) {
         const prev = merged[merged.length - 1];
-        const isToolOnly = msg.blocks.length > 0 && msg.blocks.every((b) => b.type === "tool_call" || b.type === "tool_result");
+        const isToolOnly =
+            msg.blocks.length > 0 && msg.blocks.every((b) => b.type === "tool_call" || b.type === "tool_result");
         const prevIsToolOnly =
-            prev && prev.blocks.length > 0 && prev.blocks.every((b) => b.type === "tool_call" || b.type === "tool_result");
+            prev &&
+            prev.blocks.length > 0 &&
+            prev.blocks.every((b) => b.type === "tool_call" || b.type === "tool_result");
 
         if (prev && prev.role === "assistant" && msg.role === "assistant" && isToolOnly && prevIsToolOnly) {
             prev.blocks.push(...msg.blocks);

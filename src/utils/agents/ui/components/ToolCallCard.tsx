@@ -20,14 +20,15 @@ export function ToolCallCard({
 }: ToolCallCardProps) {
     const hasContent = (diffLines && diffLines.length > 0) || !!resultContent;
     const [isOpen, setIsOpen] = useState(defaultExpanded && hasContent);
+    const isPending = !isError && !resultContent;
     const status = isError ? "ERROR" : resultContent ? "COMPLETED" : "PENDING";
-    const statusVariant = isError ? "destructive" : "cyber-secondary";
+    const statusVariant = isError ? "destructive" : isPending ? "outline" : "cyber-secondary";
 
     return (
         <div
             className={cn(
                 "rounded-lg overflow-hidden border transition-all duration-300",
-                isError ? "border-destructive/20" : "border-primary/20",
+                isError ? "border-destructive/20 bg-destructive/[0.02]" : "border-primary/15",
                 isOpen && !isError && "border-primary/40",
                 isOpen && isError && "border-destructive/40",
                 isOpen ? "collapsible-open" : ""
@@ -37,26 +38,26 @@ export function ToolCallCard({
             <div
                 onClick={hasContent ? () => setIsOpen(!isOpen) : undefined}
                 className={cn(
-                    "flex items-center gap-3 px-4 py-2.5 select-none transition-all",
+                    "flex items-center gap-3 px-4 py-2 select-none transition-all duration-200",
                     hasContent && "cursor-pointer",
                     hasContent && !isError && "hover:bg-primary/[0.06]",
                     hasContent && isError && "hover:bg-destructive/5",
-                    "bg-primary/[0.03]"
+                    "bg-primary/[0.02]"
                 )}
             >
                 {/* +/- toggle icon */}
                 <div
                     className={cn(
-                        "w-6 h-6 rounded flex items-center justify-center shrink-0 text-sm",
+                        "w-5 h-5 rounded flex items-center justify-center shrink-0",
                         isError ? "bg-destructive/10 text-destructive" : "bg-primary/10 text-primary",
                         !hasContent && "invisible"
                     )}
                 >
-                    {isOpen ? <Minus className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
+                    {isOpen ? <Minus className="w-3 h-3" /> : <Plus className="w-3 h-3" />}
                 </div>
 
                 {/* Wrench icon */}
-                <Wrench className={cn("w-3.5 h-3.5 shrink-0", isError ? "text-destructive/40" : "text-primary/40")} />
+                <Wrench className={cn("w-3 h-3 shrink-0", isError ? "text-destructive/30" : "text-primary/25")} />
 
                 {/* Tool name badge */}
                 <Badge
@@ -67,12 +68,16 @@ export function ToolCallCard({
                 </Badge>
 
                 {/* Signature */}
-                <span className="font-mono text-xs text-muted-foreground/40 truncate min-w-0">{signature}</span>
+                <span className="font-mono text-xs text-muted-foreground/35 truncate min-w-0">{signature}</span>
 
                 {/* Status badge -- pushed to right */}
                 <Badge
                     variant={statusVariant}
-                    className={cn("ml-auto text-[10px] font-mono gap-1 px-1.5 py-0 shrink-0", isError && "gap-1")}
+                    className={cn(
+                        "ml-auto text-[10px] font-mono gap-1 px-1.5 py-0 shrink-0",
+                        isError && "gap-1",
+                        isPending && "text-muted-foreground/40 border-muted-foreground/15 animate-pulse"
+                    )}
                 >
                     {isError && <XCircle className="w-3 h-3" />}
                     {status}
@@ -91,7 +96,12 @@ export function ToolCallCard({
                         {diffLines && diffLines.length > 0 && <DiffView lines={diffLines} />}
 
                         {resultContent && (
-                            <ResultBlock content={resultContent} isError={isError} toolName={name} signature={signature} />
+                            <ResultBlock
+                                content={resultContent}
+                                isError={isError}
+                                toolName={name}
+                                signature={signature}
+                            />
                         )}
                     </div>
                 )}

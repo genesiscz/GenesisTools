@@ -405,7 +405,10 @@ export class ClaudeSessionFormatter {
                     this.writeLine(`${timePrefix} ⏺ ${signature}`);
                 }
 
-                const diffLines = maxChars > 500 ? formatToolDiff(block.name, (block.input ?? {}) as Record<string, unknown>, maxChars) : null;
+                const diffLines =
+                    maxChars > 500
+                        ? formatToolDiff(block.name, (block.input ?? {}) as Record<string, unknown>, maxChars)
+                        : null;
 
                 if (diffLines) {
                     for (const line of diffLines) {
@@ -562,7 +565,10 @@ export class ClaudeSessionFormatter {
                     this.writeLine(`${prefix}  ⏺ ${signature}`);
                 }
 
-                const diffLines = maxChars > 500 ? formatToolDiff(block.name, (block.input ?? {}) as Record<string, unknown>, maxChars) : null;
+                const diffLines =
+                    maxChars > 500
+                        ? formatToolDiff(block.name, (block.input ?? {}) as Record<string, unknown>, maxChars)
+                        : null;
 
                 if (diffLines) {
                     for (const line of diffLines) {

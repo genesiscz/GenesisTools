@@ -45,11 +45,11 @@ hljs.registerLanguage("markdown", markdown);
 hljs.registerLanguage("md", markdown);
 
 function highlightCode(code: string, lang?: string): string {
-    if (lang) {
+    if (lang && hljs.getLanguage(lang)) {
         try {
             return hljs.highlight(code, { language: lang, ignoreIllegals: true }).value;
         } catch {
-            // Language not registered, fall through
+            // Highlight failed, fall through to auto
         }
     }
 

@@ -34,7 +34,7 @@ export function CodeBlock({ code, language, filename, className }: CodeBlockProp
                     onClick={handleCopy}
                     className={cn(
                         "flex items-center gap-1.5 px-2 py-0.5 rounded text-xs transition-colors",
-                        "hover:bg-white/5 text-muted-foreground/60 hover:text-muted-foreground",
+                        "hover:bg-white/5 text-muted-foreground/60 hover:text-muted-foreground"
                     )}
                 >
                     {copied ? (

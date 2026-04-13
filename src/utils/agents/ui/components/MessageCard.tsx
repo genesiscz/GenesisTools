@@ -135,11 +135,11 @@ function CollapsibleText({ content, className }: { content: string; className?: 
                 type="button"
                 onClick={toggle}
                 className={cn(
-                    "flex items-center gap-1.5 mt-2 text-xs font-mono cursor-pointer transition-colors",
-                    "text-muted-foreground/40 hover:text-muted-foreground/70"
+                    "flex items-center gap-1.5 mt-3 text-xs font-mono cursor-pointer transition-all duration-200",
+                    "text-amber-500/50 hover:text-amber-400 hover:bg-amber-500/5 rounded-md px-2 py-1 -ml-2"
                 )}
             >
-                <ChevronDown className={cn("w-3 h-3 transition-transform", expanded && "rotate-180")} />
+                <ChevronDown className={cn("w-3 h-3 transition-transform duration-200", expanded && "rotate-180")} />
                 {expanded ? "Show less" : `Show more (${content.split("\n").length} lines)`}
             </button>
         </div>
@@ -228,17 +228,19 @@ export function MessageCard({ message, formatOptions, defaultExpanded = false }:
     const hasContent = blocks.length > 0;
 
     return (
-        <div className="mb-4 animate-[fadeSlideIn_0.4s_ease-out]">
+        <div className="mb-2.5 animate-[fadeSlideIn_0.4s_ease-out]">
             <div className="flex gap-3">
                 <RoleIcon role={message.role} />
 
                 <div className="flex-1 min-w-0">
                     <div
                         className={cn(
-                            "rounded-xl p-4 relative transition-all duration-200 hover:-translate-y-px",
+                            "rounded-xl p-4 relative transition-all duration-200",
+                            "hover:-translate-y-px hover:shadow-lg",
                             isUser &&
-                                "bg-gradient-to-br from-violet-600/15 to-purple-500/10 border border-violet-500/30",
-                            isAssistant && "glass-card",
+                                "bg-gradient-to-br from-violet-600/15 to-purple-500/10 border border-violet-500/25 hover:border-violet-500/40",
+                            isAssistant &&
+                                "glass-card border-l-2 border-l-amber-500/30 hover:border-l-amber-500/60",
                             !isUser && !isAssistant && "rounded-lg border border-border bg-muted/10"
                         )}
                     >
