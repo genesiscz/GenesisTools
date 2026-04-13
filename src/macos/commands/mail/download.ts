@@ -6,8 +6,8 @@ import { EmlxBodyExtractor } from "@app/macos/lib/mail/emlx";
 import { generateEmailMarkdown, generateIndexMarkdown, generateSlug } from "@app/macos/lib/mail/format";
 import { saveAttachment } from "@app/macos/lib/mail/jxa";
 import { MailStorage } from "@app/macos/lib/mail/mail-storage";
-import { MailDatabase } from "@app/utils/macos/MailDatabase";
 import { truncateBody } from "@app/macos/lib/mail/transform";
+import { MailDatabase } from "@app/utils/macos/MailDatabase";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 

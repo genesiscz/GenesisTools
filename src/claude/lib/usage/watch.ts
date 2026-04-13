@@ -154,10 +154,7 @@ class UsageWatcher {
     }
 }
 
-export async function watchUsage(
-    accountFilter?: string,
-    notifications?: NotificationConfig,
-): Promise<never> {
+export async function watchUsage(accountFilter?: string, notifications?: NotificationConfig): Promise<never> {
     if (!notifications) {
         const { loadConfig } = await import("@app/claude/lib/config");
         const config = await loadConfig();

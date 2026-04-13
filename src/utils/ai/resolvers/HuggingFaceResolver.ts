@@ -8,7 +8,7 @@ export class HuggingFaceResolver implements AccountResolver {
     async resolve(_accountName: string): Promise<DetectedProvider> {
         throw new Error(
             "HuggingFace is not a chat provider and cannot be resolved as a DetectedProvider. " +
-                "Use AIConfig.getHfToken() to access the HF API key directly.",
+                "Use AIConfig.getHfToken() to access the HF API key directly."
         );
     }
 }

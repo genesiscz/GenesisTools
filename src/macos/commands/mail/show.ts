@@ -1,8 +1,8 @@
 import { EmlxBodyExtractor } from "@app/macos/lib/mail/emlx";
 import { rowToMessage, truncateBody } from "@app/macos/lib/mail/transform";
-import { MailDatabase } from "@app/utils/macos/MailDatabase";
 import { formatBytes } from "@app/utils/format";
 import { SafeJSON } from "@app/utils/json";
+import { MailDatabase } from "@app/utils/macos/MailDatabase";
 import chalk from "chalk";
 import type { Command } from "commander";
 

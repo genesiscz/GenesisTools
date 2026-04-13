@@ -239,8 +239,7 @@ export function MessageCard({ message, formatOptions, defaultExpanded = false }:
                             "hover:-translate-y-px hover:shadow-lg",
                             isUser &&
                                 "bg-gradient-to-br from-violet-600/15 to-purple-500/10 border border-violet-500/25 hover:border-violet-500/40",
-                            isAssistant &&
-                                "glass-card border-l-2 border-l-amber-500/30 hover:border-l-amber-500/60",
+                            isAssistant && "glass-card border-l-2 border-l-amber-500/30 hover:border-l-amber-500/60",
                             !isUser && !isAssistant && "rounded-lg border border-border bg-muted/10"
                         )}
                     >

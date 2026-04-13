@@ -49,7 +49,7 @@ export async function resolveModelsWithPricing(providerName: string): Promise<Re
             provider: providerName,
             category: ("category" in m ? m.category : undefined) ?? inferCategory(m.id),
             pricing: (await dynamicPricingManager.getPricing(providerName, m.id)) || undefined,
-        })),
+        }))
     );
 
     return { models, config };

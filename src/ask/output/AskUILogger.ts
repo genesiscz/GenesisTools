@@ -71,7 +71,15 @@ export class AskUILogger {
         p.log.step(pc.yellow("Thinking..."));
     }
 
-    logUsing({ provider, model, account }: { provider: string; model: string; account?: { name: string; label?: string } }): void {
+    logUsing({
+        provider,
+        model,
+        account,
+    }: {
+        provider: string;
+        model: string;
+        account?: { name: string; label?: string };
+    }): void {
         if (!this.showProgress) {
             return;
         }

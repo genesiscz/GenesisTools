@@ -1,6 +1,7 @@
 import { formatToolResult, formatToolSignature } from "@app/utils/agents/formatters/tool-formatter";
 import type { FormattedBlock } from "@app/utils/agents/formatters/types";
 import { TerminalRenderer } from "@app/utils/agents/renderers/TerminalRenderer";
+import { SafeJSON } from "@app/utils/json";
 import type { ChatEvent } from "@ask/lib/ChatEvent";
 
 export interface AskStreamRendererOptions {
@@ -84,7 +85,7 @@ export class AskStreamRenderer {
      * Render a tool result (works with both streaming events and callback-based ChatEngine).
      */
     renderToolResult(name: string, result: unknown, isError?: boolean): void {
-        const content = typeof result === "string" ? result : JSON.stringify(result);
+        const content = typeof result === "string" ? result : (SafeJSON.stringify(result) ?? "");
         const formatted = formatToolResult(content, this.toolResultMaxChars, {
             isError: isError ?? false,
         });

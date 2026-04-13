@@ -143,7 +143,7 @@ export function useUsagePoller({ config, accountFilter, paused, pollIntervalSeco
                         fn: async (): Promise<AccountUsage | null> => {
                             const freshCached = await storage.getCacheFile<AccountUsage>(
                                 cacheKey,
-                                `${ttlSeconds} seconds`,
+                                `${ttlSeconds} seconds`
                             );
 
                             if (freshCached) {
@@ -165,7 +165,7 @@ export function useUsagePoller({ config, accountFilter, paused, pollIntervalSeco
                     });
 
                     accountUsages[index] = result;
-                }),
+                })
             );
 
             const resolvedUsages = accountUsages.filter((u): u is AccountUsage => u !== null);

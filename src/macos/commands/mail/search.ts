@@ -9,10 +9,10 @@ import {
     resolveColumnsFromFlag,
 } from "@app/macos/lib/mail/command-helpers";
 import { MailStorage } from "@app/macos/lib/mail/mail-storage";
-import { MailDatabase } from "@app/utils/macos/MailDatabase";
 import { rowToMessage } from "@app/macos/lib/mail/transform";
 import type { MailMessage, MailMessageRow, SearchOptions } from "@app/macos/lib/mail/types";
 import { closeDarwinKit, rankBySimilarity } from "@app/utils/macos";
+import { MailDatabase } from "@app/utils/macos/MailDatabase";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 
@@ -238,7 +238,9 @@ export function registerSearchCommand(program: Command): void {
                 let semanticActive = false;
 
                 if (options.semantic === true && messages.length > 0) {
-                    spinner.start(`Apple NL re-ranking ${messages.length} results (overwrites RRF embedding scores)...`);
+                    spinner.start(
+                        `Apple NL re-ranking ${messages.length} results (overwrites RRF embedding scores)...`
+                    );
 
                     try {
                         const maxDist = parseFloat(options.maxDistance ?? "1.2");

@@ -5,6 +5,7 @@
  * into FormattedBlocks for the TerminalRenderer.
  */
 
+import { SafeJSON } from "@app/utils/json";
 import type { FormattedBlock } from "../formatters/types";
 
 // ─── Cursor stream-json event types ────────────────────────────────────────
@@ -54,12 +55,7 @@ interface CursorResultEvent {
     };
 }
 
-type CursorEvent =
-    | CursorSystemEvent
-    | CursorUserEvent
-    | CursorAssistantEvent
-    | CursorToolCallEvent
-    | CursorResultEvent;
+type CursorEvent = CursorSystemEvent | CursorUserEvent | CursorAssistantEvent | CursorToolCallEvent | CursorResultEvent;
 
 // ─── Tool name extraction ──────────────────────────────────────────────────
 
@@ -80,9 +76,7 @@ function extractToolInfo(toolCall: Record<string, unknown>): { name: string; dat
     const data = (toolCall[key] ?? {}) as Record<string, unknown>;
 
     // "globToolCall" → "glob" → "Glob"
-    const rawName = key.endsWith(CURSOR_TOOL_SUFFIX)
-        ? key.slice(0, -CURSOR_TOOL_SUFFIX.length)
-        : key;
+    const rawName = key.endsWith(CURSOR_TOOL_SUFFIX) ? key.slice(0, -CURSOR_TOOL_SUFFIX.length) : key;
 
     const name = rawName.charAt(0).toUpperCase() + rawName.slice(1);
     return { name, data };
@@ -122,7 +116,7 @@ export class CursorStreamAdapter {
         let event: CursorEvent;
 
         try {
-            event = JSON.parse(trimmed);
+            event = SafeJSON.parse(trimmed);
         } catch {
             return { blocks: [] };
         }
@@ -130,10 +124,12 @@ export class CursorStreamAdapter {
         switch (event.type) {
             case "system":
                 return {
-                    blocks: [{
-                        type: "metadata",
-                        content: `${event.model} · ${event.cwd}`,
-                    }],
+                    blocks: [
+                        {
+                            type: "metadata",
+                            content: `${event.model} · ${event.cwd}`,
+                        },
+                    ],
                 };
 
             case "user":
@@ -147,10 +143,12 @@ export class CursorStreamAdapter {
 
             case "result":
                 return {
-                    blocks: [{
-                        type: "metadata",
-                        content: `${event.subtype} · ${(event.duration_ms / 1000).toFixed(1)}s · ${event.usage?.outputTokens ?? 0} output tokens`,
-                    }],
+                    blocks: [
+                        {
+                            type: "metadata",
+                            content: `${event.subtype} · ${(event.duration_ms / 1000).toFixed(1)}s · ${event.usage?.outputTokens ?? 0} output tokens`,
+                        },
+                    ],
                     done: true,
                 };
 
@@ -184,9 +182,7 @@ export class CursorStreamAdapter {
         }
 
         // Compute delta from last accumulated text
-        const delta = text.startsWith(this.lastAssistantText)
-            ? text.slice(this.lastAssistantText.length)
-            : text;
+        const delta = text.startsWith(this.lastAssistantText) ? text.slice(this.lastAssistantText.length) : text;
 
         this.lastAssistantText = text;
 
@@ -203,15 +199,17 @@ export class CursorStreamAdapter {
         if (event.subtype === "started") {
             const args = (data.args ?? {}) as Record<string, unknown>;
             const argStr = Object.entries(args)
-                .map(([k, v]) => `${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`)
+                .map(([k, v]) => `${k}: ${typeof v === "string" ? v : SafeJSON.stringify(v)}`)
                 .join(", ");
 
             return {
-                blocks: [{
-                    type: "tool-signature",
-                    content: `${name}(${argStr})`,
-                    meta: { toolName: name },
-                }],
+                blocks: [
+                    {
+                        type: "tool-signature",
+                        content: `${name}(${argStr})`,
+                        meta: { toolName: name },
+                    },
+                ],
             };
         }
 
@@ -219,15 +217,17 @@ export class CursorStreamAdapter {
             const result = data.result as Record<string, unknown> | undefined;
             const isError = !!result?.error;
             const content = isError
-                ? JSON.stringify((result?.error as Record<string, unknown>)?.error ?? result?.error)
-                : JSON.stringify(result).slice(0, 500);
+                ? SafeJSON.stringify((result?.error as Record<string, unknown>)?.error ?? result?.error)
+                : SafeJSON.stringify(result).slice(0, 500);
 
             return {
-                blocks: [{
-                    type: "tool-result",
-                    content,
-                    meta: { toolName: name, isError },
-                }],
+                blocks: [
+                    {
+                        type: "tool-result",
+                        content,
+                        meta: { toolName: name, isError },
+                    },
+                ],
             };
         }
 

@@ -2,10 +2,6 @@
 
 export type { CalendarEventInfo, CalendarInfo, SourceInfo } from "./apple-calendar";
 export { MacCalendar } from "./apple-calendar";
-// Database base class
-export { MacDatabase } from "./MacDatabase";
-// Mail Database
-export { MailDatabase } from "./MailDatabase";
 export type { ReminderInfo, ReminderListInfo } from "./apple-reminders";
 // Apple Reminders
 export {
@@ -34,10 +30,28 @@ export {
     icloudWriteBytes,
     onIcloudFilesChanged,
 } from "./icloud";
+export type {
+    AttachmentInfo,
+    ChatInfo,
+    ExportConversationOptions,
+    GetMessagesOptions,
+    ListChatsOptions,
+    MessageInfo,
+    SearchMessagesOptions,
+} from "./iMessagesDatabase";
+// iMessage Database
+export { iMessagesDatabase } from "./iMessagesDatabase";
 // JXA helpers
 export { ensureMacOS, escapeJxa, runJxa } from "./jxa";
+export type { ContactInfo } from "./MacContactsDatabase";
+// Contacts Database
+export { MacContactsDatabase } from "./MacContactsDatabase";
+// Database base class
+export { MacDatabase } from "./MacDatabase";
 // MacOS namespace
 export { MacOS } from "./MacOS";
+// Mail Database
+export { MailDatabase } from "./MailDatabase";
 // NLP
 export {
     analyzeSentiment,
@@ -126,17 +140,3 @@ export {
     searchMemos,
     VoiceMemosError,
 } from "./voice-memos";
-// iMessage Database
-export { iMessagesDatabase } from "./iMessagesDatabase";
-export type {
-    AttachmentInfo,
-    ChatInfo,
-    ExportConversationOptions,
-    GetMessagesOptions,
-    ListChatsOptions,
-    MessageInfo,
-    SearchMessagesOptions,
-} from "./iMessagesDatabase";
-// Contacts Database
-export { MacContactsDatabase } from "./MacContactsDatabase";
-export type { ContactInfo } from "./MacContactsDatabase";
