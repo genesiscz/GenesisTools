@@ -13,6 +13,7 @@ import { AI } from "@app/utils/ai/index.ts";
 import { formatOutput, type OutputFormat } from "@app/utils/ai/transcription-format.ts";
 import type { AIProviderType } from "@app/utils/ai/types.ts";
 import { copyToClipboard } from "@app/utils/clipboard.ts";
+import { isCloudProvider } from "@app/utils/config/ai.types";
 import { formatDateTime } from "@app/utils/date.ts";
 import { formatDuration } from "@app/utils/format.ts";
 import {
@@ -29,8 +30,8 @@ import * as p from "@clack/prompts";
 import { Command } from "commander";
 import pc from "picocolors";
 
-const VALID_PROVIDERS: AIProviderType[] = ["cloud", "local-hf", "darwinkit"];
-const TRANSCRIBE_PROVIDERS: AIProviderType[] = ["local-hf", "cloud"];
+const VALID_PROVIDERS: AIProviderType[] = ["cloud", "local-hf", "darwinkit", "openai", "groq", "openrouter"];
+const TRANSCRIBE_PROVIDERS: AIProviderType[] = ["local-hf", "cloud", "openai", "groq", "openrouter"];
 
 export function registerVoiceMemosCommand(program: Command): void {
     const vm = new Command("voice-memos");
@@ -64,7 +65,7 @@ export function registerVoiceMemosCommand(program: Command): void {
         .option("--all", "Transcribe all memos")
         .option("--force", "Re-transcribe even if tsrp transcript exists")
         .option("--lang <language>", "Language hint (e.g. cs, en, de) — auto-detected if omitted")
-        .option("--provider <provider>", "AI provider (local-hf, cloud)")
+        .option("--provider <provider>", "AI provider (local-hf, cloud, openai, groq, openrouter, darwinkit)")
         .option("--local", "Shorthand for --provider local-hf")
         .option("--model <model>", "Model name/id to use")
         .option("--format <format>", "Output format (text, json, srt, vtt)")
@@ -286,10 +287,9 @@ function validateModelOption(model: string | undefined, provider: string | undef
 
     if (!model) {
         const providerType = provider ?? "local-hf";
-        const suggestions =
-            providerType === "cloud"
-                ? "whisper-large-v3-turbo, whisper-large-v3, whisper-1"
-                : "onnx-community/whisper-large-v3-turbo, onnx-community/whisper-small, onnx-community/whisper-tiny";
+        const suggestions = isCloudProvider(providerType as AIProviderType)
+            ? "whisper-large-v3-turbo, whisper-large-v3, whisper-1"
+            : "onnx-community/whisper-large-v3-turbo, onnx-community/whisper-small, onnx-community/whisper-base, onnx-community/whisper-tiny";
 
         p.log.error(`Invalid --model (empty). Available for ${providerType}: ${suggestions}`);
         process.exit(1);
@@ -415,12 +415,13 @@ async function transcribeOne(opts: {
 
     const transcribeOpts = {
         language: opts.lang,
+        model: opts.model,
         onProgress: (info: { message: string }) => {
-            s.message(info.message);
+            s.message(pc.dim(info.message));
         },
         onSegment: (seg: { start: number; text: string }) => {
             const ts = formatDuration(seg.start * 1000, "ms", "tiered");
-            s.message(`[${ts}] ${seg.text.trim()}`);
+            process.stderr.write(`${pc.dim(`  [${ts}] ${seg.text.trim()}`)}\n`);
         },
         ...(isTTY && !opts.lang
             ? {
@@ -447,7 +448,7 @@ async function transcribeOne(opts: {
     };
 
     let transcriber = await AI.Transcriber.create({
-        provider: opts.provider as AIProviderType | undefined,
+        provider: opts.provider,
         model: opts.model,
     });
 
@@ -465,7 +466,7 @@ async function transcribeOne(opts: {
             s.start("Downloading model...");
 
             transcriber = await AI.Transcriber.create({
-                provider: opts.provider as AIProviderType | undefined,
+                provider: opts.provider,
                 model: opts.model,
             });
 
