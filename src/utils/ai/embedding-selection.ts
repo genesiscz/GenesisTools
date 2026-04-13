@@ -31,6 +31,9 @@ const GPU_LABELS: Record<EmbedProvider, string> = {
     "local-hf": "CPU/MPS",
     cloud: "Cloud",
     google: "Cloud",
+    openai: "Cloud",
+    groq: "Cloud",
+    openrouter: "Cloud",
 };
 
 export async function discoverEmbeddingProviders(

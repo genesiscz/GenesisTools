@@ -15,7 +15,7 @@ export interface ModelEntry {
     id: string;
     name: string;
     task: AITask;
-    provider: "ollama" | "local-hf" | "darwinkit" | "coreml" | "cloud" | "google";
+    provider: "ollama" | "local-hf" | "darwinkit" | "coreml" | "cloud" | "google" | "openai" | "groq" | "openrouter";
     params?: string;
     dimensions?: number;
     contextLength?: number;
