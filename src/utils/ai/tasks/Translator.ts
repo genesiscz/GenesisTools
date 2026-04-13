@@ -1,6 +1,6 @@
 import { AIConfig } from "../AIConfig";
 import { getProviderForTask } from "../providers";
-import type { AITranslationProvider, TranslateOptions, TranslationResult } from "../types";
+import type { AIProviderType, AITranslationProvider, TranslateOptions, TranslationResult } from "../types";
 
 export class Translator {
     private provider: AITranslationProvider;
@@ -13,8 +13,10 @@ export class Translator {
         const config = await AIConfig.load();
 
         if (options?.provider) {
-            const providerType = options.provider as "cloud" | "local-hf" | "darwinkit";
-            config.set("translate", { provider: providerType, model: options.model });
+            await config.setTask("translate", {
+                provider: options.provider as AIProviderType,
+                model: options.model,
+            });
         }
 
         const provider = await getProviderForTask("translate", config);

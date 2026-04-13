@@ -1,6 +1,6 @@
 import { AIConfig } from "../AIConfig";
 import { getProviderForTask } from "../providers";
-import type { AISummarizationProvider, SummarizationResult, SummarizeOptions } from "../types";
+import type { AIProviderType, AISummarizationProvider, SummarizationResult, SummarizeOptions } from "../types";
 
 export class Summarizer {
     private provider: AISummarizationProvider;
@@ -13,8 +13,10 @@ export class Summarizer {
         const config = await AIConfig.load();
 
         if (options?.provider) {
-            const providerType = options.provider as "cloud" | "local-hf" | "darwinkit";
-            config.set("summarize", { provider: providerType, model: options.model });
+            await config.setTask("summarize", {
+                provider: options.provider as AIProviderType,
+                model: options.model,
+            });
         }
 
         const provider = await getProviderForTask("summarize", config);

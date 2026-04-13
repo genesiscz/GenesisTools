@@ -1,11 +1,32 @@
-export type AIProviderType = "cloud" | "local-hf" | "darwinkit" | "coreml" | "ollama" | "google";
-export type AITask = "transcribe" | "translate" | "summarize" | "classify" | "embed" | "sentiment";
+import type { AIProviderType, AITask, TaskConfig } from "@app/utils/config/ai.types";
+
+// Re-export canonical types from unified config
+export type { AIProviderType, AITask, TaskConfig };
 
 export interface AIProvider {
     readonly type: AIProviderType;
     isAvailable(): Promise<boolean>;
     supports(task: AITask): boolean;
     dispose?(): void;
+}
+
+/** Unified model metadata — single source of truth for all AI tasks. */
+export interface ModelEntry {
+    id: string;
+    name: string;
+    task: AITask;
+    provider: "ollama" | "local-hf" | "darwinkit" | "coreml" | "cloud" | "google";
+    params?: string;
+    dimensions?: number;
+    contextLength?: number;
+    charsPerToken?: number;
+    speed: "fast" | "medium" | "slow";
+    ramGB: number;
+    license: string;
+    bestFor?: string[];
+    description: string;
+    installCmd?: string;
+    taskPrefix?: { document: string; query: string };
 }
 
 export type ProgressPhase = "download" | "load" | "transcribe";
@@ -134,9 +155,4 @@ export interface AIEmbeddingProvider extends AIProvider {
     /** Batch embed multiple texts in a single provider call. Optional -- falls back to sequential embed(). */
     embedBatch?(texts: string[], options?: EmbedOptions): Promise<EmbeddingResult[]>;
     readonly dimensions: number;
-}
-
-export interface TaskConfig {
-    provider: AIProviderType;
-    model?: string;
 }

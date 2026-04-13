@@ -3,6 +3,7 @@ import type { ProviderChoice } from "@ask/types";
 import { getLanguageModel } from "@ask/types/provider";
 import type { LanguageModelUsage } from "ai";
 import { generateText, streamText } from "ai";
+import { anthropicCacheControl } from "./prompt-caching";
 
 export interface CallLLMOptions {
     systemPrompt: string;
@@ -31,6 +32,7 @@ export async function callLLM(options: CallLLMOptions): Promise<CallLLMResult> {
             model,
             system: effectiveSystem,
             prompt: userPrompt,
+            providerOptions: anthropicCacheControl(),
             ...(maxTokens ? { maxTokens } : {}),
             ...(temperature !== undefined ? { temperature } : {}),
         });
@@ -69,6 +71,7 @@ export async function callLLM(options: CallLLMOptions): Promise<CallLLMResult> {
         model,
         system: effectiveSystem,
         prompt: userPrompt,
+        providerOptions: anthropicCacheControl(),
         ...(maxTokens ? { maxTokens } : {}),
         ...(temperature !== undefined ? { temperature } : {}),
     });
