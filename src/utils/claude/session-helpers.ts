@@ -101,6 +101,60 @@ export function formatToolCallSignature(tool: ToolUseBlock, maxPrimaryChars: num
     return `${name}(${parts.join(", ")})`;
 }
 
+/**
+ * For Edit/Write/MultiEdit, render old_string → new_string as a diff block.
+ * Returns null if the tool has no diff content or the char budget is too low.
+ */
+export function formatToolCallDiffBlock(tool: ToolUseBlock, maxChars: number): string | null {
+    if (maxChars <= 500) {
+        return null;
+    }
+
+    const { name, input } = tool;
+
+    if (name === "Edit" || name === "MultiEdit") {
+        const old = input.old_string as string | undefined;
+        const new_ = input.new_string as string | undefined;
+
+        if (!old && !new_) {
+            return null;
+        }
+
+        const halfBudget = Math.floor(maxChars / 2);
+        const lines: string[] = [];
+
+        if (old) {
+            const truncated = truncateText(old, halfBudget);
+
+            for (const l of truncated.split("\n")) {
+                lines.push(`- ${l}`);
+            }
+        }
+
+        if (new_) {
+            const truncated = truncateText(new_, halfBudget);
+
+            for (const l of truncated.split("\n")) {
+                lines.push(`+ ${l}`);
+            }
+        }
+
+        return lines.join("\n");
+    }
+
+    if (name === "Write") {
+        const content = input.content as string | undefined;
+
+        if (!content) {
+            return null;
+        }
+
+        return truncateText(content, maxChars);
+    }
+
+    return null;
+}
+
 export function extractToolResultText(block: ToolResultBlock): string {
     if (typeof block.content === "string") {
         return block.content;
