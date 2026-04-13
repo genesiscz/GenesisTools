@@ -1,6 +1,24 @@
+import { rateLimitAwareDelay, retry } from "@app/utils/async";
 import { AIConfig } from "../AIConfig";
 import { getProviderForTask } from "../providers";
 import type { AIProviderType, AITranslationProvider, TranslateOptions, TranslationResult } from "../types";
+
+const RETRY_DELAY = rateLimitAwareDelay();
+
+/** Don't retry permanent errors -- only transient/rate-limit failures are worth retrying */
+function shouldRetryTransient(error: unknown): boolean {
+    const msg = error instanceof Error ? error.message : String(error);
+
+    if (/\b(401|403|404|400)\b/.test(msg)) {
+        return false;
+    }
+
+    if (/\b(invalid.api.key|unauthorized|forbidden|model.not.found)\b/i.test(msg)) {
+        return false;
+    }
+
+    return true;
+}
 
 export class Translator {
     private provider: AITranslationProvider;
@@ -42,7 +60,11 @@ export class Translator {
             }
         }
 
-        return this.provider.translate(text, options);
+        return retry(() => this.provider.translate(text, options), {
+            maxAttempts: 3,
+            getDelay: RETRY_DELAY,
+            shouldRetry: shouldRetryTransient,
+        });
     }
 
     dispose(): void {
