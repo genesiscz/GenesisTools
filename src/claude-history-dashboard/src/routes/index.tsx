@@ -14,8 +14,13 @@ export const Route = createFileRoute("/")({
 });
 
 function IndexPage() {
-	const conversations = Route.useLoaderData();
+	const rawConversations = Route.useLoaderData();
 	const [search, setSearch] = useState("");
+
+	// Deduplicate sessions that appear in multiple project dirs
+	const conversations = rawConversations.filter(
+		(conv, i, arr) => arr.findIndex((c) => c.sessionId === conv.sessionId) === i,
+	);
 
 	const filteredConversations = conversations.filter((conv) => {
 		if (!search) {

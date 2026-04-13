@@ -22,6 +22,7 @@ import {
 	extractToolUses,
 	type SerializableConversationDetail,
 	type SerializableStats,
+	type SidebarSession,
 	serializeResult,
 } from "./serializers";
 
@@ -31,6 +32,7 @@ export type {
 	SerializableConversation,
 	SerializableConversationDetail,
 	SerializableStats,
+	SidebarSession,
 	TokenUsage,
 } from "./serializers";
 
@@ -45,6 +47,38 @@ export const getConversations = createServerFn({ method: "GET" })
 			: await getAllConversations({ ...filters, limit: filters.limit || 50 });
 		return results.map(serializeResult);
 	});
+
+/**
+ * Lightweight session list for sidebar tree (no message content)
+ */
+export const getSidebarSessions = createServerFn({ method: "GET" }).handler(async () => {
+	const results = await getAllConversations({ limit: 500 });
+
+	// Deduplicate by sessionId (same session can appear in multiple project dirs)
+	const seen = new Set<string>();
+	const sessions: SidebarSession[] = [];
+
+	for (const r of results) {
+		const serialized = serializeResult(r);
+
+		if (seen.has(serialized.sessionId)) {
+			continue;
+		}
+
+		seen.add(serialized.sessionId);
+		sessions.push({
+			sessionId: serialized.sessionId,
+			project: serialized.project,
+			summary: serialized.summary,
+			customTitle: serialized.customTitle,
+			timestamp: serialized.timestamp,
+			isSubagent: serialized.isSubagent,
+			messageCount: serialized.messageCount,
+		});
+	}
+
+	return sessions;
+});
 
 /**
  * Get a single conversation by session ID with full messages
