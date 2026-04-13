@@ -2,17 +2,11 @@ import type { AIEmbeddingProvider, AIProvider, AITask, EmbeddingResult, EmbedOpt
 
 const SUPPORTED_TASKS: AITask[] = ["classify", "embed", "sentiment"];
 
-function toEmbeddingResults(raw: Array<{ vector: number[]; dimension: number }>): EmbeddingResult[] {
-    return raw.map((r) => ({
-        vector: new Float32Array(r.vector),
-        dimensions: r.dimension,
-    }));
-}
-
 export class AIDarwinKitProvider implements AIProvider, AIEmbeddingProvider {
     readonly type = "darwinkit" as const;
     readonly dimensions = 512;
     private nlpModule: typeof import("@app/utils/macos/nlp") | null = null;
+    private dkModule: typeof import("@app/utils/macos/darwinkit") | null = null;
 
     private async getNlp() {
         if (!this.nlpModule) {
@@ -20,6 +14,14 @@ export class AIDarwinKitProvider implements AIProvider, AIEmbeddingProvider {
         }
 
         return this.nlpModule;
+    }
+
+    private async getDk() {
+        if (!this.dkModule) {
+            this.dkModule = await import("@app/utils/macos/darwinkit");
+        }
+
+        return this.dkModule;
     }
 
     async isAvailable(): Promise<boolean> {
@@ -60,22 +62,26 @@ export class AIDarwinKitProvider implements AIProvider, AIEmbeddingProvider {
 
         const language = options?.language ?? "en";
 
-        // Try NL batch endpoint (same sentence-level model as embed/embedText)
+        // Use CoreML contextual batch (2x faster than sequential NLP)
         try {
-            const nlp = await this.getNlp();
+            const { getDarwinKit } = await this.getDk();
+            const dk = getDarwinKit();
 
-            if ("embedBatch" in nlp) {
-                const batchFn = nlp.embedBatch as (
-                    texts: string[],
-                    lang: string
-                ) => Promise<Array<{ vector: number[]; dimension: number }>>;
-                return toEmbeddingResults(await batchFn(texts, language));
-            }
+            await dk.coreml.loadContextual({ id: "NLContextualEmbedding", language });
+
+            const result = await dk.coreml.embedContextualBatch({
+                model_id: "NLContextualEmbedding",
+                texts,
+            });
+
+            return result.vectors.map((vector) => ({
+                vector: new Float32Array(vector),
+                dimensions: result.dimensions,
+            }));
         } catch {
-            // Batch endpoint not available or failed -- fall through to sequential
+            // CoreML contextual batch not available — fall back to sequential
         }
 
-        // Sequential fallback for older DarwinKit versions
         const results: EmbeddingResult[] = [];
 
         for (const text of texts) {

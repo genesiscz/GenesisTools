@@ -1,7 +1,7 @@
+import { unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import logger from "@app/logger";
-import { TranscriptionManager } from "@ask/audio/TranscriptionManager";
 import type {
     AIEmbeddingProvider,
     AISummarizationProvider,
@@ -16,40 +16,80 @@ import type {
     TranscriptionResult,
     TranslateOptions,
     TranslationResult,
-} from "../types";
+} from "@app/utils/ai/types";
+import type { AIProviderType } from "@app/utils/config/ai.types";
+import { TranscriptionManager } from "@ask/audio/TranscriptionManager";
 
-const API_KEY_ENV_VARS = [
-    "GROQ_API_KEY",
-    "OPENAI_API_KEY",
-    "OPENROUTER_API_KEY",
-    "ASSEMBLYAI_API_KEY",
-    "DEEPGRAM_API_KEY",
-    "GLADIA_API_KEY",
-];
+type LlmCloudType = "openai" | "groq" | "openrouter";
+type TranscribeOnlyCloudType = "assemblyai" | "deepgram" | "gladia";
+type CloudType = LlmCloudType | TranscribeOnlyCloudType | "auto";
 
-const SUPPORTED_TASKS: AITask[] = ["transcribe", "translate", "summarize", "embed"];
+const ENV_VAR_MAP: Record<Exclude<CloudType, "auto">, string> = {
+    openai: "OPENAI_API_KEY",
+    groq: "GROQ_API_KEY",
+    openrouter: "OPENROUTER_API_KEY",
+    assemblyai: "ASSEMBLYAI_API_KEY",
+    deepgram: "DEEPGRAM_API_KEY",
+    gladia: "GLADIA_API_KEY",
+};
+
+const AUTO_API_KEY_VARS = Object.values(ENV_VAR_MAP);
+
+const TRANSCRIBE_ONLY: ReadonlySet<AITask> = new Set(["transcribe"]);
+
+const CLOUD_TASKS: Record<CloudType, ReadonlySet<AITask>> = {
+    openai: new Set(["transcribe", "translate", "summarize", "embed"]),
+    groq: new Set(["transcribe", "translate", "summarize"]),
+    openrouter: new Set(["transcribe", "translate", "summarize"]),
+    assemblyai: TRANSCRIBE_ONLY,
+    deepgram: TRANSCRIBE_ONLY,
+    gladia: TRANSCRIBE_ONLY,
+    auto: new Set(["transcribe", "translate", "summarize", "embed"]),
+};
+
+const DEFAULT_LLM_MODELS: Record<LlmCloudType, string> = {
+    groq: "groq/llama-3.3-70b-versatile",
+    openrouter: "openrouter/meta-llama/llama-3-8b-instruct",
+    openai: "openai/gpt-4o-mini",
+};
+
+const FALLBACK_ORDER: ReadonlyArray<LlmCloudType> = ["groq", "openrouter", "openai"];
 
 export class AICloudProvider
     implements AITranscriptionProvider, AITranslationProvider, AISummarizationProvider, AIEmbeddingProvider
 {
-    readonly type = "cloud" as const;
+    readonly type: AIProviderType;
+    private readonly cloudType: CloudType;
     readonly dimensions = 1536;
-    private transcriptionManager: TranscriptionManager;
+    private _transcriptionManager?: TranscriptionManager;
 
-    constructor() {
-        this.transcriptionManager = new TranscriptionManager();
+    constructor(cloudType: CloudType = "auto") {
+        this.cloudType = cloudType;
+        this.type = cloudType === "auto" ? ("cloud" as AIProviderType) : cloudType;
+    }
+
+    private get transcriptionManager(): TranscriptionManager {
+        this._transcriptionManager ??= new TranscriptionManager();
+        return this._transcriptionManager;
     }
 
     async isAvailable(): Promise<boolean> {
-        return API_KEY_ENV_VARS.some((key) => !!process.env[key]);
+        if (this.cloudType === "auto") {
+            return AUTO_API_KEY_VARS.some((key) => !!process.env[key]);
+        }
+
+        return !!process.env[ENV_VAR_MAP[this.cloudType]];
     }
 
     supports(task: AITask): boolean {
-        return SUPPORTED_TASKS.includes(task);
+        if (this.cloudType === "auto" && task === "embed") {
+            return !!process.env.OPENAI_API_KEY;
+        }
+
+        return CLOUD_TASKS[this.cloudType].has(task);
     }
 
     async transcribe(audio: Buffer, options?: TranscribeOptions): Promise<TranscriptionResult> {
-        // TranscriptionManager works with file paths, so write buffer to a temp file
         const tempPath = join(tmpdir(), `ai-transcribe-${Date.now()}.wav`);
         await Bun.write(tempPath, audio);
 
@@ -57,17 +97,15 @@ export class AICloudProvider
             const result = await this.transcriptionManager.transcribeAudio(tempPath, {
                 language: options?.language,
                 model: options?.model,
+                provider: this.cloudType === "auto" ? undefined : this.cloudType,
             });
 
-            // TranscriptionManager doesn't return segments/language yet — pass through what's available
             return {
                 text: result.text,
                 duration: result.duration,
             };
         } finally {
-            // Clean up temp file
             try {
-                const { unlinkSync } = await import("node:fs");
                 unlinkSync(tempPath);
             } catch {
                 logger.debug(`Failed to clean up temp file: ${tempPath}`);
@@ -136,7 +174,6 @@ export class AICloudProvider
         const { createOpenAI } = await import("@ai-sdk/openai");
         const openai = createOpenAI();
 
-        // OpenAI supports up to 2048 inputs per request
         const MAX_BATCH = 2048;
         const results: EmbeddingResult[] = [];
 
@@ -156,21 +193,25 @@ export class AICloudProvider
     private async getLanguageModel(
         modelSpec?: string
     ): Promise<Parameters<typeof import("ai").generateText>[0]["model"]> {
-        // Default: groq > openrouter > openai
         if (modelSpec) {
             return this.resolveModel(modelSpec);
         }
 
-        if (process.env.GROQ_API_KEY) {
-            return this.resolveModel("groq/llama-3.1-8b-instant");
+        if (this.cloudType !== "auto") {
+            if (!(this.cloudType in DEFAULT_LLM_MODELS)) {
+                throw new Error(
+                    `Provider "${this.cloudType}" is transcribe-only and cannot run LLM tasks. ` +
+                        "Use openai/groq/openrouter for summarize/translate."
+                );
+            }
+
+            return this.resolveModel(DEFAULT_LLM_MODELS[this.cloudType as LlmCloudType]);
         }
 
-        if (process.env.OPENROUTER_API_KEY) {
-            return this.resolveModel("openrouter/meta-llama/llama-3.1-8b-instant");
-        }
-
-        if (process.env.OPENAI_API_KEY) {
-            return this.resolveModel("openai/gpt-4o-mini");
+        for (const ct of FALLBACK_ORDER) {
+            if (process.env[ENV_VAR_MAP[ct]]) {
+                return this.resolveModel(DEFAULT_LLM_MODELS[ct]);
+            }
         }
 
         throw new Error("No cloud LLM API key available. Set GROQ_API_KEY, OPENROUTER_API_KEY, or OPENAI_API_KEY.");

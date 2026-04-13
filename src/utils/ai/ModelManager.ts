@@ -2,34 +2,29 @@ import { existsSync, readdirSync, rmdirSync, statSync, unlinkSync } from "node:f
 import { homedir } from "node:os";
 import { join } from "node:path";
 import logger from "@app/logger";
+import { type AIProviderType, isCloudProvider } from "@app/utils/config/ai.types";
 import { formatBytes } from "@app/utils/format";
 import { ensurePackage } from "@app/utils/packages";
+import { getModelsByProvider } from "./ModelRegistry";
+import type { ModelEntry } from "./types";
 
 const HF_CACHE_DIR = join(homedir(), ".cache", "huggingface", "hub");
 
-// ============================================
-// Model registry — known models per provider/task
-// ============================================
-
-export interface TranscriptionModelInfo {
+export interface ModelInfo {
     id: string;
     name: string;
     description: string;
 }
 
-const LOCAL_TRANSCRIPTION_MODELS: TranscriptionModelInfo[] = [
-    {
-        id: "onnx-community/whisper-large-v3-turbo",
-        name: "whisper-large-v3-turbo",
-        description: "best quality, ~1.5GB",
-    },
-    { id: "onnx-community/whisper-large-v3", name: "whisper-large-v3", description: "highest quality, ~3GB" },
-    { id: "onnx-community/whisper-small", name: "whisper-small", description: "faster, lower quality" },
-    { id: "onnx-community/whisper-tiny", name: "whisper-tiny", description: "fastest, basic quality" },
-];
+/** @deprecated Use ModelInfo */
+export type TranscriptionModelInfo = ModelInfo;
 
-function getCloudTranscriptionModels(): TranscriptionModelInfo[] {
-    const models: TranscriptionModelInfo[] = [];
+function toModelInfo(entry: ModelEntry): ModelInfo {
+    return { id: entry.id, name: entry.name, description: entry.description };
+}
+
+function getCloudTranscriptionModels(): ModelInfo[] {
+    const models: ModelInfo[] = [];
 
     if (process.env.GROQ_API_KEY) {
         models.push(
@@ -55,18 +50,15 @@ export function getDefaultModel(task: string, provider: string): string | undefi
 
 /**
  * Get known models for a task + provider combination.
- * Cloud models are resolved lazily (checks env vars at call time).
+ * Cloud transcription models are resolved lazily (checks env vars at call time).
  */
-export function getModelsForTask(task: string, provider: string): TranscriptionModelInfo[] {
-    if (task !== "transcribe") {
-        return [];
-    }
-
+export function getModelsForTask(task: string, provider: string): ModelInfo[] {
     if (provider === "local-hf") {
-        return LOCAL_TRANSCRIPTION_MODELS;
+        const entries = getModelsByProvider(task as Parameters<typeof getModelsByProvider>[0], "local-hf");
+        return entries.map(toModelInfo);
     }
 
-    if (provider === "cloud") {
+    if (isCloudProvider(provider as AIProviderType) && task === "transcribe") {
         return getCloudTranscriptionModels();
     }
 
@@ -118,14 +110,12 @@ export class ModelManager {
     }
 
     isDownloaded(modelId: string): boolean {
-        // Check HuggingFace hub cache (~/.cache/huggingface/hub/models--*)
         const dirName = `models--${modelId.replace(/\//g, "--")}`;
 
         if (existsSync(join(HF_CACHE_DIR, dirName))) {
             return true;
         }
 
-        // Check transformers.js local cache (node_modules/@huggingface/transformers/.cache/<org>/<model>)
         if (this.transformersCacheDir) {
             const localPath = join(this.transformersCacheDir, modelId);
 

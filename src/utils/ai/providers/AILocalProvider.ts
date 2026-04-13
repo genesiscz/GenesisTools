@@ -1,6 +1,8 @@
 import logger from "@app/logger";
 import { toFloat32Audio } from "@app/utils/audio/converter";
 import { formatBytes } from "@app/utils/format";
+import { Stopwatch } from "@app/utils/Stopwatch";
+import { resolveDevice } from "../device";
 import { ensureHuggingFaceTransformers } from "../ensure-hf";
 import { createLanguageDetector, type LanguageDetector } from "../LanguageDetector";
 import { getDefaultModel } from "../ModelManager";
@@ -30,6 +32,33 @@ type PipelineInstance = {
 };
 
 const SUPPORTED_TASKS: AITask[] = ["transcribe", "translate", "summarize", "embed"];
+
+// ONNX Runtime 1.24.x has a CPU graph optimization bug: the loop re-runs Level3 after
+// InsertCast, exposing InsertedPrecisionFreeCast nodes to SimplifiedLayerNormFusion which
+// crashes on fp16 models. Workaround: lower graphOptimizationLevel to 'extended' (skips
+// the buggy Level3 re-run). Ref: microsoft/onnxruntime#26631, huggingface/transformers.js#1567
+// Track this set at runtime so the error-recovery path can add models dynamically.
+const FP16_INCOMPATIBLE_ENCODERS = new Set(["onnx-community/whisper-large-v3-turbo"]);
+
+/**
+ * Whisper ONNX dtype config per model vendor.
+ * - onnx-community: uses merged decoder files (decoder_model_merged_q4.onnx)
+ * - Xenova: uses separate decoder files (decoder_model_q4.onnx), no merged q4
+ * - distil-whisper: only has fp32 + quantized (int8), no fp16/q4 variants
+ */
+function getWhisperDtype(model: string): Record<string, string> | string {
+    if (model.startsWith("onnx-community/")) {
+        return { encoder_model: "fp16", decoder_model_merged: "q4" };
+    }
+
+    if (model.startsWith("distil-whisper/")) {
+        // distil-whisper only has fp32 and quantized (int8) — no fp16/q4
+        return { encoder_model: "q8", decoder_model_merged: "q8" };
+    }
+
+    // Xenova and others: separate encoder/decoder files
+    return { encoder_model: "fp16", decoder_model: "q4" };
+}
 
 export class AILocalProvider
     implements AITranscriptionProvider, AITranslationProvider, AISummarizationProvider, AIEmbeddingProvider
@@ -109,8 +138,8 @@ export class AILocalProvider
         // 29s instead of 30s: transformers.js bug #1358 causes timestamp collapse at exactly 30s
         const chunkLengthS = 29;
 
-        logger.info(`[transcribe] start: ${Math.round(durationSec)}s audio, lang=${language}, model=${model}`);
-        const transcribeStart = Date.now();
+        const sw = new Stopwatch();
+        logger.debug(`[transcribe] start: ${Math.round(durationSec)}s audio, lang=${language}, model=${model}`);
 
         onProgress?.({
             phase: "transcribe",
@@ -123,7 +152,8 @@ export class AILocalProvider
         // Use the timestamp time to calculate real progress against total duration.
         const { WhisperTextStreamer } = await import("@huggingface/transformers");
         let currentChunkText = "";
-        let lastProgressUpdate = 0;
+        let lastProgressUpdate = performance.now();
+        let segmentStart = 0;
         let lastTimestamp = 0;
         const PROGRESS_THROTTLE_MS = 300;
 
@@ -133,53 +163,42 @@ export class AILocalProvider
             skip_special_tokens: true,
             callback_function: (text: string) => {
                 currentChunkText += text;
-                logger.debug(`[transcribe] token: "${text}" (accumulated ${currentChunkText.length} chars)`);
 
-                const now = Date.now();
+                const now = performance.now();
 
                 if (now - lastProgressUpdate < PROGRESS_THROTTLE_MS) {
                     return;
                 }
 
-                const elapsed = now - lastProgressUpdate;
                 lastProgressUpdate = now;
                 const pct = Math.min(99, Math.round((lastTimestamp / durationSec) * 100));
                 const truncated = currentChunkText.length > 60 ? `...${currentChunkText.slice(-57)}` : currentChunkText;
 
-                logger.info(
-                    `[transcribe] progress: ${pct}% ts=${lastTimestamp.toFixed(1)}s elapsed_since_last=${elapsed}ms`
-                );
-
                 onProgress?.({
                     phase: "transcribe",
                     percent: pct,
-                    message: `[${language}] ${pct}% — ${truncated.trim()}`,
+                    message: `[transcribe ${sw.elapsed()}] [${language}] ${pct}% — ${truncated.trim()}`,
                 });
             },
             on_chunk_start: (time: number) => {
-                const elapsed = Date.now() - transcribeStart;
-                logger.info(`[transcribe] chunk_start: time=${time.toFixed(2)}s total_elapsed=${elapsed}ms`);
+                segmentStart = time;
                 lastTimestamp = time;
                 currentChunkText = "";
             },
             on_chunk_end: (time: number) => {
-                const elapsed = Date.now() - transcribeStart;
-                logger.info(
-                    `[transcribe] chunk_end: time=${time.toFixed(2)}s text="${currentChunkText.slice(0, 80)}" total_elapsed=${elapsed}ms`
-                );
                 lastTimestamp = time;
 
                 if (currentChunkText.trim()) {
                     options?.onSegment?.({
                         text: currentChunkText.trim(),
-                        start: time - chunkLengthS,
+                        start: segmentStart,
                         end: time,
                     });
                 }
             },
         });
 
-        logger.info(
+        logger.debug(
             `[transcribe] calling pipeline with ${audioData.length} samples, chunk_length=${chunkLengthS}s, stride=5s`
         );
         const pipeStart = Date.now();
@@ -206,12 +225,11 @@ export class AILocalProvider
         };
 
         const pipeDuration = Date.now() - pipeStart;
-        const totalDuration = Date.now() - transcribeStart;
-        logger.info(
-            `[transcribe] pipeline done: ${pipeDuration}ms, total=${totalDuration}ms, chunks=${result.chunks?.length ?? 0}, text=${result.text.length} chars`
+        logger.debug(
+            `[transcribe] pipeline done: ${pipeDuration}ms, total=${sw.elapsed()}, chunks=${result.chunks?.length ?? 0}, text=${result.text.length} chars`
         );
 
-        onProgress?.({ phase: "transcribe", percent: 100, message: "Transcription complete" });
+        onProgress?.({ phase: "transcribe", percent: 100, message: `[transcribe ${sw.elapsed()}] complete` });
 
         const segments = result.chunks?.map((c) => ({
             text: c.text,
@@ -269,7 +287,7 @@ export class AILocalProvider
     }
 
     async embed(text: string, options?: EmbedOptions): Promise<EmbeddingResult> {
-        const model = options?.model ?? "Xenova/all-MiniLM-L6-v2";
+        const model = options?.model ?? "Xenova/multilingual-e5-small";
         const pipe = await this.getPipeline("feature-extraction", model);
         const result = await pipe(text, { pooling: "mean", normalize: true });
         const data = (result as { data: Float32Array }).data;
@@ -286,7 +304,7 @@ export class AILocalProvider
             return [];
         }
 
-        const model = options?.model ?? "Xenova/all-MiniLM-L6-v2";
+        const model = options?.model ?? "Xenova/multilingual-e5-small";
         const pipe = await this.getPipeline("feature-extraction", model);
 
         // transformers.js feature-extraction pipeline accepts string[]
@@ -339,49 +357,87 @@ export class AILocalProvider
 
             const { pipeline, env } = await import("@huggingface/transformers");
 
+            await this.ensureHfToken();
+
+            const { device } = await resolveDevice();
+
+            // Build pipeline options once — reused by retry paths
+            const pipelineOpts = (extraSessionOpts?: Record<string, unknown>) => ({
+                device,
+                dtype: task === "automatic-speech-recognition" ? getWhisperDtype(model) : ("q4" as const),
+                ...(FP16_INCOMPATIBLE_ENCODERS.has(model) || extraSessionOpts
+                    ? {
+                          session_options: {
+                              ...(FP16_INCOMPATIBLE_ENCODERS.has(model) ? { graphOptimizationLevel: "extended" } : {}),
+                              ...extraSessionOpts,
+                          },
+                      }
+                    : {}),
+                progress_callback: onProgress
+                    ? (info: HfDownloadProgress) => {
+                          if (info.status === "progress" && info.loaded != null && info.total) {
+                              const pct = Math.round((info.loaded / info.total) * 100);
+                              const file = info.file?.split("/").pop() ?? "";
+                              const size = `${formatBytes(info.loaded)}/${formatBytes(info.total)}`;
+                              onProgress({
+                                  phase: "download",
+                                  percent: pct,
+                                  message: `Downloading ${file}... ${pct}% (${size})`,
+                              });
+                          } else if (info.status === "ready") {
+                              onProgress({ phase: "load", percent: 100, message: "Model loaded" });
+                          }
+                      }
+                    : undefined,
+            });
+
+            const loadPipeline = async (opts?: Record<string, unknown>) =>
+                (await pipeline(
+                    task as Parameters<typeof pipeline>[0],
+                    model,
+                    pipelineOpts(opts)
+                )) as unknown as PipelineInstance;
+
             const restoreWarnings = suppressConsoleWarnings({
                 patterns: ["Unable to determine content-length"],
             });
 
             try {
-                const pipe = (await pipeline(task as Parameters<typeof pipeline>[0], model, {
-                    // Whisper (encoder-decoder) is extremely sensitive to encoder quantization.
-                    // HF docs: "encoder-decoder models like Whisper are extremely sensitive to
-                    // quantization settings: especially of the encoder."
-                    // Flat "q4" quantizes BOTH encoder and decoder to 4-bit, corrupting encoder
-                    // hidden states → decoder hallucinates garbage (especially non-English).
-                    // Per-module dtype: fp16 encoder (precise) + q4 decoder (compressed).
-                    // For non-ASR tasks (translation, summarization), flat q4 is fine — those
-                    // models are decoder-only and tolerate aggressive quantization.
-                    dtype:
-                        task === "automatic-speech-recognition"
-                            ? { encoder_model: "fp16", decoder_model_merged: "q4" }
-                            : "q4",
-                    progress_callback: onProgress
-                        ? (info: HfDownloadProgress) => {
-                              if (info.status === "progress" && info.loaded != null && info.total) {
-                                  const pct = Math.round((info.loaded / info.total) * 100);
-                                  const file = info.file?.split("/").pop() ?? "";
-                                  const size = `${formatBytes(info.loaded)}/${formatBytes(info.total)}`;
-
-                                  onProgress({
-                                      phase: "download",
-                                      percent: pct,
-                                      message: `Downloading ${file}... ${pct}% (${size})`,
-                                  });
-                              } else if (info.status === "ready") {
-                                  onProgress({ phase: "load", percent: 100, message: "Model loaded" });
-                              }
-                          }
-                        : undefined,
-                })) as unknown as PipelineInstance;
-
+                const pipe = await loadPipeline();
                 restoreWarnings();
                 this.pipelines.set(key, pipe);
                 return pipe;
             } catch (err) {
                 restoreWarnings();
                 const msg = err instanceof Error ? err.message : String(err);
+
+                // Gated model — prompt for HF token if not configured
+                if (msg.includes("Unauthorized") || msg.includes("Access denied") || msg.includes("401")) {
+                    const token = await this.promptForHfToken(model);
+
+                    if (token) {
+                        const retryPipe = await loadPipeline();
+                        this.pipelines.set(key, retryPipe);
+                        return retryPipe;
+                    }
+
+                    throw new Error(
+                        `Model "${model}" requires a HuggingFace token. Run: tools ai config → Hugging Face token`
+                    );
+                }
+
+                // ONNX Runtime CPU bug: fp16 models crash with InsertedPrecisionFreeCast
+                // on certain architectures. Auto-retry with lowered graph optimization.
+                if (msg.includes("InsertedPrecisionFreeCast") && !FP16_INCOMPATIBLE_ENCODERS.has(model)) {
+                    logger.warn(
+                        `[getPipeline] fp16 ONNX RT crash for "${model}". Retrying with graphOptimizationLevel=extended.`
+                    );
+                    FP16_INCOMPATIBLE_ENCODERS.add(model);
+
+                    const retryPipe = await loadPipeline({ graphOptimizationLevel: "extended" });
+                    this.pipelines.set(key, retryPipe);
+                    return retryPipe;
+                }
 
                 if (msg.includes("Protobuf parsing failed") || msg.includes("Load model")) {
                     const cacheDir = env.cacheDir;
@@ -420,6 +476,90 @@ export class AILocalProvider
         } finally {
             this.pendingPipelines.delete(key);
         }
+    }
+
+    /**
+     * Ensure process.env.HF_TOKEN is set from AIConfig.
+     * @huggingface/transformers reads process.env.HF_TOKEN in its fetch wrapper (hub.js).
+     */
+    private async ensureHfToken(): Promise<void> {
+        if (process.env.HF_TOKEN) {
+            return;
+        }
+
+        const { AIConfig } = await import("../AIConfig");
+        const config = await AIConfig.load();
+        const token = config.getHfToken() ?? process.env.HUGGINGFACE_TOKEN;
+
+        if (token) {
+            process.env.HF_TOKEN = token;
+        }
+    }
+
+    /**
+     * Prompt the user for a HuggingFace token when a gated model returns Unauthorized.
+     * Opens the token page in the browser, saves the token to AIConfig, and sets process.env.HF_TOKEN.
+     */
+    private async promptForHfToken(model: string): Promise<string | null> {
+        const { isInteractive } = await import("@app/utils/cli");
+
+        if (!isInteractive()) {
+            return null;
+        }
+
+        const p = await import("@clack/prompts");
+        const pc = (await import("picocolors")).default;
+        const HF_TOKEN_URL = "https://huggingface.co/settings/tokens/new?tokenType=fineGrained";
+
+        p.log.warn(
+            `Model "${model}" is gated and requires a HuggingFace access token.\n\n` +
+                `Create a Fine-grained token at:\n` +
+                `  ${pc.cyan(HF_TOKEN_URL)}\n\n` +
+                `Required permissions:\n` +
+                `  ${pc.bold("Repositories")}  → Read access to contents of all repos under your personal namespace\n` +
+                `  ${pc.bold("Inference")}     → Make calls to the serverless Inference API`
+        );
+
+        const openBrowser = await p.confirm({
+            message: "Open HuggingFace token page in browser?",
+            initialValue: true,
+        });
+
+        if (!p.isCancel(openBrowser) && openBrowser) {
+            const { Browser } = await import("@app/utils/browser");
+            await Browser.open(HF_TOKEN_URL);
+        }
+
+        const token = await p.text({
+            message: "Paste your HuggingFace token:",
+            placeholder: "hf_...",
+            validate: (val) => {
+                if (!val?.trim()) {
+                    return "Token is required";
+                }
+
+                if (!val.startsWith("hf_")) {
+                    return "HuggingFace tokens start with hf_";
+                }
+            },
+        });
+
+        if (p.isCancel(token)) {
+            return null;
+        }
+
+        const tokenStr = (token as string).trim();
+
+        // Save to AIConfig as a huggingface account
+        const { AIConfig } = await import("../AIConfig");
+        const config = await AIConfig.load();
+        await config.setHfToken(tokenStr);
+
+        // Set for current session — @huggingface/transformers reads this in hub.js
+        process.env.HF_TOKEN = tokenStr;
+
+        p.log.success("HuggingFace token saved to AI config.");
+        return tokenStr;
     }
 
     dispose(): void {

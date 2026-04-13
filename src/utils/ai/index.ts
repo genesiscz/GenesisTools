@@ -1,3 +1,9 @@
+export type { AIConfigData, AppConfig, AppDefaults, ProviderConfig } from "@app/utils/config/ai.types";
+export { AIAccount } from "./AIAccount";
+export type { AIAccountEntry, AIAccountTokens, AIProvider } from "./account-types";
+export type { AccountResolver } from "./resolvers";
+export { ensureResolversInitialized, getResolver, registerResolver, resetResolvers } from "./resolvers";
+
 import { Embedder } from "./tasks/Embedder";
 import { Summarizer } from "./tasks/Summarizer";
 import { Transcriber } from "./tasks/Transcriber";
@@ -22,6 +28,14 @@ export type {
 } from "./LanguageDetector";
 export { createLanguageDetector, LanguageDetector } from "./LanguageDetector";
 export { ModelManager } from "./ModelManager";
+export {
+    findModel,
+    getEmbedModelsForType,
+    getMaxEmbedChars,
+    getModelsByProvider,
+    getModelsForTask,
+    getTaskPrefix,
+} from "./ModelRegistry";
 export { Embedder } from "./tasks/Embedder";
 export { Summarizer } from "./tasks/Summarizer";
 export { Transcriber } from "./tasks/Transcriber";

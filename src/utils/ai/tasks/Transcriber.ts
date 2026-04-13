@@ -3,9 +3,16 @@ import { readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { audioProcessor } from "@app/ask/audio/AudioProcessor";
+import { CLOUD_PROVIDER_TYPES } from "@app/utils/config/ai.types";
 import { AIConfig } from "../AIConfig";
 import { getProviderForTask } from "../providers";
-import type { AITranscriptionProvider, TranscribeOptions, TranscriptionResult, TranscriptionSegment } from "../types";
+import type {
+    AIProviderType,
+    AITranscriptionProvider,
+    TranscribeOptions,
+    TranscriptionResult,
+    TranscriptionSegment,
+} from "../types";
 
 const MAX_CLOUD_BYTES = 24 * 1024 * 1024;
 
@@ -20,8 +27,10 @@ export class Transcriber {
         const config = await AIConfig.load();
 
         if (options?.provider) {
-            const providerType = options.provider as "cloud" | "local-hf" | "darwinkit";
-            config.set("transcribe", { provider: providerType, model: options.model });
+            await config.setTask("transcribe", {
+                provider: options.provider as AIProviderType,
+                model: options.model,
+            });
         }
 
         const provider = await getProviderForTask("transcribe", config);
@@ -44,7 +53,7 @@ export class Transcriber {
             audio = audioOrPath;
         }
 
-        if (this.provider.type === "cloud" && audio.length > MAX_CLOUD_BYTES) {
+        if (CLOUD_PROVIDER_TYPES.has(this.provider.type) && audio.length > MAX_CLOUD_BYTES) {
             return this.transcribeChunked(audio, typeof audioOrPath === "string" ? audioOrPath : undefined, options);
         }
 

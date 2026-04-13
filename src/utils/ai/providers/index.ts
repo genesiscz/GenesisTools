@@ -20,7 +20,25 @@ export function getProvider(type: AIProviderType): AIProvider {
 
     switch (type) {
         case "cloud":
-            provider = new AICloudProvider();
+            provider = new AICloudProvider("auto");
+            break;
+        case "openai":
+            provider = new AICloudProvider("openai");
+            break;
+        case "groq":
+            provider = new AICloudProvider("groq");
+            break;
+        case "openrouter":
+            provider = new AICloudProvider("openrouter");
+            break;
+        case "assemblyai":
+            provider = new AICloudProvider("assemblyai");
+            break;
+        case "deepgram":
+            provider = new AICloudProvider("deepgram");
+            break;
+        case "gladia":
+            provider = new AICloudProvider("gladia");
             break;
         case "local-hf":
             provider = new AILocalProvider();
@@ -51,7 +69,7 @@ export function getProvider(type: AIProviderType): AIProvider {
 }
 
 export async function getProviderForTask(task: AITask, config: AIConfig): Promise<AIProvider> {
-    const preferred = config.getProvider(task);
+    const preferred = config.getTaskProvider(task);
     const provider = getProvider(preferred);
 
     if (provider.supports(task) && (await provider.isAvailable())) {
@@ -59,7 +77,17 @@ export async function getProviderForTask(task: AITask, config: AIConfig): Promis
     }
 
     // GPU-capable providers first: Ollama (Metal/CUDA), CoreML (Neural Engine), then CPU fallbacks
-    const fallbackOrder: AIProviderType[] = ["ollama", "coreml", "darwinkit", "local-hf", "cloud", "google"];
+    const fallbackOrder: AIProviderType[] = [
+        "ollama",
+        "coreml",
+        "darwinkit",
+        "local-hf",
+        "cloud",
+        "google",
+        "assemblyai",
+        "deepgram",
+        "gladia",
+    ];
 
     for (const type of fallbackOrder) {
         if (type === preferred) {
@@ -80,7 +108,20 @@ export async function getProviderForTask(task: AITask, config: AIConfig): Promis
 }
 
 export function getAllProviders(): AIProvider[] {
-    const types: AIProviderType[] = ["darwinkit", "local-hf", "cloud", "ollama", "google", "coreml"];
+    const types: AIProviderType[] = [
+        "darwinkit",
+        "local-hf",
+        "cloud",
+        "openai",
+        "groq",
+        "openrouter",
+        "assemblyai",
+        "deepgram",
+        "gladia",
+        "ollama",
+        "google",
+        "coreml",
+    ];
     return types.map((type) => getProvider(type));
 }
 
