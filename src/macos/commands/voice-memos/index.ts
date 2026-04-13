@@ -450,6 +450,7 @@ async function transcribeOne(opts: {
     let transcriber = await AI.Transcriber.create({
         provider: opts.provider,
         model: opts.model,
+        persist: true,
     });
 
     let result: import("@app/utils/ai/types.ts").TranscriptionResult;
@@ -468,6 +469,7 @@ async function transcribeOne(opts: {
             transcriber = await AI.Transcriber.create({
                 provider: opts.provider,
                 model: opts.model,
+                persist: true,
             });
 
             // On retry: use the language already confirmed, skip re-detection/re-prompting

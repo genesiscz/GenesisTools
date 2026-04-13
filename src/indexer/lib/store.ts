@@ -296,6 +296,7 @@ export async function searchIndexReadonly(
             doc: r.doc as unknown as ChunkRecord,
             score: r.score,
             method: r.method,
+            ftsSnippet: r.ftsSnippet,
         }));
     } finally {
         db.close();
@@ -692,6 +693,7 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
                     doc: r.doc as unknown as ChunkRecord,
                     score: r.score,
                     method: r.method,
+                    ftsSnippet: r.ftsSnippet,
                 }));
             },
 

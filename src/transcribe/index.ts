@@ -99,6 +99,7 @@ async function runTranscription(filePath: string, opts: TranscribeFlags): Promis
         const transcriber = await AI.Transcriber.create({
             provider,
             model: opts.model,
+            persist: true,
         });
 
         try {

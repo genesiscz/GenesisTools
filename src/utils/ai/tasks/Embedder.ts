@@ -29,7 +29,7 @@ export class Embedder {
         this.provider = provider;
     }
 
-    static async create(options?: { provider?: string; model?: string }): Promise<Embedder> {
+    static async create(options?: { provider?: string; model?: string; persist?: boolean }): Promise<Embedder> {
         const config = await AIConfig.load();
 
         if (options?.provider) {
@@ -61,6 +61,13 @@ export class Embedder {
                         `Ollama model "${options.model}" is not pulled.\n` + `Run: ollama pull ${options.model}`
                     );
                 }
+            }
+
+            if (options.persist) {
+                await config.setTask("embed", {
+                    provider: options.provider as AIProviderType,
+                    model: options.model,
+                });
             }
 
             return new Embedder(explicit as AIEmbeddingProvider);

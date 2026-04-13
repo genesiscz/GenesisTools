@@ -23,10 +23,10 @@ export class Transcriber {
         this.provider = provider;
     }
 
-    static async create(options?: { provider?: string; model?: string }): Promise<Transcriber> {
+    static async create(options?: { provider?: string; model?: string; persist?: boolean }): Promise<Transcriber> {
         const config = await AIConfig.load();
 
-        if (options?.provider) {
+        if (options?.persist && options.provider) {
             await config.setTask("transcribe", {
                 provider: options.provider as AIProviderType,
                 model: options.model,
