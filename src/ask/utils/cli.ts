@@ -19,7 +19,7 @@ export function parseCLIArguments(): Args {
         .description("Multi-provider LLM chat application")
         .option("-s, --sst <file>", "Transcribe audio file")
         .option("-m, --model <name>", "Model to use")
-        .option("-p, --provider <name>", "Provider")
+        .option("-p, --provider [name]", "Provider (omit value to choose interactively)")
         .option(
             "-f, --format <fmt>",
             "Output format (text/json/jsonl/markdown/clipboard) or models format (table/json)"
@@ -52,7 +52,7 @@ export function parseCLIArguments(): Args {
         _: args,
         sst: options.sst,
         model: options.model,
-        provider: options.provider,
+        provider: typeof options.provider === "string" ? options.provider : undefined,
         format: options.format,
         output: options.output,
         sort: options.sort,
