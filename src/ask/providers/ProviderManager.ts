@@ -92,6 +92,11 @@ export class ProviderManager {
             await this.detectAnthropicSubscription(askConfig, detected);
         }
 
+        // Check for OpenAI subscription (Codex) if not already detected via env key
+        if (!this.detectedProviders.has("openai") && (!targetProvider || targetProvider === "openai")) {
+            await this.detectOpenAISubscription(detected);
+        }
+
         this.initialized = true;
 
         if (detected.length === 0) {
@@ -216,6 +221,30 @@ export class ProviderManager {
             systemPromptPrefix: SUBSCRIPTION_SYSTEM_PREFIX,
             account,
         };
+    }
+
+    private async detectOpenAISubscription(detected: DetectedProvider[]): Promise<void> {
+        try {
+            const { AIConfig } = await import("@app/utils/ai/AIConfig");
+            const aiConfig = await AIConfig.load();
+            const subAccounts = aiConfig.getAccountsByProvider("openai-sub");
+
+            if (subAccounts.length === 0) {
+                return;
+            }
+
+            const { AIAccount } = await import("@app/utils/ai/AIAccount");
+            const account = AIAccount.chooseCodex(subAccounts[0].name, "openai-sub");
+            const provider = await account.provider();
+
+            detected.push(provider);
+            this.detectedProviders.set("openai", provider);
+
+            const hint = subAccounts[0].label ? ` (${subAccounts[0].label})` : "";
+            askUI().logDetectedSubscription({ provider: "openai", hint });
+        } catch (error) {
+            logger.warn(`Failed to detect OpenAI subscription: ${error}`);
+        }
     }
 
     private async detectAnthropicEnvKeyFallback(detected: DetectedProvider[]): Promise<void> {
