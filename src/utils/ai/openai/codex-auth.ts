@@ -11,19 +11,35 @@ const CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const REDIRECT_URI = "http://localhost:1455/auth/callback";
 const SCOPE = "openid profile email offline_access";
 
-/** Shape of ~/.codex/auth.json */
-export interface CodexAuthJson {
+/**
+ * Shape of ~/.codex/auth.json as written by the official Codex CLI.
+ * Two known formats:
+ *   - Official CLI:  { auth_mode, tokens: { access_token, refresh_token, account_id }, last_refresh }
+ *   - Third-party:   { type: "oauth", access, refresh, expires, accountId }
+ */
+interface CodexAuthJsonOfficial {
+    auth_mode: string;
+    tokens: {
+        id_token?: string;
+        access_token: string;
+        refresh_token: string;
+        account_id?: string;
+    };
+    last_refresh?: string;
+}
+
+interface CodexAuthJsonThirdParty {
     type: "oauth";
     access: string;
     refresh: string;
-    expires: number; // Unix timestamp in milliseconds
+    expires: number;
     accountId?: string;
 }
 
 export interface CodexTokens {
     accessToken: string;
     refreshToken: string;
-    expiresAt: number; // Unix timestamp in ms
+    expiresAt: number; // Unix timestamp in ms (0 if unknown — will trigger refresh)
     accountId?: string;
 }
 
@@ -32,6 +48,7 @@ export const CODEX_AUTH_PATH = join(homedir(), ".codex", "auth.json");
 
 /**
  * Read tokens from ~/.codex/auth.json (written by `codex login`).
+ * Handles both the official Codex CLI format and third-party variants.
  * Returns null if the file doesn't exist or is invalid.
  */
 export async function readCodexAuthJson(path: string = CODEX_AUTH_PATH): Promise<CodexTokens | null> {
@@ -42,18 +59,45 @@ export async function readCodexAuthJson(path: string = CODEX_AUTH_PATH): Promise
             return null;
         }
 
-        const data = (await file.json()) as CodexAuthJson;
+        const raw = await file.json();
 
-        if (!data.access || !data.refresh) {
-            return null;
+        // Official Codex CLI format: { auth_mode, tokens: { access_token, refresh_token } }
+        if (raw.tokens?.access_token) {
+            const data = raw as CodexAuthJsonOfficial;
+            const accessToken = data.tokens.access_token;
+
+            // Extract expiry from JWT (exp claim is in seconds)
+            let expiresAt = 0;
+
+            try {
+                const payload = SafeJSON.parse(Buffer.from(accessToken.split(".")[1], "base64url").toString());
+                if (typeof payload.exp === "number") {
+                    expiresAt = payload.exp * 1000;
+                }
+            } catch {
+                // Can't parse JWT — expiresAt stays 0, which triggers refresh
+            }
+
+            return {
+                accessToken,
+                refreshToken: data.tokens.refresh_token,
+                expiresAt,
+                accountId: data.tokens.account_id,
+            };
         }
 
-        return {
-            accessToken: data.access,
-            refreshToken: data.refresh,
-            expiresAt: data.expires,
-            accountId: data.accountId,
-        };
+        // Third-party format: { type: "oauth", access, refresh, expires }
+        if (raw.access && raw.refresh) {
+            const data = raw as CodexAuthJsonThirdParty;
+            return {
+                accessToken: data.access,
+                refreshToken: data.refresh,
+                expiresAt: data.expires ?? 0,
+                accountId: data.accountId,
+            };
+        }
+
+        return null;
     } catch {
         return null;
     }
