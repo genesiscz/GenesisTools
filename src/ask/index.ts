@@ -6,7 +6,7 @@ import { handleReadmeFlag } from "@app/utils/readme";
 import { AIChat } from "@ask/AIChat";
 import { transcriptionManager } from "@ask/audio/TranscriptionManager";
 import { ChatEngine } from "@ask/chat/ChatEngine";
-import type { CommandResult } from "@ask/chat/CommandHandler";
+import type { ChatState, CommandResult } from "@ask/chat/CommandHandler";
 import { commandHandler } from "@ask/chat/CommandHandler";
 import { conversationManager } from "@ask/chat/ConversationManager";
 import { loadAskContext } from "@ask/lib/context-loader";
@@ -545,10 +545,20 @@ class ASKTool {
 
                 // Handle special commands
                 if (msg.startsWith("/")) {
+                    const availableTools = this.getAvailableTools();
+                    const chatState: ChatState = {
+                        systemPrompt: this.rawSystemPrompt,
+                        conversationLength: chatEngine.getConversationLength(),
+                        totalTokens: chatEngine.getTotalTokens(),
+                        toolNames: availableTools ? Object.keys(availableTools) : [],
+                        contextBlock: chatConfig.systemPrompt,
+                    };
+
                     const result = await commandHandler.handleCommand(
                         msg,
                         modelChoice.provider.name,
-                        modelChoice.model.id
+                        modelChoice.model.id,
+                        chatState
                     );
 
                     if (result.shouldExit) {
