@@ -171,8 +171,16 @@ export function registerSearchCommand(program: Command): void {
                             const rowid = Number(sid);
                             ftsRowids.push(rowid);
 
-                            if (!snippetByRowid.has(rowid) && typeof r.doc.content === "string") {
-                                snippetByRowid.set(rowid, r.doc.content.replace(/\s+/g, " ").trim().slice(0, 200));
+                            if (!snippetByRowid.has(rowid)) {
+                                const snippet =
+                                    r.ftsSnippet ??
+                                    (typeof r.doc.content === "string"
+                                        ? r.doc.content.replace(/\s+/g, " ").trim().slice(0, 200)
+                                        : undefined);
+
+                                if (snippet) {
+                                    snippetByRowid.set(rowid, snippet);
+                                }
                             }
                         }
 
