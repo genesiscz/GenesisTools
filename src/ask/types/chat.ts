@@ -79,6 +79,8 @@ export interface ModelInfo {
     pricing?: PricingInfo;
     capabilities: string[];
     provider: string;
+    /** Model tier for category-based resolution (e.g., "mini", "standard", "haiku", "sonnet", "opus") */
+    category?: string;
 }
 
 // Output and formatting types

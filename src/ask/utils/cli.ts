@@ -33,6 +33,7 @@ export function parseCLIArguments(): Args {
         .option("-t, --temperature <n>", "Temperature (0.0-2.0)")
         .option("-k, --max-tokens <n>", "Maximum tokens")
         .option("--system-prompt <text>", "System prompt")
+        .option("--no-context", "Skip auto-injection of .genesistoolscontext.json artifacts")
         .option("-v, --verbose", "Enable verbose logging")
         .option("--silent", "Silent mode")
         .option("--predict-cost", "Show cost prediction before sending")
@@ -68,6 +69,7 @@ export function parseCLIArguments(): Args {
         cost: options.cost,
         help: options.helpFull,
         version: options.version,
+        noContext: options.context === false,
     };
 
     return result;

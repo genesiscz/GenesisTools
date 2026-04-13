@@ -1,11 +1,6 @@
 import logger from "@app/logger";
 import type { SearchResult, WebSearchOptions } from "@ask/types";
-
-interface WebSearchParams {
-    query: string;
-    numResults?: number;
-    safeSearch?: string;
-}
+import { z } from "zod";
 
 export class WebSearchTool {
     private apiKey?: string;
@@ -165,42 +160,26 @@ export class WebSearchTool {
 
         return {
             description: "Search the web for current information using Brave Search",
-            parameters: {
-                query: {
-                    type: "string",
-                    description: "The search query to look up",
-                },
-                numResults: {
-                    type: "number",
-                    description: "Number of results to return (default: 5, max: 10)",
-                    optional: true,
-                },
-                safeSearch: {
-                    type: "string",
-                    description: "Safe search level: 'off', 'moderate', or 'strict'",
-                    optional: true,
-                },
-            },
-            execute: async (params: WebSearchParams) => {
+            parameters: z.object({
+                query: z.string().describe("The search query to look up"),
+                numResults: z.number().int().min(1).max(10).default(5).describe("Number of results (max 10)"),
+                safeSearch: z.enum(["off", "moderate", "strict"]).optional().describe("Safe search level"),
+            }),
+            execute: async (params: {
+                query: string;
+                numResults?: number;
+                safeSearch?: "off" | "moderate" | "strict";
+            }): Promise<string> => {
                 try {
                     const results = await this.searchWeb(params.query, {
                         numResults: params.numResults,
-                        safeSearch: params.safeSearch as WebSearchOptions["safeSearch"],
+                        safeSearch: params.safeSearch,
                     });
 
-                    return {
-                        results,
-                        formatted: this.formatSearchResults(results),
-                        count: results.length,
-                    };
+                    return this.formatSearchResults(results);
                 } catch (error) {
                     logger.error(`Search tool execution failed: ${error}`);
-                    return {
-                        results: [],
-                        formatted: `Search failed: ${error}`,
-                        count: 0,
-                        error: error instanceof Error ? error.message : String(error),
-                    };
+                    return `Search failed: ${error instanceof Error ? error.message : String(error)}`;
                 }
             },
         };

@@ -352,6 +352,7 @@ const TASK_LABELS: Record<AITask, string> = {
     classify: "Classification",
     embed: "Embedding",
     sentiment: "Sentiment Analysis",
+    tts: "Text-to-Speech",
 };
 
 const PROVIDER_OPTIONS: Array<{ value: AIProviderType; label: string; hint: string }> = [
@@ -366,9 +367,9 @@ async function cmdConfig(): Promise<void> {
     const config = await AIConfig.load();
 
     // Show current config
-    const tasks: AITask[] = ["transcribe", "translate", "summarize", "classify", "embed", "sentiment"];
+    const tasks: AITask[] = ["transcribe", "translate", "summarize", "classify", "embed", "sentiment", "tts"];
     const currentRows = tasks.map((task) => {
-        const taskConfig = config.get(task);
+        const taskConfig = config.getTask(task);
         return [TASK_LABELS[task], taskConfig.provider, taskConfig.model ?? pc.dim("default")];
     });
     const hfToken = config.getHfToken();
@@ -409,8 +410,7 @@ async function cmdConfig(): Promise<void> {
             })
         );
 
-        config.setHfToken(token);
-        await config.save();
+        await config.setHfToken(token);
         p.outro(pc.green("Token saved."));
         return;
     }
@@ -421,7 +421,7 @@ async function cmdConfig(): Promise<void> {
             message: "Select task to configure:",
             options: tasks.map((t) => ({
                 value: t,
-                label: `${TASK_LABELS[t]} ${pc.dim(`(${config.getProvider(t)})`)}`,
+                label: `${TASK_LABELS[t]} ${pc.dim(`(${config.getTaskProvider(t)})`)}`,
             })),
         })
     );
@@ -430,7 +430,7 @@ async function cmdConfig(): Promise<void> {
         p.select({
             message: "Provider:",
             options: PROVIDER_OPTIONS,
-            initialValue: config.getProvider(taskChoice),
+            initialValue: config.getTaskProvider(taskChoice),
         })
     );
 
@@ -442,11 +442,10 @@ async function cmdConfig(): Promise<void> {
         })
     );
 
-    config.set(taskChoice, {
+    await config.setTask(taskChoice, {
         provider,
         model: model || undefined,
     });
-    await config.save();
 
     p.outro(pc.green(`${TASK_LABELS[taskChoice]} updated: ${provider}${model ? ` (${model})` : ""}`));
 }

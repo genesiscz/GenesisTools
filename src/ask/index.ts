@@ -1,6 +1,8 @@
 #!/usr/bin/env bun
 
-import logger, { configureLogger } from "@app/logger";
+import logger from "@app/logger";
+import { formatToolSignature } from "@app/utils/agents/formatters/tool-formatter";
+import { SafeJSON } from "@app/utils/json";
 import { input } from "@app/utils/prompts/clack";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { AIChat } from "@ask/AIChat";
@@ -9,6 +11,7 @@ import { ChatEngine } from "@ask/chat/ChatEngine";
 import type { CommandResult } from "@ask/chat/CommandHandler";
 import { commandHandler } from "@ask/chat/CommandHandler";
 import { conversationManager } from "@ask/chat/ConversationManager";
+import { loadAskContext } from "@ask/lib/context-loader";
 import { askUI, initAskUI } from "@ask/output/AskUILogger";
 import { costPredictor } from "@ask/output/CostPredictor";
 import { costTracker } from "@ask/output/CostTracker";
@@ -17,6 +20,8 @@ import { modelSelector } from "@ask/providers/ModelSelector";
 import { getLanguageModel } from "@ask/types";
 import { webSearchTool } from "@ask/utils/websearch";
 import * as p from "@clack/prompts";
+import type { ToolSet } from "ai";
+import { tool } from "ai";
 import pc from "picocolors";
 
 // Handle --readme flag early (before Commander parses)
@@ -41,8 +46,6 @@ import {
     validateOptions,
 } from "@ask/utils/cli";
 import { generateSessionId } from "@ask/utils/helpers";
-
-configureLogger({ logToFile: true });
 
 // Initialize conversation manager
 const convManager = conversationManager;
@@ -84,16 +87,17 @@ class ASKTool {
                 return;
             }
 
-            // Apply config defaults
-            const { loadAskConfig } = await import("@ask/config");
-            const askConfig = await loadAskConfig();
+            // Apply config defaults from unified AIConfig
+            const { AIConfig } = await import("@app/utils/ai/AIConfig");
+            const aiConfig = await AIConfig.load();
+            const askDefaults = aiConfig.getAppDefaults("ask");
 
-            if (!argv.provider && askConfig.defaultProvider) {
-                argv.provider = askConfig.defaultProvider;
+            if (!argv.provider && askDefaults?.provider) {
+                argv.provider = askDefaults.provider;
             }
 
-            if (!argv.model && askConfig.defaultModel) {
-                argv.model = askConfig.defaultModel;
+            if (!argv.model && askDefaults?.model) {
+                argv.model = askDefaults.model;
             }
 
             // Fuzzy model matching: resolve partial model names
@@ -359,13 +363,18 @@ class ASKTool {
                 }
             }
 
+            const baseSystem = createSystemPrompt(argv.systemPrompt);
+            const contextBlock = argv.noContext ? undefined : await loadAskContext(process.cwd(), 4000);
+            const combinedSystem = [baseSystem, contextBlock].filter(Boolean).join("\n\n") || undefined;
+
             const chat = new AIChat({
                 provider: argv.provider,
                 model: argv.model,
-                systemPrompt: createSystemPrompt(argv.systemPrompt),
+                systemPrompt: combinedSystem,
                 temperature: parseTemperature(argv.temperature),
                 maxTokens: parseMaxTokens(argv.maxTokens),
                 logLevel: argv.raw ? "silent" : "info",
+                tools: this.getAIChatTools(),
             });
 
             if (argv.raw) {
@@ -375,10 +384,10 @@ class ASKTool {
                 return;
             }
 
-            // Streaming mode with UI
-            // We still need provider/model info for display, so resolve first
+            // Streaming mode with UI — initialize first so resolved account is available
+            await chat.initialize();
             const config = chat.getConfig();
-            askUI().logUsing({ provider: config.provider, model: config.model });
+            askUI().logUsing({ provider: config.provider, model: config.model, account: chat.getResolvedAccount() });
 
             // Optional: Show cost prediction if --predict-cost flag is set
             if (argv.predictCost) {
@@ -405,6 +414,19 @@ class ASKTool {
             for await (const event of chat.send(message)) {
                 if (event.isText() && !suppressStreaming) {
                     process.stdout.write(event.text);
+                } else if (event.isToolCall() && !suppressStreaming) {
+                    const toolInput = (event.input ?? {}) as Record<string, unknown>;
+                    const sig = formatToolSignature(event.name, toolInput, {
+                        primaryMaxChars: 200,
+                        detailLevel: "signature",
+                    });
+                    process.stderr.write(pc.dim(`\n${sig}\n`));
+                } else if (event.isToolResult() && !suppressStreaming) {
+                    const summary =
+                        typeof event.output === "string"
+                            ? event.output.slice(0, 300)
+                            : SafeJSON.stringify(event.output).slice(0, 300);
+                    process.stderr.write(pc.dim(`✓ [${event.name}] ${summary}\n`));
                 }
 
                 if (event.isDone()) {
@@ -451,9 +473,7 @@ class ASKTool {
                             },
                         ];
 
-                        const accountInfo = await this.getAccountInfoForFooter(config.provider);
-
-                        console.log(await outputManager.formatCostBreakdown(breakdown, accountInfo));
+                        console.log(await outputManager.formatCostBreakdown(breakdown, chat.getResolvedAccount()));
                     }
                 }
             }
@@ -552,8 +572,24 @@ class ASKTool {
 
                 const startTime = Date.now();
 
-                // Send message
-                const response = await chatEngine.sendMessage(msg, tools);
+                // Send message with tool callbacks
+                const response = await chatEngine.sendMessage(msg, tools, {
+                    onToolCall: (name, args) => {
+                        const toolInput = (args ?? {}) as Record<string, unknown>;
+                        const sig = formatToolSignature(name, toolInput, {
+                            primaryMaxChars: 200,
+                            detailLevel: "signature",
+                        });
+                        console.log(pc.dim(`\n${sig}`));
+                    },
+                    onToolResult: (name, result) => {
+                        const summary =
+                            typeof result === "string"
+                                ? result.slice(0, 300)
+                                : SafeJSON.stringify(result).slice(0, 300);
+                        console.log(pc.dim(`✓ [${name}] ${summary}\n`));
+                    },
+                });
 
                 const duration = Date.now() - startTime;
 
@@ -593,9 +629,7 @@ class ASKTool {
                         },
                     ];
 
-                    const footerAccountInfo = await this.getAccountInfoForFooter(modelChoice.provider.name);
-
-                    console.log(await outputManager.formatCostBreakdown(breakdown, footerAccountInfo));
+                    console.log(await outputManager.formatCostBreakdown(breakdown, modelChoice.provider.account));
                 }
 
                 console.log(); // Add spacing
@@ -624,7 +658,9 @@ class ASKTool {
 
     private async createChatConfig(modelChoice: ProviderChoice, argv: CLIOptions): Promise<ChatConfig> {
         const model = getLanguageModel(modelChoice.provider.provider, modelChoice.model.id);
-        this.rawSystemPrompt = createSystemPrompt(argv.systemPrompt) ?? "";
+        const baseSystem = createSystemPrompt(argv.systemPrompt) ?? "";
+        const contextBlock = argv.noContext ? undefined : await loadAskContext(process.cwd(), 4000);
+        this.rawSystemPrompt = [baseSystem, contextBlock].filter(Boolean).join("\n\n");
 
         return {
             model,
@@ -638,61 +674,56 @@ class ASKTool {
         };
     }
 
-    private getAvailableTools():
+    private getBaseToolRegistry() {
+        const searchToolDef = webSearchTool.createSearchTool();
+
+        if (!searchToolDef) {
+            return null;
+        }
+
+        return { searchWeb: searchToolDef };
+    }
+
+    private getAvailableTools(): ToolSet | undefined {
+        const registry = this.getBaseToolRegistry();
+
+        if (!registry) {
+            return undefined;
+        }
+
+        return {
+            searchWeb: tool({
+                description: registry.searchWeb.description,
+                inputSchema: registry.searchWeb.parameters,
+                execute: registry.searchWeb.execute,
+            }),
+        };
+    }
+
+    /** Returns tools in AIChatTool format (for AIChat constructor). */
+    private getAIChatTools():
         | Record<
               string,
               {
                   description: string;
-                  parameters: {
-                      [key: string]: {
-                          type: string;
-                          description: string;
-                          optional?: boolean;
-                      };
-                  };
-                  execute: (...args: unknown[]) => Promise<unknown>;
+                  parameters: unknown;
+                  execute: (params: Record<string, unknown>) => Promise<unknown>;
               }
           >
         | undefined {
-        const tools: Record<
-            string,
-            {
-                description: string;
-                parameters: {
-                    [key: string]: {
-                        type: string;
-                        description: string;
-                        optional?: boolean;
-                    };
-                };
-                execute: (...args: unknown[]) => Promise<unknown>;
-            }
-        > = {};
+        const registry = this.getBaseToolRegistry();
 
-        // Add web search if available
-        const searchTool = webSearchTool.createSearchTool();
-        if (searchTool) {
-            tools.searchWeb = {
-                description: searchTool.description,
-                parameters: searchTool.parameters,
-                execute: async (...args: unknown[]) => {
-                    const params = args[0] as Parameters<typeof searchTool.execute>[0];
-                    return await searchTool.execute(params);
-                },
-            };
-        }
-
-        return Object.keys(tools).length > 0 ? tools : undefined;
-    }
-
-    private async getAccountInfoForFooter(providerName: string): Promise<{ label?: string; name: string } | undefined> {
-        if (providerName !== "anthropic") {
+        if (!registry) {
             return undefined;
         }
 
-        const { loadAskConfig } = await import("@ask/config");
-        const cfg = await loadAskConfig();
-        return cfg.claude?.accountName ? { label: cfg.claude.accountLabel, name: cfg.claude.accountName } : undefined;
+        return {
+            searchWeb: {
+                description: registry.searchWeb.description,
+                parameters: registry.searchWeb.parameters,
+                execute: registry.searchWeb.execute as (params: Record<string, unknown>) => Promise<unknown>,
+            },
+        };
     }
 
     private async handleCommandResult(

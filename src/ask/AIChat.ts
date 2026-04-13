@@ -18,6 +18,8 @@ import { modelSelector } from "@ask/providers/ModelSelector";
 import { providerManager } from "@ask/providers/ProviderManager";
 import type { ChatConfig } from "@ask/types";
 import { getLanguageModel } from "@ask/types";
+import type { ToolSet } from "ai";
+import { tool } from "ai";
 
 interface EngineWithRestore {
     engine: ChatEngine;
@@ -32,6 +34,7 @@ export class AIChat {
     private _initPromise: Promise<void> | null = null;
     private _activeTurn: ChatTurn | null = null;
     private _sessionManager: ChatSessionManager | null = null;
+    private _resolvedTools: ToolSet | undefined;
 
     readonly session: ChatSession;
     readonly log: ChatLog;
@@ -59,6 +62,10 @@ export class AIChat {
     }
 
     /** Ensure provider/model are resolved and engine is created */
+    async initialize(): Promise<void> {
+        return this._ensureInitialized();
+    }
+
     private async _ensureInitialized(): Promise<void> {
         if (this._engine) {
             return;
@@ -107,6 +114,19 @@ export class AIChat {
         };
 
         this._engine = new ChatEngine(config);
+
+        // Resolve tools from AIChatTool format to AI SDK ToolSet
+        if (this._options.tools && Object.keys(this._options.tools).length > 0) {
+            this._resolvedTools = {};
+
+            for (const [name, t] of Object.entries(this._options.tools)) {
+                this._resolvedTools[name] = tool({
+                    description: t.description,
+                    inputSchema: t.parameters as Parameters<typeof tool>[0]["inputSchema"],
+                    execute: t.execute,
+                });
+            }
+        }
 
         // Add config entry to session
         this.session.addConfig(choice.provider.name, choice.model.id, this._options.systemPrompt);
@@ -172,20 +192,22 @@ export class AIChat {
         const stream = new ReadableStream<ChatEvent>({
             start: async (controller) => {
                 try {
-                    const engineResponse = await engine.sendMessage(
-                        message,
-                        undefined, // tools — TODO: wire AIChatTool → AI SDK tools
-                        {
-                            onChunk: (chunk: string) => {
-                                controller.enqueue(ChatEvent.text(chunk));
-                                fullContent += chunk;
-                            },
-                            onThinking: (text: string) => {
-                                controller.enqueue(ChatEvent.thinking(text));
-                                thinkingContent += text;
-                            },
-                        }
-                    );
+                    const engineResponse = await engine.sendMessage(message, this._resolvedTools, {
+                        onChunk: (chunk: string) => {
+                            controller.enqueue(ChatEvent.text(chunk));
+                            fullContent += chunk;
+                        },
+                        onThinking: (text: string) => {
+                            controller.enqueue(ChatEvent.thinking(text));
+                            thinkingContent += text;
+                        },
+                        onToolCall: (name: string, input: unknown) => {
+                            controller.enqueue(ChatEvent.toolCall(name, input));
+                        },
+                        onToolResult: (name: string, output: unknown) => {
+                            controller.enqueue(ChatEvent.toolResult(name, output, 0));
+                        },
+                    });
 
                     const duration = Date.now() - startTime;
                     const response: ChatResponse = {
@@ -326,6 +348,11 @@ export class AIChat {
 
     getConfig(): Readonly<AIChatOptions> {
         return { ...this._options };
+    }
+
+    /** Get the account that was resolved for this chat session (if any). */
+    getResolvedAccount(): { name: string; label?: string } | undefined {
+        return this._engine?.getConfig().providerChoice?.provider.account;
     }
 
     /** Save session and release resources */
