@@ -157,6 +157,13 @@ export const KNOWN_MODELS = {
             category: "standard",
         },
         {
+            id: "gpt-5.3-codex",
+            name: "GPT-5.3 Codex",
+            contextWindow: 1048576,
+            capabilities: ["chat", "vision", "function-calling", "reasoning"],
+            category: "standard",
+        },
+        {
             id: "gpt-5.2-codex",
             name: "GPT-5.2 Codex",
             contextWindow: 1048576,
