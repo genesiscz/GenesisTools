@@ -82,6 +82,21 @@ const EMBED_MODELS: ModelEntry[] = [
         charsPerToken: 4,
     },
     {
+        id: "text-embedding-3-large",
+        name: "OpenAI Embed 3 Large",
+        task: "embed",
+        params: "API",
+        dimensions: 3072,
+        ramGB: 0,
+        speed: "fast",
+        license: "Proprietary",
+        provider: "openai",
+        bestFor: ["code", "general", "mail"],
+        description: "Highest-quality OpenAI embedding. 3072 dims. Requires OPENAI_API_KEY.",
+        contextLength: 8191,
+        charsPerToken: 4,
+    },
+    {
         id: "darwinkit",
         name: "DarwinKit NL",
         task: "embed",
@@ -581,6 +596,9 @@ const GPU_ORDER: Record<ModelEntry["provider"], number> = {
     darwinkit: 3,
     cloud: 4,
     google: 5,
+    openai: 6,
+    groq: 7,
+    openrouter: 8,
 };
 
 export function getModelsForTask(task: AITask): ReadonlyArray<ModelEntry> {
