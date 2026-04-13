@@ -18,3 +18,30 @@ export function anthropicCacheControl(): SharedV2ProviderOptions {
         },
     };
 }
+
+/**
+ * Build providerOptions for WHAM (OpenAI Codex subscription) requests.
+ * WHAM's Responses API requires `store: false`.
+ */
+export function whamProviderOptions(): SharedV2ProviderOptions {
+    return {
+        openai: {
+            store: false,
+        },
+    };
+}
+
+/**
+ * Build providerOptions for the given provider type.
+ * Merges Anthropic cache control and WHAM options as needed.
+ */
+export function buildProviderOptions(providerType?: string): SharedV2ProviderOptions {
+    if (providerType === "openai-sub") {
+        return {
+            ...anthropicCacheControl(),
+            ...whamProviderOptions(),
+        };
+    }
+
+    return anthropicCacheControl();
+}

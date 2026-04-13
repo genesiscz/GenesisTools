@@ -3,7 +3,7 @@ import type { ProviderChoice } from "@ask/types";
 import { getLanguageModel } from "@ask/types/provider";
 import type { LanguageModelUsage } from "ai";
 import { generateText, streamText } from "ai";
-import { anthropicCacheControl } from "./prompt-caching";
+import { buildProviderOptions } from "./prompt-caching";
 
 export interface CallLLMOptions {
     systemPrompt: string;
@@ -23,7 +23,8 @@ export interface CallLLMResult {
 
 export async function callLLM(options: CallLLMOptions): Promise<CallLLMResult> {
     const { systemPrompt, userPrompt, providerChoice, streaming, maxTokens, temperature } = options;
-    const model = getLanguageModel(providerChoice.provider.provider, providerChoice.model.id);
+    const providerType = providerChoice.provider.type;
+    const model = getLanguageModel(providerChoice.provider.provider, providerChoice.model.id, providerType);
 
     const effectiveSystem = applySystemPromptPrefix(providerChoice.provider.systemPromptPrefix, systemPrompt);
 
@@ -32,7 +33,7 @@ export async function callLLM(options: CallLLMOptions): Promise<CallLLMResult> {
             model,
             system: effectiveSystem,
             prompt: userPrompt,
-            providerOptions: anthropicCacheControl(),
+            providerOptions: buildProviderOptions(providerType),
             ...(maxTokens ? { maxTokens } : {}),
             ...(temperature !== undefined ? { temperature } : {}),
         });
@@ -71,7 +72,7 @@ export async function callLLM(options: CallLLMOptions): Promise<CallLLMResult> {
         model,
         system: effectiveSystem,
         prompt: userPrompt,
-        providerOptions: anthropicCacheControl(),
+        providerOptions: buildProviderOptions(providerType),
         ...(maxTokens ? { maxTokens } : {}),
         ...(temperature !== undefined ? { temperature } : {}),
     });

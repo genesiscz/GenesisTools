@@ -25,6 +25,8 @@ export interface ChatConfig {
     temperature?: number;
     maxTokens?: number;
     providerChoice?: ProviderChoice;
+    /** Provider type (e.g. "openai-sub" for WHAM) — used for provider-specific options */
+    providerType?: string;
 }
 
 export interface ChatResponse {

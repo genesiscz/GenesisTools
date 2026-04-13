@@ -1,6 +1,6 @@
 import logger from "@app/logger";
 import type { AIAccount } from "@app/utils/ai/AIAccount";
-import { anthropicCacheControl } from "@app/utils/ai/prompt-caching";
+import { buildProviderOptions } from "@app/utils/ai/prompt-caching";
 import { applySystemPromptPrefix } from "@app/utils/claude/subscription-billing";
 import { SafeJSON } from "@app/utils/json";
 import { estimateTokens } from "@app/utils/tokens";
@@ -82,6 +82,7 @@ export class ChatEngine {
             maxTokens: options.maxTokens,
             temperature: options.temperature,
             providerChoice: { provider, model: selection.model },
+            providerType: provider.type,
         };
 
         const engine = new ChatEngine(config);
@@ -185,7 +186,7 @@ export class ChatEngine {
             messages,
             system: this.getEffectiveSystemPrompt(),
             temperature: this.config.temperature,
-            providerOptions: anthropicCacheControl(),
+            providerOptions: buildProviderOptions(this.config.providerType),
             ...(this.config.maxTokens && { maxOutputTokens: this.config.maxTokens }),
             ...(hasTools && { tools, maxSteps: 5 }),
             onFinish: async ({ usage }) => {
@@ -322,7 +323,7 @@ export class ChatEngine {
             messages,
             system: this.getEffectiveSystemPrompt(),
             temperature: this.config.temperature,
-            providerOptions: anthropicCacheControl(),
+            providerOptions: buildProviderOptions(this.config.providerType),
             ...(this.config.maxTokens && { maxOutputTokens: this.config.maxTokens }),
             ...(hasTools && { tools, maxSteps: 5 }),
         });

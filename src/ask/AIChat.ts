@@ -111,6 +111,7 @@ export class AIChat {
             temperature: this._options.temperature,
             maxTokens: this._options.maxTokens,
             providerChoice: choice,
+            providerType: choice.provider.type,
         };
 
         this._engine = new ChatEngine(config);
