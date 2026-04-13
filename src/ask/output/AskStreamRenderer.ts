@@ -77,7 +77,7 @@ export class AskStreamRenderer {
             meta: { toolName: name },
         };
         const lines = this.renderer.render([block]);
-        this.metaStream.write(`${lines.join("\n")}\n`);
+        this.metaStream.write(`\n${lines.join("\n")}\n`);
     }
 
     /**
@@ -94,7 +94,7 @@ export class AskStreamRenderer {
             meta: { toolName: name, isError: isError ?? false },
         };
         const lines = this.renderer.render([block]);
-        this.metaStream.write(`${lines.join("\n")}\n`);
+        this.metaStream.write(`${lines.join("\n")}\n\n`);
     }
 
     private ensureNewline(): void {
