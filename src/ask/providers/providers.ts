@@ -134,6 +134,87 @@ export const TRANSCRIPTION_PROVIDERS = [
 // Known model configurations for providers that don't have model discovery APIs
 export const KNOWN_MODELS = {
     openai: [
+        // GPT-5.x series
+        {
+            id: "gpt-5.4",
+            name: "GPT-5.4",
+            contextWindow: 1048576,
+            capabilities: ["chat", "vision", "function-calling", "reasoning"],
+            category: "standard",
+        },
+        {
+            id: "gpt-5.3",
+            name: "GPT-5.3",
+            contextWindow: 1048576,
+            capabilities: ["chat", "vision", "function-calling", "reasoning"],
+            category: "standard",
+        },
+        {
+            id: "gpt-5.2",
+            name: "GPT-5.2",
+            contextWindow: 1048576,
+            capabilities: ["chat", "vision", "function-calling", "reasoning"],
+            category: "standard",
+        },
+        {
+            id: "gpt-5.2-codex",
+            name: "GPT-5.2 Codex",
+            contextWindow: 1048576,
+            capabilities: ["chat", "vision", "function-calling", "reasoning"],
+            category: "standard",
+        },
+        {
+            id: "gpt-5",
+            name: "GPT-5",
+            contextWindow: 1048576,
+            capabilities: ["chat", "vision", "function-calling", "reasoning"],
+            category: "standard",
+        },
+        {
+            id: "gpt-5-mini",
+            name: "GPT-5 Mini",
+            contextWindow: 1048576,
+            capabilities: ["chat", "vision", "function-calling"],
+            category: "mini",
+        },
+        // o-series reasoning models
+        {
+            id: "o3",
+            name: "o3",
+            contextWindow: 200000,
+            capabilities: ["chat", "reasoning", "function-calling"],
+            category: "standard",
+        },
+        {
+            id: "o4-mini",
+            name: "o4 Mini",
+            contextWindow: 200000,
+            capabilities: ["chat", "reasoning", "function-calling"],
+            category: "mini",
+        },
+        {
+            id: "o3-mini",
+            name: "o3 Mini",
+            contextWindow: 200000,
+            capabilities: ["chat", "reasoning", "function-calling"],
+            category: "mini",
+        },
+        // GPT-4o series
+        {
+            id: "gpt-4o",
+            name: "GPT-4o",
+            contextWindow: 128000,
+            capabilities: ["chat", "vision", "function-calling"],
+            category: "standard",
+        },
+        {
+            id: "gpt-4o-mini",
+            name: "GPT-4o Mini",
+            contextWindow: 128000,
+            capabilities: ["chat", "vision", "function-calling"],
+            category: "mini",
+        },
+        // Legacy
         {
             id: "gpt-4-turbo",
             name: "GPT-4 Turbo",
@@ -153,20 +234,6 @@ export const KNOWN_MODELS = {
             name: "GPT-3.5 Turbo",
             contextWindow: 16384,
             capabilities: ["chat"],
-            category: "mini",
-        },
-        {
-            id: "gpt-4o",
-            name: "GPT-4o",
-            contextWindow: 128000,
-            capabilities: ["chat", "vision", "function-calling"],
-            category: "standard",
-        },
-        {
-            id: "gpt-4o-mini",
-            name: "GPT-4o Mini",
-            contextWindow: 128000,
-            capabilities: ["chat", "vision", "function-calling"],
             category: "mini",
         },
     ],
