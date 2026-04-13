@@ -1,5 +1,3 @@
-// src/macos/commands/mail/index.ts
-
 import { Command } from "commander";
 import { registerAccountsCommand } from "./accounts";
 import { registerDownloadCommand } from "./download";

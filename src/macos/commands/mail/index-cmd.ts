@@ -3,6 +3,13 @@ import { createProgressCallbacks } from "@app/indexer/lib/progress";
 import { MailSource } from "@app/indexer/lib/sources/mail-source";
 import type { IndexConfig } from "@app/indexer/lib/types";
 import { parseMailDate } from "@app/macos/lib/mail/command-helpers";
+import {
+    getDefaultModel,
+    logProviderChoice,
+    selectEmbeddingModel,
+    selectEmbeddingProvider,
+} from "@app/utils/ai/embedding-selection";
+import { findModel, getEmbeddingProviderTypes } from "@app/utils/ai/ModelRegistry";
 import { isInteractive, suggestCommand } from "@app/utils/cli";
 import { formatBytes, formatDuration } from "@app/utils/format";
 import * as p from "@clack/prompts";
@@ -90,7 +97,7 @@ export function registerIndexCommand(program: Command): void {
 
                 if ((wantsProviderPrompt || wantsModelPrompt) && isInteractive()) {
                     if (!resolvedProvider && wantsProviderPrompt) {
-                        const selection = await selectEmbeddingProvider();
+                        const selection = await selectEmbeddingProvider({ type: "mail" });
 
                         if (!selection) {
                             p.cancel("Cancelled");
@@ -105,7 +112,7 @@ export function registerIndexCommand(program: Command): void {
                     }
 
                     if (wantsModelPrompt && resolvedProvider) {
-                        const selectedModel = await selectEmbeddingModel(resolvedProvider);
+                        const selectedModel = await selectEmbeddingModel(resolvedProvider, "mail");
 
                         if (!selectedModel) {
                             p.cancel("Cancelled");
@@ -124,7 +131,7 @@ export function registerIndexCommand(program: Command): void {
 
                     // Check if user wants to switch provider/model on existing index
                     const requestedModel =
-                        resolvedModel ?? (resolvedProvider ? PROVIDER_DEFAULT_MODELS[resolvedProvider] : undefined);
+                        resolvedModel ?? (resolvedProvider ? getDefaultModel(resolvedProvider, "mail") : undefined);
 
                     if (exists && requestedModel && !opts.rebuildFulltext && !opts.rebuildEmbeddings) {
                         const meta = manager.listIndexes().find((m) => m.name === MAIL_INDEX_NAME);
@@ -215,7 +222,7 @@ export function registerIndexCommand(program: Command): void {
                         const aiConfig = await AIConfig.load();
                         await aiConfig.setAppDefaults("mail", {
                             embeddingProvider: resolvedProvider,
-                            embeddingModel: resolvedModel ?? PROVIDER_DEFAULT_MODELS[resolvedProvider],
+                            embeddingModel: resolvedModel ?? getDefaultModel(resolvedProvider, "mail"),
                         });
                     }
                 } finally {
@@ -227,159 +234,7 @@ export function registerIndexCommand(program: Command): void {
         );
 }
 
-import { getEmbeddingProviderTypes } from "@app/utils/ai/ModelRegistry";
-
-const VALID_EMBEDDING_PROVIDERS = getEmbeddingProviderTypes();
-
-const PROVIDER_DEFAULT_MODELS: Record<string, string> = {
-    ollama: "nomic-embed-text",
-    darwinkit: "darwinkit",
-    coreml: "coreml-contextual",
-};
-
-/** Provider display labels for the selection menu. */
-const PROVIDER_LABELS: Record<string, string> = {
-    "ollama:nomic-embed-text": "Ollama \u2014 nomic-embed-text (768-dim, GPU Metal)",
-    "ollama:snowflake-arctic-embed": "Ollama \u2014 snowflake-arctic-embed (768-dim, GPU)",
-    coreml: "CoreML contextual (512-dim, on-device)",
-    darwinkit: "DarwinKit NL (512-dim, on-device, slow)",
-    cloud: "Cloud \u2014 OpenAI text-embedding-3-small",
-};
-
-interface ProviderSelection {
-    provider: string;
-    model: string;
-}
-
-/** Check if Ollama is running by hitting its API. */
-async function isOllamaRunning(): Promise<boolean> {
-    try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 1000);
-        const res = await fetch("http://localhost:11434/api/tags", { signal: controller.signal });
-        clearTimeout(timeout);
-        return res.ok;
-    } catch {
-        return false;
-    }
-}
-
-/**
- * Interactive provider selection for embedding.
- * Returns provider + model, or null if cancelled.
- */
-async function selectEmbeddingProvider(): Promise<ProviderSelection | null> {
-    const ollamaUp = await isOllamaRunning();
-    const hasOpenAiKey = !!process.env.OPENAI_API_KEY;
-    const isMac = process.platform === "darwin";
-
-    const options: Array<{ value: ProviderSelection; label: string; hint?: string }> = [];
-
-    if (ollamaUp) {
-        options.push({
-            value: { provider: "ollama", model: "nomic-embed-text" },
-            label: PROVIDER_LABELS["ollama:nomic-embed-text"],
-            hint: "recommended",
-        });
-        options.push({
-            value: { provider: "ollama", model: "snowflake-arctic-embed" },
-            label: PROVIDER_LABELS["ollama:snowflake-arctic-embed"],
-        });
-    }
-
-    if (isMac) {
-        options.push({
-            value: { provider: "coreml", model: "coreml-contextual" },
-            label: PROVIDER_LABELS.coreml,
-        });
-        options.push({
-            value: { provider: "darwinkit", model: "darwinkit" },
-            label: PROVIDER_LABELS.darwinkit,
-        });
-    }
-
-    if (hasOpenAiKey) {
-        options.push({
-            value: { provider: "cloud", model: "text-embedding-3-small" },
-            label: PROVIDER_LABELS.cloud,
-        });
-    }
-
-    if (!ollamaUp) {
-        p.log.warning(
-            `Ollama is not running. For best performance:\n` +
-                `  ${pc.dim("$")} ollama serve\n` +
-                `  ${pc.dim("$")} ollama pull nomic-embed-text`
-        );
-    }
-
-    if (options.length === 0) {
-        p.log.error("No embedding providers available. Install Ollama or set OPENAI_API_KEY.");
-        process.exit(1);
-    }
-
-    const choice = await p.select({
-        message: "Embedding provider",
-        options,
-    });
-
-    if (p.isCancel(choice)) {
-        return null;
-    }
-
-    return choice;
-}
-
-/**
- * Interactive model selection within a provider.
- * Shows models from the registry filtered by provider, sorted for mail use.
- */
-async function selectEmbeddingModel(provider: string): Promise<string | null> {
-    const { getEmbedModelsForType } = await import("@app/utils/ai/ModelRegistry");
-    const allModels = getEmbedModelsForType("mail");
-    const providerModels = allModels.filter((m) => m.provider === provider);
-
-    if (providerModels.length === 0) {
-        p.log.error(`No embedding models found for provider: ${provider}`);
-        return null;
-    }
-
-    if (providerModels.length === 1) {
-        return providerModels[0].id;
-    }
-
-    const options = providerModels.map((m) => ({
-        value: m.id,
-        label: `${m.name} (${m.dimensions ?? "?"}${m.dimensions ? "-dim" : ""})`,
-        hint: m.description,
-    }));
-
-    const choice = await p.select({
-        message: `Model for ${provider}`,
-        options,
-    });
-
-    if (p.isCancel(choice)) {
-        return null;
-    }
-
-    return choice;
-}
-
-/** Log the chosen provider + model in a human-friendly way. */
-function logProviderChoice(provider: string, model: string): void {
-    const dimMap: Record<string, string> = {
-        "nomic-embed-text": "768-dim, GPU",
-        "snowflake-arctic-embed": "768-dim, GPU",
-        darwinkit: "512-dim, on-device",
-        "coreml-contextual": "512-dim, on-device",
-        "text-embedding-3-small": "1536-dim, cloud",
-    };
-    const dim = dimMap[model] ?? "";
-    const suffix = dim ? ` (${dim})` : "";
-    const providerName = provider.charAt(0).toUpperCase() + provider.slice(1);
-    p.log.info(`Using model: ${pc.bold(`${providerName} ${model}`)}${suffix}`);
-}
+const VALID_EMBEDDING_PROVIDERS: ReadonlySet<string> = getEmbeddingProviderTypes();
 
 async function createAndSync(
     manager: IndexerManager,
@@ -406,7 +261,7 @@ async function createAndSync(
                 process.exit(1);
             }
 
-            const selection = await selectEmbeddingProvider();
+            const selection = await selectEmbeddingProvider({ type: "mail" });
 
             if (!selection) {
                 p.log.info("Cancelled");
@@ -424,7 +279,7 @@ async function createAndSync(
         // Step 2: Resolve model (interactive if --model without value, or --provider + --model)
         if (!model && provider) {
             if (wantsModelPrompt && isInteractive()) {
-                const selectedModel = await selectEmbeddingModel(provider);
+                const selectedModel = await selectEmbeddingModel(provider, "mail");
 
                 if (!selectedModel) {
                     p.log.info("Cancelled");
@@ -434,7 +289,7 @@ async function createAndSync(
 
                 model = selectedModel;
             } else {
-                model = PROVIDER_DEFAULT_MODELS[provider] ?? provider;
+                model = getDefaultModel(provider, "mail") ?? provider;
             }
         }
 
@@ -444,8 +299,7 @@ async function createAndSync(
     }
 
     if (model && !provider) {
-        const { MODEL_REGISTRY } = await import("@app/indexer/lib/model-registry");
-        const found = MODEL_REGISTRY.find((m) => m.id === model);
+        const found = findModel(model);
         provider = found?.provider;
     }
 

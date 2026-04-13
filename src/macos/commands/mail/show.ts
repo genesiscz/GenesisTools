@@ -1,6 +1,7 @@
 import { EmlxBodyExtractor } from "@app/macos/lib/mail/emlx";
 import { rowToMessage, truncateBody } from "@app/macos/lib/mail/transform";
 import { MailDatabase } from "@app/utils/macos/MailDatabase";
+import { formatBytes } from "@app/utils/format";
 import { SafeJSON } from "@app/utils/json";
 import chalk from "chalk";
 import type { Command } from "commander";
@@ -78,7 +79,7 @@ export function registerShowCommand(program: Command): void {
 
                 console.log(`Date:     ${msg.dateSent.toLocaleString()}`);
                 console.log(`Mailbox:  ${msg.mailbox}`);
-                console.log(`Size:     ${(msg.size / 1024).toFixed(1)} KB`);
+                console.log(`Size:     ${formatBytes(msg.size)}`);
                 console.log(`ID:       ${rowid}`);
 
                 if (msg.attachments.length > 0) {

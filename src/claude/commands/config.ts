@@ -7,6 +7,7 @@ import {
 } from "@app/claude/lib/config";
 import { fetchUsage } from "@app/claude/lib/usage/api";
 import { AIConfig } from "@app/utils/ai/AIConfig";
+import { formatLocalDate } from "@app/utils/date";
 import { claudeOAuth, fetchOAuthProfile, getClaudeJsonAccount } from "@app/utils/claude/auth";
 import { copyToClipboard } from "@app/utils/clipboard";
 import * as p from "@clack/prompts";
@@ -616,8 +617,7 @@ async function configureWeeklyWarmup(config: ClaudeConfig, accountNames: string[
 }
 
 function todayDateString(): string {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    return formatLocalDate(new Date());
 }
 
 async function showConfig(config: ClaudeConfig, aiConfig: AIConfig): Promise<void> {

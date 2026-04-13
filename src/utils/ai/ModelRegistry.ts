@@ -592,8 +592,8 @@ export function getModelsByProvider(task: AITask, provider: string): ReadonlyArr
 }
 
 /** All distinct provider types that have embedding models registered. */
-export function getEmbeddingProviderTypes(): ReadonlySet<string> {
-    const types = new Set<string>();
+export function getEmbeddingProviderTypes(): ReadonlySet<ModelEntry["provider"]> {
+    const types = new Set<ModelEntry["provider"]>();
 
     for (const m of ALL_MODELS) {
         if (m.task === "embed") {

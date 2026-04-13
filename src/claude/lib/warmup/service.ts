@@ -1,5 +1,6 @@
 import type { AccountUsage, UsageResponse } from "@app/claude/lib/usage/api";
 import logger from "@app/logger";
+import { formatLocalDate } from "@app/utils/date";
 
 function currentHour(): number {
     return new Date().getHours();
@@ -14,8 +15,7 @@ function isWithinSchedule(hour: number, startHour: number, endHour: number): boo
 }
 
 function todayDateString(): string {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    return formatLocalDate(new Date());
 }
 
 function shouldWarmSession(usage: UsageResponse, startHour: number, endHour: number): boolean {

@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
+import { discoverEmbeddingProviders } from "@app/utils/ai/embedding-selection";
 import { Embedder } from "@app/utils/ai/tasks/Embedder";
 import { formatBytes, formatDuration } from "@app/utils/format";
 import { SafeJSON } from "@app/utils/json";
@@ -63,13 +64,6 @@ interface CompareResult {
     recommendation: string;
 }
 
-interface DiscoveredProvider {
-    provider: string;
-    model: string;
-    label: string;
-    gpu: string;
-}
-
 // ── Constants ──
 
 const BENCHMARK_QUERIES = [
@@ -79,8 +73,6 @@ const BENCHMARK_QUERIES = [
     "import statements and dependencies",
     "configuration and environment variables",
 ];
-
-const OLLAMA_EMBEDDING_PATTERNS = ["embed", "nomic", "arctic", "mxbai", "bge", "minilm"];
 
 const TARGET_300K = 300_000;
 
@@ -219,65 +211,18 @@ function generateGeneralSample(index: number): string {
 
 // ── Provider discovery ──
 
-async function discoverProviders(): Promise<DiscoveredProvider[]> {
-    const discovered: DiscoveredProvider[] = [];
+async function discoverProviders(sampleType: SampleType) {
+    const type: "mail" | "code" = sampleType === "code" ? "code" : "mail";
+    const all = await discoverEmbeddingProviders(type);
 
-    // Check Ollama
-    try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 1000);
-        const resp = await fetch("http://localhost:11434/api/tags", {
-            signal: controller.signal,
-        });
-        clearTimeout(timeoutId);
-
-        if (resp.ok) {
-            const data = (await resp.json()) as { models: Array<{ name: string }> };
-            const embeddingModels = data.models.filter((m) =>
-                OLLAMA_EMBEDDING_PATTERNS.some((pat) => m.name.toLowerCase().includes(pat))
-            );
-
-            for (const m of embeddingModels) {
-                discovered.push({
-                    provider: "ollama",
-                    model: m.name,
-                    label: "Ollama (Metal GPU)",
-                    gpu: "Metal",
-                });
-            }
-        }
-    } catch {
-        // Ollama not running
-    }
-
-    // Check macOS-only providers
-    if (process.platform === "darwin") {
-        discovered.push({
-            provider: "coreml",
-            model: "NLContextualEmbedding",
-            label: "CoreML (Neural Eng)",
-            gpu: "ANE",
-        });
-
-        discovered.push({
-            provider: "darwinkit",
-            model: "NL sentence",
-            label: "DarwinKit NLP",
-            gpu: "--",
-        });
-    }
-
-    // Check cloud (OpenAI)
-    if (process.env.OPENAI_API_KEY) {
-        discovered.push({
-            provider: "openai",
-            model: "text-embedding-3-small",
-            label: "OpenAI Cloud",
-            gpu: "Cloud",
-        });
-    }
-
-    return discovered;
+    return all
+        .filter((p) => p.available)
+        .map((p) => ({
+            provider: p.provider,
+            model: p.model,
+            label: p.label,
+            gpu: p.gpu,
+        }));
 }
 
 // ── Provider benchmarking ──
@@ -399,7 +344,7 @@ async function runCompareProviders(opts: {
     const spinner = p.spinner();
     spinner.start("Discovering available embedding providers...");
 
-    const providers = await discoverProviders();
+    const providers = await discoverProviders(sampleType);
 
     if (providers.length === 0) {
         spinner.stop("No providers found");
@@ -532,7 +477,7 @@ async function runCompareModels(opts: {
     spinner.start(`Discovering ${provider} embedding models...`);
 
     // Get models for this provider
-    const allProviders = await discoverProviders();
+    const allProviders = await discoverProviders(sampleType);
     const models = allProviders.filter((d) => d.provider === provider);
 
     if (models.length === 0) {

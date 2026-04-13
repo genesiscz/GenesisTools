@@ -282,6 +282,13 @@ export function formatDate(d: Date): string {
 }
 
 /**
+ * Format a Date to "YYYY-MM-DD" using local timezone.
+ */
+export function formatLocalDate(d: Date): string {
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/**
  * Get the ISO week (Mon–Sun) range for a given date.
  */
 export function getWeekRange(date: Date): { start: Date; end: Date } {

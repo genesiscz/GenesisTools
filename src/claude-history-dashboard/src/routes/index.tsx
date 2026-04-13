@@ -18,9 +18,15 @@ function IndexPage() {
 	const [search, setSearch] = useState("");
 
 	// Deduplicate sessions that appear in multiple project dirs
-	const conversations = rawConversations.filter(
-		(conv, i, arr) => arr.findIndex((c) => c.sessionId === conv.sessionId) === i,
-	);
+	const seen = new Set<string>();
+	const conversations = rawConversations.filter((conv) => {
+		if (seen.has(conv.sessionId)) {
+			return false;
+		}
+
+		seen.add(conv.sessionId);
+		return true;
+	});
 
 	const filteredConversations = conversations.filter((conv) => {
 		if (!search) {
