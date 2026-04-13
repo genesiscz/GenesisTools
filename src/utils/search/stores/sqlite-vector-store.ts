@@ -5,6 +5,8 @@ import type { VectorSearchHit, VectorStore } from "./vector-store";
 export interface SqliteVectorStoreConfig {
     tableName: string;
     dimensions: number;
+    /** When true, skip CREATE TABLE — required for read-only DB handles. */
+    skipInit?: boolean;
 }
 
 export class SqliteVectorStore implements VectorStore {
@@ -16,10 +18,12 @@ export class SqliteVectorStore implements VectorStore {
         this.db = db;
         this.embTable = `${config.tableName}_embeddings`;
 
-        this.db.run(`CREATE TABLE IF NOT EXISTS ${this.embTable} (
+        if (!config.skipInit) {
+            this.db.run(`CREATE TABLE IF NOT EXISTS ${this.embTable} (
             doc_id TEXT PRIMARY KEY,
             embedding BLOB NOT NULL
         )`);
+        }
     }
 
     store(id: string, vector: Float32Array): void {
@@ -40,7 +44,7 @@ export class SqliteVectorStore implements VectorStore {
         if (!this.warnedLargeScan && rows.length > 10_000) {
             console.warn(
                 `[indexer] Brute-force vector scan (${rows.length} vectors). ` +
-                    `Run "tools indexer rebuild" to migrate to sqlite-vec for faster search.`
+                    `Run "tools indexer migrate-vec" to convert to sqlite-vec for faster search.`
             );
             this.warnedLargeScan = true;
         }
