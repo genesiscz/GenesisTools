@@ -16,6 +16,16 @@ export interface SerializableConversation {
 	isSubagent: boolean;
 }
 
+export interface SidebarSession {
+	sessionId: string;
+	project: string;
+	summary?: string;
+	customTitle?: string;
+	timestamp: string;
+	isSubagent: boolean;
+	messageCount: number;
+}
+
 export interface SerializableConversationDetail extends SerializableConversation {
 	messages: Array<{
 		type: string;
