@@ -62,6 +62,32 @@ export function readLiveStats(db: Database, indexName: string, dbPath: string): 
     return result;
 }
 
+export interface SearchStatsByMode {
+    mode: string;
+    count: number;
+    avgDurationMs: number;
+}
+
+/**
+ * Read per-mode search stats from the search_log table.
+ * Returns an empty array if the table doesn't exist yet.
+ */
+export function readSearchStatsByMode(db: Database): SearchStatsByMode[] {
+    try {
+        return db
+            .query(
+                `SELECT mode, COUNT(*) AS count, AVG(duration_ms) AS avgDurationMs
+                 FROM search_log
+                 GROUP BY mode
+                 ORDER BY count DESC`
+            )
+            .all() as SearchStatsByMode[];
+    } catch {
+        // search_log table may not exist yet
+        return [];
+    }
+}
+
 /**
  * Indexer-specific storage wrapper.
  * Single source of truth for `new Storage("indexer")` — all indexer code
