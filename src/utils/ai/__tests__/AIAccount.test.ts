@@ -22,9 +22,14 @@ describe("AIAccount", () => {
     });
 
     describe("chooseCodex()", () => {
-        it("creates an account handle with openai provider", () => {
+        it("creates an account handle with openai-sub provider by default", () => {
             const account = AIAccount.chooseCodex("my-openai");
             expect(account.name).toBe("my-openai");
+            expect(account.providerType).toBe("openai-sub");
+        });
+
+        it("accepts explicit provider type override", () => {
+            const account = AIAccount.chooseCodex("my-openai", "openai");
             expect(account.providerType).toBe("openai");
         });
     });
@@ -83,8 +88,13 @@ describe("AIAccount", () => {
     });
 
     describe("provider() error cases", () => {
-        it("throws when API key is missing for cloud provider", async () => {
+        it("throws when account not found for openai-sub provider", async () => {
             const account = AIAccount.chooseCodex("test-codex");
+            await expect(account.provider()).rejects.toThrow("not found");
+        });
+
+        it("throws when API key is missing for openai provider", async () => {
+            const account = AIAccount.chooseCodex("test-codex", "openai");
             await expect(account.provider()).rejects.toThrow("No API key found");
         });
     });

@@ -31,6 +31,7 @@ interface OldAIConfig {
     classify?: { provider: string; model?: string };
     embed?: { provider: string; model?: string };
     sentiment?: { provider: string; model?: string };
+    tts?: { provider: string; model?: string };
 }
 
 interface OldAccountConfig {
@@ -98,9 +99,10 @@ const DEFAULT_TASKS: Record<string, TaskConfig> = {
     classify: { provider: "darwinkit" },
     embed: { provider: "darwinkit" },
     sentiment: { provider: "darwinkit" },
+    tts: { provider: "cloud" },
 };
 
-const TASK_KEYS = ["transcribe", "translate", "summarize", "classify", "embed", "sentiment"];
+const TASK_KEYS = ["transcribe", "translate", "summarize", "classify", "embed", "sentiment", "tts"];
 
 // ── Helpers ──
 

@@ -40,17 +40,24 @@ export async function ensureResolversInitialized(): Promise<void> {
         return;
     }
 
-    const [{ AnthropicSubResolver }, { AnthropicApiKeyResolver }, { OpenAIApiKeyResolver }, { HuggingFaceResolver }] =
-        await Promise.all([
-            import("./AnthropicSubResolver"),
-            import("./AnthropicApiKeyResolver"),
-            import("./OpenAIApiKeyResolver"),
-            import("./HuggingFaceResolver"),
-        ]);
+    const [
+        { AnthropicSubResolver },
+        { AnthropicApiKeyResolver },
+        { OpenAIApiKeyResolver },
+        { OpenAISubResolver },
+        { HuggingFaceResolver },
+    ] = await Promise.all([
+        import("./AnthropicSubResolver"),
+        import("./AnthropicApiKeyResolver"),
+        import("./OpenAIApiKeyResolver"),
+        import("./OpenAISubResolver"),
+        import("./HuggingFaceResolver"),
+    ]);
 
     registerResolver(new AnthropicSubResolver());
     registerResolver(new AnthropicApiKeyResolver());
     registerResolver(new OpenAIApiKeyResolver());
+    registerResolver(new OpenAISubResolver());
     registerResolver(new HuggingFaceResolver());
 
     initialized = true;

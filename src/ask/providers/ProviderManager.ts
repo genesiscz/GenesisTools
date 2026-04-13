@@ -707,7 +707,7 @@ export class ProviderManager {
 
             // Try a minimal request to validate the provider
             const modelId = provider.models[0]?.id || "default";
-            const model = getLanguageModel(provider.provider, modelId);
+            const model = getLanguageModel(provider.provider, modelId, provider.type);
             await generateText({
                 model,
                 prompt: "test",

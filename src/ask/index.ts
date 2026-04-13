@@ -635,7 +635,7 @@ class ASKTool {
     private rawSystemPrompt = "";
 
     private async createChatConfig(modelChoice: ProviderChoice, argv: CLIOptions): Promise<ChatConfig> {
-        const model = getLanguageModel(modelChoice.provider.provider, modelChoice.model.id);
+        const model = getLanguageModel(modelChoice.provider.provider, modelChoice.model.id, modelChoice.provider.type);
         const baseSystem = createSystemPrompt(argv.systemPrompt) ?? "";
         const contextBlock = argv.noContext ? undefined : await loadAskContext(process.cwd(), 4000);
         this.rawSystemPrompt = [baseSystem, contextBlock].filter(Boolean).join("\n\n");

@@ -101,7 +101,7 @@ export class AIChat {
         }
 
         // Create ChatEngine — providerChoice enables automatic system prompt prefix
-        const languageModel = getLanguageModel(choice.provider.provider, choice.model.id);
+        const languageModel = getLanguageModel(choice.provider.provider, choice.model.id, choice.provider.type);
         const config: ChatConfig = {
             model: languageModel,
             provider: choice.provider.name,
