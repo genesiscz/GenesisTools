@@ -21,8 +21,8 @@ export function registerMessagesListCommand(program: Command): void {
                 service: opts.service,
                 from: opts.from ? parseMailDate(opts.from) : undefined,
                 to: opts.to ? parseMailDate(opts.to, true) : undefined,
-                limit: parseInt(opts.limit, 10),
-                page: opts.page ? parseInt(opts.page, 10) : undefined,
+                limit: Number.parseInt(opts.limit, 10),
+                page: opts.page ? Number.parseInt(opts.page, 10) : undefined,
             });
 
             if (chats.length === 0) {

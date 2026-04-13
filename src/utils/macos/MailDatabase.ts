@@ -1,5 +1,3 @@
-import { Database } from "bun:sqlite";
-import { existsSync } from "node:fs";
 import logger from "@app/logger";
 import { ENVELOPE_INDEX_PATH } from "@app/macos/lib/mail/constants";
 import type {
@@ -10,8 +8,7 @@ import type {
     ReceiverInfo,
     SearchOptions,
 } from "@app/macos/lib/mail/types";
-import { MacOS } from "@app/utils/macos/MacOS";
-import { detectTerminalApp } from "@app/utils/terminal";
+import { MacDatabase } from "./MacDatabase";
 
 interface FilterOptions {
     from?: Date;
@@ -73,61 +70,10 @@ function buildFilters(opts: FilterOptions, params: Record<string, string | numbe
     return filters;
 }
 
-export class MailDatabase {
-    private db: Database | null = null;
-
-    constructor() {
-        process.on("exit", () => this.close());
-    }
-
-    private getDb(): Database {
-        if (this.db) {
-            return this.db;
-        }
-
-        if (!existsSync(ENVELOPE_INDEX_PATH)) {
-            throw new Error(
-                `Mail database not found at: ${ENVELOPE_INDEX_PATH}\n` +
-                    "Make sure Mail.app is configured and has downloaded messages."
-            );
-        }
-
-        logger.debug(`Opening Mail database at ${ENVELOPE_INDEX_PATH} (readonly)`);
-
-        try {
-            this.db = new Database(ENVELOPE_INDEX_PATH, { readonly: true });
-        } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
-
-            if (
-                message.includes("authorization denied") ||
-                message.includes("not authorized") ||
-                message.includes("EPERM")
-            ) {
-                const termApp = detectTerminalApp();
-                MacOS.settings.openFullDiskAccess();
-
-                throw new Error(
-                    [
-                        "Full Disk Access is required to read the Mail database.",
-                        `Opening System Settings → Privacy & Security → Full Disk Access...`,
-                        `Add "${termApp}" to the list, then restart your terminal.`,
-                    ].join("\n")
-                );
-            }
-
-            throw err;
-        }
-
-        return this.db;
-    }
-
-    close(): void {
-        if (this.db) {
-            this.db.close();
-            this.db = null;
-        }
-    }
+export class MailDatabase extends MacDatabase {
+    protected readonly dbPath = ENVELOPE_INDEX_PATH;
+    protected readonly dbLabel = "Mail database";
+    protected readonly notFoundMessage = "Make sure Mail.app is configured and has downloaded messages.";
 
     searchMessages(opts: SearchOptions): MailMessageRow[] {
         const db = this.getDb();

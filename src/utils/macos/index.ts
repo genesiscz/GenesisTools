@@ -2,6 +2,10 @@
 
 export type { CalendarEventInfo, CalendarInfo, SourceInfo } from "./apple-calendar";
 export { MacCalendar } from "./apple-calendar";
+// Database base class
+export { MacDatabase } from "./MacDatabase";
+// Mail Database
+export { MailDatabase } from "./MailDatabase";
 export type { ReminderInfo, ReminderListInfo } from "./apple-reminders";
 // Apple Reminders
 export {

@@ -1,11 +1,7 @@
-import { Database } from "bun:sqlite";
-import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import logger from "@app/logger";
-import { MacOS } from "@app/utils/macos/MacOS";
-import { detectTerminalApp } from "@app/utils/terminal";
 import { MacContactsDatabase } from "./MacContactsDatabase";
+import { MacDatabase } from "./MacDatabase";
 
 // --- Constants ---
 
@@ -151,61 +147,10 @@ function computeOffset(limit: number, page?: number): number {
 
 // --- Database Class ---
 
-export class iMessagesDatabase {
-    private db: Database | null = null;
-
-    constructor() {
-        process.on("exit", () => this.close());
-    }
-
-    private getDb(): Database {
-        if (this.db) {
-            return this.db;
-        }
-
-        if (!existsSync(IMESSAGE_DB_PATH)) {
-            throw new Error(
-                `iMessage database not found at: ${IMESSAGE_DB_PATH}\n` +
-                    "Make sure Messages.app has been used on this Mac."
-            );
-        }
-
-        logger.debug(`Opening iMessage database at ${IMESSAGE_DB_PATH} (readonly)`);
-
-        try {
-            this.db = new Database(IMESSAGE_DB_PATH, { readonly: true });
-        } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
-
-            if (
-                message.includes("authorization denied") ||
-                message.includes("not authorized") ||
-                message.includes("EPERM")
-            ) {
-                const termApp = detectTerminalApp();
-                MacOS.settings.openFullDiskAccess();
-
-                throw new Error(
-                    [
-                        "Full Disk Access is required to read the iMessage database.",
-                        "Opening System Settings → Privacy & Security → Full Disk Access...",
-                        `Add "${termApp}" to the list, then restart your terminal.`,
-                    ].join("\n")
-                );
-            }
-
-            throw err;
-        }
-
-        return this.db;
-    }
-
-    close(): void {
-        if (this.db) {
-            this.db.close();
-            this.db = null;
-        }
-    }
+export class iMessagesDatabase extends MacDatabase {
+    protected readonly dbPath = IMESSAGE_DB_PATH;
+    protected readonly dbLabel = "iMessage database";
+    protected readonly notFoundMessage = "Make sure Messages.app has been used on this Mac.";
 
     /**
      * List all conversations, ordered by most recent message.
@@ -346,7 +291,6 @@ export class iMessagesDatabase {
 
         if (options?.includeAttachments) {
             this.attachAttachments(
-                db,
                 messages,
                 rows.map((r) => r.rowid)
             );
@@ -501,7 +445,7 @@ export class iMessagesDatabase {
         }
 
         const msg = this.rawToMessageInfo(row);
-        this.attachAttachments(db, [msg], [row.rowid]);
+        this.attachAttachments([msg], [row.rowid]);
         return msg;
     }
 
@@ -678,7 +622,8 @@ export class iMessagesDatabase {
         };
     }
 
-    private attachAttachments(db: Database, messages: MessageInfo[], rowids: number[]): void {
+    private attachAttachments(messages: MessageInfo[], rowids: number[]): void {
+        const db = this.getDb();
         if (rowids.length === 0) {
             return;
         }

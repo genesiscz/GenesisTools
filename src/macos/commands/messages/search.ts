@@ -21,8 +21,8 @@ export function registerMessagesSearchCommand(program: Command): void {
                 chatIdentifier: opts.chat,
                 from: opts.from ? parseMailDate(opts.from) : undefined,
                 to: opts.to ? parseMailDate(opts.to, true) : undefined,
-                limit: parseInt(opts.limit, 10),
-                page: opts.page ? parseInt(opts.page, 10) : undefined,
+                limit: Number.parseInt(opts.limit, 10),
+                page: opts.page ? Number.parseInt(opts.page, 10) : undefined,
             });
 
             if (messages.length === 0) {
