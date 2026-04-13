@@ -1,7 +1,19 @@
 import { SafeJSON } from "@app/utils/json";
-import type { AIEmbeddingProvider, AIProvider, AITask, EmbeddingResult, EmbedOptions } from "../types";
+import type {
+    AIEmbeddingProvider,
+    AIProvider,
+    AISummarizationProvider,
+    AITask,
+    AITranslationProvider,
+    EmbeddingResult,
+    EmbedOptions,
+    SummarizationResult,
+    SummarizeOptions,
+    TranslateOptions,
+    TranslationResult,
+} from "../types";
 
-const SUPPORTED_TASKS: AITask[] = ["embed"];
+const SUPPORTED_TASKS: AITask[] = ["embed", "summarize", "translate"];
 
 const DEFAULT_OLLAMA_URL = "http://localhost:11434";
 
@@ -18,18 +30,24 @@ export interface AIOllamaProviderOptions {
     baseUrl?: string;
     /** Default model for embedding. Default: nomic-embed-text */
     defaultModel?: string;
+    /** Default model for LLM chat tasks (summarize, translate). Default: llama3.2 */
+    defaultLlmModel?: string;
 }
 
-export class AIOllamaProvider implements AIProvider, AIEmbeddingProvider {
+export class AIOllamaProvider
+    implements AIProvider, AIEmbeddingProvider, AISummarizationProvider, AITranslationProvider
+{
     readonly type = "ollama" as const;
     private _dimensions: number;
     private baseUrl: string;
     private defaultModel: string;
+    private defaultLlmModel: string;
     private available: boolean | null = null;
 
     constructor(options?: AIOllamaProviderOptions) {
         this.baseUrl = (options?.baseUrl ?? DEFAULT_OLLAMA_URL).replace(/\/$/, "");
         this.defaultModel = options?.defaultModel ?? "nomic-embed-text";
+        this.defaultLlmModel = options?.defaultLlmModel ?? "llama3.2";
         // Default dimensions for nomic-embed-text. Updated from first actual response.
         this._dimensions = 768;
     }
@@ -112,6 +130,54 @@ export class AIOllamaProvider implements AIProvider, AIEmbeddingProvider {
                 }
             }
         }
+    }
+
+    private async chat(messages: Array<{ role: string; content: string }>, model?: string): Promise<string> {
+        const resp = await fetch(`${this.baseUrl}/api/chat`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: SafeJSON.stringify({
+                model: model ?? this.defaultLlmModel,
+                messages,
+                stream: false,
+            }),
+        });
+
+        if (!resp.ok) {
+            throw new Error(`Ollama /api/chat failed: ${resp.status} ${resp.statusText}`);
+        }
+
+        const data = (await resp.json()) as { message: { content: string } };
+        return data.message.content;
+    }
+
+    async summarize(text: string, options?: SummarizeOptions): Promise<SummarizationResult> {
+        const maxLength = options?.maxLength ? ` Keep it under ${options.maxLength} characters.` : "";
+        const summary = await this.chat(
+            [
+                { role: "system", content: `Summarize the following text concisely.${maxLength}` },
+                { role: "user", content: text },
+            ],
+            options?.model
+        );
+
+        return { summary, originalLength: text.length };
+    }
+
+    async translate(text: string, options: TranslateOptions): Promise<TranslationResult> {
+        const fromLang = options.from ? ` from ${options.from}` : "";
+        const result = await this.chat(
+            [
+                {
+                    role: "system",
+                    content: `Translate the following text${fromLang} to ${options.to}. Return only the translation.`,
+                },
+                { role: "user", content: text },
+            ],
+            options.model
+        );
+
+        return { text: result, from: options.from ?? "auto", to: options.to };
     }
 
     async embed(text: string, options?: EmbedOptions): Promise<EmbeddingResult> {
