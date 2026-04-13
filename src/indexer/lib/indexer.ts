@@ -1,9 +1,11 @@
 import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import logger from "@app/logger";
+import { findModel } from "@app/utils/ai/ModelRegistry";
 import type { Embedder } from "@app/utils/ai/tasks/Embedder";
 import type { WatcherSubscription } from "@app/utils/fs/watcher";
+import { Stopwatch } from "@app/utils/Stopwatch";
 import type { SearchOptions, SearchResult } from "@app/utils/search/types";
-import { Storage } from "@app/utils/storage/storage";
 import type { ChunkResult } from "./chunker";
 import { chunkFile } from "./chunker";
 import type { EventName, IndexerCallbacks, IndexerEventMap, SyncStats } from "./events";
@@ -12,10 +14,11 @@ import type { ModelInfo } from "./model-registry";
 import { formatModelTable, getMaxEmbedChars, getModelsForType, getTaskPrefix } from "./model-registry";
 import { FileSource } from "./sources/file-source";
 import type { IndexerSource, SourceEntry } from "./sources/source";
+import { getIndexerStorage } from "./storage";
 import type { IndexStore } from "./store";
 import { createIndexStore } from "./store";
 import type { ChunkRecord, IndexConfig, IndexStats } from "./types";
-import { DEFAULT_WATCH_INTERVAL_MS, EMBEDDING_BATCH_SIZE } from "./types";
+import { DEFAULT_WATCH_INTERVAL_MS, EMBEDDING_BATCH_SIZE, PROVIDER_BATCH_SIZES } from "./types";
 
 export interface SyncOptions extends IndexerCallbacks {
     scanOptions?: Pick<import("./sources/source").ScanOptions, "fromDate" | "toDate">;
@@ -85,6 +88,34 @@ export class Indexer extends IndexerEventEmitter {
         this.store = store;
         this.config = config;
         this.source = source;
+    }
+
+    /**
+     * Derive chunk maxTokens from the embedding model's context window.
+     * For "message" chunking (mail/chat), use the model's full context so each message = 1 chunk.
+     * For code/files, keep the default 500 for fine-grained search.
+     */
+    private deriveMaxTokens(): number {
+        const DEFAULT_MAX_TOKENS = 500;
+        const strategy = this.config.chunking ?? "auto";
+        const isMessageType = strategy === "message" || this.config.type === "mail" || this.config.type === "chat";
+
+        if (!isMessageType) {
+            return this.config.chunkMaxTokens ?? DEFAULT_MAX_TOKENS;
+        }
+
+        const modelId = this.config.embedding?.model;
+
+        if (modelId) {
+            const model = findModel(modelId);
+
+            if (model?.contextLength) {
+                return model.contextLength;
+            }
+        }
+
+        // Sensible default for message types — most modern embedding models support 8192
+        return 8192;
     }
 
     static async create(config: IndexConfig): Promise<Indexer> {
@@ -497,15 +528,7 @@ export class Indexer extends IndexerEventEmitter {
         const maxEmbedChars = getMaxEmbedChars(modelId);
         const taskPrefix = getTaskPrefix(modelId);
         const providerType = this.config.embedding?.provider;
-        const embedBatchSize =
-            providerType === "ollama"
-                ? 500
-                : providerType === "google"
-                  ? 100
-                  : providerType === "cloud"
-                    ? 2048
-                    : EMBEDDING_BATCH_SIZE;
-        const embedStart = performance.now();
+        const embedBatchSize = PROVIDER_BATCH_SIZES[providerType ?? ""] ?? EMBEDDING_BATCH_SIZE;
         // Match DB page to batch size so each page = ~1 HTTP call
         const dbPageSize = Math.max(1000, embedBatchSize);
         let embedded = 0;
@@ -513,28 +536,39 @@ export class Indexer extends IndexerEventEmitter {
         const zeroDims = this.embedder.dimensions;
 
         // Stop signal file for cross-process cancellation
-        const storage = new Storage("indexer");
-        const stopFile = join(storage.getBaseDir(), this.config.name, "stop.signal");
+        const stopFile = join(getIndexerStorage().getIndexDir(this.config.name), "stop.signal");
+
+        const embedSw = new Stopwatch();
+        logger.debug(
+            `[embed] starting: provider=${providerType}, model=${modelId}, batchSize=${embedBatchSize}, pageSize=${dbPageSize}, maxChars=${maxEmbedChars}`
+        );
 
         // Stream pages: query -> batch embed -> store -> next page
         while (true) {
+            const pageSw = new Stopwatch();
             const page = this.store.getUnembeddedChunksPage(dbPageSize);
+            const dbReadLap = pageSw.lap();
 
             if (page.length === 0) {
                 break;
             }
 
+            logger.debug(`[embed] page ${pageCount + 1}: fetched ${page.length} chunks in ${dbReadLap}`);
+
             const batchEmbeddings = new Map<string, Float32Array>();
+            let pageEmbedMs = 0;
 
             // Process page in embedding batches
             for (let i = 0; i < page.length; i += embedBatchSize) {
                 const batch = page.slice(i, i + embedBatchSize);
                 const textsToEmbed: string[] = [];
                 const idsToEmbed: string[] = [];
+                let skippedShort = 0;
 
                 for (const c of batch) {
                     if (c.content.length < 5) {
                         batchEmbeddings.set(c.id, new Float32Array(zeroDims));
+                        skippedShort++;
                         continue;
                     }
 
@@ -549,8 +583,18 @@ export class Indexer extends IndexerEventEmitter {
                 }
 
                 if (textsToEmbed.length > 0) {
+                    const avgChars = Math.round(textsToEmbed.reduce((s, t) => s + t.length, 0) / textsToEmbed.length);
+                    const batchSw = new Stopwatch();
+
                     try {
                         const results = await this.embedder.embedBatch(textsToEmbed);
+                        const batchMs = batchSw.elapsedMs;
+                        pageEmbedMs += batchMs;
+
+                        const rate = (textsToEmbed.length / batchMs) * 1000;
+                        logger.debug(
+                            `[embed] batch ${Math.floor(i / embedBatchSize) + 1}: ${textsToEmbed.length} texts (avg ${avgChars} chars${skippedShort > 0 ? `, ${skippedShort} skipped` : ""}) → ${batchSw.elapsed()} (${rate.toFixed(0)} emb/s)`
+                        );
 
                         for (let j = 0; j < results.length; j++) {
                             batchEmbeddings.set(idsToEmbed[j], results[j].vector);
@@ -589,8 +633,16 @@ export class Indexer extends IndexerEventEmitter {
 
             // Single DB transaction for all embeddings in this page
             await this.store.insertChunks([], batchEmbeddings);
+            const dbWriteLap = pageSw.lap();
             embedded += batchEmbeddings.size;
             pageCount++;
+
+            const pageTotalMs = pageSw.elapsedMs;
+            logger.debug(
+                `[embed] page ${pageCount} done: ${batchEmbeddings.size} embeddings, ` +
+                    `embed=${pageEmbedMs.toFixed(0)}ms, dbRead=${dbReadLap}, dbWrite=${dbWriteLap}, ` +
+                    `total=${pageSw.elapsed()} (embed ${((pageEmbedMs / pageTotalMs) * 100).toFixed(0)}%)`
+            );
 
             this.emitAndDispatch(
                 "embed:progress",
@@ -625,7 +677,12 @@ export class Indexer extends IndexerEventEmitter {
             }
         }
 
-        const embedDuration = performance.now() - embedStart;
+        const embedDurationMs = embedSw.elapsedMs;
+        const overallRate = embedded > 0 ? (embedded / embedDurationMs) * 1000 : 0;
+        logger.debug(
+            `[embed] complete: ${embedded} embeddings in ${embedSw.elapsed()} ` +
+                `(${overallRate.toFixed(0)} emb/s overall, ${pageCount} pages)`
+        );
 
         this.emitAndDispatch(
             "embed:complete",
@@ -633,7 +690,7 @@ export class Indexer extends IndexerEventEmitter {
                 indexName: this.config.name,
                 embedded,
                 skipped: 0,
-                durationMs: embedDuration,
+                durationMs: embedDurationMs,
             },
             callbacks
         );
@@ -647,7 +704,7 @@ export class Indexer extends IndexerEventEmitter {
         const { mode, callbacks } = opts;
         const syncStart = performance.now();
         const strategy = this.config.chunking ?? "auto";
-        const maxTokens = this.config.chunkMaxTokens ?? 500;
+        const maxTokens = this.deriveMaxTokens();
         const pathHashStore = this.store.getPathHashStore();
 
         // Reset cancellation flag at start of each sync
@@ -667,6 +724,11 @@ export class Indexer extends IndexerEventEmitter {
             // Skip for sinceId scans — we only process new entries, no deletion detection needed.
             const previousHashes = sinceId ? new Map<string, string>() : pathHashStore.getAllFiles();
 
+            const sw = new Stopwatch();
+            logger.debug(
+                `[scan] starting: mode=${mode}, sinceId=${sinceId ?? "none"}, strategy=${strategy}, maxTokens=${maxTokens}`
+            );
+
             this.emitAndDispatch(
                 "scan:start",
                 {
@@ -682,7 +744,9 @@ export class Indexer extends IndexerEventEmitter {
                 fromDate: opts.scanOptions?.fromDate,
                 toDate: opts.scanOptions?.toDate,
                 onBatch: async (batch) => {
+                    const batchSw = new Stopwatch();
                     const { chunks, pathEntries, perEntry } = await this.chunkEntries(batch, strategy, maxTokens);
+                    const chunkLap = batchSw.lap();
 
                     if (chunks.length > 0) {
                         await this.store.insertChunks(chunks);
@@ -693,6 +757,8 @@ export class Indexer extends IndexerEventEmitter {
                         pathHashStore.upsert(pe.path, pe.hash, true);
                     }
 
+                    const dbLap = batchSw.lap();
+
                     for (const entry of batch) {
                         storedInBatch.add(entry.id);
                     }
@@ -700,16 +766,23 @@ export class Indexer extends IndexerEventEmitter {
                     chunksAddedInBatch += chunks.length;
                     batchCount++;
 
+                    logger.debug(
+                        `[scan] batch ${batchCount}: ${batch.length} entries → ${chunks.length} chunks, ` +
+                            `chunk=${chunkLap}, dbWrite=${dbLap}, total=${storedInBatch.size} stored ${sw}`
+                    );
+
                     // Update metadata every 10 batches for crash-recovery display
                     if (batchCount % 10 === 0) {
+                        const liveStats = this.store.getStats();
+
                         this.store.updateMeta({
                             lastSyncAt: Date.now(),
                             stats: {
                                 totalFiles: pathHashStore.getFileCount(),
-                                totalChunks: this.store.getStats().totalChunks,
-                                totalEmbeddings: 0,
+                                totalChunks: liveStats.totalChunks,
+                                totalEmbeddings: liveStats.totalEmbeddings,
                                 embeddingDimensions: this.embedder?.dimensions ?? 0,
-                                dbSizeBytes: 0,
+                                dbSizeBytes: liveStats.dbSizeBytes,
                                 lastSyncDurationMs: 0,
                                 searchCount: 0,
                                 avgSearchDurationMs: 0,
@@ -749,6 +822,10 @@ export class Indexer extends IndexerEventEmitter {
                     );
                 },
             });
+
+            logger.debug(
+                `[scan] complete: ${sourceEntries.length} entries, ${chunksAddedInBatch} chunks in ${batchCount} batches, ${sw.elapsed()}`
+            );
 
             // ── Phase 2: DETECT CHANGES + STORE REMAINING ────────────
             let chunksFromRemaining = 0;

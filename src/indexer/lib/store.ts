@@ -1,16 +1,18 @@
 import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
-import type { Embedder } from "@app/utils/ai/tasks/Embedder";
+import logger from "@app/logger";
+import { Embedder } from "@app/utils/ai/tasks/Embedder";
 import { acquireLock, type LockHandle } from "@app/utils/fs/lock";
 import { SafeJSON } from "@app/utils/json";
 import { SearchEngine } from "@app/utils/search/drivers/sqlite-fts5/index";
 import type { QdrantVectorStore } from "@app/utils/search/stores/qdrant-vector-store";
+import { ensureExtensionCapableSQLite, loadSqliteVec } from "@app/utils/search/stores/sqlite-vec-loader";
 import type { VectorStore } from "@app/utils/search/stores/vector-store";
 import type { SearchOptions, SearchResult } from "@app/utils/search/types";
-import { Storage } from "@app/utils/storage/storage";
 import { deserializeMerkleTree } from "./merkle";
 import { PathHashStore } from "./path-hashes";
+import { getDbSizeBytes, getIndexerStorage, sanitizeName } from "./storage";
 import {
     type ChunkRecord,
     emptyStats,
@@ -67,10 +69,6 @@ interface ChunkDoc extends Record<string, unknown> {
     content: string;
     name: string;
     filePath: string;
-}
-
-function sanitizeName(name: string): string {
-    return name.replace(/[^a-zA-Z0-9_]/g, "_");
 }
 
 /** Max bind parameters per SQL IN(...) clause */
@@ -164,9 +162,148 @@ function migrateFromMerkleBlob(db: Database, pathHashStore: PathHashStore): void
     db.run("DROP TABLE merkle_tree");
 }
 
+export type ReadonlySearchMode = "fulltext" | "hybrid" | "vector" | "auto";
+
+export interface ReadonlySearchOptions {
+    mode?: ReadonlySearchMode;
+    limit?: number;
+    /** When false, skip vector-store/embedder construction even if hybrid/vector requested. Default: true. */
+    enableVector?: boolean;
+}
+
+async function createReadonlyEmbedder(meta: IndexMeta): Promise<Embedder | null> {
+    if (!meta.indexEmbedding) {
+        return null;
+    }
+
+    try {
+        return await Embedder.create({
+            provider: meta.indexEmbedding.provider,
+            model: meta.indexEmbedding.model,
+        });
+    } catch (err) {
+        logger.debug(
+            `[searchIndexReadonly] failed to construct embedder (${meta.indexEmbedding.provider}/${meta.indexEmbedding.model}): ${err instanceof Error ? err.message : String(err)}`
+        );
+        return null;
+    }
+}
+
+/**
+ * Search an index in read-only mode — no lock, safe for concurrent access.
+ * Uses SQLite WAL mode's natural concurrent-read support.
+ *
+ * Supports fulltext, hybrid, vector, and "auto" (picks hybrid when the index
+ * has stored embeddings and an embedder can be constructed, else fulltext).
+ * Always falls back to fulltext on embedder/extension failure — never throws.
+ */
+export async function searchIndexReadonly(
+    indexName: string,
+    query: string,
+    opts?: ReadonlySearchOptions
+): Promise<SearchResult<ChunkRecord>[]> {
+    const indexDir = getIndexerStorage().getIndexDir(indexName);
+    const dbPath = join(indexDir, "index.db");
+
+    if (!existsSync(dbPath)) {
+        throw new Error(`Index "${indexName}" database not found at ${dbPath}`);
+    }
+
+    // sqlite-vec needs extension-capable SQLite loaded BEFORE any Database() in this process.
+    ensureExtensionCapableSQLite();
+
+    const db = new Database(dbPath, { readonly: true });
+    const tableName = sanitizeName(indexName);
+
+    try {
+        const meta = readMeta(db, { name: indexName } as IndexConfig, Date.now());
+        const hasEmbeddings = (meta.stats?.totalEmbeddings ?? 0) > 0 && !!meta.indexEmbedding;
+
+        const requestedMode = opts?.mode ?? "auto";
+        let resolvedMode: "fulltext" | "hybrid" | "vector";
+
+        if (requestedMode === "auto") {
+            resolvedMode = hasEmbeddings ? "hybrid" : "fulltext";
+        } else {
+            resolvedMode = requestedMode;
+        }
+
+        // Construct embedder only when we actually need vectors at query time.
+        let embedder: Embedder | undefined;
+        // Choose vector driver based on which table the index actually uses.
+        let vectorDriver: "sqlite-vec" | "sqlite-brute" | undefined;
+
+        if (resolvedMode !== "fulltext" && opts?.enableVector !== false) {
+            const vecTableExists = !!db
+                .query("SELECT name FROM sqlite_master WHERE type='table' AND name=?")
+                .get(`${tableName}_vec`);
+            const embTableExists = !!db
+                .query("SELECT name FROM sqlite_master WHERE type='table' AND name=?")
+                .get(`${tableName}_embeddings`);
+
+            if (!vecTableExists && !embTableExists) {
+                logger.warn(
+                    `[searchIndexReadonly] index "${indexName}" has no vector tables — falling back to fulltext`
+                );
+                resolvedMode = "fulltext";
+            } else {
+                if (vecTableExists) {
+                    loadSqliteVec(db);
+                    vectorDriver = "sqlite-vec";
+                } else {
+                    vectorDriver = "sqlite-brute";
+                }
+
+                const e = await createReadonlyEmbedder(meta);
+
+                if (!e) {
+                    logger.warn(
+                        `[searchIndexReadonly] index "${indexName}" requested ${resolvedMode} but no embedder available — falling back to fulltext`
+                    );
+                    resolvedMode = "fulltext";
+                    vectorDriver = undefined;
+                } else if (meta.indexEmbedding && e.dimensions !== meta.indexEmbedding.dimensions) {
+                    logger.warn(
+                        `[searchIndexReadonly] embedder dimensions ${e.dimensions} ≠ stored ${meta.indexEmbedding.dimensions} — falling back to fulltext`
+                    );
+                    resolvedMode = "fulltext";
+                    vectorDriver = undefined;
+                } else {
+                    embedder = e;
+                }
+            }
+        }
+
+        const fts = SearchEngine.fromDatabase<ChunkDoc>(db, {
+            tableName,
+            schema: {
+                textFields: ["content", "name", "filePath"],
+                idField: "id",
+                vectorField: "content",
+            },
+            embedder,
+            vectorDriver,
+            skipSchemaInit: true,
+        });
+
+        const results = await fts.search({
+            query,
+            mode: resolvedMode,
+            limit: opts?.limit ?? 100,
+        });
+
+        return results.map((r: SearchResult<ChunkDoc>) => ({
+            doc: r.doc as unknown as ChunkRecord,
+            score: r.score,
+            method: r.method,
+        }));
+    } finally {
+        db.close();
+    }
+}
+
 export async function createIndexStore(config: IndexConfig, embedder?: Embedder): Promise<IndexStore> {
-    const storage = new Storage("indexer");
-    const indexDir = join(storage.getBaseDir(), config.name);
+    const indexDir = getIndexerStorage().getIndexDir(config.name);
 
     if (!existsSync(indexDir)) {
         mkdirSync(indexDir, { recursive: true });
@@ -196,7 +333,6 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
     // Ensure extension-capable SQLite is loaded BEFORE creating Database instances.
     // Must happen before the first new Database() call in this process.
     if (config.storage?.vectorDriver !== "sqlite-brute" && config.storage?.vectorDriver !== "qdrant") {
-        const { ensureExtensionCapableSQLite } = await import("@app/utils/search/stores/sqlite-vec-loader");
         ensureExtensionCapableSQLite();
     }
 
@@ -563,13 +699,17 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
                 const countRow = db.query(`SELECT COUNT(*) AS cnt FROM ${contentTable}`).get() as { cnt: number };
                 const chunkCount = countRow.cnt;
 
-                let dbSizeBytes = 0;
+                // Live embedding count from actual table
+                let embeddingCount = 0;
 
-                try {
-                    dbSizeBytes = Bun.file(dbPath).size;
-                } catch {
-                    // File may not exist yet
+                if (embTableExists) {
+                    const embRow = db.query(`SELECT COUNT(*) AS cnt FROM ${activeEmbTable}`).get() as {
+                        cnt: number;
+                    };
+                    embeddingCount = embRow.cnt;
                 }
+
+                const dbSizeBytes = getDbSizeBytes(dbPath);
 
                 const logStats = db
                     .query("SELECT COUNT(*) AS cnt, AVG(duration_ms) AS avg_ms FROM search_log")
@@ -583,7 +723,7 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
                 return {
                     totalFiles: meta.stats.totalFiles,
                     totalChunks: chunkCount,
-                    totalEmbeddings: meta.stats.totalEmbeddings,
+                    totalEmbeddings: embeddingCount,
                     embeddingDimensions: meta.stats.embeddingDimensions,
                     dbSizeBytes,
                     lastSyncDurationMs: meta.stats.lastSyncDurationMs,
