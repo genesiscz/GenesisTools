@@ -1,4 +1,4 @@
-import { cleanup, listAccounts } from "@app/macos/lib/mail/sqlite";
+import { MailDatabase } from "@app/utils/macos/MailDatabase";
 import { formatTable } from "@app/utils/table";
 import type { Command } from "commander";
 
@@ -7,8 +7,10 @@ export function registerAccountsCommand(program: Command): void {
         .command("accounts")
         .description("List configured mail accounts")
         .action(() => {
+            const db = new MailDatabase();
+
             try {
-                const accounts = listAccounts();
+                const accounts = db.listAccounts();
 
                 if (accounts.length === 0) {
                     console.log("No mail accounts found.");
@@ -28,7 +30,7 @@ export function registerAccountsCommand(program: Command): void {
                 console.log(formatTable(rows, headers, { alignRight: [2, 3] }));
                 console.log();
             } finally {
-                cleanup();
+                db.close();
             }
         });
 }

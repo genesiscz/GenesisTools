@@ -1,6 +1,6 @@
 import { EmlxBodyExtractor } from "@app/macos/lib/mail/emlx";
-import { cleanup, getAttachments, getMessageById, getRecipients } from "@app/macos/lib/mail/sqlite";
 import { rowToMessage, truncateBody } from "@app/macos/lib/mail/transform";
+import { MailDatabase } from "@app/utils/macos/MailDatabase";
 import { SafeJSON } from "@app/utils/json";
 import chalk from "chalk";
 import type { Command } from "commander";
@@ -12,6 +12,8 @@ export function registerShowCommand(program: Command): void {
         .option("--max-chars <n>", "Truncate body to N characters")
         .option("--json", "Output as JSON")
         .action(async (messageIdArg: string, options: { maxChars?: string; json?: boolean }) => {
+            const db = new MailDatabase();
+
             try {
                 const rowid = Number.parseInt(messageIdArg, 10);
 
@@ -20,7 +22,7 @@ export function registerShowCommand(program: Command): void {
                     process.exit(1);
                 }
 
-                const row = getMessageById(rowid);
+                const row = db.getMessageById(rowid);
 
                 if (!row) {
                     console.error(`Message ${rowid} not found.`);
@@ -30,9 +32,9 @@ export function registerShowCommand(program: Command): void {
                 const msg = rowToMessage(row);
 
                 // Enrich with recipients and attachments
-                const recipientsMap = getRecipients([rowid]);
+                const recipientsMap = db.getRecipients([rowid]);
                 msg.recipients = recipientsMap.get(rowid) ?? [];
-                const attachmentsMap = getAttachments([rowid]);
+                const attachmentsMap = db.getAttachments([rowid]);
                 msg.attachments = attachmentsMap.get(rowid) ?? [];
 
                 // Get body via EmlxBodyExtractor
@@ -96,7 +98,7 @@ export function registerShowCommand(program: Command): void {
                 console.error(error instanceof Error ? error.message : String(error));
                 process.exit(1);
             } finally {
-                cleanup();
+                db.close();
             }
         });
 }

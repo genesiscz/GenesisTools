@@ -9,15 +9,7 @@ import {
     resolveColumnsFromFlag,
 } from "@app/macos/lib/mail/command-helpers";
 import { MailStorage } from "@app/macos/lib/mail/mail-storage";
-import {
-    cleanup,
-    getAttachments,
-    getMessageCount,
-    getMessagesByRowids,
-    getRecipients,
-    listReceivers,
-    searchMessages,
-} from "@app/macos/lib/mail/sqlite";
+import { MailDatabase } from "@app/utils/macos/MailDatabase";
 import { rowToMessage } from "@app/macos/lib/mail/transform";
 import type { MailMessage, MailMessageRow, SearchOptions } from "@app/macos/lib/mail/types";
 import { closeDarwinKit, rankBySimilarity } from "@app/utils/macos";
@@ -49,6 +41,7 @@ interface SearchCommandOptions {
     to?: string;
     mailbox?: string;
     limit?: string;
+    offset?: string;
     mode?: string;
     semantic?: boolean;
     maxDistance?: string;
@@ -103,16 +96,19 @@ export function registerSearchCommand(program: Command): void {
         .option("--to <date>", "Search to date (ISO format)")
         .option("--mailbox <name>", "Restrict to specific mailbox (e.g. INBOX, Sent)")
         .option("--limit <n>", "Max results", "100")
+        .option("--offset <n>", "Skip first N results (for pagination)", "0")
         .option("--mode <mode>", "Search mode: auto | fulltext | hybrid | vector (default: auto)", "auto")
-        .option("--no-semantic", "Disable semantic re-ranking (faster, uses keyword order only)")
+        .option("--semantic", "Enable Apple NL re-ranking after RRF (not recommended — overwrites embedding scores)")
         .option("--max-distance <n>", "Max semantic distance to include (0–2, default: 1.2)", "1.2")
         .option("--columns [cols]", `Columns to show (${ALL_COLUMN_KEYS.join(",")})`)
         .option("-f, --format <type>", "Output format: table, json, toon", "table")
         .action(async (query: string, options: SearchCommandOptions) => {
+            const db = new MailDatabase();
+
             try {
                 // Handle --help-receivers: list receiver addresses and exit
                 if (options.helpReceivers) {
-                    const receivers = listReceivers();
+                    const receivers = db.listReceivers();
                     console.log("\nReceiver addresses (by message count):\n");
 
                     for (const r of receivers) {
@@ -120,7 +116,6 @@ export function registerSearchCommand(program: Command): void {
                         console.log(`  ${r.address}${name}  [${r.messageCount} msgs]`);
                     }
 
-                    cleanup();
                     return;
                 }
 
@@ -140,6 +135,7 @@ export function registerSearchCommand(program: Command): void {
                     to: parseMailDate(options.to, true),
                     mailbox: options.mailbox,
                     limit: Number.parseInt(options.limit ?? "100", 10),
+                    offset: Number.parseInt(options.offset ?? "0", 10),
                 };
 
                 const spinner = p.spinner();
@@ -155,9 +151,11 @@ export function registerSearchCommand(program: Command): void {
                     try {
                         spinner.start(`Searching (${resolvedMode} index)...`);
                         const startFts = performance.now();
+                        // Fetch enough candidates for offset+limit pagination
+                        const fetchLimit = (searchOpts.offset ?? 0) + (searchOpts.limit ?? 100);
                         const ftsResults = await searchIndexReadonly("macos-mail", query, {
                             mode: resolvedMode,
-                            limit: searchOpts.limit ?? 100,
+                            limit: fetchLimit,
                         });
                         const ftsMs = performance.now() - startFts;
                         // DB column is source_id, ChunkRecord type is sourceId
@@ -179,7 +177,7 @@ export function registerSearchCommand(program: Command): void {
                         }
 
                         if (ftsRowids.length > 0) {
-                            rows = getMessagesByRowids(ftsRowids, {
+                            rows = db.getMessagesByRowids(ftsRowids, {
                                 from: searchOpts.from,
                                 to: searchOpts.to,
                                 mailbox: searchOpts.mailbox,
@@ -205,11 +203,11 @@ export function registerSearchCommand(program: Command): void {
 
                 // Fallback to tokenized LIKE
                 if (rows.length === 0) {
-                    const totalMessages = getMessageCount();
+                    const totalMessages = db.getMessageCount();
                     const label = searchMethod === "fts" ? "No FTS matches — searching" : "Searching";
                     spinner.start(`${label} metadata across ${totalMessages.toLocaleString()} messages...`);
                     const startSqlite = performance.now();
-                    rows = searchMessages(searchOpts);
+                    rows = db.searchMessages(searchOpts);
                     const sqliteMs = performance.now() - startSqlite;
                     searchMethod = "sqlite";
                     spinner.stop(`Found ${rows.length} metadata matches in ${(sqliteMs / 1000).toFixed(1)}s`);
@@ -217,14 +215,13 @@ export function registerSearchCommand(program: Command): void {
 
                 if (rows.length === 0) {
                     p.log.info("No messages found matching your query.");
-                    cleanup();
                     return;
                 }
 
                 // Enrich with attachments
                 const isFts = searchMethod === "fts";
                 const rowids = rows.map((r) => r.rowid);
-                const attachmentsMap = getAttachments(rowids);
+                const attachmentsMap = db.getAttachments(rowids);
                 const messages: MailMessage[] = rows.map((row) => {
                     const msg = rowToMessage(row);
                     msg.attachments = attachmentsMap.get(row.rowid) ?? [];
@@ -235,13 +232,13 @@ export function registerSearchCommand(program: Command): void {
 
                 await enrichWithBodies(messages, baseColumns);
 
-                // Phase 3: Semantic re-ranking via Apple NaturalLanguage framework.
-                // Uses on-device sentence similarity (not tied to the indexer's embedding model/provider).
-                // Works regardless of which provider built the index. Opt out with --no-semantic.
+                // Optional: Apple NL re-ranking (opt-in with --semantic).
+                // Uses on-device sentence similarity — NOT the indexer's embedding model.
+                // Not recommended: overwrites RRF embedding scores with Apple NL scores.
                 let semanticActive = false;
 
-                if (options.semantic !== false && messages.length > 0) {
-                    spinner.start(`Ranking ${messages.length} results by semantic similarity...`);
+                if (options.semantic === true && messages.length > 0) {
+                    spinner.start(`Apple NL re-ranking ${messages.length} results (overwrites RRF embedding scores)...`);
 
                     try {
                         const maxDist = parseFloat(options.maxDistance ?? "1.2");
@@ -294,22 +291,35 @@ export function registerSearchCommand(program: Command): void {
 
                 // Enrich with recipients if any recipient column is selected
                 if (needsRecipients(finalColumns)) {
-                    const recipientsMap = getRecipients(rowids);
+                    const recipientsMap = db.getRecipients(rowids);
 
                     for (const msg of messages) {
                         msg.recipients = recipientsMap.get(msg.rowid) ?? [];
                     }
                 }
 
+                // Apply pagination (offset/limit) AFTER ranking so ordering is stable
+                const paginationOffset = searchOpts.offset ?? 0;
+                const pageLimit = searchOpts.limit ?? 100;
+                const totalCount = messages.length;
+                const paginatedMessages = messages.slice(paginationOffset, paginationOffset + pageLimit);
+
                 // Output results
                 await outputFormattedResults({
-                    messages,
+                    messages: paginatedMessages,
                     columns: finalColumns,
                     format: options.format ?? "table",
                 });
 
                 if ((options.format ?? "table") === "table") {
-                    p.log.info(`${messages.length} results. Use 'tools macos mail download <dir>' to export.`);
+                    const rangeEnd = Math.min(paginationOffset + pageLimit, totalCount);
+                    const rangeLabel =
+                        paginationOffset > 0
+                            ? `${paginationOffset + 1}–${rangeEnd} of ${totalCount}`
+                            : `${paginatedMessages.length}`;
+                    p.log.info(
+                        `${rangeLabel} results.${totalCount > pageLimit ? " Use --offset/--limit to paginate." : ""}`
+                    );
                 }
 
                 // Save results for download command
@@ -320,7 +330,7 @@ export function registerSearchCommand(program: Command): void {
                 p.log.error(error instanceof Error ? error.message : String(error));
                 process.exit(1);
             } finally {
-                cleanup();
+                db.close();
             }
         });
 }

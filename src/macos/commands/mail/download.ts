@@ -1,12 +1,12 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import logger from "@app/logger";
-import { EmlxBodyExtractor } from "@app/macos/lib/mail/emlx";
 import { parseMailDate } from "@app/macos/lib/mail/command-helpers";
+import { EmlxBodyExtractor } from "@app/macos/lib/mail/emlx";
 import { generateEmailMarkdown, generateIndexMarkdown, generateSlug } from "@app/macos/lib/mail/format";
 import { saveAttachment } from "@app/macos/lib/mail/jxa";
 import { MailStorage } from "@app/macos/lib/mail/mail-storage";
-import { cleanup, getRecipients } from "@app/macos/lib/mail/sqlite";
+import { MailDatabase } from "@app/utils/macos/MailDatabase";
 import { truncateBody } from "@app/macos/lib/mail/transform";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
@@ -35,6 +35,8 @@ export function registerDownloadCommand(program: Command): void {
                     bodyMaxChars?: string;
                 }
             ) => {
+                const db = new MailDatabase();
+
                 try {
                     const outputDir = resolve(outputDirArg);
                     const isTTY = process.stdout.isTTY;
@@ -134,7 +136,7 @@ export function registerDownloadCommand(program: Command): void {
 
                     // Fetch recipients for all messages
                     const rowids = filteredMessages.map((m) => m.rowid);
-                    const recipientsMap = getRecipients(rowids);
+                    const recipientsMap = db.getRecipients(rowids);
 
                     // Create EmlxBodyExtractor (fast: ~42 msg/s L2, instant L1)
                     const emlx = await EmlxBodyExtractor.create();
@@ -202,7 +204,7 @@ export function registerDownloadCommand(program: Command): void {
                     p.log.error(error instanceof Error ? error.message : String(error));
                     process.exit(1);
                 } finally {
-                    cleanup();
+                    db.close();
                 }
             }
         );

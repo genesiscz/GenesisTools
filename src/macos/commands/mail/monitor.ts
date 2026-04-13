@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { formatResultsTable } from "@app/macos/lib/mail/format";
 import { MailStorage } from "@app/macos/lib/mail/mail-storage";
-import { cleanup, getAttachments, getRecipients, listMessages } from "@app/macos/lib/mail/sqlite";
+import { MailDatabase } from "@app/utils/macos/MailDatabase";
 import { rowToMessage, truncateBody } from "@app/macos/lib/mail/transform";
 import type { MailMessage } from "@app/macos/lib/mail/types";
 import { SafeJSON } from "@app/utils/json";
@@ -132,6 +132,8 @@ export function registerMonitorCommand(program: Command): void {
         .option("--dry-run", "Show what would be flagged without updating seen DB")
         .option("--preview", "Show first 200 chars of body for matched emails")
         .action(async (options: MonitorOptions) => {
+            const db = new MailDatabase();
+
             try {
                 const limit = Number.parseInt(options.limit ?? "200", 10);
                 const rules = loadRules(options.rules);
@@ -140,18 +142,17 @@ export function registerMonitorCommand(program: Command): void {
                 const spinner = p.spinner();
                 spinner.start(`Fetching latest ${limit} messages from INBOX...`);
 
-                const rows = listMessages("INBOX", limit);
+                const rows = db.listMessages("INBOX", limit);
 
                 if (rows.length === 0) {
                     spinner.stop("No messages found in INBOX.");
-                    cleanup();
                     return;
                 }
 
                 // Build MailMessage objects
                 const rowids = rows.map((r) => r.rowid);
-                const attachmentsMap = getAttachments(rowids);
-                const recipientsMap = getRecipients(rowids);
+                const attachmentsMap = db.getAttachments(rowids);
+                const recipientsMap = db.getRecipients(rowids);
                 const messages: MailMessage[] = rows.map((row) => {
                     const msg = rowToMessage(row);
                     msg.attachments = attachmentsMap.get(row.rowid) ?? [];
@@ -169,7 +170,6 @@ export function registerMonitorCommand(program: Command): void {
                 if (newMessages.length === 0) {
                     spinner.stop("No new messages since last check.");
                     store.close();
-                    cleanup();
                     return;
                 }
 
@@ -255,7 +255,7 @@ export function registerMonitorCommand(program: Command): void {
                 p.log.error(error instanceof Error ? error.message : String(error));
                 process.exit(1);
             } finally {
-                cleanup();
+                db.close();
             }
         });
 }

@@ -64,6 +64,7 @@ export interface SearchOptions {
     to?: Date;
     mailbox?: string;
     limit?: number;
+    offset?: number;
 }
 
 export interface ReceiverInfo {
