@@ -49,7 +49,7 @@ const CLOUD_TASKS: Record<CloudType, ReadonlySet<AITask>> = {
 
 const DEFAULT_LLM_MODELS: Record<LlmCloudType, string> = {
     groq: "groq/llama-3.3-70b-versatile",
-    openrouter: "openrouter/meta-llama/llama-3-8b-instruct",
+    openrouter: "openrouter/meta-llama/llama-3-70b-instruct",
     openai: "openai/gpt-4o-mini",
 };
 
