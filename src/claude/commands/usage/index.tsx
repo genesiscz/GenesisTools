@@ -17,7 +17,6 @@ export function registerUsageCommand(program: Command): void {
             const accountFilter = typeof opts.filter === "string" ? opts.filter : undefined;
 
             if (opts.tui === false || opts.json || opts.token || opts.watch) {
-                const { loadConfig } = await import("@app/claude/lib/config");
                 const { fetchAllAccountsUsage, fetchUsage } = await import("@app/claude/lib/usage/api");
                 const { renderAllAccounts, renderAccountUsage } = await import("@app/claude/lib/usage/display");
 
@@ -34,25 +33,25 @@ export function registerUsageCommand(program: Command): void {
                     return;
                 }
 
-                const config = await loadConfig();
-                let accounts = config.accounts;
-
+                // Validate account filter against AIConfig
                 if (accountFilter) {
-                    if (!accounts[accountFilter]) {
+                    const { AIConfig } = await import("@app/utils/ai/AIConfig");
+                    const aiConfig = await AIConfig.load();
+                    const exists = aiConfig.getAccountsByProvider("anthropic-sub").some((a) => a.name === accountFilter);
+
+                    if (!exists) {
                         console.error(`Unknown account: ${accountFilter}`);
                         process.exit(1);
                     }
-
-                    accounts = { [accountFilter]: accounts[accountFilter] };
                 }
 
                 if (opts.watch) {
                     const { watchUsage } = await import("@app/claude/lib/usage/watch");
-                    await watchUsage(accounts, config.notifications);
+                    await watchUsage(accountFilter);
                     return;
                 }
 
-                const results = await fetchAllAccountsUsage(accounts);
+                const results = await fetchAllAccountsUsage(accountFilter);
 
                 if (opts.json) {
                     console.log(SafeJSON.stringify(results, null, 2));

@@ -1,6 +1,19 @@
-import { sendNotification } from "@app/utils/macos/notifications";
+import { dispatchNotification } from "@app/utils/notifications";
+import type { Storage } from "@app/utils/storage/storage";
 import { BUCKET_LABELS, BUCKET_THRESHOLD_MAP } from "./constants";
 import type { UsageDashboardConfig } from "./dashboard-config";
+
+const NOTIFICATION_POLL_TRACKER_CONFIG_KEY = "notificationPollTracker";
+
+interface TrackerState {
+    lastNotifiedThreshold: number | null;
+    lastResetEpoch: number | null;
+}
+
+interface PersistedState {
+    trackers: Record<string, TrackerState>;
+    savedAt: string;
+}
 
 type CacheStatus = "HOT" | "COOLING" | "CRITICAL" | "COLD";
 
@@ -31,6 +44,18 @@ class BucketTracker {
         public readonly accountName: string,
         public readonly bucketName: string
     ) {}
+
+    restoreState(threshold: number | null, resetEpoch: number | null): void {
+        this.lastNotifiedThreshold = threshold;
+        this.lastResetEpoch = resetEpoch;
+    }
+
+    getState(): TrackerState {
+        return {
+            lastNotifiedThreshold: this.lastNotifiedThreshold,
+            lastResetEpoch: this.lastResetEpoch,
+        };
+    }
 
     shouldNotify(currentPct: number, resetAt: string | null, thresholds: number[], isFirstPoll: boolean): boolean {
         const resetEpoch = resetAt ? new Date(resetAt).getTime() : null;
@@ -69,6 +94,7 @@ class BucketTracker {
 export class NotificationManager {
     private trackers = new Map<string, BucketTracker>();
     private isFirstPoll = true;
+    private dirty = false;
     private _alerts: UsageAlert[] = [];
     private alertIdCounter = 0;
 
@@ -99,6 +125,7 @@ export class NotificationManager {
         const shouldNotify = tracker.shouldNotify(utilization, resetsAt, thresholds, this.isFirstPoll);
 
         if (shouldNotify) {
+            this.dirty = true;
             const label = BUCKET_LABELS[bucket] ?? bucket;
             const severity = utilization >= 80 ? "critical" : "warning";
             const message = `${accountName}: ${label} ${Math.round(utilization)}%`;
@@ -116,18 +143,55 @@ export class NotificationManager {
                 });
             }
 
-            if (this.config.macos) {
-                sendNotification({
-                    title: "Claude Usage Alert",
-                    message,
-                    sound: this.config.sound || "Purr",
-                });
-            }
+            dispatchNotification({
+                app: "claude",
+                title: "Claude Usage Alert",
+                message,
+            });
         }
     }
 
     markFirstPollDone(): void {
         this.isFirstPoll = false;
+    }
+
+    async loadState(storage: Storage): Promise<void> {
+        const saved = (await storage.getConfig<Record<string, unknown>>())?.[NOTIFICATION_POLL_TRACKER_CONFIG_KEY] as
+            | PersistedState
+            | undefined;
+        if (!saved?.trackers) {
+            return;
+        }
+
+        this.applyPersistedTrackers(saved.trackers);
+    }
+
+    private applyPersistedTrackers(byKey: Record<string, TrackerState>): void {
+        for (const [key, ts] of Object.entries(byKey)) {
+            const [accountName, bucketName] = key.split(":");
+            if (!accountName || !bucketName) {
+                continue;
+            }
+            const t = new BucketTracker(accountName, bucketName);
+            t.restoreState(ts.lastNotifiedThreshold, ts.lastResetEpoch);
+            this.trackers.set(key, t);
+        }
+
+        if (this.trackers.size > 0) {
+            this.isFirstPoll = false;
+        }
+    }
+
+    async saveState(storage: Storage): Promise<void> {
+        if (!this.dirty) {
+            return;
+        }
+
+        const snapshot = Object.fromEntries([...this.trackers.entries()].map(([k, t]) => [k, t.getState()]));
+        await storage.atomicConfigUpdate<Record<string, unknown>>((c) => {
+            c[NOTIFICATION_POLL_TRACKER_CONFIG_KEY] = { trackers: snapshot, savedAt: new Date().toISOString() };
+        });
+        this.dirty = false;
     }
 
     dismissAlert(alertId: string): void {
@@ -191,13 +255,11 @@ export class NotificationManager {
                     });
                 }
 
-                if (this.config.macos) {
-                    sendNotification({
-                        title: "Claude Cache Cooling",
-                        message,
-                        sound: this.config.sound || "Purr",
-                    });
-                }
+                dispatchNotification({
+                    app: "claude",
+                    title: "Claude Cache Cooling",
+                    message,
+                });
             } else if (status === "CRITICAL" && (tracker.lastThreshold === null || tracker.lastThreshold < 5)) {
                 tracker.lastThreshold = 5;
                 tracker.lastMtime = session.mtime;
@@ -217,13 +279,11 @@ export class NotificationManager {
                     });
                 }
 
-                if (this.config.macos) {
-                    sendNotification({
-                        title: "Claude Cache Critical",
-                        message,
-                        sound: this.config.sound || "Purr",
-                    });
-                }
+                dispatchNotification({
+                    app: "claude",
+                    title: "Claude Cache Critical",
+                    message,
+                });
             }
         }
     }

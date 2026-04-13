@@ -1,18 +1,18 @@
-import type { AccountConfig } from "@app/claude/lib/config";
-import { loadConfig, saveConfig, withConfigLock } from "@app/claude/lib/config";
-import { refreshOAuthToken } from "@app/utils/claude/auth";
+import logger from "@app/logger";
+import { resolveAccountToken } from "@app/utils/claude/subscription-auth";
+import type { AIAccountEntry } from "@app/utils/config/ai.types";
 
 export type { AccountInfo, KeychainCredentials } from "@app/utils/claude/auth";
 
-export class RateLimitError extends Error {
-    constructor(message: string) {
+export class RetryableApiError extends Error {
+    readonly statusCode: number;
+
+    constructor(statusCode: number, message: string) {
         super(message);
-        this.name = "RateLimitError";
+        this.name = "RetryableApiError";
+        this.statusCode = statusCode;
     }
 }
-
-// Refresh tokens 5 minutes before expiry to avoid edge cases
-const EXPIRY_BUFFER_MS = 5 * 60 * 1000;
 
 export interface UsageBucket {
     utilization: number;
@@ -37,7 +37,15 @@ export interface AccountUsage {
 
 const USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
 
-export async function fetchUsage(accessToken: string, signal?: AbortSignal): Promise<UsageResponse> {
+export async function fetchUsage(
+    accessToken: string,
+    signal?: AbortSignal,
+    accountHint?: string
+): Promise<UsageResponse> {
+    const tag = accountHint ? `[usage:${accountHint}]` : "[usage]";
+
+    logger.debug(`${tag} fetching ${USAGE_URL}`);
+
     const res = await fetch(USAGE_URL, {
         headers: {
             Authorization: `Bearer ${accessToken}`,
@@ -46,126 +54,91 @@ export async function fetchUsage(accessToken: string, signal?: AbortSignal): Pro
         },
         signal,
     });
-    if (res.status === 429) {
+
+    if (res.status === 401 || res.status === 429) {
         const body = await res.text().catch(() => "");
-        throw new RateLimitError(`Usage API 429: ${body.slice(0, 200)}`);
+        const label = res.status === 429 ? "rate-limited" : "auth failed";
+        logger.warn(`${tag} ${res.status} ${label}: ${body.slice(0, 200)}`);
+        throw new RetryableApiError(res.status, `Usage API ${res.status}: ${body.slice(0, 200)}`);
     }
 
     if (!res.ok) {
         const body = await res.text().catch(() => "");
+        logger.error(`${tag} HTTP ${res.status}: ${body.slice(0, 200)}`);
         throw new Error(`Usage API ${res.status}: ${body.slice(0, 200)}`);
     }
+
+    logger.debug(`${tag} OK (${res.status})`);
     return res.json() as Promise<UsageResponse>;
 }
 
-/**
- * Check if an account's token needs refresh and refresh if possible.
- * Persists new tokens to disk immediately under a file lock to prevent
- * token loss on crash (refresh tokens are single-use).
- */
-async function ensureValidToken(
-    accountName: string,
-    account: AccountConfig,
-    options?: { forceRefresh?: boolean }
-): Promise<{ accessToken: string; refreshed: boolean }> {
-    const tokenIsValid = account.expiresAt && account.expiresAt > Date.now() + EXPIRY_BUFFER_MS;
-
-    if (!account.refreshToken || (!options?.forceRefresh && tokenIsValid)) {
-        return { accessToken: account.accessToken, refreshed: false };
-    }
-
-    // Token expired or expiring soon — refresh under file lock
-    return withConfigLock(async () => {
-        // Re-read config from disk (another process may have refreshed)
-        const freshConfig = await loadConfig();
-        const diskAccount = freshConfig.accounts[accountName];
-
-        // Another process already refreshed — use their tokens if:
-        // - Token is time-valid AND we're not force-refreshing, OR
-        // - Token is different from ours (another process refreshed for 429 too)
-        if (diskAccount?.expiresAt && diskAccount.expiresAt > Date.now() + EXPIRY_BUFFER_MS) {
-            if (!options?.forceRefresh || diskAccount.accessToken !== account.accessToken) {
-                account.accessToken = diskAccount.accessToken;
-                account.refreshToken = diskAccount.refreshToken;
-                account.expiresAt = diskAccount.expiresAt;
-                return { accessToken: diskAccount.accessToken, refreshed: true };
-            }
-        }
-
-        if (!diskAccount?.refreshToken) {
-            return { accessToken: account.accessToken, refreshed: false };
-        }
-
-        // Refresh using the on-disk token (in-memory might be stale)
-        let refreshed: Awaited<ReturnType<typeof refreshOAuthToken>>;
-        try {
-            refreshed = await refreshOAuthToken(diskAccount.refreshToken);
-        } catch (err) {
-            if (String(err).includes("invalid_grant")) {
-                throw new Error(`Token expired (invalid_grant). Run: tools claude login ${accountName}`);
-            }
-
-            throw err;
-        }
-
-        // Persist immediately BEFORE using the new token
-        freshConfig.accounts[accountName] = {
-            ...diskAccount,
-            accessToken: refreshed.accessToken,
-            refreshToken: refreshed.refreshToken,
-            expiresAt: refreshed.expiresAt,
-        };
-        await saveConfig(freshConfig);
-
-        // Update in-memory account
-        account.accessToken = refreshed.accessToken;
-        account.refreshToken = refreshed.refreshToken;
-        account.expiresAt = refreshed.expiresAt;
-
-        return { accessToken: refreshed.accessToken, refreshed: true };
-    }, 60_000); // 60s timeout for acquiring the config lock; refresh holds the lock while running
-}
-
 export async function fetchAllAccountsUsage(
-    accounts: Record<string, AccountConfig>,
+    accountFilter?: string | string[],
     signal?: AbortSignal
 ): Promise<AccountUsage[]> {
-    const entries = Object.entries(accounts);
-    if (entries.length === 0) {
+    const { AIConfig } = await import("@app/utils/ai/AIConfig");
+    const config = await AIConfig.load();
+    let accounts = config.getAccountsByProvider("anthropic-sub");
+
+    if (typeof accountFilter === "string") {
+        accounts = accounts.filter((a) => a.name === accountFilter);
+    } else if (Array.isArray(accountFilter)) {
+        const filterSet = new Set(accountFilter);
+        accounts = accounts.filter((a) => filterSet.has(a.name));
+    }
+
+    if (accounts.length === 0) {
         return [];
     }
 
+    logger.debug(`[usage] polling ${accounts.length} account(s): ${accounts.map((a) => a.name).join(", ")}`);
+
     const results = await Promise.allSettled(
-        entries.map(async ([name, account]) => {
-            const { accessToken } = await ensureValidToken(name, account);
+        accounts.map(async (account: AIAccountEntry) => {
+            const tag = `[usage:${account.name}]`;
+
+            const { token, refreshed: tokenRefreshed } = await resolveAccountToken(account.name, {
+                staleAccessToken: account.tokens.accessToken,
+            });
+
+            if (tokenRefreshed) {
+                logger.info(`${tag} token was refreshed before fetch`);
+            }
 
             try {
-                const usage = await fetchUsage(accessToken, signal);
-                return { accountName: name, label: account.label, usage } satisfies AccountUsage;
+                const usage = await fetchUsage(token, signal, account.name);
+                return { accountName: account.name, label: account.label, usage } satisfies AccountUsage;
             } catch (err) {
-                if (!(err instanceof RateLimitError)) {
+                if (!(err instanceof RetryableApiError)) {
+                    logger.error(`${tag} fetch failed: ${err instanceof Error ? err.message : err}`);
                     throw err;
                 }
 
-                // 429 — force-refresh token to get fresh rate limit window
-                const { accessToken: freshToken, refreshed } = await ensureValidToken(name, account, {
+                // 401/429 — force-refresh token and retry once
+                logger.warn(`${tag} got ${err.statusCode}, attempting force-refresh`);
+                const { token: freshToken, refreshed } = await resolveAccountToken(account.name, {
+                    staleAccessToken: token,
                     forceRefresh: true,
                 });
 
                 if (!refreshed) {
-                    throw err; // No refresh token available, can't bypass
+                    logger.warn(`${tag} force-refresh did not produce a new token, re-throwing ${err.statusCode}`);
+                    throw err;
                 }
 
-                // Retry once with new token
-                const usage = await fetchUsage(freshToken, signal);
-                return { accountName: name, label: account.label, usage } satisfies AccountUsage;
+                logger.info(`${tag} retrying with refreshed token`);
+                const usage = await fetchUsage(freshToken, signal, account.name);
+                return { accountName: account.name, label: account.label, usage } satisfies AccountUsage;
             }
         })
     );
 
-    return results.map((r, i) =>
-        r.status === "fulfilled"
-            ? r.value
-            : { accountName: entries[i][0], label: entries[i][1].label, error: String(r.reason) }
-    );
+    return results.map((r, i) => {
+        if (r.status === "fulfilled") {
+            return r.value;
+        }
+
+        logger.error(`[usage:${accounts[i].name}] final error: ${r.reason}`);
+        return { accountName: accounts[i].name, label: accounts[i].label, error: String(r.reason) };
+    });
 }

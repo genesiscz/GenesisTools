@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { type AccountConfig, loadConfig, refreshAccountLabels } from "@app/claude/lib/config";
+import { refreshAccountLabels } from "@app/claude/lib/config";
 import { type AccountUsage, fetchAllAccountsUsage } from "@app/claude/lib/usage/api";
 import type { UsageDashboardConfig } from "@app/claude/lib/usage/dashboard-config";
 import { UsageHistoryDb } from "@app/claude/lib/usage/history-db";
@@ -27,7 +27,7 @@ export function useUsagePoller({ config, accountFilter, paused, pollIntervalSeco
 
     const dbRef = useRef<UsageHistoryDb | null>(null);
     const notifRef = useRef<NotificationManager | null>(null);
-    const accountsRef = useRef<Record<string, AccountConfig>>({});
+    const accountNamesRef = useRef<string[]>([]);
     const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const pruneIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const pollingRef = useRef(false);
@@ -106,27 +106,27 @@ export function useUsagePoller({ config, accountFilter, paused, pollIntervalSeco
         try {
             const ttlSeconds = Math.max(3, pollIntervalSeconds - 2);
 
-            // Resolve which accounts to poll
-            const cfg = await loadConfig();
-            let accounts = cfg.accounts;
+            // Resolve which accounts to poll from AIConfig
+            const { AIConfig } = await import("@app/utils/ai/AIConfig");
+            const aiConfig = await AIConfig.load();
+            let allAccounts = aiConfig.getAccountsByProvider("anthropic-sub");
 
             if (accountFilter) {
-                accounts = accounts[accountFilter] ? { [accountFilter]: accounts[accountFilter] } : {};
+                allAccounts = allAccounts.filter((a) => a.name === accountFilter);
             }
 
-            accountsRef.current = accounts;
-            const accountNames = Object.keys(accounts);
+            const accountNames = allAccounts.map((a) => a.name);
+            accountNamesRef.current = accountNames;
             setPollingLabel(accountNames.join(", ") || "...");
 
             // Per-account locking: each account gets its own cache + lock
             // This ensures "tools claude usage" and "tools claude usage --filter foo"
             // share the same lock for account "foo" instead of racing.
-            const accountEntries = Object.entries(accounts);
-            const accountUsages: (AccountUsage | null)[] = new Array(accountEntries.length).fill(null);
+            const accountUsages: (AccountUsage | null)[] = new Array(allAccounts.length).fill(null);
 
             await Promise.all(
-                accountEntries.map(async ([name, account], index) => {
-                    const cacheKey = `poll-account-${name}.json`;
+                allAccounts.map(async (account, index) => {
+                    const cacheKey = `poll-account-${account.name}.json`;
 
                     // Fast path: check cache without lock
                     const cached = await storage.getCacheFile<AccountUsage>(cacheKey, `${ttlSeconds} seconds`);
@@ -143,14 +143,14 @@ export function useUsagePoller({ config, accountFilter, paused, pollIntervalSeco
                         fn: async (): Promise<AccountUsage | null> => {
                             const freshCached = await storage.getCacheFile<AccountUsage>(
                                 cacheKey,
-                                `${ttlSeconds} seconds`
+                                `${ttlSeconds} seconds`,
                             );
 
                             if (freshCached) {
                                 return freshCached;
                             }
 
-                            const [usage] = await fetchAllAccountsUsage({ [name]: account });
+                            const [usage] = await fetchAllAccountsUsage(account.name);
 
                             try {
                                 await storage.putCacheFile(cacheKey, usage, `${pollIntervalSeconds} seconds`);
@@ -165,7 +165,7 @@ export function useUsagePoller({ config, accountFilter, paused, pollIntervalSeco
                     });
 
                     accountUsages[index] = result;
-                })
+                }),
             );
 
             const resolvedUsages = accountUsages.filter((u): u is AccountUsage => u !== null);

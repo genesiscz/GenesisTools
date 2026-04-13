@@ -5,11 +5,13 @@ import { registerConfigCommand } from "./commands/config";
 import { registerDaemonCommand } from "./commands/daemon";
 import { registerDesktopCommand } from "./commands/desktop";
 import { registerHistoryCommand } from "./commands/history";
+import { registerMemoryCommand } from "./commands/memory";
 import { registerMigrateCommand } from "./commands/migrate";
 import { registerResumeCommand } from "./commands/resume";
 import { registerSummarizeCommand } from "./commands/summarize";
 import { registerTailCommand } from "./commands/tail";
 import { registerUsageCommand } from "./commands/usage";
+import { registerWarmupCommand } from "./commands/warmup";
 
 const program = new Command();
 
@@ -20,6 +22,7 @@ program
     .showHelpAfterError(true);
 
 registerHistoryCommand(program);
+registerMemoryCommand(program);
 registerSummarizeCommand(program);
 registerResumeCommand(program);
 registerTailCommand(program);
@@ -28,6 +31,7 @@ registerUsageCommand(program);
 registerConfigCommand(program);
 registerDaemonCommand(program);
 registerMigrateCommand(program);
+registerWarmupCommand(program);
 
 async function main(): Promise<void> {
     try {

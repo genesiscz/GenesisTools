@@ -224,10 +224,6 @@ export async function exchangeOAuthCode(codeInput: string, _verifier?: string) {
     return claudeOAuth.exchangeCode(codeInput);
 }
 
-export async function refreshOAuthToken(refreshToken: string) {
-    return claudeOAuth.refresh(refreshToken);
-}
-
 const PROFILE_URL = "https://api.anthropic.com/api/oauth/profile";
 
 export async function fetchOAuthProfile(accessToken: string): Promise<OAuthProfileResponse | undefined> {
