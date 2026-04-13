@@ -6,6 +6,16 @@ export const DEFAULT_WATCH_INTERVAL_MS = 300_000;
 /** Embedding batch size for the embed pipeline */
 export const EMBEDDING_BATCH_SIZE = 32;
 
+/** Optimal embedding batch sizes per provider (from benchmarks 2026-04-08). */
+export const PROVIDER_BATCH_SIZES: Record<string, number> = {
+    ollama: 500,
+    google: 100,
+    cloud: 2048,
+    "local-hf": 32,
+    darwinkit: 100,
+    coreml: 100,
+};
+
 export interface IndexConfig {
     name: string;
     baseDir: string;

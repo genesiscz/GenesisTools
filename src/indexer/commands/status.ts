@@ -6,6 +6,10 @@ import pc from "picocolors";
 import { IndexerManager } from "../lib/manager";
 import { DEFAULT_WATCH_INTERVAL_MS } from "../lib/types";
 
+function formatEmbeddingPct(totalEmbeddings: number, totalChunks: number): number {
+    return totalChunks > 0 ? Math.round((totalEmbeddings / totalChunks) * 100) : 0;
+}
+
 export function registerStatusCommand(program: Command): void {
     program
         .command("status")
@@ -34,17 +38,20 @@ function showOverview(manager: IndexerManager): void {
         return;
     }
 
-    const headers = ["Name", "Type", "Files", "Chunks", "Embeddings", "Status", "Last Sync", "DB Size"];
+    const headers = ["Name", "Type", "Files", "Chunks", "Embedded", "Status", "Last Sync", "DB Size"];
 
     const rows = indexes.map((meta) => {
         const lastSync = meta.lastSyncAt ? formatRelativeTime(new Date(meta.lastSyncAt), { compact: true }) : "never";
+        const { totalChunks, totalEmbeddings } = meta.stats;
+        const embPct = formatEmbeddingPct(totalEmbeddings, totalChunks);
+        const embLabel = totalEmbeddings > 0 ? `${totalEmbeddings.toLocaleString()} (${embPct}%)` : "0";
 
         return [
             meta.name,
             meta.config.type ?? "auto",
-            String(meta.stats.totalFiles),
-            String(meta.stats.totalChunks),
-            String(meta.stats.totalEmbeddings),
+            meta.stats.totalFiles.toLocaleString(),
+            totalChunks.toLocaleString(),
+            embLabel,
             formatIndexingStatus(meta.indexingStatus),
             lastSync,
             formatBytes(meta.stats.dbSizeBytes),
@@ -67,17 +74,23 @@ async function showDetailedStatus(manager: IndexerManager, name: string): Promis
 
     p.intro(pc.bgCyan(pc.white(` ${meta.name} `)));
 
+    const { totalFiles, totalChunks, totalEmbeddings, embeddingDimensions, dbSizeBytes } = meta.stats;
+    const embPct = totalChunks > 0 ? Math.round((totalEmbeddings / totalChunks) * 100) : 0;
+
     const entries: Array<[string, string]> = [
         ["Base Dir", meta.config.baseDir],
         ["Type", meta.config.type ?? "auto"],
         ["Status", formatIndexingStatus(meta.indexingStatus)],
         ["Chunking", meta.config.chunking ?? "auto"],
         ["Git Ignore", String(meta.config.respectGitIgnore ?? false)],
-        ["Files", String(meta.stats.totalFiles)],
-        ["Chunks", String(meta.stats.totalChunks)],
-        ["Embeddings", String(meta.stats.totalEmbeddings)],
-        ["Embedding Dims", String(meta.stats.embeddingDimensions)],
-        ["DB Size", formatBytes(meta.stats.dbSizeBytes)],
+        ["Scanned", `${totalFiles.toLocaleString()} files → ${totalChunks.toLocaleString()} chunks`],
+        [
+            "Embedded",
+            totalEmbeddings > 0 || embeddingDimensions > 0
+                ? `${totalEmbeddings.toLocaleString()} / ${totalChunks.toLocaleString()} (${embPct}%) — ${embeddingDimensions}-dim`
+                : "none",
+        ],
+        ["DB Size", formatBytes(dbSizeBytes)],
         [
             "Last Sync",
             meta.lastSyncAt

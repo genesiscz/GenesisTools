@@ -2,10 +2,12 @@ import { Database } from "bun:sqlite";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@app/utils/json";
-import { Storage } from "@app/utils/storage/storage";
+import type { Storage } from "@app/utils/storage/storage";
 import { CONFIG_FILENAME, ContextArtifactSource, loadContextConfig } from "./context-artifacts";
 import type { IndexerCallbacks, SyncStats } from "./events";
 import { Indexer } from "./indexer";
+import { getIndexerStorage, readLiveStats } from "./storage";
+import { searchIndexReadonly } from "./store";
 import { emptyStats, type IndexConfig, type IndexMeta } from "./types";
 
 interface ManagerConfig {
@@ -27,7 +29,7 @@ export class IndexerManager {
     }
 
     static async load(): Promise<IndexerManager> {
-        const storage = new Storage("indexer");
+        const storage = getIndexerStorage();
         await storage.ensureDirs();
         const manager = new IndexerManager(storage);
         manager._interruptedOnLoad = manager.getInterruptedIndexes();
@@ -161,10 +163,23 @@ export class IndexerManager {
                 const row = db.query("SELECT value FROM index_meta WHERE key = 'meta'").get() as {
                     value: string;
                 } | null;
-                db.close();
 
                 if (row) {
                     const meta = SafeJSON.parse(row.value) as IndexMeta;
+                    const live = readLiveStats(db, name, dbPath);
+
+                    if (live.totalChunks !== undefined) {
+                        meta.stats.totalChunks = live.totalChunks;
+                    }
+
+                    if (live.totalEmbeddings !== undefined) {
+                        meta.stats.totalEmbeddings = live.totalEmbeddings;
+                    }
+
+                    if (live.dbSizeBytes !== undefined) {
+                        meta.stats.dbSizeBytes = live.dbSizeBytes;
+                    }
+
                     result.push(meta);
                 } else {
                     result.push({
@@ -175,6 +190,8 @@ export class IndexerManager {
                         createdAt: 0,
                     });
                 }
+
+                db.close();
             } catch (err) {
                 console.debug(`Failed to read metadata for index "${name}":`, err);
                 result.push({
@@ -249,6 +266,22 @@ export class IndexerManager {
         }
 
         return Object.keys(managerConfig.indexes);
+    }
+
+    /**
+     * Search an index in read-only mode (no lock required).
+     * Safe to call while the index is being built/synced.
+     */
+    async searchReadonly(
+        name: string,
+        query: string,
+        opts?: { mode?: "fulltext" | "hybrid" | "vector" | "auto"; limit?: number }
+    ): Promise<import("@app/utils/search/types").SearchResult<import("./types").ChunkRecord>[]> {
+        if (!this.getIndexNames().includes(name)) {
+            throw new Error(`Index "${name}" not found`);
+        }
+
+        return searchIndexReadonly(name, query, opts);
     }
 
     async close(): Promise<void> {

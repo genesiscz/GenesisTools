@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Indexer } from "./indexer";
 import { IndexerManager } from "./manager";
+import { getIndexerStorage } from "./storage";
 import type { IndexConfig } from "./types";
 
 let tempDir: string;
@@ -52,6 +53,9 @@ afterAll(async () => {
     }
 
     await manager.close();
+
+    // Clean up stale filesystem leftovers from crashed test runs
+    getIndexerStorage().cleanStaleDirs("e2e_test_");
 });
 
 describe("E2E: index -> search -> verify", () => {

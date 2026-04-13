@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { EventName, IndexerCallbacks, IndexerEventMap } from "./events";
 import { Indexer } from "./indexer";
 import { IndexerManager } from "./manager";
+import { getIndexerStorage } from "./storage";
 import type { IndexConfig } from "./types";
 
 let tempDir: string;
@@ -63,6 +64,10 @@ afterAll(async () => {
     }
 
     await manager.close();
+
+    // Clean up stale filesystem leftovers from crashed test runs
+    getIndexerStorage().cleanStaleDirs("integration_test_");
+    getIndexerStorage().cleanStaleDirs("test_");
 });
 
 describe("IndexerManager lifecycle", () => {
