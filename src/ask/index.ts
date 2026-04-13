@@ -17,6 +17,7 @@ import { costTracker } from "@ask/output/CostTracker";
 import { outputManager } from "@ask/output/OutputManager";
 import { modelSelector } from "@ask/providers/ModelSelector";
 import { getLanguageModel } from "@ask/types";
+import { getFileTools } from "@ask/tools/file-tools";
 import { webSearchTool } from "@ask/utils/websearch";
 import * as p from "@clack/prompts";
 import type { ToolSet } from "ai";
@@ -115,6 +116,8 @@ class ASKTool {
                     argv.model = undefined;
                 }
             }
+
+            this.toolsDisabled = !!argv.noTools;
 
             initAskUI({
                 isTTY: process.stdout.isTTY ?? false,
@@ -653,30 +656,45 @@ class ASKTool {
         };
     }
 
-    private getBaseToolRegistry() {
-        const searchToolDef = webSearchTool.createSearchTool();
+    private toolsDisabled = false;
 
-        if (!searchToolDef) {
+    private getBaseToolRegistry() {
+        if (this.toolsDisabled) {
             return null;
         }
 
-        return { searchWeb: searchToolDef };
+        const fileTools = getFileTools();
+        const searchToolDef = webSearchTool.createSearchTool();
+
+        const registry: Record<string, ReturnType<typeof webSearchTool.createSearchTool>> = {};
+
+        if (searchToolDef) {
+            registry.searchWeb = searchToolDef;
+        }
+
+        return { fileTools, registry };
     }
 
     private getAvailableTools(): ToolSet | undefined {
-        const registry = this.getBaseToolRegistry();
+        const base = this.getBaseToolRegistry();
 
-        if (!registry) {
+        if (!base) {
             return undefined;
         }
 
-        return {
-            searchWeb: tool({
-                description: registry.searchWeb.description,
-                inputSchema: registry.searchWeb.parameters,
-                execute: registry.searchWeb.execute,
-            }),
+        const tools: ToolSet = {
+            ...base.fileTools,
         };
+
+        if (base.registry.searchWeb) {
+            tools.searchWeb = tool({
+                description: base.registry.searchWeb.description,
+                inputSchema: base.registry.searchWeb.parameters,
+                execute: base.registry.searchWeb.execute,
+            });
+        }
+
+        return Object.keys(tools).length > 0 ? tools : undefined;
     }
 
     /** Returns tools in AIChatTool format (for AIChat constructor). */
@@ -690,19 +708,40 @@ class ASKTool {
               }
           >
         | undefined {
-        const registry = this.getBaseToolRegistry();
+        const base = this.getBaseToolRegistry();
 
-        if (!registry) {
+        if (!base) {
             return undefined;
         }
 
-        return {
-            searchWeb: {
-                description: registry.searchWeb.description,
-                parameters: registry.searchWeb.parameters,
-                execute: registry.searchWeb.execute as (params: Record<string, unknown>) => Promise<unknown>,
-            },
-        };
+        const result: Record<
+            string,
+            {
+                description: string;
+                parameters: unknown;
+                execute: (params: Record<string, unknown>) => Promise<unknown>;
+            }
+        > = {};
+
+        // Add file tools (ai SDK Tool has inputSchema; AIChatTool expects parameters)
+        for (const [name, t] of Object.entries(base.fileTools)) {
+            result[name] = {
+                description: t.description ?? "",
+                parameters: t.inputSchema,
+                execute: t.execute as (params: Record<string, unknown>) => Promise<unknown>,
+            };
+        }
+
+        // Add web search
+        if (base.registry.searchWeb) {
+            result.searchWeb = {
+                description: base.registry.searchWeb.description,
+                parameters: base.registry.searchWeb.parameters,
+                execute: base.registry.searchWeb.execute as (params: Record<string, unknown>) => Promise<unknown>,
+            };
+        }
+
+        return Object.keys(result).length > 0 ? result : undefined;
     }
 
     private async handleCommandResult(

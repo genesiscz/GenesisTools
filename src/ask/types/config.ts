@@ -19,6 +19,7 @@ export interface CLIOptions {
     raw?: boolean;
     cost?: boolean;
     noContext?: boolean;
+    noTools?: boolean;
     // Aliases
     s?: string;
     m?: string;

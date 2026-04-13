@@ -39,6 +39,7 @@ export function parseCLIArguments(): Args {
         .option("--predict-cost", "Show cost prediction before sending")
         .option("--raw", "Output only the raw response content (no metadata, no cost)")
         .option("--cost", "Show cost breakdown (always shown in TTY, opt-in for piped output)")
+        .option("--no-tools", "Disable all AI tools (file, grep, bash, web search)")
         .option("-?, --help-full", "Show detailed help message")
         .option("-V, --version", "Show version information")
         .argument("[prompt...]", "Initial prompt")
@@ -70,6 +71,7 @@ export function parseCLIArguments(): Args {
         help: options.helpFull,
         version: options.version,
         noContext: options.context === false,
+        noTools: options.tools === false,
     };
 
     return result;
@@ -103,6 +105,7 @@ Options:
   --systemPrompt <text>   Set system prompt
   --streaming             Enable streaming responses (default: true)
   --no-streaming          Disable streaming responses
+  --no-tools              Disable all AI tools (file, grep, bash, web search)
   --raw                   Output only the raw response (no metadata, cost, or formatting)
   -v, --verbose            Enable verbose logging
   --silent                Silent mode
