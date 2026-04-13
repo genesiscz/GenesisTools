@@ -1,6 +1,7 @@
 import { formatToolResult, formatToolSignature } from "@app/utils/agents/formatters/tool-formatter";
 import type { FormattedBlock } from "@app/utils/agents/formatters/types";
 import { TerminalRenderer } from "@app/utils/agents/renderers/TerminalRenderer";
+import { renderMarkdown } from "@app/utils/claude/terminal-markdown";
 import { SafeJSON } from "@app/utils/json";
 import type { ChatEvent } from "@ask/lib/ChatEvent";
 
@@ -11,6 +12,8 @@ export interface AskStreamRendererOptions {
     metaStream?: NodeJS.WritableStream;
     /** Enable color output. Default: true if metaStream is TTY */
     colors?: boolean;
+    /** Enable markdown rendering for prose output. Default: true if TTY */
+    markdown?: boolean;
     /** Max chars for tool input in signatures. Default: 200 */
     toolInputMaxChars?: number;
     /** Max chars for tool result content. Default: 300 */
@@ -23,7 +26,12 @@ export class AskStreamRenderer {
     private readonly metaStream: NodeJS.WritableStream;
     private readonly toolInputMaxChars: number;
     private readonly toolResultMaxChars: number;
+    private readonly markdownEnabled: boolean;
     private needsNewlineBeforeMeta = false;
+    /** Accumulated text buffer for markdown rendering. */
+    private textBuffer = "";
+    /** Tracks text already flushed (rendered) so we only render new content. */
+    private flushedLength = 0;
 
     constructor(options: AskStreamRendererOptions = {}) {
         this.textStream = options.textStream ?? process.stdout;
@@ -32,6 +40,8 @@ export class AskStreamRenderer {
         this.toolResultMaxChars = options.toolResultMaxChars ?? 300;
 
         const isTTY = "isTTY" in this.metaStream && (this.metaStream as NodeJS.WriteStream).isTTY;
+        const textIsTTY = "isTTY" in this.textStream && (this.textStream as NodeJS.WriteStream).isTTY;
+        this.markdownEnabled = options.markdown ?? !!textIsTTY;
         this.renderer = new TerminalRenderer({
             colors: options.colors ?? !!isTTY,
         });
@@ -43,12 +53,18 @@ export class AskStreamRenderer {
      */
     renderEvent(event: ChatEvent): void {
         if (event.isText()) {
-            this.textStream.write(event.text);
+            if (this.markdownEnabled) {
+                this.bufferText(event.text);
+            } else {
+                this.textStream.write(event.text);
+            }
+
             this.needsNewlineBeforeMeta = true;
             return;
         }
 
         if (event.isToolCall()) {
+            this.flushBuffer();
             this.renderToolCall(event.name, event.input);
             return;
         }
@@ -59,8 +75,53 @@ export class AskStreamRenderer {
         }
 
         if (event.isDone()) {
+            this.flushBuffer();
             this.ensureNewline();
         }
+    }
+
+    /**
+     * Buffer text and flush complete paragraphs (delimited by double newline).
+     * Remaining partial content is flushed on done or tool events.
+     */
+    private bufferText(text: string): void {
+        this.textBuffer += text;
+
+        // Look for paragraph boundaries (double newline) in the unflushed portion
+        const unflushed = this.textBuffer.slice(this.flushedLength);
+        const boundaryIdx = unflushed.lastIndexOf("\n\n");
+
+        if (boundaryIdx === -1) {
+            return;
+        }
+
+        // Render everything up to and including the boundary
+        const toRender = this.textBuffer.slice(this.flushedLength, this.flushedLength + boundaryIdx + 2);
+        const rendered = renderMarkdown(toRender);
+        this.textStream.write(rendered);
+        this.flushedLength += boundaryIdx + 2;
+    }
+
+    /** Flush any remaining buffered text. */
+    private flushBuffer(): void {
+        if (this.flushedLength >= this.textBuffer.length) {
+            return;
+        }
+
+        const remaining = this.textBuffer.slice(this.flushedLength);
+
+        if (remaining.length === 0) {
+            return;
+        }
+
+        if (this.markdownEnabled) {
+            const rendered = renderMarkdown(remaining);
+            this.textStream.write(rendered);
+        } else {
+            this.textStream.write(remaining);
+        }
+
+        this.flushedLength = this.textBuffer.length;
     }
 
     /**
