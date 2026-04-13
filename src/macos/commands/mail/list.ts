@@ -1,7 +1,12 @@
 import { ALL_COLUMN_KEYS } from "@app/macos/lib/mail/columns";
-import { needsRecipients, outputFormattedResults, resolveColumnsFromFlag } from "@app/macos/lib/mail/command-helpers";
+import {
+    enrichWithBodies,
+    needsRecipients,
+    outputFormattedResults,
+    resolveColumnsFromFlag,
+} from "@app/macos/lib/mail/command-helpers";
 import { MailStorage } from "@app/macos/lib/mail/mail-storage";
-import { cleanup, getAttachments, getRecipients, listMessages } from "@app/macos/lib/mail/sqlite";
+import { MailDatabase } from "@app/utils/macos/MailDatabase";
 import { rowToMessage } from "@app/macos/lib/mail/transform";
 import type { MailMessage } from "@app/macos/lib/mail/types";
 import * as p from "@clack/prompts";
@@ -23,6 +28,8 @@ export function registerListCommand(program: Command): void {
         .option("-f, --format <type>", "Output format: table, json, toon", "table")
         .option("--since-last-check", "Show only emails since last monitor check")
         .action(async (mailbox: string | undefined, options: ListOptions) => {
+            const db = new MailDatabase();
+
             try {
                 const targetMailbox = mailbox ?? "INBOX";
                 const limit = Number.parseInt(options.limit ?? "20", 10);
@@ -36,7 +43,7 @@ export function registerListCommand(program: Command): void {
                 const spinner = p.spinner();
                 spinner.start(`Fetching latest ${limit} emails from ${targetMailbox}...`);
 
-                let rows = listMessages(targetMailbox, limit);
+                let rows = db.listMessages(targetMailbox, limit);
 
                 if (options.sinceLastCheck) {
                     const mailStorage = new MailStorage();
@@ -49,22 +56,23 @@ export function registerListCommand(program: Command): void {
 
                 if (rows.length === 0) {
                     spinner.stop(`No messages found in ${targetMailbox}.`);
-                    cleanup();
                     return;
                 }
 
                 // Enrich with attachments
                 const rowids = rows.map((r) => r.rowid);
-                const attachmentsMap = getAttachments(rowids);
+                const attachmentsMap = db.getAttachments(rowids);
                 const messages: MailMessage[] = rows.map((row) => {
                     const msg = rowToMessage(row);
                     msg.attachments = attachmentsMap.get(row.rowid) ?? [];
                     return msg;
                 });
 
+                await enrichWithBodies(messages, columns);
+
                 // Enrich with recipients if any recipient column is selected
                 if (needsRecipients(columns)) {
-                    const recipientsMap = getRecipients(rowids);
+                    const recipientsMap = db.getRecipients(rowids);
 
                     for (const msg of messages) {
                         msg.recipients = recipientsMap.get(msg.rowid) ?? [];
@@ -82,7 +90,7 @@ export function registerListCommand(program: Command): void {
                 p.log.error(error instanceof Error ? error.message : String(error));
                 process.exit(1);
             } finally {
-                cleanup();
+                db.close();
             }
         });
 }

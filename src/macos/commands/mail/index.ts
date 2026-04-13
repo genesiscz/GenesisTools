@@ -1,11 +1,13 @@
 // src/macos/commands/mail/index.ts
 
 import { Command } from "commander";
+import { registerAccountsCommand } from "./accounts";
 import { registerDownloadCommand } from "./download";
 import { registerIndexCommand } from "./index-cmd";
 import { registerListCommand } from "./list";
 import { registerMonitorCommand } from "./monitor";
 import { registerSearchCommand } from "./search";
+import { registerShowCommand } from "./show";
 
 /**
  * Register the `mail` subcommand on the parent program.
@@ -20,6 +22,8 @@ export function registerMailCommand(program: Command): void {
     registerDownloadCommand(mail);
     registerIndexCommand(mail);
     registerMonitorCommand(mail);
+    registerAccountsCommand(mail);
+    registerShowCommand(mail);
 
     program.addCommand(mail);
 }

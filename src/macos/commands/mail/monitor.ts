@@ -1,8 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { formatResultsTable } from "@app/macos/lib/mail/format";
 import { MailStorage } from "@app/macos/lib/mail/mail-storage";
-import { cleanup, getAttachments, getRecipients, listMessages } from "@app/macos/lib/mail/sqlite";
-import { rowToMessage } from "@app/macos/lib/mail/transform";
+import { MailDatabase } from "@app/utils/macos/MailDatabase";
+import { rowToMessage, truncateBody } from "@app/macos/lib/mail/transform";
 import type { MailMessage } from "@app/macos/lib/mail/types";
 import { SafeJSON } from "@app/utils/json";
 import * as p from "@clack/prompts";
@@ -117,6 +117,7 @@ interface MonitorOptions {
     notifyTelegram?: boolean;
     rules?: string;
     dryRun?: boolean;
+    preview?: boolean;
 }
 
 // ─── Register ────────────────────────────────────────────────
@@ -129,7 +130,10 @@ export function registerMonitorCommand(program: Command): void {
         .option("--notify-telegram", "Send a notification via sayy")
         .option("--rules <path>", "Path to custom rules JSON file")
         .option("--dry-run", "Show what would be flagged without updating seen DB")
+        .option("--preview", "Show first 200 chars of body for matched emails")
         .action(async (options: MonitorOptions) => {
+            const db = new MailDatabase();
+
             try {
                 const limit = Number.parseInt(options.limit ?? "200", 10);
                 const rules = loadRules(options.rules);
@@ -138,18 +142,17 @@ export function registerMonitorCommand(program: Command): void {
                 const spinner = p.spinner();
                 spinner.start(`Fetching latest ${limit} messages from INBOX...`);
 
-                const rows = listMessages("INBOX", limit);
+                const rows = db.listMessages("INBOX", limit);
 
                 if (rows.length === 0) {
                     spinner.stop("No messages found in INBOX.");
-                    cleanup();
                     return;
                 }
 
                 // Build MailMessage objects
                 const rowids = rows.map((r) => r.rowid);
-                const attachmentsMap = getAttachments(rowids);
-                const recipientsMap = getRecipients(rowids);
+                const attachmentsMap = db.getAttachments(rowids);
+                const recipientsMap = db.getRecipients(rowids);
                 const messages: MailMessage[] = rows.map((row) => {
                     const msg = rowToMessage(row);
                     msg.attachments = attachmentsMap.get(row.rowid) ?? [];
@@ -167,7 +170,6 @@ export function registerMonitorCommand(program: Command): void {
                 if (newMessages.length === 0) {
                     spinner.stop("No new messages since last check.");
                     store.close();
-                    cleanup();
                     return;
                 }
 
@@ -185,6 +187,22 @@ export function registerMonitorCommand(program: Command): void {
                 spinner.stop(`${newMessages.length} new message(s), ${important.length} important.`);
 
                 if (important.length > 0) {
+                    // Fetch body previews if requested
+                    if (options.preview) {
+                        const { EmlxBodyExtractor } = await import("@app/macos/lib/mail/emlx");
+                        const emlx = await EmlxBodyExtractor.create();
+
+                        for (const { msg } of important) {
+                            const body = await emlx.getBody(msg.rowid);
+
+                            if (body) {
+                                msg.body = truncateBody(body, 200, "...");
+                            }
+                        }
+
+                        emlx.dispose();
+                    }
+
                     const importantMsgs = important.map((i) => i.msg);
                     console.log("");
                     console.log(formatResultsTable(importantMsgs, ["date", "from", "subject", "flagged"]));
@@ -194,6 +212,11 @@ export function registerMonitorCommand(program: Command): void {
                         const from = msg.senderName || msg.senderAddress;
                         const subj = msg.subject.length > 50 ? `${msg.subject.slice(0, 50)}...` : msg.subject;
                         p.log.info(`[${ruleName}] ${from}: ${subj}`);
+
+                        if (options.preview && msg.body) {
+                            const preview = msg.body.replace(/\n/g, " ").slice(0, 200);
+                            p.log.message(`  ${preview}`);
+                        }
                     }
                 }
 
@@ -232,7 +255,7 @@ export function registerMonitorCommand(program: Command): void {
                 p.log.error(error instanceof Error ? error.message : String(error));
                 process.exit(1);
             } finally {
-                cleanup();
+                db.close();
             }
         });
 }

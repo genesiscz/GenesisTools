@@ -139,7 +139,28 @@ export class EmlxBodyExtractor {
             const { simpleParser } = await import("mailparser");
             const parsed = await simpleParser(mimeContent);
 
-            return parsed.text ?? null;
+            if (parsed.text) {
+                return parsed.text;
+            }
+
+            // HTML-only emails (e.g. Apple invoices): strip tags to get plain text
+            if (parsed.html) {
+                return (
+                    parsed.html
+                        .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+                        .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+                        .replace(/<[^>]+>/g, " ")
+                        .replace(/&nbsp;/g, " ")
+                        .replace(/&amp;/g, "&")
+                        .replace(/&lt;/g, "<")
+                        .replace(/&gt;/g, ">")
+                        .replace(/&#\d+;/g, "")
+                        .replace(/\s+/g, " ")
+                        .trim() || null
+                );
+            }
+
+            return null;
         } catch (err) {
             logger.debug(`Failed to parse emlx ${filePath}: ${err}`);
             return null;
