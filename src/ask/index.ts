@@ -18,6 +18,7 @@ import { outputManager } from "@ask/output/OutputManager";
 import { modelSelector } from "@ask/providers/ModelSelector";
 import { getLanguageModel } from "@ask/types";
 import { getFileTools } from "@ask/tools/file-tools";
+import { expandAtMentions } from "@ask/utils/at-mentions";
 import { webSearchTool } from "@ask/utils/websearch";
 import * as p from "@clack/prompts";
 import type { ToolSet } from "ai";
@@ -338,10 +339,18 @@ class ASKTool {
     }
 
     private async handleSingleMessage(argv: Args): Promise<void> {
-        const message = argv._.join(" ");
-        if (!message) {
+        const rawMessage = argv._.join(" ");
+        if (!rawMessage) {
             logger.error("No message provided");
             process.exit(1);
+        }
+
+        // Expand @file mentions
+        const { text: message, mentions } = expandAtMentions(rawMessage);
+
+        if (mentions.length > 0) {
+            const files = mentions.map((m) => m.path);
+            p.log.info(pc.dim(`Attached ${files.length} file${files.length > 1 ? "s" : ""}: ${files.join(", ")}`));
         }
 
         try {
@@ -552,6 +561,16 @@ class ASKTool {
                     continue;
                 }
 
+                // Expand @file mentions in the message
+                const { text: expandedMsg, mentions: msgMentions } = expandAtMentions(msg);
+
+                if (msgMentions.length > 0) {
+                    const files = msgMentions.map((m) => m.path);
+                    p.log.info(
+                        pc.dim(`Attached ${files.length} file${files.length > 1 ? "s" : ""}: ${files.join(", ")}`)
+                    );
+                }
+
                 // Regular chat message
                 console.log(pc.yellow("\nAssistant:"));
 
@@ -563,7 +582,7 @@ class ASKTool {
                 const interactiveRenderer = new AskStreamRenderer();
 
                 // Send message with tool callbacks
-                const response = await chatEngine.sendMessage(msg, tools, {
+                const response = await chatEngine.sendMessage(expandedMsg, tools, {
                     onToolCall: (name, args) => {
                         interactiveRenderer.renderToolCall(name, args);
                     },
