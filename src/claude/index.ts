@@ -4,6 +4,7 @@ import { Command } from "commander";
 import { registerConfigCommand } from "./commands/config";
 import { registerDaemonCommand } from "./commands/daemon";
 import { registerDesktopCommand } from "./commands/desktop";
+import { registerExportCommand } from "./commands/export";
 import { registerHistoryCommand } from "./commands/history";
 import { registerMemoryCommand } from "./commands/memory";
 import { registerMigrateCommand } from "./commands/migrate";
@@ -21,6 +22,7 @@ program
     .version("1.0.0")
     .showHelpAfterError(true);
 
+registerExportCommand(program);
 registerHistoryCommand(program);
 registerMemoryCommand(program);
 registerSummarizeCommand(program);
