@@ -481,6 +481,56 @@ export class Storage {
     }
 
     /**
+     * Atomically read-modify-write the config file.
+     *
+     * Acquires the config file lock, reads the current config (or empty object),
+     * calls updater to mutate it, then writes it back. This prevents TOCTOU bugs
+     * where stale in-memory config overwrites changes made by other processes.
+     *
+     * @param updater - Function that receives the current config and mutates it
+     * @returns The updated config
+     *
+     * @example
+     * await storage.atomicConfigUpdate<MyConfig>((config) => {
+     *     config.someField = newValue;
+     *     // other fields (e.g. tokens) are untouched — fresh from disk
+     * });
+     *
+     * @note The underlying file lock is **non-reentrant**. Do not call
+     * `atomicConfigUpdate` (or any code that acquires the same config lock)
+     * from within the `updater` callback — doing so will deadlock until timeout.
+     */
+    async atomicConfigUpdate<T extends object>(updater: (config: T) => void): Promise<T> {
+        await this.ensureDirs();
+
+        return this.withFileLock({
+            file: this.configPath,
+            fn: async () => {
+                let config: T;
+
+                if (existsSync(this.configPath)) {
+                    const content = await Bun.file(this.configPath).text();
+                    const parsed = SafeJSON.parse(content);
+
+                    if (parsed == null || typeof parsed !== "object" || Array.isArray(parsed)) {
+                        throw new Error(`Invalid config at ${this.configPath}: expected JSON object`);
+                    }
+
+                    config = parsed as T;
+                } else {
+                    config = {} as T;
+                }
+
+                updater(config);
+                await Bun.write(this.configPath, SafeJSON.stringify(config, null, 2));
+                logger.debug("Atomic config update complete");
+
+                return config;
+            },
+        });
+    }
+
+    /**
      * Get cache statistics
      * @returns Object with count and total size
      */

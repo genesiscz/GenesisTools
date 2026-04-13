@@ -298,3 +298,31 @@ export function formatNumber(n: number): string {
     }
     return n.toString();
 }
+
+// ============= Timestamps =============
+
+/**
+ * Format current time as HH:MM:SS.mmm (24h with milliseconds).
+ * Useful for log prefixes where you need to correlate wall-clock time.
+ */
+export function formatTimestamp(date: Date = new Date()): string {
+    const h = String(date.getHours()).padStart(2, "0");
+    const m = String(date.getMinutes()).padStart(2, "0");
+    const s = String(date.getSeconds()).padStart(2, "0");
+    const ms = String(date.getMilliseconds()).padStart(3, "0");
+    return `${h}:${m}:${s}.${ms}`;
+}
+
+/**
+ * Create a simple stopwatch function that returns formatted elapsed time.
+ * For a full-featured stopwatch with laps/stamps, use Stopwatch class from @app/utils/Stopwatch.
+ *
+ * @example
+ * const elapsed = createStopwatch();
+ * // ... do work ...
+ * console.log(elapsed()); // "1.5s"
+ */
+export function createStopwatch(): () => string {
+    const start = performance.now();
+    return () => formatDuration(performance.now() - start);
+}
