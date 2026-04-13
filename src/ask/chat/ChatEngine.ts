@@ -440,7 +440,9 @@ export class ChatEngine {
             timestamp: new Date(msg.timestamp),
         }));
 
-        // Rebuild sdkMessages from display history so the model gets full context
+        // Rebuild sdkMessages from display history — tool_call/tool_result entries from prior
+        // turns are lost since conversationHistory only stores user/assistant/system messages.
+        // This is acceptable: imported sessions resume as plain text context without active tool chains.
         this.sdkMessages = this.conversationHistory
             .filter((m) => m.role === "user" || m.role === "assistant")
             .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
@@ -482,7 +484,8 @@ export class ChatEngine {
         }
 
         if (this.conversationHistory.length < lengthBefore) {
-            // Rebuild sdkMessages to stay in sync after trim
+            // Rebuild sdkMessages to stay in sync after trim — tool_call/tool_result entries
+            // from pruned turns are dropped (trimmed context resumes without active tool chains)
             this.sdkMessages = this.conversationHistory
                 .filter((m) => m.role === "user" || m.role === "assistant")
                 .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));

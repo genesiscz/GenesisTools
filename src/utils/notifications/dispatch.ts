@@ -15,9 +15,13 @@ async function dispatchSay(message: string, config: SayChannelConfig): Promise<v
     try {
         const proc = Bun.spawn(["tools", "say", message, "--voice", voice], {
             stdout: "ignore",
-            stderr: "ignore",
+            stderr: "pipe",
         });
-        await proc.exited;
+        const [exitCode, stderrText] = await Promise.all([proc.exited, new Response(proc.stderr).text()]);
+
+        if (exitCode !== 0) {
+            logger.warn({ exitCode, stderr: stderrText.trim() }, "Say notification dispatch failed");
+        }
     } catch (err) {
         logger.warn({ err }, "Say notification dispatch failed");
     }
