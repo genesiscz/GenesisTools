@@ -208,3 +208,4 @@ vercel-skills
 .agents/skills/hf-cli/
 
 .claude/skills/hf-cli
+.claude/plans/
