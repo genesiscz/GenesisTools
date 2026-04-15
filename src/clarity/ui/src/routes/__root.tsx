@@ -13,6 +13,7 @@ const navLinks = [
 ];
 
 export const Route = createRootRoute({
+    notFoundComponent: () => <div className="p-8 text-center text-gray-400">Page not found</div>,
     head: () => ({
         title: "GenesisTools - Clarity Timelog",
         meta: [

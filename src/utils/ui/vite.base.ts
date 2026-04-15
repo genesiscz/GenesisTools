@@ -226,7 +226,7 @@ export function createDashboardViteConfig({
             ],
         },
         ssr: {
-            external: ["node:async_hooks"],
+            external: ["node:async_hooks", "bun"],
         },
         ...rest,
     }) as UserConfig;
