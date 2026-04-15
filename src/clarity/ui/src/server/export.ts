@@ -3,9 +3,9 @@ import { exportMonth, type MonthExport } from "@app/azure-devops/lib/timelog/exp
 import { enrichWorkItems } from "@app/azure-devops/lib/work-item-enrichment";
 import { TimeLogApi } from "@app/azure-devops/timelog-api";
 import type { AzureConfigWithTimeLog } from "@app/azure-devops/types";
-import { getTimelogWorkItems, type TimelogWorkItemGroup } from "@app/clarity/lib/timelog-workitems";
+import { getTimelogWorkItems, type TimelogWorkItemGroup, type TimelogWorkItemsResult } from "@app/clarity/lib/timelog-workitems";
 
-export type { TimelogWorkItemGroup };
+export type { TimelogWorkItemGroup, TimelogWorkItemsResult };
 
 function requireAdoConfig(): AzureConfigWithTimeLog {
     const adoConfig = loadAdoConfig() as AzureConfigWithTimeLog | null;
@@ -79,7 +79,7 @@ export async function getExportData(month: number, year: number, options?: { for
     return result;
 }
 
-export async function getTimelogEntries(month: number, year: number): Promise<{ workItems: TimelogWorkItemGroup[] }> {
+export async function getTimelogEntries(month: number, year: number): Promise<TimelogWorkItemsResult> {
     const adoConfig = requireAdoConfig();
     const adoApi = createTimeLogApi(adoConfig);
     return getTimelogWorkItems(adoApi, adoConfig, month, year, adoConfig.timelog!.defaultUser!.userId);

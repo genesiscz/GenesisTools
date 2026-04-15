@@ -12,23 +12,31 @@ export interface TimelogWorkItemGroup {
     entryCount: number;
 }
 
+export interface TimelogWorkItemsResult {
+    workItems: TimelogWorkItemGroup[];
+    enrichmentError?: string;
+}
+
 export async function getTimelogWorkItems(
     adoApi: TimeLogApi,
     adoConfig: AzureConfig,
     month: number,
     year: number,
     userId: string
-): Promise<{ workItems: TimelogWorkItemGroup[] }> {
+): Promise<TimelogWorkItemsResult> {
     const result = await exportMonth(adoApi, month, year, userId);
 
     const uniqueIds = [...new Set(result.entries.map((e) => e.workItemId))];
     let workItemMap = new Map<number, EnrichedWorkItem>();
+    let enrichmentError: string | undefined;
 
     if (uniqueIds.length > 0) {
         try {
             workItemMap = await enrichWorkItems(adoConfig, uniqueIds);
         } catch (err) {
-            console.error("[clarity-lib] Failed to enrich timelog entries:", err);
+            const msg = err instanceof Error ? err.message : String(err);
+            console.error("[clarity-lib] Failed to enrich timelog entries:", msg);
+            enrichmentError = msg;
         }
     }
 
@@ -48,5 +56,5 @@ export async function getTimelogWorkItems(
         }
     );
 
-    return { workItems };
+    return { workItems, enrichmentError };
 }
