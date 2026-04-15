@@ -1,4 +1,5 @@
 import { sendWarmupMessage } from "@app/claude/lib/warmup/service";
+import { isInteractive, suggestCommand } from "@app/utils/cli";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -30,6 +31,11 @@ export function registerWarmupCommand(program: Command): void {
             }
 
             selectedNames = [accountArg];
+        } else if (!isInteractive()) {
+            p.log.error("No account specified in non-interactive mode.");
+            console.info(suggestCommand("tools claude warmup", { add: ["<account>"] }));
+            p.outro("");
+            return;
         } else {
             const selected = await p.multiselect({
                 message: "Select accounts to warm up",

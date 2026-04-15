@@ -148,10 +148,7 @@ function ConversationPage() {
 				</div>
 			</header>
 			<main className="max-w-5xl mx-auto px-6 py-6 pb-16">
-				<SessionTimeline
-					messages={agentMessages}
-					formatOptions={{ showThinking: true, toolDetailLevel: "full" }}
-				/>
+				<SessionTimeline messages={agentMessages} formatOptions={{ showThinking: true, toolDetailLevel: "full" }} />
 			</main>
 		</div>
 	);

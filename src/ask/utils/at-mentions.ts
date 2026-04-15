@@ -23,9 +23,9 @@ export interface AtMentionResult {
 export function expandAtMentions(input: string): AtMentionResult {
     const mentionRegex = /@([\w./-]+\.\w+)/g;
     const mentions: ExpandedMention[] = [];
-    let match: RegExpExecArray | null;
+    let match: RegExpExecArray | null = mentionRegex.exec(input);
 
-    while ((match = mentionRegex.exec(input)) !== null) {
+    while (match !== null) {
         const raw = match[1];
         const filePath = resolve(raw);
 
@@ -39,6 +39,8 @@ export function expandAtMentions(input: string): AtMentionResult {
         } catch {
             // Skip unreadable files silently
         }
+
+        match = mentionRegex.exec(input);
     }
 
     if (mentions.length === 0) {
