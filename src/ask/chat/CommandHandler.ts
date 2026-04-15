@@ -196,8 +196,8 @@ export class CommandHandler {
         if (!state) {
             console.log(pc.dim("  No state available."));
         } else {
-            console.log(pc.bold("  Messages: ") + `${state.conversationLength}`);
-            console.log(pc.bold("  Est. tokens: ") + `${state.totalTokens.toLocaleString()}`);
+            console.log(`${pc.bold("  Messages: ")}${state.conversationLength}`);
+            console.log(`${pc.bold("  Est. tokens: ")}${state.totalTokens.toLocaleString()}`);
         }
 
         console.log();
@@ -210,7 +210,9 @@ export class CommandHandler {
             console.log(pc.dim("  No system prompt set."));
         } else {
             const truncated =
-                state.systemPrompt.length > 500 ? state.systemPrompt.slice(0, 500) + "\n... (truncated)" : state.systemPrompt;
+                state.systemPrompt.length > 500
+                    ? `${state.systemPrompt.slice(0, 500)}\n... (truncated)`
+                    : state.systemPrompt;
             console.log(pc.dim(truncated));
         }
 
@@ -273,8 +275,18 @@ export class CommandHandler {
         const parts = message.trim().split(/\s+/);
         const cmd = parts[0].toLowerCase();
         const validCommands = [
-            "/model", "/output", "/quit", "/exit", "/clear", "/save", "/sst",
-            "/context", "/tools", "/history", "/system", "/help",
+            "/model",
+            "/output",
+            "/quit",
+            "/exit",
+            "/clear",
+            "/save",
+            "/sst",
+            "/context",
+            "/tools",
+            "/history",
+            "/system",
+            "/help",
         ];
 
         return validCommands.includes(cmd);

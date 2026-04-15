@@ -46,7 +46,7 @@ function findSessionFile(sessionId: string, options: { project?: string; all?: b
     return null;
 }
 
-function getProjectDirs(projectPath?: string, allProjects?: boolean): string[] {
+function getProjectDirs(projectPath?: string, _allProjects?: boolean): string[] {
     if (projectPath) {
         const dir = resolve(PROJECTS_DIR, projectPath);
         return existsSync(dir) ? [dir] : [];
@@ -101,11 +101,9 @@ export function registerExportCommand(program: Command): void {
             }
 
             const isRaw = opts.format === "raw";
-            const useColors = opts.output ? false : (opts.colors && (process.stdout.isTTY ?? false));
+            const useColors = opts.output ? false : opts.colors && (process.stdout.isTTY ?? false);
 
-            const includeSpec = opts.include
-                ? IncludeSpec.parse(opts.include)
-                : IncludeSpec.defaults();
+            const includeSpec = opts.include ? IncludeSpec.parse(opts.include) : IncludeSpec.defaults();
 
             const formatter = new ClaudeSessionFormatter({
                 includeSpec,

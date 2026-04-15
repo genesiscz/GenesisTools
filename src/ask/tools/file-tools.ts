@@ -32,7 +32,7 @@ export function getFileTools() {
                 const lines = content.split("\n");
 
                 if (maxLines && lines.length > maxLines) {
-                    return lines.slice(0, maxLines).join("\n") + `\n... (${lines.length - maxLines} more lines)`;
+                    return `${lines.slice(0, maxLines).join("\n")}\n... (${lines.length - maxLines} more lines)`;
                 }
 
                 return content;
@@ -40,7 +40,8 @@ export function getFileTools() {
         }),
 
         grep: tool({
-            description: "Search for a pattern in files using ripgrep. Returns matching lines with file paths and line numbers.",
+            description:
+                "Search for a pattern in files using ripgrep. Returns matching lines with file paths and line numbers.",
             inputSchema: grepSchema,
             execute: async ({ pattern, path, glob }: z.infer<typeof grepSchema>) => {
                 const args = ["rg", "--no-heading", "-n", pattern];

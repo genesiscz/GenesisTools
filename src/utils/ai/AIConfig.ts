@@ -96,15 +96,16 @@ export class AIConfig {
     // ── Account CRUD ──
 
     getAccount(name: string): AIAccountEntry | undefined {
-        return this.data.accounts.find((a) => a.name === name);
+        const found = this.data.accounts.find((a) => a.name === name);
+        return found ? structuredClone(found) : undefined;
     }
 
     getAccountsByProvider(provider: AIProvider): AIAccountEntry[] {
-        return this.data.accounts.filter((a) => a.provider === provider);
+        return this.data.accounts.filter((a) => a.provider === provider).map((a) => structuredClone(a));
     }
 
     getAccountsByApp(app: string): AIAccountEntry[] {
-        return this.data.accounts.filter((a) => a.apps?.includes(app));
+        return this.data.accounts.filter((a) => a.apps?.includes(app)).map((a) => structuredClone(a));
     }
 
     /**
@@ -167,7 +168,7 @@ export class AIConfig {
     }
 
     listAccounts(): AIAccountEntry[] {
-        return [...this.data.accounts];
+        return this.data.accounts.map((a) => structuredClone(a));
     }
 
     /**
@@ -190,11 +191,11 @@ export class AIConfig {
             const defaultMatch = matches.find((a) => a.name === defaultName);
 
             if (defaultMatch) {
-                return defaultMatch;
+                return structuredClone(defaultMatch);
             }
         }
 
-        return matches[0];
+        return structuredClone(matches[0]);
     }
 
     // ── Default accounts (per-context) ──
@@ -203,11 +204,12 @@ export class AIConfig {
         const name = this.data.defaultAccounts[context];
 
         if (name) {
-            return this.data.accounts.find((a) => a.name === name);
+            const found = this.data.accounts.find((a) => a.name === name);
+            return found ? structuredClone(found) : undefined;
         }
 
         // Fallback: first account
-        return this.data.accounts[0];
+        return this.data.accounts[0] ? structuredClone(this.data.accounts[0]) : undefined;
     }
 
     async setDefaultAccount(context: string, accountName: string): Promise<void> {
