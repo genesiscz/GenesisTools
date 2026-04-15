@@ -41,7 +41,7 @@ export class CursorProvider extends MCPProvider {
     }
 
     async writeConfig(config: unknown): Promise<WriteResult> {
-        const newContent = SafeJSON.stringify(config, null, 2);
+        const newContent = SafeJSON.stringify(config, { strict: true }, 2);
 
         // Read old content (empty string if file doesn't exist)
         const oldContent = (await this.configExists()) ? await readFile(this.configPath, "utf-8") : "";
