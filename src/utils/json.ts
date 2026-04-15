@@ -57,7 +57,7 @@ export const SafeJSON = {
             const options = replacerOrOptions as StringifyOptions;
             if (options.jsonl || options.strict) {
                 // biome-ignore lint/style/noRestrictedGlobals: intentional strict-mode fallback to native JSON.stringify
-                return JSON.stringify(value);
+                return JSON.stringify(value, null, space);
             }
         }
         // Default: use comment-json stringify with all params
