@@ -211,6 +211,7 @@ export function createDashboardViteConfig({
         optimizeDeps: {
             ...overrideOptimizeDeps,
             exclude: [
+                "bun",
                 "@tanstack/react-start-client",
                 "@tanstack/start-client-core",
                 ...(overrideOptimizeDeps?.exclude ?? []),

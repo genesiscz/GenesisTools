@@ -102,15 +102,34 @@ export async function enrichWorkItems(
     // Phase 2: Batch fetch missing items from API
     if (idsToFetch.length > 0) {
         const api = await createApi(config);
-        const fetched = await api.getWorkItems(idsToFetch, {
-            comments: false,
-            updates: false,
-        });
+        let fetched: Map<number, import("@app/azure-devops/types").WorkItemFull>;
+
+        try {
+            fetched = await api.getWorkItems(idsToFetch, {
+                comments: false,
+                updates: false,
+            });
+        } catch {
+            // Batch fetch failed (e.g. one inaccessible item returns 404 for entire batch).
+            // Fall back to fetching items individually, skipping failures.
+            logger.warn(`[enrichment] Batch fetch failed, falling back to individual fetches`);
+            fetched = new Map();
+
+            for (const id of idsToFetch) {
+                try {
+                    const single = await api.getWorkItems([id], { comments: false, updates: false });
+                    for (const [sId, sItem] of single) {
+                        fetched.set(sId, sItem);
+                    }
+                } catch {
+                    logger.warn(`[enrichment] Skipping inaccessible work item #${id}`);
+                }
+            }
+        }
 
         for (const [id, item] of fetched) {
             const itemType = (item.rawFields?.["System.WorkItemType"] as string | undefined) ?? undefined;
 
-            // Save to cache (including type and assignee)
             const cacheEntry: WorkItemCache = {
                 version: WORKITEM_CACHE_VERSION,
                 cache: { fieldsFetchedAt: new Date().toISOString() },
@@ -125,7 +144,6 @@ export async function enrichWorkItems(
 
             await saveWorkItemCache(id, cacheEntry);
 
-            // Build enriched result
             const enriched: EnrichedWorkItem = {
                 id: item.id,
                 title: item.title,

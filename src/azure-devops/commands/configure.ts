@@ -26,6 +26,20 @@ async function handleConfigure(url: string): Promise<void> {
         exitWithAuthGuide();
     }
 
+    // Check if azure-devops extension is installed
+    try {
+        const extList = await $`az extension list --query "[?name=='azure-devops'].name" -o tsv`.quiet();
+
+        if (!extList.text().trim()) {
+            console.log(
+                "⚠️  Azure DevOps CLI extension not installed. Install it with:\n\n" +
+                    "    az extension add --name azure-devops\n"
+            );
+        }
+    } catch {
+        logger.debug("[configure] Could not check azure-devops extension status");
+    }
+
     console.log(`Parsing URL and fetching project ID: ${url}\n`);
 
     const newConfig = await buildAdoConfig(url);
