@@ -36,7 +36,7 @@ export function buildWeekComment(entries: CommentEntry[]): string {
         const day = d.getDate();
         const month = d.getMonth() + 1;
 
-        lines.push(`${dayName}, ${day}.${month}:`);
+        lines.push(`${dayName}, ${day}.${month}.:`);
 
         for (const entry of byDate.get(date)!) {
             const parts = [`#${entry.workItemId}`];

@@ -298,6 +298,7 @@ export interface PaginatedResponse<T> {
 export interface TimelyEventSlim {
     id: number;
     day: string;
+    dayOfWeek: string; // "Monday", "Tuesday", etc.
     project: { id: number; name: string };
     duration: string; // "HH:MM" e.g. "04:51"
     note: string;

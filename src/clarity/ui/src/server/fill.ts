@@ -37,6 +37,7 @@ interface WeekPreview {
         timelogEntries: WeekPreviewTimelogEntry[];
         clarityCurrentMinutes?: number;
         clarityDayValues?: Record<string, number>;
+        clarityOnly?: boolean;
     }>;
     unmappedWorkItems: Array<{ workItemId: number; minutes: number }>;
     clarityTotalMinutes?: number;
@@ -240,6 +241,8 @@ export async function getFillPreview(month: number, year: number): Promise<FillP
                     return;
                 }
 
+                const matchedTaskCodes = new Set<string>();
+
                 for (const entry of wp.entries) {
                     const te = ts.timeentries._results.find(
                         (e: TimeEntryRecord) => e.taskCode === entry.clarityTaskCode
@@ -256,6 +259,38 @@ export async function getFillPreview(month: number, year: number): Promise<FillP
                     }
 
                     entry.clarityDayValues = dayValues;
+                    matchedTaskCodes.add(entry.clarityTaskCode);
+                }
+
+                // Add Clarity-only entries (tasks with hours in Clarity but no ADO mapping)
+                for (const te of ts.timeentries._results as TimeEntryRecord[]) {
+                    if (matchedTaskCodes.has(te.taskCode)) {
+                        continue;
+                    }
+
+                    const totalSeconds = te.actuals?.segmentList?.total ?? 0;
+
+                    if (totalSeconds === 0) {
+                        continue;
+                    }
+
+                    const dayValues: Record<string, number> = {};
+
+                    for (const seg of te.actuals?.segmentList?.segments ?? []) {
+                        const date = seg.start.split("T")[0];
+                        dayValues[date] = Math.round(seg.value / 60);
+                    }
+
+                    wp.entries.push({
+                        clarityTaskName: te.taskName,
+                        clarityTaskCode: te.taskCode,
+                        dayValues: {},
+                        totalMinutes: 0,
+                        timelogEntries: [],
+                        clarityCurrentMinutes: Math.round(totalSeconds / 60),
+                        clarityDayValues: dayValues,
+                        clarityOnly: true,
+                    });
                 }
 
                 // Sum total from ALL Clarity timesheet entries (not just ADO-matched ones)

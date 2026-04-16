@@ -25,6 +25,7 @@ interface WeekEntry {
     timelogEntries?: TimelogEntry[];
     clarityCurrentMinutes?: number;
     clarityDayValues?: Record<string, number>;
+    clarityOnly?: boolean;
 }
 
 interface UnmappedItem {
@@ -121,73 +122,118 @@ export function FillWeekCard({
                             </TableRow>
                         </TableHeader>
                         <TableBody>
-                            {entries.map((entry) => {
-                                const isExpanded = expanded.has(entry.clarityTaskCode);
-                                const hasEntries = entry.timelogEntries && entry.timelogEntries.length > 0;
+                            {entries
+                                .filter((e) => !e.clarityOnly)
+                                .map((entry) => {
+                                    const isExpanded = expanded.has(entry.clarityTaskCode);
+                                    const hasEntries = entry.timelogEntries && entry.timelogEntries.length > 0;
 
-                                return (
-                                    <Fragment key={entry.clarityTaskCode}>
-                                        <TableRow
-                                            className={`border-white/5 ${hasEntries ? "cursor-pointer hover:bg-primary/5" : ""}`}
-                                            onClick={hasEntries ? () => toggleExpand(entry.clarityTaskCode) : undefined}
-                                        >
-                                            <TableCell className="font-mono text-sm text-gray-300">
-                                                <div className="flex items-center gap-1.5">
-                                                    {hasEntries && (
-                                                        <ChevronRight
-                                                            className={`w-3.5 h-3.5 text-gray-500 flex-shrink-0 transition-transform ${isExpanded ? "rotate-90" : ""}`}
+                                    return (
+                                        <Fragment key={entry.clarityTaskCode}>
+                                            <TableRow
+                                                className={`border-white/5 ${hasEntries ? "cursor-pointer hover:bg-primary/5" : ""}`}
+                                                onClick={
+                                                    hasEntries ? () => toggleExpand(entry.clarityTaskCode) : undefined
+                                                }
+                                            >
+                                                <TableCell className="font-mono text-sm text-gray-300">
+                                                    <div className="flex items-center gap-1.5">
+                                                        {hasEntries && (
+                                                            <ChevronRight
+                                                                className={`w-3.5 h-3.5 text-gray-500 flex-shrink-0 transition-transform ${isExpanded ? "rotate-90" : ""}`}
+                                                            />
+                                                        )}
+                                                        <div className="truncate" title={entry.clarityTaskName}>
+                                                            {entry.clarityTaskName}
+                                                        </div>
+                                                    </div>
+                                                </TableCell>
+                                                {workDays.map((d) => {
+                                                    const mins = entry.dayValues[d.date] ?? 0;
+                                                    const clarityMins = entry.clarityDayValues?.[d.date];
+
+                                                    return (
+                                                        <TableCell
+                                                            key={d.date}
+                                                            className={`font-mono text-xs text-center ${mins > 0 ? "text-primary" : "text-gray-600"}`}
+                                                        >
+                                                            <div className="flex flex-col items-center">
+                                                                {mins > 0 ? `${(mins / 60).toFixed(1)}h` : "-"}
+                                                                <DayClarityIndicator
+                                                                    adoMinutes={mins}
+                                                                    clarityMinutes={clarityMins}
+                                                                />
+                                                            </div>
+                                                        </TableCell>
+                                                    );
+                                                })}
+                                                <TableCell className="font-mono text-sm text-right font-bold text-gray-200">
+                                                    <div className="flex items-center justify-end gap-1.5">
+                                                        {(entry.totalMinutes / 60).toFixed(1)}h
+                                                        <ClarityStatusIcon
+                                                            clarityMinutes={entry.clarityCurrentMinutes}
+                                                            adoMinutes={entry.totalMinutes}
                                                         />
-                                                    )}
+                                                    </div>
+                                                </TableCell>
+                                            </TableRow>
+                                            {isExpanded && (
+                                                <TableRow className="border-white/5">
+                                                    <TableCell colSpan={workDays.length + 2} className="p-0">
+                                                        <TimelogEntriesTable
+                                                            entries={entry.timelogEntries ?? []}
+                                                            adoConfig={adoConfig}
+                                                        />
+                                                    </TableCell>
+                                                </TableRow>
+                                            )}
+                                        </Fragment>
+                                    );
+                                })}
+                            {entries.some((e) => e.clarityOnly) && (
+                                <>
+                                    <TableRow className="border-primary/10">
+                                        <TableCell
+                                            colSpan={workDays.length + 2}
+                                            className="font-mono text-[10px] text-gray-500 py-1.5 uppercase tracking-wider"
+                                        >
+                                            Clarity only (no ADO mapping)
+                                        </TableCell>
+                                    </TableRow>
+                                    {entries
+                                        .filter((e) => e.clarityOnly)
+                                        .map((entry) => (
+                                            <TableRow key={entry.clarityTaskCode} className="border-white/5">
+                                                <TableCell className="font-mono text-sm text-gray-500">
                                                     <div className="truncate" title={entry.clarityTaskName}>
                                                         {entry.clarityTaskName}
                                                     </div>
-                                                </div>
-                                            </TableCell>
-                                            {workDays.map((d) => {
-                                                const mins = entry.dayValues[d.date] ?? 0;
-                                                const clarityMins = entry.clarityDayValues?.[d.date];
+                                                </TableCell>
+                                                {workDays.map((d) => {
+                                                    const clarityMins = entry.clarityDayValues?.[d.date] ?? 0;
 
-                                                return (
-                                                    <TableCell
-                                                        key={d.date}
-                                                        className={`font-mono text-xs text-center ${mins > 0 ? "text-primary" : "text-gray-600"}`}
-                                                    >
-                                                        <div className="flex flex-col items-center">
-                                                            {mins > 0 ? `${(mins / 60).toFixed(1)}h` : "-"}
-                                                            <DayClarityIndicator
-                                                                adoMinutes={mins}
-                                                                clarityMinutes={clarityMins}
-                                                            />
-                                                        </div>
-                                                    </TableCell>
-                                                );
-                                            })}
-                                            <TableCell className="font-mono text-sm text-right font-bold text-gray-200">
-                                                <div className="flex items-center justify-end gap-1.5">
-                                                    {(entry.totalMinutes / 60).toFixed(1)}h
-                                                    <ClarityStatusIcon
-                                                        clarityMinutes={entry.clarityCurrentMinutes}
-                                                        adoMinutes={entry.totalMinutes}
-                                                    />
-                                                </div>
-                                            </TableCell>
-                                        </TableRow>
-                                        {isExpanded && (
-                                            <TableRow className="border-white/5">
-                                                <TableCell colSpan={workDays.length + 2} className="p-0">
-                                                    <TimelogEntriesTable
-                                                        entries={entry.timelogEntries ?? []}
-                                                        adoConfig={adoConfig}
-                                                    />
+                                                    return (
+                                                        <TableCell
+                                                            key={d.date}
+                                                            className={`font-mono text-xs text-center ${clarityMins > 0 ? "text-gray-400" : "text-gray-600"}`}
+                                                        >
+                                                            {clarityMins > 0
+                                                                ? `${(clarityMins / 60).toFixed(1)}h`
+                                                                : "-"}
+                                                        </TableCell>
+                                                    );
+                                                })}
+                                                <TableCell className="font-mono text-sm text-right text-gray-400">
+                                                    {((entry.clarityCurrentMinutes ?? 0) / 60).toFixed(1)}h
                                                 </TableCell>
                                             </TableRow>
-                                        )}
-                                    </Fragment>
-                                );
-                            })}
-                            {entries.length > 1 &&
+                                        ))}
+                                </>
+                            )}
+                            {entries.filter((e) => !e.clarityOnly).length > 1 &&
                                 (() => {
-                                    const weekAdoTotal = entries.reduce((sum, e) => sum + e.totalMinutes, 0);
+                                    const adoEntries = entries.filter((e) => !e.clarityOnly);
+                                    const weekAdoTotal = adoEntries.reduce((sum, e) => sum + e.totalMinutes, 0);
 
                                     return (
                                         <TableRow className="border-primary/20">
@@ -195,10 +241,18 @@ export function FillWeekCard({
                                                 Total
                                             </TableCell>
                                             {workDays.map((d) => {
-                                                const dayTotal = entries.reduce(
+                                                const adoDayTotal = adoEntries.reduce(
                                                     (sum, e) => sum + (e.dayValues[d.date] ?? 0),
                                                     0
                                                 );
+                                                const clarityOnlyDayTotal = entries
+                                                    .filter((e) => e.clarityOnly)
+                                                    .reduce(
+                                                        (sum, e) => sum + (e.clarityDayValues?.[d.date] ?? 0),
+                                                        0
+                                                    );
+                                                const dayTotal = adoDayTotal + clarityOnlyDayTotal;
+
                                                 return (
                                                     <TableCell
                                                         key={d.date}
@@ -211,6 +265,11 @@ export function FillWeekCard({
                                             <TableCell className="font-mono text-sm text-right font-bold text-primary">
                                                 <div className="flex items-center justify-end gap-1.5">
                                                     {(weekAdoTotal / 60).toFixed(1)}h
+                                                    {clarityTotalMinutes !== undefined && (
+                                                        <span className="text-[10px] text-gray-500 font-normal">
+                                                            c:{(clarityTotalMinutes / 60).toFixed(1)}h
+                                                        </span>
+                                                    )}
                                                     <ClarityStatusIcon
                                                         clarityMinutes={clarityTotalMinutes}
                                                         adoMinutes={weekAdoTotal}

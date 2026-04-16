@@ -42,7 +42,7 @@ function extractProjects(
 function formatWeekLabel(w: TimesheetWeek): string {
     const start = new Date(w.startDate);
     const end = new Date(w.finishDate);
-    const fmt = (d: Date) => `${d.getDate()}.${d.getMonth() + 1}`;
+    const fmt = (d: Date) => `${d.getDate()}.${d.getMonth() + 1}.`;
     return `${fmt(start)} – ${fmt(end)}`;
 }
 

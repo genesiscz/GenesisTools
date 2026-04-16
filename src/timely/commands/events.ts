@@ -44,12 +44,16 @@ interface EventsOptions {
     verbose?: boolean;
 }
 
+const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] as const;
+
 function slimEvent(event: TimelyEvent): TimelyEventSlim {
     const d = event.duration;
     const durationStr = `${String(d.hours).padStart(2, "0")}:${String(d.minutes).padStart(2, "0")}`;
+    const dayOfWeek = DAY_NAMES[new Date(event.day + "T00:00:00").getDay()];
     return {
         id: event.id,
         day: event.day,
+        dayOfWeek,
         project: { id: event.project?.id ?? 0, name: event.project?.name ?? "No Project" },
         duration: durationStr,
         note: event.note,
