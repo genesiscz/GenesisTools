@@ -164,6 +164,7 @@
         "ofetch": "^1.5.1",
         "onnxruntime-node": "^1.24.3",
         "ora": "^8.2.0",
+        "p-limit": "^7.3.0",
         "picocolors": "^1.1.1",
         "pino": "^9.7.0",
         "pino-pretty": "^13.0.0",
