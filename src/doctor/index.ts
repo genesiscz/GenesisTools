@@ -5,6 +5,7 @@ import { createDoctorAnalyzers } from "@app/doctor/analyzers";
 import { DiskSpaceAnalyzer } from "@app/doctor/analyzers/disk-space";
 import { wipeCache } from "@app/doctor/lib/cache";
 import { ensureDirs, makeRunId } from "@app/doctor/lib/paths";
+import { runJson } from "@app/doctor/ui/json";
 import { runLog } from "@app/doctor/ui/log";
 import { runPlain } from "@app/doctor/ui/plain";
 import { runStats } from "@app/doctor/ui/stats";
@@ -56,7 +57,12 @@ program
             dryRun: Boolean(opts.dryRun),
         };
 
-        const forcePlain = Boolean(opts.plain) || Boolean(opts.json) || !isInteractive();
+        if (opts.json) {
+            await runJson(shared);
+            return;
+        }
+
+        const forcePlain = Boolean(opts.plain) || !isInteractive();
         const columns = process.stdout.columns ?? 0;
         const rows = process.stdout.rows ?? 0;
         const tooSmall = columns < 80 || rows < 24;
