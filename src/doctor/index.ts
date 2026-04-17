@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { createDoctorAnalyzers } from "@app/doctor/analyzers";
 import { DiskSpaceAnalyzer } from "@app/doctor/analyzers/disk-space";
 import { ensureDirs, makeRunId } from "@app/doctor/lib/paths";
+import { runLog } from "@app/doctor/ui/log";
 import { runPlain } from "@app/doctor/ui/plain";
 import { runTui } from "@app/doctor/ui/tui";
 import logger from "@app/logger";
@@ -93,6 +94,16 @@ program
         for (const finding of findings) {
             logger.info(`  ${finding.title} - ${finding.detail ?? ""}`);
         }
+    });
+
+program
+    .command("log")
+    .description("Show recent action history")
+    .option("--since <duration>", "e.g. 7d, 24h, 1w", "7d")
+    .option("--analyzer <id>", "Filter by analyzer id")
+    .option("--json", "JSON output")
+    .action(async (opts: { since: string; analyzer?: string; json?: boolean }) => {
+        await runLog(opts);
     });
 
 enhanceHelp(program);
