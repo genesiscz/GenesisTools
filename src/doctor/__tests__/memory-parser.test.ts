@@ -1,9 +1,19 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
+import { rmSync } from "node:fs";
 import { join } from "node:path";
-import { parseSwapusage, parseVmStat } from "@app/doctor/analyzers/memory";
+import { MemoryAnalyzer, parseSwapusage, parseVmStat } from "@app/doctor/analyzers/memory";
+import { analysisDirFor } from "@app/doctor/lib/paths";
+import type { EngineEvent } from "@app/doctor/lib/types";
 
 const FIXTURES = join(import.meta.dir, "fixtures");
+const RUN_IDS: string[] = [];
+
+afterEach(() => {
+    for (const runId of RUN_IDS.splice(0)) {
+        rmSync(analysisDirFor(runId), { recursive: true, force: true });
+    }
+});
 
 describe("parseVmStat", () => {
     it("parses Apple Silicon 16k page size", () => {
@@ -46,5 +56,22 @@ describe("parseSwapusage", () => {
         const parsed = parseSwapusage(raw);
         expect(parsed.totalBytes).toBe(0);
         expect(parsed.encrypted).toBe(false);
+    });
+});
+
+describe("MemoryAnalyzer smoke", () => {
+    it("runs against real machine without throwing", async () => {
+        const analyzer = new MemoryAnalyzer();
+        const events: EngineEvent[] = [];
+        const runId = `doctor-memory-test-${crypto.randomUUID()}`;
+        RUN_IDS.push(runId);
+        const result = await analyzer.analyze({
+            runId,
+            opts: { thorough: false, fresh: true, dryRun: true },
+            emit: (event) => events.push(event),
+        });
+        expect(result.error).toBeNull();
+        expect(result.findings.length).toBeGreaterThan(0);
+        expect(result.findings.some((finding) => finding.id === "mem-pressure")).toBe(true);
     });
 });
