@@ -3,6 +3,7 @@
 import { homedir } from "node:os";
 import { createDoctorAnalyzers } from "@app/doctor/analyzers";
 import { DiskSpaceAnalyzer } from "@app/doctor/analyzers/disk-space";
+import { wipeCache } from "@app/doctor/lib/cache";
 import { ensureDirs, makeRunId } from "@app/doctor/lib/paths";
 import { runLog } from "@app/doctor/ui/log";
 import { runPlain } from "@app/doctor/ui/plain";
@@ -114,6 +115,14 @@ program
     .option("--json", "JSON output")
     .action(async (opts: { since: string; json?: boolean }) => {
         await runStats(opts);
+    });
+
+program
+    .command("wipe-cache")
+    .description("Delete the analyzer cache so next run is fresh")
+    .action(async () => {
+        await wipeCache();
+        console.log("Analyzer cache wiped.");
     });
 
 enhanceHelp(program);
