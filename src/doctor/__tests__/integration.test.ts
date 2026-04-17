@@ -3,10 +3,12 @@ import { MemoryAnalyzer } from "@app/doctor/analyzers/memory";
 import { ProcessesAnalyzer } from "@app/doctor/analyzers/processes";
 import { Engine } from "@app/doctor/lib/engine";
 import { classifyCachePath, classifyProcess } from "@app/doctor/lib/safety";
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, setDefaultTimeout } from "bun:test";
+
+setDefaultTimeout(60_000);
 
 describe("integration smoke (dry-run, live machine)", () => {
-    it("runs core 3 analyzers without error", { timeout: 60_000 }, async () => {
+    it("runs core 3 analyzers without error", async () => {
         const engine = new Engine();
         const errors: string[] = [];
 
@@ -25,7 +27,7 @@ describe("integration smoke (dry-run, live machine)", () => {
         expect(results.get("memory")?.findings.length).toBeGreaterThan(0);
     });
 
-    it("no non-blocked finding references a blacklisted cache path", { timeout: 60_000 }, async () => {
+    it("no non-blocked finding references a blacklisted cache path", async () => {
         const engine = new Engine();
         const results = await engine.run(
             [new DiskSpaceAnalyzer(), new MemoryAnalyzer(), new ProcessesAnalyzer()],
@@ -47,7 +49,7 @@ describe("integration smoke (dry-run, live machine)", () => {
         }
     });
 
-    it("no non-blocked finding kills a PROCESS_NEVER_KILL process", { timeout: 60_000 }, async () => {
+    it("no non-blocked finding kills a PROCESS_NEVER_KILL process", async () => {
         const engine = new Engine();
         const results = await engine.run([new ProcessesAnalyzer()], {
             concurrency: 1,
