@@ -20,10 +20,24 @@ export interface ViewContext {
     viewportRows: number;
 }
 
-export interface ViewResult {
+export interface StatusRow {
+    label: string;
+    value: string;
+    valueFg?: string;
+    tone?: "normal" | "warn" | "danger";
+}
+
+export interface ActionableTable {
     columns: ColumnSpec[];
     rows: Row[];
-    /** For the footer: "N of M findings". */
+    /** findings backing each row, same order — drawer uses this for cursor → finding mapping. */
+    findings: Finding[];
+}
+
+export interface ViewResult {
+    status: StatusRow[];
+    actionable: ActionableTable;
+    /** findings.length (Status + Actionable combined) */
     total: number;
 }
 

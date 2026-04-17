@@ -48,3 +48,60 @@ export function sliceAroundCursor<T>(
 
     return { rows: items.slice(start, start + rows), startIndex: start };
 }
+
+export function cell(text: string, fg: string, bg?: string): Cell {
+    return [{ text, fg, bg }];
+}
+
+export function meta(finding: { metadata?: unknown }): Record<string, unknown> {
+    const value = finding.metadata;
+    if (value && typeof value === "object") {
+        return value as Record<string, unknown>;
+    }
+
+    return {};
+}
+
+export function truncatePathLeft(path: string, maxWidth: number): string {
+    if (path.length <= maxWidth) {
+        return path;
+    }
+
+    return `…${path.slice(-(maxWidth - 1))}`;
+}
+
+export function truncateRight(text: string, maxWidth: number): string {
+    if (text.length <= maxWidth) {
+        return text;
+    }
+
+    return `${text.slice(0, maxWidth - 1)}…`;
+}
+
+export function formatAge(iso: string | undefined): string {
+    if (!iso) {
+        return "";
+    }
+
+    const ms = Date.now() - Date.parse(iso);
+    if (!Number.isFinite(ms)) {
+        return "";
+    }
+
+    const days = Math.floor(ms / 86_400_000);
+    if (days >= 7) {
+        const weeks = Math.floor(days / 7);
+        return `${weeks}w ago`;
+    }
+
+    if (days > 0) {
+        return `${days}d ago`;
+    }
+
+    const hours = Math.floor(ms / 3_600_000);
+    if (hours > 0) {
+        return `${hours}h ago`;
+    }
+
+    return "recent";
+}

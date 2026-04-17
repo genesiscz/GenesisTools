@@ -1,16 +1,37 @@
 import { formatBytes } from "@app/doctor/lib/size";
 import type { Finding } from "@app/doctor/lib/types";
 import { THEME } from "../theme";
-import { cell, selectionCell, sevBadge, sliceAroundCursor } from "./shared";
+import { cell, meta, selectionCell, sevBadge, sliceAroundCursor, truncatePathLeft } from "./shared";
 import type { ActionableTable, ColumnSpec, StatusRow, ViewFn } from "./types";
 
 const COLUMNS: ColumnSpec[] = [
     { header: "", weight: 0 },
     { header: "", weight: 0 },
-    { header: "Title", weight: 4 },
+    { header: "Cache", weight: 2 },
     { header: "Size", weight: 1, align: "right" },
-    { header: "Note", weight: 3 },
+    { header: "Path", weight: 4 },
 ];
+
+const PATH_MAX = 50;
+
+const ID_NAME_PREFIXES: Array<[prefix: string, name: string]> = [
+    ["dev-node-modules-", "node_modules"],
+    ["dev-xcode-derived", "Xcode DerivedData"],
+    ["dev-brew-cache", "Homebrew cache"],
+    ["dev-docker-", "Docker"],
+    ["dev-sim-runtime-", "iOS simulators"],
+    ["dev-global-cache-", "Package manager cache"],
+];
+
+function cacheName(finding: Finding): string {
+    for (const [prefix, name] of ID_NAME_PREFIXES) {
+        if (finding.id.startsWith(prefix)) {
+            return name;
+        }
+    }
+
+    return finding.title;
+}
 
 function toStatusRow(finding: Finding): StatusRow {
     return {
@@ -19,7 +40,7 @@ function toStatusRow(finding: Finding): StatusRow {
     };
 }
 
-export const genericView: ViewFn = ({ findings, selected, cursor, viewportRows }) => {
+export const devCachesView: ViewFn = ({ findings, selected, cursor, viewportRows }) => {
     const status: StatusRow[] = [];
     const actionableFindings: Finding[] = [];
 
@@ -39,13 +60,17 @@ export const genericView: ViewFn = ({ findings, selected, cursor, viewportRows }
         rows: slice.rows.map((finding, index) => {
             const highlight = slice.startIndex + index === cursor;
             const bg = highlight ? THEME.bgHighlight : undefined;
+            const m = meta(finding);
+            const bytes = typeof m.bytes === "number" ? m.bytes : finding.reclaimableBytes ?? 0;
+            const sizeText = bytes > 0 ? formatBytes(bytes) : "";
+            const path = typeof m.path === "string" ? m.path : "";
 
             return [
                 selectionCell(finding, selected, bg),
                 sevBadge(finding.severity, bg),
-                cell(finding.title, THEME.fg, bg),
-                cell(finding.reclaimableBytes ? formatBytes(finding.reclaimableBytes) : "", THEME.fgDim, bg),
-                cell(finding.detail ?? "", THEME.fgDim, bg),
+                cell(cacheName(finding), THEME.fg, bg),
+                cell(sizeText, THEME.fgDim, bg),
+                cell(truncatePathLeft(path, PATH_MAX), THEME.fgDim, bg),
             ];
         }),
         findings: slice.rows,
