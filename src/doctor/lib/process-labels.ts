@@ -53,8 +53,15 @@ const RULES: Rule[] = [
     { pattern: /^Code Helper|^Code$/, label: "VS Code" },
     { pattern: /\/Visual Studio Code\.app\//, label: "VS Code", match: "command" },
     { pattern: /\/Xcode\.app\//, label: "Xcode", match: "command" },
-    { pattern: /^WebStorm|^PhpStorm|^IntelliJ|^GoLand|^PyCharm|^RubyMine|^CLion|^DataGrip|^RustRover/, label: "JetBrains IDE" },
-    { pattern: /\/Applications\/(WebStorm|PhpStorm|IntelliJ|GoLand|PyCharm|RubyMine|CLion|DataGrip|RustRover)/, label: "JetBrains IDE", match: "command" },
+    {
+        pattern: /^WebStorm|^PhpStorm|^IntelliJ|^GoLand|^PyCharm|^RubyMine|^CLion|^DataGrip|^RustRover/,
+        label: "JetBrains IDE",
+    },
+    {
+        pattern: /\/Applications\/(WebStorm|PhpStorm|IntelliJ|GoLand|PyCharm|RubyMine|CLion|DataGrip|RustRover)/,
+        label: "JetBrains IDE",
+        match: "command",
+    },
     { pattern: /^Sublime Text$/, label: "Sublime Text" },
     { pattern: /^Zed$/, label: "Zed editor" },
     { pattern: /^GitKraken Helper/, label: "GitKraken app" },
