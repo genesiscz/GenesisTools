@@ -1,3 +1,4 @@
+/** @jsxImportSource @opentui/solid */
 import type { PlainRunOpts } from "@app/doctor/ui/plain";
 import { setBackend } from "@app/utils/prompts/p";
 import { opentuiBackend } from "@app/utils/prompts/p/opentui-backend";

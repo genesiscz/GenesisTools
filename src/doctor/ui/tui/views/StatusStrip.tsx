@@ -1,3 +1,4 @@
+/** @jsxImportSource @opentui/solid */
 import { For, type JSX } from "solid-js";
 import { THEME } from "../theme";
 import type { StatusRow } from "./types";

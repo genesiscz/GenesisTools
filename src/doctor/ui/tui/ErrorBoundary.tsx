@@ -1,3 +1,4 @@
+/** @jsxImportSource @opentui/solid */
 import logger from "@app/logger";
 import type { JSX } from "@opentui/solid";
 import { ErrorBoundary as SolidErrorBoundary } from "solid-js";

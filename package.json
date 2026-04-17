@@ -191,6 +191,7 @@
         "zustand": "^5.0.12"
     },
     "patchedDependencies": {
-        "cli-table3@0.6.5": "patches/cli-table3@0.6.5.patch"
+        "cli-table3@0.6.5": "patches/cli-table3@0.6.5.patch",
+        "@opentui/solid@0.1.100": "patches/@opentui%2Fsolid@0.1.100.patch"
     }
 }

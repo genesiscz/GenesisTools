@@ -1,3 +1,4 @@
+/** @jsxImportSource @opentui/solid */
 import type { Analyzer } from "@app/doctor/lib/analyzer";
 import type { EngineEvent, Finding } from "@app/doctor/lib/types";
 import { createMemo, For } from "solid-js";

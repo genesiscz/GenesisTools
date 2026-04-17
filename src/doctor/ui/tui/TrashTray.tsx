@@ -1,3 +1,4 @@
+/** @jsxImportSource @opentui/solid */
 import { formatBytes } from "@app/doctor/lib/size";
 import type { StageItem } from "@app/utils/prompts/clack/trash-staging";
 import { For, Show } from "solid-js";

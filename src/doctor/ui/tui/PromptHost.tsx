@@ -1,3 +1,4 @@
+/** @jsxImportSource @opentui/solid */
 import type { SelectValue } from "@app/utils/prompts/p";
 import { completeTask } from "@app/utils/prompts/p/opentui-backend";
 import { useKeyboard } from "@opentui/solid";

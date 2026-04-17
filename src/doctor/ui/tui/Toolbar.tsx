@@ -1,3 +1,4 @@
+/** @jsxImportSource @opentui/solid */
 import type { EnginePhase } from "./stores/engine-store";
 import { THEME } from "./theme";
 

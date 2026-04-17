@@ -1,3 +1,4 @@
+/** @jsxImportSource @opentui/solid */
 import type { JSX } from "@opentui/solid";
 import { THEME } from "./theme";
 

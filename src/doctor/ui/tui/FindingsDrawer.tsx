@@ -1,5 +1,7 @@
+/** @jsxImportSource @opentui/solid */
 import { formatBytes } from "@app/doctor/lib/size";
 import type { Finding } from "@app/doctor/lib/types";
+import type { TextTableContent } from "@opentui/core";
 import { useKeyboard } from "@opentui/solid";
 import { createEffect, createMemo, createSignal, Show } from "solid-js";
 import { useEngineStore } from "./stores/engine-store";
@@ -85,9 +87,9 @@ export function FindingsDrawer(props: FindingsDrawerProps) {
         }
     });
 
-    const tableContent = createMemo(() => {
+    const tableContent = createMemo((): TextTableContent => {
         const v = view();
-        return [headerRow(v.actionable.columns), ...v.actionable.rows];
+        return [headerRow(v.actionable.columns), ...v.actionable.rows] as unknown as TextTableContent;
     });
 
     return (
@@ -122,7 +124,7 @@ export function FindingsDrawer(props: FindingsDrawerProps) {
                 <text_table
                     content={tableContent()}
                     wrapMode="none"
-                    columnWidthMode="fill"
+                    columnWidthMode="full"
                     columnFitter="balanced"
                     border={false}
                     outerBorder={false}

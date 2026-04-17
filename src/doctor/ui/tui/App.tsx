@@ -1,3 +1,4 @@
+/** @jsxImportSource @opentui/solid */
 import type { Analyzer } from "@app/doctor/lib/analyzer";
 import { Engine } from "@app/doctor/lib/engine";
 import { executeActions } from "@app/doctor/lib/executor";
