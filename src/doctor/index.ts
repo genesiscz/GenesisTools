@@ -2,7 +2,19 @@
 
 import logger from "@app/logger";
 import { enhanceHelp } from "@app/utils/cli";
+import { ensureDirs, makeRunId } from "@app/doctor/lib/paths";
 import { Command } from "commander";
+
+interface RootOpts {
+    plain?: boolean;
+    thorough?: boolean;
+    quick?: boolean;
+    fresh?: boolean;
+    debug?: boolean;
+    dryRun?: boolean;
+    json?: boolean;
+    only?: string;
+}
 
 const program = new Command();
 
@@ -17,8 +29,11 @@ program
     .option("--dry-run", "Never execute fixes, show what would run")
     .option("--json", "Machine-readable output (implies --plain)")
     .option("--only <ids>", "Comma-separated analyzer ids to run")
-    .action(() => {
-        logger.info("tools doctor — coming soon");
+    .action(async (opts: RootOpts) => {
+        const runId = makeRunId();
+        ensureDirs(runId);
+        logger.debug({ opts, runId }, "doctor starting");
+        logger.info("tools doctor — phase 1 scaffold complete; UI arrives in phase 2");
     });
 
 enhanceHelp(program);
