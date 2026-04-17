@@ -1,5 +1,7 @@
-export interface SelectOption<T> {
-    value: T;
+export type SelectValue = string | number | boolean;
+
+export interface SelectOption {
+    value: SelectValue;
     label: string;
     hint?: string;
 }
@@ -17,17 +19,17 @@ export interface TextOpts {
     validate?: (value: string) => string | undefined;
 }
 
-export interface SelectOpts<T> {
+export interface SelectOpts {
     message: string;
-    options: SelectOption<T>[];
-    initialValue?: T;
+    options: SelectOption[];
+    initialValue?: SelectValue;
 }
 
-export interface MultiSelectOpts<T> {
+export interface MultiSelectOpts {
     message: string;
-    options: SelectOption<T>[];
+    options: SelectOption[];
     required?: boolean;
-    initialValues?: T[];
+    initialValues?: SelectValue[];
 }
 
 export interface TypedConfirmOpts {

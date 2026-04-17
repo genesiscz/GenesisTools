@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
+import { SafeJSON } from "@app/utils/json";
 import { matchesGlob } from "@app/utils/string";
 import { BLACKLIST_FILE } from "./paths";
 import type { Severity } from "./types";
@@ -68,7 +69,7 @@ interface UserBlacklistFile {
 }
 
 function parseUserBlacklist(raw: string): UserBlacklistFile {
-    return JSON.parse(raw);
+    return SafeJSON.parse(raw, { strict: true }) as UserBlacklistFile;
 }
 
 function loadUserBlacklist(): string[] {

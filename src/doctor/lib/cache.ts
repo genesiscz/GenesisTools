@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import { SafeJSON } from "@app/utils/json";
 import { CACHE_DIR, cacheFilePath } from "./paths";
 import type { AnalyzerResult } from "./types";
 
@@ -18,7 +19,7 @@ export async function readCache(analyzerId: string, ttlMs: number): Promise<Anal
 
     try {
         const raw = await readFile(path, "utf8");
-        const parsed: CacheEntry = JSON.parse(raw);
+        const parsed = SafeJSON.parse(raw, { strict: true }) as CacheEntry;
         const age = Date.now() - new Date(parsed.writtenAt).getTime();
 
         if (age > ttlMs) {
@@ -35,7 +36,7 @@ export async function writeCache(analyzerId: string, result: AnalyzerResult): Pr
     const path = cacheFilePath(analyzerId);
     await mkdir(dirname(path), { recursive: true });
     const entry: CacheEntry = { writtenAt: result.timestamp, result };
-    await writeFile(path, JSON.stringify(entry), "utf8");
+    await writeFile(path, SafeJSON.stringify(entry), "utf8");
 }
 
 export async function wipeCache(): Promise<void> {

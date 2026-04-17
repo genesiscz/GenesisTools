@@ -1,4 +1,13 @@
-import type { ConfirmOpts, Log, MultiSelectOpts, SelectOpts, Spinner, TextOpts, TypedConfirmOpts } from "./types";
+import type {
+    ConfirmOpts,
+    Log,
+    MultiSelectOpts,
+    SelectOpts,
+    SelectValue,
+    Spinner,
+    TextOpts,
+    TypedConfirmOpts,
+} from "./types";
 
 export interface PromptBackend {
     intro(msg: string): void;
@@ -9,8 +18,8 @@ export interface PromptBackend {
     text(opts: TextOpts): Promise<string>;
     confirm(opts: ConfirmOpts): Promise<boolean>;
     typedConfirm(opts: TypedConfirmOpts): Promise<boolean>;
-    select<T>(opts: SelectOpts<T>): Promise<T>;
-    multiselect<T>(opts: MultiSelectOpts<T>): Promise<T[]>;
+    select(opts: SelectOpts): Promise<SelectValue>;
+    multiselect(opts: MultiSelectOpts): Promise<SelectValue[]>;
 
     spinner(): Spinner;
     log: Log;

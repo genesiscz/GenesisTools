@@ -1,10 +1,10 @@
 import { describe, expect, it } from "bun:test";
 import {
     CACHE_BLACKLIST_GLOBS,
-    PROCESS_AUTO_RESPAWN,
-    PROCESS_NEVER_KILL,
     classifyCachePath,
     classifyProcess,
+    PROCESS_AUTO_RESPAWN,
+    PROCESS_NEVER_KILL,
 } from "@app/doctor/lib/safety";
 
 describe("safety.classifyCachePath", () => {

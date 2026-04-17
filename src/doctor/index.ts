@@ -1,9 +1,11 @@
 #!/usr/bin/env bun
 
-import logger from "@app/logger";
-import { StubAnalyzer } from "@app/doctor/analyzers/_stub";
+import { homedir } from "node:os";
+import { createDoctorAnalyzers } from "@app/doctor/analyzers";
+import { DiskSpaceAnalyzer } from "@app/doctor/analyzers/disk-space";
 import { ensureDirs, makeRunId } from "@app/doctor/lib/paths";
 import { runPlain } from "@app/doctor/ui/plain";
+import logger from "@app/logger";
 import { enhanceHelp } from "@app/utils/cli";
 import { Command } from "commander";
 
@@ -36,7 +38,7 @@ program
         ensureDirs(runId);
         logger.debug({ opts, runId }, "doctor starting");
 
-        const analyzers = [new StubAnalyzer()];
+        const analyzers = createDoctorAnalyzers();
 
         await runPlain({
             analyzers,
@@ -49,6 +51,31 @@ program
             fresh: Boolean(opts.fresh),
             dryRun: Boolean(opts.dryRun),
         });
+    });
+
+program
+    .command("find")
+    .description("Ad-hoc file finder: X files in last Y days bigger than Z MB")
+    .option("--root <path>", "Root directory to scan", "$HOME")
+    .option("--min-mb <n>", "Minimum file size in MB", "100")
+    .option("--max-days <n>", "Modified in last N days", "30")
+    .action(async (opts: { root: string; minMb: string; maxDays: string }) => {
+        const runId = makeRunId();
+        ensureDirs(runId);
+
+        const analyzer = new DiskSpaceAnalyzer();
+        const root = opts.root === "$HOME" ? homedir() : opts.root;
+        const findings = await analyzer.findAdhoc({
+            root,
+            minMB: Number.parseInt(opts.minMb, 10),
+            maxDays: Number.parseInt(opts.maxDays, 10),
+        });
+
+        logger.info(`${findings.length} files matched`);
+
+        for (const finding of findings) {
+            logger.info(`  ${finding.title} - ${finding.detail ?? ""}`);
+        }
     });
 
 enhanceHelp(program);

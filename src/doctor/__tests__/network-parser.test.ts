@@ -18,9 +18,13 @@ describe("parseNetstatStates", () => {
 
 describe("parseUtunInterfaces", () => {
     it("finds utun interface blocks", () => {
-        const raw = ["utun0: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST>", "", "en0: flags=8863<UP>", "", "utun1: flags=8051<UP>"].join(
-            "\n"
-        );
+        const raw = [
+            "utun0: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST>",
+            "",
+            "en0: flags=8863<UP>",
+            "",
+            "utun1: flags=8051<UP>",
+        ].join("\n");
 
         expect(parseUtunInterfaces(raw)).toEqual(["utun0", "utun1"]);
     });

@@ -1,9 +1,8 @@
 import { spawnSync } from "node:child_process";
-import clipboardy from "clipboardy";
 import { Analyzer } from "@app/doctor/lib/analyzer";
+import { labelForProcess } from "@app/doctor/lib/process-labels";
 import { classifyProcess } from "@app/doctor/lib/safety";
 import { formatBytes } from "@app/doctor/lib/size";
-import { labelForProcess } from "@app/doctor/lib/process-labels";
 import type {
     Action,
     ActionResult,
@@ -12,6 +11,7 @@ import type {
     ExecutorContext,
     Finding,
 } from "@app/doctor/lib/types";
+import clipboardy from "clipboardy";
 
 export interface VmStatParsed {
     pageSize: number;
@@ -73,9 +73,7 @@ export function parseVmStat(raw: string): VmStatParsed {
 }
 
 export function parseSwapusage(raw: string): SwapusageParsed {
-    const match = raw.match(
-        /total = ([\d.]+)M\s+used = ([\d.]+)M\s+free = ([\d.]+)M(\s+\(encrypted\))?/
-    );
+    const match = raw.match(/total = ([\d.]+)M\s+used = ([\d.]+)M\s+free = ([\d.]+)M(\s+\(encrypted\))?/);
 
     if (!match) {
         return { totalBytes: 0, usedBytes: 0, freeBytes: 0, encrypted: false };
@@ -191,8 +189,7 @@ export class MemoryAnalyzer extends Analyzer {
         const vm = parseVmStat(vmRes.stdout ?? "");
         const swap = parseSwapusage(swapRes.stdout ?? "");
         const swapPressureSevere =
-            swap.usedBytes > 10 * 1024 * 1024 * 1024 ||
-            (swap.totalBytes > 0 && swap.usedBytes / swap.totalBytes > 0.5);
+            swap.usedBytes > 10 * 1024 * 1024 * 1024 || (swap.totalBytes > 0 && swap.usedBytes / swap.totalBytes > 0.5);
         const topProcesses = getTopProcessesByRss(10);
 
         if (swap.totalBytes > 0) {

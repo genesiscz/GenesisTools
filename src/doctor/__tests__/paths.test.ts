@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { homedir } from "node:os";
-import { DOCTOR_DIR, analysisDirFor, cacheFilePath, makeRunId } from "@app/doctor/lib/paths";
+import { analysisDirFor, cacheFilePath, DOCTOR_DIR, makeRunId } from "@app/doctor/lib/paths";
 
 describe("paths", () => {
     it("DOCTOR_DIR lives under ~/.genesis-tools/doctor", () => {

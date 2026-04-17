@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { appendHistory, readHistorySince, writeAnalysisLog } from "@app/doctor/lib/history";
-import { HISTORY_FILE, analysisDirFor } from "@app/doctor/lib/paths";
+import { analysisDirFor, HISTORY_FILE } from "@app/doctor/lib/paths";
 import type { ActionResult, AnalyzerResult } from "@app/doctor/lib/types";
 
 let originalHistory: string | null;

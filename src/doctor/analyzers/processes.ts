@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { Analyzer } from "@app/doctor/lib/analyzer";
-import { classifyProcess, PROCESS_NEVER_KILL } from "@app/doctor/lib/safety";
 import { labelForProcess } from "@app/doctor/lib/process-labels";
+import { classifyProcess, PROCESS_NEVER_KILL } from "@app/doctor/lib/safety";
 import type {
     Action,
     ActionResult,
@@ -222,10 +222,7 @@ export class ProcessesAnalyzer extends Analyzer {
             yield {
                 id: `proc-cpu-${hog.pid}`,
                 analyzerId: this.id,
-                title:
-                    `CPU hog PID ${hog.pid} - ` +
-                    `${hog.label ?? hog.comm}${suffix} - ` +
-                    `${hog.cpu.toFixed(1)}%`,
+                title: `CPU hog PID ${hog.pid} - ` + `${hog.label ?? hog.comm}${suffix} - ` + `${hog.cpu.toFixed(1)}%`,
                 detail: hog.command.length > 120 ? `${hog.command.slice(0, 120)}...` : hog.command,
                 severity: safety.severity === "blocked" ? "blocked" : "cautious",
                 blacklistReason: safety.reason,
@@ -261,15 +258,17 @@ export class ProcessesAnalyzer extends Analyzer {
 
             const totalRss = group.reduce((acc, record) => acc + record.rssBytes, 0);
             const label = group[0].label ?? comm;
-            const visiblePids = group.slice(0, 10).map((record) => record.pid).join(", ");
+            const visiblePids = group
+                .slice(0, 10)
+                .map((record) => record.pid)
+                .join(", ");
             const detail = `PIDs: ${visiblePids}${group.length > 10 ? "..." : ""}`;
 
             yield {
                 id: `proc-group-${comm}`,
                 analyzerId: this.id,
                 title:
-                    `Group: ${label} x ${group.length} - ` +
-                    `${(totalRss / (1024 * 1024 * 1024)).toFixed(1)} GB RSS`,
+                    `Group: ${label} x ${group.length} - ` + `${(totalRss / (1024 * 1024 * 1024)).toFixed(1)} GB RSS`,
                 detail,
                 severity: "cautious",
                 reclaimableBytes: totalRss,

@@ -5,11 +5,7 @@ import type { Analyzer } from "@app/doctor/lib/analyzer";
 
 export type AnalyzerConstructor = new () => Analyzer;
 
-export const coreAnalyzerConstructors: AnalyzerConstructor[] = [
-    DiskSpaceAnalyzer,
-    MemoryAnalyzer,
-    ProcessesAnalyzer,
-];
+export const coreAnalyzerConstructors: AnalyzerConstructor[] = [DiskSpaceAnalyzer, MemoryAnalyzer, ProcessesAnalyzer];
 
 export function createCoreAnalyzers(): Analyzer[] {
     return coreAnalyzerConstructors.map((AnalyzerCtor) => new AnalyzerCtor());

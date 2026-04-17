@@ -2,7 +2,15 @@ import { spawnSync } from "node:child_process";
 import { Analyzer } from "@app/doctor/lib/analyzer";
 import type { AnalyzerCategory, AnalyzerContext, ExecutorContext, Finding } from "@app/doctor/lib/types";
 
-const TCP_STATES = ["ESTABLISHED", "TIME_WAIT", "CLOSE_WAIT", "LISTEN", "SYN_SENT", "FIN_WAIT_1", "FIN_WAIT_2"] as const;
+const TCP_STATES = [
+    "ESTABLISHED",
+    "TIME_WAIT",
+    "CLOSE_WAIT",
+    "LISTEN",
+    "SYN_SENT",
+    "FIN_WAIT_1",
+    "FIN_WAIT_2",
+] as const;
 
 export class NetworkAnalyzer extends Analyzer {
     readonly id = "network";

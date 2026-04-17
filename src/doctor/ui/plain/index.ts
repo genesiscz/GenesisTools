@@ -1,13 +1,13 @@
+import type { Analyzer } from "@app/doctor/lib/analyzer";
 import { Engine } from "@app/doctor/lib/engine";
 import { executeActions } from "@app/doctor/lib/executor";
 import { writeRunSummary } from "@app/doctor/lib/history";
 import { formatBytes, sumBytes } from "@app/doctor/lib/size";
 import type { ActionResult, EngineEvent, Finding } from "@app/doctor/lib/types";
-import type { Analyzer } from "@app/doctor/lib/analyzer";
-import { stageAndConfirm, type StageItem } from "@app/utils/prompts/clack/trash-staging";
+import { type StageItem, stageAndConfirm } from "@app/utils/prompts/clack/trash-staging";
 import * as p from "@app/utils/prompts/p";
-import { clackBackend } from "@app/utils/prompts/p/clack-backend";
 import { setBackend } from "@app/utils/prompts/p";
+import { clackBackend } from "@app/utils/prompts/p/clack-backend";
 import pc from "picocolors";
 import { confirmActions, type SelectedAction, selectFindings } from "./findings";
 import { pickAnalyzers } from "./picker";

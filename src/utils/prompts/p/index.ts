@@ -1,5 +1,14 @@
 import { getBackend, setBackend } from "./backend";
-import type { ConfirmOpts, Log, MultiSelectOpts, SelectOpts, Spinner, TextOpts, TypedConfirmOpts } from "./types";
+import type {
+    ConfirmOpts,
+    Log,
+    MultiSelectOpts,
+    SelectOpts,
+    SelectValue,
+    Spinner,
+    TextOpts,
+    TypedConfirmOpts,
+} from "./types";
 
 export { setBackend };
 export type { PromptBackend } from "./backend";
@@ -33,11 +42,11 @@ export function typedConfirm(opts: TypedConfirmOpts): Promise<boolean> {
     return getBackend().typedConfirm(opts);
 }
 
-export function select<T>(opts: SelectOpts<T>): Promise<T> {
+export function select(opts: SelectOpts): Promise<SelectValue> {
     return getBackend().select(opts);
 }
 
-export function multiselect<T>(opts: MultiSelectOpts<T>): Promise<T[]> {
+export function multiselect(opts: MultiSelectOpts): Promise<SelectValue[]> {
     return getBackend().multiselect(opts);
 }
 
@@ -53,5 +62,5 @@ export const log: Log = {
     step: (msg) => getBackend().log.step(msg),
 };
 
-export { buildInstallPrompt, offerInstall } from "./offer-install";
 export type { OfferInstallOpts } from "./offer-install";
+export { buildInstallPrompt, offerInstall } from "./offer-install";

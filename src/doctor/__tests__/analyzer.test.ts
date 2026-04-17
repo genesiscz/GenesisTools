@@ -32,7 +32,17 @@ class ErrorAnalyzer extends Analyzer {
     readonly cacheTtlMs = 0;
 
     protected async *run(_: AnalyzerContext): AsyncIterable<Finding> {
-        throw new Error("boom");
+        if (Date.now() >= 0) {
+            throw new Error("boom");
+        }
+
+        yield {
+            id: "unreachable",
+            analyzerId: this.id,
+            title: "unreachable",
+            severity: "safe",
+            actions: [],
+        };
     }
 }
 

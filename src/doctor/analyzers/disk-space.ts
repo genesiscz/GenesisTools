@@ -5,7 +5,14 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { Analyzer } from "@app/doctor/lib/analyzer";
 import { duBytes, formatBytes } from "@app/doctor/lib/size";
-import type { Action, ActionResult, AnalyzerCategory, AnalyzerContext, ExecutorContext, Finding } from "@app/doctor/lib/types";
+import type {
+    Action,
+    ActionResult,
+    AnalyzerCategory,
+    AnalyzerContext,
+    ExecutorContext,
+    Finding,
+} from "@app/doctor/lib/types";
 
 interface SizedPath {
     path: string;

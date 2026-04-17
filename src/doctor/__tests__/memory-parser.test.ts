@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { readFileSync } from "node:fs";
-import { rmSync } from "node:fs";
+import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { MemoryAnalyzer, parseSwapusage, parseVmStat } from "@app/doctor/analyzers/memory";
 import { analysisDirFor } from "@app/doctor/lib/paths";

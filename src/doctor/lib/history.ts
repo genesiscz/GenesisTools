@@ -1,7 +1,8 @@
 import { existsSync } from "node:fs";
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { HISTORY_FILE, analysisDirFor } from "./paths";
+import { SafeJSON } from "@app/utils/json";
+import { analysisDirFor, HISTORY_FILE } from "./paths";
 import type { ActionResult, AnalyzerResult } from "./types";
 
 export interface HistoryEntry {
@@ -20,7 +21,7 @@ export interface RunSummary {
 export async function appendHistory(runId: string, action: ActionResult): Promise<void> {
     await mkdir(dirname(HISTORY_FILE), { recursive: true });
     const entry: HistoryEntry = { timestamp: new Date().toISOString(), runId, action };
-    await appendFile(HISTORY_FILE, `${JSON.stringify(entry)}\n`, "utf8");
+    await appendFile(HISTORY_FILE, `${SafeJSON.stringify(entry)}\n`, "utf8");
 }
 
 export async function readHistorySince(since: Date): Promise<HistoryEntry[]> {
@@ -34,14 +35,12 @@ export async function readHistorySince(since: Date): Promise<HistoryEntry[]> {
 
     for (const line of lines) {
         try {
-            const parsed: HistoryEntry = JSON.parse(line);
+            const parsed = SafeJSON.parse(line, { strict: true }) as HistoryEntry;
 
             if (new Date(parsed.timestamp) >= since) {
                 entries.push(parsed);
             }
-        } catch {
-            continue;
-        }
+        } catch {}
     }
 
     return entries;
@@ -50,11 +49,11 @@ export async function readHistorySince(since: Date): Promise<HistoryEntry[]> {
 export async function writeAnalysisLog(runId: string, analyzerId: string, result: AnalyzerResult): Promise<void> {
     const dir = analysisDirFor(runId);
     await mkdir(dir, { recursive: true });
-    await writeFile(join(dir, `${analyzerId}.json`), JSON.stringify(result, null, 2), "utf8");
+    await writeFile(join(dir, `${analyzerId}.json`), SafeJSON.stringify(result, null, 2), "utf8");
 }
 
 export async function writeRunSummary(runId: string, summary: RunSummary): Promise<void> {
     const dir = analysisDirFor(runId);
     await mkdir(dir, { recursive: true });
-    await writeFile(join(dir, "run.json"), JSON.stringify(summary, null, 2), "utf8");
+    await writeFile(join(dir, "run.json"), SafeJSON.stringify(summary, null, 2), "utf8");
 }

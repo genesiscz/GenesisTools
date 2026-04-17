@@ -2,11 +2,11 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import clipboardy from "clipboardy";
 import { Analyzer } from "@app/doctor/lib/analyzer";
 import { classifyCachePath } from "@app/doctor/lib/safety";
 import { duBytes, formatBytes } from "@app/doctor/lib/size";
 import type { Action, AnalyzerCategory, AnalyzerContext, ExecutorContext, Finding } from "@app/doctor/lib/types";
+import clipboardy from "clipboardy";
 
 interface CacheEntry {
     name: string;
