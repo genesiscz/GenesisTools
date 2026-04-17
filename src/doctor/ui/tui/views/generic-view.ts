@@ -1,7 +1,14 @@
 import { formatBytes } from "@app/doctor/lib/size";
 import type { Finding } from "@app/doctor/lib/types";
 import { THEME } from "../theme";
-import { cell, selectionCell, sevBadge, sliceAroundCursor } from "./shared";
+import {
+    applyRightAlign,
+    cell,
+    rightAlignColumnIndexes,
+    selectionCell,
+    sevBadge,
+    sliceAroundCursor,
+} from "./shared";
 import type { ActionableTable, ColumnSpec, StatusRow, ViewFn } from "./types";
 
 const COLUMNS: ColumnSpec[] = [
@@ -11,6 +18,8 @@ const COLUMNS: ColumnSpec[] = [
     { header: "Size", weight: 1, align: "right" },
     { header: "Note", weight: 3 },
 ];
+
+const RIGHT_ALIGN = rightAlignColumnIndexes(COLUMNS);
 
 function toStatusRow(finding: Finding): StatusRow {
     return {
@@ -34,20 +43,22 @@ export const genericView: ViewFn = ({ findings, selected, cursor, viewportRows }
 
     const slice = sliceAroundCursor(actionableFindings, cursor, viewportRows);
 
+    const rows = slice.rows.map((finding, index) => {
+        const highlight = slice.startIndex + index === cursor;
+        const bg = highlight ? THEME.bgHighlight : undefined;
+
+        return [
+            selectionCell(finding, selected, bg),
+            sevBadge(finding.severity, bg),
+            cell(finding.title, THEME.fg, bg),
+            cell(finding.reclaimableBytes ? formatBytes(finding.reclaimableBytes) : "", THEME.fgDim, bg),
+            cell(finding.detail ?? "", THEME.fgDim, bg),
+        ];
+    });
+
     const actionable: ActionableTable = {
         columns: COLUMNS,
-        rows: slice.rows.map((finding, index) => {
-            const highlight = slice.startIndex + index === cursor;
-            const bg = highlight ? THEME.bgHighlight : undefined;
-
-            return [
-                selectionCell(finding, selected, bg),
-                sevBadge(finding.severity, bg),
-                cell(finding.title, THEME.fg, bg),
-                cell(finding.reclaimableBytes ? formatBytes(finding.reclaimableBytes) : "", THEME.fgDim, bg),
-                cell(finding.detail ?? "", THEME.fgDim, bg),
-            ];
-        }),
+        rows: applyRightAlign(rows, RIGHT_ALIGN),
         findings: slice.rows,
     };
 

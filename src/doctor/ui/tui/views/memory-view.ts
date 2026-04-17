@@ -1,7 +1,15 @@
 import { formatBytes } from "@app/doctor/lib/size";
 import type { Finding } from "@app/doctor/lib/types";
 import { THEME } from "../theme";
-import { cell, meta, selectionCell, sevBadge, sliceAroundCursor } from "./shared";
+import {
+    applyRightAlign,
+    cell,
+    meta,
+    rightAlignColumnIndexes,
+    selectionCell,
+    sevBadge,
+    sliceAroundCursor,
+} from "./shared";
 import type { ActionableTable, ColumnSpec, StatusRow, ViewFn } from "./types";
 
 const COLUMNS: ColumnSpec[] = [
@@ -11,6 +19,8 @@ const COLUMNS: ColumnSpec[] = [
     { header: "RSS", weight: 1, align: "right" },
     { header: "PID", weight: 1 },
 ];
+
+const RIGHT_ALIGN = rightAlignColumnIndexes(COLUMNS);
 
 function pressureColor(level: string): string | undefined {
     if (level === "HIGH") {
@@ -87,28 +97,30 @@ export const memoryView: ViewFn = ({ findings, selected, cursor, viewportRows })
 
     const slice = sliceAroundCursor(actionableFindings, cursor, viewportRows);
 
+    const rows = slice.rows.map((finding, index) => {
+        const highlight = slice.startIndex + index === cursor;
+        const bg = highlight ? THEME.bgHighlight : undefined;
+        const m = meta(finding);
+        const label = typeof m.label === "string" && m.label.length > 0
+            ? m.label
+            : typeof m.comm === "string"
+              ? m.comm
+              : finding.title;
+        const rss = typeof m.rssBytes === "number" ? m.rssBytes : finding.reclaimableBytes ?? 0;
+        const pid = typeof m.pid === "number" ? String(m.pid) : "";
+
+        return [
+            selectionCell(finding, selected, bg),
+            sevBadge(finding.severity, bg),
+            cell(label, THEME.fg, bg),
+            cell(rss > 0 ? formatBytes(rss) : "", THEME.fgDim, bg),
+            cell(pid, THEME.fgDim, bg),
+        ];
+    });
+
     const actionable: ActionableTable = {
         columns: COLUMNS,
-        rows: slice.rows.map((finding, index) => {
-            const highlight = slice.startIndex + index === cursor;
-            const bg = highlight ? THEME.bgHighlight : undefined;
-            const m = meta(finding);
-            const label = typeof m.label === "string" && m.label.length > 0
-                ? m.label
-                : typeof m.comm === "string"
-                  ? m.comm
-                  : finding.title;
-            const rss = typeof m.rssBytes === "number" ? m.rssBytes : finding.reclaimableBytes ?? 0;
-            const pid = typeof m.pid === "number" ? String(m.pid) : "";
-
-            return [
-                selectionCell(finding, selected, bg),
-                sevBadge(finding.severity, bg),
-                cell(label, THEME.fg, bg),
-                cell(rss > 0 ? formatBytes(rss) : "", THEME.fgDim, bg),
-                cell(pid, THEME.fgDim, bg),
-            ];
-        }),
+        rows: applyRightAlign(rows, RIGHT_ALIGN),
         findings: slice.rows,
     };
 

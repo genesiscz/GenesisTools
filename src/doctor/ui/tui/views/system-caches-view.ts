@@ -1,7 +1,16 @@
 import { formatBytes } from "@app/doctor/lib/size";
 import type { Finding } from "@app/doctor/lib/types";
 import { THEME } from "../theme";
-import { cell, meta, selectionCell, sevBadge, sliceAroundCursor, truncatePathLeft } from "./shared";
+import {
+    applyRightAlign,
+    cell,
+    meta,
+    rightAlignColumnIndexes,
+    selectionCell,
+    sevBadge,
+    sliceAroundCursor,
+    truncatePathLeft,
+} from "./shared";
 import type { ActionableTable, ColumnSpec, StatusRow, ViewFn } from "./types";
 
 const COLUMNS: ColumnSpec[] = [
@@ -11,6 +20,8 @@ const COLUMNS: ColumnSpec[] = [
     { header: "Size", weight: 1, align: "right" },
     { header: "Extra", weight: 2 },
 ];
+
+const RIGHT_ALIGN = rightAlignColumnIndexes(COLUMNS);
 
 const PATH_MAX = 50;
 
@@ -46,28 +57,30 @@ export const systemCachesView: ViewFn = ({ findings, selected, cursor, viewportR
 
     const slice = sliceAroundCursor(actionableFindings, cursor, viewportRows);
 
+    const rows = slice.rows.map((finding, index) => {
+        const highlight = slice.startIndex + index === cursor;
+        const bg = highlight ? THEME.bgHighlight : undefined;
+        const m = meta(finding);
+        const bytes = typeof m.bytes === "number"
+            ? m.bytes
+            : typeof m.totalSize === "number"
+              ? m.totalSize
+              : finding.reclaimableBytes ?? 0;
+        const sizeText = bytes > 0 ? formatBytes(bytes) : "";
+        const pathValue = typeof m.path === "string" ? m.path : finding.title;
+
+        return [
+            selectionCell(finding, selected, bg),
+            sevBadge(finding.severity, bg),
+            cell(truncatePathLeft(pathValue, PATH_MAX), THEME.fg, bg),
+            cell(sizeText, THEME.fgDim, bg),
+            cell(extraText(finding), THEME.fgDim, bg),
+        ];
+    });
+
     const actionable: ActionableTable = {
         columns: COLUMNS,
-        rows: slice.rows.map((finding, index) => {
-            const highlight = slice.startIndex + index === cursor;
-            const bg = highlight ? THEME.bgHighlight : undefined;
-            const m = meta(finding);
-            const bytes = typeof m.bytes === "number"
-                ? m.bytes
-                : typeof m.totalSize === "number"
-                  ? m.totalSize
-                  : finding.reclaimableBytes ?? 0;
-            const sizeText = bytes > 0 ? formatBytes(bytes) : "";
-            const pathValue = typeof m.path === "string" ? m.path : finding.title;
-
-            return [
-                selectionCell(finding, selected, bg),
-                sevBadge(finding.severity, bg),
-                cell(truncatePathLeft(pathValue, PATH_MAX), THEME.fg, bg),
-                cell(sizeText, THEME.fgDim, bg),
-                cell(extraText(finding), THEME.fgDim, bg),
-            ];
-        }),
+        rows: applyRightAlign(rows, RIGHT_ALIGN),
         findings: slice.rows,
     };
 

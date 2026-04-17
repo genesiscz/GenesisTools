@@ -1,6 +1,14 @@
 import type { Finding } from "@app/doctor/lib/types";
 import { THEME } from "../theme";
-import { cell, meta, selectionCell, sevBadge, sliceAroundCursor } from "./shared";
+import {
+    applyRightAlign,
+    cell,
+    meta,
+    rightAlignColumnIndexes,
+    selectionCell,
+    sevBadge,
+    sliceAroundCursor,
+} from "./shared";
 import type { ActionableTable, ColumnSpec, StatusRow, ViewFn } from "./types";
 
 const COLUMNS: ColumnSpec[] = [
@@ -10,6 +18,8 @@ const COLUMNS: ColumnSpec[] = [
     { header: "Count", weight: 1, align: "right" },
     { header: "Detail", weight: 4 },
 ];
+
+const RIGHT_ALIGN = rightAlignColumnIndexes(COLUMNS);
 
 interface OutdatedPkgShape {
     name: unknown;
@@ -71,21 +81,23 @@ export const brewView: ViewFn = ({ findings, selected, cursor, viewportRows }) =
 
     const slice = sliceAroundCursor(actionableFindings, cursor, viewportRows);
 
+    const rows = slice.rows.map((finding, index) => {
+        const highlight = slice.startIndex + index === cursor;
+        const bg = highlight ? THEME.bgHighlight : undefined;
+        const isOutdated = finding.id === "brew-outdated";
+
+        return [
+            selectionCell(finding, selected, bg),
+            sevBadge(finding.severity, bg),
+            cell(finding.title.trim(), THEME.fg, bg),
+            cell(isOutdated ? outdatedCount(finding) : "", THEME.fgDim, bg),
+            cell(isOutdated ? outdatedDetail(finding) : (finding.detail ?? "").trim(), THEME.fgDim, bg),
+        ];
+    });
+
     const actionable: ActionableTable = {
         columns: COLUMNS,
-        rows: slice.rows.map((finding, index) => {
-            const highlight = slice.startIndex + index === cursor;
-            const bg = highlight ? THEME.bgHighlight : undefined;
-            const isOutdated = finding.id === "brew-outdated";
-
-            return [
-                selectionCell(finding, selected, bg),
-                sevBadge(finding.severity, bg),
-                cell(finding.title.trim(), THEME.fg, bg),
-                cell(isOutdated ? outdatedCount(finding) : "", THEME.fgDim, bg),
-                cell(isOutdated ? outdatedDetail(finding) : (finding.detail ?? "").trim(), THEME.fgDim, bg),
-            ];
-        }),
+        rows: applyRightAlign(rows, RIGHT_ALIGN),
         findings: slice.rows,
     };
 
