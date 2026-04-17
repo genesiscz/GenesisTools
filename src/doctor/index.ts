@@ -6,6 +6,7 @@ import { DiskSpaceAnalyzer } from "@app/doctor/analyzers/disk-space";
 import { ensureDirs, makeRunId } from "@app/doctor/lib/paths";
 import { runLog } from "@app/doctor/ui/log";
 import { runPlain } from "@app/doctor/ui/plain";
+import { runStats } from "@app/doctor/ui/stats";
 import { runTui } from "@app/doctor/ui/tui";
 import logger from "@app/logger";
 import { enhanceHelp, isInteractive } from "@app/utils/cli";
@@ -104,6 +105,15 @@ program
     .option("--json", "JSON output")
     .action(async (opts: { since: string; analyzer?: string; json?: boolean }) => {
         await runLog(opts);
+    });
+
+program
+    .command("stats")
+    .description("Rolled-up reclaim totals")
+    .option("--since <duration>", "7d, 30d, all", "7d")
+    .option("--json", "JSON output")
+    .action(async (opts: { since: string; json?: boolean }) => {
+        await runStats(opts);
     });
 
 enhanceHelp(program);
