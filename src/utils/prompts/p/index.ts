@@ -52,3 +52,6 @@ export const log: Log = {
     error: (msg) => getBackend().log.error(msg),
     step: (msg) => getBackend().log.step(msg),
 };
+
+export { buildInstallPrompt, offerInstall } from "./offer-install";
+export type { OfferInstallOpts } from "./offer-install";
