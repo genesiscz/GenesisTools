@@ -5,8 +5,9 @@ import { createDoctorAnalyzers } from "@app/doctor/analyzers";
 import { DiskSpaceAnalyzer } from "@app/doctor/analyzers/disk-space";
 import { ensureDirs, makeRunId } from "@app/doctor/lib/paths";
 import { runPlain } from "@app/doctor/ui/plain";
+import { runTui } from "@app/doctor/ui/tui";
 import logger from "@app/logger";
-import { enhanceHelp } from "@app/utils/cli";
+import { enhanceHelp, isInteractive } from "@app/utils/cli";
 import { Command } from "commander";
 
 interface RootOpts {
@@ -39,18 +40,34 @@ program
         logger.debug({ opts, runId }, "doctor starting");
 
         const analyzers = createDoctorAnalyzers();
-
-        await runPlain({
+        const only = opts.only
+            ?.split(",")
+            .map((id) => id.trim())
+            .filter(Boolean);
+        const shared = {
             analyzers,
             runId,
-            only: opts.only
-                ?.split(",")
-                .map((id) => id.trim())
-                .filter(Boolean),
+            only,
             thorough: Boolean(opts.thorough),
             fresh: Boolean(opts.fresh),
             dryRun: Boolean(opts.dryRun),
-        });
+        };
+
+        const forcePlain = Boolean(opts.plain) || Boolean(opts.json) || !isInteractive();
+        const columns = process.stdout.columns ?? 0;
+        const rows = process.stdout.rows ?? 0;
+        const tooSmall = columns < 80 || rows < 24;
+
+        if (forcePlain || tooSmall) {
+            if (tooSmall && !forcePlain) {
+                logger.warn(`Terminal is ${columns}x${rows} - falling back to --plain (needs 80x24 minimum).`);
+            }
+
+            await runPlain(shared);
+            return;
+        }
+
+        await runTui(shared);
     });
 
 program
