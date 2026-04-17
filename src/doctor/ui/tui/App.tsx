@@ -3,10 +3,12 @@ import { Engine } from "@app/doctor/lib/engine";
 import type { EngineEvent } from "@app/doctor/lib/types";
 import logger from "@app/logger";
 import { useKeyboard, useRenderer } from "@opentui/solid";
-import { createMemo, onCleanup, onMount } from "solid-js";
+import { createMemo, onCleanup, onMount, Show } from "solid-js";
+import { Dashboard } from "./Dashboard";
 import { useEngineStore } from "./stores/engine-store";
 import { useStore } from "./stores/use-store";
 import { THEME } from "./theme";
+import { Toolbar } from "./Toolbar";
 
 export interface AppProps {
     analyzers: Analyzer[];
@@ -85,25 +87,24 @@ export function App(props: AppProps) {
 
     return (
         <box flexDirection="column" width="100%" height="100%" backgroundColor={THEME.bg}>
-            <box border borderStyle="rounded" borderColor={THEME.accent} padding={1} backgroundColor={THEME.bgAlt}>
-                <text>
-                    <span fg={THEME.accent}>
-                        <strong>macOS Doctor</strong>
-                    </span>
-                    <span fg={THEME.fgDim}>  ·  </span>
-                    <span fg={phase() === "done" ? THEME.success : THEME.accent}>{phase()}</span>
-                    <span fg={THEME.fgDim}>  ·  </span>
-                    <span fg={THEME.fg}>{findingsById().size} findings</span>
-                    <span fg={THEME.fgDim}>     [j/k] move  [d/enter] drill  [q] quit</span>
-                </text>
-            </box>
-            <box flexGrow={1} padding={1} flexDirection="column">
-                <text fg={THEME.fg}>
-                    {drawerOpen()
-                        ? `${focusedAnalyzerId()} · ${analyzerFindings().length} findings`
-                        : `${props.analyzers.length} analyzers · ${events().length} events`}
-                </text>
-                <text fg={THEME.fgDim}>Dashboard panels load in the next Phase 5 task.</text>
+            <Toolbar phase={phase()} findingsCount={findingsById().size} />
+            <box flexGrow={1} padding={1}>
+                <Show
+                    when={!drawerOpen()}
+                    fallback={
+                        <box flexDirection="column">
+                            <text fg={THEME.accent}>{focusedAnalyzerId()}</text>
+                            <text fg={THEME.fgDim}>{analyzerFindings().length} findings selected for drawer view</text>
+                        </box>
+                    }
+                >
+                    <Dashboard
+                        analyzers={props.analyzers}
+                        events={events()}
+                        findingsById={findingsById()}
+                        focusedAnalyzerId={focusedAnalyzerId()}
+                    />
+                </Show>
             </box>
         </box>
     );
