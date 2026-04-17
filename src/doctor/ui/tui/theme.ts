@@ -1,6 +1,7 @@
 export const THEME = {
     bg: "#1a1b26",
     bgAlt: "#24283b",
+    bgHighlight: "#2a2f4a",
     fg: "#c0caf5",
     fgDim: "#565f89",
     accent: "#7aa2f7",
