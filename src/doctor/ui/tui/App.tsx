@@ -5,6 +5,7 @@ import logger from "@app/logger";
 import { useKeyboard, useRenderer } from "@opentui/solid";
 import { createMemo, onCleanup, onMount, Show } from "solid-js";
 import { Dashboard } from "./Dashboard";
+import { FindingsDrawer } from "./FindingsDrawer";
 import { useEngineStore } from "./stores/engine-store";
 import { useStore } from "./stores/use-store";
 import { THEME } from "./theme";
@@ -92,10 +93,11 @@ export function App(props: AppProps) {
                 <Show
                     when={!drawerOpen()}
                     fallback={
-                        <box flexDirection="column">
-                            <text fg={THEME.accent}>{focusedAnalyzerId()}</text>
-                            <text fg={THEME.fgDim}>{analyzerFindings().length} findings selected for drawer view</text>
-                        </box>
+                        <FindingsDrawer
+                            analyzerId={focusedAnalyzerId()}
+                            findings={analyzerFindings()}
+                            onClose={() => useEngineStore.getState().setDrawer(false)}
+                        />
                     }
                 >
                     <Dashboard
