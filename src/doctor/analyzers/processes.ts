@@ -125,6 +125,40 @@ function killPidAction(pid: number, label: string): Action {
     };
 }
 
+/**
+ * Best-effort human name when labelForProcess didn't match a rule.
+ * macOS `ps` truncates the `comm` column (often to the binary path), so pull
+ * the basename when it looks like a path, and fall back to `command` otherwise.
+ */
+function displayCommName(record: ProcessRecord): string {
+    const comm = record.comm;
+
+    if (comm.includes("/")) {
+        const tail = comm.split("/").pop();
+
+        if (tail && tail.length > 0) {
+            return tail;
+        }
+    }
+
+    if (comm.length >= 15 && record.command) {
+        // comm was likely truncated — try to extract an app name from the full command.
+        const app = record.command.match(/\/([^/]+)\.app\//);
+
+        if (app) {
+            return app[1];
+        }
+
+        const bin = record.command.split(/\s+/)[0]?.split("/").pop();
+
+        if (bin) {
+            return bin;
+        }
+    }
+
+    return comm;
+}
+
 function getCommForPid(pid: number, kids: ProcessRecord[], root: ProcessRecord): string {
     if (pid === root.pid) {
         return root.comm;
@@ -219,10 +253,12 @@ export class ProcessesAnalyzer extends Analyzer {
 
             const suffix = safety.autoRespawn ? " (will restart)" : "";
 
+            const displayName = hog.label ?? displayCommName(hog);
+
             yield {
                 id: `proc-cpu-${hog.pid}`,
                 analyzerId: this.id,
-                title: `CPU hog PID ${hog.pid} - ` + `${hog.label ?? hog.comm}${suffix} - ` + `${hog.cpu.toFixed(1)}%`,
+                title: `${displayName}${suffix} - ${hog.cpu.toFixed(1)}% CPU (PID ${hog.pid})`,
                 detail: hog.command.length > 120 ? `${hog.command.slice(0, 120)}...` : hog.command,
                 severity: safety.severity === "blocked" ? "blocked" : "cautious",
                 blacklistReason: safety.reason,
@@ -257,7 +293,7 @@ export class ProcessesAnalyzer extends Analyzer {
             }
 
             const totalRss = group.reduce((acc, record) => acc + record.rssBytes, 0);
-            const label = group[0].label ?? comm;
+            const label = group[0].label ?? displayCommName(group[0]);
             const visiblePids = group
                 .slice(0, 10)
                 .map((record) => record.pid)
@@ -267,8 +303,7 @@ export class ProcessesAnalyzer extends Analyzer {
             yield {
                 id: `proc-group-${comm}`,
                 analyzerId: this.id,
-                title:
-                    `Group: ${label} x ${group.length} - ` + `${(totalRss / (1024 * 1024 * 1024)).toFixed(1)} GB RSS`,
+                title: `${label} x ${group.length} processes`,
                 detail,
                 severity: "cautious",
                 reclaimableBytes: totalRss,

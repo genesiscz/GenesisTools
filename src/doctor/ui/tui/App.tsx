@@ -77,16 +77,7 @@ export function App(props: AppProps) {
 
         const store = useEngineStore.getState();
 
-        if (drawerOpen() && (key.name === "q" || key.name === "escape")) {
-            store.setDrawer(false);
-            return;
-        }
-
-        if (key.name === "q" || key.name === "escape") {
-            renderer.destroy();
-            return;
-        }
-
+        // Global keys work regardless of drawer state.
         if (key.shift && key.name === "d") {
             void commitTrash({ dryRun: props.dryRun });
             return;
@@ -97,8 +88,21 @@ export function App(props: AppProps) {
             return;
         }
 
-        if (key.name === "d" || key.name === "enter") {
-            store.setDrawer(!drawerOpen());
+        // When the drawer is open, it owns navigation (j/k/up/down/space) and
+        // its own close on q/escape. Don't process those here — the drawer's
+        // own useKeyboard handler will.
+        if (drawerOpen()) {
+            return;
+        }
+
+        if (key.name === "q" || key.name === "escape") {
+            renderer.destroy();
+            return;
+        }
+
+        // OpenTUI emits `return` for the Enter key, not `enter`. Accept both.
+        if (key.name === "d" || key.name === "return" || key.name === "enter") {
+            store.setDrawer(true);
             return;
         }
 

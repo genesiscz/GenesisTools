@@ -55,13 +55,7 @@ export const useEngineStore = createStore<EngineState>()((set) => ({
             if (event.type === "finding") {
                 const findingsById = new Map(state.findingsById);
                 findingsById.set(event.finding.id, event.finding);
-
-                const selectedFindingIds = new Set(state.selectedFindingIds);
-                if (event.finding.severity === "safe") {
-                    selectedFindingIds.add(event.finding.id);
-                }
-
-                return { events, findingsById, selectedFindingIds };
+                return { events, findingsById };
             }
 
             if (event.type === "all-done") {
