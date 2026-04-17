@@ -47,19 +47,17 @@ export function AnalyzerPanel(props: AnalyzerPanelProps) {
             borderColor={props.focused ? THEME.accent : THEME.muted}
             padding={1}
             width={26}
-            height={7}
+            height={8}
             flexDirection="column"
         >
-            <text>
-                <span fg={props.focused ? THEME.accent : THEME.fg}>
-                    {props.analyzer.icon}  {props.analyzer.name}
-                </span>
+            <text fg={props.focused ? THEME.accent : THEME.fg}>
+                {`${props.analyzer.icon}  ${props.analyzer.name}`}
             </text>
             <text>
                 <span fg={done() ? THEME.success : THEME.accent}>{progressBar(percent(), 14)}</span>
                 <span fg={THEME.fgDim}> {percent().toFixed(0)}%</span>
             </text>
-            <text fg={THEME.fg}>{props.findings.length} findings</text>
+            <text fg={THEME.fg}>{`${props.findings.length} findings`}</text>
             <text fg={THEME.fgDim}>{reclaimableBytes() > 0 ? formatBytes(reclaimableBytes()) : "n/a"}</text>
         </box>
     );
