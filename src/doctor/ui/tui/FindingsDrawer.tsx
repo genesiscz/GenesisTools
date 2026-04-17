@@ -1,10 +1,13 @@
 import { formatBytes } from "@app/doctor/lib/size";
 import type { Finding } from "@app/doctor/lib/types";
 import { useKeyboard } from "@opentui/solid";
-import { createEffect, createMemo, createSignal, For } from "solid-js";
+import { createEffect, createMemo, createSignal, Show } from "solid-js";
 import { useEngineStore } from "./stores/engine-store";
 import { useStore } from "./stores/use-store";
 import { THEME } from "./theme";
+import { StatusStrip } from "./views/StatusStrip";
+import { viewForAnalyzer } from "./views";
+import type { Cell, ColumnSpec, Row } from "./views/types";
 
 interface FindingsDrawerProps {
     analyzerId: string;
@@ -12,33 +15,39 @@ interface FindingsDrawerProps {
     onClose(): void;
 }
 
-function severityInk(severity: Finding["severity"]): string {
-    if (severity === "safe") {
-        return THEME.sevSafe;
-    }
+const HEADER_BG = THEME.bgAlt;
 
-    if (severity === "cautious") {
-        return THEME.sevCautious;
-    }
-
-    if (severity === "dangerous") {
-        return THEME.sevDangerous;
-    }
-
-    return THEME.sevBlocked;
+function headerRow(columns: ColumnSpec[]): Row {
+    return columns.map((col): Cell => [{ text: col.header, fg: THEME.fgDim, bg: HEADER_BG }]);
 }
 
 export function FindingsDrawer(props: FindingsDrawerProps) {
     const [cursor, setCursor] = createSignal(0);
+    const [viewportRows] = createSignal(20);
     const selectedFindingIds = useStore(useEngineStore, (state) => state.selectedFindingIds);
+
+    const view = createMemo(() => {
+        const fn = viewForAnalyzer(props.analyzerId);
+        return fn({
+            findings: props.findings,
+            selected: selectedFindingIds(),
+            cursor: cursor(),
+            viewportRows: viewportRows(),
+        });
+    });
+
+    const actionableFindings = createMemo(() => view().actionable.findings);
+    const actionableCount = createMemo(() => actionableFindings().length);
+    const statusCount = createMemo(() => view().status.length);
+
     const selectedTotal = createMemo(() =>
-        props.findings
+        actionableFindings()
             .filter((finding) => selectedFindingIds().has(finding.id))
             .reduce((total, finding) => total + (finding.reclaimableBytes ?? 0), 0)
     );
 
     createEffect(() => {
-        const maxCursor = Math.max(0, props.findings.length - 1);
+        const maxCursor = Math.max(0, actionableCount() - 1);
 
         if (cursor() > maxCursor) {
             setCursor(maxCursor);
@@ -51,8 +60,12 @@ export function FindingsDrawer(props: FindingsDrawerProps) {
             return;
         }
 
+        if (actionableCount() === 0) {
+            return;
+        }
+
         if (key.name === "j" || key.name === "down") {
-            setCursor((current) => Math.min(current + 1, props.findings.length - 1));
+            setCursor((current) => Math.min(current + 1, actionableCount() - 1));
             return;
         }
 
@@ -62,7 +75,7 @@ export function FindingsDrawer(props: FindingsDrawerProps) {
         }
 
         if (key.name === "space") {
-            const finding = props.findings[cursor()];
+            const finding = actionableFindings()[cursor()];
 
             if (!finding || finding.severity === "blocked") {
                 return;
@@ -72,45 +85,57 @@ export function FindingsDrawer(props: FindingsDrawerProps) {
         }
     });
 
+    const tableContent = createMemo(() => {
+        const v = view();
+        return [headerRow(v.actionable.columns), ...v.actionable.rows];
+    });
+
     return (
-        <box flexDirection="column" border borderStyle="rounded" borderColor={THEME.accent} padding={1}>
+        <box flexDirection="column" border borderStyle="rounded" borderColor={THEME.accent} padding={1} flexGrow={1}>
             <text>
                 <span fg={THEME.accent}>
                     <strong>{props.analyzerId}</strong>
                 </span>
-                <span fg={THEME.fgDim}>  ·  {props.findings.length} findings</span>
-                <span fg={THEME.fgDim}>  ·  selected: </span>
-                <span fg={THEME.success}>{formatBytes(selectedTotal())}</span>
-                <span fg={THEME.fgDim}>     [space] toggle  [esc] close</span>
+                <span fg={THEME.fgDim}>{`  ·  ${actionableCount()} actionable`}</span>
+                <Show when={statusCount() > 0}>
+                    <span fg={THEME.fgDim}>{`  ·  ${statusCount()} status`}</span>
+                </Show>
+                <Show when={selectedTotal() > 0}>
+                    <span fg={THEME.fgDim}>  ·  selected: </span>
+                    <span fg={THEME.success}>{formatBytes(selectedTotal())}</span>
+                </Show>
+                <span fg={THEME.fgDim}>     [space] toggle  [j/k] move  [x] act  [esc] close</span>
             </text>
-            <scrollbox flexGrow={1} focused>
-                <For each={props.findings}>
-                    {(finding, index) => {
-                        const marker = createMemo(() => {
-                            if (finding.severity === "blocked") {
-                                return "x";
-                            }
 
-                            return selectedFindingIds().has(finding.id) ? "*" : "o";
-                        });
-                        const isCursor = createMemo(() => index() === cursor());
-                        const bytes = createMemo(() =>
-                            finding.reclaimableBytes ? ` · ${formatBytes(finding.reclaimableBytes)}` : ""
-                        );
-                        const reason = createMemo(() => (finding.blacklistReason ? ` (${finding.blacklistReason})` : ""));
+            <StatusStrip rows={view().status} />
 
-                        return (
-                            <text>
-                                <span fg={isCursor() ? THEME.accent : THEME.fgDim}>{isCursor() ? "> " : "  "}</span>
-                                <span fg={severityInk(finding.severity)}>{marker()}</span>
-                                <span fg={THEME.fg}> {finding.title}</span>
-                                <span fg={THEME.fgDim}>{bytes()}</span>
-                                <span fg={THEME.sevBlocked}>{reason()}</span>
-                            </text>
-                        );
-                    }}
-                </For>
-            </scrollbox>
+            <Show
+                when={actionableCount() > 0}
+                fallback={
+                    <box flexGrow={1} justifyContent="center" alignItems="center">
+                        <text>
+                            <span fg={THEME.fgDim}>Nothing to act on — this analyzer only reports status.</span>
+                        </text>
+                    </box>
+                }
+            >
+                <text_table
+                    content={tableContent()}
+                    wrapMode="none"
+                    columnWidthMode="fill"
+                    columnFitter="balanced"
+                    border={false}
+                    outerBorder={false}
+                    cellPadding={0}
+                    flexGrow={1}
+                />
+            </Show>
+
+            <Show when={actionableCount() > 0}>
+                <text>
+                    <span fg={THEME.fgDim}>{`cursor ${cursor() + 1} / ${actionableCount()}`}</span>
+                </text>
+            </Show>
         </box>
     );
 }

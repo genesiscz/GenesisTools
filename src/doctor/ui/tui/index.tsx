@@ -3,6 +3,7 @@ import { setBackend } from "@app/utils/prompts/p";
 import { opentuiBackend } from "@app/utils/prompts/p/opentui-backend";
 import { createCliRenderer } from "@opentui/core";
 import { render } from "@opentui/solid";
+import "./views/register";
 import { App } from "./App";
 import { ErrorBoundary } from "./ErrorBoundary";
 
