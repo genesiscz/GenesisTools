@@ -3,7 +3,7 @@ import { Engine } from "@app/doctor/lib/engine";
 import { executeActions } from "@app/doctor/lib/executor";
 import type { Action, EngineEvent, Finding } from "@app/doctor/lib/types";
 import logger from "@app/logger";
-import { emptyTrash, stageItems, type StageItem } from "@app/utils/prompts/clack/trash-staging";
+import { emptyTrash, type StageItem, stageItems } from "@app/utils/prompts/clack/trash-staging";
 import * as p from "@app/utils/prompts/p";
 import { useKeyboard, useRenderer } from "@opentui/solid";
 import { createMemo, onCleanup, onMount, Show } from "solid-js";
@@ -13,9 +13,9 @@ import { PromptHost } from "./PromptHost";
 import { useEngineStore } from "./stores/engine-store";
 import { usePromptStore } from "./stores/prompt-store";
 import { useStore } from "./stores/use-store";
-import { THEME } from "./theme";
 import { Toolbar } from "./Toolbar";
 import { TrashTray } from "./TrashTray";
+import { THEME } from "./theme";
 
 export interface AppProps {
     analyzers: Analyzer[];
@@ -48,20 +48,24 @@ export function App(props: AppProps) {
         };
 
         engine.on("event", handleEvent);
-        engine
-            .run(props.analyzers, {
-                concurrency: props.thorough ? 8 : 4,
-                thorough: props.thorough,
-                fresh: props.fresh,
-                runId: props.runId,
-                dryRun: props.dryRun,
-            })
-            .catch((err) => {
-                logger.error({ err }, "doctor TUI engine failed");
-                useEngineStore.getState().setPhase("done");
-            });
+
+        const deferred = setTimeout(() => {
+            engine
+                .run(props.analyzers, {
+                    concurrency: props.thorough ? 8 : 4,
+                    thorough: props.thorough,
+                    fresh: props.fresh,
+                    runId: props.runId,
+                    dryRun: props.dryRun,
+                })
+                .catch((err) => {
+                    logger.error({ err }, "doctor TUI engine failed");
+                    useEngineStore.getState().setPhase("done");
+                });
+        }, 0);
 
         onCleanup(() => {
+            clearTimeout(deferred);
             engine.off("event", handleEvent);
         });
     });
