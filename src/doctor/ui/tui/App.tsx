@@ -6,7 +6,9 @@ import { useKeyboard, useRenderer } from "@opentui/solid";
 import { createMemo, onCleanup, onMount, Show } from "solid-js";
 import { Dashboard } from "./Dashboard";
 import { FindingsDrawer } from "./FindingsDrawer";
+import { PromptHost } from "./PromptHost";
 import { useEngineStore } from "./stores/engine-store";
+import { usePromptStore } from "./stores/prompt-store";
 import { useStore } from "./stores/use-store";
 import { THEME } from "./theme";
 import { Toolbar } from "./Toolbar";
@@ -26,6 +28,7 @@ export function App(props: AppProps) {
     const findingsById = useStore(useEngineStore, (state) => state.findingsById);
     const focusedAnalyzerId = useStore(useEngineStore, (state) => state.focusedAnalyzerId);
     const drawerOpen = useStore(useEngineStore, (state) => state.drawerOpen);
+    const promptCount = useStore(usePromptStore, (state) => state.tasks.length);
     const analyzerFindings = createMemo(() =>
         Array.from(findingsById().values()).filter((finding) => finding.analyzerId === focusedAnalyzerId())
     );
@@ -59,6 +62,10 @@ export function App(props: AppProps) {
     });
 
     useKeyboard((key) => {
+        if (promptCount() > 0) {
+            return;
+        }
+
         const store = useEngineStore.getState();
 
         if (drawerOpen() && (key.name === "q" || key.name === "escape")) {
@@ -108,6 +115,7 @@ export function App(props: AppProps) {
                     />
                 </Show>
             </box>
+            <PromptHost />
         </box>
     );
 }
