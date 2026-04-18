@@ -184,7 +184,7 @@ export function AnalyzerPanel(props: AnalyzerPanelProps) {
             borderColor={props.focused ? THEME.accent : THEME.muted}
             padding={1}
             width={26}
-            height={8}
+            height={9}
             flexDirection="column"
         >
             <text fg={props.focused ? THEME.accent : THEME.fg}>
@@ -198,11 +198,13 @@ export function AnalyzerPanel(props: AnalyzerPanelProps) {
             <text fg={statusColor()}>{statusLine()}</text>
             <text fg={THEME.fgDim}>
                 <span>{`${props.findings.length} findings`}</span>
-                <Show when={reclaimableBytes() > 0}>
-                    <span>{`  ·  ${formatBytes(reclaimableBytes())}`}</span>
-                </Show>
                 <Show when={elapsedMs() > 0}>
                     <span>{`  ·  ${formatDurationMs(elapsedMs())}`}</span>
+                </Show>
+            </text>
+            <text fg={THEME.fgDim}>
+                <Show when={reclaimableBytes() > 0} fallback={<span>{" "}</span>}>
+                    <span>{formatBytes(reclaimableBytes())}</span>
                 </Show>
             </text>
         </box>
