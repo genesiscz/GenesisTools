@@ -9,6 +9,7 @@ import { useStore } from "./stores/use-store";
 import { THEME } from "./theme";
 import { StatusStrip } from "./views/StatusStrip";
 import { viewForAnalyzer } from "./views";
+import { toNativeContent } from "./views/native-content";
 import type { Cell, ColumnSpec, Row } from "./views/types";
 
 interface FindingsDrawerProps {
@@ -89,7 +90,7 @@ export function FindingsDrawer(props: FindingsDrawerProps) {
 
     const tableContent = createMemo((): TextTableContent => {
         const v = view();
-        return [headerRow(v.actionable.columns), ...v.actionable.rows] as unknown as TextTableContent;
+        return toNativeContent([headerRow(v.actionable.columns), ...v.actionable.rows]);
     });
 
     const [tableRef, setTableRef] = createSignal<TextTableRenderable | undefined>(undefined);
