@@ -1,5 +1,5 @@
-import { spawnSync } from "node:child_process";
 import { Analyzer } from "@app/doctor/lib/analyzer";
+import { run } from "@app/doctor/lib/run";
 import type { AnalyzerCategory, AnalyzerContext, ExecutorContext, Finding } from "@app/doctor/lib/types";
 
 export interface Assertion {
@@ -24,7 +24,7 @@ export class StartupAnalyzer extends Analyzer {
     readonly cacheTtlMs = 7 * 24 * 60 * 60 * 1000;
 
     protected async *run(_ctx: AnalyzerContext): AsyncIterable<Finding> {
-        const pmRes = spawnSync("pmset", ["-g", "assertions"], { encoding: "utf8" });
+        const pmRes = await run("pmset", ["-g", "assertions"]);
         const assertions = pmRes.status === 0 ? parsePmsetAssertions(pmRes.stdout) : [];
 
         for (const assertion of assertions) {
@@ -39,7 +39,7 @@ export class StartupAnalyzer extends Analyzer {
             };
         }
 
-        const lcRes = spawnSync("launchctl", ["list"], { encoding: "utf8" });
+        const lcRes = await run("launchctl", ["list"]);
         const items = lcRes.status === 0 ? parseLaunchctlList(lcRes.stdout) : [];
         const broken = items.filter((item) => item.status !== null && item.status < 0);
 
@@ -56,7 +56,7 @@ export class StartupAnalyzer extends Analyzer {
                         label: "Remove with launchctl",
                         confirm: "yesno",
                         execute: async (_ctx: ExecutorContext, finding) => {
-                            const res = spawnSync("launchctl", ["remove", item.label]);
+                            const res = await run("launchctl", ["remove", item.label]);
 
                             return {
                                 findingId: finding.id,

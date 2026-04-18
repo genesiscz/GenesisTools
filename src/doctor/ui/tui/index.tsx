@@ -12,6 +12,21 @@ export async function runTui(opts: PlainRunOpts): Promise<void> {
     const renderer = await createCliRenderer({ exitOnCtrlC: true });
     setBackend(opentuiBackend(renderer));
 
+    // Belt-and-suspenders SIGINT handler: if the main thread is ever blocked
+    // (e.g., a pathological analyzer), a second Ctrl+C forcibly exits.
+    let sigintArmed = false;
+    const onSigint = (): void => {
+        if (sigintArmed) {
+            process.exit(130);
+        }
+
+        sigintArmed = true;
+        renderer.destroy();
+        setTimeout(() => process.exit(130), 500);
+    };
+    process.on("SIGINT", onSigint);
+    renderer.once("destroy", () => process.off("SIGINT", onSigint));
+
     const selectedAnalyzers = opts.only
         ? opts.analyzers.filter((analyzer) => opts.only?.includes(analyzer.id))
         : opts.analyzers;

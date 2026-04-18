@@ -2,7 +2,7 @@
 import type { Analyzer } from "@app/doctor/lib/analyzer";
 import { formatBytes } from "@app/doctor/lib/size";
 import type { EngineEvent, Finding } from "@app/doctor/lib/types";
-import { createMemo } from "solid-js";
+import { createMemo, createSignal, onCleanup, Show } from "solid-js";
 import { THEME } from "./theme";
 
 interface AnalyzerPanelProps {
@@ -12,34 +12,170 @@ interface AnalyzerPanelProps {
     focused: boolean;
 }
 
-function latestProgress(events: EngineEvent[], analyzerId: string): Extract<EngineEvent, { type: "progress" }> | null {
-    for (let index = events.length - 1; index >= 0; index--) {
-        const event = events[index];
+type PanelStatus = "pending" | "running" | "done" | "error";
 
-        if (event?.type === "progress" && event.analyzerId === analyzerId) {
-            return event;
+interface PanelState {
+    status: PanelStatus;
+    percent: number;
+    currentItem: string | null;
+    startedAtMs: number | null;
+    doneDurationMs: number | null;
+}
+
+function deriveState(events: EngineEvent[], analyzerId: string): PanelState {
+    let status: PanelStatus = "pending";
+    let percent = 0;
+    let currentItem: string | null = null;
+    let startedAtMs: number | null = null;
+    let doneDurationMs: number | null = null;
+
+    for (const event of events) {
+        if (!("analyzerId" in event) || event.analyzerId !== analyzerId) {
+            continue;
+        }
+
+        if (event.type === "analyzer-start") {
+            status = "running";
+            startedAtMs = Date.parse(event.startedAt);
+            continue;
+        }
+
+        if (event.type === "progress") {
+            status = "running";
+            percent = event.percent ?? percent;
+            currentItem = event.currentItem ?? currentItem;
+            continue;
+        }
+
+        if (event.type === "analyzer-done") {
+            status = event.error ? "error" : "done";
+            percent = 100;
+            doneDurationMs = event.durationMs;
         }
     }
 
-    return null;
+    return { status, percent, currentItem, startedAtMs, doneDurationMs };
 }
 
-function isDone(events: EngineEvent[], analyzerId: string): boolean {
-    return events.some((event) => event.type === "analyzer-done" && event.analyzerId === analyzerId);
-}
+const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 function progressBar(percent: number, width: number): string {
     const filled = Math.floor((percent / 100) * width);
-    return `${"#".repeat(filled)}${"-".repeat(width - filled)}`;
+    return `${"#".repeat(filled)}${"-".repeat(Math.max(0, width - filled))}`;
+}
+
+function formatDurationMs(ms: number): string {
+    if (ms < 1000) {
+        return `${ms}ms`;
+    }
+
+    return `${(ms / 1000).toFixed(1)}s`;
+}
+
+function truncate(value: string, max: number): string {
+    if (value.length <= max) {
+        return value;
+    }
+
+    return `${value.slice(0, max - 1)}…`;
 }
 
 export function AnalyzerPanel(props: AnalyzerPanelProps) {
-    const progress = createMemo(() => latestProgress(props.events, props.analyzer.id));
-    const done = createMemo(() => isDone(props.events, props.analyzer.id));
-    const percent = createMemo(() => progress()?.percent ?? (done() ? 100 : 0));
+    const state = createMemo(() => deriveState(props.events, props.analyzer.id));
+
+    const [tick, setTick] = createSignal(0);
+    const interval = setInterval(() => setTick((current) => current + 1), 100);
+    onCleanup(() => clearInterval(interval));
+
+    const spinnerFrame = createMemo(() => SPINNER_FRAMES[tick() % SPINNER_FRAMES.length]);
+
+    const elapsedMs = createMemo(() => {
+        const current = state();
+
+        if (current.status === "done" || current.status === "error") {
+            return current.doneDurationMs ?? 0;
+        }
+
+        if (current.startedAtMs === null) {
+            return 0;
+        }
+
+        // Depend on tick() so the elapsed counter ticks every 100ms.
+        void tick();
+        return Date.now() - current.startedAtMs;
+    });
+
     const reclaimableBytes = createMemo(() =>
         props.findings.reduce((total, finding) => total + (finding.reclaimableBytes ?? 0), 0)
     );
+
+    const statusLine = createMemo(() => {
+        const current = state();
+
+        if (current.status === "pending") {
+            return "waiting…";
+        }
+
+        if (current.status === "error") {
+            return "error";
+        }
+
+        if (current.status === "done") {
+            return "done";
+        }
+
+        return current.currentItem ? truncate(current.currentItem, 22) : "scanning…";
+    });
+
+    const statusColor = createMemo(() => {
+        const current = state().status;
+
+        if (current === "done") {
+            return THEME.success;
+        }
+
+        if (current === "error") {
+            return THEME.danger;
+        }
+
+        if (current === "running") {
+            return THEME.accent;
+        }
+
+        return THEME.fgDim;
+    });
+
+    const barColor = createMemo(() => {
+        const current = state().status;
+
+        if (current === "done") {
+            return THEME.success;
+        }
+
+        if (current === "error") {
+            return THEME.danger;
+        }
+
+        return THEME.accent;
+    });
+
+    const indicator = createMemo(() => {
+        const current = state().status;
+
+        if (current === "running") {
+            return spinnerFrame();
+        }
+
+        if (current === "done") {
+            return "✓";
+        }
+
+        if (current === "error") {
+            return "✗";
+        }
+
+        return "·";
+    });
 
     return (
         <box
@@ -52,14 +188,23 @@ export function AnalyzerPanel(props: AnalyzerPanelProps) {
             flexDirection="column"
         >
             <text fg={props.focused ? THEME.accent : THEME.fg}>
-                {`${props.analyzer.icon}  ${props.analyzer.name}`}
+                <span>{`${props.analyzer.icon}  ${props.analyzer.name}  `}</span>
+                <span fg={statusColor()}>{indicator()}</span>
             </text>
             <text>
-                <span fg={done() ? THEME.success : THEME.accent}>{progressBar(percent(), 14)}</span>
-                <span fg={THEME.fgDim}> {percent().toFixed(0)}%</span>
+                <span fg={barColor()}>{progressBar(state().percent, 14)}</span>
+                <span fg={THEME.fgDim}>{` ${state().percent.toFixed(0)}%`}</span>
             </text>
-            <text fg={THEME.fg}>{`${props.findings.length} findings`}</text>
-            <text fg={THEME.fgDim}>{reclaimableBytes() > 0 ? formatBytes(reclaimableBytes()) : "n/a"}</text>
+            <text fg={statusColor()}>{statusLine()}</text>
+            <text fg={THEME.fgDim}>
+                <span>{`${props.findings.length} findings`}</span>
+                <Show when={reclaimableBytes() > 0}>
+                    <span>{`  ·  ${formatBytes(reclaimableBytes())}`}</span>
+                </Show>
+                <Show when={elapsedMs() > 0}>
+                    <span>{`  ·  ${formatDurationMs(elapsedMs())}`}</span>
+                </Show>
+            </text>
         </box>
     );
 }

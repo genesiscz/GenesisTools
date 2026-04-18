@@ -1,5 +1,5 @@
-import { spawnSync } from "node:child_process";
 import { Analyzer } from "@app/doctor/lib/analyzer";
+import { run } from "@app/doctor/lib/run";
 import type { AnalyzerCategory, AnalyzerContext, Finding } from "@app/doctor/lib/types";
 
 export interface PowerProfile {
@@ -18,7 +18,7 @@ export class BatteryAnalyzer extends Analyzer {
     readonly cacheTtlMs = 24 * 60 * 60 * 1000;
 
     protected async *run(_ctx: AnalyzerContext): AsyncIterable<Finding> {
-        const res = spawnSync("system_profiler", ["SPPowerDataType"], { encoding: "utf8", timeout: 5_000 });
+        const res = await run("system_profiler", ["SPPowerDataType"], { timeoutMs: 5_000 });
 
         if (res.status === 0) {
             const profile = parsePowerProfile(res.stdout);
@@ -28,8 +28,9 @@ export class BatteryAnalyzer extends Analyzer {
             }
         }
 
-        const thermRes = spawnSync("pmset", ["-g", "thermlog"], { encoding: "utf8" });
-        const events = thermRes.status === 0 ? parseThermLog(thermRes.stdout) : [];
+        // `pmset -g thermlog` streams indefinitely on recent macOS — cap hard.
+        const thermRes = await run("pmset", ["-g", "thermlog"], { timeoutMs: 2_000 });
+        const events = thermRes.timedOut ? [] : parseThermLog(thermRes.stdout);
 
         yield {
             id: "battery-thermal",

@@ -1,5 +1,5 @@
-import { spawnSync } from "node:child_process";
 import { Analyzer } from "@app/doctor/lib/analyzer";
+import { run, runInherit } from "@app/doctor/lib/run";
 import type { AnalyzerCategory, AnalyzerContext, ExecutorContext, Finding } from "@app/doctor/lib/types";
 
 const TCP_STATES = [
@@ -20,7 +20,7 @@ export class NetworkAnalyzer extends Analyzer {
     readonly cacheTtlMs = 0;
 
     protected async *run(_ctx: AnalyzerContext): AsyncIterable<Finding> {
-        const netstatRes = spawnSync("netstat", ["-an"], { encoding: "utf8" });
+        const netstatRes = await run("netstat", ["-an"]);
         const counts = netstatRes.status === 0 ? parseNetstatStates(netstatRes.stdout) : {};
         const stuck = (counts.TIME_WAIT ?? 0) + (counts.CLOSE_WAIT ?? 0);
 
@@ -48,9 +48,9 @@ export class NetworkAnalyzer extends Analyzer {
                     label: "Flush DNS cache",
                     confirm: "yesno",
                     execute: async (_ctx: ExecutorContext, finding) => {
-                        const flush = spawnSync("dscacheutil", ["-flushcache"]);
-                        const hup = spawnSync("sudo", ["killall", "-HUP", "mDNSResponder"], { stdio: "inherit" });
-                        const ok = flush.status === 0 && hup.status === 0;
+                        const flush = await run("dscacheutil", ["-flushcache"]);
+                        const hupStatus = await runInherit("sudo", ["killall", "-HUP", "mDNSResponder"]);
+                        const ok = flush.status === 0 && hupStatus === 0;
 
                         return {
                             findingId: finding.id,
@@ -62,7 +62,7 @@ export class NetworkAnalyzer extends Analyzer {
             ],
         };
 
-        const ifRes = spawnSync("ifconfig", [], { encoding: "utf8" });
+        const ifRes = await run("ifconfig", []);
         const utuns = ifRes.status === 0 ? parseUtunInterfaces(ifRes.stdout) : [];
 
         if (utuns.length > 4) {

@@ -1,9 +1,9 @@
-import { spawnSync } from "node:child_process";
 import type { Dirent } from "node:fs";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import pLimit from "p-limit";
 import { Analyzer } from "@app/doctor/lib/analyzer";
 import {
     listGlobalPackages,
@@ -11,9 +11,12 @@ import {
     reinstallCommand,
     writeSnapshot,
 } from "@app/doctor/lib/global-packages";
+import { run, runInherit } from "@app/doctor/lib/run";
 import { duBytes, formatBytes } from "@app/doctor/lib/size";
 import type { Action, AnalyzerCategory, AnalyzerContext, ExecutorContext, Finding } from "@app/doctor/lib/types";
 import { SafeJSON } from "@app/utils/json";
+
+const DU_CONCURRENCY = 8;
 
 const ROOTS = ["~/Tresors", "~/Projects", "~/Developer", "~/dev", "~/code", "~/src"];
 const NODE_MODULES_MIN_BYTES = 500 * 1024 * 1024;
@@ -69,11 +72,31 @@ export class DevCachesAnalyzer extends Analyzer {
 
     protected async *run(ctx: AnalyzerContext): AsyncIterable<Finding> {
         yield* this.scanNodeModules(ctx);
+
+        this.emitStage(ctx, "Xcode DerivedData");
         yield* this.scanXcodeDerivedData();
+
+        this.emitStage(ctx, "simulators");
         yield* this.scanSimulators();
+
+        this.emitStage(ctx, "docker");
         yield* this.scanDocker();
+
+        this.emitStage(ctx, "package caches");
         yield* this.scanGlobalPackageCaches(ctx);
+
+        this.emitStage(ctx, "brew cache");
         yield* this.scanBrewCache();
+    }
+
+    private emitStage(ctx: AnalyzerContext, currentItem: string): void {
+        ctx.emit({
+            type: "progress",
+            analyzerId: this.id,
+            phase: "scanning",
+            currentItem,
+            findingsCount: 0,
+        });
     }
 
     private async *scanNodeModules(ctx: AnalyzerContext): AsyncIterable<Finding> {
@@ -89,22 +112,28 @@ export class DevCachesAnalyzer extends Analyzer {
         const sized: Array<{ path: string; bytes: number }> = [];
         let scanned = 0;
 
-        for (const path of paths) {
-            scanned++;
-            ctx.emit({
-                type: "progress",
-                analyzerId: this.id,
-                phase: "scanning",
-                percent: total === 0 ? 100 : (scanned / total) * 100,
-                currentItem: `node_modules ${scanned}/${total}`,
-                findingsCount: sized.length,
-            });
+        const limit = pLimit(DU_CONCURRENCY);
 
-            const bytes = duBytes(path);
-            if (bytes >= NODE_MODULES_MIN_BYTES) {
-                sized.push({ path, bytes });
-            }
-        }
+        await Promise.all(
+            paths.map((path) =>
+                limit(async () => {
+                    const bytes = await duBytes(path);
+                    scanned++;
+                    ctx.emit({
+                        type: "progress",
+                        analyzerId: this.id,
+                        phase: "scanning",
+                        percent: total === 0 ? 100 : (scanned / total) * 100,
+                        currentItem: `node_modules ${scanned}/${total}`,
+                        findingsCount: sized.length,
+                    });
+
+                    if (bytes >= NODE_MODULES_MIN_BYTES) {
+                        sized.push({ path, bytes });
+                    }
+                })
+            )
+        );
 
         sized.sort((left, right) => right.bytes - left.bytes);
 
@@ -136,7 +165,7 @@ export class DevCachesAnalyzer extends Analyzer {
             return;
         }
 
-        const bytes = duBytes(path);
+        const bytes = await duBytes(path);
         if (bytes < 500 * 1024 * 1024) {
             return;
         }
@@ -166,7 +195,7 @@ export class DevCachesAnalyzer extends Analyzer {
     }
 
     private async *scanBrewCache(): AsyncIterable<Finding> {
-        const res = spawnSync("brew", ["--cache"], { encoding: "utf8" });
+        const res = await run("brew", ["--cache"]);
 
         if (res.status !== 0) {
             return;
@@ -177,7 +206,7 @@ export class DevCachesAnalyzer extends Analyzer {
             return;
         }
 
-        const bytes = duBytes(path);
+        const bytes = await duBytes(path);
         if (bytes < 200 * 1024 * 1024) {
             return;
         }
@@ -195,12 +224,12 @@ export class DevCachesAnalyzer extends Analyzer {
                     label: "Run brew cleanup -s",
                     confirm: "none",
                     execute: async (_ctx, finding) => {
-                        const result = spawnSync("brew", ["cleanup", "-s"], { stdio: "inherit" });
+                        const status = await runInherit("brew", ["cleanup", "-s"]);
 
                         return {
                             findingId: finding.id,
                             actionId: "brew-cleanup",
-                            status: result.status === 0 ? "ok" : "failed",
+                            status: status === 0 ? "ok" : "failed",
                             actualReclaimedBytes: bytes,
                         };
                     },
@@ -337,7 +366,7 @@ function lastUsedAt(logPath: string): Date | null {
 }
 
 async function* scanSimulators(): AsyncIterable<Finding> {
-    const res = spawnSync("xcrun", ["simctl", "list", "devices", "--json"], { encoding: "utf8" });
+    const res = await run("xcrun", ["simctl", "list", "devices", "--json"], { timeoutMs: 10_000 });
 
     if (res.status !== 0) {
         return;
@@ -352,8 +381,12 @@ async function* scanSimulators(): AsyncIterable<Finding> {
         byRuntime.set(dev.runtime, bucket);
     }
 
+    const limit = pLimit(DU_CONCURRENCY);
+
     for (const [runtime, group] of byRuntime) {
-        const totalBytes = group.reduce((acc, device) => acc + duBytes(device.dataPath), 0);
+        const sizes = await Promise.all(group.map((device) => limit(() => duBytes(device.dataPath))));
+        const totalBytes = sizes.reduce((acc, size) => acc + size, 0);
+
         const unavailable = group.filter((device) => !device.isAvailable);
         const stale = group.filter((device) => {
             const last = lastUsedAt(device.logPath);
@@ -393,7 +426,7 @@ function simulatorActions(args: {
             label: `Delete ${args.unavailable.length} unavailable simulator(s)`,
             confirm: "yesno",
             execute: async (_ctx, finding) => {
-                const res = spawnSync("xcrun", ["simctl", "delete", "unavailable"]);
+                const res = await run("xcrun", ["simctl", "delete", "unavailable"]);
 
                 return {
                     findingId: finding.id,
@@ -437,7 +470,7 @@ function deleteSimulatorsAction(id: string, label: string, devices: SimDevice[])
             let failed = 0;
 
             for (const dev of devices) {
-                const res = spawnSync("xcrun", ["simctl", "delete", dev.udid]);
+                const res = await run("xcrun", ["simctl", "delete", dev.udid]);
                 if (res.status !== 0) {
                     failed++;
                 }
@@ -454,7 +487,7 @@ function deleteSimulatorsAction(id: string, label: string, devices: SimDevice[])
 }
 
 async function* scanDocker(): AsyncIterable<Finding> {
-    const res = spawnSync("docker", ["system", "df", "--format", "json"], { encoding: "utf8", timeout: 5_000 });
+    const res = await run("docker", ["system", "df", "--format", "json"], { timeoutMs: 5_000 });
 
     if (res.status !== 0) {
         return;
@@ -476,12 +509,12 @@ async function* scanDocker(): AsyncIterable<Finding> {
                     label: "Run docker image prune -a",
                     confirm: "yesno",
                     execute: async (_ctx, finding) => {
-                        const prune = spawnSync("docker", ["image", "prune", "-af"], { stdio: "inherit" });
+                        const status = await runInherit("docker", ["image", "prune", "-af"]);
 
                         return {
                             findingId: finding.id,
                             actionId: "prune-images",
-                            status: prune.status === 0 ? "ok" : "failed",
+                            status: status === 0 ? "ok" : "failed",
                         };
                     },
                 },
@@ -499,17 +532,30 @@ async function* scanGlobalPackageCaches(ctx: AnalyzerContext, analyzerId: string
         { manager: "yarn", path: join(homedir(), ".yarn", "berry", "cache"), minBytes: 500 * 1024 * 1024 },
     ];
 
-    for (const item of cases) {
-        if (!existsSync(item.path)) {
-            continue;
-        }
+    const candidates = cases.filter((item) => existsSync(item.path));
+    const limit = pLimit(DU_CONCURRENCY);
+    const sized = await Promise.all(
+        candidates.map((item) =>
+            limit(async () => {
+                ctx.emit({
+                    type: "progress",
+                    analyzerId,
+                    phase: "scanning",
+                    currentItem: `${item.manager} cache`,
+                    findingsCount: 0,
+                });
 
-        const bytes = duBytes(item.path);
+                return { item, bytes: await duBytes(item.path) };
+            })
+        )
+    );
+
+    for (const { item, bytes } of sized) {
         if (bytes < item.minBytes) {
             continue;
         }
 
-        const globals = listGlobalPackages(item.manager);
+        const globals = await listGlobalPackages(item.manager);
         const cmd = reinstallCommand(item.manager, globals);
 
         yield {
@@ -564,12 +610,12 @@ function cleanPackageCacheAction(args: {
                     label: `Re-install ${args.globals.length} ${args.manager} globals`,
                     confirm: "yesno",
                     execute: async (_ctx, finding) => {
-                        const reinstall = spawnSync(args.cmd.cmd, args.cmd.args, { stdio: "inherit" });
+                        const status = await runInherit(args.cmd.cmd, args.cmd.args);
 
                         return {
                             findingId: finding.id,
                             actionId: `reinstall-${args.manager}`,
-                            status: reinstall.status === 0 ? "ok" : "failed",
+                            status: status === 0 ? "ok" : "failed",
                             metadata: { manager: args.manager, packageCount: args.globals.length },
                         };
                     },

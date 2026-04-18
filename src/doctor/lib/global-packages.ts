@@ -1,7 +1,7 @@
-import { spawnSync } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { SafeJSON } from "@app/utils/json";
+import { run } from "./run";
 import { snapshotFilePath } from "./paths";
 
 export type PackageManager = "bun" | "npm" | "pnpm" | "yarn";
@@ -25,23 +25,23 @@ interface YarnLine {
     data?: string;
 }
 
-export function listGlobalPackages(manager: PackageManager): string[] {
+export async function listGlobalPackages(manager: PackageManager): Promise<string[]> {
     if (manager === "bun") {
-        const res = spawnSync("bun", ["pm", "ls", "-g"], { encoding: "utf8" });
+        const res = await run("bun", ["pm", "ls", "-g"]);
         return parseBunList(res.stdout ?? "");
     }
 
     if (manager === "npm") {
-        const res = spawnSync("npm", ["ls", "-g", "--depth=0", "--json"], { encoding: "utf8" });
+        const res = await run("npm", ["ls", "-g", "--depth=0", "--json"]);
         return parseNpmJson(res.stdout ?? "");
     }
 
     if (manager === "pnpm") {
-        const res = spawnSync("pnpm", ["ls", "-g", "--depth=0", "--json"], { encoding: "utf8" });
+        const res = await run("pnpm", ["ls", "-g", "--depth=0", "--json"]);
         return parseNpmJson(res.stdout ?? "");
     }
 
-    const res = spawnSync("yarn", ["global", "list", "--json"], { encoding: "utf8" });
+    const res = await run("yarn", ["global", "list", "--json"]);
     return parseYarnJson(res.stdout ?? "");
 }
 

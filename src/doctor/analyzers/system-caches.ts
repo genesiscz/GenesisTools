@@ -57,7 +57,7 @@ export class SystemCachesAnalyzer extends Analyzer {
 
             const displayPath = `~/Library/Caches/${name}`;
             const classification = classifyCachePath(displayPath);
-            const bytes = duBytes(path);
+            const bytes = await duBytes(path);
 
             if (bytes < 50 * 1024 * 1024 && classification.severity !== "blocked") {
                 continue;

@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { run } from "./run";
 
 export function formatBytes(bytes: number): string {
     if (bytes < 1024) {
@@ -21,10 +21,10 @@ export function sumBytes(items: Array<{ reclaimableBytes?: number }>): number {
     return items.reduce((acc, item) => acc + (item.reclaimableBytes ?? 0), 0);
 }
 
-export function duBytes(path: string): number {
-    const res = spawnSync("du", ["-sk", path], { encoding: "utf8" });
+export async function duBytes(path: string, opts: { timeoutMs?: number } = {}): Promise<number> {
+    const res = await run("du", ["-sk", path], { timeoutMs: opts.timeoutMs ?? 15_000 });
 
-    if (res.status !== 0) {
+    if (res.status !== 0 || res.timedOut) {
         return 0;
     }
 
@@ -32,8 +32,8 @@ export function duBytes(path: string): number {
     return Number.isNaN(kb) ? 0 : kb * 1024;
 }
 
-export function statBytes(path: string): number {
-    const res = spawnSync("stat", ["-f", "%z", path], { encoding: "utf8" });
+export async function statBytes(path: string): Promise<number> {
+    const res = await run("stat", ["-f", "%z", path]);
 
     if (res.status !== 0) {
         return 0;

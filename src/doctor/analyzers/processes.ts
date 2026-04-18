@@ -1,6 +1,6 @@
-import { spawnSync } from "node:child_process";
 import { Analyzer } from "@app/doctor/lib/analyzer";
 import { labelForProcess } from "@app/doctor/lib/process-labels";
+import { run } from "@app/doctor/lib/run";
 import { classifyProcess, PROCESS_NEVER_KILL } from "@app/doctor/lib/safety";
 import type {
     Action,
@@ -112,7 +112,7 @@ function killPidAction(pid: number, label: string): Action {
         label: `Kill PID ${pid} - ${label}`,
         confirm: "yesno",
         execute: async (_ctx: ExecutorContext, finding): Promise<ActionResult> => {
-            const res = spawnSync("kill", [String(pid)]);
+            const res = await run("kill", [String(pid)]);
 
             return {
                 findingId: finding.id,
@@ -175,7 +175,7 @@ function killTreeAction(root: ProcessRecord, kids: ProcessRecord[]): Action {
         execute: async (_ctx, finding): Promise<ActionResult> => {
             const pids = [root.pid, ...kids.map((kid) => kid.pid)];
             const killable = pids.filter((pid) => !PROCESS_NEVER_KILL.has(getCommForPid(pid, kids, root)));
-            const res = spawnSync("kill", killable.map(String));
+            const res = await run("kill", killable.map(String));
 
             return {
                 findingId: finding.id,
@@ -195,7 +195,7 @@ function createKillGroupAction(comm: string, label: string, group: ProcessRecord
         confirmPhrase: comm,
         execute: async (_ctx, finding): Promise<ActionResult> => {
             const pids = group.map((record) => String(record.pid));
-            const res = spawnSync("kill", pids);
+            const res = await run("kill", pids);
 
             return {
                 findingId: finding.id,
@@ -215,7 +215,7 @@ export class ProcessesAnalyzer extends Analyzer {
     readonly cacheTtlMs = 0;
 
     protected async *run(_ctx: AnalyzerContext): AsyncIterable<Finding> {
-        const res = spawnSync("ps", ["-axo", "pid,ppid,pcpu,rss,stat,comm,command"], { encoding: "utf8" });
+        const res = await run("ps", ["-axo", "pid,ppid,pcpu,rss,stat,comm,command"]);
 
         if (res.status !== 0) {
             return;

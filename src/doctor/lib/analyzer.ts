@@ -19,6 +19,13 @@ export abstract class Analyzer {
         let error: AnalyzerResult["error"] = null;
 
         ctx.emit({ type: "analyzer-start", analyzerId: this.id, startedAt: new Date().toISOString() });
+        ctx.emit({
+            type: "progress",
+            analyzerId: this.id,
+            phase: "scanning",
+            currentItem: "starting…",
+            findingsCount: 0,
+        });
 
         if (this.cacheTtlMs > 0 && !ctx.opts.fresh) {
             const cached = await readCache(this.id, this.cacheTtlMs);

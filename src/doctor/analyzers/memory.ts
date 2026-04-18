@@ -1,6 +1,6 @@
-import { spawnSync } from "node:child_process";
 import { Analyzer } from "@app/doctor/lib/analyzer";
 import { labelForProcess } from "@app/doctor/lib/process-labels";
+import { run } from "@app/doctor/lib/run";
 import { classifyProcess } from "@app/doctor/lib/safety";
 import { formatBytes } from "@app/doctor/lib/size";
 import type {
@@ -97,8 +97,8 @@ interface TopProcess {
     label: string | null;
 }
 
-function getTopProcessesByRss(limit: number): TopProcess[] {
-    const res = spawnSync("ps", ["-axo", "pid=,rss=,comm=,command="], { encoding: "utf8" });
+async function getTopProcessesByRss(limit: number): Promise<TopProcess[]> {
+    const res = await run("ps", ["-axo", "pid=,rss=,comm=,command="]);
 
     if (res.status !== 0) {
         return [];
@@ -145,7 +145,7 @@ function killProcessAction(proc: TopProcess): Action {
         label: `Kill PID ${proc.pid} - ${proc.label ?? proc.comm}${suffix}`,
         confirm: "yesno",
         execute: async (_ctx: ExecutorContext, finding): Promise<ActionResult> => {
-            const res = spawnSync("kill", [String(proc.pid)]);
+            const res = await run("kill", [String(proc.pid)]);
 
             return {
                 findingId: finding.id,
@@ -184,13 +184,13 @@ export class MemoryAnalyzer extends Analyzer {
     readonly cacheTtlMs = 0;
 
     protected async *run(_ctx: AnalyzerContext): AsyncIterable<Finding> {
-        const vmRes = spawnSync("vm_stat", [], { encoding: "utf8" });
-        const swapRes = spawnSync("sysctl", ["vm.swapusage"], { encoding: "utf8" });
+        const vmRes = await run("vm_stat", []);
+        const swapRes = await run("sysctl", ["vm.swapusage"]);
         const vm = parseVmStat(vmRes.stdout ?? "");
         const swap = parseSwapusage(swapRes.stdout ?? "");
         const swapPressureSevere =
             swap.usedBytes > 10 * 1024 * 1024 * 1024 || (swap.totalBytes > 0 && swap.usedBytes / swap.totalBytes > 0.5);
-        const topProcesses = getTopProcessesByRss(10);
+        const topProcesses = await getTopProcessesByRss(10);
 
         if (swap.totalBytes > 0) {
             const swapUsedPct = Math.round((swap.usedBytes / swap.totalBytes) * 100);

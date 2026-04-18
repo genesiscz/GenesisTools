@@ -1,5 +1,5 @@
-import { spawnSync } from "node:child_process";
 import { Analyzer } from "@app/doctor/lib/analyzer";
+import { run } from "@app/doctor/lib/run";
 import type { AnalyzerCategory, AnalyzerContext, Finding } from "@app/doctor/lib/types";
 
 interface SecurityCheck {
@@ -18,7 +18,7 @@ export class SecurityAnalyzer extends Analyzer {
 
     protected async *run(_ctx: AnalyzerContext): AsyncIterable<Finding> {
         for (const check of securityChecks()) {
-            const res = spawnSync(check.cmd, check.args, { encoding: "utf8" });
+            const res = await run(check.cmd, check.args);
             const stdout = res.stdout ?? "";
             const stderr = res.stderr ?? "";
             const passing = res.status === 0 && check.ok(stdout);

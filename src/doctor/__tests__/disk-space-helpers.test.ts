@@ -20,7 +20,7 @@ describe("parseTmutilOutput", () => {
 });
 
 describe("isFdAvailable", () => {
-    it("returns boolean", () => {
-        expect(typeof isFdAvailable()).toBe("boolean");
+    it("returns boolean", async () => {
+        expect(typeof (await isFdAvailable())).toBe("boolean");
     });
 });

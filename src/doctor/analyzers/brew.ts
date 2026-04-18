@@ -1,5 +1,5 @@
-import { spawnSync } from "node:child_process";
 import { Analyzer } from "@app/doctor/lib/analyzer";
+import { isCommandAvailable, run, runInherit } from "@app/doctor/lib/run";
 import type { AnalyzerCategory, AnalyzerContext, ExecutorContext, Finding } from "@app/doctor/lib/types";
 import { SafeJSON } from "@app/utils/json";
 
@@ -22,9 +22,9 @@ export class BrewAnalyzer extends Analyzer {
     readonly cacheTtlMs = 24 * 60 * 60 * 1000;
 
     protected async *run(_ctx: AnalyzerContext): AsyncIterable<Finding> {
-        const whichBrew = spawnSync("which", ["brew"]);
+        const brewAvailable = await isCommandAvailable("brew");
 
-        if (whichBrew.status !== 0) {
+        if (!brewAvailable) {
             yield {
                 id: "brew-not-installed",
                 analyzerId: this.id,
@@ -36,7 +36,7 @@ export class BrewAnalyzer extends Analyzer {
             return;
         }
 
-        const outdatedRes = spawnSync("brew", ["outdated", "--json=v2"], { encoding: "utf8", timeout: 15_000 });
+        const outdatedRes = await run("brew", ["outdated", "--json=v2"], { timeoutMs: 15_000 });
         const outdated = outdatedRes.status === 0 ? parseBrewOutdated(outdatedRes.stdout) : [];
 
         if (outdated.length > 0) {
@@ -55,12 +55,12 @@ export class BrewAnalyzer extends Analyzer {
                         label: "Run brew upgrade",
                         confirm: "yesno",
                         execute: async (_ctx: ExecutorContext, finding) => {
-                            const res = spawnSync("brew", ["upgrade"], { stdio: "inherit" });
+                            const status = await runInherit("brew", ["upgrade"]);
 
                             return {
                                 findingId: finding.id,
                                 actionId: "brew-upgrade",
-                                status: res.status === 0 ? "ok" : "failed",
+                                status: status === 0 ? "ok" : "failed",
                             };
                         },
                     },
@@ -69,7 +69,7 @@ export class BrewAnalyzer extends Analyzer {
             };
         }
 
-        const leavesRes = spawnSync("brew", ["leaves"], { encoding: "utf8" });
+        const leavesRes = await run("brew", ["leaves"]);
         const leaves = leavesRes.status === 0 ? leavesRes.stdout.split("\n").filter((line) => line.trim()) : [];
 
         if (leaves.length > 30) {

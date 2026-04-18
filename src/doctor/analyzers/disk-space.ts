@@ -1,9 +1,9 @@
-import { spawnSync } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { Analyzer } from "@app/doctor/lib/analyzer";
+import { isCommandAvailable, run, runInherit } from "@app/doctor/lib/run";
 import { duBytes, formatBytes } from "@app/doctor/lib/size";
 import type {
     Action,
@@ -27,14 +27,12 @@ export function parseTmutilOutput(raw: string): string[] {
         .filter((line) => line.length > 0 && !line.startsWith("Snapshots for disk"));
 }
 
-export function isFdAvailable(): boolean {
-    const res = spawnSync("which", ["fd"]);
-    return res.status === 0;
+export async function isFdAvailable(): Promise<boolean> {
+    return isCommandAvailable("fd");
 }
 
-export function isBrewAvailable(): boolean {
-    const res = spawnSync("which", ["brew"]);
-    return res.status === 0;
+export async function isBrewAvailable(): Promise<boolean> {
+    return isCommandAvailable("brew");
 }
 
 function stageTrashAction(path: string): Action {
@@ -89,7 +87,7 @@ function revealInFinderAction(path: string): Action {
         label: "Reveal in Finder",
         confirm: "none",
         execute: async (_ctx, finding): Promise<ActionResult> => {
-            spawnSync("open", ["-R", path]);
+            await run("open", ["-R", path]);
 
             return { findingId: finding.id, actionId: "reveal", status: "ok" };
         },
@@ -102,13 +100,13 @@ function installFdAction(): Action {
         label: "Install fd via Homebrew (optional, faster scans)",
         confirm: "yesno",
         execute: async (_ctx, finding): Promise<ActionResult> => {
-            const res = spawnSync("brew", ["install", "fd"], { stdio: "inherit" });
+            const status = await runInherit("brew", ["install", "fd"]);
 
             return {
                 findingId: finding.id,
                 actionId: "install-fd",
-                status: res.status === 0 ? "ok" : "failed",
-                error: res.status !== 0 ? "brew install failed" : undefined,
+                status: status === 0 ? "ok" : "failed",
+                error: status !== 0 ? "brew install failed" : undefined,
             };
         },
     };
@@ -149,7 +147,7 @@ export class DiskSpaceAnalyzer extends Analyzer {
     protected async *run(ctx: AnalyzerContext): AsyncIterable<Finding> {
         const home = homedir();
 
-        if (!isFdAvailable() && isBrewAvailable()) {
+        if (!(await isFdAvailable()) && (await isBrewAvailable())) {
             yield {
                 id: "disk-install-fd",
                 analyzerId: this.id,
@@ -167,7 +165,7 @@ export class DiskSpaceAnalyzer extends Analyzer {
     }
 
     async findAdhoc(opts: { root: string; minMB: number; maxDays: number }): Promise<Finding[]> {
-        const useFd = isFdAvailable();
+        const useFd = await isFdAvailable();
         const cmd = useFd ? "fd" : "find";
         const args = useFd
             ? [
@@ -186,7 +184,7 @@ export class DiskSpaceAnalyzer extends Analyzer {
               ]
             : [opts.root, "-type", "f", "-size", `+${opts.minMB}M`, "-mtime", `-${opts.maxDays}`];
 
-        const res = spawnSync(cmd, args, { encoding: "utf8", timeout: 30_000 });
+        const res = await run(cmd, args, { timeoutMs: 30_000 });
 
         if (res.status !== 0) {
             return [];
@@ -223,7 +221,7 @@ export class DiskSpaceAnalyzer extends Analyzer {
             findingsCount: 0,
         });
 
-        const size = duBytes(downloads);
+        const size = await duBytes(downloads);
 
         if (size <= 500 * 1024 * 1024) {
             return;
@@ -248,7 +246,7 @@ export class DiskSpaceAnalyzer extends Analyzer {
             return;
         }
 
-        const size = duBytes(trash);
+        const size = await duBytes(trash);
 
         if (size <= 0) {
             return;
@@ -267,7 +265,7 @@ export class DiskSpaceAnalyzer extends Analyzer {
                     label: "Empty Trash permanently",
                     confirm: "yesno",
                     execute: async (_ctx, finding): Promise<ActionResult> => {
-                        const res = spawnSync("osascript", ["-e", 'tell application "Finder" to empty trash']);
+                        const res = await run("osascript", ["-e", 'tell application "Finder" to empty trash']);
 
                         return {
                             findingId: finding.id,
@@ -283,7 +281,7 @@ export class DiskSpaceAnalyzer extends Analyzer {
     }
 
     private async *findTimeMachineSnapshots(): AsyncIterable<Finding> {
-        const tmRes = spawnSync("tmutil", ["listlocalsnapshots", "/"], { encoding: "utf8" });
+        const tmRes = await run("tmutil", ["listlocalsnapshots", "/"]);
         const snapshots = tmRes.status === 0 ? parseTmutilOutput(tmRes.stdout) : [];
 
         if (snapshots.length === 0) {
@@ -303,7 +301,7 @@ export class DiskSpaceAnalyzer extends Analyzer {
                     confirm: "yesno",
                     execute: async (_ctx, finding): Promise<ActionResult> => {
                         for (const snapshot of snapshots) {
-                            spawnSync("tmutil", ["deletelocalsnapshots", localSnapshotName(snapshot)]);
+                            await run("tmutil", ["deletelocalsnapshots", localSnapshotName(snapshot)]);
                         }
 
                         return {
@@ -320,7 +318,7 @@ export class DiskSpaceAnalyzer extends Analyzer {
     }
 
     private async *findLargeFiles(ctx: AnalyzerContext, home: string): AsyncIterable<Finding> {
-        const useFd = isFdAvailable();
+        const useFd = await isFdAvailable();
         const cmd = useFd ? "fd" : "find";
         const args = useFd
             ? ["-H", "-t", "f", "-S", "+500m", "--max-depth", "6", "--", ".", home]
@@ -334,7 +332,7 @@ export class DiskSpaceAnalyzer extends Analyzer {
             findingsCount: 0,
         });
 
-        const res = spawnSync(cmd, args, { encoding: "utf8", timeout: 15_000 });
+        const res = await run(cmd, args, { timeoutMs: 15_000 });
 
         if (res.status !== 0) {
             return;
