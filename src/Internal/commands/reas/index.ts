@@ -27,7 +27,7 @@ import { SafeJSON } from "@app/utils/json";
 import { stripAnsi } from "@app/utils/string";
 import { formatTable } from "@app/utils/table";
 import * as p from "@clack/prompts";
-import type { Command } from "commander";
+import { Command } from "commander";
 import pc from "picocolors";
 
 interface ReasOptions {
@@ -924,6 +924,16 @@ export function registerReasCommand(program: Command): void {
 
             console.log();
         });
+
+    // ---- Subcommand: backfill ----
+    reas.addCommand(
+        new Command("backfill")
+            .description("Backfill historical sold listings from REAS catalog API")
+            .action(async () => {
+                const { main } = await import("./backfill.ts");
+                await main();
+            })
+    );
 
     // ---- Subcommand: snapshots ----
     reas.command("snapshots")
