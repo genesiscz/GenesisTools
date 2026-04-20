@@ -21,7 +21,7 @@
 ## 📚 Table of Contents
 
 -   [🎯 Claude Code Plugin](#-claude-code-plugin)
-    -   [Commands](#commands) — `setup`, `github-pr`, `github-pr-old`, `claude-history`, `question`
+    -   [Commands](#commands) — `setup`, `github-pr`, `claude-history`, `question`
     -   [Skills](#skills) — `github`, `azure-devops`, `timelog`, `analyze-har`, and 10 more
 -   [🚀 Quick Start](#-quick-start)
 -   [🛠️ Available Tools](#️-available-tools)
@@ -60,7 +60,6 @@ Commands are invoked manually with `/gt:<name>`:
 |---------|-------------|
 | [`gt:setup`](#gtsetup) | Interactive setup guide for installing GenesisTools globally |
 | [`gt:github-pr`](#gtgithub-pr) | Fetch PR review comments, triage with AI, implement fixes, commit, reply |
-| [`gt:github-pr-old`](#gtgithub-pr-old) | Legacy PR review workflow (without `--llm` session mode) |
 | [`gt:claude-history`](#gtclaude-history-command) | Search conversation history by keywords, files, commits, or time range |
 | [`gt:question`](#gtquestion) | Answer-only mode — research and explain without modifying code |
 
@@ -113,10 +112,6 @@ End-to-end PR review fix workflow using `--llm` session mode for efficient threa
 **What it does:** Fetches review threads → spawns Explore agents to verify each claim against actual source code → assigns verdicts (`VALID`, `FALSE_POSITIVE`, `BY_DESIGN`, `ALREADY_FIXED`) → presents analysis report → asks which to fix → implements fixes → commits → replies to threads on GitHub.
 
 Also supports **multi-PR analysis** — provide multiple URLs and it spawns parallel agents, writes per-PR plans, and presents a consolidated report.
-
-#### `gt:github-pr-old`
-
-Legacy version of the PR review workflow that uses markdown file output instead of `--llm` session mode. Same analysis and fix flow, different transport.
 
 #### `gt:claude-history` (command)
 

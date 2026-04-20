@@ -1,6 +1,6 @@
 ---
 name: gt:git-rebaser
-description: Guided git rebase cascade for branch hierarchies. Use when rebasing a parent feature branch onto master/main and then updating child branches. Triggers on "rebase branches", "cascade rebase", "rebase onto master", "update child branches after rebase", "rebase feature branch hierarchy", "git rebaser". Handles reflog lookup, --onto mechanics, commit reporting, and user confirmation before any destructive action.
+description: Cascade rebase a parent branch onto master and update all child branches. Handles reflog lookup, `--onto` mechanics, and confirmation before destructive actions. Use for "cascade rebase", "update child branches", "rebase branch hierarchy".
 ---
 
 # Git Rebaser — Guided Cascade Rebase

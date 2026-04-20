@@ -1,7 +1,6 @@
 ---
 name: gt:claude-history
-description: |
-  Use when the user wants to find or reference something from a past Claude Code conversation — a fix, solution, discussion, or decision they remember from an earlier session. Applies when they say things like "you helped me fix", "we debugged", "we discussed", "I remember asking you", "I need to reference our conversation", or when they want to locate a specific past interaction by topic, file, date, or vague recollection. Also covers summarizing past Claude sessions. Does NOT apply when searching codebases, git history, browser history, Slack logs, or any non-Claude source.
+description: Find or reference a past Claude Code conversation — fixes, decisions, or discussions from earlier sessions ("you helped me fix", "we debugged", "I remember asking"). Locate sessions by topic, file, or date. Not for codebase/git/Slack history.
 ---
 
 # Claude History Search

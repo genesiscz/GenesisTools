@@ -1,9 +1,6 @@
 ---
 name: gt:automate
-description: |
-  Use for saving and replaying multi-step GenesisTools CLI workflows as named presets. Triggers when the user wants to bundle a sequence of `tools` commands into a reusable automation they can run with one command — for example: chaining tools like `collect-files-for-ai`, `github`, `azure-devops`, or `json` into a repeatable workflow. Also triggers when running a previously saved preset by name (e.g. "run the db-backup preset").
-
-  Does NOT trigger for: browser automation, bash scripting, Makefile/CI setup, or general task scheduling.
+description: Save and replay multi-step GenesisTools `tools` workflows as named presets. Use to bundle a sequence of commands into a reusable preset, or run a saved preset by name. Not for bash scripts, browser automation, or CI setup.
 ---
 
 # Automate Tool Usage Guide

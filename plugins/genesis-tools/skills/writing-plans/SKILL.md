@@ -1,6 +1,6 @@
 ---
 name: gt:writing-plans
-description: Use when you have a spec or requirements for a multi-step task, before touching code
+description: Write an implementation plan before a multi-step code task.
 context: fork
 ---
 

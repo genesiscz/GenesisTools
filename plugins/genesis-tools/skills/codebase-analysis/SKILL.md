@@ -1,6 +1,6 @@
 ---
 name: gt:codebase-analysis
-description: Deep codebase analysis without cluttering main session
+description: Deep codebase exploration in an isolated fork — keeps heavy Grep/Glob out of the main session.
 context: fork
 ---
 

@@ -1,7 +1,6 @@
 ---
 name: gt:github
-description: |
-  Use whenever the user wants to READ or SEARCH GitHub content: fetching an issue or PR from a URL, getting comments (including after a specific comment anchor like #issuecomment-XXX), viewing PR review threads without making code changes, searching a repository's issues/PRs/code (e.g. "find how library X handles Y", "are there issues about Z"), browsing notifications or activity. Also use for GitHub Actions analysis: workflow run history, CI costs, billing breakdown, billable minutes, failure waste, cross-repo usage scanning, and run management (cancel, rerun). Triggers on any "look up", "show me", "find", "check", "summarize", or "search" intent on GitHub URLs or repositories, AND on "actions", "CI", "billing", "cost", "workflow runs", "billable minutes", "failed runs", or "rerun" intents. Do NOT use when the task is to implement code fixes, address PR feedback, or make commits — use gt:github-pr for that.
+description: Read or search GitHub (issues, PRs, review threads, comments, code, notifications) and analyze GitHub Actions (workflow runs, billing, costs, failures, rerun/cancel). Use on any GitHub URL or repo lookup. Not for implementing code fixes or PR feedback — use gt:github-pr.
 ---
 
 # GitHub Tool Usage Guide
