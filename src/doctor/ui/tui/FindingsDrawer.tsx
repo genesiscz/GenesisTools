@@ -7,9 +7,9 @@ import { createEffect, createMemo, createSignal, Show } from "solid-js";
 import { useEngineStore } from "./stores/engine-store";
 import { useStore } from "./stores/use-store";
 import { THEME } from "./theme";
-import { StatusStrip } from "./views/StatusStrip";
 import { viewForAnalyzer } from "./views";
 import { toNativeContent } from "./views/native-content";
+import { StatusStrip } from "./views/StatusStrip";
 import type { Cell, ColumnSpec, Row } from "./views/types";
 
 interface FindingsDrawerProps {
@@ -115,10 +115,10 @@ export function FindingsDrawer(props: FindingsDrawerProps) {
                     <span fg={THEME.fgDim}>{`  ·  ${statusCount()} status`}</span>
                 </Show>
                 <Show when={selectedTotal() > 0}>
-                    <span fg={THEME.fgDim}>  ·  selected: </span>
+                    <span fg={THEME.fgDim}>{"  ·  selected: "}</span>
                     <span fg={THEME.success}>{formatBytes(selectedTotal())}</span>
                 </Show>
-                <span fg={THEME.fgDim}>     [space] toggle  [j/k] move  [x] act  [esc] close</span>
+                <span fg={THEME.fgDim}>{"     [space] toggle  [j/k] move  [x] act  [esc] close"}</span>
             </text>
 
             <StatusStrip rows={view().status} />

@@ -203,7 +203,7 @@ export function AnalyzerPanel(props: AnalyzerPanelProps) {
                 </Show>
             </text>
             <text fg={THEME.fgDim}>
-                <Show when={reclaimableBytes() > 0} fallback={<span>{" "}</span>}>
+                <Show when={reclaimableBytes() > 0} fallback={<span> </span>}>
                     <span>{formatBytes(reclaimableBytes())}</span>
                 </Show>
             </text>

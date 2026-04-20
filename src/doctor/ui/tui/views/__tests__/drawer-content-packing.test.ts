@@ -1,6 +1,6 @@
-import { RGBA } from "@opentui/core";
 import { describe, expect, it } from "bun:test";
 import type { Action, Finding } from "@app/doctor/lib/types";
+import { RGBA } from "@opentui/core";
 import { viewForAnalyzer } from "../index";
 import { toNativeContent, toRgba } from "../native-content";
 
