@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "skills": {
+    "opentui": {
+      "source": "msmps/opentui-skill",
+      "sourceType": "github",
+      "computedHash": "2915038bb3297e759f740f9e6bfa885ed80a4a7fe945825f5874b48db9ce0fd2"
+    },
+    "terminal-ops": {
+      "source": "affaan-m/everything-claude-code",
+      "sourceType": "github",
+      "computedHash": "90237198c14df985b7c5966edf2753b65e90426e7b5cffa38a45b6e3f7a29300"
+    },
+    "terminal-ui": {
+      "source": "pproenca/dot-skills",
+      "sourceType": "github",
+      "computedHash": "f5c35268ccb3fd6dd50312bb0bc5dc6c19917ee83b88496d59ff5f2dd5271208"
+    }
+  }
+}
