@@ -1,6 +1,6 @@
 ---
 name: gt:git-rebaser
-description: Cascade rebase a parent branch onto master and update all child branches. Handles reflog lookup, `--onto` mechanics, and confirmation before destructive actions. Use for "cascade rebase", "update child branches", "rebase branch hierarchy".
+description: Triggers when rebasing a stack of branches — a parent plus child branches on top — where rebasing the parent leaves children orphaned. Use for "cascade rebase", "rebase branch hierarchy", "update child branches after rebase", "my sub-branches broke after rebasing parent", or any scenario that needs `git rebase --onto`. Not for a single-branch rebase.
 ---
 
 # Git Rebaser — Guided Cascade Rebase
