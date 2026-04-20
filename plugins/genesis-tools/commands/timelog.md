@@ -1,6 +1,7 @@
 ---
 name: gt:timelog
-description: Sync Timely to Azure DevOps timelogs and fill Clarity PPM timesheets. Use for "sync timely", "log my time", "propose time entries", "what did I work on today", "fill clarity", "ppm timesheet". Analyzes Timely activities + git commits to generate ADO entries.
+description: Sync Timely → Azure DevOps timelogs and fill Clarity PPM timesheets.
+argument-hint: "[date or range, e.g. 2026-01-30 or --from 2026-01-01 --to 2026-01-31]"
 ---
 
 # Timely -> Azure DevOps Time Sync

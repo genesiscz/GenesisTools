@@ -61,6 +61,7 @@ Commands are invoked manually with `/gt:<name>`:
 | [`gt:setup`](#gtsetup) | Interactive setup guide for installing GenesisTools globally |
 | [`gt:github-pr`](#gtgithub-pr) | Fetch PR review comments, triage with AI, implement fixes, commit, reply |
 | [`gt:automate`](#gtautomate) | Build or run multi-step `tools` CLI automation presets |
+| [`gt:timelog`](#gttimelog) | Sync Timely → Azure DevOps timelogs and fill Clarity PPM timesheets |
 | [`gt:claude-history`](#gtclaude-history-command) | Search conversation history by keywords, files, commits, or time range |
 | [`gt:question`](#gtquestion) | Answer-only mode — research and explain without modifying code |
 
@@ -71,8 +72,7 @@ Skills activate automatically when you mention relevant topics in conversation:
 | Skill | Triggers On | What It Does |
 |-------|------------|--------------|
 | [`gt:github`](#gtgithub) | GitHub URLs, "get PR", "search issues", "CI billing" | Read/search GitHub issues, PRs, code, notifications, Actions costs |
-| [`gt:azure-devops`](#gtazure-devops) | "get workitem", "show query", Azure DevOps URLs | Fetch work items, run queries, create items, manage time logs |
-| [`gt:timelog`](#gttimelog) | "sync timely", "log my time", "fill clarity" | Sync Timely auto-tracked time → Azure DevOps → Clarity PPM |
+| [`gt:azure-devops`](#gtazure-devops) | "get workitem", "show query", Azure DevOps URLs | Fetch work items, run queries, create items. Defers time-logging to `/gt:timelog`. |
 | [`gt:claude-history`](#gtclaude-history-skill) | "we discussed", "find conversation", "search history" | Search past Claude Code conversations by topic, file, or tool |
 | [`gt:summarize`](#gtsummarize) | "summarize session", "extract learnings", "postmortem" | Summarize Claude Code sessions into docs, changelogs, or memory |
 | [`gt:analyze-har`](#gtanalyze-har) | "analyze HAR", `.har` file paths, "debug network" | Token-efficient HAR analysis with progressive detail levels |
@@ -123,6 +123,17 @@ Build or run multi-step `tools` CLI automation presets. Converted from an auto-t
 ```
 
 Chains any `tools` commands with variables, conditions (`if`), branching, and built-in actions (`log`, `prompt`, `shell`, `set`). Supports `{{ vars.x }}`, `{{ steps.id.output }}`, `{{ env.HOME }}` expressions. Error strategies: stop / continue / skip.
+
+#### `gt:timelog`
+
+Sync Timely auto-tracking → Azure DevOps time logs → Clarity PPM timesheets. Command-only (no auto-triggering) so its large workflow guidance doesn't preload every session — `gt:azure-devops` defers to `/gt:timelog` when the user wants to log time.
+
+```bash
+/gt:timelog 2026-03-20
+/gt:timelog --from 2026-03-18 --to 2026-03-20
+```
+
+Analyzes Timely events, linked/unlinked memories, and git commits to propose entries; maps activities to work items via commit messages, branch names, and fixed mappings; supports the prepare-import staging workflow for multi-day batch syncing; bridges ADO → Clarity with `tools clarity fill`; generates monthly reports in `.claude/timelog/`.
 
 #### `gt:claude-history` (command)
 
@@ -196,28 +207,6 @@ tools azure-devops workitem 261575 --task-folders --images
 tools azure-devops query "Open Bugs" --download-workitems --category react19
 tools azure-devops history show 261575 --assigned-to "Martin"
 tools azure-devops timelog add -w 268935 -h 2 -t "Development"
-```
-
-</details>
-
-#### `gt:timelog`
-
-Sync time from Timely auto-tracking → Azure DevOps time logs → Clarity PPM timesheets.
-
-<details>
-<summary><b>Key capabilities</b></summary>
-
-- Analyzes Timely events, linked/unlinked memories, and git commits to propose time entries
-- Maps activities to work items using commit messages, branch names, and fixed mappings
-- Supports prepare-import staging workflow for multi-day batch syncing
-- Bridges ADO time logs to Clarity PPM with `tools clarity fill`
-- Generates monthly reports in `.claude/timelog/`
-
-```bash
-tools timely events --day 2026-03-20 --format json --without-details | tools json
-tools git commits --from 2026-03-18 --to 2026-03-20 --format json | tools json
-tools azure-devops timelog prepare-import add --from 2026-03-18 --to 2026-03-20 --entry '{...}'
-tools clarity fill --month 3 --year 2026 --confirm
 ```
 
 </details>
