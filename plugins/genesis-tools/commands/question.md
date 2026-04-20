@@ -1,6 +1,6 @@
 ---
 name: gt:question
-description: Answer-only mode — explain something without modifying code. Use when user wants an explanation, not an implementation.
+description: Answer-only mode — explain without modifying code.
 argument-hint: "<your question>"
 allowed-tools:
     - Read

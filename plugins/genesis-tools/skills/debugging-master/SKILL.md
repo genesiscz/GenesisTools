@@ -1,7 +1,6 @@
 ---
 name: debugging-master
-description: |
-  Use when debugging runtime behavior that code-reading alone can't explain. Prime indicators: environment-specific failures ("works locally, breaks in CI"), operations that are slow or hang, data discrepancies between layers (API returns X but UI shows Y), or any "why is this happening at runtime" question. Core actions: adding targeted logging to observe real values, profiling slow operations, tracing execution flow, instrumenting HTTP calls. The key signal: you need to run the code and observe what actually happens. Not for static problems like type errors, code review, or adding permanent features.
+description: Hypothesis-driven runtime debugging with temporary, auto-cleanable instrumentation across Node/TS, PHP, and browser (via HTTP). Triggers on "debug this", "add temporary logs", "instrument X", "why is this slow/wrong at runtime", "test my theory", comparing failing vs passing runs, intermittent or cross-device bugs. Not for type errors or static code review.
 ---
 
 # Debugging Master

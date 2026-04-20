@@ -1,11 +1,13 @@
 ---
 name: gt:azure-devops
-description: Interact with Azure DevOps work items, queries, dashboards, and time logging. Use when user asks to get/fetch/show work items, queries, tasks, bugs from Azure DevOps. Also handles analyzing work items and time logging. Triggers on phrases like "get workitem", "fetch task", "show query", "download tasks", "analyze workitem", "analyze task", "log time", "timelog", "time entry", or Azure DevOps URLs.
+description: Azure DevOps work items, queries, and dashboards. Use for "get workitem", "fetch task", "show query", "analyze task", or any Azure DevOps URL. For time logging (Timely sync, Clarity fill), invoke the `/gt:timelog` command instead — this skill defers to it.
 ---
 
 # Azure DevOps Work Item Tool
 
 Fetch, manage, and analyze Azure DevOps work items using `tools azure-devops`.
+
+> **Time logging:** If the user wants to log time, sync Timely, or fill Clarity timesheets, stop here and invoke the `/gt:timelog` command. This skill only covers raw work-item operations.
 
 ## CLI Reference
 

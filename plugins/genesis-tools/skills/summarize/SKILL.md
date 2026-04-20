@@ -1,7 +1,6 @@
 ---
 name: gt:summarize
-description: |
-  Use when the user wants to summarize a Claude Code session, extract learnings, create documentation, generate a changelog or postmortem, or analyze past work. Triggers on: "summarize this session", "extract learnings", "write up what we did", "create onboarding docs", "what changed", "postmortem", "remember this for later", "document this session". Does NOT apply to general text summarization or non-Claude-Code content.
+description: Summarize a Claude Code session — extract learnings, generate postmortem/changelog, write onboarding docs, or document what was done. Use for "summarize this session", "extract learnings", "postmortem", "write up what we did". Not for general text summarization.
 ---
 
 # Claude History Summarize
