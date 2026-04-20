@@ -1,6 +1,6 @@
 ---
 name: debugging-master
-description: Triggers on "why is this slow/wrong at runtime", "add logging", "instrument this", "works locally breaks in CI", data mismatches between layers (API vs UI), intermittent failures, and comparing passing vs failing runs. Not for type errors or static code review.
+description: Hypothesis-driven runtime debugging with temporary, auto-cleanable instrumentation across Node/TS, PHP, and browser (via HTTP). Triggers on "debug this", "add temporary logs", "instrument X", "why is this slow/wrong at runtime", "test my theory", comparing failing vs passing runs, intermittent or cross-device bugs. Not for type errors or static code review.
 ---
 
 # Debugging Master
