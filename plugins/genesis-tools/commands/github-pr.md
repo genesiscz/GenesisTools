@@ -1,6 +1,6 @@
 ---
 name: gt:github-pr
-description: Fetch PR review comments, select which to fix, implement fixes, and commit
+description: Fix PR review comments — fetch, pick, implement, commit.
 argument-hint: "<pr-number-or-url> [-u] [-w] [--save] [--open] [--open-only]"
 ---
 

@@ -1,6 +1,6 @@
 ---
 name: gt:setup
-description: Set up GenesisTools to make the "tools" command function globally
+description: Install GenesisTools so `tools` works globally.
 argument-hint: "[optional: setup details]"
 allowed-tools:
     - Bash

@@ -1,6 +1,6 @@
 ---
 name: gt:react-compiler-debug
-description: Debug and inspect React Compiler (babel-plugin-react-compiler) output. Use when user asks to see what React Compiler generates, debug memoization issues, understand why a component isn't being optimized, or compare original vs compiled code. Triggers on "react compiler", "compiler output", "see compiled", "memoization debug", "why isn't this memoized".
+description: Inspect React Compiler (babel-plugin-react-compiler) output. Use for "compiler output", "see compiled", "why isn't this memoized", or comparing original vs compiled components.
 ---
 
 # React Compiler Debug

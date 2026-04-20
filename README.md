@@ -21,7 +21,7 @@
 ## 📚 Table of Contents
 
 -   [🎯 Claude Code Plugin](#-claude-code-plugin)
-    -   [Commands](#commands) — `setup`, `github-pr`, `github-pr-old`, `claude-history`, `question`
+    -   [Commands](#commands) — `setup`, `github-pr`, `claude-history`, `question`
     -   [Skills](#skills) — `github`, `azure-devops`, `timelog`, `analyze-har`, and 10 more
 -   [🚀 Quick Start](#-quick-start)
 -   [🛠️ Available Tools](#️-available-tools)
@@ -60,7 +60,8 @@ Commands are invoked manually with `/gt:<name>`:
 |---------|-------------|
 | [`gt:setup`](#gtsetup) | Interactive setup guide for installing GenesisTools globally |
 | [`gt:github-pr`](#gtgithub-pr) | Fetch PR review comments, triage with AI, implement fixes, commit, reply |
-| [`gt:github-pr-old`](#gtgithub-pr-old) | Legacy PR review workflow (without `--llm` session mode) |
+| [`gt:automate`](#gtautomate) | Build or run multi-step `tools` CLI automation presets |
+| [`gt:timelog`](#gttimelog) | Sync Timely → Azure DevOps timelogs and fill Clarity PPM timesheets |
 | [`gt:claude-history`](#gtclaude-history-command) | Search conversation history by keywords, files, commits, or time range |
 | [`gt:question`](#gtquestion) | Answer-only mode — research and explain without modifying code |
 
@@ -71,16 +72,13 @@ Skills activate automatically when you mention relevant topics in conversation:
 | Skill | Triggers On | What It Does |
 |-------|------------|--------------|
 | [`gt:github`](#gtgithub) | GitHub URLs, "get PR", "search issues", "CI billing" | Read/search GitHub issues, PRs, code, notifications, Actions costs |
-| [`gt:azure-devops`](#gtazure-devops) | "get workitem", "show query", Azure DevOps URLs | Fetch work items, run queries, create items, manage time logs |
-| [`gt:timelog`](#gttimelog) | "sync timely", "log my time", "fill clarity" | Sync Timely auto-tracked time → Azure DevOps → Clarity PPM |
+| [`gt:azure-devops`](#gtazure-devops) | "get workitem", "show query", Azure DevOps URLs | Fetch work items, run queries, create items. Defers time-logging to `/gt:timelog`. |
 | [`gt:claude-history`](#gtclaude-history-skill) | "we discussed", "find conversation", "search history" | Search past Claude Code conversations by topic, file, or tool |
 | [`gt:summarize`](#gtsummarize) | "summarize session", "extract learnings", "postmortem" | Summarize Claude Code sessions into docs, changelogs, or memory |
 | [`gt:analyze-har`](#gtanalyze-har) | "analyze HAR", `.har` file paths, "debug network" | Token-efficient HAR analysis with progressive detail levels |
 | [`gt:react-compiler-debug`](#gtreact-compiler-debug) | "react compiler", "why isn't this memoized" | Inspect React Compiler output, debug bail-outs |
 | [`gt:typescript-error-fixer`](#gttypescript-error-fixer) | "fix type errors", "eliminate any types" | Systematic 4-phase TS error fixing with zero `any` tolerance |
 | [`gt:git-rebaser`](#gtgit-rebaser) | "rebase branches", "cascade rebase", "update child branches" | Guided rebase cascade for branch hierarchies with `--onto` |
-| [`gt:automate`](#gtautomate) | "create preset", "run the X preset", "chain tools" | Save and replay multi-step CLI workflows as named presets |
-| [`gt:codebase-analysis`](#gtcodebase-analysis) | "analyze codebase", "find dead code", "audit types" | Deep codebase analysis (dependencies, dead code, security) in a fork |
 | [`gt:living-docs`](#gtliving-docs) | "bootstrap docs", "validate documentation", "audit docs" | Self-maintaining documentation system with context rules |
 | [`gt:writing-plans`](#gtwriting-plans) | "write a plan", "create implementation plan" | Write bite-sized TDD implementation plans with exact file paths |
 | [`debugging-master`](#debugging-master) | "debug runtime", "why is this slow", "add logging" | Hypothesis-driven runtime debugging with instrumentation toolkit |
@@ -114,9 +112,28 @@ End-to-end PR review fix workflow using `--llm` session mode for efficient threa
 
 Also supports **multi-PR analysis** — provide multiple URLs and it spawns parallel agents, writes per-PR plans, and presents a consolidated report.
 
-#### `gt:github-pr-old`
+#### `gt:automate`
 
-Legacy version of the PR review workflow that uses markdown file output instead of `--llm` session mode. Same analysis and fix flow, different transport.
+Build or run multi-step `tools` CLI automation presets. Converted from an auto-triggering skill to an explicit command — invoke it when you actually want to create or run a preset, so its guidance doesn't load into every session.
+
+```bash
+/gt:automate run monthly-invoice-search --var startDate=2026-02-01
+/gt:automate list
+/gt:automate create     # Interactive builder
+```
+
+Chains any `tools` commands with variables, conditions (`if`), branching, and built-in actions (`log`, `prompt`, `shell`, `set`). Supports `{{ vars.x }}`, `{{ steps.id.output }}`, `{{ env.HOME }}` expressions. Error strategies: stop / continue / skip.
+
+#### `gt:timelog`
+
+Sync Timely auto-tracking → Azure DevOps time logs → Clarity PPM timesheets. Command-only (no auto-triggering) so its large workflow guidance doesn't preload every session — `gt:azure-devops` defers to `/gt:timelog` when the user wants to log time.
+
+```bash
+/gt:timelog 2026-03-20
+/gt:timelog --from 2026-03-18 --to 2026-03-20
+```
+
+Analyzes Timely events, linked/unlinked memories, and git commits to propose entries; maps activities to work items via commit messages, branch names, and fixed mappings; supports the prepare-import staging workflow for multi-day batch syncing; bridges ADO → Clarity with `tools clarity fill`; generates monthly reports in `.claude/timelog/`.
 
 #### `gt:claude-history` (command)
 
@@ -190,28 +207,6 @@ tools azure-devops workitem 261575 --task-folders --images
 tools azure-devops query "Open Bugs" --download-workitems --category react19
 tools azure-devops history show 261575 --assigned-to "Martin"
 tools azure-devops timelog add -w 268935 -h 2 -t "Development"
-```
-
-</details>
-
-#### `gt:timelog`
-
-Sync time from Timely auto-tracking → Azure DevOps time logs → Clarity PPM timesheets.
-
-<details>
-<summary><b>Key capabilities</b></summary>
-
-- Analyzes Timely events, linked/unlinked memories, and git commits to propose time entries
-- Maps activities to work items using commit messages, branch names, and fixed mappings
-- Supports prepare-import staging workflow for multi-day batch syncing
-- Bridges ADO time logs to Clarity PPM with `tools clarity fill`
-- Generates monthly reports in `.claude/timelog/`
-
-```bash
-tools timely events --day 2026-03-20 --format json --without-details | tools json
-tools git commits --from 2026-03-18 --to 2026-03-20 --format json | tools json
-tools azure-devops timelog prepare-import add --from 2026-03-18 --to 2026-03-20 --entry '{...}'
-tools clarity fill --month 3 --year 2026 --confirm
 ```
 
 </details>
@@ -330,48 +325,6 @@ Guided cascade rebase for branch hierarchies with `git rebase --onto`.
 5. **Final report** — tree visualization of the new branch hierarchy
 
 Every destructive step requires explicit user confirmation. Stops on conflicts with guidance.
-
-</details>
-
-#### `gt:automate`
-
-Save and replay multi-step GenesisTools CLI workflows as named presets.
-
-<details>
-<summary><b>Key capabilities</b></summary>
-
-- Chain any `tools` commands into reusable presets with variables and conditions
-- Expression syntax with `{{ vars.x }}`, `{{ steps.id.output }}`, `{{ env.HOME }}`
-- Built-in actions: `if`, `log`, `prompt`, `shell`, `set`
-- Error strategies: stop, continue, skip
-- Dry-run mode for previewing execution
-
-```bash
-tools automate run monthly-invoice-search --var startDate=2026-02-01
-tools automate run my-preset --dry-run
-tools automate list
-tools automate create     # Interactive builder
-```
-
-</details>
-
-#### `gt:codebase-analysis`
-
-Deep codebase analysis in an isolated fork context — heavy Grep/Glob operations stay separate from your main work.
-
-<details>
-<summary><b>Analysis types</b></summary>
-
-| Type | What it finds |
-|------|---------------|
-| `dependencies` | Import graph, circular dependencies, unused imports |
-| `dead-code` | Exported but never-imported functions |
-| `api-surface` | Public exports, REST endpoints, RPC methods |
-| `type-safety` | `any` types, type assertions, missing return types |
-| `error-handling` | Uncaught promises, empty catch blocks |
-| `test-coverage` | Files without test files, untested exports |
-| `security` | Hardcoded secrets, unsanitized inputs, eval usage |
-| `patterns` | Custom pattern matching |
 
 </details>
 
