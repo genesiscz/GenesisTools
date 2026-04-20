@@ -28,6 +28,9 @@
     -   [🔍 Git & Version Control](#-git--version-control)
     -   [🤖 AI & Analysis](#-ai--analysis)
     -   [📊 Monitoring & Watching](#-monitoring--watching)
+    -   [🍎 macOS & System](#-macos--system)
+    -   [⚡ Productivity & Automation](#-productivity--automation)
+    -   [🛠️ Shell & Infrastructure](#️-shell--infrastructure)
     -   [📦 Package Management](#-package-management)
 -   [💡 Tool Details](#-tool-details)
 
@@ -439,6 +442,8 @@ tools
 | **[Git Rename Commits](#18--git-rename-commits)**      | 🔄 Interactively rename commit messages         |
 | **[Git Rebranch](#23--git-rebranch)**                  | ✂️ Split a messy branch into clean branches      |
 | **[Git Rebase Multiple](#21--git-rebase-multiple)**    | 🌳 Safe branch hierarchy rebasing with rollback |
+| **[Git Analysis](#26--git)**                           | 🕵️ Query commits + manage authors/workitem regex |
+| **[GitHub CLI](#52--github)**                          | 🐙 Issues, PRs, reviews, and code search         |
 
 ### 🤖 AI & Analysis
 
@@ -456,6 +461,18 @@ tools
 | **[React Compiler Debug](#22--react-compiler-debug)** | ⚛️ Inspect React Compiler output              |
 | **[HAR Analyzer](#24--har-analyzer)**                 | 🔍 Token-efficient HAR file analysis          |
 | **[JSON Schema](#25--json-schema)**                   | 📐 Infer schemas from JSON data               |
+| **[Ask](#27--ask)**                                   | 💬 Multi-provider LLM chat CLI                |
+| **[Automate](#28--automate)**                         | 🔗 Chain GenesisTools commands into presets  |
+| **[Claude](#29--claude)**                             | 🧠 Claude Code history, resume, desktop sync |
+| **[Cursor](#30--cursor)**                             | ➤ Dispatch a prompt to Cursor Agent CLI       |
+| **[Cursor Context](#31--cursor-context)**             | 🧹 Strip tool inputs/outputs from SpecStory logs |
+| **[Debugging Master](#32--debugging-master)**         | 🩺 LLM debugging instrumentation + log reader |
+| **[Timely](#33--timely)**                             | ⏱️ Timely time-tracking CLI                  |
+| **[Clarity](#34--clarity)**                           | 📆 Fill CA PPM Clarity timesheets from ADO   |
+| **[Transcribe](#35--transcribe)**                     | 🎙️ Multi-provider audio/video transcription  |
+| **[YouTube](#36--youtube)**                           | ▶️ Transcribe YouTube videos                 |
+| **[Jenkins MCP](#37--jenkins-mcp)**                   | 🔧 MCP server for Jenkins builds and queue    |
+| **[MCP Debug](#38--mcp-debug)**                       | 🐛 Debug MCP server env / cwd / PATH issues   |
 
 ### 📊 Monitoring & Watching
 
@@ -465,6 +482,40 @@ tools
 | **[Watchman](#5--watchman)**                  | 👁️ Monitor file changes with Facebook Watchman  |
 | **[Watch](#6--watch-formerly-watch-glob)**    | 🔄 Real-time file monitoring with glob patterns |
 | **[FSEvents Profile](#14--fsevents-profile)** | 📊 Profile macOS filesystem events              |
+| **[Port](#39--port)**                         | 🔌 Inspect, kill, and watch local port owners   |
+| **[macOS Resources](#40--macos-resources)**   | 📈 Live CPU / RAM / open-files dashboard        |
+
+### 🍎 macOS & System
+
+| Tool                                    | Description                                      |
+| --------------------------------------- | ------------------------------------------------ |
+| **[macOS Native](#41--macos)**          | 📬 Mail, Calendar, Reminders, Messages CLI        |
+| **[Voice Memos](#42--voice-memos)**     | 🎙️ List, play, export, transcribe Voice Memos   |
+| **[DarwinKit](#43--darwinkit)**         | 🧪 Apple on-device ML primitives from the shell  |
+| **[Say](#47--say)**                     | 🗣️ TTS with per-app mute and volume             |
+| **[Notify](#46--notify)**               | 🔔 Multi-channel notifications (banner/TG/hook)  |
+
+### ⚡ Productivity & Automation
+
+| Tool                                  | Description                                   |
+| ------------------------------------- | --------------------------------------------- |
+| **[Timer](#44--timer)**               | ⏲️ Focus timer with Pomodoro + notifications |
+| **[Todo](#45--todo)**                 | ✅ Task tracking for AI-assisted sessions    |
+| **[Telegram](#48--telegram)**         | 📨 MTProto user-account Telegram client      |
+| **[Telegram Bot](#49--telegram-bot)** | 🤖 Telegram Bot API for notifications         |
+| **[Markdown CLI](#50--markdown-cli)** | 📄 Render markdown in the terminal, with watch |
+| **[Daemon](#51--daemon)**             | 🕑 Background task scheduler                  |
+
+### 🛠️ Shell & Infrastructure
+
+| Tool                                    | Description                                 |
+| --------------------------------------- | ------------------------------------------- |
+| **[Zsh](#53--zsh)**                     | 🐚 Shell hook manager with toggleable features |
+| **[Rohlík Spending](#54--rohlik-spending)** | 🛒 Analyze Rohlík grocery spending         |
+| **[Tools Browser](#55--tools)**         | 🧰 Interactive launcher for every tool      |
+| **[Update](#56--update)**               | 🔄 Update GenesisTools to the latest version |
+| **[Benchmark](#57--benchmark)**         | 📐 Save and compare timed command recipes   |
+| **[Usage](#58--usage)**                 | 💵 Token & cost analytics for `ask`         |
 
 ### 📦 Package Management
 
@@ -2443,6 +2494,511 @@ tools json-schema data.json -m typescript --clipboard
 - Compact mode: One interface per line (default), multi-line with `--pretty`
 
 </details>
+
+---
+
+### 26. 🕵️ Git
+
+Commit analysis tool: query commits by date range, extract workitem IDs via configurable regex, and manage author identities for clean history slicing. Complements `git-commit` (creates) and `git-last-commits-diff` (renders) with reporting.
+
+```bash
+# Last week of commits with line-change stats
+tools git commits --from 2026-04-13 --to 2026-04-20 --stat
+
+# Emit JSON for dashboards
+tools git commits --from 2026-04-01 --to 2026-04-30 --format json
+
+# Manage configured authors / workitem patterns
+tools git configure-authors
+tools git configure-workitem-patterns --suggest --repo /path/to/repo
+```
+
+See [`src/git/README.md`](src/git/README.md) for the full option list.
+
+---
+
+### 27. 💬 Ask
+
+Multi-provider LLM chat client: OpenAI, Anthropic, Google, Groq, OpenRouter, xAI, JinaAI. Streaming, interactive or one-shot, audio transcription, live pricing from OpenRouter, and usage tracking via `tools usage`.
+
+```bash
+# One-shot prompt
+tools ask "Explain this function" --model claude-4-sonnet
+
+# Interactive session
+tools ask
+
+# Transcribe + ask
+tools ask --audio meeting.m4a
+```
+
+See [`src/ask/README.md`](src/ask/README.md) for the full provider matrix and options.
+
+---
+
+### 28. 🔗 Automate
+
+Chain any GenesisTools commands into named, reusable **presets**. Scheduled execution via a background daemon, variable interpolation between steps, SQLite run history.
+
+```bash
+# Create / list / inspect
+tools automate preset create
+tools automate preset list
+tools automate preset show my-preset
+
+# Run
+tools automate preset run my-preset
+
+# Schedule as a task
+tools automate task create
+tools automate daemon start
+```
+
+See [`src/automate/README.md`](src/automate/README.md) for the 40+ step types and variable interpolation syntax.
+
+---
+
+### 29. 🧠 Claude
+
+Utilities for working *with* Claude Code on the side: search history, resume past sessions, sync with Claude Desktop, inspect usage, and migrate session files between versions.
+
+```bash
+tools claude history --search "timelog"
+tools claude summarize <session-id>
+tools claude tail                      # live-tail current session
+tools claude desktop status            # Desktop app sync health
+tools claude warmup                    # prime prompt cache
+```
+
+See [`src/claude/README.md`](src/claude/README.md) for the full subcommand list.
+
+---
+
+### 30. ➤ Cursor
+
+Thin wrapper around `cursor agent` CLI that streams a Cursor answer into your terminal using the GenesisTools unified renderer: tool calls on stderr (colorized), answer text on stdout (clean for piping).
+
+```bash
+tools cursor "which service creates the reservation?"
+tools cursor --mode plan "outline a refactor of the auth layer"
+tools cursor --model gpt-5 "explain this file"
+tools cursor --raw "give me the summary" > answer.md
+```
+
+See [`src/cursor/README.md`](src/cursor/README.md).
+
+---
+
+### 31. 🧹 Cursor Context
+
+Strip tool-use **parameters** and/or **results** from Cursor SpecStory exports to save tokens before piping them back into an LLM. Interactive selector per tool, cleaned output copied to clipboard.
+
+```bash
+# Interactive — pick which tools to strip
+tools cursor-context logs/story.log
+
+# Save to file too
+tools cursor-context logs/story.log -o cleaned.log
+```
+
+See [`src/cursor-context/README.md`](src/cursor-context/README.md).
+
+---
+
+### 32. 🩺 Debugging Master
+
+LLM debugging toolkit — instrumentation primitives plus a token-efficient log reader. Paired with the `genesis-tools:debugging-master` skill.
+
+```bash
+tools debugging-master start --session "race-in-auth"
+tools debugging-master get --session race --format ai
+tools debugging-master expand --session race --entry <id>
+tools debugging-master diff --session race-a --against race-b
+```
+
+See [`src/debugging-master/README.md`](src/debugging-master/README.md).
+
+---
+
+### 33. ⏱️ Timely
+
+Timely time-tracking CLI: OAuth2 login, account/project pickers, events + auto-tracked memories, and monthly exports in table/CSV/JSON/summary formats.
+
+```bash
+tools timely login
+tools timely events --from 2026-04-01 --to 2026-04-07
+tools timely memories --day 2026-04-20
+tools timely export-month 2026-04 --format csv > time.csv
+```
+
+See [`src/timely/README.md`](src/timely/README.md).
+
+---
+
+### 34. 📆 Clarity
+
+Fill **CA PPM / Clarity** weekly timesheets from Azure DevOps timelogs + Timely activities. Browser dashboard UI for reviewing the plan, commands for linking ADO workitems to Clarity PPM project codes.
+
+```bash
+tools clarity configure
+tools clarity timesheet         # propose this week
+tools clarity link-workitems    # map ADO -> PPM tasks
+tools clarity fill              # commit to Clarity
+tools clarity ui                # open dashboard on localhost:3071
+```
+
+See [`src/clarity/README.md`](src/clarity/README.md).
+
+---
+
+### 35. 🎙️ Transcribe
+
+Audio/video transcription with multiple providers (OpenAI Whisper, Groq, JinaAI, local). Supports mp3/wav/m4a/ogg/flac/aiff/webm/opus/mov/mp4 and outputs text/srt/vtt/json.
+
+```bash
+tools transcribe meeting.m4a
+tools transcribe interview.mp4 --format srt -o interview.srt
+tools transcribe memo.mp3 --clipboard
+tools transcribe call.wav --provider openai --model whisper-1
+```
+
+See [`src/transcribe/README.md`](src/transcribe/README.md).
+
+---
+
+### 36. ▶️ YouTube
+
+YouTube video utilities — currently a transcribe subcommand that uses captions when available and falls back to AI transcription.
+
+```bash
+tools youtube transcribe https://www.youtube.com/watch?v=dQw4w9WgXcQ
+tools youtube transcribe dQw4w9WgXcQ
+```
+
+See [`src/youtube/README.md`](src/youtube/README.md).
+
+---
+
+### 37. 🔧 Jenkins MCP
+
+Model Context Protocol server exposing Jenkins: list jobs, trigger builds, read logs, watch the queue, stop builds. Requires `JENKINS_URL`, `JENKINS_USER`, `JENKINS_TOKEN` env vars.
+
+```bash
+JENKINS_URL=https://jenkins.example.com \
+JENKINS_USER=me JENKINS_TOKEN=xxxx \
+tools jenkins-mcp
+```
+
+See [`src/jenkins-mcp/README.md`](src/jenkins-mcp/README.md) for the MCP tool list + config snippet.
+
+---
+
+### 38. 🐛 MCP Debug
+
+Debug helper for MCP server configurations: runs arbitrary commands and emits **JSON to stdout** (parsed by the MCP client) plus **debug info to stderr** (visible in the client's debug console). Great for verifying what env/cwd the client passes to your server.
+
+```bash
+tools mcp-debug which bun
+tools mcp-debug --env
+COMMANDS="env;which playwright" tools mcp-debug
+```
+
+See [`src/mcp-debug/README.md`](src/mcp-debug/README.md).
+
+---
+
+### 39. 🔌 Port
+
+Inspect, list, watch, and clean processes owning local ports. Interactive kill prompts, watch mode, and a `clean` command that kills orphaned listeners.
+
+```bash
+tools port                 # list listening ports
+tools port 3000            # inspect a port
+tools port 3000 --kill     # pick PID(s) to kill
+tools port ps              # dev-focused process listing
+tools port clean           # kill orphaned listeners
+tools port watch           # live port open/close events
+```
+
+See [`src/port/README.md`](src/port/README.md).
+
+---
+
+### 40. 📈 macOS Resources
+
+Ink-based TUI dashboard for process CPU / RAM / open-files usage. Filter by process name, set alert thresholds, and optionally fire desktop notifications or voice alerts when breached.
+
+```bash
+tools macos-resources
+tools macos-resources --process chrome --notify
+tools macos-resources --cpulimit 80 --memorylimit 1000
+```
+
+See [`src/macos-resources/README.md`](src/macos-resources/README.md).
+
+---
+
+### 41. 📬 macOS Native
+
+Umbrella CLI for macOS native frameworks: Mail, Calendar, Reminders, Messages, Voice Memos, and Sleep data. Consistent interface across every framework via the shared DarwinKit bridge.
+
+```bash
+tools macos mail search "invoice"
+tools macos calendar list Work --from 2026-04-01 --to 2026-04-30
+tools macos reminders add "Buy milk" --list Home --due "tomorrow 18:00"
+tools macos messages search "meeting"
+tools macos voice-memos list
+```
+
+See [`src/macos/README.md`](src/macos/README.md) for the full surface and permission setup.
+
+---
+
+### 42. 🎧 Voice Memos
+
+List, play, export, transcribe, and search macOS Voice Memos from the terminal. Uses Apple's on-device `tsrp` transcripts first, AI fallback second.
+
+```bash
+tools voice-memos list
+tools voice-memos play 3
+tools voice-memos export 3 ~/Desktop
+tools voice-memos transcribe 3
+tools voice-memos search "project review"
+```
+
+See [`src/voice-memos/README.md`](src/voice-memos/README.md).
+
+---
+
+### 43. 🧪 DarwinKit
+
+Apple on-device ML from the terminal — CLI access to CoreML / NLP / Vision primitives through the shared DarwinKit native bridge. Interactive menu in TTY mode; CLI + `--format json|pretty|raw` for scripting.
+
+```bash
+tools darwinkit                         # interactive menu
+tools darwinkit --help                  # full command list
+tools darwinkit <command> --format json
+```
+
+See [`src/darwinkit/README.md`](src/darwinkit/README.md).
+
+---
+
+### 44. ⏲️ Timer
+
+Focus timer with live countdown, background mode, Pomodoro cycles, and completion hooks that call `tools notify` / `tools say`.
+
+```bash
+tools timer 25m "Deep work" --notify
+tools timer 25m "Pomodoro" --repeat 4 --bg --notify --say
+tools timer list
+tools timer cancel
+```
+
+See [`src/timer/README.md`](src/timer/README.md).
+
+---
+
+### 45. ✅ Todo
+
+Task tracking for AI-assisted development sessions. SQLite backend, status lifecycle (`pending -> in-progress -> completed`), search, JSON export/import.
+
+```bash
+tools todo add "Fix race in token refresh"
+tools todo list
+tools todo start <id>
+tools todo complete <id>
+tools todo search "token"
+```
+
+See [`src/todo/README.md`](src/todo/README.md).
+
+---
+
+### 46. 🔔 Notify
+
+Unified notification dispatcher — single command fans out to macOS banners (via `terminal-notifier`), Telegram bots, webhooks, and TTS. Action hooks (`--open`, `--execute`), grouping, DnD bypass, and an interactive `config` wizard.
+
+```bash
+tools notify "Build finished"
+tools notify "Deploy finished" -t "CI" -s "staging" --sound Hero --open https://example.com
+tools notify --ignore-dnd "Server is down"
+tools notify config
+```
+
+See [`src/notify/README.md`](src/notify/README.md).
+
+---
+
+### 47. 🗣️ Say
+
+Text-to-speech wrapper for macOS `say` with **per-app mute**, per-app volume memory, auto language/voice detection, and both one-shot + interactive modes.
+
+```bash
+tools say "Build finished"
+tools say "Timer done" --app timer --wait
+tools say --mute --app claude        # mute one caller
+tools say --volume 60% "Loud and clear"
+```
+
+See [`src/say/README.md`](src/say/README.md).
+
+---
+
+### 48. 📨 Telegram
+
+Telegram **user-account** client (MTProto). Listen for messages, browse contacts, search chat history, and run a TUI chat watcher. Use `telegram-bot` for the Bot API flavor.
+
+```bash
+tools telegram configure
+tools telegram listen
+tools telegram watch
+tools telegram history --chat @someone --limit 100
+```
+
+See [`src/telegram/README.md`](src/telegram/README.md).
+
+---
+
+### 49. 🤖 Telegram Bot
+
+Telegram **Bot API** client for sending notifications and receiving commands. Simpler auth than the user-account flavor — just a bot token + chat ID.
+
+```bash
+tools telegram-bot configure
+tools telegram-bot send "Build finished"
+tools telegram-bot start               # command listener
+```
+
+See [`src/telegram-bot/README.md`](src/telegram-bot/README.md).
+
+---
+
+### 50. 📄 Markdown CLI
+
+Render markdown to beautiful CLI output. Watch mode, themes (dark/light/minimal), width control, `--no-color` for plain piping. Same renderer used by the `tools` browser.
+
+```bash
+tools markdown-cli README.md
+tools markdown-cli README.md --watch
+cat README.md | tools markdown-cli --no-color > plain.txt
+```
+
+See [`src/markdown-cli/README.md`](src/markdown-cli/README.md).
+
+---
+
+### 51. 🕑 Daemon
+
+General-purpose background task scheduler. Owns cron-like jobs (e.g. scheduled `automate` presets), runs them in the background, and logs their output.
+
+```bash
+tools daemon start
+tools daemon status
+tools daemon logs
+tools daemon install        # LaunchAgent / systemd unit
+```
+
+See [`src/daemon/README.md`](src/daemon/README.md).
+
+---
+
+### 52. 🐙 GitHub
+
+Token-efficient GitHub CLI for AI workflows: issues, PRs, review threads, code search, notifications, activity feed, raw file fetches. Built-in SQLite cache, bot filters, reaction filters, and an interactive menu.
+
+```bash
+tools github pr 456 --no-bots --last 20
+tools github review 456 --unresolved-only --group-by-file
+tools github search "flaky test" --type pr --state open
+tools github notifications --state unread --since 7d
+tools github status          # auth + rate limit + cache stats
+```
+
+See [`src/github/README.md`](src/github/README.md).
+
+---
+
+### 53. 🐚 Zsh
+
+Shell enhancement manager. Installs a single-line hook into your rc files with two modes (static ~1ms, dynamic ~1s) and toggleable feature modules (notifications, port helpers, TTS, etc.).
+
+```bash
+tools zsh install            # interactive
+tools zsh list               # available features + status
+tools zsh enable notify
+tools zsh disable dotdotdot
+tools zsh uninstall
+```
+
+See [`src/zsh/README.md`](src/zsh/README.md).
+
+---
+
+### 54. 🛒 Rohlík Spending
+
+Analyze your spending on [rohlik.cz](https://www.rohlik.cz) (Czech grocery delivery). Captures browser cookies once, then pulls delivered orders + line items and aggregates totals.
+
+```bash
+tools rohlik-spending
+```
+
+See [`src/rohlik-spending/README.md`](src/rohlik-spending/README.md).
+
+---
+
+### 55. 🧰 Tools Browser
+
+Interactive launcher for every GenesisTools command. Fuzzy-search, view README in terminal, explore subcommands, copy command to clipboard. Also what you get when you run `tools` with no arguments.
+
+```bash
+tools                        # open the browser
+tools tools                  # same thing, explicitly
+```
+
+See [`src/tools/README.md`](src/tools/README.md).
+
+---
+
+### 56. 🔄 Update
+
+Update GenesisTools to the latest version — git pull, bun install (with clean retry), and optional Claude Code plugin refresh.
+
+```bash
+tools update
+```
+
+See [`src/update/README.md`](src/update/README.md).
+
+---
+
+### 57. 📐 Benchmark
+
+Lightweight command-benchmarking runner. Save command recipes, run them, and inspect per-run history so you can see how timings drift across releases.
+
+```bash
+tools benchmark              # interactive picker
+tools benchmark add
+tools benchmark run <name>
+tools benchmark history <name>
+```
+
+See [`src/benchmark/README.md`](src/benchmark/README.md).
+
+---
+
+### 58. 💵 Usage
+
+Token and cost analytics for the `ask` tool. Reports totals, per-provider / per-model breakdowns, and daily usage from the local SQLite usage DB. Costs are live via OpenRouter pricing.
+
+```bash
+tools usage
+tools usage --days 7
+tools usage --provider openai --format summary
+tools usage --format json | jq '.total'
+```
+
+See [`src/usage/README.md`](src/usage/README.md).
 
 ---
 
