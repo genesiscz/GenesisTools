@@ -1,6 +1,6 @@
 ---
 name: debugging-master
-description: Debug runtime behavior when code-reading can't explain it: "works locally, breaks in CI", slow/hanging operations, data mismatches between layers. Involves targeted logging, profiling, execution tracing, HTTP instrumentation. Not for type errors, code review, or adding features.
+description: Triggers on "why is this slow/wrong at runtime", "add logging", "instrument this", "works locally breaks in CI", data mismatches between layers (API vs UI), intermittent failures, and comparing passing vs failing runs. Not for type errors or static code review.
 ---
 
 # Debugging Master

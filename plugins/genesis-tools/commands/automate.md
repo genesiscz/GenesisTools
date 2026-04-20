@@ -1,6 +1,7 @@
 ---
 name: gt:automate
-description: Save and replay multi-step GenesisTools `tools` workflows as named presets. Use to bundle a sequence of commands into a reusable preset, or run a saved preset by name. Not for bash scripts, browser automation, or CI setup.
+description: Build or run multi-step `tools` CLI automation presets.
+argument-hint: "[run|list|show|create] [name-or-args]"
 ---
 
 # Automate Tool Usage Guide
