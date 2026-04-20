@@ -12,8 +12,7 @@ const COLUMNS: ColumnSpec[] = [
 
 function toStatusRow(finding: Finding): StatusRow {
     const m = meta(finding);
-    const checkLabel =
-        typeof m.check === "string" && m.check.length > 0 ? m.check : finding.title;
+    const checkLabel = typeof m.check === "string" && m.check.length > 0 ? m.check : finding.title;
     const passing = m.passing === true;
     const value = passing ? "✓ enabled" : "✗ disabled";
     const valueFg = passing ? THEME.success : THEME.sevDangerous;
@@ -28,6 +27,7 @@ export const securityView: ViewFn = ({ findings }) => {
         columns: COLUMNS,
         rows: [],
         findings: [],
+        allFindings: [],
     };
 
     return { status, actionable, total: findings.length };

@@ -38,7 +38,7 @@ async function runOne(ctx: ExecutorContext, finding: Finding, action: Action): P
         return {
             findingId: finding.id,
             actionId: action.id,
-            status: "ok",
+            status: "skipped",
             actualReclaimedBytes: finding.reclaimableBytes,
             metadata: { dryRun: true },
         };

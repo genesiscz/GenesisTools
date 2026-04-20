@@ -10,8 +10,12 @@ export interface StatsOpts {
 }
 
 function sinceDate(since: string | undefined): Date {
-    if (!since || since === "all") {
+    if (since === "all") {
         return new Date(0);
+    }
+
+    if (!since) {
+        return new Date(Date.now() - 7 * 86400_000);
     }
 
     const m = since.match(/^(\d+)([dwhm])$/);

@@ -1,4 +1,4 @@
-import type { RGBA, TextTableOptions, TextTableRenderable } from "@opentui/core";
+import { type RGBA, type TextTableOptions, TextTableRenderable } from "@opentui/core";
 import type { JSX, Ref } from "solid-js";
 
 declare module "@opentui/solid/src/types/elements.js" {

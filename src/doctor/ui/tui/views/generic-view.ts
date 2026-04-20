@@ -1,14 +1,7 @@
 import { formatBytes } from "@app/doctor/lib/size";
 import type { Finding } from "@app/doctor/lib/types";
 import { THEME } from "../theme";
-import {
-    applyRightAlign,
-    cell,
-    rightAlignColumnIndexes,
-    selectionCell,
-    sevBadge,
-    sliceAroundCursor,
-} from "./shared";
+import { applyRightAlign, cell, rightAlignColumnIndexes, selectionCell, sevBadge, sliceAroundCursor } from "./shared";
 import type { ActionableTable, ColumnSpec, StatusRow, ViewFn } from "./types";
 
 const COLUMNS: ColumnSpec[] = [
@@ -51,7 +44,11 @@ export const genericView: ViewFn = ({ findings, selected, cursor, viewportRows }
             selectionCell(finding, selected, bg),
             sevBadge(finding.severity, bg),
             cell(finding.title, THEME.fg, bg),
-            cell(finding.reclaimableBytes ? formatBytes(finding.reclaimableBytes) : "", THEME.fgDim, bg),
+            cell(
+                typeof finding.reclaimableBytes === "number" ? formatBytes(finding.reclaimableBytes) : "",
+                THEME.fgDim,
+                bg
+            ),
             cell(finding.detail ?? "", THEME.fgDim, bg),
         ];
     });
@@ -60,6 +57,7 @@ export const genericView: ViewFn = ({ findings, selected, cursor, viewportRows }
         columns: COLUMNS,
         rows: applyRightAlign(rows, RIGHT_ALIGN),
         findings: slice.rows,
+        allFindings: actionableFindings,
     };
 
     return { status, actionable, total: findings.length };

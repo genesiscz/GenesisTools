@@ -26,11 +26,13 @@ export function Toolbar(props: ToolbarProps) {
                 <span fg={THEME.accent}>
                     <strong>macOS Doctor</strong>
                 </span>
-                <span fg={THEME.fgDim}>  ·  </span>
+                <span fg={THEME.fgDim}> · </span>
                 <span fg={phaseColor()}>{props.phase}</span>
-                <span fg={THEME.fgDim}>  ·  </span>
-                <span fg={THEME.fg}>{props.findingsCount} findings</span>
-                <span fg={THEME.fgDim}>     [j/k] move  [d/enter] drill  [x] act  [q] quit</span>
+                <span fg={THEME.fgDim}> · </span>
+                <span fg={THEME.fg}>
+                    {props.findingsCount} {props.findingsCount === 1 ? "finding" : "findings"}
+                </span>
+                <span fg={THEME.fgDim}> [j/k] move [d/enter] drill [x] act [q] quit</span>
             </text>
         </box>
     );

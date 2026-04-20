@@ -45,13 +45,11 @@ State lives under `~/.genesis-tools/doctor/`:
 
 Override the cache blacklist by creating `~/.genesis-tools/doctor/blacklist.json`:
 
-```json
-{
-    "cacheGlobs": [
-        "~/Library/Caches/com.example.myapp/**"
-    ]
-}
-```
+    {
+        "cacheGlobs": [
+            "~/Library/Caches/com.example.myapp/**"
+        ]
+    }
 
 ## Performance
 

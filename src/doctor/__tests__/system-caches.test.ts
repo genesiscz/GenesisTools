@@ -33,8 +33,9 @@ describe("archivedLogCommand", () => {
     it("uses an explicit sudo command with shell-quoted paths", () => {
         const command = archivedLogCommand(["/var/log/app one.log.gz", "/var/log/install.log.0.bz2"]);
 
-        expect(command).toContain("# Execute this plox because");
+        expect(command).toContain("# Execute this");
         expect(command).toContain("sudo /bin/rm --");
         expect(command).toContain("'/var/log/app one.log.gz'");
+        expect(command).toContain("'/var/log/install.log.0.bz2'");
     });
 });

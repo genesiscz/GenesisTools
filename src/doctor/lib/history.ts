@@ -40,7 +40,9 @@ export async function readHistorySince(since: Date): Promise<HistoryEntry[]> {
             if (new Date(parsed.timestamp) >= since) {
                 entries.push(parsed);
             }
-        } catch {}
+        } catch (err) {
+            console.error("Failed to parse history line", err);
+        }
     }
 
     return entries;

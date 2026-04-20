@@ -82,6 +82,7 @@ export const batteryView: ViewFn = ({ findings }) => {
         columns: COLUMNS,
         rows: [],
         findings: [],
+        allFindings: [],
     };
 
     return { status, actionable, total: findings.length };

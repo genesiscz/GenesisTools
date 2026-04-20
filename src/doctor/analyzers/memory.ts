@@ -198,7 +198,9 @@ export class MemoryAnalyzer extends Analyzer {
             const actions: Action[] = [];
 
             for (const proc of topProcesses.slice(0, 3)) {
-                actions.push(killProcessAction(proc));
+                if (classifyProcess(proc.comm).severity !== "blocked") {
+                    actions.push(killProcessAction(proc));
+                }
             }
 
             actions.push(copyPurgeCommandAction());
@@ -220,6 +222,7 @@ export class MemoryAnalyzer extends Analyzer {
         const totalBytes = (vm.active + vm.inactive + vm.free + vm.wired + vm.speculative) * vm.pageSize;
         const freeRatio = totalBytes > 0 ? (vm.freeBytes + vm.inactiveBytes) / totalBytes : 1;
         const pressure = freeRatio > 0.3 ? "LOW" : freeRatio > 0.1 ? "MED" : "HIGH";
+        const pressureSeverity = pressure === "HIGH" ? "dangerous" : pressure === "MED" ? "cautious" : "safe";
 
         yield {
             id: "mem-pressure",
@@ -230,7 +233,7 @@ export class MemoryAnalyzer extends Analyzer {
                 `Active ${formatBytes(vm.activeBytes)} - ` +
                 `Compressed ${formatBytes(vm.compressedBytes)} - ` +
                 `Free ${formatBytes(vm.freeBytes)}`,
-            severity: "safe",
+            severity: pressureSeverity,
             actions: [],
             metadata: { vm },
         };

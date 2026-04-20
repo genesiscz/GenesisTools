@@ -1,8 +1,8 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { SafeJSON } from "@app/utils/json";
-import { run } from "./run";
 import { snapshotFilePath } from "./paths";
+import { run } from "./run";
 
 export type PackageManager = "bun" | "npm" | "pnpm" | "yarn";
 
@@ -60,11 +60,16 @@ export function parseBunList(raw: string): string[] {
 
 export function parseNpmJson(raw: string): string[] {
     try {
-        const parsed = SafeJSON.parse(raw) as NpmListObject | NpmListObject[];
+        const parsed = SafeJSON.parse(raw, { strict: true }) as NpmListObject | NpmListObject[];
         const root = Array.isArray(parsed) ? parsed[0] : parsed;
         const deps = root?.dependencies ?? {};
 
-        return Object.entries(deps).map(([name, info]) => `${name}@${info.version ?? "latest"}`);
+        return Object.entries(deps)
+            .filter(
+                (entry): entry is [string, NpmDependencyInfo & { version: string }] =>
+                    typeof entry[1].version === "string" && entry[1].version.length > 0
+            )
+            .map(([name, info]) => `${name}@${info.version}`);
     } catch {
         return [];
     }

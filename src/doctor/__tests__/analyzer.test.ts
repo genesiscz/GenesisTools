@@ -35,7 +35,6 @@ class ErrorAnalyzer extends Analyzer {
         if (Date.now() >= 0) {
             throw new Error("boom");
         }
-
         yield {
             id: "unreachable",
             analyzerId: this.id,

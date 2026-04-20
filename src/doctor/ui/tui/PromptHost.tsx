@@ -2,7 +2,7 @@
 import type { SelectValue } from "@app/utils/prompts/p";
 import { completeTask } from "@app/utils/prompts/p/opentui-backend";
 import { useKeyboard } from "@opentui/solid";
-import { createEffect, createMemo, createSignal, For, Show, type Setter } from "solid-js";
+import { createEffect, createMemo, createSignal, For, type Setter, Show } from "solid-js";
 import { Modal } from "./Modal";
 import type { PromptTask } from "./stores/prompt-store";
 import { usePromptStore } from "./stores/prompt-store";
@@ -35,11 +35,10 @@ export function PromptHost() {
 
     createEffect(() => {
         const task = current();
-        task?.id;
-        setTextInput(task?.type === "text" ? task.opts.initialValue ?? "" : "");
+        setTextInput(task?.type === "text" ? (task.opts.initialValue ?? "") : "");
         setValidationMessage("");
         setCursor(initialCursor(task));
-        setSelected(new Set(task?.type === "multiselect" ? task.opts.initialValues ?? [] : []));
+        setSelected(new Set(task?.type === "multiselect" ? (task.opts.initialValues ?? []) : []));
     });
 
     useKeyboard((key) => {
@@ -198,12 +197,12 @@ function renderTextPrompt(task: Extract<PromptTask, { type: "text" }>, textInput
             <text fg={THEME.fg}>{task.opts.message}</text>
             <text fg={THEME.fg}>
                 &gt; {textInput}
-                <span fg={THEME.fgDim}>{textInput ? "" : task.opts.placeholder ?? ""}</span>
+                <span fg={THEME.fgDim}>{textInput ? "" : (task.opts.placeholder ?? "")}</span>
             </text>
             <Show when={validationMessage}>
                 <text fg={THEME.danger}>{validationMessage}</text>
             </Show>
-            <text fg={THEME.fgDim}>[enter] submit  [esc] cancel</text>
+            <text fg={THEME.fgDim}>[enter] submit [esc] cancel</text>
         </Modal>
     );
 }
@@ -217,7 +216,7 @@ function renderConfirmPrompt(task: Extract<PromptTask, { type: "confirm" | "type
                     Type: <span fg={THEME.accent}>{task.opts.phrase}</span>
                 </text>
                 <text fg={THEME.fg}>&gt; {textInput}</text>
-                <text fg={THEME.fgDim}>[enter] submit  [esc] cancel</text>
+                <text fg={THEME.fgDim}>[enter] submit [esc] cancel</text>
             </Modal>
         );
     }
@@ -225,7 +224,7 @@ function renderConfirmPrompt(task: Extract<PromptTask, { type: "confirm" | "type
     return (
         <Modal title="Confirm">
             <text fg={task.opts.danger ? THEME.danger : THEME.fg}>{task.opts.message}</text>
-            <text fg={THEME.fgDim}>[y] yes  [n] no  [esc] cancel</text>
+            <text fg={THEME.fgDim}>[y] yes [n] no [esc] cancel</text>
         </Modal>
     );
 }
@@ -254,7 +253,9 @@ function renderSelectionPrompt(
                         return (
                             <text>
                                 <span fg={isCursor() ? THEME.accent : THEME.fgDim}>{isCursor() ? "> " : "  "}</span>
-                                <span fg={isSelected() ? THEME.success : THEME.fg}>{marker()} {option.label}</span>
+                                <span fg={isSelected() ? THEME.success : THEME.fg}>
+                                    {marker()} {option.label}
+                                </span>
                                 <span fg={THEME.fgDim}>{option.hint ? ` ${option.hint}` : ""}</span>
                             </text>
                         );
@@ -262,7 +263,9 @@ function renderSelectionPrompt(
                 </For>
             </scrollbox>
             <text fg={THEME.fgDim}>
-                {task.type === "multiselect" ? "[space] toggle  [enter] done  [esc] cancel" : "[enter] select  [esc] cancel"}
+                {task.type === "multiselect"
+                    ? "[space] toggle  [enter] done  [esc] cancel"
+                    : "[enter] select  [esc] cancel"}
             </text>
         </Modal>
     );

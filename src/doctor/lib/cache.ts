@@ -20,7 +20,13 @@ export async function readCache(analyzerId: string, ttlMs: number): Promise<Anal
     try {
         const raw = await readFile(path, "utf8");
         const parsed = SafeJSON.parse(raw, { strict: true }) as CacheEntry;
-        const age = Date.now() - new Date(parsed.writtenAt).getTime();
+        const writtenAtMs = Date.parse(parsed.writtenAt);
+
+        if (!Number.isFinite(writtenAtMs)) {
+            return null;
+        }
+
+        const age = Date.now() - writtenAtMs;
 
         if (age > ttlMs) {
             return null;

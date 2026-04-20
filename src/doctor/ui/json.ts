@@ -13,7 +13,8 @@ export interface JsonRunOpts {
 }
 
 export async function runJson(opts: JsonRunOpts): Promise<void> {
-    const selected = opts.only ? opts.analyzers.filter((a) => opts.only?.includes(a.id)) : opts.analyzers;
+    const selected =
+        opts.only && opts.only.length > 0 ? opts.analyzers.filter((a) => opts.only!.includes(a.id)) : opts.analyzers;
     const engine = new Engine();
     const findings: Finding[] = [];
     const errors: Array<{ analyzerId: string; error: string }> = [];

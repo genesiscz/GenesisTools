@@ -17,8 +17,8 @@ describe("paths", () => {
         expect(cacheFilePath("disk-space")).toBe(`${homedir()}/.genesis-tools/doctor/cache/disk-space.json`);
     });
 
-    it("makeRunId replaces colons with dashes", () => {
-        const id = makeRunId(new Date("2026-04-17T14:30:12.000Z"));
-        expect(id).toBe("2026-04-17T14-30-12");
+    it("makeRunId replaces colons and dots with dashes (millisecond precision)", () => {
+        const id = makeRunId(new Date("2026-04-17T14:30:12.345Z"));
+        expect(id).toBe("2026-04-17T14-30-12-345Z");
     });
 });

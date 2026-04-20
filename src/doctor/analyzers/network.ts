@@ -1,5 +1,5 @@
 import { Analyzer } from "@app/doctor/lib/analyzer";
-import { run, runInherit } from "@app/doctor/lib/run";
+import { run } from "@app/doctor/lib/run";
 import type { AnalyzerCategory, AnalyzerContext, ExecutorContext, Finding } from "@app/doctor/lib/types";
 
 const TCP_STATES = [
@@ -49,8 +49,14 @@ export class NetworkAnalyzer extends Analyzer {
                     confirm: "yesno",
                     execute: async (_ctx: ExecutorContext, finding) => {
                         const flush = await run("dscacheutil", ["-flushcache"]);
-                        const hupStatus = await runInherit("sudo", ["killall", "-HUP", "mDNSResponder"]);
-                        const ok = flush.status === 0 && hupStatus === 0;
+                        // HUP to mDNSResponder requires sudo; skip if non-root to avoid
+                        // an interactive password prompt in non-TTY contexts.
+                        let hupOk = true;
+                        if (process.getuid?.() === 0) {
+                            const hup = await run("killall", ["-HUP", "mDNSResponder"]);
+                            hupOk = hup.status === 0;
+                        }
+                        const ok = flush.status === 0 && hupOk;
 
                         return {
                             findingId: finding.id,

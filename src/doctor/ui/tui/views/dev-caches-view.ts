@@ -70,7 +70,7 @@ export const devCachesView: ViewFn = ({ findings, selected, cursor, viewportRows
         const highlight = slice.startIndex + index === cursor;
         const bg = highlight ? THEME.bgHighlight : undefined;
         const m = meta(finding);
-        const bytes = typeof m.bytes === "number" ? m.bytes : finding.reclaimableBytes ?? 0;
+        const bytes = typeof m.bytes === "number" ? m.bytes : (finding.reclaimableBytes ?? 0);
         const sizeText = bytes > 0 ? formatBytes(bytes) : "";
         const path = typeof m.path === "string" ? m.path : "";
 
@@ -87,6 +87,7 @@ export const devCachesView: ViewFn = ({ findings, selected, cursor, viewportRows
         columns: COLUMNS,
         rows: applyRightAlign(rows, RIGHT_ALIGN),
         findings: slice.rows,
+        allFindings: actionableFindings,
     };
 
     return { status, actionable, total: findings.length };

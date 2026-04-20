@@ -30,8 +30,10 @@ export interface StatusRow {
 export interface ActionableTable {
     columns: ColumnSpec[];
     rows: Row[];
-    /** findings backing each row, same order — drawer uses this for cursor → finding mapping. */
+    /** findings backing the current visible page (rows), same order — used for rendering. */
     findings: Finding[];
+    /** all actionable findings across all pages — used for count, selection totals, and cursor → finding mapping. */
+    allFindings: Finding[];
 }
 
 export interface ViewResult {

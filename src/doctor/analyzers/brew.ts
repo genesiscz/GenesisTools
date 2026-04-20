@@ -69,7 +69,7 @@ export class BrewAnalyzer extends Analyzer {
             };
         }
 
-        const leavesRes = await run("brew", ["leaves"]);
+        const leavesRes = await run("brew", ["leaves"], { timeoutMs: 10_000 });
         const leaves = leavesRes.status === 0 ? leavesRes.stdout.split("\n").filter((line) => line.trim()) : [];
 
         if (leaves.length > 30) {

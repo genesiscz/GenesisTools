@@ -39,12 +39,14 @@ export function FindingsDrawer(props: FindingsDrawerProps) {
         });
     });
 
-    const actionableFindings = createMemo(() => view().actionable.findings);
-    const actionableCount = createMemo(() => actionableFindings().length);
+    // full list — used for count, selection totals, and cursor → finding mapping
+    // (view().actionable.findings is the visible page slice, used for rendering via rows)
+    const allActionableFindings = createMemo(() => view().actionable.allFindings);
+    const actionableCount = createMemo(() => allActionableFindings().length);
     const statusCount = createMemo(() => view().status.length);
 
     const selectedTotal = createMemo(() =>
-        actionableFindings()
+        allActionableFindings()
             .filter((finding) => selectedFindingIds().has(finding.id))
             .reduce((total, finding) => total + (finding.reclaimableBytes ?? 0), 0)
     );
@@ -78,7 +80,7 @@ export function FindingsDrawer(props: FindingsDrawerProps) {
         }
 
         if (key.name === "space") {
-            const finding = actionableFindings()[cursor()];
+            const finding = allActionableFindings()[cursor()];
 
             if (!finding || finding.severity === "blocked") {
                 return;

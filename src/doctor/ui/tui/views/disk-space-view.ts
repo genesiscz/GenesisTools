@@ -53,7 +53,7 @@ export const diskSpaceView: ViewFn = ({ findings, selected, cursor, viewportRows
         const bg = highlight ? THEME.bgHighlight : undefined;
         const m = meta(finding);
         const path = typeof m.path === "string" ? m.path : finding.title;
-        const sizeText = finding.reclaimableBytes ? formatBytes(finding.reclaimableBytes) : "";
+        const sizeText = typeof finding.reclaimableBytes === "number" ? formatBytes(finding.reclaimableBytes) : "";
         const mtime = typeof m.mtime === "string" ? m.mtime : undefined;
         const ageText = formatAge(mtime);
         const isRecommendation = finding.id === "disk-install-fd";
@@ -71,6 +71,7 @@ export const diskSpaceView: ViewFn = ({ findings, selected, cursor, viewportRows
         columns: COLUMNS,
         rows: applyRightAlign(rows, RIGHT_ALIGN),
         findings: slice.rows,
+        allFindings: actionableFindings,
     };
 
     return { status, actionable, total: findings.length };

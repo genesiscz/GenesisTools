@@ -23,7 +23,7 @@ export function snapshotFilePath(runId: string, manager: string): string {
 }
 
 export function makeRunId(now: Date = new Date()): string {
-    return now.toISOString().replace(/:/g, "-").replace(/\..+$/, "");
+    return now.toISOString().replace(/[:.]/g, "-");
 }
 
 export function ensureDirs(runId?: string): void {

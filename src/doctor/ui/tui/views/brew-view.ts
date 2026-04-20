@@ -99,6 +99,7 @@ export const brewView: ViewFn = ({ findings, selected, cursor, viewportRows }) =
         columns: COLUMNS,
         rows: applyRightAlign(rows, RIGHT_ALIGN),
         findings: slice.rows,
+        allFindings: actionableFindings,
     };
 
     return { status, actionable, total: findings.length };

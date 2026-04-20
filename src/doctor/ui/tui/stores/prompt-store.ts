@@ -20,7 +20,7 @@ export type PromptTaskValue = string | boolean | SelectValue | SelectValue[];
 export interface PromptState {
     tasks: PromptTask[];
     enqueue(task: PromptTask): void;
-    complete(id: string, value: PromptTaskValue): void;
+    complete(id: string): void;
 }
 
 export const usePromptStore = createStore<PromptState>()((set) => ({

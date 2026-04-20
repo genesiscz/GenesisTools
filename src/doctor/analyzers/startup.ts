@@ -29,7 +29,7 @@ export class StartupAnalyzer extends Analyzer {
 
         for (const assertion of assertions) {
             yield {
-                id: `startup-assertion-${assertion.pid}`,
+                id: `startup-assertion-${assertion.pid}-${assertion.kind}-${assertion.name}`,
                 analyzerId: this.id,
                 title: `${assertion.processName} (PID ${assertion.pid}) · ${assertion.kind}`,
                 detail: assertion.name,
@@ -41,7 +41,7 @@ export class StartupAnalyzer extends Analyzer {
 
         const lcRes = await run("launchctl", ["list"]);
         const items = lcRes.status === 0 ? parseLaunchctlList(lcRes.stdout) : [];
-        const broken = items.filter((item) => item.status !== null && item.status < 0);
+        const broken = items.filter((item) => item.status !== null && item.status !== 0);
 
         for (const item of broken.slice(0, 10)) {
             yield {

@@ -60,9 +60,7 @@ export const startupView: ViewFn = ({ findings, selected, cursor, viewportRows }
             const highlight = slice.startIndex + index === cursor;
             const bg = highlight ? THEME.bgHighlight : undefined;
             const m = meta(finding);
-            const name = typeof m.label === "string" && m.label.length > 0
-                ? m.label
-                : finding.title;
+            const name = typeof m.label === "string" && m.label.length > 0 ? m.label : finding.title;
             const detail = (finding.detail ?? "").trim();
 
             return [
@@ -74,6 +72,7 @@ export const startupView: ViewFn = ({ findings, selected, cursor, viewportRows }
             ];
         }),
         findings: slice.rows,
+        allFindings: actionableFindings,
     };
 
     return { status, actionable, total: findings.length };

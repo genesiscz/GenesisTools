@@ -41,8 +41,7 @@ function pressureColor(level: string): string | undefined {
 function swapStatus(finding: Finding): StatusRow {
     const m = meta(finding);
     const swapRaw = m.swap;
-    const swap =
-        swapRaw && typeof swapRaw === "object" ? (swapRaw as Record<string, unknown>) : {};
+    const swap = swapRaw && typeof swapRaw === "object" ? (swapRaw as Record<string, unknown>) : {};
     const used = typeof swap.usedBytes === "number" ? swap.usedBytes : 0;
     const total = typeof swap.totalBytes === "number" ? swap.totalBytes : 0;
     const pct = total > 0 ? Math.round((used / total) * 100) : 0;
@@ -101,12 +100,13 @@ export const memoryView: ViewFn = ({ findings, selected, cursor, viewportRows })
         const highlight = slice.startIndex + index === cursor;
         const bg = highlight ? THEME.bgHighlight : undefined;
         const m = meta(finding);
-        const label = typeof m.label === "string" && m.label.length > 0
-            ? m.label
-            : typeof m.comm === "string"
-              ? m.comm
-              : finding.title;
-        const rss = typeof m.rssBytes === "number" ? m.rssBytes : finding.reclaimableBytes ?? 0;
+        const label =
+            typeof m.label === "string" && m.label.length > 0
+                ? m.label
+                : typeof m.comm === "string"
+                  ? m.comm
+                  : finding.title;
+        const rss = typeof m.rssBytes === "number" ? m.rssBytes : (finding.reclaimableBytes ?? 0);
         const pid = typeof m.pid === "number" ? String(m.pid) : "";
 
         return [
@@ -122,6 +122,7 @@ export const memoryView: ViewFn = ({ findings, selected, cursor, viewportRows })
         columns: COLUMNS,
         rows: applyRightAlign(rows, RIGHT_ALIGN),
         findings: slice.rows,
+        allFindings: actionableFindings,
     };
 
     return { status, actionable, total: findings.length };

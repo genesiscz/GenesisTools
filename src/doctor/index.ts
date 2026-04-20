@@ -91,10 +91,17 @@ program
 
         const analyzer = new DiskSpaceAnalyzer();
         const root = opts.root === "$HOME" ? homedir() : opts.root;
+        const minMB = Number.parseInt(opts.minMb, 10);
+        const maxDays = Number.parseInt(opts.maxDays, 10);
+
+        if (!Number.isFinite(minMB) || minMB < 0 || !Number.isFinite(maxDays) || maxDays < 0) {
+            throw new Error("--min-mb and --max-days must be non-negative integers");
+        }
+
         const findings = await analyzer.findAdhoc({
             root,
-            minMB: Number.parseInt(opts.minMb, 10),
-            maxDays: Number.parseInt(opts.maxDays, 10),
+            minMB,
+            maxDays,
         });
 
         logger.info(`${findings.length} files matched`);

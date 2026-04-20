@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { isInteractive } from "@app/utils/cli";
 import pc from "picocolors";
 import { getBackend } from "./backend";
 
@@ -13,6 +14,10 @@ export function buildInstallPrompt(opts: OfferInstallOpts): string {
 }
 
 export async function offerInstall(opts: OfferInstallOpts): Promise<boolean> {
+    if (!isInteractive()) {
+        return false;
+    }
+
     const backend = getBackend();
     const ok = await backend.confirm({ message: buildInstallPrompt(opts) });
 
@@ -35,6 +40,6 @@ export async function offerInstall(opts: OfferInstallOpts): Promise<boolean> {
         return true;
     }
 
-    spinner.stop(`Install failed: ${result.stderr ?? "unknown error"}`);
+    spinner.stop(`Install failed: ${result.stderr || "unknown error"}`);
     return false;
 }

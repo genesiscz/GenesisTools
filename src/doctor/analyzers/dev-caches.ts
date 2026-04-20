@@ -3,7 +3,6 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import pLimit from "p-limit";
 import { Analyzer } from "@app/doctor/lib/analyzer";
 import {
     listGlobalPackages,
@@ -15,6 +14,7 @@ import { run, runInherit } from "@app/doctor/lib/run";
 import { duBytes, formatBytes } from "@app/doctor/lib/size";
 import type { Action, AnalyzerCategory, AnalyzerContext, ExecutorContext, Finding } from "@app/doctor/lib/types";
 import { SafeJSON } from "@app/utils/json";
+import pLimit from "p-limit";
 
 const DU_CONCURRENCY = 8;
 
@@ -242,7 +242,7 @@ export class DevCachesAnalyzer extends Analyzer {
 
 export function parseSimctlJson(raw: string): SimDevice[] {
     try {
-        const parsed = SafeJSON.parse(raw) as SimctlDevicesJson;
+        const parsed = SafeJSON.parse(raw, { strict: true }) as SimctlDevicesJson;
         const devices: SimDevice[] = [];
 
         for (const [runtime, list] of Object.entries(parsed.devices)) {
@@ -275,7 +275,7 @@ export function parseDockerSystemDfJson(raw: string): DockerDfSummary[] {
         }
 
         try {
-            const parsed = SafeJSON.parse(line) as DockerDfJsonLine;
+            const parsed = SafeJSON.parse(line, { strict: true }) as DockerDfJsonLine;
             if (parsed.Type) {
                 summaries.push({
                     type: parsed.Type,
@@ -421,21 +421,13 @@ function simulatorActions(args: {
     const actions: Action[] = [];
 
     if (args.unavailable.length > 0) {
-        actions.push({
-            id: "delete-unavailable",
-            label: `Delete ${args.unavailable.length} unavailable simulator(s)`,
-            confirm: "yesno",
-            execute: async (_ctx, finding) => {
-                const res = await run("xcrun", ["simctl", "delete", "unavailable"]);
-
-                return {
-                    findingId: finding.id,
-                    actionId: "delete-unavailable",
-                    status: res.status === 0 ? "ok" : "failed",
-                    metadata: { count: args.unavailable.length },
-                };
-            },
-        });
+        actions.push(
+            deleteSimulatorsAction(
+                "delete-unavailable",
+                `Delete ${args.unavailable.length} unavailable simulator(s)`,
+                args.unavailable
+            )
+        );
     }
 
     if (args.stale.length > 0) {

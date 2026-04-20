@@ -1,6 +1,5 @@
-import type { CliRenderer } from "@opentui/core";
-import { usePromptStore } from "@app/doctor/ui/tui/stores/prompt-store";
 import type { PromptTask, PromptTaskValue } from "@app/doctor/ui/tui/stores/prompt-store";
+import { usePromptStore } from "@app/doctor/ui/tui/stores/prompt-store";
 import type { PromptBackend } from "@app/utils/prompts/p/backend";
 import type {
     ConfirmOpts,
@@ -12,6 +11,7 @@ import type {
     TextOpts,
     TypedConfirmOpts,
 } from "@app/utils/prompts/p/types";
+import type { CliRenderer } from "@opentui/core";
 
 export interface LogEntry {
     level: "info" | "success" | "warn" | "error" | "step";
@@ -70,7 +70,7 @@ export function completeTask(id: string, value: PromptTaskValue): void {
     }
 
     resolvers.delete(id);
-    usePromptStore.getState().complete(id, value);
+    usePromptStore.getState().complete(id);
     resolver(value);
 }
 

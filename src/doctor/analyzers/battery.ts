@@ -30,7 +30,7 @@ export class BatteryAnalyzer extends Analyzer {
 
         // `pmset -g thermlog` streams indefinitely on recent macOS — cap hard.
         const thermRes = await run("pmset", ["-g", "thermlog"], { timeoutMs: 2_000 });
-        const events = thermRes.timedOut ? [] : parseThermLog(thermRes.stdout);
+        const events = thermRes.status === 0 || thermRes.timedOut ? parseThermLog(thermRes.stdout) : [];
 
         yield {
             id: "battery-thermal",

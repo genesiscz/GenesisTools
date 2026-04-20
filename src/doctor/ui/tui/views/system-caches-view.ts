@@ -61,11 +61,12 @@ export const systemCachesView: ViewFn = ({ findings, selected, cursor, viewportR
         const highlight = slice.startIndex + index === cursor;
         const bg = highlight ? THEME.bgHighlight : undefined;
         const m = meta(finding);
-        const bytes = typeof m.bytes === "number"
-            ? m.bytes
-            : typeof m.totalSize === "number"
-              ? m.totalSize
-              : finding.reclaimableBytes ?? 0;
+        const bytes =
+            typeof m.bytes === "number"
+                ? m.bytes
+                : typeof m.totalSize === "number"
+                  ? m.totalSize
+                  : (finding.reclaimableBytes ?? 0);
         const sizeText = bytes > 0 ? formatBytes(bytes) : "";
         const pathValue = typeof m.path === "string" ? m.path : finding.title;
 
@@ -82,6 +83,7 @@ export const systemCachesView: ViewFn = ({ findings, selected, cursor, viewportR
         columns: COLUMNS,
         rows: applyRightAlign(rows, RIGHT_ALIGN),
         findings: slice.rows,
+        allFindings: actionableFindings,
     };
 
     return { status, actionable, total: findings.length };

@@ -16,7 +16,7 @@ export function aggregate(entries: HistoryEntry[]): Stats {
         runIds.add(entry.runId);
         actionCounts[entry.action.actionId] = (actionCounts[entry.action.actionId] ?? 0) + 1;
 
-        if (entry.action.status === "ok" && entry.action.actualReclaimedBytes) {
+        if (entry.action.status === "ok" && entry.action.actualReclaimedBytes != null) {
             totalReclaimedBytes += entry.action.actualReclaimedBytes;
         }
     }
