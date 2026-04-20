@@ -120,10 +120,14 @@ async function executeTool(scriptId, scriptArgs) {
         }
     }
 
-    // Execute bun run using spawnSync
+    // Execute bun run using spawnSync.
+    // cwd must be the workspace root so Bun loads the repo's bunfig.toml
+    // (e.g. @opentui/solid/preload) and resolves @app/* paths via tsconfig.
+    // Pass original shell cwd through INIT_CWD for tools that need it.
     const result = spawnSync("bun", ["run", targetScript, ...scriptArgs], {
         stdio: "inherit",
-        cwd: process.cwd(),
+        cwd: workspaceRoot,
+        env: { ...process.env, INIT_CWD: process.cwd() },
         shell: process.platform === "win32",
     });
 

@@ -1,0 +1,13 @@
+diff --git a/src/types/elements.d.ts b/src/types/elements.d.ts
+index 9ddbcbdd86cb5452f1fda777692061bdd5758461..13875532c52a09cabc0c680673adf7a7eb1c48b0 100644
+--- a/src/types/elements.d.ts
++++ b/src/types/elements.d.ts
+@@ -28,7 +28,7 @@ type TextChildren = string | number | boolean | null | undefined | JSX.Element;
+ export type TextProps = ComponentProps<TextOptions, TextRenderable> & {
+     children?: TextChildren | Array<TextChildren>;
+ };
+-export type SpanProps = ComponentProps<{}, TextNodeRenderable> & {
++export type SpanProps = ComponentProps<import("@opentui/core").TextNodeOptions, TextNodeRenderable> & {
+     children?: TextChildren | Array<TextChildren>;
+ };
+ export type LinkProps = SpanProps & {
