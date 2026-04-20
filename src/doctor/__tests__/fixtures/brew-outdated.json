@@ -1,0 +1,16 @@
+{
+  "formulae": [
+    {
+      "name": "git",
+      "installed_versions": ["2.44.0"],
+      "current_version": "2.45.0"
+    }
+  ],
+  "casks": [
+    {
+      "name": "visual-studio-code",
+      "installed_versions": ["1.88.0"],
+      "current_version": "1.89.0"
+    }
+  ]
+}

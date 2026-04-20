@@ -1,0 +1,10 @@
+  PID  PPID %CPU    RSS STAT COMM            COMMAND
+    1     0  0.0  12000 Ss   launchd         /sbin/launchd
+  100     1  0.2  50000 S    kernel_task     kernel_task
+  200     1  2.5 300000 S    WindowServer    /System/Library/.../WindowServer
+ 1000   200  1.0 200000 S    Dock            /System/Applications/Dock.app/...
+ 5000  1000 99.5 500000 S    node            node /Users/me/dev/server.js
+ 6000  5000  0.1  80000 Z    node            <defunct>
+ 7000   200 50.0 1000000 S   Brave Browser   /Applications/Brave Browser.app/.../Brave Browser
+ 7100  7000  0.5 800000 S    Brave Browser Helper (Renderer) /Applications/Brave Browser.app/.../Brave Browser Helper (Renderer)
+ 8000     1  0.0  30000 S    caffeinate      caffeinate -t 300

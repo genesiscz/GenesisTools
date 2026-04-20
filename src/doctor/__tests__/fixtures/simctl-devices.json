@@ -1,0 +1,62 @@
+{
+  "devices": {
+    "com.apple.CoreSimulator.SimRuntime.iOS-26-3": [
+      {
+        "udid": "A1111111-B222-C333-D444-E55555555555",
+        "name": "iPhone 17",
+        "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPhone-17",
+        "state": "Shutdown",
+        "dataPath": "/Users/me/Library/Developer/CoreSimulator/Devices/A1111111-B222-C333-D444-E55555555555/data",
+        "logPath": "/Users/me/Library/Logs/CoreSimulator/A1111111-B222-C333-D444-E55555555555",
+        "isAvailable": true
+      },
+      {
+        "udid": "B1111111-B222-C333-D444-E55555555555",
+        "name": "iPhone 17 Pro",
+        "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro",
+        "state": "Shutdown",
+        "dataPath": "/Users/me/Library/Developer/CoreSimulator/Devices/B1111111-B222-C333-D444-E55555555555/data",
+        "logPath": "/Users/me/Library/Logs/CoreSimulator/B1111111-B222-C333-D444-E55555555555",
+        "isAvailable": true
+      },
+      {
+        "udid": "C1111111-B222-C333-D444-E55555555555",
+        "name": "iPad Pro 13-inch",
+        "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPad-Pro-13-inch",
+        "state": "Shutdown",
+        "dataPath": "/Users/me/Library/Developer/CoreSimulator/Devices/C1111111-B222-C333-D444-E55555555555/data",
+        "logPath": "/Users/me/Library/Logs/CoreSimulator/C1111111-B222-C333-D444-E55555555555",
+        "isAvailable": false
+      }
+    ],
+    "com.apple.CoreSimulator.SimRuntime.iOS-26-4": [
+      {
+        "udid": "D1111111-B222-C333-D444-E55555555555",
+        "name": "iPhone 17",
+        "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPhone-17",
+        "state": "Booted",
+        "dataPath": "/Users/me/Library/Developer/CoreSimulator/Devices/D1111111-B222-C333-D444-E55555555555/data",
+        "logPath": "/Users/me/Library/Logs/CoreSimulator/D1111111-B222-C333-D444-E55555555555",
+        "isAvailable": true
+      },
+      {
+        "udid": "E1111111-B222-C333-D444-E55555555555",
+        "name": "iPhone 17 Pro Max",
+        "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro-Max",
+        "state": "Shutdown",
+        "dataPath": "/Users/me/Library/Developer/CoreSimulator/Devices/E1111111-B222-C333-D444-E55555555555/data",
+        "logPath": "/Users/me/Library/Logs/CoreSimulator/E1111111-B222-C333-D444-E55555555555",
+        "isAvailable": true
+      },
+      {
+        "udid": "F1111111-B222-C333-D444-E55555555555",
+        "name": "iPad mini",
+        "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPad-mini",
+        "state": "Shutdown",
+        "dataPath": "/Users/me/Library/Developer/CoreSimulator/Devices/F1111111-B222-C333-D444-E55555555555/data",
+        "logPath": "/Users/me/Library/Logs/CoreSimulator/F1111111-B222-C333-D444-E55555555555",
+        "isAvailable": true
+      }
+    ]
+  }
+}
