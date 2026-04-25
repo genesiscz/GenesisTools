@@ -1,15 +1,15 @@
 import { spawn } from "node:child_process";
+import { readFileSync, writeFileSync } from "node:fs";
 import logger from "@app/logger";
 import type { TimelyService } from "@app/timely/api/service";
 import type { OAuth2Tokens, TimelyEntry } from "@app/timely/types";
+import type { CreatePlanV1, PlanIssue } from "@app/timely/types/plan";
 import { type CategorySuggestion, suggestProjects } from "@app/timely/utils/categorizer";
 import { loadEventCorpus } from "@app/timely/utils/event-corpus";
-import {
-    type BuiltPayload,
-    buildPayloadFromFlat,
-    flattenMemories,
-} from "@app/timely/utils/flatten-memories";
+import { type BuiltPayload, buildPayloadFromFlat, flattenMemories } from "@app/timely/utils/flatten-memories";
 import { fetchMemoriesForDates } from "@app/timely/utils/memories";
+import { applyPlan, validatePlan } from "@app/timely/utils/plan-apply";
+import { buildPlan } from "@app/timely/utils/plan-build";
 import { isInteractive } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
 import type { Storage } from "@app/utils/storage";
@@ -26,6 +26,10 @@ interface CreateOptions {
     interactive?: boolean;
     dryRun?: boolean;
     chainAdo?: boolean;
+    plan?: boolean;
+    out?: string;
+    apply?: string;
+    yes?: boolean;
 }
 
 function buildPayload(memories: TimelyEntry[], day: string, projectId: number, note: string): BuiltPayload {
@@ -222,6 +226,145 @@ async function runCreate(storage: Storage, service: TimelyService, options: Crea
     }
 }
 
+async function runPlan(storage: Storage, service: TimelyService, options: CreateOptions): Promise<void> {
+    const accountId = await storage.getConfigValue<number>("selectedAccountId");
+    const tokens = await storage.getConfigValue<OAuth2Tokens>("tokens");
+    if (!accountId || !tokens?.access_token) {
+        logger.error("Not authenticated. Run 'tools timely login' first.");
+        process.exit(1);
+    }
+
+    const dates = expandDates(options);
+    if (dates.length === 0) {
+        logger.error("Provide --from/--to or --day with --plan");
+        process.exit(1);
+    }
+
+    const [memoriesResult, corpus] = await Promise.all([
+        fetchMemoriesForDates({ accountId, accessToken: tokens.access_token, dates, storage }),
+        loadEventCorpus(storage, service, accountId),
+    ]);
+
+    const plan = buildPlan({ memoriesByDate: memoriesResult.byDate, corpus, dates });
+    const json = SafeJSON.stringify(plan, null, 2);
+
+    const out = options.out ?? "-";
+    if (out === "-") {
+        process.stdout.write(`${json}\n`);
+    } else {
+        writeFileSync(out, `${json}\n`, "utf8");
+        logger.info(chalk.green(`✓ Plan written to ${out}`));
+        logger.info(`  ${plan.days.length} day(s), ${plan.days.reduce((s, d) => s + d.available_memories.length, 0)} memories`);
+        logger.info("  Edit events[] per day, then: tools timely create --apply " + out + " --dry-run");
+    }
+}
+
+function readPlanFile(path: string): CreatePlanV1 {
+    const text = path === "-" ? readFromStdin() : readFileSync(path, "utf8");
+    const parsed = SafeJSON.parse(text);
+    return parsed as CreatePlanV1;
+}
+
+function readFromStdin(): string {
+    const chunks: Buffer[] = [];
+    const fd = 0;
+    const buf = Buffer.alloc(65_536);
+    let n: number;
+    do {
+        try {
+            n = require("node:fs").readSync(fd, buf, 0, buf.length, null);
+        } catch {
+            break;
+        }
+        if (n > 0) {
+            chunks.push(Buffer.from(buf.subarray(0, n)));
+        }
+    } while (n > 0);
+
+    return Buffer.concat(chunks).toString("utf8");
+}
+
+function printIssues(issues: PlanIssue[]): { errors: number; warnings: number } {
+    let errors = 0;
+    let warnings = 0;
+    for (const issue of issues) {
+        const tag = issue.severity === "error" ? chalk.red("✗") : chalk.yellow("!");
+        const where = issue.eventIdx !== undefined ? `${issue.day}#${issue.eventIdx}` : issue.day;
+        console.log(`${tag} ${where}: ${issue.message}`);
+        if (issue.severity === "error") {
+            errors++;
+        } else {
+            warnings++;
+        }
+    }
+
+    return { errors, warnings };
+}
+
+async function runApply(storage: Storage, service: TimelyService, options: CreateOptions): Promise<void> {
+    const accountId = await storage.getConfigValue<number>("selectedAccountId");
+    const tokens = await storage.getConfigValue<OAuth2Tokens>("tokens");
+    if (!accountId || !tokens?.access_token) {
+        logger.error("Not authenticated. Run 'tools timely login' first.");
+        process.exit(1);
+    }
+
+    const path = options.apply!;
+    const plan = readPlanFile(path);
+
+    const issues = validatePlan(plan);
+    const { errors, warnings } = printIssues(issues);
+    if (errors > 0) {
+        logger.error(`Plan has ${errors} error(s). Fix and retry.`);
+        process.exit(1);
+    }
+
+    const interactive = isInteractive();
+    if (warnings > 0 && interactive && !options.yes) {
+        const ok = await p.confirm({ message: `${warnings} warning(s). Proceed?`, initialValue: false });
+        if (p.isCancel(ok) || !ok) {
+            logger.info("Cancelled.");
+            return;
+        }
+    }
+
+    const results = await applyPlan({
+        plan,
+        service,
+        storage,
+        accountId,
+        accessToken: tokens.access_token,
+        dryRun: options.dryRun ?? false,
+        onPayload: (day, idx, payload) => {
+            console.log(chalk.dim(`\n--- ${day} event #${idx} ---`));
+            console.log(SafeJSON.stringify(payload, null, 2));
+        },
+    });
+
+    let created = 0;
+    let failed = 0;
+    for (const r of results) {
+        if (r.error) {
+            console.log(chalk.red(`✗ ${r.day}#${r.eventIdx} [proj ${r.project_id}]: ${r.error}`));
+            failed++;
+        } else if (options.dryRun) {
+            console.log(chalk.cyan(`◯ ${r.day}#${r.eventIdx} [proj ${r.project_id}] DRY ${r.duration} (${r.memoryCount} memories)`));
+        } else {
+            console.log(chalk.green(`✓ ${r.day}#${r.eventIdx} [proj ${r.project_id}] event ${r.eventId} (${r.duration}, ${r.memoryCount} memories)`));
+            created++;
+        }
+    }
+
+    if (options.dryRun) {
+        logger.info(`Dry-run complete: ${results.length} event(s) would be created.`);
+    } else {
+        logger.info(`Created ${created} event(s)${failed > 0 ? `, ${failed} failed` : ""}.`);
+        if (failed > 0) {
+            process.exit(1);
+        }
+    }
+}
+
 export function registerCreateCommand(program: Command, storage: Storage, service: TimelyService): void {
     program
         .command("create")
@@ -232,9 +375,29 @@ export function registerCreateCommand(program: Command, storage: Storage, servic
         .option("-p, --project <id>", "Force project ID (skip categorizer)")
         .option("-n, --note <text>", "Override note (default: derived from memory titles)")
         .option("-i, --interactive", "Interactive mode (default if TTY)")
-        .option("--dry-run", "Show payload without posting")
+        .option("--dry-run", "Show payload without posting (works with create + apply)")
         .option("--chain-ado", "After create, run `tools azure-devops timelog add -i` per day")
+        .option("--plan", "Generate a JSON plan instead of posting (LLM-friendly)")
+        .option("--out <path>", "Output path for --plan (default: stdout)", "-")
+        .option("--apply <path>", "Apply a plan JSON file (use - for stdin)")
+        .option("--yes", "Skip warning confirmation when applying")
         .action(async (options: CreateOptions) => {
+            const modes = [options.plan, !!options.apply].filter(Boolean).length;
+            if (modes > 1) {
+                logger.error("--plan and --apply are mutually exclusive");
+                process.exit(1);
+            }
+
+            if (options.plan) {
+                await runPlan(storage, service, options);
+                return;
+            }
+
+            if (options.apply) {
+                await runApply(storage, service, options);
+                return;
+            }
+
             await runCreate(storage, service, options);
         });
 }
