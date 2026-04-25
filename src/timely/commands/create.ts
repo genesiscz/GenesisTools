@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import logger from "@app/logger";
 import type { TimelyService } from "@app/timely/api/service";
 import type { OAuth2Tokens, TimelyEntry } from "@app/timely/types";
@@ -11,7 +12,6 @@ import type { Storage } from "@app/utils/storage";
 import * as p from "@clack/prompts";
 import chalk from "chalk";
 import type { Command } from "commander";
-import { spawn } from "node:child_process";
 
 interface CreateOptions {
     from?: string;
