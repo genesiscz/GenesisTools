@@ -144,11 +144,11 @@ await new Command()
   .description("Complex CLI application")
   .command("config", "Manage configuration")
     .command("set <key> <value>", "Set a configuration value")
-      .action((options, key, value) => {
+      .action(({ key, value }) => {
         console.log(`Set ${key} = ${value}`);
       })
     .command("get <key>", "Get a configuration value")
-      .action((options, key) => {
+      .action(({ key }) => {
         console.log(`Get ${key}`);
       })
     .command("list", "List all configuration")
@@ -169,7 +169,7 @@ await new Command()
 
 ### Documentation
 
-Full documentation available at: [Cliffy Command Documentation](https://cliffy.io/docs/command/)
+Full documentation available at: https://cliffy.io/docs/command/
 
 ---
 
@@ -325,8 +325,8 @@ async function main() {
 ### Documentation
 
 Full documentation and API references available at:
-- [LogTape Documentation](https://logtape.org)
-- [JSR Package](https://jsr.io/@logtape/logtape)
+- https://logtape.org (main docs)
+- https://jsr.io/@logtape/logtape (JSR package)
 
 ---
 
@@ -360,17 +360,12 @@ Full documentation and API references available at:
 ## Usage in GenesisTools
 
 ### Argument Parsing
-GenesisTools uses **commander** for argument parsing. It provides:
+GenesisTools currently uses **minimist** for argument parsing. Both yargs and @cliffy/command could be considered for future enhancements:
 
-- **Subcommands**: Define hierarchical command structures with `.command()`
-- **Options**: Strongly typed options with `.option()` and automatic help generation
-- **Action handlers**: Clean separation of command logic with `.action()`
+- **yargs**: Better for complex Node.js/Bun CLI tools with many options and commands
+- **@cliffy/command**: Better for Deno-based tools that need type safety and built-in validation
 
-For interactive prompts, GenesisTools uses **@inquirer/prompts** which provides:
-
-- **Modern API**: Promise-based with individual prompt functions (`select`, `input`, `confirm`, etc.)
-- **Type safety**: Built-in TypeScript support
-- **Cancellation handling**: `ExitPromptError` from `@inquirer/core` for clean user cancellation
+For GenesisTools' Bun-based environment, **yargs** would be the more natural choice if migration were considered.
 
 ### Logging
 GenesisTools currently uses **pino** for logging. **@logtape/logtape** offers advantages:
