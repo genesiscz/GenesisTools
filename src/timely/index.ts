@@ -11,6 +11,7 @@ import { TimelyApiClient } from "./api/client";
 import { TimelyService } from "./api/service";
 import { registerAccountsCommand } from "./commands/accounts";
 import { registerCacheCommand } from "./commands/cache";
+import { registerCreateCommand } from "./commands/create";
 import { registerEventsCommand } from "./commands/events";
 import { registerExportMonthCommand } from "./commands/export-month";
 // Commands
@@ -43,6 +44,7 @@ ${chalk.cyan("Commands:")}
   projects                List all projects (--select to choose default)
   events                  List time entries (with memories + unlinked by default)
   memories                List auto-tracked activities (suggested entries)
+  create                  Create events from memories (interactive heuristic)
   export-month <YYYY-MM>  Export all entries for a month
   cache [list|clear]      Manage cache
 
@@ -102,6 +104,7 @@ async function main(): Promise<void> {
     registerExportMonthCommand(program, storage, service);
     registerCacheCommand(program, storage);
     registerMemoriesCommand(program, storage, service);
+    registerCreateCommand(program, storage, service);
     enhanceHelp(program);
 
     // Parse and execute
