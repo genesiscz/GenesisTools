@@ -1,2 +1,4 @@
+preload = ["@opentui/solid/preload"]
+
 [test]
-preload = ["./src/utils/search/stores/sqlite-vec-preload.ts"]
+preload = ["@opentui/solid/preload", "./src/utils/search/stores/sqlite-vec-preload.ts"]
