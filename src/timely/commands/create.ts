@@ -2,9 +2,13 @@ import { spawn } from "node:child_process";
 import logger from "@app/logger";
 import type { TimelyService } from "@app/timely/api/service";
 import type { OAuth2Tokens, TimelyEntry } from "@app/timely/types";
-import type { CreateEventInput, CreateEventTimestamp } from "@app/timely/types/api";
 import { type CategorySuggestion, suggestProjects } from "@app/timely/utils/categorizer";
 import { loadEventCorpus } from "@app/timely/utils/event-corpus";
+import {
+    type BuiltPayload,
+    buildPayloadFromFlat,
+    flattenMemories,
+} from "@app/timely/utils/flatten-memories";
 import { fetchMemoriesForDates } from "@app/timely/utils/memories";
 import { isInteractive } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
@@ -24,83 +28,8 @@ interface CreateOptions {
     chainAdo?: boolean;
 }
 
-interface BuiltPayload {
-    input: CreateEventInput;
-    totalSeconds: number;
-}
-
-interface FlatEntry {
-    id: number;
-    from: string;
-    to: string;
-}
-
-function flattenMemories(memories: TimelyEntry[]): FlatEntry[] {
-    const flat: FlatEntry[] = [];
-    for (const bucket of memories) {
-        const inner = bucket.entries ?? [];
-        if (inner.length === 0) {
-            // Some payloads return a single entry without an `entries` wrapper
-            if (bucket.id && bucket.from && bucket.to) {
-                flat.push({ id: bucket.id, from: bucket.from, to: bucket.to });
-            }
-
-            continue;
-        }
-
-        for (const entry of inner) {
-            const subs = entry.sub_entries ?? [];
-            if (subs.length === 0) {
-                flat.push({ id: entry.id, from: entry.from, to: entry.to });
-            } else {
-                for (const sub of subs) {
-                    flat.push({ id: entry.id, from: sub.from, to: sub.to });
-                }
-            }
-        }
-    }
-
-    return flat.sort((a, b) => a.from.localeCompare(b.from));
-}
-
 function buildPayload(memories: TimelyEntry[], day: string, projectId: number, note: string): BuiltPayload {
-    const flat = flattenMemories(memories);
-    if (flat.length === 0) {
-        throw new Error(`No usable entries on ${day} — memories are empty or malformed`);
-    }
-
-    let totalSec = 0;
-    const timestamps: CreateEventTimestamp[] = flat.map((f) => {
-        const fromMs = new Date(f.from).getTime();
-        const toMs = new Date(f.to).getTime();
-        totalSec += Math.max(0, (toMs - fromMs) / 1000);
-        return {
-            from: f.from,
-            to: f.to,
-            entry_ids: [`tool_tic_${f.id}`],
-        };
-    });
-
-    const hours = Math.floor(totalSec / 3600);
-    const minutes = Math.floor((totalSec % 3600) / 60);
-    const seconds = Math.floor(totalSec % 60);
-
-    return {
-        input: {
-            day,
-            project_id: projectId,
-            note,
-            from: flat[0].from,
-            to: flat[flat.length - 1].to,
-            hours,
-            minutes,
-            seconds,
-            timestamps,
-            created_from: "GenesisTools",
-            updated_from: "GenesisTools",
-        },
-        totalSeconds: totalSec,
-    };
+    return buildPayloadFromFlat(flattenMemories(memories), day, projectId, note);
 }
 
 function expandDates(options: CreateOptions): string[] {
