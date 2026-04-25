@@ -58,6 +58,7 @@ tools timely export-month 2026-04 --format detailed-summary --silent
 | `projects [--select]` | List projects, optionally pick default |
 | `events [--from/--to/--day]` | List logged time entries |
 | `memories [--from/--to/--day]` | Auto-tracked activities (suggested entries) |
+| `create [--day/--from/--to] [-i] [--dry-run] [--chain-ado]` | Create events from memories with heuristic project suggestion |
 | `export-month <YYYY-MM>` | Export all entries for a month |
 | `cache [list\|clear]` | Manage the local Timely cache |
 
