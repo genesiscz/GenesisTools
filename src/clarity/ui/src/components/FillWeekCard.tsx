@@ -247,10 +247,7 @@ export function FillWeekCard({
                                                 );
                                                 const clarityOnlyDayTotal = entries
                                                     .filter((e) => e.clarityOnly)
-                                                    .reduce(
-                                                        (sum, e) => sum + (e.clarityDayValues?.[d.date] ?? 0),
-                                                        0
-                                                    );
+                                                    .reduce((sum, e) => sum + (e.clarityDayValues?.[d.date] ?? 0), 0);
                                                 const dayTotal = adoDayTotal + clarityOnlyDayTotal;
 
                                                 return (
