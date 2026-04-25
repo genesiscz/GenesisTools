@@ -217,19 +217,30 @@ export interface TimelyEvent {
 // Create Event Input
 // ============================================
 
+export interface CreateEventTimestamp {
+    from: string; // ISO datetime
+    to: string; // ISO datetime
+    entry_ids: string[]; // e.g. ["tool_tic_<memoryId>"]
+}
+
 export interface CreateEventInput {
     day: string; // YYYY-MM-DD
     hours: number;
     minutes: number;
+    seconds?: number;
     note?: string;
     project_id?: number;
     user_id?: number;
-    from?: string; // HH:MM
-    to?: string; // HH:MM
+    from?: string; // ISO datetime or HH:MM
+    to?: string;
     estimated_hours?: number;
     estimated_minutes?: number;
     label_ids?: number[];
     external_id?: string;
+    timestamps?: CreateEventTimestamp[];
+    created_from?: string;
+    updated_from?: string;
+    timer_state?: number;
 }
 
 // ============================================
