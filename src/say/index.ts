@@ -1,34 +1,21 @@
 #!/usr/bin/env bun
 
 import { existsSync, readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import logger from "@app/logger";
-import { getProvider, getTextToSpeechProvider } from "@app/utils/ai/providers";
-import type { AITextToSpeechProvider, TTSOptions, TTSResult } from "@app/utils/ai/types";
+import { resolve } from "node:path";
+import { AI } from "@app/utils/ai/index.ts";
+import type { AIProviderType } from "@app/utils/ai/types.ts";
 import { suggestCommand } from "@app/utils/cli/executor";
 import type { SayConfig } from "@app/utils/macos/tts.ts";
-import {
-    getConfigForRead,
-    listVoicesStructured,
-    normalizeVolume,
-    playAudioFile,
-    setConfig,
-    setMute,
-    speak,
-} from "@app/utils/macos/tts.ts";
+import { getConfigForRead, listVoicesStructured, normalizeVolume, setConfig, setMute } from "@app/utils/macos/tts.ts";
 import { formatTable } from "@app/utils/table.ts";
 import * as p from "@clack/prompts";
 import { Command } from "commander";
 import pc from "picocolors";
 
-const REST_TTS_LIMIT = 15_000;
-
-type SayProvider = "macos" | "xai";
+type SayProvider = "macos" | "xai" | "openai";
 
 interface SayOptions {
     volume?: number;
-    /** `true` when `--voice` was passed without an argument — triggers voice listing. */
     voice?: string | true;
     rate?: number;
     wait?: boolean;
@@ -40,13 +27,13 @@ interface SayOptions {
     format?: "mp3" | "wav";
     file?: string;
     stream?: boolean;
+    noStream?: boolean;
+    model?: string;
 }
 
 const program = new Command()
     .name("say")
-    .description(
-        "Text-to-speech with volume control, auto language detection, mute, and pluggable backends (macOS, xAI Grok)"
-    )
+    .description("Text-to-speech with pluggable backends (macOS, xAI Grok, OpenAI)")
     .argument("[message...]", "Text to speak (omit to read --file or enter interactive mode)")
     .option("--volume <n>", "Volume (0.0-1.0 or 0-100%); saved per-app with --app", parseFloat)
     .option("--voice [name]", "Voice id (provider-specific). Pass --voice with no value to list available voices.")
@@ -55,27 +42,26 @@ const program = new Command()
     .option("--app <name>", "Caller identity for per-app mute")
     .option("--mute", "Mute (global or per-app with --app)")
     .option("--unmute", "Unmute (global or per-app with --app)")
-    .option("--provider <name>", "TTS backend: 'macos' (default) or 'xai'", "macos")
+    .option("--provider <name>", "TTS backend: macos (default), xai, openai")
     .option("--language <bcp47>", "Language hint (xai only; defaults to 'auto')")
-    .option("--format <codec>", "Output codec for xAI: mp3 (default) or wav")
+    .option("--format <codec>", "Output codec: mp3 (default) or wav")
     .option("--file <path>", "Read text from a file instead of args")
-    .option("--stream", "Force WebSocket streaming path (xai only; auto-engaged for >15k chars)")
+    .option("--stream", "Force streaming path")
+    .option("--no-stream", "Force REST/non-streaming path")
+    .option("--model <id>", "Provider-specific model (e.g. tts-1, gpt-4o-mini-tts for openai)")
     .action(async (messageParts: string[], opts: SayOptions) => {
         if (opts.mute) {
             await setMute(true, opts.app);
-            const scope = opts.app ? `app "${opts.app}"` : "global";
-            console.log(pc.yellow(`[say] ${scope} muted`));
+            console.log(pc.yellow(`[say] ${opts.app ? `app "${opts.app}"` : "global"} muted`));
             return;
         }
 
         if (opts.unmute) {
             await setMute(false, opts.app);
-            const scope = opts.app ? `app "${opts.app}"` : "global";
-            console.log(pc.green(`[say] ${scope} unmuted`));
+            console.log(pc.green(`[say] ${opts.app ? `app "${opts.app}"` : "global"} unmuted`));
             return;
         }
 
-        // `--voice` with no value: list available voices and exit.
         if (opts.voice === true) {
             await printVoiceList(opts.provider);
             return;
@@ -88,21 +74,55 @@ const program = new Command()
             return;
         }
 
-        const provider: SayProvider = opts.provider ?? "macos";
-        const voice = typeof opts.voice === "string" ? opts.voice : undefined;
+        const muted = await isMutedForApp(opts.app);
 
-        if (provider === "xai") {
-            await speakViaXai(text, { ...opts, voice });
+        if (muted) {
+            process.stderr.write("[say] muted\n");
             return;
         }
 
-        await speak(text, {
-            volume: opts.volume,
-            voice,
-            rate: opts.rate,
-            wait: opts.wait,
-            app: opts.app,
-        });
+        const provider: SayProvider = opts.provider ?? "macos";
+
+        if (provider !== "macos" && !envForProvider(provider)) {
+            console.error(pc.red(`[say] env var for ${provider} is not set.`));
+            console.error(pc.dim(suggestCommand("tools say", { add: ["--provider", "macos"] })));
+            process.exit(1);
+        }
+
+        const volume = opts.volume != null ? normalizeVolume(opts.volume) : undefined;
+        const stream = opts.stream === true ? true : opts.noStream === true ? false : undefined;
+
+        try {
+            await AI.speak(text, {
+                provider,
+                voice: typeof opts.voice === "string" ? opts.voice : undefined,
+                language: opts.language,
+                format: opts.format,
+                rate: opts.rate,
+                volume,
+                stream,
+                wait: opts.wait,
+                model: opts.model,
+            });
+        } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            console.error(pc.red(`[say] TTS failed: ${message}`));
+
+            if (isVoiceNotFoundError(message)) {
+                await printVoiceList(provider);
+            }
+
+            process.exit(1);
+        }
+    });
+
+// `tools say voices` subcommand
+program
+    .command("voices")
+    .description("List voices grouped by provider")
+    .option("--provider <name>", "Filter to one provider")
+    .action(async (opts: { provider?: SayProvider }) => {
+        await printVoiceList(opts.provider);
     });
 
 async function resolveText(messageParts: string[], filePath?: string): Promise<string | null> {
@@ -124,72 +144,21 @@ async function resolveText(messageParts: string[], filePath?: string): Promise<s
     return messageParts.join(" ");
 }
 
-async function speakViaXai(text: string, opts: SayOptions & { voice?: string }): Promise<void> {
-    if (!process.env.X_AI_API_KEY) {
-        console.error(pc.red("[say] X_AI_API_KEY is not set."));
-        console.error(pc.dim(suggestCommand("tools say", { add: ["--provider", "macos"] })));
-        process.exit(1);
+function envForProvider(provider: SayProvider): boolean {
+    if (provider === "xai") {
+        return !!process.env.X_AI_API_KEY;
     }
 
-    const config = await getConfigForRead();
-    const muted = isAppMuted(config, opts.app);
-
-    if (muted) {
-        process.stderr.write("[say] muted\n");
-        return;
+    if (provider === "openai") {
+        return !!process.env.OPENAI_API_KEY;
     }
 
-    const provider = getTextToSpeechProvider("xai");
-    const useStream = opts.stream || text.length > REST_TTS_LIMIT;
-
-    const ttsOptions: TTSOptions = {
-        voice: opts.voice ?? "eve",
-        language: opts.language ?? "auto",
-        format: opts.format ?? "mp3",
-        stream: useStream,
-    };
-
-    let result: TTSResult;
-
-    try {
-        if (useStream) {
-            if (!provider.synthesizeStream) {
-                throw new Error("xAI provider missing synthesizeStream");
-            }
-
-            logger.debug(`[say] xai streaming (${text.length} chars)`);
-            const stream = provider.synthesizeStream(text, ttsOptions);
-            const chunks: Uint8Array[] = [];
-            for await (const c of stream.audio) {
-                chunks.push(c);
-            }
-            result = { audio: Buffer.concat(chunks), contentType: stream.contentType };
-        } else {
-            logger.debug(`[say] xai REST (${text.length} chars)`);
-            result = await provider.synthesize(text, ttsOptions);
-        }
-    } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.error(pc.red(`[say] xAI TTS failed: ${message}`));
-
-        if (isVoiceNotFoundError(message)) {
-            await printVoiceList("xai");
-        }
-
-        process.exit(1);
-    }
-
-    const ext = pickExtensionFromContentType(result.contentType, ttsOptions.format);
-    const tmpFile = join(tmpdir(), `genesis-say-xai-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`);
-    await Bun.write(tmpFile, result.audio);
-
-    const rawVolume = opts.volume ?? (opts.app ? config.appVolume[opts.app] : undefined) ?? config.defaultVolume ?? 1;
-    const volume = normalizeVolume(rawVolume);
-
-    await playAudioFile(tmpFile, { volume, wait: opts.wait, cleanup: true });
+    return true;
 }
 
-function isAppMuted(config: SayConfig, app?: string): boolean {
+async function isMutedForApp(app: string | undefined): Promise<boolean> {
+    const config = await getConfigForRead();
+
     if (app && app in config.appMute) {
         return config.appMute[app];
     }
@@ -197,61 +166,34 @@ function isAppMuted(config: SayConfig, app?: string): boolean {
     return config.globalMute;
 }
 
-function pickExtensionFromContentType(contentType: string, requestedFormat?: TTSOptions["format"]): string {
-    const ct = contentType.toLowerCase();
-
-    if (ct.includes("mpeg") || ct.includes("mp3")) {
-        return ".mp3";
-    }
-
-    if (ct.includes("wav")) {
-        return ".wav";
-    }
-
-    if (ct.includes("aiff")) {
-        return ".aiff";
-    }
-
-    return requestedFormat ? `.${requestedFormat}` : ".mp3";
-}
-
 function isVoiceNotFoundError(message: string): boolean {
     return /\b404\b/.test(message) || /voice .* not found/i.test(message);
 }
 
-async function printVoiceList(filterProvider?: SayProvider): Promise<void> {
-    const providers: SayProvider[] = filterProvider ? [filterProvider] : ["macos", "xai"];
+async function printVoiceList(filter?: SayProvider): Promise<void> {
+    const grouped = await AI.Synthesizer.create({ provider: "any" }).then((s) =>
+        s.listVoices(filter ? { provider: filter as AIProviderType } : undefined)
+    );
 
-    for (const name of providers) {
-        if (name === "xai" && !process.env.X_AI_API_KEY) {
-            console.error(pc.dim(`\n[xai] X_AI_API_KEY not set — skipping`));
+    for (const [providerType, voices] of Object.entries(grouped)) {
+        const label =
+            providerType === "macos"
+                ? "macOS"
+                : providerType === "xai"
+                  ? "xAI"
+                  : providerType === "openai"
+                    ? "OpenAI"
+                    : providerType;
+        console.log();
+        console.log(pc.bold(pc.cyan(`[${label}] (${voices.length} voices)`)));
+
+        if (voices.length === 0) {
+            console.error(pc.dim("  (no voices)"));
             continue;
         }
 
-        console.log();
-        console.log(pc.bold(pc.cyan(`Provider: ${name}`)));
-
-        try {
-            const provider = getProvider(name) as unknown as AITextToSpeechProvider;
-
-            if (!provider.listVoices) {
-                console.error(pc.dim(`  (no listVoices() implementation)`));
-                continue;
-            }
-
-            const voices = await provider.listVoices();
-
-            if (voices.length === 0) {
-                console.error(pc.dim(`  (no voices reported)`));
-                continue;
-            }
-
-            const rows = voices.map((v) => [v.id, v.name, v.locale ?? "", (v.description ?? "").slice(0, 60)]);
-            console.log(formatTable(rows, ["ID", "Name", "Locale", "Description"]));
-        } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
-            console.error(pc.red(`  failed to list voices: ${message}`));
-        }
+        const rows = voices.map((v) => [v.id, v.name, v.locale ?? "", (v.description ?? "").slice(0, 60)]);
+        console.log(formatTable(rows, ["ID", "Name", "Locale", "Description"]));
     }
 }
 
@@ -275,8 +217,6 @@ async function interactiveMode(): Promise<void> {
     p.intro(pc.bgCyan(pc.black(" tools say ")));
 
     const config = await getConfigForRead();
-
-    // Show current status
     showStatus(config);
 
     const action = await p.select({
@@ -350,13 +290,7 @@ async function handleTest(config: SayConfig): Promise<void> {
 
     const s = p.spinner();
     s.start("Speaking...");
-
-    await speak(text, {
-        volume: config.defaultVolume,
-        voice: config.defaultVoice ?? undefined,
-        wait: true,
-    });
-
+    await AI.speak(String(text), { provider: "macos", volume: config.defaultVolume, wait: true });
     s.stop("Done");
 }
 
