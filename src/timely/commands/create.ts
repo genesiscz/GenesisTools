@@ -243,8 +243,37 @@ async function runPlan(storage: Storage, service: TimelyService, options: Create
         logger.info(
             `  ${plan.days.length} day(s), ${plan.days.reduce((s, d) => s + d.available_memories.length, 0)} memories`
         );
-        logger.info(`  Edit events[] per day, then: tools timely create --apply ${out} --dry-run`);
+        printPlanSummary(plan);
+        logger.info(`Edit events[] per day, then: tools timely create --apply ${out} --dry-run`);
     }
+}
+
+function printPlanSummary(plan: CreatePlanV1): void {
+    for (const day of plan.days) {
+        console.log(chalk.bold(`\n=== ${day.day} (${day.available_memories.length} memories) ===`));
+        if (day.suggestions.length > 0) {
+            console.log(chalk.dim("  Suggestions:"));
+            for (const s of day.suggestions) {
+                console.log(
+                    chalk.dim(
+                        `    proj ${String(s.project_id).padStart(8)}  ${s.project_name.padEnd(20)}  score ${s.score.toFixed(2).padStart(5)}  ${s.reasons.join(" · ")}`
+                    )
+                );
+            }
+        }
+
+        console.log(chalk.dim("  Memories (id  from-to  min  app  note | sub_notes):"));
+        for (const m of day.available_memories) {
+            const f = m.from.split("T")[1]?.slice(0, 5) ?? "??:??";
+            const t = m.to.split("T")[1]?.slice(0, 5) ?? "??:??";
+            const app = (m.app || "").slice(0, 20).padEnd(20);
+            const note = (m.note || "").slice(0, 70);
+            const sub = m.sub_notes.length > 0 ? ` | ${m.sub_notes.slice(0, 2).join("; ").slice(0, 80)}` : "";
+            console.log(`    ${String(m.id).padStart(10)}  ${f}-${t}  ${String(m.duration_min).padStart(4)}m  ${app}  ${note}${sub}`);
+        }
+    }
+
+    console.log("");
 }
 
 function readPlanFile(path: string): CreatePlanV1 {
