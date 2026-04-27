@@ -1,7 +1,11 @@
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { YoutubeDatabase } from "@app/youtube/lib/db";
 
 let db: YoutubeDatabase;
+let tempDirs: string[] = [];
 
 beforeEach(() => {
     db = new YoutubeDatabase(":memory:");
@@ -9,6 +13,12 @@ beforeEach(() => {
 
 afterEach(() => {
     db.close();
+
+    for (const tempDir of tempDirs) {
+        rmSync(tempDir, { recursive: true, force: true });
+    }
+
+    tempDirs = [];
 });
 
 describe("YoutubeDatabase schema", () => {
@@ -155,6 +165,37 @@ describe("YoutubeDatabase videos", () => {
 
         expect(video?.summaryShort).toBe("Short summary");
         expect(video?.summaryTimestamped).toEqual([{ startSec: 0, endSec: 10, text: "Intro" }]);
+    });
+
+    it("prunes expired binary files and clears database paths", async () => {
+        const tempDir = mkdtempSync(join(tmpdir(), "youtube-db-prune-"));
+        tempDirs.push(tempDir);
+        const audioPath = join(tempDir, "old.wav");
+        const videoPath = join(tempDir, "old.mp4");
+        const thumbPath = join(tempDir, "fresh.jpg");
+        writeFileSync(audioPath, "audio");
+        writeFileSync(videoPath, "video");
+        writeFileSync(thumbPath, "thumb");
+        db.upsertVideo({ id: "vid00000001", channelHandle: "@mkbhd", title: "Video 1" });
+        db.setVideoBinaryPath("vid00000001", "audio", audioPath, 5);
+        db.setVideoBinaryPath("vid00000001", "video", videoPath, 5);
+        db.setVideoBinaryPath("vid00000001", "thumb", thumbPath);
+        db.getDb().run("UPDATE videos SET audio_cached_at = datetime('now', '-10 days'), video_cached_at = datetime('now', '-10 days'), thumb_cached_at = datetime('now') WHERE id = ?", [
+            "vid00000001",
+        ]);
+
+        const result = await db.pruneExpiredBinaries({ audioOlderThanDays: 7, videoOlderThanDays: 7, thumbOlderThanDays: 7 });
+        const video = db.getVideo("vid00000001");
+
+        expect(result).toEqual({ audio: 1, video: 1, thumb: 0 });
+        expect(existsSync(audioPath)).toBe(false);
+        expect(existsSync(videoPath)).toBe(false);
+        expect(existsSync(thumbPath)).toBe(true);
+        expect(video?.audioPath).toBeNull();
+        expect(video?.audioSizeBytes).toBeNull();
+        expect(video?.videoPath).toBeNull();
+        expect(video?.videoSizeBytes).toBeNull();
+        expect(video?.thumbPath).toBe(thumbPath);
     });
 });
 

@@ -1,21 +1,31 @@
+import { existsSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { BaseDatabase } from "@app/utils/database";
+import { withFileLock } from "@app/utils/storage";
+import type { Channel, ChannelHandle } from "@app/youtube/lib/channel.types";
 import type {
-    Channel,
-    ChannelHandle,
-    JobStage,
-    JobStatus,
-    JobTargetKind,
-    Language,
-    PipelineJob,
-    QaChunk,
-    TimestampedSummaryEntry,
-    Transcript,
-    TranscriptSegment,
-    Video,
-    VideoId,
-} from "@app/youtube/lib/types";
+    ClaimJobOpts,
+    EnqueueJobInput,
+    GetTranscriptOpts,
+    ListJobsOpts,
+    ListVideosOpts,
+    PruneExpiredBinariesOpts,
+    PruneExpiredBinariesResult,
+    SaveTranscriptInput,
+    SearchTranscriptsOpts,
+    SetVideoBinaryPathInput,
+    SetVideoSummaryInput,
+    TranscriptSearchHit,
+    UpdateJobPartial,
+    UpsertChannelInput,
+    UpsertQaChunkInput,
+    UpsertVideoInput,
+} from "@app/youtube/lib/db.types";
+import type { JobStage, JobStatus, JobTargetKind, PipelineJob } from "@app/youtube/lib/jobs.types";
+import type { QaChunk } from "@app/youtube/lib/qa.types";
+import type { Language, Transcript, TranscriptSegment } from "@app/youtube/lib/transcript.types";
+import type { TimestampedSummaryEntry, Video, VideoId } from "@app/youtube/lib/video.types";
 
 export const DEFAULT_DB_PATH = join(homedir(), ".genesis-tools", "youtube", "youtube.db");
 
@@ -605,57 +615,73 @@ export class YoutubeDatabase extends BaseDatabase {
         this.db.run("UPDATE jobs SET status = 'cancelled', completed_at = datetime('now'), updated_at = datetime('now') WHERE id = ?", [id]);
     }
 
+    async pruneExpiredBinaries(opts: PruneExpiredBinariesOpts): Promise<PruneExpiredBinariesResult> {
+        return {
+            audio: await this.pruneExpiredBinaryKind("audio", opts.audioOlderThanDays),
+            video: await this.pruneExpiredBinaryKind("video", opts.videoOlderThanDays),
+            thumb: await this.pruneExpiredBinaryKind("thumb", opts.thumbOlderThanDays),
+        };
+    }
+
+    private async pruneExpiredBinaryKind(kind: "audio" | "video" | "thumb", olderThanDays?: number): Promise<number> {
+        if (olderThanDays === undefined) {
+            return 0;
+        }
+
+        const columns = videoBinaryColumns(kind);
+        const cutoff = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000).toISOString().slice(0, 19).replace("T", " ");
+        const rows = this.db
+            .query<PruneBinaryRow, [string]>(
+                `SELECT id, ${columns.pathColumn} AS path
+                 FROM videos
+                 WHERE ${columns.pathColumn} IS NOT NULL AND ${columns.cachedAtColumn} < ?
+                 ORDER BY ${columns.cachedAtColumn} ASC`
+            )
+            .all(cutoff);
+        let count = 0;
+
+        for (const row of rows) {
+            const filePath = row.path;
+
+            if (!filePath) {
+                continue;
+            }
+
+            await withFileLock(`${filePath}.lock`, async () => {
+                try {
+                    if (existsSync(filePath)) {
+                        unlinkSync(filePath);
+                    }
+                } catch (error) {
+                    if (!isEnoentError(error)) {
+                        throw error;
+                    }
+                }
+
+                this.clearVideoBinaryPath(row.id, kind);
+                count++;
+            });
+        }
+
+        return count;
+    }
+
+    private clearVideoBinaryPath(id: VideoId, kind: "audio" | "video" | "thumb"): void {
+        const columns = videoBinaryColumns(kind);
+
+        if (columns.sizeColumn) {
+            this.db.run(
+                `UPDATE videos SET ${columns.pathColumn} = NULL, ${columns.sizeColumn} = NULL, ${columns.cachedAtColumn} = NULL, updated_at = datetime('now') WHERE id = ?`,
+                [id]
+            );
+        } else {
+            this.db.run(`UPDATE videos SET ${columns.pathColumn} = NULL, ${columns.cachedAtColumn} = NULL, updated_at = datetime('now') WHERE id = ?`, [id]);
+        }
+    }
+
     initSchemaForTest(): void {
         this.initSchema();
     }
-}
-
-interface UpsertChannelInput {
-    handle: ChannelHandle;
-    channelId?: string | null;
-    title?: string | null;
-    description?: string | null;
-    subscriberCount?: number | null;
-    thumbUrl?: string | null;
-}
-
-interface UpsertVideoInput {
-    id: VideoId;
-    channelHandle: ChannelHandle;
-    title: string;
-    description?: string | null;
-    uploadDate?: string | null;
-    durationSec?: number | null;
-    viewCount?: number | null;
-    likeCount?: number | null;
-    language?: string | null;
-    availableCaptionLangs?: string[];
-    tags?: string[];
-    isShort?: boolean;
-    isLive?: boolean;
-    thumbUrl?: string | null;
-}
-
-interface ListVideosOpts {
-    channel?: ChannelHandle;
-    since?: string;
-    includeShorts?: boolean;
-    includeLive?: boolean;
-    limit?: number;
-    offset?: number;
-}
-
-interface SetVideoBinaryPathInput {
-    id: VideoId;
-    kind: "audio" | "video" | "thumb";
-    path: string | null;
-    sizeBytes?: number;
-}
-
-interface SetVideoSummaryInput {
-    id: VideoId;
-    kind: "short" | "timestamped";
-    value: string | TimestampedSummaryEntry[];
 }
 
 interface VideoRow {
@@ -793,71 +819,9 @@ function parseNullableJsonArray<T>(raw: string | null): T[] | null {
     return parsed as T[];
 }
 
-interface SaveTranscriptInput {
-    videoId: VideoId;
-    lang: Language;
-    source: "captions" | "ai";
-    text: string;
-    segments: TranscriptSegment[];
-    durationSec?: number | null;
-}
-
-interface GetTranscriptOpts {
-    lang?: Language;
-    source?: "captions" | "ai";
-    preferLang?: Language[];
-}
-
-interface SearchTranscriptsOpts {
-    videoIds?: VideoId[];
-    limit?: number;
-    snippetChars?: number;
-}
-
-interface UpsertQaChunkInput {
-    videoId: VideoId;
-    chunkIdx: number;
-    text: string;
-    startSec?: number | null;
-    endSec?: number | null;
-    embedding?: Float32Array | null;
-    embedderModel?: string | null;
-}
-
-interface EnqueueJobInput {
-    targetKind: JobTargetKind;
-    target: string;
-    stages: JobStage[];
-    parentJobId?: number | null;
-}
-
-interface ClaimJobOpts {
-    stage?: JobStage;
-}
-
-interface UpdateJobPartial {
-    status?: JobStatus;
-    currentStage?: JobStage | null;
-    error?: string | null;
-    progress?: number;
-    progressMessage?: string | null;
-    completedAt?: string | null;
-}
-
-interface ListJobsOpts {
-    status?: JobStatus;
-    targetKind?: JobTargetKind;
-    target?: string;
-    parentJobId?: number;
-    limit?: number;
-    offset?: number;
-}
-
-interface TranscriptSearchHit {
-    videoId: VideoId;
-    lang: Language;
-    snippet: string;
-    rank: number;
+interface PruneBinaryRow {
+    id: VideoId;
+    path: string | null;
 }
 
 interface TranscriptRow {
@@ -964,6 +928,10 @@ function assertJobTransition(from: JobStatus, to: JobStatus, trigger: string): v
     if (!allowed[from].includes(to)) {
         throw new Error(`${trigger}: invalid job transition ${from} -> ${to}`);
     }
+}
+
+function isEnoentError(error: unknown): boolean {
+    return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
 
 function rowToQaChunk(row: QaChunkRow): QaChunk {
