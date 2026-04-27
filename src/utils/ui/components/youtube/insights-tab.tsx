@@ -58,9 +58,7 @@ export function InsightsTab({ videoId, useSummary, useGenerateSummary }: Insight
                 title="Generate AI insights?"
                 description="This will send the full transcript to your configured LLM and ask for a short summary."
                 payloadSummary="Full transcript text; expected response ≤ ~1 KB."
-                defaultProvider="(server-configured)"
-                defaultModel="(server-configured)"
-                billingNote="Configure the default in server.json under provider.summarize. Override here if needed."
+                billingNote="Leave blank to use the default provider (server.json → provider.summarize)."
                 busy={generate.isPending}
                 confirmLabel={shortSummary.length === 0 ? "Generate" : "Re-generate"}
                 onCancel={() => setConfirmOpen(false)}

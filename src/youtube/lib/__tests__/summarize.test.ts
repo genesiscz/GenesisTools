@@ -59,30 +59,21 @@ describe("SummaryService", () => {
         }
     });
 
-    it("summarizes timestamped output via a single Summarizer call (no providerChoice)", async () => {
+    it("builds timestamped highlights deterministically without any LLM call when no providerChoice is given", async () => {
         const { db, config, dir } = await makeFixture();
         const progress: unknown[] = [];
 
         try {
-            summaries = [JSON.stringify([
-                { startSec: 0, endSec: 10, text: "First half" },
-                { startSec: 10, endSec: 20, text: "Second half" },
-            ])];
             const service = new SummaryService(db, config, makeDeps());
 
-            await expect(service.summarize({ videoId: "abc123def45", mode: "timestamped", provider: "groq", onProgress: (info) => progress.push(info) })).resolves.toEqual({
-                timestamped: [
-                    { startSec: 0, endSec: 10, text: "First half" },
-                    { startSec: 10, endSec: 20, text: "Second half" },
-                ],
-            });
-            expect(summarizerCreateCalls).toEqual([{ provider: "groq" }]);
-            expect(summarizeCalls).toHaveLength(1);
-            expect(db.getVideo("abc123def45")?.summaryTimestamped).toEqual([
-                { startSec: 0, endSec: 10, text: "First half" },
-                { startSec: 10, endSec: 20, text: "Second half" },
-            ]);
-            expect(progress).toEqual([{ phase: "summarize", message: "Summarizing entire transcript in one call" }]);
+            const result = await service.summarize({ videoId: "abc123def45", mode: "timestamped", onProgress: (info) => progress.push(info) });
+
+            expect(result.timestamped?.length).toBeGreaterThan(0);
+            expect(result.timestamped?.every((entry) => typeof entry.text === "string" && entry.text.length > 0)).toBe(true);
+            expect(callLlmCalls).toHaveLength(0);
+            expect(summarizeCalls).toHaveLength(0);
+            expect(progress).toEqual([{ phase: "summarize", message: "Building timestamped highlights deterministically" }]);
+            expect(db.getVideo("abc123def45")?.summaryTimestamped?.length).toBe(result.timestamped?.length);
         } finally {
             db.close();
             await rm(dir, { recursive: true, force: true });
@@ -112,10 +103,11 @@ describe("SummaryService", () => {
         const { db, config, dir } = await makeFixture();
 
         try {
-            summaries = ["Plain prose, not JSON at all."];
+            llmResponses = ["Plain prose, not JSON at all."];
             const service = new SummaryService(db, config, makeDeps());
 
-            const result = await service.summarize({ videoId: "abc123def45", mode: "timestamped" });
+            const fakeChoice = { provider: "fake", model: "fake" } as unknown as Parameters<typeof service.summarize>[0]["providerChoice"];
+            const result = await service.summarize({ videoId: "abc123def45", mode: "timestamped", providerChoice: fakeChoice });
             expect(result.timestamped?.length).toBe(1);
             expect(result.timestamped?.[0].text).toContain("Plain prose");
         } finally {

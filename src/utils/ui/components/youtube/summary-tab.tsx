@@ -65,13 +65,12 @@ export function SummaryTab({ videoId, onSeek, useSummary, useGenerateSummary }: 
             <LlmConfirmDialog
                 open={confirmOpen}
                 title="Generate timestamped summary?"
-                description="This will send the full transcript to your configured LLM in one request and ask for ~12 timestamped highlights as JSON."
-                payloadSummary="Full transcript with timestamps; expected response ≤ ~3 KB JSON."
-                defaultProvider="(server-configured)"
-                defaultModel="(server-configured)"
-                billingNote="Tip: leave provider/model blank to use the server's default (server.json → provider.summarize)."
+                description="Default: pick a representative line per time-bucket from the transcript. Set provider+model to instead send the full transcript to an LLM that returns ~12 summarised highlights."
+                payloadSummary="Without LLM: zero bytes sent, zero cost. With LLM: full transcript with timestamps; expected response ≤ ~3 KB JSON."
+                billingNote="LLM cost depends on the provider you select."
+                deterministicLabel={entries.length === 0 ? "Generate (free)" : "Re-generate (free)"}
                 busy={generate.isPending}
-                confirmLabel={entries.length === 0 ? "Generate" : "Re-generate"}
+                confirmLabel={entries.length === 0 ? "Generate (LLM)" : "Re-generate (LLM)"}
                 onCancel={() => setConfirmOpen(false)}
                 onConfirm={(overrides) => runGenerate(overrides, entries.length > 0)}
             />

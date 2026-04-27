@@ -1,4 +1,5 @@
 import { SafeJSON } from "@app/utils/json";
+import { withJobActivity } from "@app/youtube/lib/job-activity";
 import { resolveProviderChoice } from "@app/youtube/lib/provider-choice";
 import { CORS_HEADERS } from "@app/youtube/lib/server/cors";
 import { toErrorResponse } from "@app/youtube/lib/server/error";
@@ -109,16 +110,35 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
             }
 
             const providerChoice = (provider || model) ? await resolveProviderChoice({ provider, model }) : undefined;
-            const result = await yt.summary.summarize({
-                videoId: id,
-                mode,
-                provider,
-                providerChoice,
-                targetBins,
-                forceRecompute: force,
-            });
+            const job = yt.db.enqueueJob({ targetKind: "video", target: id, stages: ["summarize"] });
+            const startedAt = new Date().toISOString();
+            yt.db.updateJob(job.id, { status: "running", currentStage: "summarize" });
 
-            return Response.json({ summary: mode === "timestamped" ? result.timestamped ?? [] : result.short ?? "", mode, cached: false }, { headers: CORS_HEADERS });
+            try {
+                const result = await withJobActivity({ jobId: job.id, stage: "summarize", db: yt.db }, () =>
+                    yt.summary.summarize({
+                        videoId: id,
+                        mode,
+                        provider,
+                        providerChoice,
+                        targetBins,
+                        forceRecompute: force,
+                    })
+                );
+                yt.db.updateJob(job.id, { status: "completed", progress: 1, currentStage: null, completedAt: new Date().toISOString() });
+
+                return Response.json({
+                    summary: mode === "timestamped" ? result.timestamped ?? [] : result.short ?? "",
+                    mode,
+                    cached: false,
+                    jobId: job.id,
+                    startedAt,
+                }, { headers: CORS_HEADERS });
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                yt.db.updateJob(job.id, { status: "failed", error: message, completedAt: new Date().toISOString() });
+                throw error;
+            }
         }
 
         const qa = matchRoute(req, "POST", "/api/v1/videos/:id/qa", url.pathname);
@@ -143,19 +163,33 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                 return jsonError("no transcript yet for this video — run pipeline / transcribe first", 409);
             }
 
-            await yt.qa.index({ videoId: id });
+            const question = body.question;
+            const topK = typeof body.topK === "number" ? body.topK : undefined;
             const providerChoice = await resolveProviderChoice({
                 provider: typeof body.provider === "string" ? body.provider : undefined,
                 model: typeof body.model === "string" ? body.model : undefined,
             });
-            const result = await yt.qa.ask({
-                videoIds: [id],
-                question: body.question,
-                topK: typeof body.topK === "number" ? body.topK : undefined,
-                providerChoice,
-            });
+            const job = yt.db.enqueueJob({ targetKind: "video", target: id, stages: ["summarize"] });
+            yt.db.updateJob(job.id, { status: "running", currentStage: "summarize" });
 
-            return Response.json(result, { headers: CORS_HEADERS });
+            try {
+                const result = await withJobActivity({ jobId: job.id, stage: "summarize", db: yt.db }, async () => {
+                    await yt.qa.index({ videoId: id });
+                    return yt.qa.ask({
+                        videoIds: [id],
+                        question,
+                        topK,
+                        providerChoice,
+                    });
+                });
+                yt.db.updateJob(job.id, { status: "completed", progress: 1, currentStage: null, completedAt: new Date().toISOString() });
+
+                return Response.json({ ...result, jobId: job.id }, { headers: CORS_HEADERS });
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                yt.db.updateJob(job.id, { status: "failed", error: message, completedAt: new Date().toISOString() });
+                throw error;
+            }
         }
 
         return jsonError("not found", 404);

@@ -774,8 +774,8 @@ export class YoutubeDatabase extends BaseDatabase {
                 input.action ?? null,
                 input.provider ?? null,
                 input.model ?? null,
-                truncateForActivity(input.prompt),
-                truncateForActivity(input.response),
+                input.prompt ?? null,
+                input.response ?? null,
                 input.tokensIn ?? null,
                 input.tokensOut ?? null,
                 input.tokensTotal ?? null,
@@ -1193,20 +1193,6 @@ function rowToChannel(row: ChannelRow): Channel {
         createdAt: row.created_at,
         updatedAt: row.updated_at,
     };
-}
-
-const ACTIVITY_TEXT_LIMIT = 64 * 1024;
-
-function truncateForActivity(value: string | null | undefined): string | null {
-    if (value === null || value === undefined) {
-        return null;
-    }
-
-    if (value.length <= ACTIVITY_TEXT_LIMIT) {
-        return value;
-    }
-
-    return `${value.slice(0, ACTIVITY_TEXT_LIMIT)}…[truncated ${value.length - ACTIVITY_TEXT_LIMIT} chars]`;
 }
 
 interface JobActivityRow {
