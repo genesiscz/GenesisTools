@@ -243,7 +243,7 @@ async function runPlan(storage: Storage, service: TimelyService, options: Create
         logger.info(
             `  ${plan.days.length} day(s), ${plan.days.reduce((s, d) => s + d.available_memories.length, 0)} memories`
         );
-        logger.info("  Edit events[] per day, then: tools timely create --apply " + out + " --dry-run");
+        logger.info(`  Edit events[] per day, then: tools timely create --apply ${out} --dry-run`);
     }
 }
 
