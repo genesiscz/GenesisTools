@@ -20,7 +20,7 @@ export interface BuiltPayload {
  * returned. Used by the plan/apply flow to filter to a specific event's IDs.
  */
 export function flattenMemories(memories: TimelyEntry[], allowedIds?: Set<number>): FlatEntry[] {
-    const flat: FlatEntry[] = [];
+    const raw: FlatEntry[] = [];
 
     const allowed = (id: number): boolean => !allowedIds || allowedIds.has(id);
 
@@ -28,7 +28,7 @@ export function flattenMemories(memories: TimelyEntry[], allowedIds?: Set<number
         const inner = bucket.entries ?? [];
         if (inner.length === 0) {
             if (bucket.id && bucket.from && bucket.to && allowed(bucket.id)) {
-                flat.push({ id: bucket.id, from: bucket.from, to: bucket.to });
+                raw.push({ id: bucket.id, from: bucket.from, to: bucket.to });
             }
 
             continue;
@@ -41,16 +41,57 @@ export function flattenMemories(memories: TimelyEntry[], allowedIds?: Set<number
 
             const subs = entry.sub_entries ?? [];
             if (subs.length === 0) {
-                flat.push({ id: entry.id, from: entry.from, to: entry.to });
+                raw.push({ id: entry.id, from: entry.from, to: entry.to });
             } else {
                 for (const sub of subs) {
-                    flat.push({ id: entry.id, from: sub.from, to: sub.to });
+                    raw.push({ id: entry.id, from: sub.from, to: sub.to });
                 }
             }
         }
     }
 
-    return flat.sort((a, b) => a.from.localeCompare(b.from));
+    // Merge overlapping/touching intervals PER memory id to keep the visible
+    // timestamps[] in the Timely UI minimal (otherwise dozens of 1-min rows).
+    const byId = new Map<number, FlatEntry[]>();
+    for (const f of raw) {
+        const arr = byId.get(f.id) ?? [];
+        arr.push(f);
+        byId.set(f.id, arr);
+    }
+
+    const merged: FlatEntry[] = [];
+    for (const [id, items] of byId) {
+        const sorted = items
+            .map((it) => ({ id, fromMs: new Date(it.from).getTime(), toMs: new Date(it.to).getTime(), from: it.from, to: it.to }))
+            .filter((it) => it.toMs > it.fromMs)
+            .sort((a, b) => a.fromMs - b.fromMs);
+
+        if (sorted.length === 0) {
+            continue;
+        }
+
+        let curFrom = sorted[0].from;
+        let curTo = sorted[0].to;
+        let curToMs = sorted[0].toMs;
+        for (let i = 1; i < sorted.length; i++) {
+            const it = sorted[i];
+            if (it.fromMs <= curToMs) {
+                if (it.toMs > curToMs) {
+                    curTo = it.to;
+                    curToMs = it.toMs;
+                }
+            } else {
+                merged.push({ id, from: curFrom, to: curTo });
+                curFrom = it.from;
+                curTo = it.to;
+                curToMs = it.toMs;
+            }
+        }
+
+        merged.push({ id, from: curFrom, to: curTo });
+    }
+
+    return merged.sort((a, b) => a.from.localeCompare(b.from));
 }
 
 /**
