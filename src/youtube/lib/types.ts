@@ -16,6 +16,15 @@ export type {
     SummaryProgressInfo,
 } from "@app/youtube/lib/summarize.types";
 export type {
+    EnqueuePipelineJobInput,
+    JobEventHandler,
+    ListPipelineJobsOpts,
+    PipelineDeps,
+    PipelineHandlerMap,
+    StageHandler,
+    StageHandlerCtx,
+} from "@app/youtube/lib/pipeline.types";
+export type {
     AskCitation,
     AskOpts,
     AskResult,
