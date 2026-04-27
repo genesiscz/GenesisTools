@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { BaseDatabase } from "@app/utils/database";
+import type { Channel, ChannelHandle } from "@app/youtube/lib/types";
 
 export const DEFAULT_DB_PATH = join(homedir(), ".genesis-tools", "youtube", "youtube.db");
 
@@ -154,7 +155,88 @@ export class YoutubeDatabase extends BaseDatabase {
         }
     }
 
+    upsertChannel(input: UpsertChannelInput): void {
+        this.db.run(
+            `INSERT INTO channels (handle, channel_id, title, description, subscriber_count, thumb_url, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+             ON CONFLICT(handle) DO UPDATE SET
+                channel_id = COALESCE(excluded.channel_id, channels.channel_id),
+                title = COALESCE(excluded.title, channels.title),
+                description = COALESCE(excluded.description, channels.description),
+                subscriber_count = COALESCE(excluded.subscriber_count, channels.subscriber_count),
+                thumb_url = COALESCE(excluded.thumb_url, channels.thumb_url),
+                updated_at = datetime('now')`,
+            [
+                input.handle,
+                input.channelId ?? null,
+                input.title ?? null,
+                input.description ?? null,
+                input.subscriberCount ?? null,
+                input.thumbUrl ?? null,
+            ]
+        );
+    }
+
+    getChannel(handle: ChannelHandle): Channel | null {
+        const row = this.db.query<ChannelRow, [string]>("SELECT * FROM channels WHERE handle = ?").get(handle);
+
+        if (!row) {
+            return null;
+        }
+
+        return rowToChannel(row);
+    }
+
+    listChannels(): Channel[] {
+        const rows = this.db.query<ChannelRow, []>("SELECT * FROM channels ORDER BY handle").all();
+
+        return rows.map(rowToChannel);
+    }
+
+    removeChannel(handle: ChannelHandle): void {
+        this.db.run("DELETE FROM channels WHERE handle = ?", [handle]);
+    }
+
+    setChannelSynced(handle: ChannelHandle): void {
+        this.db.run("UPDATE channels SET last_synced_at = datetime('now'), updated_at = datetime('now') WHERE handle = ?", [handle]);
+    }
+
     initSchemaForTest(): void {
         this.initSchema();
     }
+}
+
+interface UpsertChannelInput {
+    handle: ChannelHandle;
+    channelId?: string | null;
+    title?: string | null;
+    description?: string | null;
+    subscriberCount?: number | null;
+    thumbUrl?: string | null;
+}
+
+interface ChannelRow {
+    handle: ChannelHandle;
+    channel_id: string | null;
+    title: string | null;
+    description: string | null;
+    subscriber_count: number | null;
+    thumb_url: string | null;
+    last_synced_at: string | null;
+    created_at: string;
+    updated_at: string;
+}
+
+function rowToChannel(row: ChannelRow): Channel {
+    return {
+        handle: row.handle,
+        channelId: row.channel_id,
+        title: row.title,
+        description: row.description,
+        subscriberCount: row.subscriber_count,
+        thumbUrl: row.thumb_url,
+        lastSyncedAt: row.last_synced_at,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+    };
 }

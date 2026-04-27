@@ -59,3 +59,43 @@ describe("YoutubeDatabase schema", () => {
         expect(rows[0].version).toBe(1);
     });
 });
+
+describe("YoutubeDatabase channels", () => {
+    it("upserts and gets a channel", () => {
+        db.upsertChannel({
+            handle: "@mkbhd",
+            channelId: "UCBJycsmduvYEL83R_U4JriQ",
+            title: "Marques Brownlee",
+            description: null,
+            subscriberCount: 19_000_000,
+            thumbUrl: null,
+        });
+        const channel = db.getChannel("@mkbhd");
+
+        expect(channel?.title).toBe("Marques Brownlee");
+        expect(channel?.subscriberCount).toBe(19_000_000);
+    });
+
+    it("lists channels in alphabetical order", () => {
+        db.upsertChannel({ handle: "@b", title: "B" });
+        db.upsertChannel({ handle: "@a", title: "A" });
+        const list = db.listChannels();
+
+        expect(list.map((channel) => channel.handle)).toEqual(["@a", "@b"]);
+    });
+
+    it("removes a channel", () => {
+        db.upsertChannel({ handle: "@x", title: "X" });
+        db.removeChannel("@x");
+
+        expect(db.getChannel("@x")).toBeNull();
+    });
+
+    it("sets last synced timestamp", () => {
+        db.upsertChannel({ handle: "@sync", title: "Sync" });
+        db.setChannelSynced("@sync");
+        const channel = db.getChannel("@sync");
+
+        expect(channel?.lastSyncedAt).toBeString();
+    });
+});
