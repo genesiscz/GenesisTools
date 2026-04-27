@@ -11,6 +11,7 @@ import { AIXAIProvider } from "./AIXAIProvider";
 
 const providers = new Map<AIProviderType, AIProvider>();
 
+/** @deprecated Use task-specific accessors: getTranscriptionProvider, getTextToSpeechProvider, etc. */
 export function getProvider(type: AIProviderType): AIProvider {
     const existing = providers.get(type);
 
@@ -141,6 +142,107 @@ export function disposeAll(): void {
     }
 
     providers.clear();
+}
+
+import { CLOUD_PROVIDER_TYPES } from "@app/utils/config/ai.types";
+import type {
+    AIEmbeddingProvider,
+    AISummarizationProvider,
+    AITextToSpeechProvider,
+    AITranscriptionProvider,
+    AITranslationProvider,
+} from "../types";
+
+/**
+ * Return all registered providers that support `task`, optionally filtered by kind.
+ * Note: does NOT call isAvailable() — caller decides whether to filter further.
+ */
+export function getProvidersForTask(
+    task: AITask,
+    filter?: { kind?: "local" | "cloud" | "any" }
+): AIProvider[] {
+    const all = getAllProviders().filter((p) => p.supports(task));
+    const kind = filter?.kind ?? "any";
+
+    if (kind === "any") {
+        return all;
+    }
+
+    if (kind === "cloud") {
+        return all.filter((p) => CLOUD_PROVIDER_TYPES.has(p.type));
+    }
+
+    return all.filter((p) => !CLOUD_PROVIDER_TYPES.has(p.type));
+}
+
+export function getTranscriptionProvider(type: AIProviderType): AITranscriptionProvider {
+    const p = getProvider(type);
+
+    if (!isTranscriptionProvider(p)) {
+        throw new Error(`Provider "${type}" does not implement AITranscriptionProvider.`);
+    }
+
+    return p;
+}
+
+export function getTextToSpeechProvider(type: AIProviderType): AITextToSpeechProvider {
+    const p = getProvider(type);
+
+    if (!isTextToSpeechProvider(p)) {
+        throw new Error(`Provider "${type}" does not implement AITextToSpeechProvider.`);
+    }
+
+    return p;
+}
+
+export function getEmbeddingProvider(type: AIProviderType): AIEmbeddingProvider {
+    const p = getProvider(type);
+
+    if (!isEmbeddingProvider(p)) {
+        throw new Error(`Provider "${type}" does not implement AIEmbeddingProvider.`);
+    }
+
+    return p;
+}
+
+export function getTranslationProvider(type: AIProviderType): AITranslationProvider {
+    const p = getProvider(type);
+
+    if (!isTranslationProvider(p)) {
+        throw new Error(`Provider "${type}" does not implement AITranslationProvider.`);
+    }
+
+    return p;
+}
+
+export function getSummarizationProvider(type: AIProviderType): AISummarizationProvider {
+    const p = getProvider(type);
+
+    if (!isSummarizationProvider(p)) {
+        throw new Error(`Provider "${type}" does not implement AISummarizationProvider.`);
+    }
+
+    return p;
+}
+
+function isTranscriptionProvider(p: AIProvider): p is AITranscriptionProvider {
+    return typeof (p as AITranscriptionProvider).transcribe === "function";
+}
+
+function isTextToSpeechProvider(p: AIProvider): p is AITextToSpeechProvider {
+    return typeof (p as AITextToSpeechProvider).synthesize === "function";
+}
+
+function isEmbeddingProvider(p: AIProvider): p is AIEmbeddingProvider {
+    return typeof (p as AIEmbeddingProvider).embed === "function";
+}
+
+function isTranslationProvider(p: AIProvider): p is AITranslationProvider {
+    return typeof (p as AITranslationProvider).translate === "function";
+}
+
+function isSummarizationProvider(p: AIProvider): p is AISummarizationProvider {
+    return typeof (p as AISummarizationProvider).summarize === "function";
 }
 
 export { AICloudProvider } from "./AICloudProvider";
