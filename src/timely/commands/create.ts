@@ -125,7 +125,13 @@ async function runCreate(storage: Storage, service: TimelyService, options: Crea
         process.exit(1);
     }
 
-    const interactive = options.interactive ?? isInteractive();
+    const ttyInteractive = isInteractive();
+    if (options.interactive && !ttyInteractive) {
+        logger.error("--interactive requires a TTY; rerun with -p <id> [-n <note>] for non-TTY contexts.");
+        process.exit(1);
+    }
+
+    const interactive = options.interactive ?? ttyInteractive;
 
     p.intro(chalk.cyan(`Timely create — ${dates.length} day(s)`));
 
@@ -391,9 +397,12 @@ export function registerCreateCommand(program: Command, storage: Storage, servic
         .option("--apply <path>", "Apply a plan JSON file (use - for stdin)")
         .option("--yes", "Skip warning confirmation when applying")
         .action(async (options: CreateOptions) => {
-            if (options.project !== undefined && Number.isNaN(parseInt(options.project, 10))) {
-                logger.error(`Invalid --project: ${options.project} (must be numeric)`);
-                process.exit(1);
+            if (options.project !== undefined) {
+                const parsed = Number(options.project);
+                if (!Number.isInteger(parsed) || parsed <= 0) {
+                    logger.error(`Invalid --project: ${options.project} (must be a positive integer)`);
+                    process.exit(1);
+                }
             }
 
             const modes = [options.plan, !!options.apply].filter(Boolean).length;

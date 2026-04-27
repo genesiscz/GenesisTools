@@ -13,11 +13,35 @@ export function validatePlan(plan: CreatePlanV1): PlanIssue[] {
         return issues;
     }
 
+    if (!Array.isArray(plan.days)) {
+        issues.push({ severity: "error", day: "*", message: "plan.days must be an array" });
+        return issues;
+    }
+
     for (const day of plan.days) {
+        if (!Array.isArray(day.available_memories) || !Array.isArray(day.events)) {
+            issues.push({
+                severity: "error",
+                day: day?.day ?? "*",
+                message: "day must have array `available_memories` and `events`",
+            });
+            continue;
+        }
+
         const availableIds = new Set(day.available_memories.map((m) => m.id));
         const seenInDay = new Set<number>();
 
         for (const [i, ev] of day.events.entries()) {
+            if (!Array.isArray(ev.memory_ids)) {
+                issues.push({
+                    severity: "error",
+                    day: day.day,
+                    eventIdx: i,
+                    message: "event.memory_ids must be an array",
+                });
+                continue;
+            }
+
             if (ev.memory_ids.length === 0) {
                 issues.push({
                     severity: "error",
