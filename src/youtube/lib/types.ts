@@ -55,3 +55,4 @@ export type {
     YtDlpProgress,
     YtDlpProgressInfo,
 } from "@app/youtube/lib/yt-dlp.types";
+export type { YoutubeDeps, YoutubeOptions, YoutubeServices } from "@app/youtube/lib/youtube.types";
