@@ -15,7 +15,15 @@ export type {
     SummarizeResult,
     SummaryProgressInfo,
 } from "@app/youtube/lib/summarize.types";
-export type { QaChunk } from "@app/youtube/lib/qa.types";
+export type {
+    AskCitation,
+    AskOpts,
+    AskResult,
+    ChunkedTranscript,
+    IndexOpts,
+    IndexResult,
+    QaChunk,
+} from "@app/youtube/lib/qa.types";
 export type { Language, Transcript, TranscriptSegment } from "@app/youtube/lib/transcript.types";
 export type {
     AudioDownloadProgress,
