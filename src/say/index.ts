@@ -28,7 +28,8 @@ type SayProvider = "macos" | "xai";
 
 interface SayOptions {
     volume?: number;
-    voice?: string;
+    /** `true` when `--voice` was passed without an argument — triggers voice listing. */
+    voice?: string | true;
     rate?: number;
     wait?: boolean;
     app?: string;
@@ -48,7 +49,7 @@ const program = new Command()
     )
     .argument("[message...]", "Text to speak (omit to read --file or enter interactive mode)")
     .option("--volume <n>", "Volume (0.0-1.0 or 0-100%); saved per-app with --app", parseFloat)
-    .option("--voice <name>", "Voice id (provider-specific: macos voice name or xAI voice id like 'eve')")
+    .option("--voice [name]", "Voice id (provider-specific). Pass --voice with no value to list available voices.")
     .option("--rate <wpm>", "Words per minute (macOS only)", parseInt)
     .option("--wait", "Block until speech finishes")
     .option("--app <name>", "Caller identity for per-app mute")
@@ -74,6 +75,12 @@ const program = new Command()
             return;
         }
 
+        // `--voice` with no value: list available voices and exit.
+        if (opts.voice === true) {
+            await printVoiceList(opts.provider);
+            return;
+        }
+
         const text = await resolveText(messageParts, opts.file);
 
         if (text == null) {
@@ -82,15 +89,16 @@ const program = new Command()
         }
 
         const provider: SayProvider = opts.provider ?? "macos";
+        const voice = typeof opts.voice === "string" ? opts.voice : undefined;
 
         if (provider === "xai") {
-            await speakViaXai(text, opts);
+            await speakViaXai(text, { ...opts, voice });
             return;
         }
 
         await speak(text, {
             volume: opts.volume,
-            voice: opts.voice,
+            voice,
             rate: opts.rate,
             wait: opts.wait,
             app: opts.app,
@@ -116,7 +124,7 @@ async function resolveText(messageParts: string[], filePath?: string): Promise<s
     return messageParts.join(" ");
 }
 
-async function speakViaXai(text: string, opts: SayOptions): Promise<void> {
+async function speakViaXai(text: string, opts: SayOptions & { voice?: string }): Promise<void> {
     if (!process.env.X_AI_API_KEY) {
         console.error(pc.red("[say] X_AI_API_KEY is not set."));
         console.error(pc.dim(suggestCommand("tools say", { add: ["--provider", "macos"] })));
@@ -158,6 +166,11 @@ async function speakViaXai(text: string, opts: SayOptions): Promise<void> {
     } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         console.error(pc.red(`[say] xAI TTS failed: ${message}`));
+
+        if (isVoiceNotFoundError(message)) {
+            await printVoiceList("xai");
+        }
+
         process.exit(1);
     }
 
@@ -195,6 +208,46 @@ function pickExtensionFromContentType(contentType: string, requestedFormat?: TTS
     }
 
     return requestedFormat ? `.${requestedFormat}` : ".mp3";
+}
+
+function isVoiceNotFoundError(message: string): boolean {
+    return /\b404\b/.test(message) || /voice .* not found/i.test(message);
+}
+
+async function printVoiceList(filterProvider?: SayProvider): Promise<void> {
+    const providers: SayProvider[] = filterProvider ? [filterProvider] : ["macos", "xai"];
+
+    for (const name of providers) {
+        if (name === "xai" && !process.env.X_AI_API_KEY) {
+            console.error(pc.dim(`\n[xai] X_AI_API_KEY not set — skipping`));
+            continue;
+        }
+
+        console.log();
+        console.log(pc.bold(pc.cyan(`Provider: ${name}`)));
+
+        try {
+            const provider = getProvider(name) as unknown as AITextToSpeechProvider;
+
+            if (!provider.listVoices) {
+                console.error(pc.dim(`  (no listVoices() implementation)`));
+                continue;
+            }
+
+            const voices = await provider.listVoices();
+
+            if (voices.length === 0) {
+                console.error(pc.dim(`  (no voices reported)`));
+                continue;
+            }
+
+            const rows = voices.map((v) => [v.id, v.name, v.locale ?? "", (v.description ?? "").slice(0, 60)]);
+            console.log(formatTable(rows, ["ID", "Name", "Locale", "Description"]));
+        } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            console.error(pc.red(`  failed to list voices: ${message}`));
+        }
+    }
 }
 
 async function main(): Promise<void> {
