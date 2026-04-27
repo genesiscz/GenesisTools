@@ -324,6 +324,10 @@ async function splitFromSurface(
     ]);
 }
 
+function shellQuote(path: string): string {
+    return `'${path.replace(/'/g, "'\\''")}'`;
+}
+
 async function replayTerminal(
     surface: Surface & { type: "terminal" },
     workspaceRef: string,
@@ -331,7 +335,14 @@ async function replayTerminal(
     opts: RestoreOptions,
 ): Promise<void> {
     if (surface.cwd) {
-        await runCmuxOk(["send", "--workspace", workspaceRef, "--surface", surfaceRef, `cd ${surface.cwd}\n`]);
+        await runCmuxOk([
+            "send",
+            "--workspace",
+            workspaceRef,
+            "--surface",
+            surfaceRef,
+            `cd -- ${shellQuote(surface.cwd)}\n`,
+        ]);
     }
     if (opts.replay && surface.command && surface.command_source !== "none") {
         // Send command WITHOUT a trailing newline so the user can confirm before executing.
