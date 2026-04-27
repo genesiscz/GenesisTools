@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, spyOn } from "bun:test";
-import { checkYtDlp, listChannelVideos } from "@app/youtube/lib/yt-dlp";
+import { checkYtDlp, dumpVideoMetadata, listChannelVideos } from "@app/youtube/lib/yt-dlp";
 
 const encoder = new TextEncoder();
 
@@ -100,5 +100,59 @@ describe("listChannelVideos", () => {
         spyOn(Bun, "spawn").mockImplementation(() => mockProcess("", "no channel", 1));
 
         await expect(listChannelVideos({ handle: "@missing" })).rejects.toThrow("yt-dlp listChannelVideos failed: no channel");
+    });
+});
+
+describe("dumpVideoMetadata", () => {
+    it("parses yt-dlp dump JSON into normalized metadata", async () => {
+        spyOn(Bun, "spawn").mockImplementation((cmd) => {
+            spawnCalls.push(cmd as string[]);
+
+            return mockProcess(JSON.stringify({
+                id: "abc123def45",
+                title: "A video",
+                description: "Description",
+                upload_date: "20260402",
+                duration: 59,
+                view_count: 1000,
+                like_count: 100,
+                language: "en",
+                subtitles: { en: [] },
+                automatic_captions: { cs: [] },
+                tags: ["tech"],
+                aspect_ratio: 0.56,
+                is_live: false,
+                thumbnail: "https://img.example/thumb.jpg",
+                uploader_id: "@mkbhd",
+                channel_id: "UCBJycsmduvYEL83R_U4JriQ",
+                channel: "MKBHD",
+            }));
+        });
+
+        await expect(dumpVideoMetadata("abc123def45")).resolves.toEqual({
+            id: "abc123def45",
+            title: "A video",
+            description: "Description",
+            uploadDate: "2026-04-02",
+            durationSec: 59,
+            viewCount: 1000,
+            likeCount: 100,
+            language: "en",
+            availableCaptionLangs: ["en", "cs"],
+            tags: ["tech"],
+            isShort: true,
+            isLive: false,
+            thumbUrl: "https://img.example/thumb.jpg",
+            channelHandle: "@mkbhd",
+            channelId: "UCBJycsmduvYEL83R_U4JriQ",
+            channelTitle: "MKBHD",
+        });
+        expect(spawnCalls[0]).toEqual(["yt-dlp", "--skip-download", "--dump-json", "--no-warnings", "abc123def45"]);
+    });
+
+    it("throws stderr when metadata dumping fails", async () => {
+        spyOn(Bun, "spawn").mockImplementation(() => mockProcess("", "bad video", 1));
+
+        await expect(dumpVideoMetadata("bad")).rejects.toThrow("yt-dlp dumpVideoMetadata failed: bad video");
     });
 });

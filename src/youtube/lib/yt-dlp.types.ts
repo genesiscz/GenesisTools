@@ -30,3 +30,22 @@ export interface ListedVideo {
     isShort: boolean;
     isLive: boolean;
 }
+
+export interface DumpedVideoMetadata {
+    id: VideoId;
+    title: string;
+    description: string | null;
+    uploadDate: string | null;
+    durationSec: number | null;
+    viewCount: number | null;
+    likeCount: number | null;
+    language: string | null;
+    availableCaptionLangs: string[];
+    tags: string[];
+    isShort: boolean;
+    isLive: boolean;
+    thumbUrl: string | null;
+    channelHandle: ChannelHandle | null;
+    channelId: string | null;
+    channelTitle: string | null;
+}
