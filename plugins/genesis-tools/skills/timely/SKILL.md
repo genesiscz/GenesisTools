@@ -15,6 +15,8 @@ Drives the conversation that turns auto-tracked Timely memories into logged even
 
 The plan/apply pattern is the default. It lets you split a day's memories across multiple projects and gives the user a single artifact to review before any POST.
 
+> **DO NOT use python, jq, awk, or shell loops to inspect or edit the plan.** The tool prints the summary itself and you have the `Edit` / `Read` / `Write` tools. Using shell scripts to extract memory IDs is an anti-pattern — it hides your reasoning from the user and is unnecessary now that the tool ships a summary.
+
 ### Step 1 — Generate a plan
 
 ```bash
@@ -23,26 +25,44 @@ tools timely create --plan --from 2026-04-21 --to 2026-04-25 --out /tmp/timely-p
 tools timely create --plan --day 2026-04-24 --out /tmp/timely-plan.json
 ```
 
-The plan file contains, per day:
-- `available_memories[]` — every memory on that day with `id`, `app`, `note`, `from`, `to`, `duration_min`, `sub_notes[]`
-- `suggestions[]` — top-3 projects from the historical heuristic with `score` and `reasons`
-- `events: []` — empty; you fill this in
+The command does two things:
+1. **Writes** the JSON plan file to `--out`
+2. **Prints** a compact per-day summary to stdout — this is what you reason over
 
-### Step 2 — Read the plan and reason about it
+The summary looks like:
 
-Read `/tmp/timely-plan.json`. For each day, look at:
-- The `available_memories[]` (apps, notes, time ranges, sub-notes — these often contain repo names, branch names, file paths)
-- `suggestions[]` (heuristic prior — high score = strong historical pattern, but **don't blindly trust** if the memories clearly tell a different story)
+```
+=== 2026-04-19 (2 memories) ===
+  Suggestions:
+    proj  4344283  ČEZ          score  2.88  27 similar past entries · top word similarity 0.00
+    proj  5190862  Reservine    score  0.05   1 similar past entries · top word similarity 0.00
+  Memories (id  from-to  min  app  note | sub_notes):
+    2079040832  21:03-22:07    65m  cmux       col-fe | tools claude usage; col-fe2
+    2079063024  22:23-22:29     6m  cmux       col-fe
+```
+
+The plan JSON file contains the same data with full ISO timestamps and is the artifact `--apply` consumes.
+
+### Step 2 — Reason from the printed summary (no Read of JSON needed)
+
+Look at the summary the tool printed for:
+- App names + notes + sub_notes (often contain repo names, branch names, file paths — strong project signal)
+- Time ranges (split a day by morning/afternoon/evening blocks)
+- `suggestions[]` (heuristic prior — high score = strong historical pattern, but **don't blindly trust** if the memories clearly say something else)
 - Any prior conversation context the user gave you (e.g. "I worked on Reservine in the morning")
 
-### Step 3 — Fill in `events[]`
+State your splits in chat — group memory IDs into time-block buckets per intended project. Be explicit so the user can correct you before you Edit.
 
-Group memory IDs by intended project. Multiple events per day are fine — each gets its own project + note + memory_ids subset. Example:
+### Step 3 — Fill in `events[]` with the Edit tool
+
+Use the `Edit` tool to replace `"events": []` in the plan JSON file with your filled events. **Don't use shell scripts** — the Edit tool is the right primitive.
+
+Multiple events per day are fine — each gets its own project + note + memory_ids subset. Example:
 
 ```json
 "events": [
   {
-    "project_id": 4250000,
+    "project_id": 5190862,
     "note": "Reservine — col-fe migration",
     "memory_ids": [2084994045, 2085026565]
   },
@@ -55,15 +75,16 @@ Group memory IDs by intended project. Multiple events per day are fine — each 
 ```
 
 **Rules:**
-- Every `memory_id` must appear in `available_memories[].id` (validation will error otherwise)
+- Every `memory_id` must appear in `available_memories[].id` (validation errors otherwise — re-Read the JSON if you forget an ID)
 - A `memory_id` should appear in **at most one** event (validation warns on duplicates)
-- Memories you intentionally skip (lunch, idle, personal) — just leave them out of every `events[]`. Validation **warns** but doesn't error
-- Notes should be human-readable, not just app names. Look at `sub_notes[]` for repo / branch / file-path hints
-- Use `project_id` from `suggestions[]` when the heuristic matches your reasoning; otherwise use `tools timely projects --format json` to look up other project IDs
+- Memories you intentionally skip (lunch, idle, personal, leisure YouTube/Instagram/Messages-with-partner) — just leave them out. Validation **warns**, doesn't error
+- Notes should be human-readable, not just app names. Steal phrasing from `sub_notes[]` (repo names, branch names, PR titles)
+- Use `project_id` from `suggestions[]` when it matches your reasoning. Run `tools timely projects --format json` to look up other project IDs
+- **Memory linkage caveat**: a single memory's wall-clock window is atomic — you can't split *one* memory across two projects. If memory `X` shows mixed work (e.g. cmux session that touched two repos), pick the dominant project for the whole window
 
-### Step 4 — Write the file back
+### Step 4 — Verify the file
 
-After editing, save the JSON.
+The Edit tool already wrote the changes. No additional save step needed. If you're worried, `Read` the relevant slice of the file to confirm.
 
 ### Step 5 — Dry-run
 
