@@ -80,10 +80,17 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                 return jsonError("video not found", 404);
             }
 
-            const mode = url.searchParams.get("mode") === "timestamped" ? "timestamped" : "short";
-            const cached = mode === "timestamped" ? video.summaryTimestamped : video.summaryShort;
+            const mode = parseMode(url.searchParams.get("mode"));
+            const cached =
+                mode === "timestamped" ? video.summaryTimestamped
+                : mode === "long" ? video.summaryLong
+                : video.summaryShort;
+            const fallback = mode === "timestamped" ? [] : mode === "long" ? null : "";
 
-            return Response.json({ summary: cached ?? (mode === "timestamped" ? [] : ""), mode, cached: cached !== null && cached !== undefined }, { headers: CORS_HEADERS });
+            return Response.json(
+                { summary: cached ?? fallback, mode, cached: cached !== null && cached !== undefined },
+                { headers: CORS_HEADERS }
+            );
         }
 
         const summaryPost = matchRoute(req, "POST", "/api/v1/videos/:id/summary", url.pathname);
@@ -97,10 +104,13 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
             }
 
             const body = (await safeJsonBody(req)) ?? {};
-            const mode = body.mode === "timestamped" ? "timestamped" : "short";
+            const mode = parseMode(body.mode);
             const force = body.force === true;
             const provider = typeof body.provider === "string" ? body.provider : undefined;
             const model = typeof body.model === "string" ? body.model : undefined;
+            const tone = parseTone(body.tone);
+            const format = parseFormat(body.format);
+            const length = parseLength(body.length);
             const targetBins = typeof body.targetBins === "number" ? body.targetBins : undefined;
 
             const transcript = yt.db.getTranscript(id);
@@ -123,12 +133,18 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                         providerChoice,
                         targetBins,
                         forceRecompute: force,
+                        tone,
+                        format,
+                        length,
                     })
                 );
                 yt.db.updateJob(job.id, { status: "completed", progress: 1, currentStage: null, completedAt: new Date().toISOString() });
 
                 return Response.json({
-                    summary: mode === "timestamped" ? result.timestamped ?? [] : result.short ?? "",
+                    summary:
+                        mode === "timestamped" ? result.timestamped ?? []
+                        : mode === "long" ? result.long ?? null
+                        : result.short ?? "",
                     mode,
                     cached: false,
                     jobId: job.id,
@@ -252,6 +268,38 @@ function jsonError(error: string, status: number): Response {
         status,
         headers: { "Content-Type": "application/json", ...CORS_HEADERS },
     });
+}
+
+function parseMode(value: unknown): "short" | "timestamped" | "long" {
+    if (value === "timestamped" || value === "long") {
+        return value;
+    }
+
+    return "short";
+}
+
+function parseTone(value: unknown): "insightful" | "funny" | "actionable" | "controversial" | undefined {
+    if (value === "insightful" || value === "funny" || value === "actionable" || value === "controversial") {
+        return value;
+    }
+
+    return undefined;
+}
+
+function parseFormat(value: unknown): "list" | "qa" | undefined {
+    if (value === "list" || value === "qa") {
+        return value;
+    }
+
+    return undefined;
+}
+
+function parseLength(value: unknown): "short" | "auto" | "detailed" | undefined {
+    if (value === "short" || value === "auto" || value === "detailed") {
+        return value;
+    }
+
+    return undefined;
 }
 
 async function safeJsonBody(req: Request): Promise<Record<string, unknown> | null> {
