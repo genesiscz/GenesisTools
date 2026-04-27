@@ -1,0 +1,6 @@
+export { VideoDetailTabs, type VideoDetailDataSource, type VideoDetailTab } from "@app/utils/ui/components/youtube/tabs";
+export { InsightsTab } from "@app/utils/ui/components/youtube/insights-tab";
+export { SummaryTab } from "@app/utils/ui/components/youtube/summary-tab";
+export { CommentsTab } from "@app/utils/ui/components/youtube/comments-tab";
+export { TranscriptTab } from "@app/utils/ui/components/youtube/transcript-tab";
+export { YouTubeIframe } from "@app/utils/ui/components/youtube/youtube-iframe";

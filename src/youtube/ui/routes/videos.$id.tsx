@@ -1,16 +1,23 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { Badge } from "@app/utils/ui/components/badge";
 import { Card, CardContent } from "@app/utils/ui/components/card";
 import { ProgressBar } from "@app/yt/components/pipeline/progress-bar";
 import { Loading } from "@app/yt/components/shared/loading";
-import { VideoDetailTabs, type VideoDetailTab } from "@app/yt/components/video-detail/tabs";
+import { YouTubeIframe, VideoDetailTabs, type VideoDetailDataSource, type VideoDetailTab } from "@app/utils/ui/components/youtube";
 import { formatDate, formatDuration, formatNumber } from "@app/yt/lib/format";
-import { useVideo } from "@app/yt/api.hooks";
+import { useAskVideo, useSummary, useTranscript, useVideo } from "@app/yt/api.hooks";
 import { useEventStream } from "@app/yt/ws.client";
 import type { VideoId } from "@app/youtube/lib/types";
 import { Captions, Eye, Radio } from "lucide-react";
+
+const videoDetailDataSource: VideoDetailDataSource = {
+    useVideo,
+    useTranscript,
+    useSummary,
+    useAskVideo,
+};
 
 export const Route = createFileRoute("/videos/$id")({
     component: VideoDetailPage,
@@ -65,35 +72,8 @@ function VideoDetailPage() {
                 <ProgressBar videoId={id as VideoId} value={progress} />
             </section>
             <aside className="col-span-12 lg:col-span-5">
-                <VideoDetailTabs videoId={id as VideoId} active={activeTab} onActiveChange={setActiveTab} onSeek={setSeekToSec} />
+                <VideoDetailTabs videoId={id as VideoId} ds={videoDetailDataSource} active={activeTab} onActiveChange={setActiveTab} onSeek={setSeekToSec} />
             </aside>
-        </div>
-    );
-}
-
-function YouTubeIframe({ id, seekToSec }: { id: VideoId; seekToSec: number | null }) {
-    const iframeRef = useRef<HTMLIFrameElement | null>(null);
-
-    useEffect(() => {
-        if (seekToSec === null) {
-            return;
-        }
-
-        iframeRef.current?.contentWindow?.postMessage(JSON.stringify({ event: "command", func: "seekTo", args: [seekToSec, true] }), "*");
-    }, [seekToSec]);
-
-    return (
-        <div className="yt-panel overflow-hidden rounded-3xl p-2">
-            <div className="aspect-video overflow-hidden rounded-2xl bg-black">
-                <iframe
-                    ref={iframeRef}
-                    title="YouTube player"
-                    src={`https://www.youtube.com/embed/${encodeURIComponent(id)}?enablejsapi=1`}
-                    className="h-full w-full"
-                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                    allowFullScreen
-                />
-            </div>
         </div>
     );
 }
