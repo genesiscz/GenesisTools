@@ -1,10 +1,18 @@
 #!/usr/bin/env bun
 
+import { existsSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import logger from "@app/logger";
+import { getProvider } from "@app/utils/ai/providers";
+import type { AITextToSpeechProvider, TTSOptions, TTSResult } from "@app/utils/ai/types";
+import { suggestCommand } from "@app/utils/cli/executor";
 import type { SayConfig } from "@app/utils/macos/tts.ts";
 import {
     getConfigForRead,
     listVoicesStructured,
     normalizeVolume,
+    playAudioFile,
     setConfig,
     setMute,
     speak,
@@ -14,62 +22,180 @@ import * as p from "@clack/prompts";
 import { Command } from "commander";
 import pc from "picocolors";
 
+const REST_TTS_LIMIT = 15_000;
+
+type SayProvider = "macos" | "xai";
+
+interface SayOptions {
+    volume?: number;
+    voice?: string;
+    rate?: number;
+    wait?: boolean;
+    app?: string;
+    mute?: boolean;
+    unmute?: boolean;
+    provider?: SayProvider;
+    language?: string;
+    format?: "mp3" | "wav";
+    file?: string;
+    stream?: boolean;
+}
+
 const program = new Command()
     .name("say")
-    .description("Text-to-speech with volume control, auto language detection, and mute support")
-    .argument("[message...]", "Text to speak")
+    .description(
+        "Text-to-speech with volume control, auto language detection, mute, and pluggable backends (macOS, xAI Grok)"
+    )
+    .argument("[message...]", "Text to speak (omit to read --file or enter interactive mode)")
     .option("--volume <n>", "Volume (0.0-1.0 or 0-100%); saved per-app with --app", parseFloat)
-    .option("--voice <name>", "Override voice name")
-    .option("--rate <wpm>", "Words per minute", parseInt)
+    .option("--voice <name>", "Voice id (provider-specific: macos voice name or xAI voice id like 'eve')")
+    .option("--rate <wpm>", "Words per minute (macOS only)", parseInt)
     .option("--wait", "Block until speech finishes")
     .option("--app <name>", "Caller identity for per-app mute")
     .option("--mute", "Mute (global or per-app with --app)")
     .option("--unmute", "Unmute (global or per-app with --app)")
-    .action(
-        async (
-            messageParts: string[],
-            opts: {
-                volume?: number;
-                voice?: string;
-                rate?: number;
-                wait?: boolean;
-                app?: string;
-                mute?: boolean;
-                unmute?: boolean;
-            }
-        ) => {
-            // Handle mute/unmute commands
-            if (opts.mute) {
-                await setMute(true, opts.app);
-                const scope = opts.app ? `app "${opts.app}"` : "global";
-                console.log(pc.yellow(`[say] ${scope} muted`));
-                return;
-            }
-
-            if (opts.unmute) {
-                await setMute(false, opts.app);
-                const scope = opts.app ? `app "${opts.app}"` : "global";
-                console.log(pc.green(`[say] ${scope} unmuted`));
-                return;
-            }
-
-            // No message → interactive mode
-            if (messageParts.length === 0) {
-                await interactiveMode();
-                return;
-            }
-
-            const message = messageParts.join(" ");
-
-            await speak(message, {
-                volume: opts.volume,
-                voice: opts.voice,
-                rate: opts.rate,
-                wait: opts.wait,
-                app: opts.app,
-            });
+    .option("--provider <name>", "TTS backend: 'macos' (default) or 'xai'", "macos")
+    .option("--language <bcp47>", "Language hint (xai only; defaults to 'auto')")
+    .option("--format <codec>", "Output codec for xAI: mp3 (default) or wav")
+    .option("--file <path>", "Read text from a file instead of args")
+    .option("--stream", "Force WebSocket streaming path (xai only; auto-engaged for >15k chars)")
+    .action(async (messageParts: string[], opts: SayOptions) => {
+        if (opts.mute) {
+            await setMute(true, opts.app);
+            const scope = opts.app ? `app "${opts.app}"` : "global";
+            console.log(pc.yellow(`[say] ${scope} muted`));
+            return;
         }
-    );
+
+        if (opts.unmute) {
+            await setMute(false, opts.app);
+            const scope = opts.app ? `app "${opts.app}"` : "global";
+            console.log(pc.green(`[say] ${scope} unmuted`));
+            return;
+        }
+
+        const text = await resolveText(messageParts, opts.file);
+
+        if (text == null) {
+            await interactiveMode();
+            return;
+        }
+
+        const provider: SayProvider = opts.provider ?? "macos";
+
+        if (provider === "xai") {
+            await speakViaXai(text, opts);
+            return;
+        }
+
+        await speak(text, {
+            volume: opts.volume,
+            voice: opts.voice,
+            rate: opts.rate,
+            wait: opts.wait,
+            app: opts.app,
+        });
+    });
+
+async function resolveText(messageParts: string[], filePath?: string): Promise<string | null> {
+    if (filePath) {
+        const abs = resolve(filePath);
+
+        if (!existsSync(abs)) {
+            console.error(pc.red(`[say] file not found: ${abs}`));
+            process.exit(1);
+        }
+
+        return readFileSync(abs, "utf8");
+    }
+
+    if (messageParts.length === 0) {
+        return null;
+    }
+
+    return messageParts.join(" ");
+}
+
+async function speakViaXai(text: string, opts: SayOptions): Promise<void> {
+    if (!process.env.X_AI_API_KEY) {
+        console.error(pc.red("[say] X_AI_API_KEY is not set."));
+        console.error(pc.dim(suggestCommand("tools say", { add: ["--provider", "macos"] })));
+        process.exit(1);
+    }
+
+    const config = await getConfigForRead();
+    const muted = isAppMuted(config, opts.app);
+
+    if (muted) {
+        process.stderr.write("[say] muted\n");
+        return;
+    }
+
+    const provider = getProvider("xai") as unknown as AITextToSpeechProvider;
+    const useStream = opts.stream || text.length > REST_TTS_LIMIT;
+
+    const ttsOptions: TTSOptions = {
+        voice: opts.voice ?? "eve",
+        language: opts.language ?? "auto",
+        format: opts.format ?? "mp3",
+        stream: useStream,
+    };
+
+    let result: TTSResult;
+
+    try {
+        if (useStream) {
+            if (!provider.synthesizeStream) {
+                throw new Error("xAI provider missing synthesizeStream");
+            }
+
+            logger.debug(`[say] xai streaming (${text.length} chars)`);
+            result = await provider.synthesizeStream(text, ttsOptions);
+        } else {
+            logger.debug(`[say] xai REST (${text.length} chars)`);
+            result = await provider.synthesize(text, ttsOptions);
+        }
+    } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(pc.red(`[say] xAI TTS failed: ${message}`));
+        process.exit(1);
+    }
+
+    const ext = pickExtensionFromContentType(result.contentType, ttsOptions.format);
+    const tmpFile = join(tmpdir(), `genesis-say-xai-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`);
+    await Bun.write(tmpFile, result.audio);
+
+    const rawVolume = opts.volume ?? (opts.app ? config.appVolume[opts.app] : undefined) ?? config.defaultVolume ?? 1;
+    const volume = normalizeVolume(rawVolume);
+
+    await playAudioFile(tmpFile, { volume, wait: opts.wait, cleanup: true });
+}
+
+function isAppMuted(config: SayConfig, app?: string): boolean {
+    if (app && app in config.appMute) {
+        return config.appMute[app];
+    }
+
+    return config.globalMute;
+}
+
+function pickExtensionFromContentType(contentType: string, requestedFormat?: TTSOptions["format"]): string {
+    const ct = contentType.toLowerCase();
+
+    if (ct.includes("mpeg") || ct.includes("mp3")) {
+        return ".mp3";
+    }
+
+    if (ct.includes("wav")) {
+        return ".wav";
+    }
+
+    if (ct.includes("aiff")) {
+        return ".aiff";
+    }
+
+    return requestedFormat ? `.${requestedFormat}` : ".mp3";
+}
 
 async function main(): Promise<void> {
     try {

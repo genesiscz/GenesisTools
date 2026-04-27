@@ -223,16 +223,7 @@ export async function speak(text: string, options?: SpeakOptions): Promise<void>
             return;
         }
 
-        const afplayArgs = ["afplay", "-v", String(volume), tmpFile];
-        const afplayProc = Bun.spawn(afplayArgs, { stdout: "ignore", stderr: "ignore" });
-
-        if (options?.wait) {
-            await afplayProc.exited;
-            cleanupTmpFile(tmpFile);
-        } else {
-            // Clean up after playback finishes in background
-            afplayProc.exited.then(() => cleanupTmpFile(tmpFile));
-        }
+        await playAudioFile(tmpFile, { volume, wait: options?.wait, cleanup: true });
     } else {
         // Direct say (volume = 1, no need for afplay)
         sayArgs.push(text);
@@ -241,6 +232,84 @@ export async function speak(text: string, options?: SpeakOptions): Promise<void>
         if (options?.wait) {
             await proc.exited;
         }
+    }
+}
+
+export interface PlayAudioOptions {
+    /** Playback volume 0.0-1.0 (passed to `afplay -v`). */
+    volume?: number;
+    /** Block until playback finishes. */
+    wait?: boolean;
+    /** Delete the file after playback. */
+    cleanup?: boolean;
+}
+
+/**
+ * Play an audio file via macOS `afplay`. Used by both the macOS TTS path
+ * (volume-attenuated AIFF) and the xAI TTS path (mp3/wav from the API).
+ */
+export async function playAudioFile(path: string, options?: PlayAudioOptions): Promise<void> {
+    const args = ["afplay"];
+
+    if (options?.volume != null) {
+        args.push("-v", String(options.volume));
+    }
+
+    args.push(path);
+
+    const proc = Bun.spawn(args, { stdout: "ignore", stderr: "ignore" });
+
+    const finalize = (): void => {
+        if (options?.cleanup) {
+            cleanupTmpFile(path);
+        }
+    };
+
+    if (options?.wait) {
+        await proc.exited;
+        finalize();
+    } else {
+        proc.exited.then(finalize);
+    }
+}
+
+/**
+ * Render text to an audio buffer using macOS `say -o`. Returns AIFF bytes.
+ * Used by AIMacosProvider.synthesize() so the macOS path goes through the
+ * same AITextToSpeechProvider interface as cloud providers.
+ */
+export async function renderToBuffer(text: string, options?: { voice?: string; rate?: number }): Promise<Buffer> {
+    const tmpFile = join(tmpdir(), `genesis-say-render-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.aiff`);
+    const args = ["say"];
+
+    let voiceName = options?.voice ?? null;
+
+    if (!voiceName) {
+        voiceName = await detectVoiceForText(text);
+    }
+
+    if (voiceName) {
+        args.push("-v", voiceName);
+    }
+
+    if (options?.rate) {
+        args.push("-r", String(options.rate));
+    }
+
+    args.push("-o", tmpFile, text);
+
+    const proc = Bun.spawn(args, { stdout: "ignore", stderr: "ignore" });
+    await proc.exited;
+
+    if (!existsSync(tmpFile)) {
+        throw new Error("macOS `say` failed to produce output file");
+    }
+
+    try {
+        const file = Bun.file(tmpFile);
+        return Buffer.from(await file.arrayBuffer());
+    } finally {
+        cleanupTmpFile(tmpFile);
     }
 }
 

@@ -4,8 +4,10 @@ import { existsSync } from "node:fs";
 import { basename, extname, resolve } from "node:path";
 import { audioProcessor } from "@app/ask/audio/AudioProcessor.ts";
 import { AI } from "@app/utils/ai/index.ts";
+import { getAllProviders } from "@app/utils/ai/providers/index.ts";
 import { formatOutput, formatTimestamp, type OutputFormat, toSRT, toVTT } from "@app/utils/ai/transcription-format.ts";
 import type { AIProviderType } from "@app/utils/ai/types.ts";
+import { isInteractive, suggestCommand } from "@app/utils/cli/executor.ts";
 import { copyToClipboard } from "@app/utils/clipboard.ts";
 import { formatBytes, formatDuration } from "@app/utils/format.ts";
 import * as p from "@clack/prompts";
@@ -190,12 +192,12 @@ async function interactiveMode(): Promise<void> {
     const providerChoice = await p.select({
         message: "Provider:",
         options: [
-            { value: undefined, label: "Default", hint: "use configured provider" },
             { value: "local-hf", label: "Local (Hugging Face)", hint: "runs locally via transformers.js" },
             { value: "cloud", label: "Cloud (auto-select)", hint: "picks best available" },
             ...(process.env.OPENAI_API_KEY ? [{ value: "openai", label: "OpenAI", hint: "whisper-1" }] : []),
             ...(process.env.GROQ_API_KEY ? [{ value: "groq", label: "Groq", hint: "whisper-large-v3" }] : []),
             ...(process.env.OPENROUTER_API_KEY ? [{ value: "openrouter", label: "OpenRouter" }] : []),
+            ...(process.env.X_AI_API_KEY ? [{ value: "xai", label: "xAI (Grok)", hint: "grok-voice STT" }] : []),
             { value: "darwinkit", label: "DarwinKit", hint: "macOS native speech recognition" },
         ],
     });
@@ -272,7 +274,7 @@ const program = new Command()
     .name("transcribe")
     .description("Transcribe audio files using AI (local or cloud)")
     .argument("[file]", "Audio file to transcribe")
-    .option("--provider <provider>", "AI provider (local-hf, cloud, openai, groq, openrouter, darwinkit)")
+    .option("--provider <provider>", "AI provider (local-hf, cloud, openai, groq, openrouter, darwinkit, xai)")
     .option("--local", "Shorthand for --provider local-hf")
     .option("--format <format>", "Output format (text, json, srt, vtt)", "text")
     .option("--lang <language>", "Audio language (e.g. en, cs, de)")
@@ -285,8 +287,65 @@ const program = new Command()
             return;
         }
 
-        await runTranscription(file, opts);
+        const resolvedProvider = await ensureProviderResolved(opts);
+
+        await runTranscription(file, { ...opts, provider: resolvedProvider });
     });
+
+async function ensureProviderResolved(opts: TranscribeFlags): Promise<string | undefined> {
+    if (opts.local) {
+        return "local-hf";
+    }
+
+    if (opts.provider) {
+        return opts.provider;
+    }
+
+    const available = await listAvailableTranscribeProviders();
+
+    if (isInteractive()) {
+        if (available.length === 0) {
+            console.error(pc.red("No transcription providers are available."));
+            console.error(pc.dim("Set one of: OPENAI_API_KEY, GROQ_API_KEY, OPENROUTER_API_KEY, X_AI_API_KEY"));
+            console.error(pc.dim("…or install local-hf / darwinkit support."));
+            process.exit(1);
+        }
+
+        const picked = await p.select({
+            message: "Pick a transcription provider:",
+            options: available.map((id) => ({ value: id, label: id })),
+        });
+
+        if (p.isCancel(picked)) {
+            console.error(pc.yellow("Cancelled."));
+            process.exit(1);
+        }
+
+        return picked as string;
+    }
+
+    const choices = available.length > 0 ? available.join("|") : "local-hf|cloud|openai|groq|openrouter|xai";
+    console.error(pc.red("No --provider specified and not in an interactive terminal."));
+    console.error(pc.dim(suggestCommand("tools transcribe", { add: ["--provider", `<${choices}>`] })));
+    process.exit(1);
+}
+
+async function listAvailableTranscribeProviders(): Promise<string[]> {
+    const all = getAllProviders();
+    const supported: string[] = [];
+
+    for (const provider of all) {
+        if (!provider.supports("transcribe")) {
+            continue;
+        }
+
+        if (await provider.isAvailable()) {
+            supported.push(provider.type);
+        }
+    }
+
+    return supported;
+}
 
 async function main(): Promise<void> {
     try {

@@ -136,6 +136,41 @@ export interface SummarizationResult {
 
 export interface AITranscriptionProvider extends AIProvider {
     transcribe(audio: Buffer, options?: TranscribeOptions): Promise<TranscriptionResult>;
+    /** Streaming variant — paces audio frames over WebSocket and emits onSegment per finalized chunk. */
+    transcribeStream?(audio: Buffer, options?: TranscribeOptions): Promise<TranscriptionResult>;
+}
+
+export interface TTSOptions {
+    /** Provider-specific voice id (xai: "eve" | "ara" | "rex" | "sal" | "leo"). */
+    voice?: string;
+    /** BCP-47 language code, or "auto". */
+    language?: string;
+    /** Output container codec. v1 ships only formats afplay handles natively. */
+    format?: "mp3" | "wav";
+    /** Enable provider-side text normalization (numbers, abbreviations -> spoken form). */
+    textNormalization?: boolean;
+    /** Force WebSocket streaming path even if text fits in REST limit. */
+    stream?: boolean;
+}
+
+export interface TTSResult {
+    audio: Buffer;
+    /** Response Content-Type — used to pick the temp-file extension for playback. */
+    contentType: string;
+}
+
+export interface TTSVoice {
+    id: string;
+    name: string;
+    description?: string;
+    locale?: string;
+}
+
+export interface AITextToSpeechProvider extends AIProvider {
+    synthesize(text: string, options?: TTSOptions): Promise<TTSResult>;
+    /** Streaming variant — opens WebSocket, collects all audio chunks, returns full buffer. Bypasses REST text-length limit. */
+    synthesizeStream?(text: string, options?: TTSOptions): Promise<TTSResult>;
+    listVoices?(): Promise<TTSVoice[]>;
 }
 
 export interface AITranslationProvider extends AIProvider {

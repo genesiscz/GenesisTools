@@ -5,7 +5,9 @@ import { AICoreMLProvider } from "./AICoreMLProvider";
 import { AIDarwinKitProvider } from "./AIDarwinKitProvider";
 import { AIGoogleProvider } from "./AIGoogleProvider";
 import { AILocalProvider } from "./AILocalProvider";
+import { AIMacosProvider } from "./AIMacosProvider";
 import { AIOllamaProvider } from "./AIOllamaProvider";
+import { AIXAIProvider } from "./AIXAIProvider";
 
 const providers = new Map<AIProviderType, AIProvider>();
 
@@ -59,6 +61,12 @@ export function getProvider(type: AIProviderType): AIProvider {
             break;
         case "google":
             provider = new AIGoogleProvider();
+            break;
+        case "xai":
+            provider = new AIXAIProvider();
+            break;
+        case "macos":
+            provider = new AIMacosProvider();
             break;
         default:
             throw new Error(`Unknown provider type: ${type}`);
@@ -121,6 +129,8 @@ export function getAllProviders(): AIProvider[] {
         "ollama",
         "google",
         "coreml",
+        "xai",
+        "macos",
     ];
     return types.map((type) => getProvider(type));
 }
@@ -138,4 +148,6 @@ export { AICoreMLProvider } from "./AICoreMLProvider";
 export { AIDarwinKitProvider } from "./AIDarwinKitProvider";
 export { AIGoogleProvider } from "./AIGoogleProvider";
 export { AILocalProvider } from "./AILocalProvider";
+export { AIMacosProvider } from "./AIMacosProvider";
 export { AIOllamaProvider } from "./AIOllamaProvider";
+export { AIXAIProvider } from "./AIXAIProvider";

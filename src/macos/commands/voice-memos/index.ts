@@ -30,8 +30,8 @@ import * as p from "@clack/prompts";
 import { Command } from "commander";
 import pc from "picocolors";
 
-const VALID_PROVIDERS: AIProviderType[] = ["cloud", "local-hf", "darwinkit", "openai", "groq", "openrouter"];
-const TRANSCRIBE_PROVIDERS: AIProviderType[] = ["local-hf", "cloud", "openai", "groq", "openrouter"];
+const VALID_PROVIDERS: AIProviderType[] = ["cloud", "local-hf", "darwinkit", "openai", "groq", "openrouter", "xai"];
+const TRANSCRIBE_PROVIDERS: AIProviderType[] = ["local-hf", "cloud", "openai", "groq", "openrouter", "xai"];
 
 export function registerVoiceMemosCommand(program: Command): void {
     const vm = new Command("voice-memos");
