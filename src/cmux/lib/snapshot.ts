@@ -23,7 +23,12 @@ interface SurfaceListEntry {
     selected?: boolean;
 }
 
-type ListPaneSurfacesResponse = SurfaceListEntry[];
+interface ListPaneSurfacesResponse {
+    surfaces: SurfaceListEntry[];
+    pane_ref?: string;
+    workspace_ref?: string;
+    window_ref?: string;
+}
 
 export interface SnapshotOptions {
     name: string;
@@ -173,7 +178,7 @@ async function capturePanes(workspaceRef: string, options: SnapshotOptions): Pro
             paneInfo.ref,
         ]);
 
-        const sortedEntries = [...surfacesInfo].sort((a, b) => a.index - b.index);
+        const sortedEntries = [...surfacesInfo.surfaces].sort((a, b) => a.index - b.index);
         const surfaces: Surface[] = [];
         let selectedIndex = 0;
         for (const surfaceEntry of sortedEntries) {
