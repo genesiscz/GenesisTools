@@ -1,8 +1,8 @@
-import { existsSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { BaseDatabase } from "@app/utils/database";
 import { withFileLock } from "@app/utils/storage";
+import { deleteIfExists } from "@app/youtube/lib/cache";
 import type { Channel, ChannelHandle } from "@app/youtube/lib/channel.types";
 import type {
     ClaimJobOpts,
@@ -648,16 +648,7 @@ export class YoutubeDatabase extends BaseDatabase {
             }
 
             await withFileLock(`${filePath}.lock`, async () => {
-                try {
-                    if (existsSync(filePath)) {
-                        unlinkSync(filePath);
-                    }
-                } catch (error) {
-                    if (!isEnoentError(error)) {
-                        throw error;
-                    }
-                }
-
+                await deleteIfExists(filePath);
                 this.clearVideoBinaryPath(row.id, kind);
                 count++;
             });
@@ -928,10 +919,6 @@ function assertJobTransition(from: JobStatus, to: JobStatus, trigger: string): v
     if (!allowed[from].includes(to)) {
         throw new Error(`${trigger}: invalid job transition ${from} -> ${to}`);
     }
-}
-
-function isEnoentError(error: unknown): boolean {
-    return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
 
 function rowToQaChunk(row: QaChunkRow): QaChunk {
