@@ -44,12 +44,10 @@ export function registerSaveCommand(parent: Command): void {
 
 async function runSave(rawName: string | undefined, flags: SaveFlags): Promise<void> {
     const interactive = isInteractive();
-    const captureCwd = flags.cwd !== false;
-    const captureScreen = flags.screen !== false;
-    const captureHistory = flags.history !== false;
     let forceWrite = !!flags.force;
 
     const scope = await resolveScope(flags, interactive);
+    const { captureCwd, captureScreen, captureHistory } = await resolveCaptureFlags(flags, interactive);
     const name = await resolveName(rawName, scope, interactive);
 
     const store = new ProfileStore();
@@ -150,6 +148,74 @@ async function resolveScope(flags: SaveFlags, interactive: boolean): Promise<Pro
         })
     );
     return choice;
+}
+
+interface CaptureFlags {
+    captureCwd: boolean;
+    captureScreen: boolean;
+    captureHistory: boolean;
+}
+
+/**
+ * After scope is picked, ask which per-pane data to capture: cwd, visible screen,
+ * last shell command. CLI flags (`--no-cwd`/`--no-screen`/`--no-history`) win — they
+ * skip the prompt and force-include in non-interactive mode. Otherwise default-on,
+ * displayed as a multiselect so the user can deselect what they don't want.
+ */
+async function resolveCaptureFlags(flags: SaveFlags, interactive: boolean): Promise<CaptureFlags> {
+    const flagOverrides: CaptureFlags = {
+        captureCwd: flags.cwd !== false,
+        captureScreen: flags.screen !== false,
+        captureHistory: flags.history !== false,
+    };
+    const anyExplicitlyDisabled = flags.cwd === false || flags.screen === false || flags.history === false;
+    if (!interactive || anyExplicitlyDisabled) {
+        return flagOverrides;
+    }
+
+    type CaptureKey = "cwd" | "screen" | "history";
+    const initial: CaptureKey[] = [];
+    if (flagOverrides.captureCwd) {
+        initial.push("cwd");
+    }
+    if (flagOverrides.captureScreen) {
+        initial.push("screen");
+    }
+    if (flagOverrides.captureHistory) {
+        initial.push("history");
+    }
+
+    const picked = await withCancel(
+        p.multiselect<CaptureKey>({
+            message: "What should be captured per pane?",
+            options: [
+                {
+                    value: "cwd",
+                    label: "Working directory",
+                    hint: "from each pane's tab title — replays as `cd <path>` on restore",
+                },
+                {
+                    value: "screen",
+                    label: "Visible screen contents",
+                    hint: "the saved scrollback is printed back into the new pane (monochrome)",
+                },
+                {
+                    value: "history",
+                    label: "Last shell command",
+                    hint: "pre-typed (NOT auto-executed) at the new prompt — e.g. `claude --resume <id>`",
+                },
+            ],
+            initialValues: initial,
+            required: false,
+        })
+    );
+
+    const set = new Set(picked);
+    return {
+        captureCwd: set.has("cwd"),
+        captureScreen: set.has("screen"),
+        captureHistory: set.has("history"),
+    };
 }
 
 async function resolveName(rawName: string | undefined, scope: ProfileScope, interactive: boolean): Promise<string> {
