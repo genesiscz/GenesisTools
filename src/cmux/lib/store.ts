@@ -9,9 +9,10 @@ import {
     writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import { PROFILE_VERSION, type Profile, type ProfileSummary } from "@app/cmux/lib/types";
 import logger from "@app/logger";
+import { SafeJSON } from "@app/utils/json";
 import { Storage } from "@app/utils/storage";
-import { type Profile, PROFILE_VERSION, type ProfileSummary } from "@app/cmux/lib/types";
 
 const NAME_PATTERN = /^[A-Za-z0-9._-]+$/;
 
@@ -34,7 +35,7 @@ export class ProfileStore {
     pathFor(name: string): string {
         if (!NAME_PATTERN.test(name)) {
             throw new Error(
-                `Invalid profile name "${name}". Use letters, digits, dots, underscores, or dashes (no slashes).`,
+                `Invalid profile name "${name}". Use letters, digits, dots, underscores, or dashes (no slashes).`
             );
         }
         return join(this.profilesDir, `${name}.json`);
@@ -77,7 +78,7 @@ export class ProfileStore {
         const profile = readJson<Profile>(path);
         if (profile.version !== PROFILE_VERSION) {
             throw new Error(
-                `Profile "${name}" has version ${profile.version}; this CLI only supports version ${PROFILE_VERSION}.`,
+                `Profile "${name}" has version ${profile.version}; this CLI only supports version ${PROFILE_VERSION}.`
             );
         }
         return profile;
@@ -89,8 +90,9 @@ export class ProfileStore {
             throw new ProfileExistsError(name, path);
         }
         this.ensureDir();
+        const normalized: Profile = { ...profile, name, version: PROFILE_VERSION };
         const tmpPath = `${path}.tmp.${process.pid}`;
-        writeFileSync(tmpPath, `${JSON.stringify(profile, null, 2)}\n`, "utf8");
+        writeFileSync(tmpPath, `${SafeJSON.stringify(normalized, null, 2)}\n`, "utf8");
         renameSync(tmpPath, path);
         return path;
     }
@@ -112,7 +114,7 @@ export class ProfileStore {
 export class ProfileNotFoundError extends Error {
     constructor(
         public readonly name: string,
-        public readonly path: string,
+        public readonly path: string
     ) {
         super(`No profile named "${name}" at ${path}`);
         this.name = "ProfileNotFoundError";
@@ -122,7 +124,7 @@ export class ProfileNotFoundError extends Error {
 export class ProfileExistsError extends Error {
     constructor(
         public readonly profileName: string,
-        public readonly path: string,
+        public readonly path: string
     ) {
         super(`Profile "${profileName}" already exists at ${path}. Use --force to overwrite.`);
         this.name = "ProfileExistsError";
@@ -131,7 +133,7 @@ export class ProfileExistsError extends Error {
 
 function readJson<T>(path: string): T {
     const raw = readFileSync(path, "utf8");
-    return JSON.parse(raw) as T;
+    return SafeJSON.parse(raw) as T;
 }
 
 function summarize(profile: Profile, path: string): ProfileSummary {
