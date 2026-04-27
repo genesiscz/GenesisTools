@@ -11,6 +11,11 @@ export interface BuiltPayload {
     totalSeconds: number;
 }
 
+/** Merge intervals within a memory if the gap between them is at most this many seconds. */
+const MERGE_GAP_TOLERANCE_SEC = 60;
+/** Drop merged intervals shorter than this — too noisy to log. */
+const MIN_BLOCK_SEC = 5 * 60;
+
 /**
  * Walk memory buckets → app entries → sub-entries, returning a flat list of
  * (memoryId, from, to) triples sorted by `from`. Each item maps to one
@@ -59,6 +64,9 @@ export function flattenMemories(memories: TimelyEntry[], allowedIds?: Set<number
         byId.set(f.id, arr);
     }
 
+    const mergeToleranceMs = MERGE_GAP_TOLERANCE_SEC * 1000;
+    const minBlockMs = MIN_BLOCK_SEC * 1000;
+
     const merged: FlatEntry[] = [];
     for (const [id, items] of byId) {
         const sorted = items
@@ -70,25 +78,34 @@ export function flattenMemories(memories: TimelyEntry[], allowedIds?: Set<number
             continue;
         }
 
+        const memoryMerged: { from: string; to: string; durationMs: number }[] = [];
         let curFrom = sorted[0].from;
         let curTo = sorted[0].to;
+        let curFromMs = sorted[0].fromMs;
         let curToMs = sorted[0].toMs;
         for (let i = 1; i < sorted.length; i++) {
             const it = sorted[i];
-            if (it.fromMs <= curToMs) {
+            if (it.fromMs - curToMs <= mergeToleranceMs) {
                 if (it.toMs > curToMs) {
                     curTo = it.to;
                     curToMs = it.toMs;
                 }
             } else {
-                merged.push({ id, from: curFrom, to: curTo });
+                memoryMerged.push({ from: curFrom, to: curTo, durationMs: curToMs - curFromMs });
                 curFrom = it.from;
                 curTo = it.to;
+                curFromMs = it.fromMs;
                 curToMs = it.toMs;
             }
         }
 
-        merged.push({ id, from: curFrom, to: curTo });
+        memoryMerged.push({ from: curFrom, to: curTo, durationMs: curToMs - curFromMs });
+
+        for (const block of memoryMerged) {
+            if (block.durationMs >= minBlockMs) {
+                merged.push({ id, from: block.from, to: block.to });
+            }
+        }
     }
 
     return merged.sort((a, b) => a.from.localeCompare(b.from));
