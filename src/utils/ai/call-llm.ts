@@ -1,4 +1,5 @@
 import { applySystemPromptPrefix } from "@app/utils/claude/subscription-billing";
+import { SafeJSON } from "@app/utils/json";
 import type { ProviderChoice } from "@ask/types";
 import { getLanguageModel } from "@ask/types/provider";
 import type { LanguageModelUsage } from "ai";
@@ -114,7 +115,7 @@ export async function callLLMStructured<T>(options: CallLLMStructuredOptions<T>)
 
     return {
         object: result.object as T,
-        content: JSON.stringify(result.object, null, 2),
+        content: SafeJSON.stringify(result.object, null, 2),
         usage: result.usage,
     };
 }
