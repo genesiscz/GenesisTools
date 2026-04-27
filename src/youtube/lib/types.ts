@@ -11,3 +11,4 @@ export type {
 export type { QaChunk } from "@app/youtube/lib/qa.types";
 export type { Language, Transcript, TranscriptSegment } from "@app/youtube/lib/transcript.types";
 export type { TimestampedSummaryEntry, Video, VideoId, VideoMetadata } from "@app/youtube/lib/video.types";
+export type { ListedVideo, ListChannelVideosOpts, YtDlpAvailability, YtDlpProgress, YtDlpProgressInfo } from "@app/youtube/lib/yt-dlp.types";
