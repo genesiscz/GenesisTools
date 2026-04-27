@@ -4,7 +4,11 @@ import { BaseDatabase } from "@app/utils/database";
 import type {
     Channel,
     ChannelHandle,
+    JobStage,
+    JobStatus,
+    JobTargetKind,
     Language,
+    PipelineJob,
     QaChunk,
     TimestampedSummaryEntry,
     Transcript,
@@ -439,6 +443,168 @@ export class YoutubeDatabase extends BaseDatabase {
         return (row?.count ?? 0) > 0;
     }
 
+    enqueueJob(input: EnqueueJobInput): PipelineJob {
+        const result = this.db
+            .query<{ id: number }, [string, string, string, number | null]>(
+                `INSERT INTO jobs (target_kind, target, stages, parent_job_id, status)
+                 VALUES (?, ?, ?, ?, 'pending') RETURNING id`
+            )
+            .get(input.targetKind, input.target, JSON.stringify(input.stages), input.parentJobId ?? null);
+
+        if (!result) {
+            throw new Error("enqueueJob failed: insert returned no id");
+        }
+
+        const job = this.getJob(result.id);
+
+        if (!job) {
+            throw new Error(`enqueueJob: inserted id=${result.id} but read returned null`);
+        }
+
+        return job;
+    }
+
+    claimNextJob(workerId: string, opts: ClaimJobOpts = {}): PipelineJob | null {
+        const stageClause = opts.stage ? "AND EXISTS (SELECT 1 FROM json_each(jobs.stages) WHERE value = ?)" : "";
+        const row = opts.stage
+            ? this.db
+                  .query<JobRow, [string, string]>(
+                      `UPDATE jobs SET status = 'running', worker_id = ?, claimed_at = datetime('now'), updated_at = datetime('now')
+                       WHERE id = (
+                           SELECT id FROM jobs WHERE status = 'pending' ${stageClause} ORDER BY id ASC LIMIT 1
+                       )
+                       RETURNING *`
+                  )
+                  .get(workerId, opts.stage)
+            : this.db
+                  .query<JobRow, [string]>(
+                      `UPDATE jobs SET status = 'running', worker_id = ?, claimed_at = datetime('now'), updated_at = datetime('now')
+                       WHERE id = (
+                           SELECT id FROM jobs WHERE status = 'pending' ORDER BY id ASC LIMIT 1
+                       )
+                       RETURNING *`
+                  )
+                  .get(workerId);
+
+        return row ? rowToJob(row) : null;
+    }
+
+    updateJob(id: number, partial: UpdateJobPartial): void {
+        const existing = this.getJob(id);
+
+        if (!existing) {
+            throw new Error(`updateJob: job ${id} not found`);
+        }
+
+        if (partial.status !== undefined) {
+            assertJobTransition(existing.status, partial.status, "updateJob");
+        }
+
+        const sets: string[] = [];
+        const params: Array<string | number | null> = [];
+
+        if (partial.status !== undefined) {
+            sets.push("status = ?");
+            params.push(partial.status);
+
+            if (isTerminalJobStatus(partial.status) && partial.completedAt === undefined) {
+                sets.push("completed_at = datetime('now')");
+            }
+        }
+
+        if (partial.currentStage !== undefined) {
+            sets.push("current_stage = ?");
+            params.push(partial.currentStage);
+        }
+
+        if (partial.error !== undefined) {
+            sets.push("error = ?");
+            params.push(partial.error);
+        }
+
+        if (partial.progress !== undefined) {
+            sets.push("progress = ?");
+            params.push(partial.progress);
+        }
+
+        if (partial.progressMessage !== undefined) {
+            sets.push("progress_message = ?");
+            params.push(partial.progressMessage);
+        }
+
+        if (partial.completedAt !== undefined) {
+            sets.push("completed_at = ?");
+            params.push(partial.completedAt);
+        }
+
+        if (sets.length === 0) {
+            return;
+        }
+
+        sets.push("updated_at = datetime('now')");
+        params.push(id);
+        this.db.run(`UPDATE jobs SET ${sets.join(", ")} WHERE id = ?`, params);
+    }
+
+    listJobs(opts: ListJobsOpts = {}): PipelineJob[] {
+        const where: string[] = [];
+        const params: Array<string | number> = [];
+
+        if (opts.status) {
+            where.push("status = ?");
+            params.push(opts.status);
+        }
+
+        if (opts.targetKind) {
+            where.push("target_kind = ?");
+            params.push(opts.targetKind);
+        }
+
+        if (opts.target) {
+            where.push("target = ?");
+            params.push(opts.target);
+        }
+
+        if (opts.parentJobId !== undefined) {
+            where.push("parent_job_id = ?");
+            params.push(opts.parentJobId);
+        }
+
+        const whereClause = where.length ? `WHERE ${where.join(" AND ")}` : "";
+        const limit = opts.limit ?? 100;
+        const offset = opts.offset ?? 0;
+        const rows = this.db.query<JobRow, [...Array<string | number>, number, number]>(`SELECT * FROM jobs ${whereClause} ORDER BY id DESC LIMIT ? OFFSET ?`).all(...params, limit, offset);
+
+        return rows.map(rowToJob);
+    }
+
+    markInterruptedJobsForRequeue(): number {
+        const result = this.db.run(
+            `UPDATE jobs SET status = 'pending', worker_id = NULL, claimed_at = NULL, current_stage = NULL,
+                             progress = 0, progress_message = NULL, updated_at = datetime('now')
+             WHERE status = 'running'`
+        );
+
+        return result.changes;
+    }
+
+    getJob(id: number): PipelineJob | null {
+        const row = this.db.query<JobRow, [number]>("SELECT * FROM jobs WHERE id = ?").get(id);
+
+        return row ? rowToJob(row) : null;
+    }
+
+    cancelJob(id: number): void {
+        const existing = this.getJob(id);
+
+        if (!existing) {
+            return;
+        }
+
+        assertJobTransition(existing.status, "cancelled", "cancelJob");
+        this.db.run("UPDATE jobs SET status = 'cancelled', completed_at = datetime('now'), updated_at = datetime('now') WHERE id = ?", [id]);
+    }
+
     initSchemaForTest(): void {
         this.initSchema();
     }
@@ -658,6 +824,35 @@ interface UpsertQaChunkInput {
     embedderModel?: string | null;
 }
 
+interface EnqueueJobInput {
+    targetKind: JobTargetKind;
+    target: string;
+    stages: JobStage[];
+    parentJobId?: number | null;
+}
+
+interface ClaimJobOpts {
+    stage?: JobStage;
+}
+
+interface UpdateJobPartial {
+    status?: JobStatus;
+    currentStage?: JobStage | null;
+    error?: string | null;
+    progress?: number;
+    progressMessage?: string | null;
+    completedAt?: string | null;
+}
+
+interface ListJobsOpts {
+    status?: JobStatus;
+    targetKind?: JobTargetKind;
+    target?: string;
+    parentJobId?: number;
+    limit?: number;
+    offset?: number;
+}
+
 interface TranscriptSearchHit {
     videoId: VideoId;
     lang: Language;
@@ -694,6 +889,81 @@ interface QaChunkRow {
     embedding_dims: number | null;
     embedder_model: string | null;
     created_at: string;
+}
+
+interface JobRow {
+    id: number;
+    target_kind: JobTargetKind;
+    target: string;
+    stages: string;
+    current_stage: JobStage | null;
+    status: JobStatus;
+    error: string | null;
+    progress: number;
+    progress_message: string | null;
+    parent_job_id: number | null;
+    worker_id: string | null;
+    claimed_at: string | null;
+    created_at: string;
+    updated_at: string;
+    completed_at: string | null;
+}
+
+function rowToJob(row: JobRow): PipelineJob {
+    return {
+        id: row.id,
+        targetKind: row.target_kind,
+        target: row.target,
+        stages: parseJobStages(row.stages),
+        currentStage: row.current_stage,
+        status: row.status,
+        error: row.error,
+        progress: row.progress,
+        progressMessage: row.progress_message,
+        parentJobId: row.parent_job_id,
+        workerId: row.worker_id,
+        claimedAt: row.claimed_at,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        completedAt: row.completed_at,
+    };
+}
+
+function parseJobStages(raw: string): JobStage[] {
+    const parsed = JSON.parse(raw) as unknown;
+
+    if (!Array.isArray(parsed)) {
+        return [];
+    }
+
+    return parsed.filter(isJobStage);
+}
+
+function isJobStage(value: unknown): value is JobStage {
+    return value === "discover" || value === "metadata" || value === "captions" || value === "audio" || value === "transcribe" || value === "summarize";
+}
+
+function isTerminalJobStatus(status: JobStatus): boolean {
+    return status === "completed" || status === "failed" || status === "cancelled";
+}
+
+function assertJobTransition(from: JobStatus, to: JobStatus, trigger: string): void {
+    if (from === to) {
+        return;
+    }
+
+    const allowed: Record<JobStatus, JobStatus[]> = {
+        pending: ["running", "cancelled"],
+        running: ["completed", "failed", "cancelled", "interrupted"],
+        completed: [],
+        failed: ["pending"],
+        cancelled: [],
+        interrupted: ["pending"],
+    };
+
+    if (!allowed[from].includes(to)) {
+        throw new Error(`${trigger}: invalid job transition ${from} -> ${to}`);
+    }
 }
 
 function rowToQaChunk(row: QaChunkRow): QaChunk {

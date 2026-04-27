@@ -246,3 +246,87 @@ describe("YoutubeDatabase QA chunks", () => {
         expect(chunks[0].text).toBe("New");
     });
 });
+
+describe("YoutubeDatabase jobs", () => {
+    it("enqueues and retrieves a pending job", () => {
+        const job = db.enqueueJob({ targetKind: "video", target: "vid00000001", stages: ["metadata", "captions"] });
+
+        expect(job.id).toBeGreaterThan(0);
+        expect(job.status).toBe("pending");
+        expect(job.stages).toEqual(["metadata", "captions"]);
+        expect(db.getJob(job.id)?.target).toBe("vid00000001");
+    });
+
+    it("claims one pending job atomically and filters by stage", () => {
+        const metadataOnly = db.enqueueJob({ targetKind: "video", target: "meta", stages: ["metadata"] });
+        const audioJob = db.enqueueJob({ targetKind: "video", target: "audio", stages: ["audio"] });
+        const claimed = db.claimNextJob("worker-1", { stage: "audio" });
+        const secondClaim = db.claimNextJob("worker-2", { stage: "audio" });
+
+        expect(claimed?.id).toBe(audioJob.id);
+        expect(claimed?.status).toBe("running");
+        expect(claimed?.workerId).toBe("worker-1");
+        expect(claimed?.claimedAt).toBeString();
+        expect(secondClaim).toBeNull();
+        expect(db.getJob(metadataOnly.id)?.status).toBe("pending");
+    });
+
+    it("updates running jobs through completion", () => {
+        const job = db.enqueueJob({ targetKind: "video", target: "vid00000001", stages: ["metadata"] });
+        const claimed = db.claimNextJob("worker-1");
+
+        db.updateJob(claimed?.id ?? job.id, { currentStage: "metadata", progress: 0.5, progressMessage: "half" });
+        expect(db.getJob(job.id)?.progress).toBe(0.5);
+
+        db.updateJob(job.id, { status: "completed", progress: 1 });
+        const completed = db.getJob(job.id);
+
+        expect(completed?.status).toBe("completed");
+        expect(completed?.completedAt).toBeString();
+    });
+
+    it("rejects invalid job state transitions", () => {
+        const job = db.enqueueJob({ targetKind: "video", target: "vid00000001", stages: ["metadata"] });
+
+        expect(() => db.updateJob(job.id, { status: "completed" })).toThrow("invalid job transition pending -> completed");
+    });
+
+    it("cancels pending and running jobs", () => {
+        const pending = db.enqueueJob({ targetKind: "video", target: "pending", stages: ["metadata"] });
+        db.enqueueJob({ targetKind: "video", target: "running", stages: ["metadata"] });
+        const running = db.claimNextJob("worker-1");
+
+        db.cancelJob(pending.id);
+        db.cancelJob(running?.id ?? 0);
+
+        expect(db.getJob(pending.id)?.status).toBe("cancelled");
+        expect(db.getJob(running?.id ?? 0)?.status).toBe("cancelled");
+    });
+
+    it("requeues interrupted running jobs", () => {
+        const first = db.enqueueJob({ targetKind: "video", target: "first", stages: ["metadata"] });
+        const second = db.enqueueJob({ targetKind: "video", target: "second", stages: ["metadata"] });
+        db.claimNextJob("worker-1");
+        db.claimNextJob("worker-2");
+        db.updateJob(first.id, { currentStage: "metadata", progress: 0.25, progressMessage: "working" });
+        const count = db.markInterruptedJobsForRequeue();
+
+        expect(count).toBe(2);
+        expect(db.getJob(first.id)?.status).toBe("pending");
+        expect(db.getJob(first.id)?.workerId).toBeNull();
+        expect(db.getJob(first.id)?.progress).toBe(0);
+        expect(db.getJob(second.id)?.status).toBe("pending");
+    });
+
+    it("lists jobs by filters", () => {
+        const parent = db.enqueueJob({ targetKind: "channel", target: "@mkbhd", stages: ["discover"] });
+        db.enqueueJob({ targetKind: "video", target: "child", stages: ["metadata"], parentJobId: parent.id });
+        db.enqueueJob({ targetKind: "video", target: "other", stages: ["metadata"] });
+
+        const children = db.listJobs({ parentJobId: parent.id });
+        const videos = db.listJobs({ targetKind: "video", limit: 2 });
+
+        expect(children.map((job) => job.target)).toEqual(["child"]);
+        expect(videos.length).toBe(2);
+    });
+});
