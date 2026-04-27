@@ -81,7 +81,22 @@ export function getProvider(type: AIProviderType): AIProvider {
 
 export async function getProviderForTask(task: AITask, config: AIConfig): Promise<AIProvider> {
     const preferred = config.getTaskProvider(task);
-    const provider = getProvider(preferred);
+    // Route through the task-specific accessor first so per-task class splits work
+    // (e.g. xai has separate AIXAITranscriptionProvider + AIXAITextToSpeechProvider —
+    // getProvider returns only the TTS one).
+    let provider: AIProvider;
+
+    try {
+        if (task === "transcribe") {
+            provider = getTranscriptionProvider(preferred);
+        } else if (task === "tts") {
+            provider = getTextToSpeechProvider(preferred);
+        } else {
+            provider = getProvider(preferred);
+        }
+    } catch {
+        provider = getProvider(preferred);
+    }
 
     if (provider.supports(task) && (await provider.isAvailable())) {
         return provider;
