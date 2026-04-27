@@ -1,9 +1,9 @@
 import { useMemo, useState } from "react";
 import { Button } from "@app/utils/ui/components/button";
 import { Input } from "@app/utils/ui/components/input";
-import { Loading } from "@yt/components/shared/loading";
-import { formatTimecode } from "@yt/lib/time";
-import { useTranscript } from "@yt/api.hooks";
+import { Loading } from "@app/yt/components/shared/loading";
+import { formatTimecode } from "@app/yt/lib/time";
+import { useTranscript } from "@app/yt/api.hooks";
 import type { TranscriptSegment, VideoId } from "@app/youtube/lib/types";
 import { Search } from "lucide-react";
 

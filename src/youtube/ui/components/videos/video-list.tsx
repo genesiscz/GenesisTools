@@ -2,12 +2,12 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { Badge } from "@app/utils/ui/components/badge";
 import { Button } from "@app/utils/ui/components/button";
-import { EmptyState } from "@yt/components/shared/empty-state";
-import { Loading } from "@yt/components/shared/loading";
-import { VideoCard } from "@yt/components/videos/video-card";
-import { VideoListFilters, type VideoListFilterState } from "@yt/components/videos/video-list-filters";
-import { formatDateTime, formatNumber } from "@yt/lib/format";
-import { useChannels, useSyncChannel, useVideos } from "@yt/api.hooks";
+import { EmptyState } from "@app/yt/components/shared/empty-state";
+import { Loading } from "@app/yt/components/shared/loading";
+import { VideoCard } from "@app/yt/components/videos/video-card";
+import { VideoListFilters, type VideoListFilterState } from "@app/yt/components/videos/video-list-filters";
+import { formatDateTime, formatNumber } from "@app/yt/lib/format";
+import { useChannels, useSyncChannel, useVideos } from "@app/yt/api.hooks";
 import type { ChannelHandle } from "@app/youtube/lib/types";
 import { RefreshCw } from "lucide-react";
 

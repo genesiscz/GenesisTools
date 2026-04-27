@@ -1,11 +1,11 @@
 import { useMemo, useState } from "react";
 import { Button } from "@app/utils/ui/components/button";
 import { Input } from "@app/utils/ui/components/input";
-import { AddChannelDialog } from "@yt/components/channels/add-channel-dialog";
-import { ChannelCard } from "@yt/components/channels/channel-card";
-import { EmptyState } from "@yt/components/shared/empty-state";
-import { Loading } from "@yt/components/shared/loading";
-import { useChannels } from "@yt/api.hooks";
+import { AddChannelDialog } from "@app/yt/components/channels/add-channel-dialog";
+import { ChannelCard } from "@app/yt/components/channels/channel-card";
+import { EmptyState } from "@app/yt/components/shared/empty-state";
+import { Loading } from "@app/yt/components/shared/loading";
+import { useChannels } from "@app/yt/api.hooks";
 import { Plus, Search } from "lucide-react";
 
 export function ChannelsGrid() {

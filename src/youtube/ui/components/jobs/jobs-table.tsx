@@ -2,10 +2,10 @@ import { toast } from "sonner";
 import { Button } from "@app/utils/ui/components/button";
 import { Progress } from "@app/utils/ui/components/progress";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@app/utils/ui/components/table";
-import { EmptyState } from "@yt/components/shared/empty-state";
-import { JobStatusBadge } from "@yt/components/jobs/job-status-badge";
-import { formatDateTime, formatDuration } from "@yt/lib/format";
-import { useCancelJob } from "@yt/api.hooks";
+import { EmptyState } from "@app/yt/components/shared/empty-state";
+import { JobStatusBadge } from "@app/yt/components/jobs/job-status-badge";
+import { formatDateTime, formatDuration } from "@app/yt/lib/format";
+import { useCancelJob } from "@app/yt/api.hooks";
 import type { PipelineJob } from "@app/youtube/lib/types";
 import { Ban, PlayCircle } from "lucide-react";
 

@@ -1,9 +1,9 @@
 import { Outlet, createRootRouteWithContext, redirect } from "@tanstack/react-router";
 import type { QueryClient } from "@tanstack/react-query";
-import { fetchUiConfig } from "@yt/config.client";
-import { ErrorBoundary } from "@yt/components/shared/error-boundary";
-import { Sidebar } from "@yt/components/shared/sidebar";
-import { Topbar } from "@yt/components/shared/topbar";
+import { fetchUiConfig } from "@app/yt/config.client";
+import { ErrorBoundary } from "@app/yt/components/shared/error-boundary";
+import { Sidebar } from "@app/yt/components/shared/sidebar";
+import { Topbar } from "@app/yt/components/shared/topbar";
 
 interface RouterContext {
     queryClient: QueryClient;

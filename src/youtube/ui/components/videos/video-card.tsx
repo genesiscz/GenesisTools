@@ -1,7 +1,7 @@
 import { useNavigate } from "@tanstack/react-router";
 import { Badge } from "@app/utils/ui/components/badge";
 import { Card, CardContent } from "@app/utils/ui/components/card";
-import { formatDate, formatDuration, formatNumber } from "@yt/lib/format";
+import { formatDate, formatDuration, formatNumber } from "@app/yt/lib/format";
 import type { Video } from "@app/youtube/lib/types";
 import { Captions, Eye, Radio } from "lucide-react";
 

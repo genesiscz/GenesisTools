@@ -2,10 +2,10 @@ import { useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@app/utils/ui/components/select";
-import { JobsTable } from "@yt/components/jobs/jobs-table";
-import { Loading } from "@yt/components/shared/loading";
-import { useJobs } from "@yt/api.hooks";
-import { useEventStream } from "@yt/ws.client";
+import { JobsTable } from "@app/yt/components/jobs/jobs-table";
+import { Loading } from "@app/yt/components/shared/loading";
+import { useJobs } from "@app/yt/api.hooks";
+import { useEventStream } from "@app/yt/ws.client";
 import type { JobStatus } from "@app/youtube/lib/types";
 
 const statusOptions: Array<JobStatus | "all"> = ["all", "pending", "running", "completed", "failed", "cancelled", "interrupted"];

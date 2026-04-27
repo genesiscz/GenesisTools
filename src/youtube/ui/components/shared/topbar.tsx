@@ -1,6 +1,6 @@
 import { Link, useRouterState } from "@tanstack/react-router";
-import { useEventStream } from "@yt/ws.client";
-import { pageTitleFromPath } from "@yt/lib/theme";
+import { useEventStream } from "@app/yt/ws.client";
+import { pageTitleFromPath } from "@app/yt/lib/theme";
 import { Activity, Menu, Sparkles } from "lucide-react";
 
 export function Topbar() {

@@ -4,8 +4,8 @@ import { Badge } from "@app/utils/ui/components/badge";
 import { Button } from "@app/utils/ui/components/button";
 import { Card, CardContent } from "@app/utils/ui/components/card";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@app/utils/ui/components/dropdown-menu";
-import { formatDateTime, formatNumber } from "@yt/lib/format";
-import { useRemoveChannel, useSyncChannel } from "@yt/api.hooks";
+import { formatDateTime, formatNumber } from "@app/yt/lib/format";
+import { useRemoveChannel, useSyncChannel } from "@app/yt/api.hooks";
 import type { Channel } from "@app/youtube/lib/types";
 import { MoreVertical, RefreshCw, Trash2 } from "lucide-react";
 

@@ -1,5 +1,5 @@
-import { beforeEach, describe, expect, it } from "bun:test";
-import { createEventStream } from "@yt/ws.client";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { createEventStream } from "@app/yt/ws.client";
 
 interface WebSocketConstructor {
     new (url: string): FakeWebSocket;
@@ -26,6 +26,9 @@ class FakeWebSocket {
     }
 }
 
+const originalFetch = globalThis.fetch;
+const originalWebSocket = globalThis.WebSocket;
+
 function resetHooks() {
 }
 
@@ -35,6 +38,11 @@ describe("useEventStream", () => {
         globalThis.fetch = (async () => Response.json({ config: { apiBaseUrl: "http://api.example.test" }, where: "/tmp/server.json" })) as unknown as typeof fetch;
         globalThis.WebSocket = FakeWebSocket as unknown as WebSocketConstructor & typeof WebSocket;
         resetHooks();
+    });
+
+    afterEach(() => {
+        globalThis.fetch = originalFetch;
+        globalThis.WebSocket = originalWebSocket;
     });
 
     it("subscribes to configured websocket events and forwards messages", async () => {

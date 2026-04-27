@@ -1,9 +1,10 @@
-import { beforeEach, describe, expect, it, mock } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import type { JobStage } from "@app/youtube/lib/types";
 
 const fetchCalls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
+const originalFetch = globalThis.fetch;
 
-mock.module("@yt/config.client", () => ({
+mock.module("@app/yt/config.client", () => ({
     fetchUiConfig: async () => ({
         config: { apiBaseUrl: "http://api.example.test/", firstRunComplete: true },
         where: "/tmp/server.json",
@@ -22,8 +23,12 @@ describe("youtube ui apiClient", () => {
         }) as typeof fetch;
     });
 
+    afterEach(() => {
+        globalThis.fetch = originalFetch;
+    });
+
     it("posts channel handles to the configured API base URL", async () => {
-        const { apiClient } = await import(`@yt/api.client?case=${moduleToken}`);
+        const { apiClient } = await import(`@app/yt/api.client?case=${moduleToken}`);
 
         const result = await apiClient.addChannels(["@mkbhd"]);
 
@@ -34,7 +39,7 @@ describe("youtube ui apiClient", () => {
     });
 
     it("serializes video filters and pipeline stages", async () => {
-        const { apiClient } = await import(`@yt/api.client?case=${moduleToken}`);
+        const { apiClient } = await import(`@app/yt/api.client?case=${moduleToken}`);
         const stages: JobStage[] = ["captions", "summarize"];
 
         await apiClient.listVideos({ channel: "@mkbhd", limit: 12, includeShorts: true, since: "2026-01-01" });
@@ -50,7 +55,7 @@ describe("youtube ui apiClient", () => {
             fetchCalls.push({ input, init });
             return Response.json({ summary: [{ startSec: 1, endSec: 2, text: "hello" }] });
         }) as typeof fetch;
-        const { apiClient } = await import(`@yt/api.client?case=${moduleToken}`);
+        const { apiClient } = await import(`@app/yt/api.client?case=${moduleToken}`);
 
         const result = await apiClient.getSummary("video-1", "timestamped");
 
@@ -63,7 +68,7 @@ describe("youtube ui apiClient", () => {
             fetchCalls.push({ input, init });
             return new Response("boom", { status: 500, statusText: "Server Error" });
         }) as typeof fetch;
-        const { apiClient } = await import(`@yt/api.client?case=${moduleToken}`);
+        const { apiClient } = await import(`@app/yt/api.client?case=${moduleToken}`);
 
         await expect(apiClient.listChannels()).rejects.toThrow("500 Server Error: boom");
     });

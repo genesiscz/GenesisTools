@@ -3,12 +3,12 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { Badge } from "@app/utils/ui/components/badge";
 import { Card, CardContent } from "@app/utils/ui/components/card";
-import { ProgressBar } from "@yt/components/pipeline/progress-bar";
-import { Loading } from "@yt/components/shared/loading";
-import { VideoDetailTabs, type VideoDetailTab } from "@yt/components/video-detail/tabs";
-import { formatDate, formatDuration, formatNumber } from "@yt/lib/format";
-import { useVideo } from "@yt/api.hooks";
-import { useEventStream } from "@yt/ws.client";
+import { ProgressBar } from "@app/yt/components/pipeline/progress-bar";
+import { Loading } from "@app/yt/components/shared/loading";
+import { VideoDetailTabs, type VideoDetailTab } from "@app/yt/components/video-detail/tabs";
+import { formatDate, formatDuration, formatNumber } from "@app/yt/lib/format";
+import { useVideo } from "@app/yt/api.hooks";
+import { useEventStream } from "@app/yt/ws.client";
 import type { VideoId } from "@app/youtube/lib/types";
 import { Captions, Eye, Radio } from "lucide-react";
 

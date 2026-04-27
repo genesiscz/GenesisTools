@@ -3,7 +3,7 @@ import { toast } from "sonner";
 import { Button } from "@app/utils/ui/components/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@app/utils/ui/components/dialog";
 import { Textarea } from "@app/utils/ui/components/textarea";
-import { useAddChannels, useSyncChannel } from "@yt/api.hooks";
+import { useAddChannels, useSyncChannel } from "@app/yt/api.hooks";
 import type { ChannelHandle } from "@app/youtube/lib/types";
 import { FileUp, Plus } from "lucide-react";
 

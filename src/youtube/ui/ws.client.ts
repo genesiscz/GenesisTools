@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { fetchUiConfig } from "@yt/config.client";
+import { fetchUiConfig } from "@app/yt/config.client";
 import type { JobEvent } from "@app/youtube/lib/types";
 
 export interface UseEventStreamOpts {

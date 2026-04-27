@@ -1,7 +1,7 @@
 import { Button } from "@app/utils/ui/components/button";
-import { Loading } from "@yt/components/shared/loading";
-import { formatTimecode } from "@yt/lib/time";
-import { useSummary } from "@yt/api.hooks";
+import { Loading } from "@app/yt/components/shared/loading";
+import { formatTimecode } from "@app/yt/lib/time";
+import { useSummary } from "@app/yt/api.hooks";
 import type { VideoId } from "@app/youtube/lib/types";
 
 export function SummaryTab({ videoId, onSeek }: { videoId: VideoId; onSeek: (seconds: number) => void }) {

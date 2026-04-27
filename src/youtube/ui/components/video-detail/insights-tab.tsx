@@ -1,6 +1,6 @@
 import { Badge } from "@app/utils/ui/components/badge";
-import { Loading } from "@yt/components/shared/loading";
-import { useSummary } from "@yt/api.hooks";
+import { Loading } from "@app/yt/components/shared/loading";
+import { useSummary } from "@app/yt/api.hooks";
 import type { VideoId } from "@app/youtube/lib/types";
 
 const fallbackIcons = ["🎯", "💰", "🏆"];

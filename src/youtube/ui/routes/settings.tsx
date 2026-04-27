@@ -17,10 +17,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@app/utils/ui/componen
 import { Input } from "@app/utils/ui/components/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@app/utils/ui/components/select";
 import { Switch } from "@app/utils/ui/components/switch";
-import { Loading } from "@yt/components/shared/loading";
-import { formatBytes } from "@yt/lib/format";
-import { apiClient } from "@yt/api.client";
-import { useCacheStats, useClearCache, usePatchServerConfig, usePruneCache, useServerConfig } from "@yt/api.hooks";
+import { Loading } from "@app/yt/components/shared/loading";
+import { formatBytes } from "@app/yt/lib/format";
+import { apiClient } from "@app/yt/api.client";
+import { useCacheStats, useClearCache, usePatchServerConfig, usePruneCache, useServerConfig } from "@app/yt/api.hooks";
 import type { YoutubeConfigShape } from "@app/youtube/lib/types";
 import { CheckCircle2, DatabaseZap, RotateCcw, Save, Server, Trash2 } from "lucide-react";
 

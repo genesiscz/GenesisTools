@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { Button } from "@app/utils/ui/components/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@app/utils/ui/components/card";
 import { Input } from "@app/utils/ui/components/input";
-import { patchUiConfig } from "@yt/config.client";
+import { patchUiConfig } from "@app/yt/config.client";
 import { Cable, Server } from "lucide-react";
 
 export function FirstRunWizard() {

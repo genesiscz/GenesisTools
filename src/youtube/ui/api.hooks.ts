@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { apiClient, clearApiBaseUrlCache } from "@yt/api.client";
+import { apiClient, clearApiBaseUrlCache } from "@app/yt/api.client";
 import type { ChannelHandle, JobStage, JobStatus, VideoId } from "@app/youtube/lib/types";
 import type { YoutubeConfigPatch } from "@app/youtube/lib/config.api.types";
 

@@ -1,8 +1,8 @@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@app/utils/ui/components/tabs";
-import { CommentsTab } from "@yt/components/video-detail/comments-tab";
-import { InsightsTab } from "@yt/components/video-detail/insights-tab";
-import { SummaryTab } from "@yt/components/video-detail/summary-tab";
-import { TranscriptTab } from "@yt/components/video-detail/transcript-tab";
+import { CommentsTab } from "@app/yt/components/video-detail/comments-tab";
+import { InsightsTab } from "@app/yt/components/video-detail/insights-tab";
+import { SummaryTab } from "@app/yt/components/video-detail/summary-tab";
+import { TranscriptTab } from "@app/yt/components/video-detail/transcript-tab";
 import type { VideoId } from "@app/youtube/lib/types";
 
 export type VideoDetailTab = "insights" | "summary" | "comments" | "transcript";

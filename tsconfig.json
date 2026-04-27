@@ -37,8 +37,8 @@
             "@ask/*": ["./src/ask/*"],
             "@ui/*": ["./src/utils/ui/*"],
             "@ui": ["./src/utils/ui/index.ts"],
-            "@yt/*": ["./src/youtube/ui/*"],
-            "@yt": ["./src/youtube/ui/index.ts"]
+            "@app/yt/*": ["./src/youtube/ui/*"],
+            "@app/yt": ["./src/youtube/ui/index.ts"]
         }
     },
     "include": ["src/**/*", "./test-*.ts"]

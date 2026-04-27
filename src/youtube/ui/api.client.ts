@@ -1,4 +1,4 @@
-import { fetchUiConfig } from "@yt/config.client";
+import { fetchUiConfig } from "@app/yt/config.client";
 import type {
     Channel,
     ChannelHandle,
