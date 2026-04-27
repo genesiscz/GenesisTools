@@ -174,6 +174,11 @@ export interface AITextToSpeechProvider extends AIProvider {
      * Returns a named object so callers can get contentType without consuming the stream first.
      */
     synthesizeStream?(text: string, options?: TTSOptions): { audio: AsyncIterable<Uint8Array>; contentType: string };
+    /**
+     * Native speak short-circuit — plays audio directly to speakers without a buffer roundtrip.
+     * Implemented by local providers (e.g. macOS) that can pipe straight to the audio subsystem.
+     */
+    speak?(text: string, options?: TTSOptions & { volume?: number; rate?: number; wait?: boolean }): Promise<void>;
     listVoices?(): Promise<TTSVoice[]>;
 }
 

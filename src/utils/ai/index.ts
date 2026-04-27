@@ -6,6 +6,8 @@ export { ensureResolversInitialized, getResolver, registerResolver, resetResolve
 
 import { Embedder } from "./tasks/Embedder";
 import { Summarizer } from "./tasks/Summarizer";
+import type { SpeakOptions } from "./tasks/Synthesizer";
+import { Synthesizer } from "./tasks/Synthesizer";
 import { Transcriber } from "./tasks/Transcriber";
 import { Translator } from "./tasks/Translator";
 import { TranscriptionManager } from "./transcription/TranscriptionManager";
@@ -18,6 +20,7 @@ import type {
     TranscriptionResult,
     TranslateOptions,
     TranslationResult,
+    TTSResult,
 } from "./types";
 
 export { AIConfig } from "./AIConfig";
@@ -47,6 +50,8 @@ export {
 } from "./ModelRegistry";
 export { Embedder } from "./tasks/Embedder";
 export { Summarizer } from "./tasks/Summarizer";
+export type { ProviderSelector, SpeakOptions, VoicesByProvider } from "./tasks/Synthesizer";
+export { Synthesizer } from "./tasks/Synthesizer";
 export { Transcriber } from "./tasks/Transcriber";
 export { Translator } from "./tasks/Translator";
 export { TranscriptionManager, transcriptionManager } from "./transcription/TranscriptionManager";
@@ -54,6 +59,7 @@ export * from "./types";
 
 export const AI = {
     Embedder,
+    Synthesizer,
     Transcriber,
     Translator,
     Summarizer,
@@ -94,5 +100,15 @@ export const AI = {
         } finally {
             s.dispose();
         }
+    },
+
+    async speak(text: string, options?: SpeakOptions): Promise<void> {
+        const s = await Synthesizer.create({ provider: options?.provider });
+        await s.speak(text, options);
+    },
+
+    async synthesize(text: string, options?: SpeakOptions): Promise<TTSResult> {
+        const s = await Synthesizer.create({ provider: options?.provider });
+        return s.synthesize(text, options);
     },
 };
