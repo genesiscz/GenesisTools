@@ -274,6 +274,50 @@ describe("YoutubeDatabase transcripts", () => {
     });
 });
 
+describe("YoutubeDatabase video metadata search", () => {
+    beforeEach(() => {
+        db.upsertChannel({ handle: "@mkbhd" });
+        db.upsertVideo({ id: "vid_phone001", channelHandle: "@mkbhd", title: "iPhone 16 review", description: "A long detailed phone review", tags: ["apple", "review"], uploadDate: "2026-04-01" });
+        db.upsertVideo({ id: "vid_macsoda1", channelHandle: "@mkbhd", title: "MacBook test", description: "Battery and chip review", tags: ["macbook", "agentic"], uploadDate: "2026-03-01" });
+    });
+
+    it("matches title via SQL LIKE", () => {
+        const hits = db.searchVideos("phone", { fields: ["title"] });
+
+        expect(hits.length).toBe(1);
+        expect(hits[0]).toMatchObject({ videoId: "vid_phone001", field: "title" });
+    });
+
+    it("matches description with snippet around the hit", () => {
+        const hits = db.searchVideos("Battery", { fields: ["description"] });
+
+        expect(hits[0]).toMatchObject({ videoId: "vid_macsoda1", field: "description" });
+        expect(hits[0].snippet.toLowerCase()).toContain("battery");
+    });
+
+    it("matches tags from tags_json", () => {
+        const hits = db.searchVideos("agentic", { fields: ["tags"] });
+
+        expect(hits.length).toBe(1);
+        expect(hits[0]).toMatchObject({ videoId: "vid_macsoda1", field: "tags", snippet: "agentic" });
+    });
+
+    it("scopes to a channel and respects limit", () => {
+        db.upsertChannel({ handle: "@other" });
+        db.upsertVideo({ id: "vid_other001", channelHandle: "@other", title: "phone test", description: null });
+        const hits = db.searchVideos("phone", { fields: ["title"], channel: "@mkbhd", limit: 1 });
+
+        expect(hits.length).toBe(1);
+        expect(hits[0].channelHandle).toBe("@mkbhd");
+    });
+
+    it("returns empty for queries with no match", () => {
+        const hits = db.searchVideos("nonexistent-zzz", { fields: ["title", "description", "tags"] });
+
+        expect(hits).toEqual([]);
+    });
+});
+
 describe("YoutubeDatabase QA chunks", () => {
     beforeEach(() => {
         db.upsertChannel({ handle: "@mkbhd" });

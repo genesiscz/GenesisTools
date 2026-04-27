@@ -12,6 +12,7 @@ export class Pipeline {
     private readonly emitter = new EventEmitter();
     private abortController: AbortController | null = null;
     private readonly workers: Promise<void>[] = [];
+    private readonly jobAborts = new Map<number, AbortController>();
     private globalConcurrencyOverride: number | null = null;
     private running = false;
 
@@ -46,6 +47,12 @@ export class Pipeline {
 
     cancelJob(id: number): void {
         this.db.cancelJob(id);
+        const controller = this.jobAborts.get(id);
+
+        if (controller) {
+            controller.abort(new Error(`job ${id} cancelled`));
+        }
+
         this.emit({ type: "job:cancelled", jobId: id });
     }
 
@@ -112,9 +119,13 @@ export class Pipeline {
         logger.info({ jobId: job.id, targetKind: job.targetKind, target: job.target, claimedStage, stages: job.stages }, "youtube pipeline job started");
         this.emit({ type: "job:started", job });
 
+        const jobController = new AbortController();
+        this.jobAborts.set(job.id, jobController);
+        const mergedSignal = AbortSignal.any([signal, jobController.signal]);
+
         try {
             for (const [index, stage] of stagesForClaimedWorker(job, claimedStage).entries()) {
-                if (!this.running || signal.aborted) {
+                if (!this.running || mergedSignal.aborted) {
                     return;
                 }
 
@@ -130,7 +141,7 @@ export class Pipeline {
 
                 const ctx: StageHandlerCtx = {
                     job: this.db.getJob(job.id) ?? job,
-                    signal,
+                    signal: mergedSignal,
                     onProgress: (progress, message) => {
                         this.db.updateJob(job.id, { progress, progressMessage: message ?? null });
                         this.emit({ type: "stage:progress", jobId: job.id, stage, progress, message });
@@ -142,16 +153,28 @@ export class Pipeline {
                 this.emit({ type: "stage:completed", jobId: job.id, stage });
             }
 
+            if (jobController.signal.aborted) {
+                logger.info({ jobId: job.id, targetKind: job.targetKind, target: job.target }, "youtube pipeline job stopped (cancelled)");
+                return;
+            }
+
             this.db.updateJob(job.id, { status: "completed", completedAt: new Date().toISOString(), progress: 1, progressMessage: null, currentStage: null });
             const completed = this.db.getJob(job.id) ?? job;
             logger.info({ jobId: completed.id, targetKind: completed.targetKind, target: completed.target }, "youtube pipeline job completed");
             this.emit({ type: "job:completed", job: completed });
         } catch (error) {
+            if (jobController.signal.aborted) {
+                logger.info({ jobId: job.id, target: job.target, target_kind: job.targetKind }, "youtube pipeline job stopped mid-stage (cancelled)");
+                return;
+            }
+
             const message = error instanceof Error ? error.message : String(error);
             this.db.updateJob(job.id, { status: "failed", error: message, completedAt: new Date().toISOString() });
             const failed = this.db.getJob(job.id) ?? job;
             logger.error({ jobId: failed.id, targetKind: failed.targetKind, target: failed.target, error: message }, "youtube pipeline job failed");
             this.emit({ type: "job:failed", job: failed, error: message });
+        } finally {
+            this.jobAborts.delete(job.id);
         }
     }
 

@@ -1,4 +1,6 @@
 import { join } from "node:path";
+import logger from "@app/logger";
+import { concurrentMap } from "@app/utils/async";
 import { audioPath, ensureBinaryDir, videoFilePath } from "@app/youtube/lib/cache";
 import { DEFAULT_BASE_DIR, YoutubeConfig } from "@app/youtube/lib/config";
 import { YoutubeDatabase } from "@app/youtube/lib/db";
@@ -20,6 +22,20 @@ const DEFAULT_YOUTUBE_DEPS: YoutubeDeps = {
     dumpVideoMetadata,
 };
 
+export interface SyncDatesOpts {
+    channel?: ChannelHandle;
+    limit?: number;
+    concurrency?: number;
+    signal?: AbortSignal;
+    onProgress?: (info: { videoId: VideoId; index: number; total: number; uploadDate: string | null }) => void;
+}
+
+export interface SyncDatesResult {
+    scanned: number;
+    updated: number;
+    failed: Array<{ videoId: VideoId; error: string }>;
+}
+
 export class Youtube {
     private readonly baseDir: string;
     private readonly deps: YoutubeDeps;
@@ -39,7 +55,9 @@ export class Youtube {
         list: YoutubeDatabase["listVideos"];
         show: (id: VideoId) => ReturnType<YoutubeDatabase["getVideo"]>;
         search: (query: string, opts?: { videoIds?: VideoId[]; limit?: number }) => ReturnType<YoutubeDatabase["searchTranscripts"]>;
+        searchMetadata: YoutubeDatabase["searchVideos"];
         ensureMetadata: (id: VideoId, opts?: { signal?: AbortSignal }) => Promise<NonNullable<ReturnType<YoutubeDatabase["getVideo"]>>>;
+        syncDates: (opts?: SyncDatesOpts) => Promise<SyncDatesResult>;
     };
 
     constructor(options: YoutubeOptions = {}) {
@@ -49,13 +67,16 @@ export class Youtube {
         this._config = options.config;
         this.channels = {
             add: async (handle: ChannelHandle): Promise<void> => {
+                logger.info({ handle }, "youtube channel add");
                 this.db.upsertChannel({ handle });
             },
             list: () => this.db.listChannels(),
             remove: (handle: ChannelHandle): void => {
+                logger.info({ handle }, "youtube channel remove");
                 this.db.removeChannel(handle);
             },
             sync: async (handle: ChannelHandle, opts: { limit?: number; includeShorts?: boolean; signal?: AbortSignal } = {}): Promise<number> => {
+                logger.info({ handle, limit: opts.limit, includeShorts: opts.includeShorts }, "youtube channel sync started");
                 this.db.upsertChannel({ handle });
                 const videos = await this.deps.listChannelVideos({ handle, limit: opts.limit, includeShorts: opts.includeShorts, signal: opts.signal });
 
@@ -64,6 +85,7 @@ export class Youtube {
                 }
 
                 this.db.setChannelSynced(handle);
+                logger.info({ handle, videos: videos.length }, "youtube channel sync completed");
 
                 return videos.length;
             },
@@ -72,10 +94,72 @@ export class Youtube {
             list: this.db.listVideos.bind(this.db),
             show: (id: VideoId) => this.db.getVideo(id),
             search: (query: string, opts?: { videoIds?: VideoId[]; limit?: number }) => this.db.searchTranscripts(query, opts),
+            searchMetadata: this.db.searchVideos.bind(this.db),
+            syncDates: async (opts: SyncDatesOpts = {}): Promise<SyncDatesResult> => {
+                const candidates = this.db.listVideosMissingUploadDate({ channel: opts.channel, limit: opts.limit ?? 500 });
+                const failed: Array<{ videoId: VideoId; error: string }> = [];
+                let updated = 0;
+
+                logger.info({ channel: opts.channel, candidates: candidates.length }, "youtube videos.syncDates start");
+
+                if (candidates.length === 0) {
+                    return { scanned: 0, updated: 0, failed: [] };
+                }
+
+                let index = 0;
+                await concurrentMap({
+                    items: candidates,
+                    concurrency: opts.concurrency ?? 4,
+                    fn: async (video) => {
+                        opts.signal?.throwIfAborted();
+
+                        try {
+                            const meta = await this.deps.dumpVideoMetadata(video.id, { signal: opts.signal });
+
+                            if (meta.uploadDate) {
+                                this.db.upsertVideo({
+                                    id: video.id,
+                                    channelHandle: video.channelHandle,
+                                    title: meta.title ?? video.title,
+                                    description: meta.description ?? video.description,
+                                    uploadDate: meta.uploadDate,
+                                    durationSec: meta.durationSec ?? video.durationSec,
+                                    viewCount: meta.viewCount ?? video.viewCount,
+                                    likeCount: meta.likeCount ?? video.likeCount,
+                                    language: meta.language ?? video.language,
+                                    availableCaptionLangs: meta.availableCaptionLangs ?? video.availableCaptionLangs ?? undefined,
+                                    tags: meta.tags ?? video.tags ?? undefined,
+                                    isShort: meta.isShort ?? video.isShort,
+                                    isLive: meta.isLive ?? video.isLive,
+                                    thumbUrl: meta.thumbUrl ?? video.thumbUrl,
+                                });
+                                updated++;
+                            }
+
+                            const current = ++index;
+                            opts.onProgress?.({ videoId: video.id, index: current, total: candidates.length, uploadDate: meta.uploadDate ?? null });
+                        } catch (error) {
+                            const message = error instanceof Error ? error.message : String(error);
+                            failed.push({ videoId: video.id, error: message });
+                            const current = ++index;
+                            opts.onProgress?.({ videoId: video.id, index: current, total: candidates.length, uploadDate: null });
+                        }
+                    },
+                    onError: (video, reason) => {
+                        const message = reason instanceof Error ? reason.message : String(reason);
+                        failed.push({ videoId: video.id, error: message });
+                    },
+                });
+
+                logger.info({ scanned: candidates.length, updated, failed: failed.length }, "youtube videos.syncDates done");
+                return { scanned: candidates.length, updated, failed };
+            },
             ensureMetadata: async (id: VideoId, opts: { signal?: AbortSignal } = {}) => {
+                logger.info({ videoId: id }, "youtube metadata ensure requested");
                 const existing = this.db.getVideo(id);
 
                 if (existing) {
+                    logger.debug({ videoId: id }, "youtube metadata already cached");
                     return existing;
                 }
 
@@ -105,6 +189,7 @@ export class Youtube {
                     throw new Error(`ensureMetadata failed to persist video ${id}`);
                 }
 
+                logger.info({ videoId: id, channelHandle: handle }, "youtube metadata persisted");
                 return saved;
             },
         };
@@ -147,8 +232,26 @@ export class Youtube {
                 }
 
                 await this.channels.sync(ctx.job.target as ChannelHandle, { signal: ctx.signal });
+
+                const remainingStages = stagesAfter(ctx.job.stages, "discover");
+
+                if (remainingStages.length === 0) {
+                    return;
+                }
+
+                const videos = this.db.listVideos({ channel: ctx.job.target as ChannelHandle, includeShorts: true });
+                logger.info({ parentJobId: ctx.job.id, channel: ctx.job.target, videos: videos.length, stages: remainingStages }, "youtube enqueueing discovered video jobs");
+
+                for (const video of videos) {
+                    this.pipeline.enqueue({ targetKind: "video", target: video.id, stages: remainingStages, parentJobId: ctx.job.id });
+                }
             },
             metadata: async (ctx) => {
+                if (ctx.job.targetKind !== "video" && ctx.job.targetKind !== "url") {
+                    logger.warn({ jobId: ctx.job.id, targetKind: ctx.job.targetKind, target: ctx.job.target }, "youtube metadata stage skipped for non-video target");
+                    return;
+                }
+
                 await this.videos.ensureMetadata(ctx.job.target as VideoId, { signal: ctx.signal });
             },
             captions: async (ctx) => {
@@ -180,15 +283,27 @@ export class Youtube {
     }
 
     async downloadVideo(id: VideoId, opts: { quality?: "720p" | "1080p" | "best"; signal?: AbortSignal } = {}) {
+        logger.info({ videoId: id, quality: opts.quality }, "youtube video download requested");
         const video = await this.videos.ensureMetadata(id, { signal: opts.signal });
         const quality = opts.quality ?? (await this.config.get("defaultQuality"));
         const nextVideo = videoFilePath({ cacheDir: join(this.baseDir, "cache") }, video.channelHandle, video.id, "mp4");
         ensureBinaryDir(nextVideo);
         const result = await downloadVideo({ idOrUrl: video.id, outPath: nextVideo, quality, signal: opts.signal });
         this.db.setVideoBinaryPath(video.id, "video", result.path, result.sizeBytes);
+        logger.info({ videoId: id, path: result.path, sizeBytes: result.sizeBytes }, "youtube video download completed");
 
         return result;
     }
+}
+
+function stagesAfter(stages: JobStage[], stage: JobStage): JobStage[] {
+    const index = stages.indexOf(stage);
+
+    if (index === -1) {
+        return [];
+    }
+
+    return stages.slice(index + 1);
 }
 
 function listedVideoToInput(handle: ChannelHandle, video: ListedVideo): UpsertVideoInput {

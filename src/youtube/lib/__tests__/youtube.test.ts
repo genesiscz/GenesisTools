@@ -62,6 +62,31 @@ describe("Youtube", () => {
         }
     });
 
+    it("channel discover enqueues remaining stages for discovered videos", async () => {
+        const { yt, db, dir } = await makeFixture({
+            listChannelVideos: async () => [
+                { id: "abc123def45", title: "Video 1", durationSec: 42, uploadDate: "2026-04-01", isShort: false, isLive: false },
+                { id: "def456ghi78", title: "Video 2", durationSec: 30, uploadDate: "2026-04-02", isShort: true, isLive: false },
+            ],
+        });
+
+        try {
+            const parent = yt.pipeline.enqueue({ targetKind: "channel", target: "@mkbhd", stages: ["discover", "metadata"] });
+            await yt.pipeline.start();
+            await waitFor(() => yt.pipeline.getJob(parent.id)?.status === "completed");
+            await yt.pipeline.stop();
+
+            const childJobs = db.listJobs({ parentJobId: parent.id, limit: 10 });
+            expect(childJobs.map((job) => ({ targetKind: job.targetKind, target: job.target, stages: job.stages, parentJobId: job.parentJobId })).sort((a, b) => a.target.localeCompare(b.target))).toEqual([
+                { targetKind: "video", target: "abc123def45", stages: ["metadata"], parentJobId: parent.id },
+                { targetKind: "video", target: "def456ghi78", stages: ["metadata"], parentJobId: parent.id },
+            ]);
+        } finally {
+            await yt.dispose();
+            await rm(dir, { recursive: true, force: true });
+        }
+    });
+
     it("dumps and persists metadata when a video is missing", async () => {
         const { yt, db, dir, calls } = await makeFixture();
 
@@ -70,6 +95,27 @@ describe("Youtube", () => {
             expect(calls.dump).toBe(1);
             expect(db.getChannel("@mkbhd")).toMatchObject({ channelId: "UC123", title: "MKBHD" });
             expect(db.getVideo("abc123def45")).toMatchObject({ title: "Dumped", availableCaptionLangs: ["en"] });
+        } finally {
+            await yt.dispose();
+            await rm(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("syncDates backfills upload_date for rows that are missing one", async () => {
+        const { yt, db, dir, calls } = await makeFixture();
+        db.upsertChannel({ handle: "@mkbhd" });
+        db.upsertVideo({ id: "vidaaaaaaaa", channelHandle: "@mkbhd", title: "no-date" });
+        db.upsertVideo({ id: "vidbbbbbbbb", channelHandle: "@mkbhd", title: "had-date", uploadDate: "2026-01-01" });
+
+        try {
+            const result = await yt.videos.syncDates({ concurrency: 2 });
+
+            expect(result.scanned).toBe(1);
+            expect(result.updated).toBe(1);
+            expect(result.failed).toEqual([]);
+            expect(calls.dump).toBe(1);
+            expect(db.getVideo("vidaaaaaaaa")?.uploadDate).toBe("2026-04-01");
+            expect(db.getVideo("vidbbbbbbbb")?.uploadDate).toBe("2026-01-01");
         } finally {
             await yt.dispose();
             await rm(dir, { recursive: true, force: true });
@@ -116,3 +162,16 @@ async function makeFixture(overrides: Partial<YoutubeDeps> = {}) {
 
     return { yt, db, config, dir, calls };
 }
+
+async function waitFor(predicate: () => boolean, timeoutMs = 1000): Promise<void> {
+    const startedAt = Date.now();
+
+    while (!predicate()) {
+        if (Date.now() - startedAt > timeoutMs) {
+            throw new Error("timed out waiting for predicate");
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+}
+

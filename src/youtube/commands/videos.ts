@@ -2,7 +2,7 @@ import { renderColumns } from "@app/youtube/commands/_shared/columns";
 import { getYoutube } from "@app/youtube/commands/_shared/ensure-pipeline";
 import { renderOrEmit } from "@app/youtube/commands/_shared/render";
 import { normaliseHandle, wrap } from "@app/youtube/commands/_shared/utils";
-import type { VideoId } from "@app/youtube/lib/types";
+import type { ChannelHandle, VideoId, VideoSearchField } from "@app/youtube/lib/types";
 import { formatDuration } from "@app/utils/format";
 import { Command } from "commander";
 import pc from "picocolors";
@@ -15,12 +15,14 @@ interface ListOpts {
 }
 
 interface SearchHit {
-    kind: "transcript" | "title" | "desc";
+    kind: "transcript" | "title" | "description" | "tags";
     videoId: VideoId;
     snippet: string;
     rank: number;
     lang?: string;
 }
+
+const VALID_SEARCH_FIELDS = new Set<string>(["transcript", "title", "description", "desc", "tags"]);
 
 export function registerVideosCommand(program: Command): void {
     const cmd = program.command("videos").description("List, inspect, and search cached videos");
@@ -85,31 +87,40 @@ export function registerVideosCommand(program: Command): void {
 
     cmd.command("search")
         .argument("<query>")
-        .description("Search transcripts, titles, and descriptions by keyword")
-        .option("--in <fields>", "Comma-separated: transcript,title,desc (default: transcript)", (value) => value.split(",").map((part) => part.trim()).filter(Boolean), ["transcript"])
+        .description("Search transcripts, titles, descriptions, and tags by keyword (server-side SQL)")
+        .option(
+            "--in <fields>",
+            "Comma-separated: transcript,title,description,tags (default: transcript)",
+            (value) => value.split(",").map((part) => part.trim()).filter(Boolean),
+            ["transcript"]
+        )
         .option("--channel <handle>", "Filter metadata search by channel handle")
         .option("--limit <n>", "Max hits", (value) => Number.parseInt(value, 10), 50)
-        .addHelpText("after", "\nExamples:\n  $ tools youtube videos search iphone\n  $ tools youtube videos search iphone --in transcript,title --channel @mkbhd\n")
+        .addHelpText("after", "\nExamples:\n  $ tools youtube videos search iphone\n  $ tools youtube videos search iphone --in title,description --channel @mkbhd\n  $ tools youtube videos search agentic --in tags\n")
         .action(async (query: string, opts: { in: string[]; channel?: string; limit: number }) => {
             const yt = await getYoutube();
+            const fields = normaliseSearchFields(opts.in);
             const results: SearchHit[] = [];
-            const lowered = query.toLowerCase();
 
-            if (opts.in.includes("transcript")) {
+            if (fields.includes("transcript")) {
                 const hits = yt.videos.search(query, { limit: opts.limit });
                 results.push(...hits.map((hit) => ({ kind: "transcript" as const, ...hit })));
             }
 
-            if (opts.in.includes("title") || opts.in.includes("desc")) {
-                const all = yt.videos.list({ channel: opts.channel ? normaliseHandle(opts.channel) : undefined, limit: 5_000, includeShorts: true, includeLive: true });
-                for (const video of all) {
-                    if (opts.in.includes("title") && video.title.toLowerCase().includes(lowered)) {
-                        results.push({ kind: "title", videoId: video.id, snippet: video.title, rank: 0 });
-                    }
+            const metadataFields = fields.filter((f): f is VideoSearchField => f !== "transcript");
 
-                    if (opts.in.includes("desc") && video.description?.toLowerCase().includes(lowered)) {
-                        results.push({ kind: "desc", videoId: video.id, snippet: video.description.slice(0, 160), rank: 0 });
-                    }
+            if (metadataFields.length > 0) {
+                const channel = opts.channel ? normaliseHandle(opts.channel) : undefined;
+                const hits = yt.videos.searchMetadata(query, {
+                    fields: metadataFields,
+                    channel: channel as ChannelHandle | undefined,
+                    limit: opts.limit,
+                    includeShorts: true,
+                    includeLive: true,
+                });
+
+                for (const hit of hits) {
+                    results.push({ kind: hit.field, videoId: hit.videoId, snippet: hit.snippet, rank: 0 });
                 }
             }
 
@@ -126,4 +137,75 @@ export function registerVideosCommand(program: Command): void {
 
             await renderOrEmit({ text, json: limited, flags: cmd.optsWithGlobals() });
         });
+
+    cmd.command("sync-dates")
+        .description("Backfill upload_date for cached videos that are missing one (queries yt-dlp once per row)")
+        .option("--channel <handle>", "Limit to a single channel")
+        .option("--limit <n>", "Max rows to scan in one run (default 200)", (value) => Number.parseInt(value, 10), 200)
+        .option("--concurrency <n>", "Parallel yt-dlp lookups (default 4)", (value) => Number.parseInt(value, 10), 4)
+        .addHelpText(
+            "after",
+            "\nExamples:\n  $ tools youtube videos sync-dates --channel @mkbhd --limit 50\n  $ tools youtube videos sync-dates --concurrency 6\n"
+        )
+        .action(async (opts: { channel?: string; limit: number; concurrency: number }) => {
+            const yt = await getYoutube();
+            const channel = opts.channel ? normaliseHandle(opts.channel) : undefined;
+            const flags = cmd.optsWithGlobals();
+            const isSilent = Boolean(flags.silent || flags.json);
+
+            const result = await yt.videos.syncDates({
+                channel,
+                limit: opts.limit,
+                concurrency: opts.concurrency,
+                onProgress: (info) => {
+                    if (!isSilent) {
+                        const status = info.uploadDate ? pc.green(info.uploadDate) : pc.dim("—");
+                        process.stderr.write(`\r[${info.index}/${info.total}] ${info.videoId}  ${status}     `);
+                    }
+                },
+            });
+
+            if (!isSilent) {
+                process.stderr.write("\n");
+            }
+
+            const lines = [
+                `Scanned: ${result.scanned}`,
+                `Updated: ${pc.green(String(result.updated))}`,
+                `Failed:  ${result.failed.length > 0 ? pc.red(String(result.failed.length)) : "0"}`,
+            ];
+
+            if (result.failed.length > 0) {
+                lines.push("", pc.bold("Failures:"));
+                for (const failure of result.failed.slice(0, 10)) {
+                    lines.push(`  ${failure.videoId}  ${pc.red(failure.error)}`);
+                }
+
+                if (result.failed.length > 10) {
+                    lines.push(`  …and ${result.failed.length - 10} more`);
+                }
+            }
+
+            await renderOrEmit({ text: lines.join("\n"), json: result, flags });
+        });
+}
+
+function normaliseSearchFields(input: string[]): Array<"transcript" | VideoSearchField> {
+    const out: Array<"transcript" | VideoSearchField> = [];
+
+    for (const value of input) {
+        const lower = value.toLowerCase();
+
+        if (!VALID_SEARCH_FIELDS.has(lower)) {
+            throw new Error(`unknown --in field: ${value} (allowed: transcript, title, description, tags)`);
+        }
+
+        const normalised = lower === "desc" ? "description" : lower;
+
+        if (!out.includes(normalised as "transcript" | VideoSearchField)) {
+            out.push(normalised as "transcript" | VideoSearchField);
+        }
+    }
+
+    return out;
 }

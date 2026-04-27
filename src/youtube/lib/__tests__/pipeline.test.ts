@@ -88,6 +88,48 @@ describe("Pipeline", () => {
         }
     });
 
+    it("propagates AbortSignal mid-stage when cancelJob is called on a running job", async () => {
+        const { db, config, dir } = await makeFixture();
+        await config.update({ concurrency: { download: 1, localTranscribe: 1, cloudTranscribe: 1, summarize: 1 } });
+        let observedSignal: AbortSignal | null = null;
+        let abortObserved = false;
+        const handlers = makeHandlers({
+            metadata: async (ctx) => {
+                observedSignal = ctx.signal;
+
+                await new Promise<void>((resolve) => {
+                    const onAbort = () => {
+                        abortObserved = true;
+                        resolve();
+                    };
+
+                    if (ctx.signal.aborted) {
+                        onAbort();
+                        return;
+                    }
+
+                    ctx.signal.addEventListener("abort", onAbort, { once: true });
+                });
+            },
+        });
+        const pipeline = new Pipeline(db, config, { pollMs: 1, handlers });
+
+        try {
+            await pipeline.start();
+            const job = pipeline.enqueue({ targetKind: "video", target: "live-cancel", stages: ["metadata"] });
+            await waitFor(() => observedSignal !== null);
+            pipeline.cancelJob(job.id);
+            await waitFor(() => abortObserved);
+
+            expect(abortObserved).toBe(true);
+            expect(observedSignal!.aborted).toBe(true);
+        } finally {
+            await pipeline.stop();
+            db.close();
+            await rm(dir, { recursive: true, force: true });
+        }
+    });
+
     it("requeues interrupted jobs on start and can cancel jobs", async () => {
         const { db, config, dir } = await makeFixture();
         await config.update({ concurrency: { download: 1, localTranscribe: 1, cloudTranscribe: 1, summarize: 1 } });

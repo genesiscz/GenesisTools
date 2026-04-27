@@ -72,6 +72,24 @@ export interface SearchTranscriptsOpts {
     snippetChars?: number;
 }
 
+export type VideoSearchField = "title" | "description" | "tags";
+
+export interface SearchVideosOpts {
+    fields?: VideoSearchField[];
+    channel?: ChannelHandle;
+    limit?: number;
+    includeShorts?: boolean;
+    includeLive?: boolean;
+}
+
+export interface VideoSearchHit {
+    videoId: VideoId;
+    field: VideoSearchField;
+    snippet: string;
+    title: string;
+    channelHandle: ChannelHandle;
+}
+
 export interface TranscriptSearchHit {
     videoId: VideoId;
     lang: Language;

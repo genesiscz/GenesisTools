@@ -21,9 +21,33 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
         if (matchRoute(req, "GET", "/api/v1/videos/search", url.pathname)) {
             const query = url.searchParams.get("q") ?? "";
             const limit = parseInt(url.searchParams.get("limit") ?? "50", 10);
-            const hits = yt.videos.search(query, { limit });
+            const inFields = (url.searchParams.get("in") ?? "transcript").split(",").map((part) => part.trim()).filter(Boolean);
+            const channel = url.searchParams.get("channel") as ChannelHandle | null;
+            const hits: Array<{ kind: string; videoId: string; snippet: string; rank?: number; lang?: string }> = [];
 
-            return Response.json({ hits }, { headers: CORS_HEADERS });
+            if (inFields.includes("transcript")) {
+                for (const hit of yt.videos.search(query, { limit })) {
+                    hits.push({ kind: "transcript", ...hit });
+                }
+            }
+
+            const metadataFields = inFields
+                .map((value) => (value === "desc" ? "description" : value))
+                .filter((value): value is "title" | "description" | "tags" => value === "title" || value === "description" || value === "tags");
+
+            if (metadataFields.length > 0) {
+                for (const hit of yt.videos.searchMetadata(query, {
+                    fields: metadataFields,
+                    channel: channel ?? undefined,
+                    limit,
+                    includeShorts: true,
+                    includeLive: true,
+                })) {
+                    hits.push({ kind: hit.field, videoId: hit.videoId, snippet: hit.snippet });
+                }
+            }
+
+            return Response.json({ hits: hits.slice(0, limit) }, { headers: CORS_HEADERS });
         }
 
         const showVideo = matchRoute(req, "GET", "/api/v1/videos/:id", url.pathname);

@@ -15,6 +15,7 @@ import type {
     RecordJobActivityInput,
     SaveTranscriptInput,
     SearchTranscriptsOpts,
+    SearchVideosOpts,
     SetVideoBinaryPathInput,
     SetVideoSummaryInput,
     TranscriptSearchHit,
@@ -22,6 +23,8 @@ import type {
     UpsertChannelInput,
     UpsertQaChunkInput,
     UpsertVideoInput,
+    VideoSearchField,
+    VideoSearchHit,
 } from "@app/youtube/lib/db.types";
 import type { JobActivity, JobActivityKind, JobStage, JobStatus, JobTargetKind, PipelineJob } from "@app/youtube/lib/jobs.types";
 import type { QaChunk } from "@app/youtube/lib/qa.types";
@@ -346,6 +349,29 @@ export class YoutubeDatabase extends BaseDatabase {
         return rowToVideo(row);
     }
 
+    /**
+     * Returns videos whose `upload_date` is still NULL — these need a `dumpVideoMetadata`
+     * pass to backfill the date (yt-dlp's flat-playlist listing doesn't carry it).
+     */
+    listVideosMissingUploadDate(opts: { channel?: ChannelHandle; limit?: number } = {}): Video[] {
+        const where: string[] = ["upload_date IS NULL"];
+        const params: Array<string | number> = [];
+
+        if (opts.channel) {
+            where.push("channel_handle = ?");
+            params.push(opts.channel);
+        }
+
+        params.push(opts.limit ?? 100);
+        const rows = this.db
+            .query<VideoRow, Array<string | number>>(
+                `SELECT * FROM videos WHERE ${where.join(" AND ")} ORDER BY created_at ASC LIMIT ?`
+            )
+            .all(...params);
+
+        return rows.map(rowToVideo);
+    }
+
     listVideos(opts: ListVideosOpts = {}): Video[] {
         const where: string[] = [];
         const params: Array<string | number> = [];
@@ -462,6 +488,50 @@ export class YoutubeDatabase extends BaseDatabase {
         const rows = this.db.query<TranscriptRow, [string]>("SELECT * FROM transcripts WHERE video_id = ? ORDER BY lang, source").all(videoId);
 
         return rows.map(rowToTranscript);
+    }
+
+    searchVideos(query: string, opts: SearchVideosOpts = {}): VideoSearchHit[] {
+        const fields = opts.fields?.length ? opts.fields : (["title", "description", "tags"] as VideoSearchField[]);
+        const limit = opts.limit ?? 50;
+        const term = `%${escapeLike(query)}%`;
+        const where: string[] = [];
+        const params: Array<string | number> = [];
+        const orParts: string[] = [];
+
+        for (const field of fields) {
+            const column = videoSearchColumn(field);
+            orParts.push(`${column} LIKE ? ESCAPE '\\'`);
+            params.push(term);
+        }
+
+        where.push(`(${orParts.join(" OR ")})`);
+
+        if (opts.channel) {
+            where.push("channel_handle = ?");
+            params.push(opts.channel);
+        }
+
+        if (!opts.includeShorts) {
+            where.push("is_short = 0");
+        }
+
+        if (!opts.includeLive) {
+            where.push("is_live = 0");
+        }
+
+        params.push(limit);
+        const rows = this.db
+            .query<VideoSearchRow, Array<string | number>>(
+                `SELECT id, channel_handle, title, description, tags_json
+                 FROM videos
+                 WHERE ${where.join(" AND ")}
+                 ORDER BY upload_date DESC NULLS LAST
+                 LIMIT ?`
+            )
+            .all(...params);
+        const lowered = query.toLowerCase();
+
+        return rows.flatMap((row) => buildVideoHits(row, fields, lowered));
     }
 
     searchTranscripts(query: string, opts: SearchTranscriptsOpts = {}): TranscriptSearchHit[] {
@@ -1185,4 +1255,89 @@ function rowToJobActivity(row: JobActivityRow): JobActivity {
 
 function isJobActivityKind(value: unknown): value is JobActivityKind {
     return value === "llm" || value === "embed" || value === "transcribe";
+}
+
+interface VideoSearchRow {
+    id: VideoId;
+    channel_handle: ChannelHandle;
+    title: string;
+    description: string | null;
+    tags_json: string | null;
+}
+
+function videoSearchColumn(field: VideoSearchField): string {
+    switch (field) {
+        case "title":
+            return "title";
+        case "description":
+            return "COALESCE(description, '')";
+        case "tags":
+            return "COALESCE(tags_json, '')";
+    }
+}
+
+function escapeLike(value: string): string {
+    return value.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
+}
+
+function buildVideoHits(row: VideoSearchRow, fields: VideoSearchField[], loweredQuery: string): VideoSearchHit[] {
+    const out: VideoSearchHit[] = [];
+    const description = row.description ?? "";
+    const tags = parseJsonArray(row.tags_json);
+
+    for (const field of fields) {
+        if (field === "title" && row.title.toLowerCase().includes(loweredQuery)) {
+            out.push({
+                videoId: row.id,
+                field,
+                snippet: row.title,
+                title: row.title,
+                channelHandle: row.channel_handle,
+            });
+            continue;
+        }
+
+        if (field === "description" && description.toLowerCase().includes(loweredQuery)) {
+            out.push({
+                videoId: row.id,
+                field,
+                snippet: snippetAround(description, loweredQuery),
+                title: row.title,
+                channelHandle: row.channel_handle,
+            });
+            continue;
+        }
+
+        if (field === "tags") {
+            const tagHit = tags.find((tag) => tag.toLowerCase().includes(loweredQuery));
+
+            if (tagHit) {
+                out.push({
+                    videoId: row.id,
+                    field,
+                    snippet: tagHit,
+                    title: row.title,
+                    channelHandle: row.channel_handle,
+                });
+            }
+        }
+    }
+
+    return out;
+}
+
+function snippetAround(text: string, loweredQuery: string, contextChars = 80): string {
+    const lower = text.toLowerCase();
+    const index = lower.indexOf(loweredQuery);
+
+    if (index === -1) {
+        return text.slice(0, contextChars * 2);
+    }
+
+    const start = Math.max(0, index - contextChars);
+    const end = Math.min(text.length, index + loweredQuery.length + contextChars);
+    const prefix = start > 0 ? "…" : "";
+    const suffix = end < text.length ? "…" : "";
+
+    return `${prefix}${text.slice(start, end)}${suffix}`.replace(/\s+/g, " ").trim();
 }

@@ -36,6 +36,7 @@ const videos: Video[] = [
 const calls = {
     list: [] as unknown[],
     search: [] as unknown[],
+    searchMetadata: [] as unknown[],
 };
 
 mock.module("@app/youtube/commands/_shared/ensure-pipeline", () => ({
@@ -51,6 +52,14 @@ mock.module("@app/youtube/commands/_shared/ensure-pipeline", () => ({
                 calls.search.push({ query, opts });
 
                 return [{ videoId: "abc123def45", lang: "en", snippet: "phone transcript", rank: -1 }];
+            },
+            searchMetadata: (query: string, opts: unknown) => {
+                calls.searchMetadata.push({ query, opts });
+
+                return [
+                    { videoId: "abc123def45", field: "title", snippet: "iPhone review", title: "iPhone review", channelHandle: "@mkbhd" },
+                    { videoId: "abc123def45", field: "description", snippet: "A detailed phone review", title: "iPhone review", channelHandle: "@mkbhd" },
+                ];
             },
         },
         db: {
@@ -76,6 +85,7 @@ describe("youtube videos command", () => {
     beforeEach(() => {
         calls.list = [];
         calls.search = [];
+        calls.searchMetadata = [];
         stdout = "";
         stderr = "";
         process.exitCode = undefined;
@@ -121,15 +131,19 @@ describe("youtube videos command", () => {
         expect(process.exitCode).toBe(1);
     });
 
-    it("searches transcripts and metadata fields", async () => {
+    it("searches transcripts and metadata fields server-side", async () => {
         const program = await makeProgram();
 
         await program.parseAsync(["node", "test", "videos", "search", "phone", "--in", "transcript,title,desc", "--channel", "mkbhd", "--limit", "10"]);
 
         expect(calls.search[0]).toEqual({ query: "phone", opts: { limit: 10 } });
-        expect(calls.list[0]).toMatchObject({ channel: "@mkbhd", limit: 5000 });
+        expect(calls.searchMetadata[0]).toMatchObject({
+            query: "phone",
+            opts: { fields: ["title", "description"], channel: "@mkbhd", limit: 10 },
+        });
+        expect(calls.list).toEqual([]);
         expect(stdout).toContain("transcript");
         expect(stdout).toContain("title");
-        expect(stdout).toContain("desc");
+        expect(stdout).toContain("description");
     });
 });
