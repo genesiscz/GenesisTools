@@ -13,7 +13,7 @@ export default createDashboardViteConfig({
         tanstackRouter({ target: "react", routesDirectory: resolve(root, "routes"), generatedRouteTree: resolve(root, "routeTree.gen.ts") }),
         youtubeConfigPlugin(),
     ],
-    aliases: { "@app/yt": root },
+    aliases: { "@app": resolve(root, "../.."), "@app/yt": root },
     tanstackStartOptions: false,
     watchDirs: ["youtube"],
 });
