@@ -472,6 +472,11 @@ async function transcribeOne(opts: {
     const isTTY = !!process.stdout.isTTY;
     let confirmedLang: string | undefined = opts.lang;
 
+    // confirmLanguage is one-shot: once the user confirms, the flag is set and
+    // any further detection calls (e.g. per-chunk in chunked transcription) return
+    // the pinned language without re-prompting.
+    let langConfirmed = false;
+
     const transcribeOpts = {
         language: opts.lang,
         model: opts.model,
@@ -487,9 +492,15 @@ async function transcribeOne(opts: {
                   confirmLanguage: async (
                       detected: import("@app/utils/ai/LanguageDetector.ts").LanguageDetectionResult
                   ) => {
+                      if (langConfirmed) {
+                          // Return the already-confirmed language without prompting again
+                          return confirmedLang;
+                      }
+
                       s.stop(`Detected: ${detected.language} (${Math.round(detected.confidence * 100)}%)`);
                       const confirmed = await promptLanguage(detected);
                       confirmedLang = confirmed;
+                      langConfirmed = true;
                       s.start("Transcribing...");
                       return confirmed;
                   },
