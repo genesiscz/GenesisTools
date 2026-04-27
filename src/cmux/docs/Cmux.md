@@ -399,19 +399,30 @@ Icon names are documented at `cmux help set-status`. Some popular ones: `hammer`
 
 These bit me during implementation. Don't trust the docs blindly; check.
 
-### The BIG GOTCHA: `surface.split` ignores its `surface` param
+### The BIG GOTCHA: `surface.split`, `surface.create`, and `pane.list` all ignore their explicit params
 
-Direct JSON-RPC:
+Three V1-routed methods fall back to `tabManager.selectedTabId` instead of using the explicit ref(s) on the request:
 
 ```json
 {"method":"surface.split","params":{"direction":"down","surface":"surface:47","workspace":"workspace:9"}}
+// Splits the FOCUSED pane, not the pane containing surface:47.
+
+{"method":"surface.create","params":{"workspace":"workspace:17","pane":"pane:54","type":"terminal"}}
+// Creates the surface in the FOCUSED pane (returns pane_ref of the focused pane,
+// not pane:54). Effect for restore: when a saved layout has multi-tab panes, every
+// extra tab piles up in the anchor pane instead of going to its target.
+
+{"method":"pane.list","params":{"workspace":"workspace:1"}}
+// Returns the FOCUSED workspace's panes; response even echoes workspace_ref of the
+// focused workspace, not the requested one.
 ```
 
-This **splits the focused pane**, not the pane containing `surface:47`. The CLI's `cmux new-split <dir> --surface <ref>` does the right thing. Use the CLI for splits.
+For all three, the CLI counterparts work correctly — they route through V2 and honor the explicit params. So this tool uses:
+- `cmux new-split <dir> --surface <ref> --workspace <ref>` instead of raw `surface.split`
+- `cmux new-surface --pane <ref> --workspace <ref>` instead of raw `surface.create`
+- For `pane.list` there's no V2 CLI alternative that returns geometry; we work around by `cmux select-workspace`-ing to the target before reading (causes focus flicker — same reason save can't run in the background).
 
-### `pane.list` ignores the `workspace` param too
-
-Calling `pane.list {"workspace":"workspace:1"}` while `workspace:2` is focused returns workspace:2's panes. The response even echoes `workspace_ref: "workspace:2"`. This is why `tools cmux profiles save` has to focus-switch to each target workspace before reading it.
+Filed upstream as [manaflow-ai/cmux#3189](https://github.com/manaflow-ai/cmux/issues/3189).
 
 ### `cmux new-workspace`'s `--name` is best-effort
 
@@ -447,6 +458,18 @@ Not a cmux quirk — but if your tab titles show `tools claude usage`, that's Ge
 
 Killing and relaunching cmux assigns brand-new refs. The 4 workspaces I had as `workspace:1..4` may all get different refs after a restart. Profile JSON stores titles + structure only, never raw refs.
 
+### Pane text reads are ANSI-stripped — colors cannot be captured
+
+`cmux capture-pane`, `cmux read-screen`, and the raw `surface.read_text` RPC all return **plain text only**. There is no `--ansi` / `--raw` / `--with-escapes` flag, and probing param variants (`ansi:true`, `raw:true`, `include_ansi:true`, `format:"ansi"`) on `surface.read_text` confirms the daemon never emits escape sequences. `read-screen --help` even spells it out: "Read terminal text from a surface as plain text."
+
+This is why `tools cmux profiles restore` paints back saved screens **monochrome**. The structure (login banner, prompts, command output) is preserved but colors are lost. tmux's equivalent (`tmux capture-pane -e`) does emit ANSI; cmux 0.63.2 has no analogue.
+
+### `cmux capture-pane --scrollback` returns visible content only (in 0.63.2)
+
+Despite the help text ("Include scrollback (not just visible viewport)"), `cmux capture-pane --scrollback --lines 5000 --surface <ref>` returns the same N lines as plain `capture-pane --surface <ref>` — i.e. the visible viewport, no real scrollback. The raw `surface.read_text {"scrollback":true}` RPC does return full scrollback (3000+ lines) but is affected by the V1 routing bug (issue #3189) — it always returns the focused surface's content regardless of the `surface` param. Net effect: per-surface scrollback access is currently impossible in 0.63.2 without a focus-switching dance.
+
+This means `tools cmux profiles save` can only capture the **visible** rows of each pane. For long-running TUIs (Claude Code, vim) where the launching shell command (`claude --resume <id>`) has scrolled past the visible area, the `command` field will be empty — there is nothing for the parser to find.
+
 ---
 
 ## What `tools cmux profiles ...` actually does
@@ -471,7 +494,10 @@ for each window:
     cmux --json list-pane-surfaces --workspace <ref> --pane <ref>
     for each surface:
       if browser: RPC browser.url.get { surface: <ref> }
-      if terminal: cwdFromTitle(title) + lastHistoryHint($HISTFILE)
+      if terminal:
+        cwdFromTitle(title)                                  # per-pane cwd from OSC-7 title
+        cmux capture-pane --workspace <ref> --surface <ref>  # visible content, ANSI-stripped
+        lastCommandFromCapture(text)                         # parse trailing shell prompt
 
 # After everything is captured:
 cmux select-workspace --workspace <originally-focused-ref>   # restore focus
@@ -496,33 +522,53 @@ for each window in profile:
 
     # Topology
     RPC pane.list { workspace: <new> }                # confirm 1 starting pane
-    buildSplitTree(saved-pane-pixel_frames)           # binary tree from rect adjacency
+    buildSplitTree(saved-pane-pixel_frames)           # binary tree from rect adjacency,
+                                                      # each internal node carries the saved
+                                                      # leftFraction or topFraction (0..1)
     applyTree:
       for each internal node:
         cmux --json new-split <right|down> --surface <anchor> --workspace <new>
+        # Resize the JUST-CREATED border immediately (one pair of panes shares it now;
+        # cmux's resize-pane errors with "no adjacent border in direction X" once deeper
+        # splits exist, so global post-hoc convergence does not work).
+        # cmux's --amount is in PIXELS (empirically — despite "tmux-compatible alias"),
+        # so multiply cell-deltas by pane.cell_width_px / cell_height_px.
+        # Direction must match the pane that has a neighbor in that direction:
+        #   • move border LEFT (shrink old / grow new)  → -L on NEW (right pane)
+        #   • move border RIGHT (grow old / shrink new) → -R on OLD (left pane)
+        #   • move border UP   (grow new bottom)        → -U on NEW (bottom pane)
+        #   • move border DOWN (grow old top)           → -D on OLD (top pane)
+        # Re-read pane.list after each call (cmux clamps to neighbour min size and rounds
+        # to whole cells) and loop up to 8 attempts; bail when a call doesn't reduce delta.
       for each leaf:
         record map[savedIndex] = current pane ref
-
-    # Sizing
-    convergeToTarget(targets):
-      loop up to 5 iters:
-        RPC pane.list { workspace: <new> }
-        for each pane: compute Δcols, Δrows
-        if all |Δ| ≤ 1: break
-        for each pane (largest Δ first):
-          cmux resize-pane --pane <ref> -L|-R|-U|-D --amount <|Δ|>
 
     # Surfaces
     for each saved pane:
       while current surfaces < saved surfaces:
-        RPC surface.create { pane, type, url? }
+        cmux new-surface --pane <ref> --workspace <new> --type <terminal|browser> [--url ...]
+        # NOT raw RPC surface.create — that ignores the pane param and creates in the
+        # focused pane (tabs would all stack into the anchor pane). See gotcha above.
       for each saved surface:
         cmux rename-tab --workspace <new> --surface <ref> "<title>"
         if terminal:
-          cmux send --workspace <new> --surface <ref> "cd <cwd>\n"
-          cmux send --workspace <new> --surface <ref> "<command>"   # no newline
+          # Single composite shell command, sent as one cmux-send payload:
+          #   cd <cwd> 2>/dev/null              ← silently restore working dir
+          #   ; printf '\033[2J\033[3J\033[H'   ← clear screen + scrollback + cursor home
+          #   ; printf %s '<base64>' | base64 -d ← print the saved screen text back out
+          #   \n                                 ← execute the line
+          #   <command>                          ← typed but NOT executed (no \n)
+          # The end result: the new pane shows exactly the saved screen + a fresh prompt
+          # below, with the saved last command pre-typed and waiting for Enter.
+          cmux send --workspace <new> --surface <ref> "<composite payload>"
 
 cmux select-workspace --workspace <originally-focused>   # restore focus
 ```
+
+Limitations baked into this design:
+
+- **Monochrome.** Saved screen content is ANSI-stripped by cmux 0.63.2 (see "Pane text reads are ANSI-stripped" above). Replay shows the structure but loses colors.
+- **Visible-rows only.** Scrollback is not currently retrievable per-surface (CLI `--scrollback` returns visible only; raw RPC `surface.read_text {scrollback:true}` is V1-routing-bugged). Long-running TUI panes lose their pre-TUI shell command.
+- **Pre-typed command can be wrong** if the parser hits a non-shell prompt that uses `❯`/`$` glyphs. We mitigate by only matching prompts with directory/git/host context (oh-my-zsh robbyrussell, `[user@host]$`, `user@host:dir$`); bare-glyph prompts are deliberately rejected.
 
 That's the entire integration surface. Everything else (cookies, network mocking, sidebar UX) is downstream cmux features we don't currently use.

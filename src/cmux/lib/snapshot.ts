@@ -1,6 +1,6 @@
 import { runCmux, runCmuxJSON } from "@app/cmux/lib/cli";
 import { withFocusedWorkspace } from "@app/cmux/lib/focus-guard";
-import { cwdFromTitle, lastHistoryHint } from "@app/cmux/lib/shell-probe";
+import { captureSurfaceState, cwdFromTitle } from "@app/cmux/lib/shell-probe";
 import {
     browserUrl,
     paneList,
@@ -9,7 +9,7 @@ import {
     windowList,
     workspaceList,
 } from "@app/cmux/lib/socket";
-import type { CommandSource, Pane, Profile, ProfileScope, Surface, Window, Workspace } from "@app/cmux/lib/types";
+import type { Pane, Profile, ProfileScope, Surface, Window, Workspace } from "@app/cmux/lib/types";
 import { PROFILE_VERSION } from "@app/cmux/lib/types";
 import logger from "@app/logger";
 
@@ -31,6 +31,7 @@ export interface SnapshotOptions {
     targetWindowRef?: string;
     targetWorkspaceRef?: string;
     captureCwd: boolean;
+    captureScreen: boolean;
     captureHistory: boolean;
     note?: string;
     cmuxVersion: string;
@@ -179,7 +180,7 @@ async function capturePanes(workspaceRef: string, options: SnapshotOptions): Pro
             if (surfaceEntry.selected) {
                 selectedIndex = surfaces.length;
             }
-            surfaces.push(await captureSurface(surfaceEntry, options));
+            surfaces.push(await captureSurface(surfaceEntry, workspaceRef, options));
         }
 
         panes.push({
@@ -196,7 +197,11 @@ async function capturePanes(workspaceRef: string, options: SnapshotOptions): Pro
     return panes;
 }
 
-async function captureSurface(entry: SurfaceListEntry, options: SnapshotOptions): Promise<Surface> {
+async function captureSurface(
+    entry: SurfaceListEntry,
+    workspaceRef: string,
+    options: SnapshotOptions,
+): Promise<Surface> {
     const title = entry.title ?? "";
     if (entry.type === "browser") {
         const url = await browserUrl(entry.ref);
@@ -204,20 +209,18 @@ async function captureSurface(entry: SurfaceListEntry, options: SnapshotOptions)
     }
 
     const cwd = options.captureCwd ? cwdFromTitle(title) : undefined;
-    let command: string | undefined;
-    let commandSource: CommandSource = "none";
-    if (options.captureHistory) {
-        const hint = lastHistoryHint();
-        command = hint.value;
-        commandSource = hint.source;
-    }
+    const captured = await captureSurfaceState(workspaceRef, entry.ref, {
+        screen: options.captureScreen,
+        history: options.captureHistory,
+    });
 
     return {
         type: "terminal",
         title,
         cwd,
-        command,
-        command_source: commandSource,
+        screen: captured.screen,
+        command: captured.command.value,
+        command_source: captured.command.value ? captured.command.source : undefined,
     };
 }
 

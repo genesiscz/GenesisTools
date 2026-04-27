@@ -94,7 +94,10 @@ async function runRestore(name: string, flags: RestoreFlags): Promise<void> {
         const summary = outcome.workspaces
             .map((w) => {
                 const status = w.converged ? pc.green("✓") : pc.yellow("≈");
-                return `  ${status} ${pc.cyan(w.title)} ${pc.dim(`(${w.iterations} resize iter${w.iterations === 1 ? "" : "s"})`)}`;
+                const dimensionNote = w.converged
+                    ? "exact size match"
+                    : `off by ${w.maxCellDelta} cell${w.maxCellDelta === 1 ? "" : "s"}`;
+                return `  ${status} ${pc.cyan(w.title)} ${pc.dim(`(${dimensionNote})`)}`;
             })
             .join("\n");
         p.note(summary, "Result");

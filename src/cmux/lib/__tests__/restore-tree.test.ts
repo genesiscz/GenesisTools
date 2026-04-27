@@ -23,14 +23,29 @@ describe("buildSplitTree", () => {
         }
     });
 
-    it("recognises a left/right vertical split", () => {
+    it("recognises a left/right vertical split with 0.5 fraction", () => {
         const tree = buildSplitTree([pane(0, 0, 0, 500, 800), pane(1, 500, 0, 500, 800)]);
         expect(tree.kind).toBe("vsplit");
+        if (tree.kind === "vsplit") {
+            expect(tree.leftFraction).toBeCloseTo(0.5, 2);
+        }
     });
 
-    it("recognises a top/bottom horizontal split", () => {
+    it("recognises a top/bottom horizontal split with 0.5 fraction", () => {
         const tree = buildSplitTree([pane(0, 0, 0, 1000, 400), pane(1, 0, 400, 1000, 400)]);
         expect(tree.kind).toBe("hsplit");
+        if (tree.kind === "hsplit") {
+            expect(tree.topFraction).toBeCloseTo(0.5, 2);
+        }
+    });
+
+    it("captures non-half fractions for asymmetric splits", () => {
+        // Left pane is 25% wide, right pane is 75% wide.
+        const tree = buildSplitTree([pane(0, 0, 0, 250, 800), pane(1, 250, 0, 750, 800)]);
+        expect(tree.kind).toBe("vsplit");
+        if (tree.kind === "vsplit") {
+            expect(tree.leftFraction).toBeCloseTo(0.25, 2);
+        }
     });
 
     it("decomposes the reservine layout (left full + 2 stacked right)", () => {

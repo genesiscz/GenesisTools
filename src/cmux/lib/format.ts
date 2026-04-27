@@ -101,11 +101,14 @@ function formatSurface(surface: Surface): string {
         return `${pc.magenta("browser")} ${title}${url}`;
     }
     const cwd = surface.cwd ? pc.dim(` cwd=${truncate(surface.cwd, 50)}`) : "";
+    const screen = surface.screen
+        ? pc.dim(` screen=${surface.screen.rows}r/${formatBytes(Buffer.byteLength(surface.screen.text, "utf8"))}`)
+        : "";
     const cmd =
-        surface.command && surface.command_source !== "none"
-            ? pc.dim(` cmd[${surface.command_source ?? "none"}]=${truncate(surface.command, 40)}`)
+        surface.command && surface.command_source && surface.command_source !== "none"
+            ? pc.dim(` cmd[${surface.command_source}]=${truncate(surface.command, 40)}`)
             : "";
-    return `${pc.yellow("term")} ${title}${cwd}${cmd}`;
+    return `${pc.yellow("term")} ${title}${cwd}${screen}${cmd}`;
 }
 
 function scopeLabel(scope: string): string {

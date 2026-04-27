@@ -13,6 +13,7 @@ interface SaveFlags {
     workspace?: string;
     window?: string;
     cwd?: boolean;
+    screen?: boolean;
     history?: boolean;
     note?: string;
     force?: boolean;
@@ -26,7 +27,14 @@ export function registerSaveCommand(parent: Command): void {
         .option("--workspace <ref>", "Target workspace (only with --scope workspace)")
         .option("--window <ref>", "Target window (only with --scope window)")
         .option("--no-cwd", "Skip per-pane cwd capture")
-        .option("--no-history", "Skip last-shell-command capture")
+        .option(
+            "--no-screen",
+            "Skip per-pane visible-screen capture (default on: each terminal pane's rendered content is captured so restore can paint it back)",
+        )
+        .option(
+            "--no-history",
+            "Skip per-pane last-shell-command capture (default on: scrollback is parsed for the most recent shell prompt+command, e.g. `claude --resume <id>`, and that command is pre-typed at the new prompt on restore)",
+        )
         .option("--note <text>", "Free-form note stored on the profile")
         .option("-f, --force", "Overwrite an existing profile of the same name")
         .action(async (name: string | undefined, flags: SaveFlags) => {
@@ -37,6 +45,7 @@ export function registerSaveCommand(parent: Command): void {
 async function runSave(rawName: string | undefined, flags: SaveFlags): Promise<void> {
     const interactive = isInteractive();
     const captureCwd = flags.cwd !== false;
+    const captureScreen = flags.screen !== false;
     const captureHistory = flags.history !== false;
     let forceWrite = !!flags.force;
 
@@ -71,6 +80,7 @@ async function runSave(rawName: string | undefined, flags: SaveFlags): Promise<v
         targetWindowRef: flags.window,
         targetWorkspaceRef: flags.workspace,
         captureCwd,
+        captureScreen,
         captureHistory,
         note: flags.note,
         cmuxVersion,

@@ -2,7 +2,14 @@ export const PROFILE_VERSION = 1;
 
 export type ProfileScope = "all" | "window" | "workspace";
 
-export type CommandSource = "history" | "manual" | "none";
+export type CommandSource = "scrollback" | "manual" | "none";
+
+export interface ScreenSnapshot {
+    /** Raw rendered text returned by `cmux capture-pane` at save time. ANSI-stripped. */
+    text: string;
+    /** Number of rendered rows captured (for display in `view`). */
+    rows: number;
+}
 
 export interface PixelFrame {
     x: number;
@@ -20,6 +27,18 @@ export interface TerminalSurface {
     type: "terminal";
     title: string;
     cwd?: string;
+    /**
+     * Visible terminal content captured at save time. On restore the new pane is
+     * cleared and this text is printed back so the pane looks exactly like it did
+     * when saved (login banner, previous prompts, last command, etc.).
+     */
+    screen?: ScreenSnapshot;
+    /**
+     * Most recent shell-prompt+command line found in scrollback at save time. On restore
+     * this is *typed but not executed* at the new prompt (no trailing newline) so the
+     * user can review and press Enter — useful for re-launching TUIs like
+     * `claude --resume <id>` that don't show up cleanly in screen replay.
+     */
     command?: string;
     command_source?: CommandSource;
 }

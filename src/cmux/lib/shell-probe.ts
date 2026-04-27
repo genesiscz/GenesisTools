@@ -1,8 +1,8 @@
-import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { CommandSource } from "@app/cmux/lib/types";
 import logger from "@app/logger";
+import { runCmux } from "@app/cmux/lib/cli";
+import type { CommandSource, ScreenSnapshot } from "@app/cmux/lib/types";
 
 /**
  * cmux exposes no PID/tty for surfaces, but it does set tab titles from OSC-7 cwd escapes.
@@ -15,7 +15,8 @@ export function cwdFromTitle(title: string | undefined | null): string | undefin
         return undefined;
     }
     const trimmed = title.trim();
-    // OSC-7 / OSC-1337 titles: "user@host:/abs/path" or "user@host:~/path"
+    // OSC-7 / OSC-1337 titles: "user@host:/abs/path" or "user@host:~/path"; the path
+    // can contain spaces, so use `.+$` rather than `\S+`.
     const userHostMatch = trimmed.match(/^[^\s@:]+@[^\s:]+:(.+)$/);
     if (userHostMatch) {
         return expandHome(userHostMatch[1]);
@@ -39,48 +40,117 @@ function expandHome(path: string): string {
     return path;
 }
 
-let cachedHistoryHint: { value: string | undefined; source: CommandSource } | null = null;
-
 /**
- * Best-effort "last shell command" hint sampled from the user's history file.
- * Globally scoped — the same hint is shared by every pane in v1. Users can edit the
- * resulting JSON to make individual panes accurate before restoring.
+ * Patterns we recognise as shell prompts followed by a typed command. Each pattern's
+ * capture group 1 is the command portion, or `undefined` if the prompt is empty.
+ *
+ * We deliberately only match prompts that include directory/git/host context. Bare-glyph
+ * prompts (`❯ cmd`, `$ cmd`) are excluded because terminal TUIs (Claude Code, Codex
+ * Forge, etc.) use the same glyphs for their chat input boxes — capturing the user's
+ * typed chat text as a "shell command" and replaying it on restore would be wrong and
+ * surprising. Users with bare-glyph shells lose command capture but can hand-edit the
+ * profile JSON with `command_source: "manual"` if they want it back.
  */
-export function lastHistoryHint(): { value: string | undefined; source: CommandSource } {
-    if (cachedHistoryHint) {
-        return cachedHistoryHint;
-    }
-    const candidates = [
-        process.env.HISTFILE,
-        process.env.ZDOTDIR ? join(process.env.ZDOTDIR, ".zsh_history") : undefined,
-        join(homedir(), ".zsh_history"),
-        join(homedir(), ".bash_history"),
-    ].filter((p): p is string => Boolean(p));
+const PROMPT_PATTERNS: RegExp[] = [
+    // oh-my-zsh robbyrussell. Every part of the prompt prefix (git suffix, ✗ dirty-tree
+    // mark, trailing command) is optional so "➜  app git:(main) ✗" with no command
+    // yields capture-group 1 === undefined, which the parser skips as an empty prompt.
+    /^➜\s+\S+(?:\s+git:\([^)]*\))?(?:\s+✗)?(?:\s+(.*?))?\s*$/u,
+    // [user@host dir]$ <command>
+    /^\[[^\]]+\]\s*[$#%]\s+(\S.*?)\s*$/u,
+    // user@host:dir$ <command>  (typical bash)
+    /^[\w.\-]+@[\w.\-]+:\S*[$#%]\s+(\S.*?)\s*$/u,
+];
 
-    for (const path of candidates) {
-        try {
-            if (!existsSync(path)) {
-                continue;
+interface CommandHint {
+    value: string | undefined;
+    source: CommandSource;
+}
+
+const NO_COMMAND: CommandHint = { value: undefined, source: "none" };
+
+export function lastCommandFromCapture(text: string | undefined | null): CommandHint {
+    if (!text) {
+        return NO_COMMAND;
+    }
+    const lines = text.split("\n").map((line) => line.replace(/\s+$/u, ""));
+    for (let i = lines.length - 1; i >= 0; i -= 1) {
+        const line = lines[i];
+        if (!line) {
+            continue;
+        }
+        for (const pattern of PROMPT_PATTERNS) {
+            const match = line.match(pattern);
+            if (match?.[1]) {
+                return { value: match[1], source: "scrollback" };
             }
-            const raw = readFileSync(path, "utf8");
-            const lines = raw
-                .split("\n")
-                .map((l) => l.trim())
-                .filter(Boolean);
-            if (lines.length === 0) {
-                continue;
-            }
-            const last = lines[lines.length - 1];
-            // zsh extended-history format: ": <epoch>:<elapsed>;<cmd>"
-            const stripped = last.startsWith(":") ? last.replace(/^:[^;]*;/, "") : last;
-            cachedHistoryHint = { value: stripped, source: "history" };
-            logger.debug({ path }, "[shell-probe] history hint loaded");
-            return cachedHistoryHint;
-        } catch (error) {
-            logger.debug({ error, path }, "[shell-probe] history read failed");
         }
     }
+    return NO_COMMAND;
+}
 
-    cachedHistoryHint = { value: undefined, source: "none" };
-    return cachedHistoryHint;
+export interface SurfaceCaptureResult {
+    screen?: ScreenSnapshot;
+    command: CommandHint;
+}
+
+/**
+ * Capture rendered terminal text from a single surface via `cmux capture-pane` (V2 routing).
+ * Raw socket `surface.read_text` is affected by the V1 routing bug — it returns the
+ * focused surface's content regardless of the param — so we shell out to the CLI which
+ * routes per-surface correctly.
+ *
+ * The CLI's `--scrollback` flag does NOT actually include scrollback in cmux 0.63.2
+ * (see upstream issue) — it returns the same visible content as plain `capture-pane`.
+ * That means the captured command can only come from the visible area: shell panes
+ * with a recent prompt are captured fine; long-running Claude/vim sessions whose
+ * launching `claude --resume <id>` has scrolled past the visible 40-ish rows will
+ * yield no `command`. Users can hand-edit the profile JSON with `command_source: "manual"`
+ * to add the right command for those panes.
+ */
+export async function captureSurfaceState(
+    workspaceRef: string,
+    surfaceRef: string,
+    options: { screen: boolean; history: boolean },
+): Promise<SurfaceCaptureResult> {
+    if (!options.screen && !options.history) {
+        return { command: NO_COMMAND };
+    }
+
+    const visible = await runCaptureSafely(workspaceRef, surfaceRef);
+    if (!visible) {
+        return { command: NO_COMMAND };
+    }
+
+    const text = visible.replace(/\s+$/u, "");
+    if (!text) {
+        return { command: NO_COMMAND };
+    }
+
+    const screen = options.screen ? { text, rows: text.split("\n").length } : undefined;
+    const command = options.history ? lastCommandFromCapture(text) : NO_COMMAND;
+    return { screen, command };
+}
+
+async function runCaptureSafely(workspaceRef: string, surfaceRef: string): Promise<string | undefined> {
+    try {
+        const result = await runCmux([
+            "capture-pane",
+            "--workspace",
+            workspaceRef,
+            "--surface",
+            surfaceRef,
+        ]);
+        if (result.code !== 0) {
+            logger.debug(
+                { workspaceRef, surfaceRef, stderr: result.stderr.trim() },
+                "[shell-probe] capture-pane non-zero exit",
+            );
+            return undefined;
+        }
+        return result.stdout;
+    } catch (error) {
+        logger.warn({ error, workspaceRef, surfaceRef }, "[shell-probe] capture-pane failed");
+        return undefined;
+    }
 }

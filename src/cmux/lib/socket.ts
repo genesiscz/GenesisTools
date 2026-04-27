@@ -222,36 +222,6 @@ export async function surfaceSplit(
     });
 }
 
-export interface SurfaceCreateResult {
-    pane_ref: string;
-    surface_ref: string;
-    type: string;
-    workspace_ref: string;
-    window_ref: string;
-}
-
-export async function surfaceCreate(opts: {
-    pane?: string;
-    workspace?: string;
-    type?: "terminal" | "browser";
-    url?: string;
-}): Promise<SurfaceCreateResult> {
-    const params: Record<string, unknown> = {};
-    if (opts.pane) {
-        params.pane = opts.pane;
-    }
-    if (opts.workspace) {
-        params.workspace = opts.workspace;
-    }
-    if (opts.type) {
-        params.type = opts.type;
-    }
-    if (opts.url) {
-        params.url = opts.url;
-    }
-    return rpc<SurfaceCreateResult>("surface.create", params);
-}
-
 export async function browserUrl(surfaceRef: string): Promise<string | null> {
     try {
         const result = await rpc<{ url?: string } | string>("browser.url.get", { surface: surfaceRef });
