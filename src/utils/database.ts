@@ -20,6 +20,7 @@ export abstract class BaseDatabase {
 
         this.db = new BunDatabase(dbPath);
         this.db.exec("PRAGMA journal_mode = WAL;");
+        this.db.exec("PRAGMA busy_timeout = 5000;");
         this.initSchema();
     }
 

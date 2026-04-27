@@ -1,6 +1,8 @@
 import { EventEmitter } from "node:events";
+import logger from "@app/logger";
 import type { YoutubeConfig } from "@app/youtube/lib/config";
 import type { YoutubeDatabase } from "@app/youtube/lib/db";
+import { withJobActivity } from "@app/youtube/lib/job-activity";
 import type { JobEvent, JobStage, PipelineJob } from "@app/youtube/lib/jobs.types";
 import type { EnqueuePipelineJobInput, JobEventHandler, ListPipelineJobsOpts, PipelineDeps, StageHandlerCtx } from "@app/youtube/lib/pipeline.types";
 
@@ -28,6 +30,7 @@ export class Pipeline {
 
     enqueue(input: EnqueuePipelineJobInput): PipelineJob {
         const job = this.db.enqueueJob(input);
+        logger.info({ jobId: job.id, targetKind: job.targetKind, target: job.target, stages: job.stages, parentJobId: job.parentJobId }, "youtube pipeline job enqueued");
         this.emit({ type: "job:created", job });
 
         return job;
@@ -57,10 +60,12 @@ export class Pipeline {
 
         this.running = true;
         this.abortController = new AbortController();
-        this.db.markInterruptedJobsForRequeue();
+        const requeued = this.db.markInterruptedJobsForRequeue();
+        logger.info({ requeued }, "youtube pipeline starting");
 
         for (const stage of JOB_STAGES) {
             const count = await this.workerCountForStage(stage);
+            logger.debug({ stage, count }, "youtube pipeline starting stage workers");
 
             for (let i = 0; i < count; i++) {
                 const workerId = `${this.deps.workerIdPrefix ?? "youtube"}-${stage}-${i}`;
@@ -74,6 +79,7 @@ export class Pipeline {
             return;
         }
 
+        logger.info({ workers: this.workers.length }, "youtube pipeline stopping");
         this.running = false;
         this.abortController?.abort();
         await Promise.allSettled(this.workers);
@@ -83,22 +89,31 @@ export class Pipeline {
 
     private async workerLoop(stage: JobStage, workerId: string, signal: AbortSignal): Promise<void> {
         while (this.running && !signal.aborted) {
-            const job = this.db.claimNextJob(workerId, { stage });
+            let job: PipelineJob | null = null;
+
+            try {
+                job = this.db.claimNextJob(workerId, { stage });
+            } catch (error) {
+                logger.warn({ err: error, stage, workerId }, "youtube pipeline claim failed (will retry)");
+                await sleep(this.deps.pollMs ?? DEFAULT_POLL_MS);
+                continue;
+            }
 
             if (!job) {
                 await sleep(this.deps.pollMs ?? DEFAULT_POLL_MS);
                 continue;
             }
 
-            await this.runJob(job, signal);
+            await this.runJob(job, stage, signal);
         }
     }
 
-    private async runJob(job: PipelineJob, signal: AbortSignal): Promise<void> {
+    private async runJob(job: PipelineJob, claimedStage: JobStage, signal: AbortSignal): Promise<void> {
+        logger.info({ jobId: job.id, targetKind: job.targetKind, target: job.target, claimedStage, stages: job.stages }, "youtube pipeline job started");
         this.emit({ type: "job:started", job });
 
         try {
-            for (const [index, stage] of job.stages.entries()) {
+            for (const [index, stage] of stagesForClaimedWorker(job, claimedStage).entries()) {
                 if (!this.running || signal.aborted) {
                     return;
                 }
@@ -109,6 +124,7 @@ export class Pipeline {
                     throw new Error(`No handler registered for stage ${stage}`);
                 }
 
+                logger.debug({ jobId: job.id, stage, targetKind: job.targetKind, target: job.target }, "youtube pipeline stage started");
                 this.db.updateJob(job.id, { currentStage: stage, progress: index / job.stages.length, progressMessage: null });
                 this.emit({ type: "stage:started", jobId: job.id, stage });
 
@@ -121,17 +137,20 @@ export class Pipeline {
                     },
                 };
 
-                await handler(ctx);
+                await withJobActivity({ jobId: job.id, stage, db: this.db }, () => handler(ctx));
+                logger.debug({ jobId: job.id, stage, targetKind: job.targetKind, target: job.target }, "youtube pipeline stage completed");
                 this.emit({ type: "stage:completed", jobId: job.id, stage });
             }
 
             this.db.updateJob(job.id, { status: "completed", completedAt: new Date().toISOString(), progress: 1, progressMessage: null, currentStage: null });
             const completed = this.db.getJob(job.id) ?? job;
+            logger.info({ jobId: completed.id, targetKind: completed.targetKind, target: completed.target }, "youtube pipeline job completed");
             this.emit({ type: "job:completed", job: completed });
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             this.db.updateJob(job.id, { status: "failed", error: message, completedAt: new Date().toISOString() });
             const failed = this.db.getJob(job.id) ?? job;
+            logger.error({ jobId: failed.id, targetKind: failed.targetKind, target: failed.target, error: message }, "youtube pipeline job failed");
             this.emit({ type: "job:failed", job: failed, error: message });
         }
     }
@@ -164,6 +183,17 @@ export class Pipeline {
 }
 
 const JOB_STAGES: JobStage[] = ["discover", "metadata", "captions", "audio", "video", "transcribe", "summarize"];
+
+function stagesForClaimedWorker(job: PipelineJob, claimedStage: JobStage): JobStage[] {
+    const startIndex = job.stages.indexOf(claimedStage);
+    const stages = startIndex === -1 ? job.stages : job.stages.slice(startIndex);
+
+    if (job.targetKind === "channel" && stages[0] === "discover") {
+        return ["discover"];
+    }
+
+    return stages;
+}
 
 function sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));

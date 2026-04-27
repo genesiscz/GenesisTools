@@ -62,14 +62,27 @@ export class SummaryService {
         opts.onProgress?.({ phase: "summarize", message: "summarizing transcript" });
 
         if (opts.providerChoice) {
+            const startedAt = new Date();
             const result = await this.deps.callLLM({
                 systemPrompt: SHORT_SUMMARY_SYSTEM_PROMPT,
                 userPrompt: text,
                 providerChoice: opts.providerChoice,
                 streaming: false,
             });
+            const completedAt = new Date();
             const ids = identifyProviderChoice(opts.providerChoice);
-            await recordYoutubeUsage({ action: "summarize:short", provider: ids.provider, model: ids.model, usage: result.usage, scope: opts.videoId });
+            await recordYoutubeUsage({
+                action: "summarize:short",
+                provider: ids.provider,
+                model: ids.model,
+                usage: result.usage,
+                scope: opts.videoId,
+                prompt: formatPrompt(SHORT_SUMMARY_SYSTEM_PROMPT, text),
+                response: result.content,
+                durationMs: completedAt.getTime() - startedAt.getTime(),
+                startedAt: startedAt.toISOString(),
+                completedAt: completedAt.toISOString(),
+            });
 
             return result.content;
         }
@@ -112,14 +125,27 @@ export class SummaryService {
         const action: YoutubeUsageAction = "summarize:timestamped";
 
         if (opts.providerChoice) {
+            const startedAt = new Date();
             const result = await this.deps.callLLM({
                 systemPrompt: TIMESTAMPED_SYSTEM_PROMPT,
                 userPrompt,
                 providerChoice: opts.providerChoice,
                 streaming: false,
             });
+            const completedAt = new Date();
             const ids = identifyProviderChoice(opts.providerChoice);
-            await recordYoutubeUsage({ action, provider: ids.provider, model: ids.model, usage: result.usage, scope: opts.videoId });
+            await recordYoutubeUsage({
+                action,
+                provider: ids.provider,
+                model: ids.model,
+                usage: result.usage,
+                scope: opts.videoId,
+                prompt: formatPrompt(TIMESTAMPED_SYSTEM_PROMPT, userPrompt),
+                response: result.content,
+                durationMs: completedAt.getTime() - startedAt.getTime(),
+                startedAt: startedAt.toISOString(),
+                completedAt: completedAt.toISOString(),
+            });
 
             return parseTimestampedJson(result.content, totalSec, transcript.text);
         }
@@ -137,6 +163,10 @@ export class SummaryService {
             summarizer.dispose();
         }
     }
+}
+
+function formatPrompt(systemPrompt: string, userPrompt: string): string {
+    return `system:\n${systemPrompt}\n\nuser:\n${userPrompt}`;
 }
 
 function formatTranscriptWithTimestamps(transcript: Transcript): string {

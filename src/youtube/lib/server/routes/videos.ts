@@ -2,16 +2,13 @@ import { SafeJSON } from "@app/utils/json";
 import { resolveProviderChoice } from "@app/youtube/lib/provider-choice";
 import { CORS_HEADERS } from "@app/youtube/lib/server/cors";
 import { toErrorResponse } from "@app/youtube/lib/server/error";
+import { matchRoute } from "@app/youtube/lib/server/match-route";
 import type { ChannelHandle, Transcript, VideoId } from "@app/youtube/lib/types";
 import type { Youtube } from "@app/youtube/lib/youtube";
 
 export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Promise<Response> {
-    const segments = url.pathname.split("/").filter(Boolean);
-    const id = segments[3];
-    const action = segments[4];
-
     try {
-        if (url.pathname === "/api/v1/videos" && req.method === "GET") {
+        if (matchRoute(req, "GET", "/api/v1/videos", url.pathname)) {
             const channel = url.searchParams.get("channel") as ChannelHandle | null;
             const since = url.searchParams.get("since") ?? undefined;
             const limit = parseInt(url.searchParams.get("limit") ?? "30", 10);
@@ -21,7 +18,7 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
             return Response.json({ videos }, { headers: CORS_HEADERS });
         }
 
-        if (id === "search" && req.method === "GET") {
+        if (matchRoute(req, "GET", "/api/v1/videos/search", url.pathname)) {
             const query = url.searchParams.get("q") ?? "";
             const limit = parseInt(url.searchParams.get("limit") ?? "50", 10);
             const hits = yt.videos.search(query, { limit });
@@ -29,22 +26,30 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
             return Response.json({ hits }, { headers: CORS_HEADERS });
         }
 
-        if (id && !action && req.method === "GET") {
-            const video = yt.videos.show(id as VideoId);
+        const showVideo = matchRoute(req, "GET", "/api/v1/videos/:id", url.pathname);
+
+        if (showVideo) {
+            const id = showVideo.id as VideoId;
+            const video = yt.videos.show(id);
 
             if (!video) {
                 return jsonError("video not found", 404);
             }
 
-            return Response.json({ video, transcripts: yt.db.listTranscripts(id as VideoId) }, { headers: CORS_HEADERS });
+            return Response.json({ video, transcripts: yt.db.listTranscripts(id) }, { headers: CORS_HEADERS });
         }
 
-        if (id && action === "transcript" && req.method === "GET") {
-            return handleTranscriptRoute(url, yt, id as VideoId);
+        const transcriptRoute = matchRoute(req, "GET", "/api/v1/videos/:id/transcript", url.pathname);
+
+        if (transcriptRoute) {
+            return handleTranscriptRoute(url, yt, transcriptRoute.id as VideoId);
         }
 
-        if (id && action === "summary" && req.method === "GET") {
-            const video = yt.videos.show(id as VideoId);
+        const summaryGet = matchRoute(req, "GET", "/api/v1/videos/:id/summary", url.pathname);
+
+        if (summaryGet) {
+            const id = summaryGet.id as VideoId;
+            const video = yt.videos.show(id);
 
             if (!video) {
                 return jsonError("video not found", 404);
@@ -56,8 +61,11 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
             return Response.json({ summary: cached ?? (mode === "timestamped" ? [] : ""), mode, cached: cached !== null && cached !== undefined }, { headers: CORS_HEADERS });
         }
 
-        if (id && action === "summary" && req.method === "POST") {
-            const video = yt.videos.show(id as VideoId);
+        const summaryPost = matchRoute(req, "POST", "/api/v1/videos/:id/summary", url.pathname);
+
+        if (summaryPost) {
+            const id = summaryPost.id as VideoId;
+            const video = yt.videos.show(id);
 
             if (!video) {
                 return jsonError("video not found", 404);
@@ -70,7 +78,7 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
             const model = typeof body.model === "string" ? body.model : undefined;
             const targetBins = typeof body.targetBins === "number" ? body.targetBins : undefined;
 
-            const transcript = yt.db.getTranscript(id as VideoId);
+            const transcript = yt.db.getTranscript(id);
 
             if (!transcript) {
                 return jsonError("no transcript yet for this video — run pipeline / transcribe first", 409);
@@ -78,7 +86,7 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
 
             const providerChoice = (provider || model) ? await resolveProviderChoice({ provider, model }) : undefined;
             const result = await yt.summary.summarize({
-                videoId: id as VideoId,
+                videoId: id,
                 mode,
                 provider,
                 providerChoice,
@@ -89,8 +97,11 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
             return Response.json({ summary: mode === "timestamped" ? result.timestamped ?? [] : result.short ?? "", mode, cached: false }, { headers: CORS_HEADERS });
         }
 
-        if (id && action === "qa" && req.method === "POST") {
-            const video = yt.videos.show(id as VideoId);
+        const qa = matchRoute(req, "POST", "/api/v1/videos/:id/qa", url.pathname);
+
+        if (qa) {
+            const id = qa.id as VideoId;
+            const video = yt.videos.show(id);
 
             if (!video) {
                 return jsonError("video not found", 404);
@@ -102,19 +113,19 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                 return jsonError("body must include {question: string}", 400);
             }
 
-            const transcript = yt.db.getTranscript(id as VideoId);
+            const transcript = yt.db.getTranscript(id);
 
             if (!transcript) {
                 return jsonError("no transcript yet for this video — run pipeline / transcribe first", 409);
             }
 
-            await yt.qa.index({ videoId: id as VideoId });
+            await yt.qa.index({ videoId: id });
             const providerChoice = await resolveProviderChoice({
                 provider: typeof body.provider === "string" ? body.provider : undefined,
                 model: typeof body.model === "string" ? body.model : undefined,
             });
             const result = await yt.qa.ask({
-                videoIds: [id as VideoId],
+                videoIds: [id],
                 question: body.question,
                 topK: typeof body.topK === "number" ? body.topK : undefined,
                 providerChoice,

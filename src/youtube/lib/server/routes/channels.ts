@@ -1,6 +1,7 @@
 import { SafeJSON } from "@app/utils/json";
 import { CORS_HEADERS } from "@app/youtube/lib/server/cors";
 import { toErrorResponse } from "@app/youtube/lib/server/error";
+import { matchRoute } from "@app/youtube/lib/server/match-route";
 import type { ChannelHandle } from "@app/youtube/lib/types";
 import type { Youtube } from "@app/youtube/lib/youtube";
 
@@ -11,17 +12,13 @@ interface AddChannelsBody {
 }
 
 export async function handleChannelsRoute(req: Request, url: URL, yt: Youtube): Promise<Response> {
-    const segments = url.pathname.split("/").filter(Boolean);
-    const handle = segments[3] ? normaliseHandle(decodeURIComponent(segments[3])) : undefined;
-    const action = segments[4];
-
     try {
-        if (!handle && req.method === "GET") {
+        if (matchRoute(req, "GET", "/api/v1/channels", url.pathname)) {
             return Response.json({ channels: yt.channels.list() }, { headers: CORS_HEADERS });
         }
 
-        if (!handle && req.method === "POST") {
-            const body = await readJson<AddChannelsBody>(req);
+        if (matchRoute(req, "POST", "/api/v1/channels", url.pathname)) {
+            const body = (await req.json()) as AddChannelsBody;
             const inputs = [...(body.handles ?? []), ...(body.handle ? [body.handle] : []), ...(body.fromFile ?? [])];
             const normalised = inputs.map(normaliseHandle);
 
@@ -32,12 +29,19 @@ export async function handleChannelsRoute(req: Request, url: URL, yt: Youtube): 
             return Response.json({ added: normalised }, { headers: CORS_HEADERS });
         }
 
-        if (handle && !action && req.method === "DELETE") {
+        const remove = matchRoute(req, "DELETE", "/api/v1/channels/:handle", url.pathname);
+
+        if (remove) {
+            const handle = normaliseHandle(remove.handle);
             yt.channels.remove(handle);
+
             return Response.json({ removed: handle }, { headers: CORS_HEADERS });
         }
 
-        if (handle && action === "sync" && req.method === "POST") {
+        const sync = matchRoute(req, "POST", "/api/v1/channels/:handle/sync", url.pathname);
+
+        if (sync) {
+            const handle = normaliseHandle(sync.handle);
             const job = yt.pipeline.enqueue({
                 targetKind: "channel",
                 target: handle,
@@ -61,10 +65,6 @@ function normaliseHandle(input: string): ChannelHandle {
     }
 
     return (trimmed.startsWith("@") ? trimmed : `@${trimmed}`) as ChannelHandle;
-}
-
-async function readJson<T>(req: Request): Promise<T> {
-    return (await req.json()) as T;
 }
 
 function jsonError(error: string, status: number): Response {

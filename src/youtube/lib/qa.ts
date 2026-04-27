@@ -101,6 +101,7 @@ export class QaService {
                 .join("\n\n");
             const systemPrompt = "You answer questions about YouTube video transcripts. Cite the [#N] markers from the context to back every claim. If the context doesn't contain the answer, say so plainly.";
             const userPrompt = `Question: ${opts.question}\n\nContext from transcripts:\n${context}`;
+            const startedAt = new Date();
             const result = await this.deps.callLLM({
                 systemPrompt,
                 userPrompt,
@@ -108,6 +109,7 @@ export class QaService {
                 streaming: opts.streaming,
                 streamTarget: opts.streamTarget,
             });
+            const completedAt = new Date();
             const ids = identifyProviderChoice(opts.providerChoice);
             await recordYoutubeUsage({
                 action: "qa:ask",
@@ -115,6 +117,11 @@ export class QaService {
                 model: ids.model,
                 usage: result.usage,
                 scope: opts.videoIds.join(","),
+                prompt: `system:\n${systemPrompt}\n\nuser:\n${userPrompt}`,
+                response: result.content,
+                durationMs: completedAt.getTime() - startedAt.getTime(),
+                startedAt: startedAt.toISOString(),
+                completedAt: completedAt.toISOString(),
             });
 
             return {

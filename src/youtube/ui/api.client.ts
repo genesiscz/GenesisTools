@@ -2,6 +2,7 @@ import { fetchUiConfig } from "@app/yt/config.client";
 import type {
     Channel,
     ChannelHandle,
+    JobActivity,
     JobStage,
     JobStatus,
     PipelineJob,
@@ -124,6 +125,7 @@ export const apiClient = {
         api<AskVideoResponse>(`/videos/${encodeURIComponent(id)}/qa`, { method: "POST", body: JSON.stringify(opts) }),
     listJobs: (params: { status?: JobStatus; limit?: number } = {}) => api<{ jobs: PipelineJob[] }>(withQuery("/jobs", [["status", params.status], ["limit", params.limit]])),
     getJob: (id: number) => api<{ job: PipelineJob }>(`/jobs/${id}`),
+    getJobActivity: (id: number) => api<{ activity: JobActivity[] }>(`/jobs/${id}/activity`),
     cancelJob: (id: number) => api<{ job: PipelineJob | null }>(`/jobs/${id}/cancel`, { method: "POST" }),
     startPipeline: (body: { target: string; targetKind?: "video" | "channel" | "url"; stages: JobStage[] }) =>
         api<{ job: PipelineJob }>("/pipeline", { method: "POST", body: JSON.stringify(body) }),

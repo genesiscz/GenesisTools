@@ -102,6 +102,16 @@ export function useJob(id: number | null) {
     });
 }
 
+export function useJobActivity(id: number | null, opts: { refetchInterval?: number } = {}) {
+    return useQuery({
+        queryKey: ["job-activity", id],
+        queryFn: () => apiClient.getJobActivity(id as number),
+        enabled: id !== null,
+        refetchInterval: opts.refetchInterval ?? 3000,
+        select: (response) => response.activity,
+    });
+}
+
 export function useCancelJob() {
     const queryClient = useQueryClient();
 
