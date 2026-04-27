@@ -53,12 +53,7 @@ export function flattenMemories(memories: TimelyEntry[], allowedIds?: Set<number
     return flat.sort((a, b) => a.from.localeCompare(b.from));
 }
 
-export function buildPayloadFromFlat(
-    flat: FlatEntry[],
-    day: string,
-    projectId: number,
-    note: string
-): BuiltPayload {
+export function buildPayloadFromFlat(flat: FlatEntry[], day: string, projectId: number, note: string): BuiltPayload {
     if (flat.length === 0) {
         throw new Error(`No usable entries on ${day} — memories are empty or filtered out`);
     }

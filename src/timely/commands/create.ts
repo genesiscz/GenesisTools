@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import logger from "@app/logger";
 import type { TimelyService } from "@app/timely/api/service";
@@ -25,7 +24,6 @@ interface CreateOptions {
     note?: string;
     interactive?: boolean;
     dryRun?: boolean;
-    chainAdo?: boolean;
     plan?: boolean;
     out?: string;
     apply?: string;
@@ -212,18 +210,6 @@ async function runCreate(storage: Storage, service: TimelyService, options: Crea
     }
 
     p.outro(`Created ${created.length} event(s).`);
-
-    if (options.chainAdo && created.length > 0) {
-        for (const date of dates) {
-            console.log(chalk.cyan(`\n→ Launching ADO TimeLog for ${date}...`));
-            await new Promise<void>((resolve) => {
-                const proc = spawn("tools", ["azure-devops", "timelog", "add", "-i", "-d", date], {
-                    stdio: "inherit",
-                });
-                proc.on("exit", () => resolve());
-            });
-        }
-    }
 }
 
 async function runPlan(storage: Storage, service: TimelyService, options: CreateOptions): Promise<void> {
@@ -254,7 +240,9 @@ async function runPlan(storage: Storage, service: TimelyService, options: Create
     } else {
         writeFileSync(out, `${json}\n`, "utf8");
         logger.info(chalk.green(`✓ Plan written to ${out}`));
-        logger.info(`  ${plan.days.length} day(s), ${plan.days.reduce((s, d) => s + d.available_memories.length, 0)} memories`);
+        logger.info(
+            `  ${plan.days.length} day(s), ${plan.days.reduce((s, d) => s + d.available_memories.length, 0)} memories`
+        );
         logger.info("  Edit events[] per day, then: tools timely create --apply " + out + " --dry-run");
     }
 }
@@ -348,9 +336,17 @@ async function runApply(storage: Storage, service: TimelyService, options: Creat
             console.log(chalk.red(`✗ ${r.day}#${r.eventIdx} [proj ${r.project_id}]: ${r.error}`));
             failed++;
         } else if (options.dryRun) {
-            console.log(chalk.cyan(`◯ ${r.day}#${r.eventIdx} [proj ${r.project_id}] DRY ${r.duration} (${r.memoryCount} memories)`));
+            console.log(
+                chalk.cyan(
+                    `◯ ${r.day}#${r.eventIdx} [proj ${r.project_id}] DRY ${r.duration} (${r.memoryCount} memories)`
+                )
+            );
         } else {
-            console.log(chalk.green(`✓ ${r.day}#${r.eventIdx} [proj ${r.project_id}] event ${r.eventId} (${r.duration}, ${r.memoryCount} memories)`));
+            console.log(
+                chalk.green(
+                    `✓ ${r.day}#${r.eventIdx} [proj ${r.project_id}] event ${r.eventId} (${r.duration}, ${r.memoryCount} memories)`
+                )
+            );
             created++;
         }
     }
@@ -376,7 +372,6 @@ export function registerCreateCommand(program: Command, storage: Storage, servic
         .option("-n, --note <text>", "Override note (default: derived from memory titles)")
         .option("-i, --interactive", "Interactive mode (default if TTY)")
         .option("--dry-run", "Show payload without posting (works with create + apply)")
-        .option("--chain-ado", "After create, run `tools azure-devops timelog add -i` per day")
         .option("--plan", "Generate a JSON plan instead of posting (LLM-friendly)")
         .option("--out <path>", "Output path for --plan (default: stdout)", "-")
         .option("--apply <path>", "Apply a plan JSON file (use - for stdin)")
