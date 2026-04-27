@@ -117,12 +117,14 @@ const program = new Command()
     });
 
 // `tools say voices` subcommand
+// Note: --provider lives on the root command (program.opts()), not here.
+// Commander parses root options globally, so reading from opts would always be undefined.
 program
     .command("voices")
-    .description("List voices grouped by provider")
-    .option("--provider <name>", "Filter to one provider")
-    .action(async (opts: { provider?: SayProvider }) => {
-        await printVoiceList(opts.provider);
+    .description("List voices grouped by provider (use root --provider to filter)")
+    .action(async () => {
+        const rootOpts = program.opts<SayOptions>();
+        await printVoiceList(rootOpts.provider);
     });
 
 async function resolveText(messageParts: string[], filePath?: string): Promise<string | null> {
