@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import logger from "@app/logger";
-import { getProvider } from "@app/utils/ai/providers";
+import { getProvider, getTextToSpeechProvider } from "@app/utils/ai/providers";
 import type { AITextToSpeechProvider, TTSOptions, TTSResult } from "@app/utils/ai/types";
 import { suggestCommand } from "@app/utils/cli/executor";
 import type { SayConfig } from "@app/utils/macos/tts.ts";
@@ -139,7 +139,7 @@ async function speakViaXai(text: string, opts: SayOptions & { voice?: string }):
         return;
     }
 
-    const provider = getProvider("xai") as unknown as AITextToSpeechProvider;
+    const provider = getTextToSpeechProvider("xai");
     const useStream = opts.stream || text.length > REST_TTS_LIMIT;
 
     const ttsOptions: TTSOptions = {
@@ -158,7 +158,12 @@ async function speakViaXai(text: string, opts: SayOptions & { voice?: string }):
             }
 
             logger.debug(`[say] xai streaming (${text.length} chars)`);
-            result = await provider.synthesizeStream(text, ttsOptions);
+            const stream = provider.synthesizeStream(text, ttsOptions);
+            const chunks: Uint8Array[] = [];
+            for await (const c of stream.audio) {
+                chunks.push(c);
+            }
+            result = { audio: Buffer.concat(chunks), contentType: stream.contentType };
         } else {
             logger.debug(`[say] xai REST (${text.length} chars)`);
             result = await provider.synthesize(text, ttsOptions);

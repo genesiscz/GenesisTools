@@ -7,7 +7,8 @@ import { AIGoogleProvider } from "./AIGoogleProvider";
 import { AILocalProvider } from "./AILocalProvider";
 import { AIMacOSTextToSpeechProvider } from "./AIMacOSTextToSpeechProvider";
 import { AIOllamaProvider } from "./AIOllamaProvider";
-import { AIXAIProvider } from "./AIXAIProvider";
+import { AIXAITextToSpeechProvider } from "./xai/AIXAITextToSpeechProvider";
+import { AIXAITranscriptionProvider } from "./xai/AIXAITranscriptionProvider";
 
 const providers = new Map<AIProviderType, AIProvider>();
 
@@ -64,7 +65,7 @@ export function getProvider(type: AIProviderType): AIProvider {
             provider = new AIGoogleProvider();
             break;
         case "xai":
-            provider = new AIXAIProvider();
+            provider = new AIXAITextToSpeechProvider();
             break;
         case "macos":
             provider = new AIMacOSTextToSpeechProvider();
@@ -116,6 +117,20 @@ export async function getProviderForTask(task: AITask, config: AIConfig): Promis
     );
 }
 
+const customProviderCache = new Map<string, AIProvider>();
+
+function getOrCacheCustom<T extends AIProvider>(key: string, factory: () => T): T {
+    const existing = customProviderCache.get(key) as T | undefined;
+
+    if (existing) {
+        return existing;
+    }
+
+    const created = factory();
+    customProviderCache.set(key, created);
+    return created;
+}
+
 export function getAllProviders(): AIProvider[] {
     const types: AIProviderType[] = [
         "darwinkit",
@@ -133,7 +148,10 @@ export function getAllProviders(): AIProvider[] {
         "xai",
         "macos",
     ];
-    return types.map((type) => getProvider(type));
+    const list = types.map((type) => getProvider(type));
+    // Add per-task providers that don't surface through getProvider().
+    list.push(getOrCacheCustom("xai-stt", () => new AIXAITranscriptionProvider()));
+    return list;
 }
 
 export function disposeAll(): void {
@@ -173,6 +191,10 @@ export function getProvidersForTask(task: AITask, filter?: { kind?: "local" | "c
 }
 
 export function getTranscriptionProvider(type: AIProviderType): AITranscriptionProvider {
+    if (type === "xai") {
+        return getOrCacheCustom("xai-stt", () => new AIXAITranscriptionProvider());
+    }
+
     const p = getProvider(type);
 
     if (!isTranscriptionProvider(p)) {
@@ -249,4 +271,5 @@ export { AIGoogleProvider } from "./AIGoogleProvider";
 export { AILocalProvider } from "./AILocalProvider";
 export { AIMacOSTextToSpeechProvider } from "./AIMacOSTextToSpeechProvider";
 export { AIOllamaProvider } from "./AIOllamaProvider";
-export { AIXAIProvider } from "./AIXAIProvider";
+export { AIXAITextToSpeechProvider } from "./xai/AIXAITextToSpeechProvider";
+export { AIXAITranscriptionProvider } from "./xai/AIXAITranscriptionProvider";

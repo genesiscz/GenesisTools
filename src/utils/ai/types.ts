@@ -168,8 +168,12 @@ export interface TTSVoice {
 
 export interface AITextToSpeechProvider extends AIProvider {
     synthesize(text: string, options?: TTSOptions): Promise<TTSResult>;
-    /** Streaming variant — opens WebSocket, collects all audio chunks, returns full buffer. Bypasses REST text-length limit. */
-    synthesizeStream?(text: string, options?: TTSOptions): Promise<TTSResult>;
+    /**
+     * Streaming variant — yields audio chunks as they arrive (WebSocket or chunked HTTP).
+     * Bypasses REST text-length limits and enables real-time piped playback.
+     * Returns a named object so callers can get contentType without consuming the stream first.
+     */
+    synthesizeStream?(text: string, options?: TTSOptions): { audio: AsyncIterable<Uint8Array>; contentType: string };
     listVoices?(): Promise<TTSVoice[]>;
 }
 
