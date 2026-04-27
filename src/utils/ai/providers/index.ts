@@ -7,6 +7,7 @@ import { AIGoogleProvider } from "./AIGoogleProvider";
 import { AILocalProvider } from "./AILocalProvider";
 import { AIMacOSTextToSpeechProvider } from "./AIMacOSTextToSpeechProvider";
 import { AIOllamaProvider } from "./AIOllamaProvider";
+import { AIOpenAITextToSpeechProvider } from "./openai/AIOpenAITextToSpeechProvider";
 import { AIXAITextToSpeechProvider } from "./xai/AIXAITextToSpeechProvider";
 import { AIXAITranscriptionProvider } from "./xai/AIXAITranscriptionProvider";
 
@@ -151,6 +152,7 @@ export function getAllProviders(): AIProvider[] {
     const list = types.map((type) => getProvider(type));
     // Add per-task providers that don't surface through getProvider().
     list.push(getOrCacheCustom("xai-stt", () => new AIXAITranscriptionProvider()));
+    list.push(getOrCacheCustom("openai-tts", () => new AIOpenAITextToSpeechProvider()));
     return list;
 }
 
@@ -205,6 +207,10 @@ export function getTranscriptionProvider(type: AIProviderType): AITranscriptionP
 }
 
 export function getTextToSpeechProvider(type: AIProviderType): AITextToSpeechProvider {
+    if (type === "openai") {
+        return getOrCacheCustom("openai-tts", () => new AIOpenAITextToSpeechProvider());
+    }
+
     const p = getProvider(type);
 
     if (!isTextToSpeechProvider(p)) {
@@ -271,5 +277,6 @@ export { AIGoogleProvider } from "./AIGoogleProvider";
 export { AILocalProvider } from "./AILocalProvider";
 export { AIMacOSTextToSpeechProvider } from "./AIMacOSTextToSpeechProvider";
 export { AIOllamaProvider } from "./AIOllamaProvider";
+export { AIOpenAITextToSpeechProvider } from "./openai/AIOpenAITextToSpeechProvider";
 export { AIXAITextToSpeechProvider } from "./xai/AIXAITextToSpeechProvider";
 export { AIXAITranscriptionProvider } from "./xai/AIXAITranscriptionProvider";
