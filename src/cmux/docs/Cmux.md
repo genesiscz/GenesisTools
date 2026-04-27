@@ -27,7 +27,7 @@ Comprehensive reference for every cmux CLI command and JSON-RPC method this tool
 
 ## Architecture in 60 seconds
 
-```
+```text
 window  ─┬─ workspace ─┬─ pane ─┬─ surface (terminal | browser)
          │             │        └─ surface
          │             └─ pane ─── surface
@@ -214,7 +214,7 @@ A pane is a rectangle in the workspace. cmux manages them in a binary split tree
 
 ### `cmux list-panes --workspace <ref>` output (CLI, plain mode)
 
-```
+```text
   pane:23  [1 surface]
 * pane:35  [1 surface]  [focused]
   pane:36  [3 surfaces]
@@ -258,7 +258,7 @@ A pane is a rectangle in the workspace. cmux manages them in a binary split tree
 
 `cmux resize-pane --pane <ref> -R --amount 5` moves the **right boundary** of the pane right by 5 cells (i.e. pane gains 5 columns; the right neighbour loses 5). Dual for `-L/-U/-D`. If a pane has no neighbour in that direction the call fails with:
 
-```
+```text
 invalid_state: No vertical split ancestor for pane
 ```
 
@@ -455,7 +455,7 @@ A walkthrough of the exact cmux calls our CLI makes.
 
 ### `tools cmux profiles save <name>`
 
-```
+```bash
 cmux identify --json                           # resolve socket path (cached)
 cmux --version                                  # for cmux_version field
 
@@ -482,7 +482,7 @@ cmux select-workspace --workspace <originally-focused-ref>   # restore focus
 
 ### `tools cmux profiles restore <name>`
 
-```
+```bash
 read profile JSON
 
 for each window in profile:
