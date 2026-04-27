@@ -679,8 +679,15 @@ async function interactiveMode(): Promise<void> {
                 break;
             }
             case "transcribe": {
-                const provider = await ensureTranscribeProvider({});
-                await transcribeOne({ id: memo.id, provider });
+                const opts: TranscribeOpts = {};
+                opts.provider = await ensureTranscribeProvider(opts);
+                const resolved = await resolveTranscribeOptions(opts);
+                await transcribeOne({
+                    id: memo.id,
+                    provider: resolved.provider,
+                    model: resolved.model,
+                    format: resolved.format,
+                });
                 break;
             }
         }
