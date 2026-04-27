@@ -12,16 +12,17 @@
  * per pipeline job.
  */
 import logger from "@app/logger";
-import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
-import { costTracker } from "@ask/output/CostTracker";
-import type { ProviderChoice } from "@ask/types";
 import { getJobActivityContext } from "@app/youtube/lib/job-activity";
 import type { JobActivityKind } from "@app/youtube/lib/jobs.types";
+import { costTracker } from "@ask/output/CostTracker";
+import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
+import type { ProviderChoice } from "@ask/types";
 import type { LanguageModelUsage } from "ai";
 
 export type YoutubeUsageAction =
     | "summarize:short"
     | "summarize:timestamped"
+    | "summarize:long"
     | "qa:ask"
     | "qa:embed"
     | "transcribe:ai";
@@ -53,7 +54,10 @@ export async function recordYoutubeUsage(input: RecordYoutubeUsageInput): Promis
         const usage: LanguageModelUsage =
             input.usage ?? ({ inputTokens: 0, outputTokens: 0, totalTokens: 0 } as LanguageModelUsage);
         await costTracker.trackUsage(input.provider, input.model, usage, sessionId);
-        logger.debug({ action: input.action, provider: input.provider, model: input.model, scope: input.scope }, "youtube usage recorded");
+        logger.debug(
+            { action: input.action, provider: input.provider, model: input.model, scope: input.scope },
+            "youtube usage recorded"
+        );
 
         const ctx = getJobActivityContext();
 

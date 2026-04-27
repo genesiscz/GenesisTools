@@ -1,14 +1,13 @@
+import logger from "@app/logger";
 import { callLLM, callLLMStructured } from "@app/utils/ai/call-llm";
 import { Summarizer } from "@app/utils/ai/tasks/Summarizer";
-import logger from "@app/logger";
 import type { YoutubeConfig } from "@app/youtube/lib/config";
 import type { YoutubeDatabase } from "@app/youtube/lib/db";
-import type { SummaryBin, SummaryServiceDeps, SummarizeOpts, SummarizeResult } from "@app/youtube/lib/summarize.types";
-import { compactTranscript } from "@app/youtube/lib/transcript-compact";
+import type { SummarizeOpts, SummarizeResult, SummaryBin, SummaryServiceDeps } from "@app/youtube/lib/summarize.types";
 import type { Transcript } from "@app/youtube/lib/transcript.types";
+import { compactTranscript } from "@app/youtube/lib/transcript-compact";
 import { identifyProviderChoice, recordYoutubeUsage } from "@app/youtube/lib/usage";
 import type {
-    SummaryFormat,
     SummaryLength,
     SummaryTone,
     TimestampedSummaryEntry,
@@ -35,10 +34,13 @@ const LONG_SUMMARY_SYSTEM_BASE =
     "You write rich long-form summaries of YouTube videos. Use the supplied transcript and produce: a TL;DR, key points, learnings the viewer should walk away with, a topical chapter breakdown, and a closing verdict. Be concrete — name specific products, numbers, people. Do not invent facts.";
 
 const TONE_INSTRUCTIONS: Record<SummaryTone, string> = {
-    insightful: "Tone: insightful. Surface the underlying logic and tradeoffs the speaker makes. Be analytical and precise.",
+    insightful:
+        "Tone: insightful. Surface the underlying logic and tradeoffs the speaker makes. Be analytical and precise.",
     funny: "Tone: funny. Lean into observational humour. Keep it light but accurate. Do not insult anyone.",
-    actionable: "Tone: actionable. Lead each section with the move-or-decision the viewer can take. Use imperative verbs.",
-    controversial: "Tone: controversial. Highlight where the speaker's claims are debatable, surprising, or counter to mainstream opinion.",
+    actionable:
+        "Tone: actionable. Lead each section with the move-or-decision the viewer can take. Use imperative verbs.",
+    controversial:
+        "Tone: controversial. Highlight where the speaker's claims are debatable, surprising, or counter to mainstream opinion.",
 };
 
 const TimestampedListSectionSchema = z.object({
@@ -135,7 +137,7 @@ export class SummaryService {
     }
 
     private async summarizeText(text: string, opts: SummarizeOpts): Promise<string> {
-        opts.onProgress?.({ phase: "summarize", message: "Summarizing transcript" });
+        opts.onProgress?.({ phase: "summarize", percent: 30, message: "Calling LLM for short summary" });
         const systemPrompt = withTone(SHORT_SUMMARY_SYSTEM_BASE, opts.tone);
 
         if (opts.providerChoice) {
@@ -183,9 +185,14 @@ export class SummaryService {
         }
     }
 
-    private async summarizeTimestamped(transcript: Transcript, opts: SummarizeOpts): Promise<TimestampedSummaryEntry[]> {
+    private async summarizeTimestamped(
+        transcript: Transcript,
+        opts: SummarizeOpts
+    ): Promise<TimestampedSummaryEntry[]> {
         if (!opts.providerChoice) {
-            throw new Error("timestamped summary requires an LLM provider — pass providerChoice (CLI: --provider/--model, UI: dialog overrides)");
+            throw new Error(
+                "timestamped summary requires an LLM provider — pass providerChoice (CLI: --provider/--model, UI: dialog overrides)"
+            );
         }
 
         const totalSec = transcript.durationSec ?? transcript.segments.at(-1)?.end ?? 0;
@@ -208,11 +215,26 @@ export class SummaryService {
             formattedTranscript,
         ].join("\n");
 
-        opts.onProgress?.({ phase: "summarize", message: `Calling LLM for ${sectionCount} timestamped sections (${isQa ? "qa" : "list"} format)` });
+        opts.onProgress?.({
+            phase: "summarize",
+            percent: 30,
+            message: `Calling LLM for ${sectionCount} timestamped sections (${isQa ? "qa" : "list"} format)`,
+        });
         const startedAt = new Date();
         const result = isQa
-            ? await this.deps.callLLMStructured({ systemPrompt, userPrompt, providerChoice: opts.providerChoice, schema: TimestampedQaSchema })
-            : await this.deps.callLLMStructured({ systemPrompt, userPrompt, providerChoice: opts.providerChoice, schema: TimestampedListSchema });
+            ? await this.deps.callLLMStructured({
+                  systemPrompt,
+                  userPrompt,
+                  providerChoice: opts.providerChoice,
+                  schema: TimestampedQaSchema,
+              })
+            : await this.deps.callLLMStructured({
+                  systemPrompt,
+                  userPrompt,
+                  providerChoice: opts.providerChoice,
+                  schema: TimestampedListSchema,
+              });
+        opts.onProgress?.({ phase: "summarize", percent: 90, message: "Parsing timestamped sections" });
         const completedAt = new Date();
         const ids = identifyProviderChoice(opts.providerChoice);
         await recordYoutubeUsage({
@@ -234,7 +256,9 @@ export class SummaryService {
 
     private async summarizeLong(transcript: Transcript, opts: SummarizeOpts): Promise<VideoLongSummary> {
         if (!opts.providerChoice) {
-            throw new Error("long summary requires an LLM provider — pass providerChoice (CLI: --provider/--model, UI: dialog overrides)");
+            throw new Error(
+                "long summary requires an LLM provider — pass providerChoice (CLI: --provider/--model, UI: dialog overrides)"
+            );
         }
 
         const totalSec = transcript.durationSec ?? transcript.segments.at(-1)?.end ?? 0;
@@ -248,7 +272,11 @@ export class SummaryService {
             transcript.text,
         ].join("\n");
 
-        opts.onProgress?.({ phase: "summarize", message: "Calling LLM for long-form summary (structured output)" });
+        opts.onProgress?.({
+            phase: "summarize",
+            percent: 30,
+            message: "Calling LLM for long-form summary (structured output)",
+        });
         const startedAt = new Date();
         const result = await this.deps.callLLMStructured({
             systemPrompt,
@@ -256,10 +284,11 @@ export class SummaryService {
             providerChoice: opts.providerChoice,
             schema: LongSchema,
         });
+        opts.onProgress?.({ phase: "summarize", percent: 90, message: "Parsing long-form structured response" });
         const completedAt = new Date();
         const ids = identifyProviderChoice(opts.providerChoice);
         await recordYoutubeUsage({
-            action: "summarize:short",
+            action: "summarize:long",
             provider: ids.provider,
             model: ids.model,
             usage: result.usage,
@@ -383,7 +412,11 @@ export function bucketSegments(transcript: Transcript, binSizeSec: number): Summ
 
     for (const segment of transcript.segments) {
         const binIndex = Math.floor(segment.start / binSizeSec);
-        const slot = bins[binIndex] ?? { startSec: binIndex * binSizeSec, endSec: (binIndex + 1) * binSizeSec, texts: [] };
+        const slot = bins[binIndex] ?? {
+            startSec: binIndex * binSizeSec,
+            endSec: (binIndex + 1) * binSizeSec,
+            texts: [],
+        };
         slot.texts.push(segment.text);
 
         if (segment.end > slot.endSec) {

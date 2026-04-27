@@ -22,7 +22,10 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
         if (matchRoute(req, "GET", "/api/v1/videos/search", url.pathname)) {
             const query = url.searchParams.get("q") ?? "";
             const limit = parseInt(url.searchParams.get("limit") ?? "50", 10);
-            const inFields = (url.searchParams.get("in") ?? "transcript").split(",").map((part) => part.trim()).filter(Boolean);
+            const inFields = (url.searchParams.get("in") ?? "transcript")
+                .split(",")
+                .map((part) => part.trim())
+                .filter(Boolean);
             const channel = url.searchParams.get("channel") as ChannelHandle | null;
             const hits: Array<{ kind: string; videoId: string; snippet: string; rank?: number; lang?: string }> = [];
 
@@ -34,7 +37,10 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
 
             const metadataFields = inFields
                 .map((value) => (value === "desc" ? "description" : value))
-                .filter((value): value is "title" | "description" | "tags" => value === "title" || value === "description" || value === "tags");
+                .filter(
+                    (value): value is "title" | "description" | "tags" =>
+                        value === "title" || value === "description" || value === "tags"
+                );
 
             if (metadataFields.length > 0) {
                 for (const hit of yt.videos.searchMetadata(query, {
@@ -82,9 +88,11 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
 
             const mode = parseMode(url.searchParams.get("mode"));
             const cached =
-                mode === "timestamped" ? video.summaryTimestamped
-                : mode === "long" ? video.summaryLong
-                : video.summaryShort;
+                mode === "timestamped"
+                    ? video.summaryTimestamped
+                    : mode === "long"
+                      ? video.summaryLong
+                      : video.summaryShort;
             const fallback = mode === "timestamped" ? [] : mode === "long" ? null : "";
 
             return Response.json(
@@ -119,10 +127,25 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                 return jsonError("no transcript yet for this video — run pipeline / transcribe first", 409);
             }
 
-            const providerChoice = (provider || model) ? await resolveProviderChoice({ provider, model }) : undefined;
+            const providerChoice = provider || model ? await resolveProviderChoice({ provider, model }) : undefined;
             const job = yt.db.enqueueJob({ targetKind: "video", target: id, stages: ["summarize"] });
             const startedAt = new Date().toISOString();
-            yt.db.updateJob(job.id, { status: "running", currentStage: "summarize" });
+            yt.db.updateJob(job.id, {
+                status: "running",
+                currentStage: "summarize",
+                progress: 0,
+                progressMessage: "Compacting transcript",
+            });
+            const startedJob = yt.db.getJob(job.id) ?? job;
+            yt.pipeline.emitExternal({ type: "job:started", job: startedJob });
+            yt.pipeline.emitExternal({ type: "stage:started", jobId: job.id, stage: "summarize" });
+            yt.pipeline.emitExternal({
+                type: "stage:progress",
+                jobId: job.id,
+                stage: "summarize",
+                progress: 0.05,
+                message: "Compacting transcript",
+            });
 
             try {
                 const result = await withJobActivity({ jobId: job.id, stage: "summarize", db: yt.db }, () =>
@@ -136,23 +159,50 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                         tone,
                         format,
                         length,
+                        onProgress: (info) => {
+                            const progress = (info.percent ?? 50) / 100;
+                            yt.db.updateJob(job.id, { progress, progressMessage: info.message });
+                            yt.pipeline.emitExternal({
+                                type: "stage:progress",
+                                jobId: job.id,
+                                stage: "summarize",
+                                progress,
+                                message: info.message,
+                            });
+                        },
                     })
                 );
-                yt.db.updateJob(job.id, { status: "completed", progress: 1, currentStage: null, completedAt: new Date().toISOString() });
+                yt.db.updateJob(job.id, {
+                    status: "completed",
+                    progress: 1,
+                    progressMessage: null,
+                    currentStage: null,
+                    completedAt: new Date().toISOString(),
+                });
+                const completedJob = yt.db.getJob(job.id) ?? job;
+                yt.pipeline.emitExternal({ type: "stage:completed", jobId: job.id, stage: "summarize" });
+                yt.pipeline.emitExternal({ type: "job:completed", job: completedJob });
 
-                return Response.json({
-                    summary:
-                        mode === "timestamped" ? result.timestamped ?? []
-                        : mode === "long" ? result.long ?? null
-                        : result.short ?? "",
-                    mode,
-                    cached: false,
-                    jobId: job.id,
-                    startedAt,
-                }, { headers: CORS_HEADERS });
+                return Response.json(
+                    {
+                        summary:
+                            mode === "timestamped"
+                                ? (result.timestamped ?? [])
+                                : mode === "long"
+                                  ? (result.long ?? null)
+                                  : (result.short ?? ""),
+                        mode,
+                        cached: false,
+                        jobId: job.id,
+                        startedAt,
+                    },
+                    { headers: CORS_HEADERS }
+                );
             } catch (error) {
                 const message = error instanceof Error ? error.message : String(error);
                 yt.db.updateJob(job.id, { status: "failed", error: message, completedAt: new Date().toISOString() });
+                const failedJob = yt.db.getJob(job.id) ?? job;
+                yt.pipeline.emitExternal({ type: "job:failed", job: failedJob, error: message });
                 throw error;
             }
         }
@@ -198,7 +248,12 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                         providerChoice,
                     });
                 });
-                yt.db.updateJob(job.id, { status: "completed", progress: 1, currentStage: null, completedAt: new Date().toISOString() });
+                yt.db.updateJob(job.id, {
+                    status: "completed",
+                    progress: 1,
+                    currentStage: null,
+                    completedAt: new Date().toISOString(),
+                });
 
                 return Response.json({ ...result, jobId: job.id }, { headers: CORS_HEADERS });
             } catch (error) {
@@ -228,15 +283,21 @@ function handleTranscriptRoute(url: URL, yt: Youtube, id: VideoId): Response {
     }
 
     if (format === "text") {
-        return new Response(transcript.text, { headers: { ...CORS_HEADERS, "Content-Type": "text/plain; charset=utf-8" } });
+        return new Response(transcript.text, {
+            headers: { ...CORS_HEADERS, "Content-Type": "text/plain; charset=utf-8" },
+        });
     }
 
     if (format === "srt") {
-        return new Response(toSrt(transcript), { headers: { ...CORS_HEADERS, "Content-Type": "application/x-subrip; charset=utf-8" } });
+        return new Response(toSrt(transcript), {
+            headers: { ...CORS_HEADERS, "Content-Type": "application/x-subrip; charset=utf-8" },
+        });
     }
 
     if (format === "vtt") {
-        return new Response(toVtt(transcript), { headers: { ...CORS_HEADERS, "Content-Type": "text/vtt; charset=utf-8" } });
+        return new Response(toVtt(transcript), {
+            headers: { ...CORS_HEADERS, "Content-Type": "text/vtt; charset=utf-8" },
+        });
     }
 
     return Response.json({ transcript }, { headers: CORS_HEADERS });
@@ -244,12 +305,20 @@ function handleTranscriptRoute(url: URL, yt: Youtube, id: VideoId): Response {
 
 function toSrt(transcript: Transcript): string {
     return transcript.segments
-        .map((segment, index) => `${index + 1}\n${formatTimestamp(segment.start, ",")} --> ${formatTimestamp(segment.end, ",")}\n${segment.text}`)
+        .map(
+            (segment, index) =>
+                `${index + 1}\n${formatTimestamp(segment.start, ",")} --> ${formatTimestamp(segment.end, ",")}\n${segment.text}`
+        )
         .join("\n\n");
 }
 
 function toVtt(transcript: Transcript): string {
-    const cues = transcript.segments.map((segment) => `${formatTimestamp(segment.start, ".")} --> ${formatTimestamp(segment.end, ".")}\n${segment.text}`).join("\n\n");
+    const cues = transcript.segments
+        .map(
+            (segment) =>
+                `${formatTimestamp(segment.start, ".")} --> ${formatTimestamp(segment.end, ".")}\n${segment.text}`
+        )
+        .join("\n\n");
     return `WEBVTT\n\n${cues}`;
 }
 

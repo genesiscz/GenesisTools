@@ -4,7 +4,13 @@ import type { YoutubeConfig } from "@app/youtube/lib/config";
 import type { YoutubeDatabase } from "@app/youtube/lib/db";
 import { withJobActivity } from "@app/youtube/lib/job-activity";
 import type { JobEvent, JobStage, PipelineJob } from "@app/youtube/lib/jobs.types";
-import type { EnqueuePipelineJobInput, JobEventHandler, ListPipelineJobsOpts, PipelineDeps, StageHandlerCtx } from "@app/youtube/lib/pipeline.types";
+import type {
+    EnqueuePipelineJobInput,
+    JobEventHandler,
+    ListPipelineJobsOpts,
+    PipelineDeps,
+    StageHandlerCtx,
+} from "@app/youtube/lib/pipeline.types";
 
 const DEFAULT_POLL_MS = 250;
 
@@ -31,7 +37,16 @@ export class Pipeline {
 
     enqueue(input: EnqueuePipelineJobInput): PipelineJob {
         const job = this.db.enqueueJob(input);
-        logger.info({ jobId: job.id, targetKind: job.targetKind, target: job.target, stages: job.stages, parentJobId: job.parentJobId }, "youtube pipeline job enqueued");
+        logger.info(
+            {
+                jobId: job.id,
+                targetKind: job.targetKind,
+                target: job.target,
+                stages: job.stages,
+                parentJobId: job.parentJobId,
+            },
+            "youtube pipeline job enqueued"
+        );
         this.emit({ type: "job:created", job });
 
         return job;
@@ -116,7 +131,10 @@ export class Pipeline {
     }
 
     private async runJob(job: PipelineJob, claimedStage: JobStage, signal: AbortSignal): Promise<void> {
-        logger.info({ jobId: job.id, targetKind: job.targetKind, target: job.target, claimedStage, stages: job.stages }, "youtube pipeline job started");
+        logger.info(
+            { jobId: job.id, targetKind: job.targetKind, target: job.target, claimedStage, stages: job.stages },
+            "youtube pipeline job started"
+        );
         this.emit({ type: "job:started", job });
 
         const jobController = new AbortController();
@@ -135,8 +153,15 @@ export class Pipeline {
                     throw new Error(`No handler registered for stage ${stage}`);
                 }
 
-                logger.debug({ jobId: job.id, stage, targetKind: job.targetKind, target: job.target }, "youtube pipeline stage started");
-                this.db.updateJob(job.id, { currentStage: stage, progress: index / job.stages.length, progressMessage: null });
+                logger.debug(
+                    { jobId: job.id, stage, targetKind: job.targetKind, target: job.target },
+                    "youtube pipeline stage started"
+                );
+                this.db.updateJob(job.id, {
+                    currentStage: stage,
+                    progress: index / job.stages.length,
+                    progressMessage: null,
+                });
                 this.emit({ type: "stage:started", jobId: job.id, stage });
 
                 const ctx: StageHandlerCtx = {
@@ -149,29 +174,50 @@ export class Pipeline {
                 };
 
                 await withJobActivity({ jobId: job.id, stage, db: this.db }, () => handler(ctx));
-                logger.debug({ jobId: job.id, stage, targetKind: job.targetKind, target: job.target }, "youtube pipeline stage completed");
+                logger.debug(
+                    { jobId: job.id, stage, targetKind: job.targetKind, target: job.target },
+                    "youtube pipeline stage completed"
+                );
                 this.emit({ type: "stage:completed", jobId: job.id, stage });
             }
 
             if (jobController.signal.aborted) {
-                logger.info({ jobId: job.id, targetKind: job.targetKind, target: job.target }, "youtube pipeline job stopped (cancelled)");
+                logger.info(
+                    { jobId: job.id, targetKind: job.targetKind, target: job.target },
+                    "youtube pipeline job stopped (cancelled)"
+                );
                 return;
             }
 
-            this.db.updateJob(job.id, { status: "completed", completedAt: new Date().toISOString(), progress: 1, progressMessage: null, currentStage: null });
+            this.db.updateJob(job.id, {
+                status: "completed",
+                completedAt: new Date().toISOString(),
+                progress: 1,
+                progressMessage: null,
+                currentStage: null,
+            });
             const completed = this.db.getJob(job.id) ?? job;
-            logger.info({ jobId: completed.id, targetKind: completed.targetKind, target: completed.target }, "youtube pipeline job completed");
+            logger.info(
+                { jobId: completed.id, targetKind: completed.targetKind, target: completed.target },
+                "youtube pipeline job completed"
+            );
             this.emit({ type: "job:completed", job: completed });
         } catch (error) {
             if (jobController.signal.aborted) {
-                logger.info({ jobId: job.id, target: job.target, target_kind: job.targetKind }, "youtube pipeline job stopped mid-stage (cancelled)");
+                logger.info(
+                    { jobId: job.id, target: job.target, target_kind: job.targetKind },
+                    "youtube pipeline job stopped mid-stage (cancelled)"
+                );
                 return;
             }
 
             const message = error instanceof Error ? error.message : String(error);
             this.db.updateJob(job.id, { status: "failed", error: message, completedAt: new Date().toISOString() });
             const failed = this.db.getJob(job.id) ?? job;
-            logger.error({ jobId: failed.id, targetKind: failed.targetKind, target: failed.target, error: message }, "youtube pipeline job failed");
+            logger.error(
+                { jobId: failed.id, targetKind: failed.targetKind, target: failed.target, error: message },
+                "youtube pipeline job failed"
+            );
             this.emit({ type: "job:failed", job: failed, error: message });
         } finally {
             this.jobAborts.delete(job.id);
@@ -201,6 +247,13 @@ export class Pipeline {
     }
 
     private emit(event: JobEvent): void {
+        this.emitter.emit(event.type, event);
+    }
+
+    /** Emit pipeline lifecycle events for a job that runs OUTSIDE the queue worker
+     *  (e.g. POST /summary which executes synchronously inside the request handler).
+     *  Keeps the WS event stream + UI progress bar in sync with synchronous routes. */
+    emitExternal(event: JobEvent): void {
         this.emitter.emit(event.type, event);
     }
 }
