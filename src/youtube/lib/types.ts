@@ -45,7 +45,17 @@ export type {
     TranscriberResult,
     TranscriberSegment,
 } from "@app/youtube/lib/transcripts.types";
-export type { TimestampedSummaryEntry, Video, VideoId, VideoMetadata } from "@app/youtube/lib/video.types";
+export type {
+    SummaryFormat,
+    SummaryLength,
+    SummaryTone,
+    TimestampedSummaryEntry,
+    Video,
+    VideoId,
+    VideoLongSummary,
+    VideoLongSummaryChapter,
+    VideoMetadata,
+} from "@app/youtube/lib/video.types";
 export type {
     DownloadAudioOpts,
     DownloadAudioResult,
