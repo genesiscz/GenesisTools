@@ -5,6 +5,7 @@ import type {
     Channel,
     ChannelHandle,
     Language,
+    QaChunk,
     TimestampedSummaryEntry,
     Transcript,
     TranscriptSegment,
@@ -396,6 +397,48 @@ export class YoutubeDatabase extends BaseDatabase {
         }));
     }
 
+    upsertQaChunk(input: UpsertQaChunkInput): void {
+        const embedding = input.embedding ? Buffer.from(input.embedding.buffer, input.embedding.byteOffset, input.embedding.byteLength) : null;
+        const embeddingDims = input.embedding ? input.embedding.length : null;
+
+        this.db.run(
+            `INSERT INTO qa_chunks (video_id, chunk_idx, text, start_sec, end_sec, embedding, embedding_dims, embedder_model)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(video_id, chunk_idx, embedder_model) DO UPDATE SET
+                text = excluded.text,
+                start_sec = excluded.start_sec,
+                end_sec = excluded.end_sec,
+                embedding = excluded.embedding,
+                embedding_dims = excluded.embedding_dims`,
+            [
+                input.videoId,
+                input.chunkIdx,
+                input.text,
+                input.startSec ?? null,
+                input.endSec ?? null,
+                embedding,
+                embeddingDims,
+                input.embedderModel ?? null,
+            ]
+        );
+    }
+
+    listQaChunks(videoId: VideoId, embedderModel?: string): QaChunk[] {
+        const rows = embedderModel
+            ? this.db.query<QaChunkRow, [string, string]>("SELECT * FROM qa_chunks WHERE video_id = ? AND embedder_model = ? ORDER BY chunk_idx").all(videoId, embedderModel)
+            : this.db.query<QaChunkRow, [string]>("SELECT * FROM qa_chunks WHERE video_id = ? ORDER BY chunk_idx").all(videoId);
+
+        return rows.map(rowToQaChunk);
+    }
+
+    hasQaChunks(videoId: VideoId, embedderModel?: string): boolean {
+        const row = embedderModel
+            ? this.db.query<{ count: number }, [string, string]>("SELECT COUNT(*) AS count FROM qa_chunks WHERE video_id = ? AND embedder_model = ?").get(videoId, embedderModel)
+            : this.db.query<{ count: number }, [string]>("SELECT COUNT(*) AS count FROM qa_chunks WHERE video_id = ?").get(videoId);
+
+        return (row?.count ?? 0) > 0;
+    }
+
     initSchemaForTest(): void {
         this.initSchema();
     }
@@ -605,6 +648,16 @@ interface SearchTranscriptsOpts {
     snippetChars?: number;
 }
 
+interface UpsertQaChunkInput {
+    videoId: VideoId;
+    chunkIdx: number;
+    text: string;
+    startSec?: number | null;
+    endSec?: number | null;
+    embedding?: Float32Array | null;
+    embedderModel?: string | null;
+}
+
 interface TranscriptSearchHit {
     videoId: VideoId;
     lang: Language;
@@ -628,6 +681,34 @@ interface TranscriptSearchRow {
     lang: Language;
     snippet: string;
     rank: number;
+}
+
+interface QaChunkRow {
+    id: number;
+    video_id: VideoId;
+    chunk_idx: number;
+    text: string;
+    start_sec: number | null;
+    end_sec: number | null;
+    embedding: Uint8Array | null;
+    embedding_dims: number | null;
+    embedder_model: string | null;
+    created_at: string;
+}
+
+function rowToQaChunk(row: QaChunkRow): QaChunk {
+    return {
+        id: row.id,
+        videoId: row.video_id,
+        chunkIdx: row.chunk_idx,
+        text: row.text,
+        startSec: row.start_sec,
+        endSec: row.end_sec,
+        embedding: row.embedding ? new Float32Array(row.embedding.buffer, row.embedding.byteOffset, row.embedding.byteLength / Float32Array.BYTES_PER_ELEMENT) : null,
+        embeddingDims: row.embedding_dims,
+        embedderModel: row.embedder_model,
+        createdAt: row.created_at,
+    };
 }
 
 function rowToTranscript(row: TranscriptRow): Transcript {

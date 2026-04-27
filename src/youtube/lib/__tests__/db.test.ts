@@ -203,3 +203,46 @@ describe("YoutubeDatabase transcripts", () => {
         expect(hits[0].videoId).toBe("vid00000001");
     });
 });
+
+describe("YoutubeDatabase QA chunks", () => {
+    beforeEach(() => {
+        db.upsertChannel({ handle: "@mkbhd" });
+        db.upsertVideo({ id: "vid00000001", channelHandle: "@mkbhd", title: "T" });
+    });
+
+    it("upserts and lists chunks in chunk order", () => {
+        db.upsertQaChunk({ videoId: "vid00000001", chunkIdx: 1, text: "Second", embedderModel: "test-model" });
+        db.upsertQaChunk({ videoId: "vid00000001", chunkIdx: 0, text: "First", startSec: 0, endSec: 10, embedderModel: "test-model" });
+        const chunks = db.listQaChunks("vid00000001", "test-model");
+
+        expect(chunks.map((chunk) => chunk.text)).toEqual(["First", "Second"]);
+        expect(chunks[0].startSec).toBe(0);
+        expect(chunks[0].endSec).toBe(10);
+    });
+
+    it("round-trips Float32 embeddings", () => {
+        db.upsertQaChunk({
+            videoId: "vid00000001",
+            chunkIdx: 0,
+            text: "Embedded",
+            embedding: new Float32Array([0.25, 0.5, 0.75]),
+            embedderModel: "test-model",
+        });
+        const [chunk] = db.listQaChunks("vid00000001", "test-model");
+
+        expect(chunk.embedding).toBeInstanceOf(Float32Array);
+        expect(Array.from(chunk.embedding ?? [])).toEqual([0.25, 0.5, 0.75]);
+        expect(chunk.embeddingDims).toBe(3);
+    });
+
+    it("updates an existing model chunk and reports chunk presence", () => {
+        db.upsertQaChunk({ videoId: "vid00000001", chunkIdx: 0, text: "Old", embedderModel: "test-model" });
+        db.upsertQaChunk({ videoId: "vid00000001", chunkIdx: 0, text: "New", embedderModel: "test-model" });
+        const chunks = db.listQaChunks("vid00000001", "test-model");
+
+        expect(db.hasQaChunks("vid00000001", "test-model")).toBe(true);
+        expect(db.hasQaChunks("vid00000001", "missing-model")).toBe(false);
+        expect(chunks.length).toBe(1);
+        expect(chunks[0].text).toBe("New");
+    });
+});
