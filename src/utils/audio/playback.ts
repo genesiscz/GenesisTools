@@ -27,7 +27,7 @@ export async function playBuffer(audio: Buffer, contentType: string, opts?: Play
     }
 
     if (isFfplayAvailable()) {
-        await runFfplayWithBuffer(audio, volume, opts?.wait);
+        await runFfplayWithBuffer(audio, volume, opts?.wait, contentType);
         return;
     }
 
@@ -42,7 +42,7 @@ export async function playStream(
     const volume = clampVolume(opts?.volume);
 
     if (isFfplayAvailable()) {
-        await runFfplayWithStream(audio, volume, opts?.wait);
+        await runFfplayWithStream(audio, volume, opts?.wait, contentType);
         return;
     }
 
@@ -65,12 +65,29 @@ function clampVolume(v: number | undefined): number {
     return Math.max(0, Math.min(1, normalized));
 }
 
-function ffplayArgs(volume: number): string[] {
-    return ["-hide_banner", "-nodisp", "-autoexit", "-loglevel", "error", "-af", `volume=${volume}`, "-i", "-"];
+/**
+ * Build ffplay argument list for streaming stdin.
+ * PCM16 24kHz mono (audio/pcm) needs explicit format hints — ffplay cannot
+ * auto-detect raw PCM from stdin with no magic bytes.
+ */
+function ffplayArgs(volume: number, contentType?: string): string[] {
+    const base = ["-hide_banner", "-nodisp", "-autoexit", "-loglevel", "error", "-af", `volume=${volume}`];
+
+    if (contentType?.includes("pcm")) {
+        // Raw signed 16-bit little-endian PCM at 24kHz mono
+        return [...base, "-f", "s16le", "-ar", "24000", "-ac", "1", "-i", "-"];
+    }
+
+    return [...base, "-i", "-"];
 }
 
-async function runFfplayWithBuffer(audio: Buffer, volume: number, wait: boolean | undefined): Promise<void> {
-    const proc = Bun.spawn(["ffplay", ...ffplayArgs(volume)], {
+async function runFfplayWithBuffer(
+    audio: Buffer,
+    volume: number,
+    wait: boolean | undefined,
+    contentType?: string
+): Promise<void> {
+    const proc = Bun.spawn(["ffplay", ...ffplayArgs(volume, contentType)], {
         stdin: "pipe",
         stdout: "ignore",
         stderr: "ignore",
@@ -93,9 +110,10 @@ async function runFfplayWithBuffer(audio: Buffer, volume: number, wait: boolean 
 async function runFfplayWithStream(
     audio: AsyncIterable<Uint8Array>,
     volume: number,
-    wait: boolean | undefined
+    wait: boolean | undefined,
+    contentType?: string
 ): Promise<void> {
-    const proc = Bun.spawn(["ffplay", ...ffplayArgs(volume)], {
+    const proc = Bun.spawn(["ffplay", ...ffplayArgs(volume, contentType)], {
         stdin: "pipe",
         stdout: "ignore",
         stderr: "ignore",
@@ -173,6 +191,10 @@ function pickExtension(contentType: string): string {
 
     if (ct.includes("ogg") || ct.includes("opus")) {
         return ".ogg";
+    }
+
+    if (ct.includes("pcm")) {
+        return ".pcm";
     }
 
     return ".mp3";
