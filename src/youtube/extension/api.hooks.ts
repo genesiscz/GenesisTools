@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { send } from "@ext/api.bridge";
 import type { ExtensionApiMap } from "@ext/shared/messages";
-import type { Channel, ChannelHandle, JobStage, PipelineJob, TimestampedSummaryEntry, Transcript, Video, VideoId } from "@app/youtube/lib/types";
+import type { Channel, ChannelHandle, JobStage, PipelineJob, SummaryFormat, SummaryLength, SummaryTone, TimestampedSummaryEntry, Transcript, Video, VideoId, VideoLongSummary } from "@app/youtube/lib/types";
 import type { VideoDetailDataSource } from "@app/utils/ui/components/youtube/tabs";
 
 export function useChannels() {
@@ -33,10 +33,14 @@ export function useTranscript(id: VideoId | null, opts: { lang?: string; source?
     });
 }
 
-export function useSummary(id: VideoId | null, mode: "short" | "timestamped") {
+export function useSummary(id: VideoId | null, mode: "short" | "timestamped" | "long") {
     return useQuery({
         queryKey: ["summary", id, mode],
         queryFn: async () => {
+            if (mode === "long") {
+                return { long: null as VideoLongSummary | null, cached: false };
+            }
+
             const response = await send<ExtensionApiMap["api:getSummary"]>({ type: "api:getSummary", id: id as VideoId, mode });
 
             if (mode === "timestamped") {
@@ -53,8 +57,13 @@ export function useGenerateSummary(id: VideoId) {
     const queryClient = useQueryClient();
 
     return useMutation({
-        mutationFn: async (opts: { mode: "short" | "timestamped"; force?: boolean; provider?: string; model?: string; targetBins?: number }) => {
-            const response = await send<ExtensionApiMap["api:generateSummary"]>({ type: "api:generateSummary", id, ...opts });
+        mutationFn: async (opts: { mode: "short" | "timestamped" | "long"; force?: boolean; provider?: string; model?: string; targetBins?: number; tone?: SummaryTone; format?: SummaryFormat; length?: SummaryLength }) => {
+            if (opts.mode === "long") {
+                return { long: null as VideoLongSummary | null, cached: false };
+            }
+
+            const { tone: _tone, format: _format, length: _length, ...bridgeOpts } = opts;
+            const response = await send<ExtensionApiMap["api:generateSummary"]>({ type: "api:generateSummary", id, ...bridgeOpts, mode: bridgeOpts.mode as "short" | "timestamped" });
 
             if (opts.mode === "timestamped") {
                 return { timestamped: (response.summary ?? []) as TimestampedSummaryEntry[], cached: response.cached ?? false };
