@@ -4,16 +4,28 @@ import { CommentsTab } from "@app/utils/ui/components/youtube/comments-tab";
 import { InsightsTab } from "@app/utils/ui/components/youtube/insights-tab";
 import { SummaryTab } from "@app/utils/ui/components/youtube/summary-tab";
 import { TranscriptTab } from "@app/utils/ui/components/youtube/transcript-tab";
-import type { AskCitation, TimestampedSummaryEntry, Transcript, Video, VideoId } from "@app/youtube/lib/types";
+import type { AskCitation, TimestampedSummaryEntry, Transcript, Video, VideoId, VideoLongSummary } from "@app/youtube/lib/types";
 
 export type VideoDetailTab = "insights" | "summary" | "comments" | "transcript";
 
 export interface VideoDetailDataSource {
     useVideo: (id: VideoId | null) => { data: { video: Video; transcripts?: Transcript[] } | undefined; isPending: boolean };
     useTranscript: (id: VideoId | null, opts?: { lang?: string; source?: "captions" | "ai" }) => { data: { transcript: Transcript } | undefined; isPending: boolean };
-    useSummary: (id: VideoId | null, mode: "short" | "timestamped") => { data: { short?: string; timestamped?: TimestampedSummaryEntry[]; cached?: boolean } | undefined; isPending: boolean };
+    useSummary: (
+        id: VideoId | null,
+        mode: "short" | "timestamped" | "long"
+    ) => { data: { short?: string; timestamped?: TimestampedSummaryEntry[]; long?: VideoLongSummary | null; cached?: boolean } | undefined; isPending: boolean };
     useGenerateSummary: (id: VideoId) => {
-        mutateAsync: (opts: { mode: "short" | "timestamped"; force?: boolean; provider?: string; model?: string; targetBins?: number }) => Promise<{ short?: string; timestamped?: TimestampedSummaryEntry[]; cached: boolean }>;
+        mutateAsync: (opts: {
+            mode: "short" | "timestamped" | "long";
+            force?: boolean;
+            provider?: string;
+            model?: string;
+            targetBins?: number;
+            tone?: "insightful" | "funny" | "actionable" | "controversial";
+            format?: "list" | "qa";
+            length?: "short" | "auto" | "detailed";
+        }) => Promise<{ short?: string; timestamped?: TimestampedSummaryEntry[]; long?: VideoLongSummary | null; cached: boolean; jobId?: number }>;
         isPending: boolean;
     };
     useAskVideo: (id: VideoId) => {
@@ -39,8 +51,8 @@ export function VideoDetailTabs({ videoId, ds, active, onActiveChange, onSeek }:
                 <TabsTrigger value="comments">Comments</TabsTrigger>
                 <TabsTrigger value="transcript">Transcript</TabsTrigger>
             </TabsList>
-            <TabsContent value="insights"><InsightsTab videoId={videoId} useSummary={ds.useSummary} useGenerateSummary={ds.useGenerateSummary} /></TabsContent>
-            <TabsContent value="summary"><SummaryTab videoId={videoId} onSeek={onSeek} useSummary={ds.useSummary} useGenerateSummary={ds.useGenerateSummary} /></TabsContent>
+            <TabsContent value="insights"><InsightsTab videoId={videoId} onSeek={onSeek} useSummary={ds.useSummary} useGenerateSummary={ds.useGenerateSummary} /></TabsContent>
+            <TabsContent value="summary"><SummaryTab videoId={videoId} useSummary={ds.useSummary} useGenerateSummary={ds.useGenerateSummary} /></TabsContent>
             <TabsContent value="comments"><CommentsTab /></TabsContent>
             <TabsContent value="transcript"><TranscriptTab videoId={videoId} onSeek={onSeek} useTranscript={ds.useTranscript} /></TabsContent>
         </Tabs>

@@ -3,32 +3,54 @@ import { Badge } from "@app/utils/ui/components/badge";
 import { Button } from "@app/utils/ui/components/button";
 import { LlmConfirmDialog } from "@app/utils/ui/components/youtube/llm-confirm-dialog";
 import { Loading } from "@app/utils/ui/components/youtube/loading";
-import type { TimestampedSummaryEntry, VideoId } from "@app/youtube/lib/types";
-
-const fallbackIcons = ["🎯", "💰", "🏆"];
+import { DEFAULT_SUMMARY_CONTROLS, SummaryControlsBar, type SummaryControlsState } from "@app/utils/ui/components/youtube/summary-controls";
+import { TimestampedSummaryView } from "@app/utils/ui/components/youtube/timestamped-summary-view";
+import type { TimestampedSummaryEntry, VideoLongSummary, VideoId } from "@app/youtube/lib/types";
 
 export interface InsightsTabProps {
     videoId: VideoId;
-    useSummary: (id: VideoId | null, mode: "short" | "timestamped") => { data: { short?: string; timestamped?: TimestampedSummaryEntry[] } | undefined; isPending: boolean };
+    onSeek: (seconds: number) => void;
+    useSummary: (
+        id: VideoId | null,
+        mode: "short" | "timestamped" | "long"
+    ) => { data: { timestamped?: TimestampedSummaryEntry[]; long?: VideoLongSummary | null; cached?: boolean } | undefined; isPending: boolean };
     useGenerateSummary: (id: VideoId) => {
-        mutateAsync: (opts: { mode: "short" | "timestamped"; force?: boolean; provider?: string; model?: string }) => Promise<{ short?: string; cached: boolean }>;
+        mutateAsync: (opts: {
+            mode: "short" | "timestamped" | "long";
+            force?: boolean;
+            provider?: string;
+            model?: string;
+            tone?: SummaryControlsState["tone"];
+            format?: SummaryControlsState["format"];
+            length?: SummaryControlsState["length"];
+        }) => Promise<{ timestamped?: TimestampedSummaryEntry[]; cached: boolean; jobId?: number }>;
         isPending: boolean;
     };
 }
 
-export function InsightsTab({ videoId, useSummary, useGenerateSummary }: InsightsTabProps) {
-    const summary = useSummary(videoId, "short");
+export function InsightsTab({ videoId, onSeek, useSummary, useGenerateSummary }: InsightsTabProps) {
+    const timestamped = useSummary(videoId, "timestamped");
+    const long = useSummary(videoId, "long");
     const generate = useGenerateSummary(videoId);
     const [confirmOpen, setConfirmOpen] = useState(false);
-    const shortSummary = summary.data?.short ?? "";
-    const bullets = parseInsights(shortSummary);
+    const [controls, setControls] = useState<SummaryControlsState>(DEFAULT_SUMMARY_CONTROLS);
+    const entries = timestamped.data?.timestamped ?? [];
+    const tldr = long.data?.long?.tldr ?? null;
 
-    if (summary.isPending) {
+    if (timestamped.isPending) {
         return <Loading label="Loading insights" />;
     }
 
     async function runGenerate({ provider, model }: { provider?: string; model?: string }) {
-        await generate.mutateAsync({ mode: "short", force: shortSummary.length > 0, provider, model });
+        await generate.mutateAsync({
+            mode: "timestamped",
+            force: entries.length > 0,
+            provider,
+            model,
+            tone: controls.tone,
+            format: controls.format,
+            length: controls.length,
+        });
         setConfirmOpen(false);
     }
 
@@ -36,54 +58,32 @@ export function InsightsTab({ videoId, useSummary, useGenerateSummary }: Insight
         <div className="space-y-4">
             <div className="flex items-start justify-between gap-3">
                 <div>
-                    <Badge variant="cyber-secondary">AI signal</Badge>
+                    <Badge variant="cyber-secondary">AI signal · timestamped</Badge>
                     <h3 className="mt-3 text-2xl font-bold">Key insights</h3>
                 </div>
                 <Button data-testid="insights-generate" onClick={() => setConfirmOpen(true)} disabled={generate.isPending}>
-                    {shortSummary.length === 0 ? "Generate insights…" : "Re-generate…"}
+                    {entries.length === 0 ? "Generate insights…" : "Re-generate…"}
                 </Button>
             </div>
-            <div className="space-y-3">
-                {bullets.map((bullet, index) => (
-                    <div key={`${bullet.text}-${index}`} className="rounded-2xl border border-primary/20 bg-primary/5 p-4 transition hover:border-primary/40 hover:bg-primary/10">
-                        <div className="flex gap-3">
-                            <span className="text-2xl leading-none">{bullet.icon}</span>
-                            <p className="leading-7 text-foreground/90">{bullet.text}</p>
-                        </div>
-                    </div>
-                ))}
-            </div>
+            <SummaryControlsBar value={controls} onChange={setControls} disabled={generate.isPending} />
+            {entries.length === 0 ? (
+                <p data-testid="insights-empty" className="rounded-2xl border border-dashed border-primary/25 p-5 text-muted-foreground">
+                    No timestamped insights yet. Click <span className="font-semibold text-foreground/95">Generate insights</span> to send the transcript to your configured LLM and get back per-section highlights with icons + timestamps.
+                </p>
+            ) : (
+                <TimestampedSummaryView entries={entries} tldr={tldr} onSeek={onSeek} />
+            )}
             <LlmConfirmDialog
                 open={confirmOpen}
-                title="Generate AI insights?"
-                description="This will send the full transcript to your configured LLM and ask for a short summary."
-                payloadSummary="Full transcript text; expected response ≤ ~1 KB."
-                billingNote="Leave blank to use the default provider (server.json → provider.summarize)."
+                title="Generate timestamped insights?"
+                description={`Sends the compacted transcript to your LLM and asks for ~${entries.length === 0 ? "12" : "12"} sections with icon + title + 1-2 sentence body each. Tone: ${controls.tone}. Format: ${controls.format}. Length: ${controls.length}.`}
+                payloadSummary="Compacted transcript with timestamps; structured-output JSON response."
+                billingNote="LLM cost depends on the provider you select."
                 busy={generate.isPending}
-                confirmLabel={shortSummary.length === 0 ? "Generate" : "Re-generate"}
+                confirmLabel={entries.length === 0 ? "Generate" : "Re-generate"}
                 onCancel={() => setConfirmOpen(false)}
                 onConfirm={runGenerate}
             />
         </div>
     );
-}
-
-function parseInsights(value: string): Array<{ icon: string; text: string }> {
-    if (!value) {
-        return [{ icon: "🎯", text: "No insights yet. Click \"Generate insights\" to ask the LLM for a short summary of this transcript." }];
-    }
-
-    const lines = value.split("\n").map((line) => line.trim()).filter(Boolean);
-    const parsed = lines
-        .map((line, index) => {
-            const match = line.match(/^([🎯💰🏆💸⭐🔥🚀✅•\-])\s*(.+)$/u);
-            return { icon: match?.[1] && match[1] !== "-" && match[1] !== "•" ? match[1] : fallbackIcons[index % fallbackIcons.length], text: match?.[2] ?? line };
-        })
-        .slice(0, 8);
-
-    if (parsed.length > 0) {
-        return parsed;
-    }
-
-    return [{ icon: "🎯", text: value.slice(0, 280) }];
 }

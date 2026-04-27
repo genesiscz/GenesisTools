@@ -1,78 +1,83 @@
 import { useState } from "react";
+import { Badge } from "@app/utils/ui/components/badge";
 import { Button } from "@app/utils/ui/components/button";
 import { LlmConfirmDialog } from "@app/utils/ui/components/youtube/llm-confirm-dialog";
 import { Loading } from "@app/utils/ui/components/youtube/loading";
-import { formatTimecode } from "@app/utils/ui/components/youtube/time";
-import type { TimestampedSummaryEntry, VideoId } from "@app/youtube/lib/types";
+import { LongSummaryView } from "@app/utils/ui/components/youtube/long-summary-view";
+import { DEFAULT_SUMMARY_CONTROLS, SummaryControlsBar, type SummaryControlsState } from "@app/utils/ui/components/youtube/summary-controls";
+import type { VideoId, VideoLongSummary } from "@app/youtube/lib/types";
 
 export interface SummaryTabProps {
     videoId: VideoId;
-    onSeek: (seconds: number) => void;
-    useSummary: (id: VideoId | null, mode: "short" | "timestamped") => { data: { timestamped?: TimestampedSummaryEntry[]; cached?: boolean } | undefined; isPending: boolean };
+    useSummary: (
+        id: VideoId | null,
+        mode: "short" | "timestamped" | "long"
+    ) => { data: { long?: VideoLongSummary | null; cached?: boolean } | undefined; isPending: boolean };
     useGenerateSummary: (id: VideoId) => {
-        mutateAsync: (opts: { mode: "short" | "timestamped"; force?: boolean; provider?: string; model?: string; targetBins?: number }) => Promise<{ timestamped?: TimestampedSummaryEntry[]; cached: boolean }>;
+        mutateAsync: (opts: {
+            mode: "short" | "timestamped" | "long";
+            force?: boolean;
+            provider?: string;
+            model?: string;
+            tone?: SummaryControlsState["tone"];
+            length?: SummaryControlsState["length"];
+        }) => Promise<{ long?: VideoLongSummary | null; cached: boolean; jobId?: number }>;
         isPending: boolean;
     };
 }
 
-export function SummaryTab({ videoId, onSeek, useSummary, useGenerateSummary }: SummaryTabProps) {
-    const summary = useSummary(videoId, "timestamped");
+export function SummaryTab({ videoId, useSummary, useGenerateSummary }: SummaryTabProps) {
+    const summary = useSummary(videoId, "long");
     const generate = useGenerateSummary(videoId);
     const [confirmOpen, setConfirmOpen] = useState(false);
-    const entries = summary.data?.timestamped ?? [];
+    const [controls, setControls] = useState<SummaryControlsState>(DEFAULT_SUMMARY_CONTROLS);
+    const long = summary.data?.long ?? null;
 
     if (summary.isPending) {
         return <Loading label="Loading summary" />;
     }
 
-    async function runGenerate({ provider, model }: { provider?: string; model?: string }, force = false) {
-        await generate.mutateAsync({ mode: "timestamped", force, provider, model, targetBins: 12 });
+    async function runGenerate({ provider, model }: { provider?: string; model?: string }) {
+        await generate.mutateAsync({
+            mode: "long",
+            force: long !== null,
+            provider,
+            model,
+            tone: controls.tone,
+            length: controls.length,
+        });
         setConfirmOpen(false);
     }
 
     return (
-        <div className="space-y-5">
+        <div className="space-y-4">
             <div className="flex items-start justify-between gap-3">
                 <div>
-                    <p className="font-mono text-xs uppercase tracking-[0.28em] text-primary">Timestamped Summary</p>
-                    <h3 className="mt-2 text-3xl font-bold leading-tight">Money moments and key beats</h3>
+                    <Badge variant="cyber-secondary">AI signal · long-form</Badge>
+                    <h3 className="mt-3 text-2xl font-bold">Whole-video summary</h3>
                 </div>
-                <div className="flex flex-col items-end gap-1">
-                    <Button data-testid="summary-generate" onClick={() => setConfirmOpen(true)} disabled={generate.isPending}>
-                        {entries.length === 0 ? "Generate summary…" : "Re-generate…"}
-                    </Button>
-                    {entries.length > 0 ? <span className="text-xs text-muted-foreground">cached · click to refresh</span> : null}
-                </div>
+                <Button data-testid="summary-generate" onClick={() => setConfirmOpen(true)} disabled={generate.isPending}>
+                    {long === null ? "Generate summary…" : "Re-generate…"}
+                </Button>
             </div>
-            {entries.length === 0 ? (
+            <SummaryControlsBar value={controls} onChange={setControls} disabled={generate.isPending} hideFormat />
+            {long === null ? (
                 <p data-testid="summary-empty" className="rounded-2xl border border-dashed border-primary/25 p-5 text-muted-foreground">
-                    No timestamped summary yet. Generating will send the full transcript to the LLM in a single call (no per-bin loops).
+                    No long-form summary yet. Click <span className="font-semibold text-foreground/95">Generate summary</span> to send the compacted transcript to your LLM and get back a structured TL;DR + key points + learnings + chapters + verdict.
                 </p>
-            ) : null}
-            <div className="space-y-3">
-                {entries.map((entry, index) => (
-                    <article key={`${entry.startSec}-${index}`} className="rounded-2xl border border-secondary/20 bg-secondary/5 p-4">
-                        <div className="mb-3 flex items-center gap-2">
-                            <span className="text-xl">{index % 2 === 0 ? "💸" : "💰"}</span>
-                            <Button variant="ghost" size="sm" className="yt-timecode h-8 px-3" onClick={() => onSeek(entry.startSec)}>
-                                {formatTimecode(entry.startSec)}–{formatTimecode(entry.endSec)}
-                            </Button>
-                        </div>
-                        <p className="leading-7 text-foreground/90">{entry.text}</p>
-                    </article>
-                ))}
-            </div>
+            ) : (
+                <LongSummaryView summary={long} />
+            )}
             <LlmConfirmDialog
                 open={confirmOpen}
-                title="Generate timestamped summary?"
-                description="Default: pick a representative line per time-bucket from the transcript. Set provider+model to instead send the full transcript to an LLM that returns ~12 summarised highlights."
-                payloadSummary="Without LLM: zero bytes sent, zero cost. With LLM: full transcript with timestamps; expected response ≤ ~3 KB JSON."
+                title="Generate long-form summary?"
+                description={`Sends the compacted transcript to your LLM and asks for a TL;DR + 3-10 key points + 2-8 learnings + 1-12 chapters + an optional verdict. Tone: ${controls.tone}. Length: ${controls.length}.`}
+                payloadSummary="Compacted transcript text; structured-output JSON response."
                 billingNote="LLM cost depends on the provider you select."
-                deterministicLabel={entries.length === 0 ? "Generate (free)" : "Re-generate (free)"}
                 busy={generate.isPending}
-                confirmLabel={entries.length === 0 ? "Generate (LLM)" : "Re-generate (LLM)"}
+                confirmLabel={long === null ? "Generate" : "Re-generate"}
                 onCancel={() => setConfirmOpen(false)}
-                onConfirm={(overrides) => runGenerate(overrides, entries.length > 0)}
+                onConfirm={runGenerate}
             />
         </div>
     );
