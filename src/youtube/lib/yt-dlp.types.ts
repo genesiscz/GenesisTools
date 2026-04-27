@@ -49,3 +49,32 @@ export interface DumpedVideoMetadata {
     channelId: string | null;
     channelTitle: string | null;
 }
+
+export interface DownloadAudioOpts {
+    idOrUrl: string;
+    outPath: string;
+    format: "wav" | "opus";
+    sampleRate?: number;
+    bitrate?: number;
+    onProgress?: YtDlpProgress;
+    signal?: AbortSignal;
+}
+
+export interface DownloadAudioResult {
+    path: string;
+    sizeBytes: number;
+    durationSec: number | null;
+}
+
+export interface DownloadVideoOpts {
+    idOrUrl: string;
+    outPath: string;
+    quality: "720p" | "1080p" | "best";
+    onProgress?: YtDlpProgress;
+    signal?: AbortSignal;
+}
+
+export interface DownloadVideoResult {
+    path: string;
+    sizeBytes: number;
+}

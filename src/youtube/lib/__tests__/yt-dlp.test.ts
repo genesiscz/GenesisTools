@@ -1,5 +1,9 @@
+import { writeFileSync } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, spyOn } from "bun:test";
-import { checkYtDlp, dumpVideoMetadata, listChannelVideos } from "@app/youtube/lib/yt-dlp";
+import { checkYtDlp, downloadAudio, downloadVideo, dumpVideoMetadata, listChannelVideos } from "@app/youtube/lib/yt-dlp";
 
 const encoder = new TextEncoder();
 
@@ -154,5 +158,108 @@ describe("dumpVideoMetadata", () => {
         spyOn(Bun, "spawn").mockImplementation(() => mockProcess("", "bad video", 1));
 
         await expect(dumpVideoMetadata("bad")).rejects.toThrow("yt-dlp dumpVideoMetadata failed: bad video");
+    });
+});
+
+describe("downloadAudio and downloadVideo", () => {
+    it("downloads wav audio and emits download/postprocess progress", async () => {
+        const dir = await mkdtemp(join(tmpdir(), "yt-dlp-test-"));
+        const outPath = join(dir, "audio.wav");
+        const progress: unknown[] = [];
+
+        try {
+            spyOn(Bun, "spawn").mockImplementation((cmd) => {
+                const args = cmd as string[];
+                spawnCalls.push(args);
+                writeFileSync(outPath, "audio");
+
+                return mockProcess("", "[download] 12.5% of 1MiB\n[ExtractAudio] Destination: audio.wav\n");
+            });
+
+            await expect(downloadAudio({ idOrUrl: "abc123def45", outPath, format: "wav", onProgress: (info) => progress.push(info) })).resolves.toEqual({
+                path: outPath,
+                sizeBytes: 5,
+                durationSec: null,
+            });
+            expect(spawnCalls[0]).toEqual([
+                "yt-dlp",
+                "-x",
+                "--no-playlist",
+                "--newline",
+                "-o",
+                outPath,
+                "--audio-format",
+                "wav",
+                "--postprocessor-args",
+                "ffmpeg:-ar 16000 -ac 1",
+                "abc123def45",
+            ]);
+            expect(progress).toEqual([
+                { phase: "download", percent: 12.5, message: "[download] 12.5% of 1MiB" },
+                { phase: "postprocess", message: "[ExtractAudio] Destination: audio.wav" },
+            ]);
+        } finally {
+            await rm(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("downloads opus audio with bitrate", async () => {
+        const dir = await mkdtemp(join(tmpdir(), "yt-dlp-test-"));
+        const outPath = join(dir, "audio.opus");
+
+        try {
+            spyOn(Bun, "spawn").mockImplementation((cmd) => {
+                spawnCalls.push(cmd as string[]);
+                writeFileSync(outPath, "opus");
+
+                return mockProcess("");
+            });
+
+            await expect(downloadAudio({ idOrUrl: "abc123def45", outPath, format: "opus", bitrate: 96 })).resolves.toMatchObject({ path: outPath, sizeBytes: 4 });
+            expect(spawnCalls[0]).toContain("--audio-quality");
+            expect(spawnCalls[0]).toContain("96K");
+        } finally {
+            await rm(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("downloads video using quality filters and emits merge progress", async () => {
+        const dir = await mkdtemp(join(tmpdir(), "yt-dlp-test-"));
+        const outPath = join(dir, "video.mp4");
+        const progress: unknown[] = [];
+
+        try {
+            spyOn(Bun, "spawn").mockImplementation((cmd) => {
+                spawnCalls.push(cmd as string[]);
+                writeFileSync(outPath, "video");
+
+                return mockProcess("", "[download] 90% of 10MiB\n[Merger] Merging formats into video.mp4\n");
+            });
+
+            await expect(downloadVideo({ idOrUrl: "abc123def45", outPath, quality: "720p", onProgress: (info) => progress.push(info) })).resolves.toEqual({
+                path: outPath,
+                sizeBytes: 5,
+            });
+            expect(spawnCalls[0]).toContain("bv*[height<=720]+ba/b[height<=720]");
+            expect(progress).toEqual([
+                { phase: "download", percent: 90, message: "[download] 90% of 10MiB" },
+                { phase: "merge", message: "[Merger] Merging formats into video.mp4" },
+            ]);
+        } finally {
+            await rm(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("throws stderr when downloads fail", async () => {
+        const dir = await mkdtemp(join(tmpdir(), "yt-dlp-test-"));
+        const outPath = join(dir, "video.mp4");
+
+        try {
+            spyOn(Bun, "spawn").mockImplementation(() => mockProcess("", "download failed", 1));
+
+            await expect(downloadVideo({ idOrUrl: "bad", outPath, quality: "best" })).rejects.toThrow("yt-dlp downloadVideo failed: download failed");
+        } finally {
+            await rm(dir, { recursive: true, force: true });
+        }
     });
 });

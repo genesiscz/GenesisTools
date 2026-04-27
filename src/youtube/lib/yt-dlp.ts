@@ -1,6 +1,16 @@
+import { stat } from "node:fs/promises";
 import { SafeJSON } from "@app/utils/json";
 import type { ChannelHandle } from "@app/youtube/lib/channel.types";
-import type { DumpedVideoMetadata, ListedVideo, ListChannelVideosOpts, YtDlpAvailability } from "@app/youtube/lib/yt-dlp.types";
+import type {
+    DownloadAudioOpts,
+    DownloadAudioResult,
+    DownloadVideoOpts,
+    DownloadVideoResult,
+    DumpedVideoMetadata,
+    ListedVideo,
+    ListChannelVideosOpts,
+    YtDlpAvailability,
+} from "@app/youtube/lib/yt-dlp.types";
 
 interface RawListing {
     entries?: RawListedVideo[];
@@ -137,6 +147,101 @@ export async function dumpVideoMetadata(idOrUrl: string, opts: { signal?: AbortS
         channelId: raw.channel_id ?? null,
         channelTitle: raw.channel ?? null,
     };
+}
+
+export async function downloadAudio(opts: DownloadAudioOpts): Promise<DownloadAudioResult> {
+    const args = ["yt-dlp", "-x", "--no-playlist", "--newline", "-o", opts.outPath];
+
+    if (opts.format === "wav") {
+        args.push("--audio-format", "wav", "--postprocessor-args", `ffmpeg:-ar ${opts.sampleRate ?? 16000} -ac 1`);
+    } else {
+        args.push("--audio-format", "opus", "--audio-quality", `${opts.bitrate ?? 64}K`);
+    }
+
+    args.push(opts.idOrUrl);
+    await runDownloadWithProgress(args, opts.signal, (line) => {
+        parseProgressLine(line, opts.onProgress);
+    }, "downloadAudio");
+    const file = await stat(opts.outPath);
+
+    return { path: opts.outPath, sizeBytes: file.size, durationSec: null };
+}
+
+export async function downloadVideo(opts: DownloadVideoOpts): Promise<DownloadVideoResult> {
+    const heightMap = { "720p": 720, "1080p": 1080, best: undefined };
+    const fmtFilter =
+        opts.quality === "best"
+            ? "bv*+ba/b"
+            : `bv*[height<=${heightMap[opts.quality]}]+ba/b[height<=${heightMap[opts.quality]}]`;
+    const args = ["yt-dlp", "-f", fmtFilter, "--merge-output-format", "mp4", "--no-playlist", "--newline", "-o", opts.outPath, opts.idOrUrl];
+
+    await runDownloadWithProgress(args, opts.signal, (line) => {
+        parseProgressLine(line, opts.onProgress);
+    }, "downloadVideo");
+    const file = await stat(opts.outPath);
+
+    return { path: opts.outPath, sizeBytes: file.size };
+}
+
+async function runDownloadWithProgress(args: string[], signal: AbortSignal | undefined, onLine: (line: string) => void, label: string): Promise<string> {
+    const proc = Bun.spawn(args, { stdio: ["ignore", "pipe", "pipe"], signal });
+    let stderr = "";
+
+    await streamProgress(proc.stderr, (line) => {
+        stderr += `${line}\n`;
+        onLine(line);
+    });
+
+    const exit = await proc.exited;
+
+    if (exit !== 0) {
+        throw new Error(`yt-dlp ${label} failed: ${stderr.trim()}`);
+    }
+
+    return stderr;
+}
+
+function parseProgressLine(line: string, onProgress?: DownloadAudioOpts["onProgress"]): void {
+    const downloadMatch = line.match(/\[download\]\s+(\d+(?:\.\d+)?)%/);
+
+    if (downloadMatch) {
+        onProgress?.({ phase: "download", percent: Number.parseFloat(downloadMatch[1]), message: line.trim() });
+    }
+
+    if (line.includes("[ExtractAudio]")) {
+        onProgress?.({ phase: "postprocess", message: line.trim() });
+    }
+
+    if (line.includes("[Merger]")) {
+        onProgress?.({ phase: "merge", message: line.trim() });
+    }
+}
+
+async function streamProgress(stream: ReadableStream<Uint8Array>, onLine: (line: string) => void): Promise<void> {
+    const reader = stream.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+
+    while (true) {
+        const { done, value } = await reader.read();
+
+        if (done) {
+            break;
+        }
+
+        buf += decoder.decode(value, { stream: true });
+        let idx = buf.indexOf("\n");
+
+        while (idx !== -1) {
+            onLine(buf.slice(0, idx));
+            buf = buf.slice(idx + 1);
+            idx = buf.indexOf("\n");
+        }
+    }
+
+    if (buf.length) {
+        onLine(buf);
+    }
 }
 
 function normalizeListedVideo(entry: RawListedVideo, isShort: boolean): ListedVideo[] {

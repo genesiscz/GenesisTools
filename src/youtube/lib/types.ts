@@ -12,6 +12,10 @@ export type { QaChunk } from "@app/youtube/lib/qa.types";
 export type { Language, Transcript, TranscriptSegment } from "@app/youtube/lib/transcript.types";
 export type { TimestampedSummaryEntry, Video, VideoId, VideoMetadata } from "@app/youtube/lib/video.types";
 export type {
+    DownloadAudioOpts,
+    DownloadAudioResult,
+    DownloadVideoOpts,
+    DownloadVideoResult,
     DumpedVideoMetadata,
     ListedVideo,
     ListChannelVideosOpts,
