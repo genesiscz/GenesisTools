@@ -121,33 +121,64 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
             const length = parseLength(body.length);
             const targetBins = typeof body.targetBins === "number" ? body.targetBins : undefined;
 
-            const transcript = yt.db.getTranscript(id);
-
-            if (!transcript) {
-                return jsonError("no transcript yet for this video — run pipeline / transcribe first", 409);
-            }
-
+            const hasTranscript = yt.db.getTranscript(id) !== null;
             const providerChoice = provider || model ? await resolveProviderChoice({ provider, model }) : undefined;
-            const job = yt.db.enqueueJob({ targetKind: "video", target: id, stages: ["summarize"] });
+            const stages = hasTranscript ? (["summarize"] as const) : (["captions", "summarize"] as const);
+            const job = yt.db.enqueueJob({ targetKind: "video", target: id, stages: [...stages] });
             const startedAt = new Date().toISOString();
             yt.db.updateJob(job.id, {
                 status: "running",
-                currentStage: "summarize",
+                currentStage: hasTranscript ? "summarize" : "captions",
                 progress: 0,
-                progressMessage: "Compacting transcript",
+                progressMessage: hasTranscript ? "Compacting transcript" : "Fetching captions / transcribing",
             });
             const startedJob = yt.db.getJob(job.id) ?? job;
             yt.pipeline.emitExternal({ type: "job:started", job: startedJob });
-            yt.pipeline.emitExternal({ type: "stage:started", jobId: job.id, stage: "summarize" });
-            yt.pipeline.emitExternal({
-                type: "stage:progress",
-                jobId: job.id,
-                stage: "summarize",
-                progress: 0.05,
-                message: "Compacting transcript",
-            });
 
             try {
+                if (!hasTranscript) {
+                    yt.pipeline.emitExternal({ type: "stage:started", jobId: job.id, stage: "captions" });
+                    yt.pipeline.emitExternal({
+                        type: "stage:progress",
+                        jobId: job.id,
+                        stage: "captions",
+                        progress: 0.05,
+                        message: "Fetching captions",
+                    });
+                    await withJobActivity({ jobId: job.id, stage: "captions", db: yt.db }, () =>
+                        yt.transcripts.transcribe({
+                            videoId: id,
+                            onProgress: (info) => {
+                                const stagePct = (info.percent ?? 0) / 100;
+                                const overall = Math.min(0.25, 0.05 + stagePct * 0.2);
+                                yt.db.updateJob(job.id, { progress: overall, progressMessage: info.message });
+                                yt.pipeline.emitExternal({
+                                    type: "stage:progress",
+                                    jobId: job.id,
+                                    stage: "captions",
+                                    progress: overall,
+                                    message: info.message,
+                                });
+                            },
+                        })
+                    );
+                    yt.pipeline.emitExternal({ type: "stage:completed", jobId: job.id, stage: "captions" });
+                }
+
+                yt.db.updateJob(job.id, {
+                    currentStage: "summarize",
+                    progress: 0.25,
+                    progressMessage: "Compacting transcript",
+                });
+                yt.pipeline.emitExternal({ type: "stage:started", jobId: job.id, stage: "summarize" });
+                yt.pipeline.emitExternal({
+                    type: "stage:progress",
+                    jobId: job.id,
+                    stage: "summarize",
+                    progress: 0.25,
+                    message: "Compacting transcript",
+                });
+
                 const result = await withJobActivity({ jobId: job.id, stage: "summarize", db: yt.db }, () =>
                     yt.summary.summarize({
                         videoId: id,
