@@ -174,6 +174,9 @@ export function createDashboardViteConfig({
     const { plugins: _ignored, resolve: _resolveIgnored, optimizeDeps: overrideOptimizeDeps, ...rest } = overrides;
     const allAliases: Record<string, string> = { "@app": resolve(root, "src"), ...aliases };
     const appDir = allAliases["@app"];
+    const aliasArray = Object.entries(allAliases)
+        .sort(([a], [b]) => b.length - a.length)
+        .map(([find, replacement]) => ({ find, replacement }));
     const externalWatchDirs = appDir ? deriveWatchDirs(root, appDir, extraWatchDirs) : [];
 
     const corePlugins: PluginOption[] = [pinNodeModules(root), tailwindcss()];
@@ -202,11 +205,11 @@ export function createDashboardViteConfig({
             },
         },
         resolve: {
-            alias: {
-                "@ui": resolve(__dirname, "."),
-                "node:async_hooks": BROWSER_ASYNC_HOOKS_POLYFILL,
-                ...allAliases,
-            },
+            alias: [
+                { find: "@ui", replacement: resolve(__dirname, ".") },
+                { find: "node:async_hooks", replacement: BROWSER_ASYNC_HOOKS_POLYFILL },
+                ...aliasArray,
+            ],
         },
         optimizeDeps: {
             ...overrideOptimizeDeps,
