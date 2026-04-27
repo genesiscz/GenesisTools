@@ -1,10 +1,11 @@
 import { useMemo, useState } from "react";
 import { Button } from "@app/utils/ui/components/button";
 import { Input } from "@app/utils/ui/components/input";
+import { type RunPipeline } from "@app/utils/ui/components/youtube/tabs";
 import { Loading } from "@app/utils/ui/components/youtube/loading";
 import { formatTimecode } from "@app/utils/ui/components/youtube/time";
 import type { Transcript, TranscriptSegment, VideoId } from "@app/youtube/lib/types";
-import { Search } from "lucide-react";
+import { Captions, Search } from "lucide-react";
 
 const DEFAULT_RENDER_LIMIT = 200;
 
@@ -12,9 +13,10 @@ export interface TranscriptTabProps {
     videoId: VideoId;
     onSeek: (seconds: number) => void;
     useTranscript: (id: VideoId | null, opts?: { lang?: string; source?: "captions" | "ai" }) => { data: { transcript: Transcript } | undefined; isPending: boolean };
+    runPipeline?: RunPipeline;
 }
 
-export function TranscriptTab({ videoId, onSeek, useTranscript }: TranscriptTabProps) {
+export function TranscriptTab({ videoId, onSeek, useTranscript, runPipeline }: TranscriptTabProps) {
     const [query, setQuery] = useState("");
     const [showAll, setShowAll] = useState(false);
     const transcript = useTranscript(videoId);
@@ -41,10 +43,35 @@ export function TranscriptTab({ videoId, onSeek, useTranscript }: TranscriptTabP
     }
 
     if (segments.length === 0) {
+        const isRunning = runPipeline?.isPending ?? false;
+
         return (
-            <p className="rounded-2xl border border-dashed border-primary/25 p-5 text-muted-foreground">
-                No transcript yet. Run <code className="font-mono">tools youtube transcribe &lt;id&gt;</code> or kick off a pipeline that includes the <code className="font-mono">captions</code> stage.
-            </p>
+            <div className="space-y-4 rounded-2xl border border-dashed border-primary/25 p-5">
+                <div className="flex items-start gap-3">
+                    <Captions className="mt-0.5 size-5 shrink-0 text-primary" />
+                    <div className="space-y-1">
+                        <p className="font-mono text-xs uppercase tracking-[0.28em] text-secondary">No transcript</p>
+                        <p className="text-sm text-muted-foreground">
+                            We haven't fetched captions for this video yet. Run the captions stage to grab YouTube's
+                            captions, falling back to audio + AI transcription if needed.
+                        </p>
+                    </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-3">
+                    {runPipeline ? (
+                        <Button
+                            data-testid="transcript-run-pipeline"
+                            onClick={() => runPipeline.run(["captions"])}
+                            disabled={isRunning}
+                        >
+                            {isRunning ? "Fetching transcript…" : "Fetch transcript"}
+                        </Button>
+                    ) : null}
+                    <span className="font-mono text-xs text-muted-foreground/70">
+                        Or run <code className="rounded bg-black/30 px-1.5 py-0.5">tools youtube transcribe {videoId}</code>
+                    </span>
+                </div>
+            </div>
         );
     }
 

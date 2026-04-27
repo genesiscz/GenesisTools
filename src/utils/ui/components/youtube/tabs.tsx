@@ -6,6 +6,7 @@ import { SummaryTab } from "@app/utils/ui/components/youtube/summary-tab";
 import { TranscriptTab } from "@app/utils/ui/components/youtube/transcript-tab";
 import type {
     AskCitation,
+    JobStage,
     TimestampedSummaryEntry,
     Transcript,
     Video,
@@ -15,6 +16,11 @@ import type {
 import { useEffect, useRef } from "react";
 
 export type VideoDetailTab = "insights" | "summary" | "comments" | "transcript";
+
+export interface RunPipeline {
+    run: (stages: JobStage[]) => Promise<void>;
+    isPending: boolean;
+}
 
 export interface VideoDetailDataSource {
     useVideo: (id: VideoId | null) => {
@@ -76,9 +82,17 @@ export interface VideoDetailTabsProps {
     active: VideoDetailTab;
     onActiveChange: (tab: VideoDetailTab) => void;
     onSeek: (seconds: number) => void;
+    runPipeline?: RunPipeline;
 }
 
-export function VideoDetailTabs({ videoId, ds, active, onActiveChange, onSeek }: VideoDetailTabsProps) {
+export function VideoDetailTabs({
+    videoId,
+    ds,
+    active,
+    onActiveChange,
+    onSeek,
+    runPipeline,
+}: VideoDetailTabsProps) {
     return (
         <Tabs
             value={active}
@@ -106,7 +120,12 @@ export function VideoDetailTabs({ videoId, ds, active, onActiveChange, onSeek }:
                 <CommentsTab />
             </TabsContent>
             <TabsContent value="transcript">
-                <TranscriptTab videoId={videoId} onSeek={onSeek} useTranscript={ds.useTranscript} />
+                <TranscriptTab
+                    videoId={videoId}
+                    onSeek={onSeek}
+                    useTranscript={ds.useTranscript}
+                    runPipeline={runPipeline}
+                />
             </TabsContent>
         </Tabs>
     );

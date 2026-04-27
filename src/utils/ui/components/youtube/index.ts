@@ -1,4 +1,9 @@
-export { VideoDetailTabs, type VideoDetailDataSource, type VideoDetailTab } from "@app/utils/ui/components/youtube/tabs";
+export {
+    type RunPipeline,
+    type VideoDetailDataSource,
+    type VideoDetailTab,
+    VideoDetailTabs,
+} from "@app/utils/ui/components/youtube/tabs";
 export { InsightsTab } from "@app/utils/ui/components/youtube/insights-tab";
 export { SummaryTab } from "@app/utils/ui/components/youtube/summary-tab";
 export { CommentsTab } from "@app/utils/ui/components/youtube/comments-tab";

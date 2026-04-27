@@ -1,13 +1,21 @@
 import { Badge } from "@app/utils/ui/components/badge";
 import { Card, CardContent } from "@app/utils/ui/components/card";
 import {
+    type RunPipeline,
     type VideoDetailDataSource,
     type VideoDetailTab,
     VideoDetailTabs,
     YouTubeIframe,
 } from "@app/utils/ui/components/youtube";
-import type { VideoId } from "@app/youtube/lib/types";
-import { useAskVideo, useGenerateSummary, useSummary, useTranscript, useVideo } from "@app/yt/api.hooks";
+import type { JobStage, VideoId } from "@app/youtube/lib/types";
+import {
+    useAskVideo,
+    useGenerateSummary,
+    useStartPipeline,
+    useSummary,
+    useTranscript,
+    useVideo,
+} from "@app/yt/api.hooks";
 import { ProgressBar } from "@app/yt/components/pipeline/progress-bar";
 import { Loading } from "@app/yt/components/shared/loading";
 import { formatDate, formatDuration, formatNumber } from "@app/yt/lib/format";
@@ -15,7 +23,8 @@ import { useEventStream } from "@app/yt/ws.client";
 import { useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { Captions, Eye, Radio } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { toast } from "sonner";
 
 const videoDetailDataSource: VideoDetailDataSource = {
     useVideo,
@@ -37,6 +46,22 @@ function VideoDetailPage() {
     const [progress, setProgress] = useState(0);
     const [progressMessage, setProgressMessage] = useState<string | null>(null);
     const queryClient = useQueryClient();
+    const startPipeline = useStartPipeline();
+    const runPipeline = useMemo<RunPipeline>(
+        () => ({
+            isPending: startPipeline.isPending,
+            run: async (stages: JobStage[]) => {
+                try {
+                    await startPipeline.mutateAsync({ target: id, targetKind: "video", stages });
+                } catch (error) {
+                    toast.error("Pipeline failed to start", {
+                        description: error instanceof Error ? error.message : String(error),
+                    });
+                }
+            },
+        }),
+        [id, startPipeline]
+    );
 
     useEventStream({
         enabled: true,
@@ -109,6 +134,7 @@ function VideoDetailPage() {
                     active={activeTab}
                     onActiveChange={setActiveTab}
                     onSeek={setSeekToSec}
+                    runPipeline={runPipeline}
                 />
             </aside>
         </div>
