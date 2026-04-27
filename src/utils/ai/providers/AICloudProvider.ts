@@ -18,7 +18,7 @@ import type {
     TranslationResult,
 } from "@app/utils/ai/types";
 import type { AIProviderType } from "@app/utils/config/ai.types";
-import { TranscriptionManager } from "@ask/audio/TranscriptionManager";
+import { TranscriptionManager } from "@app/utils/ai/transcription/TranscriptionManager";
 
 type LlmCloudType = "openai" | "groq" | "openrouter";
 type TranscribeOnlyCloudType = "assemblyai" | "deepgram" | "gladia";

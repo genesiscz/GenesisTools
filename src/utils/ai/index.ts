@@ -8,6 +8,7 @@ import { Embedder } from "./tasks/Embedder";
 import { Summarizer } from "./tasks/Summarizer";
 import { Transcriber } from "./tasks/Transcriber";
 import { Translator } from "./tasks/Translator";
+import { TranscriptionManager } from "./transcription/TranscriptionManager";
 import type {
     EmbeddingResult,
     EmbedOptions,
@@ -48,6 +49,7 @@ export { Embedder } from "./tasks/Embedder";
 export { Summarizer } from "./tasks/Summarizer";
 export { Transcriber } from "./tasks/Transcriber";
 export { Translator } from "./tasks/Translator";
+export { TranscriptionManager, transcriptionManager } from "./transcription/TranscriptionManager";
 export * from "./types";
 
 export const AI = {
@@ -55,6 +57,7 @@ export const AI = {
     Transcriber,
     Translator,
     Summarizer,
+    TranscriptionManager,
 
     async embed(text: string, options?: EmbedOptions): Promise<EmbeddingResult> {
         const e = await Embedder.create();
