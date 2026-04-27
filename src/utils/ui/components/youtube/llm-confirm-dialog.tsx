@@ -50,10 +50,14 @@ export function LlmConfirmDialog({
 
     return (
         <div
-            className="fixed inset-0 z-50 grid place-items-center bg-background/80 backdrop-blur-sm"
+            className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-background/80 px-4 pb-12 pt-[12vh] backdrop-blur-sm"
             data-testid="llm-confirm-dialog"
+            onClick={onCancel}
         >
-            <Card className="w-full max-w-lg border-primary/40 shadow-2xl">
+            <Card
+                className="w-full max-w-lg border-primary/40 shadow-2xl"
+                onClick={(event) => event.stopPropagation()}
+            >
                 <CardHeader>
                     <CardTitle>{title}</CardTitle>
                 </CardHeader>
