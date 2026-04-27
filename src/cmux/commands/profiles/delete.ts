@@ -1,9 +1,9 @@
-import { Command } from "commander";
-import * as p from "@clack/prompts";
-import pc from "picocolors";
 import { ProfileNotFoundError, ProfileStore } from "@app/cmux/lib/store";
-import { isInteractive } from "@app/utils/cli";
+import { isInteractive, suggestCommand } from "@app/utils/cli";
 import { withCancel } from "@app/utils/prompts/clack/helpers";
+import * as p from "@clack/prompts";
+import type { Command } from "commander";
+import pc from "picocolors";
 
 export function registerDeleteCommand(parent: Command): void {
     parent
@@ -17,7 +17,9 @@ export function registerDeleteCommand(parent: Command): void {
                 const summary = store.summarize(store.read(name));
                 if (!flags.yes) {
                     if (!isInteractive()) {
-                        console.error(`Refusing to delete in non-interactive mode without --yes.`);
+                        console.error(
+                            `Refusing to delete in non-interactive mode without --yes. ${suggestCommand(`tools cmux profiles delete ${name} --yes`)}`
+                        );
                         process.exitCode = 1;
                         return;
                     }
@@ -25,7 +27,7 @@ export function registerDeleteCommand(parent: Command): void {
                         p.confirm({
                             message: `Delete profile "${name}" (${summary.workspaces} workspace(s))?`,
                             initialValue: false,
-                        }),
+                        })
                     );
                     if (!confirmed) {
                         p.cancel("Aborted.");
@@ -33,7 +35,7 @@ export function registerDeleteCommand(parent: Command): void {
                     }
                 }
                 store.delete(name);
-                console.log(pc.green(`✓`) + ` Deleted profile "${name}".`);
+                console.log(`${pc.green("✓")} Deleted profile "${name}".`);
             } catch (error) {
                 if (error instanceof ProfileNotFoundError) {
                     console.error(error.message);
