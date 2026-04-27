@@ -1,4 +1,5 @@
 export type { CacheLayout } from "@app/youtube/lib/cache.types";
+export type { FetchCaptionsOpts, FetchCaptionsResult } from "@app/youtube/lib/captions.types";
 export type { Channel, ChannelHandle } from "@app/youtube/lib/channel.types";
 export type { YoutubeConfigShape } from "@app/youtube/lib/config.types";
 export type {
