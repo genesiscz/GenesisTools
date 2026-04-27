@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { Command } from "commander";
 import { ProfileNotFoundError, ProfileStore } from "@app/cmux/lib/store";
@@ -15,18 +14,11 @@ export function registerEditCommand(parent: Command): void {
             }
 
             const editor = pickEditor();
-            const args = editor.args.concat([path]);
-            await new Promise<void>((resolve, reject) => {
-                const child = spawn(editor.bin, args, { stdio: "inherit" });
-                child.on("error", reject);
-                child.on("close", (code) => {
-                    if (code === 0) {
-                        resolve();
-                    } else {
-                        reject(new Error(`${editor.bin} exited with code ${code}`));
-                    }
-                });
-            });
+            const proc = Bun.spawn([editor.bin, ...editor.args, path], { stdio: ["inherit", "inherit", "inherit"] });
+            const exitCode = await proc.exited;
+            if (exitCode !== 0) {
+                throw new Error(`${editor.bin} exited with code ${exitCode}`);
+            }
         });
 }
 
@@ -34,7 +26,9 @@ function pickEditor(): { bin: string; args: string[] } {
     const fromEnv = process.env.VISUAL || process.env.EDITOR;
     if (fromEnv) {
         const parts = fromEnv.split(/\s+/).filter(Boolean);
-        return { bin: parts[0], args: parts.slice(1) };
+        if (parts.length > 0) {
+            return { bin: parts[0], args: parts.slice(1) };
+        }
     }
     return { bin: "vi", args: [] };
 }
