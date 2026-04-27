@@ -472,12 +472,23 @@ async function transcribeOne(opts: {
     const isTTY = !!process.stdout.isTTY;
     let confirmedLang: string | undefined = opts.lang;
 
-    // confirmLanguage is one-shot: once the user confirms, the flag is set and
-    // any further detection calls (e.g. per-chunk in chunked transcription) return
-    // the pinned language without re-prompting.
-    let langConfirmed = false;
-
-    const transcribeOpts = {
+    // After the first confirm we pin transcribeOpts.language so retries (Transcriber
+    // wraps provider.transcribe in retry()) skip language detection entirely on the
+    // provider side — bulletproof against any closure/scope quirks.
+    const transcribeOpts: {
+        language?: string;
+        model?: string;
+        onProgress: (info: { message: string }) => void;
+        onSegment: (seg: { start: number; text: string }) => void;
+        confirmLanguage?: (
+            detected: import("@app/utils/ai/LanguageDetector.ts").LanguageDetectionResult
+        ) => Promise<string>;
+        thresholds?: {
+            noSpeechThreshold: number;
+            logprobThreshold: number;
+            compressionRatioThreshold: number;
+        };
+    } = {
         language: opts.lang,
         model: opts.model,
         onProgress: (info: { message: string }) => {
@@ -487,35 +498,27 @@ async function transcribeOne(opts: {
             const ts = formatDuration(seg.start * 1000, "ms", "tiered");
             process.stderr.write(`${pc.dim(`  [${ts}] ${seg.text.trim()}`)}\n`);
         },
-        ...(isTTY && !opts.lang
-            ? {
-                  confirmLanguage: async (
-                      detected: import("@app/utils/ai/LanguageDetector.ts").LanguageDetectionResult
-                  ) => {
-                      if (langConfirmed) {
-                          // Return the already-confirmed language without prompting again
-                          return confirmedLang;
-                      }
-
-                      s.stop(`Detected: ${detected.language} (${Math.round(detected.confidence * 100)}%)`);
-                      const confirmed = await promptLanguage(detected);
-                      confirmedLang = confirmed;
-                      langConfirmed = true;
-                      s.start("Transcribing...");
-                      return confirmed;
-                  },
-              }
-            : {}),
-        ...(opts.sensitive
-            ? {
-                  thresholds: {
-                      noSpeechThreshold: 0.3,
-                      logprobThreshold: -0.5,
-                      compressionRatioThreshold: 2.4,
-                  },
-              }
-            : {}),
     };
+
+    if (isTTY && !opts.lang) {
+        transcribeOpts.confirmLanguage = async (detected) => {
+            s.stop(`Detected: ${detected.language} (${Math.round(detected.confidence * 100)}%)`);
+            const confirmed = await promptLanguage(detected);
+            confirmedLang = confirmed;
+            transcribeOpts.language = confirmed;
+            transcribeOpts.confirmLanguage = undefined;
+            s.start("Transcribing...");
+            return confirmed;
+        };
+    }
+
+    if (opts.sensitive) {
+        transcribeOpts.thresholds = {
+            noSpeechThreshold: 0.3,
+            logprobThreshold: -0.5,
+            compressionRatioThreshold: 2.4,
+        };
+    }
 
     let transcriber = await AI.Transcriber.create({
         provider: opts.provider,
