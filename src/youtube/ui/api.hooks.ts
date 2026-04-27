@@ -1,10 +1,23 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { apiClient, clearApiBaseUrlCache } from "@app/yt/api.client";
-import type { ChannelHandle, JobStage, JobStatus, VideoId } from "@app/youtube/lib/types";
 import type { YoutubeConfigPatch } from "@app/youtube/lib/config.api.types";
+import type { ChannelHandle, JobStage, JobStatus, VideoId } from "@app/youtube/lib/types";
+import { apiClient, clearApiBaseUrlCache } from "@app/yt/api.client";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
+
+function errorMessage(error: unknown): string {
+    if (error instanceof Error) {
+        return error.message;
+    }
+
+    return String(error);
+}
 
 export function useChannels() {
-    return useQuery({ queryKey: ["channels"], queryFn: () => apiClient.listChannels(), select: (response) => response.channels });
+    return useQuery({
+        queryKey: ["channels"],
+        queryFn: () => apiClient.listChannels(),
+        select: (response) => response.channels,
+    });
 }
 
 export function useAddChannels() {
@@ -33,13 +46,21 @@ export function useSyncChannel() {
 
     return useMutation({
         mutationFn: (args: { handle: ChannelHandle; limit?: number; includeShorts?: boolean; since?: string }) =>
-            apiClient.syncChannel(args.handle, { limit: args.limit, includeShorts: args.includeShorts, since: args.since }),
+            apiClient.syncChannel(args.handle, {
+                limit: args.limit,
+                includeShorts: args.includeShorts,
+                since: args.since,
+            }),
         onSuccess: () => queryClient.invalidateQueries({ queryKey: ["jobs"] }),
     });
 }
 
 export function useVideos(params: Parameters<typeof apiClient.listVideos>[0] = {}) {
-    return useQuery({ queryKey: ["videos", params], queryFn: () => apiClient.listVideos(params), select: (response) => response.videos });
+    return useQuery({
+        queryKey: ["videos", params],
+        queryFn: () => apiClient.listVideos(params),
+        select: (response) => response.videos,
+    });
 }
 
 export function useVideo(id: VideoId | null) {
@@ -85,12 +106,16 @@ export function useGenerateSummary(id: VideoId) {
             queryClient.invalidateQueries({ queryKey: ["video", id] });
             queryClient.invalidateQueries({ queryKey: ["jobs"] });
         },
+        onError: (error, opts) => {
+            toast.error(`Generate ${opts.mode} summary failed`, { description: errorMessage(error) });
+        },
     });
 }
 
 export function useAskVideo(id: VideoId) {
     return useMutation({
-        mutationFn: (vars: { question: string; topK?: number; provider?: string; model?: string }) => apiClient.askVideo(id, vars),
+        mutationFn: (vars: { question: string; topK?: number; provider?: string; model?: string }) =>
+            apiClient.askVideo(id, vars),
     });
 }
 
@@ -134,7 +159,8 @@ export function useStartPipeline() {
     const queryClient = useQueryClient();
 
     return useMutation({
-        mutationFn: (vars: { target: string; targetKind?: "video" | "channel" | "url"; stages: JobStage[] }) => apiClient.startPipeline(vars),
+        mutationFn: (vars: { target: string; targetKind?: "video" | "channel" | "url"; stages: JobStage[] }) =>
+            apiClient.startPipeline(vars),
         onSuccess: () => queryClient.invalidateQueries({ queryKey: ["jobs"] }),
     });
 }
@@ -156,7 +182,8 @@ export function useClearCache() {
     const queryClient = useQueryClient();
 
     return useMutation({
-        mutationFn: (body: { audio?: boolean; video?: boolean; thumbs?: boolean; all?: boolean }) => apiClient.clearCache(body),
+        mutationFn: (body: { audio?: boolean; video?: boolean; thumbs?: boolean; all?: boolean }) =>
+            apiClient.clearCache(body),
         onSuccess: () => queryClient.invalidateQueries({ queryKey: ["cache-stats"] }),
     });
 }

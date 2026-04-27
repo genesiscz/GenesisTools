@@ -1,11 +1,15 @@
-import { useState } from "react";
 import { Badge } from "@app/utils/ui/components/badge";
 import { Button } from "@app/utils/ui/components/button";
 import { LlmConfirmDialog } from "@app/utils/ui/components/youtube/llm-confirm-dialog";
 import { Loading } from "@app/utils/ui/components/youtube/loading";
 import { LongSummaryView } from "@app/utils/ui/components/youtube/long-summary-view";
-import { DEFAULT_SUMMARY_CONTROLS, SummaryControlsBar, type SummaryControlsState } from "@app/utils/ui/components/youtube/summary-controls";
+import {
+    DEFAULT_SUMMARY_CONTROLS,
+    SummaryControlsBar,
+    type SummaryControlsState,
+} from "@app/utils/ui/components/youtube/summary-controls";
 import type { VideoId, VideoLongSummary } from "@app/youtube/lib/types";
+import { useState } from "react";
 
 export interface SummaryTabProps {
     videoId: VideoId;
@@ -23,6 +27,7 @@ export interface SummaryTabProps {
             length?: SummaryControlsState["length"];
         }) => Promise<{ long?: VideoLongSummary | null; cached: boolean; jobId?: number }>;
         isPending: boolean;
+        error?: Error | null;
     };
 }
 
@@ -56,14 +61,24 @@ export function SummaryTab({ videoId, useSummary, useGenerateSummary }: SummaryT
                     <Badge variant="cyber-secondary">AI signal · long-form</Badge>
                     <h3 className="mt-3 text-2xl font-bold">Whole-video summary</h3>
                 </div>
-                <Button data-testid="summary-generate" onClick={() => setConfirmOpen(true)} disabled={generate.isPending}>
+                <Button
+                    data-testid="summary-generate"
+                    onClick={() => setConfirmOpen(true)}
+                    disabled={generate.isPending}
+                >
                     {long === null ? "Generate summary…" : "Re-generate…"}
                 </Button>
             </div>
             <SummaryControlsBar value={controls} onChange={setControls} disabled={generate.isPending} hideFormat />
             {long === null ? (
-                <p data-testid="summary-empty" className="rounded-2xl border border-dashed border-primary/25 p-5 text-muted-foreground">
-                    No long-form summary yet. Click <span className="font-semibold text-foreground/95">Generate summary</span> to send the compacted transcript to your LLM and get back a structured TL;DR + key points + learnings + chapters + verdict.
+                <p
+                    data-testid="summary-empty"
+                    className="rounded-2xl border border-dashed border-primary/25 p-5 text-muted-foreground"
+                >
+                    No long-form summary yet. Click{" "}
+                    <span className="font-semibold text-foreground/95">Generate summary</span> to send the compacted
+                    transcript to your LLM and get back a structured TL;DR + key points + learnings + chapters +
+                    verdict.
                 </p>
             ) : (
                 <LongSummaryView summary={long} />
@@ -76,6 +91,7 @@ export function SummaryTab({ videoId, useSummary, useGenerateSummary }: SummaryT
                 billingNote="LLM cost depends on the provider you select."
                 busy={generate.isPending}
                 confirmLabel={long === null ? "Generate" : "Re-generate"}
+                error={generate.error ? (generate.error as Error).message : null}
                 onCancel={() => setConfirmOpen(false)}
                 onConfirm={runGenerate}
             />
