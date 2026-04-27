@@ -55,8 +55,8 @@ export async function captureProfile(options: SnapshotOptions, progress: Snapsho
     const allWindows = await windowList();
     const allWorkspaces = await collectAllWorkspaces(allWindows);
 
-    const focusedRef = await getFocusedWorkspaceRef();
-    const targetWorkspaces = filterWorkspaces(allWorkspaces, options, focusedRef);
+    const ctx = await getIdentifyContext();
+    const targetWorkspaces = filterWorkspaces(allWorkspaces, options, ctx.focusedWorkspaceRef);
     const targetWindowRefs = new Set(targetWorkspaces.map((ws) => ws.window_ref));
     const targetWindows = allWindows.filter((w) => targetWindowRefs.has(w.ref));
 
@@ -81,7 +81,7 @@ export async function captureProfile(options: SnapshotOptions, progress: Snapsho
             });
 
             const captured = await withFocusedWorkspace(ws.ref, async () => {
-                const panes = await capturePanes(ws.ref, options);
+                const panes = await capturePanes(ws.ref, options, ctx.callerSurfaceRef);
                 const fresh = await paneList(ws.ref);
                 return { panes, container: fresh.container_frame };
             });
@@ -131,12 +131,29 @@ async function collectAllWorkspaces(windows: WindowEntry[]): Promise<CollectedWo
     return out;
 }
 
-async function getFocusedWorkspaceRef(): Promise<string | undefined> {
+interface IdentifyContext {
+    focusedWorkspaceRef?: string;
+    /**
+     * Surface where the save command itself is running. Capturing its visible screen
+     * would record `tools cmux profiles save` as the bottom-of-screen content, which
+     * then gets replayed verbatim into the restored pane — meta-circular and useless.
+     * We skip screen capture for this one surface.
+     */
+    callerSurfaceRef?: string;
+}
+
+async function getIdentifyContext(): Promise<IdentifyContext> {
     try {
-        const identify = await runCmuxJSON<{ focused?: { workspace_ref?: string } }>(["identify"]);
-        return identify.focused?.workspace_ref;
+        const identify = await runCmuxJSON<{
+            focused?: { workspace_ref?: string };
+            caller?: { surface_ref?: string };
+        }>(["identify"]);
+        return {
+            focusedWorkspaceRef: identify.focused?.workspace_ref,
+            callerSurfaceRef: identify.caller?.surface_ref,
+        };
     } catch {
-        return undefined;
+        return {};
     }
 }
 
@@ -165,7 +182,11 @@ function filterWorkspaces(
     return all.filter((ws) => ws.ref === ref);
 }
 
-async function capturePanes(workspaceRef: string, options: SnapshotOptions): Promise<Pane[]> {
+async function capturePanes(
+    workspaceRef: string,
+    options: SnapshotOptions,
+    callerSurfaceRef: string | undefined,
+): Promise<Pane[]> {
     const layout = await paneList(workspaceRef);
     const panes: Pane[] = [];
 
@@ -185,7 +206,7 @@ async function capturePanes(workspaceRef: string, options: SnapshotOptions): Pro
             if (surfaceEntry.selected) {
                 selectedIndex = surfaces.length;
             }
-            surfaces.push(await captureSurface(surfaceEntry, workspaceRef, options));
+            surfaces.push(await captureSurface(surfaceEntry, workspaceRef, options, callerSurfaceRef));
         }
 
         panes.push({
@@ -206,6 +227,7 @@ async function captureSurface(
     entry: SurfaceListEntry,
     workspaceRef: string,
     options: SnapshotOptions,
+    callerSurfaceRef: string | undefined,
 ): Promise<Surface> {
     const title = entry.title ?? "";
     if (entry.type === "browser") {
@@ -214,8 +236,16 @@ async function captureSurface(
     }
 
     const cwd = options.captureCwd ? cwdFromTitle(title) : undefined;
+    // Skip screen capture for the surface running this very save command — its
+    // visible content is dominated by the `tools cmux profiles save` invocation
+    // and the running clack prompts, which would replay back into the restored
+    // pane verbatim. Other panes still get full screen capture.
+    const isCaller = callerSurfaceRef !== undefined && entry.ref === callerSurfaceRef;
+    if (isCaller && options.captureScreen) {
+        logger.debug({ surfaceRef: entry.ref }, "[snapshot] skipping screen capture for caller surface");
+    }
     const captured = await captureSurfaceState(workspaceRef, entry.ref, {
-        screen: options.captureScreen,
+        screen: options.captureScreen && !isCaller,
         history: options.captureHistory,
     });
 
