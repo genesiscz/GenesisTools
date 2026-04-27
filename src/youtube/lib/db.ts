@@ -1,7 +1,16 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { BaseDatabase } from "@app/utils/database";
-import type { Channel, ChannelHandle, TimestampedSummaryEntry, Video, VideoId } from "@app/youtube/lib/types";
+import type {
+    Channel,
+    ChannelHandle,
+    Language,
+    TimestampedSummaryEntry,
+    Transcript,
+    TranscriptSegment,
+    Video,
+    VideoId,
+} from "@app/youtube/lib/types";
 
 export const DEFAULT_DB_PATH = join(homedir(), ".genesis-tools", "youtube", "youtube.db");
 
@@ -308,6 +317,85 @@ export class YoutubeDatabase extends BaseDatabase {
         this.db.run(`UPDATE videos SET ${column} = ?, updated_at = datetime('now') WHERE id = ?`, [serialized, input.id]);
     }
 
+    saveTranscript(input: SaveTranscriptInput): void {
+        this.db.run(
+            `INSERT INTO transcripts (video_id, lang, source, text, segments_json, duration_sec)
+             VALUES (?, ?, ?, ?, ?, ?)
+             ON CONFLICT(video_id, lang, source) DO UPDATE SET
+                text = excluded.text,
+                segments_json = excluded.segments_json,
+                duration_sec = excluded.duration_sec,
+                created_at = datetime('now')`,
+            [input.videoId, input.lang, input.source, input.text, JSON.stringify(input.segments), input.durationSec ?? null]
+        );
+    }
+
+    getTranscript(videoId: VideoId, opts: GetTranscriptOpts = {}): Transcript | null {
+        if (opts.preferLang?.length) {
+            for (const lang of opts.preferLang) {
+                const transcript = this.getTranscript(videoId, { lang });
+
+                if (transcript) {
+                    return transcript;
+                }
+            }
+
+            return null;
+        }
+
+        const where: string[] = ["video_id = ?"];
+        const params: string[] = [videoId];
+
+        if (opts.lang) {
+            where.push("lang = ?");
+            params.push(opts.lang);
+        }
+
+        if (opts.source) {
+            where.push("source = ?");
+            params.push(opts.source);
+        }
+
+        const row = this.db
+            .query<TranscriptRow, string[]>(
+                `SELECT * FROM transcripts WHERE ${where.join(" AND ")}
+                 ORDER BY (source = 'captions') DESC, created_at DESC LIMIT 1`
+            )
+            .get(...params);
+
+        if (!row) {
+            return null;
+        }
+
+        return rowToTranscript(row);
+    }
+
+    listTranscripts(videoId: VideoId): Transcript[] {
+        const rows = this.db.query<TranscriptRow, [string]>("SELECT * FROM transcripts WHERE video_id = ? ORDER BY lang, source").all(videoId);
+
+        return rows.map(rowToTranscript);
+    }
+
+    searchTranscripts(query: string, opts: SearchTranscriptsOpts = {}): TranscriptSearchHit[] {
+        const limit = opts.limit ?? 50;
+        const snippetChars = opts.snippetChars ?? 50;
+        const filterClause = opts.videoIds?.length ? `AND video_id IN (${opts.videoIds.map(() => "?").join(",")})` : "";
+        const rows = this.db
+            .query<TranscriptSearchRow, Array<string | number>>(
+                `SELECT video_id, lang, snippet(transcripts_fts, 0, '<b>', '</b>', '…', ?) AS snippet, rank
+                 FROM transcripts_fts WHERE transcripts_fts MATCH ? ${filterClause}
+                 ORDER BY rank LIMIT ?`
+            )
+            .all(snippetChars, query, ...(opts.videoIds ?? []), limit);
+
+        return rows.map((row) => ({
+            videoId: row.video_id,
+            lang: row.lang,
+            snippet: row.snippet,
+            rank: row.rank,
+        }));
+    }
+
     initSchemaForTest(): void {
         this.initSchema();
     }
@@ -494,6 +582,89 @@ function parseNullableJsonArray<T>(raw: string | null): T[] | null {
     }
 
     return parsed as T[];
+}
+
+interface SaveTranscriptInput {
+    videoId: VideoId;
+    lang: Language;
+    source: "captions" | "ai";
+    text: string;
+    segments: TranscriptSegment[];
+    durationSec?: number | null;
+}
+
+interface GetTranscriptOpts {
+    lang?: Language;
+    source?: "captions" | "ai";
+    preferLang?: Language[];
+}
+
+interface SearchTranscriptsOpts {
+    videoIds?: VideoId[];
+    limit?: number;
+    snippetChars?: number;
+}
+
+interface TranscriptSearchHit {
+    videoId: VideoId;
+    lang: Language;
+    snippet: string;
+    rank: number;
+}
+
+interface TranscriptRow {
+    id: number;
+    video_id: VideoId;
+    lang: Language;
+    source: "captions" | "ai";
+    text: string;
+    segments_json: string | null;
+    duration_sec: number | null;
+    created_at: string;
+}
+
+interface TranscriptSearchRow {
+    video_id: VideoId;
+    lang: Language;
+    snippet: string;
+    rank: number;
+}
+
+function rowToTranscript(row: TranscriptRow): Transcript {
+    return {
+        id: row.id,
+        videoId: row.video_id,
+        lang: row.lang,
+        source: row.source,
+        text: row.text,
+        segments: parseTranscriptSegments(row.segments_json),
+        durationSec: row.duration_sec,
+        createdAt: row.created_at,
+    };
+}
+
+function parseTranscriptSegments(raw: string | null): TranscriptSegment[] {
+    if (!raw) {
+        return [];
+    }
+
+    const parsed = JSON.parse(raw) as unknown;
+
+    if (!Array.isArray(parsed)) {
+        return [];
+    }
+
+    return parsed.filter(isTranscriptSegment);
+}
+
+function isTranscriptSegment(value: unknown): value is TranscriptSegment {
+    if (!value || typeof value !== "object") {
+        return false;
+    }
+
+    const candidate = value as { text?: unknown; start?: unknown; end?: unknown };
+
+    return typeof candidate.text === "string" && typeof candidate.start === "number" && typeof candidate.end === "number";
 }
 
 interface ChannelRow {

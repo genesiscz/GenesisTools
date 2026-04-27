@@ -157,3 +157,49 @@ describe("YoutubeDatabase videos", () => {
         expect(video?.summaryTimestamped).toEqual([{ startSec: 0, endSec: 10, text: "Intro" }]);
     });
 });
+
+describe("YoutubeDatabase transcripts", () => {
+    beforeEach(() => {
+        db.upsertChannel({ handle: "@mkbhd" });
+        db.upsertVideo({ id: "vid00000001", channelHandle: "@mkbhd", title: "T" });
+    });
+
+    it("saves and retrieves a transcript", () => {
+        db.saveTranscript({
+            videoId: "vid00000001",
+            lang: "en",
+            source: "captions",
+            text: "Hello world from MKBHD",
+            segments: [{ start: 0, end: 1, text: "Hello world from MKBHD" }],
+            durationSec: 1,
+        });
+        const transcript = db.getTranscript("vid00000001");
+
+        expect(transcript?.text).toContain("MKBHD");
+        expect(transcript?.segments).toEqual([{ start: 0, end: 1, text: "Hello world from MKBHD" }]);
+    });
+
+    it("prefers captions over AI by default", () => {
+        db.saveTranscript({ videoId: "vid00000001", lang: "en", source: "ai", text: "AI text", segments: [] });
+        db.saveTranscript({ videoId: "vid00000001", lang: "en", source: "captions", text: "Caption text", segments: [] });
+        const transcript = db.getTranscript("vid00000001");
+
+        expect(transcript?.source).toBe("captions");
+    });
+
+    it("lists transcripts for a video", () => {
+        db.saveTranscript({ videoId: "vid00000001", lang: "en", source: "captions", text: "English", segments: [] });
+        db.saveTranscript({ videoId: "vid00000001", lang: "cs", source: "captions", text: "Czech", segments: [] });
+        const transcripts = db.listTranscripts("vid00000001");
+
+        expect(transcripts.map((transcript) => transcript.lang)).toEqual(["cs", "en"]);
+    });
+
+    it("FTS5 search finds matches", () => {
+        db.saveTranscript({ videoId: "vid00000001", lang: "en", source: "captions", text: "talking about iPhones today", segments: [] });
+        const hits = db.searchTranscripts("iphones");
+
+        expect(hits.length).toBe(1);
+        expect(hits[0].videoId).toBe("vid00000001");
+    });
+});
