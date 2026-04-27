@@ -16,11 +16,11 @@ export function cwdFromTitle(title: string | undefined | null): string | undefin
     }
     const trimmed = title.trim();
     // OSC-7 / OSC-1337 titles: "user@host:/abs/path" or "user@host:~/path"
-    const userHostMatch = trimmed.match(/^[^\s@:]+@[^\s:]+:(\S+)$/);
+    const userHostMatch = trimmed.match(/^[^\s@:]+@[^\s:]+:(.+)$/);
     if (userHostMatch) {
         return expandHome(userHostMatch[1]);
     }
-    if (trimmed.startsWith("…/") || trimmed.startsWith("~/")) {
+    if (trimmed === "…" || trimmed === "~" || trimmed.startsWith("…/") || trimmed.startsWith("~/")) {
         return expandHome(trimmed);
     }
     if (trimmed.startsWith("/")) {
