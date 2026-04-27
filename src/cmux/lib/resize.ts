@@ -1,6 +1,6 @@
-import logger from "@app/logger";
 import { runCmuxOk } from "@app/cmux/lib/cli";
 import { paneList } from "@app/cmux/lib/socket";
+import logger from "@app/logger";
 
 export interface ResizeTarget {
     paneRef: string;
@@ -24,10 +24,7 @@ export interface ConvergeResult {
  * deltas; cmux propagates the change to neighbours, so we re-read after each pass and
  * loop until everyone is within {@link TOLERANCE_CELLS} or we hit {@link MAX_ITERATIONS}.
  */
-export async function convergeToTarget(
-    workspaceRef: string,
-    targets: ResizeTarget[],
-): Promise<ConvergeResult> {
+export async function convergeToTarget(workspaceRef: string, targets: ResizeTarget[]): Promise<ConvergeResult> {
     const targetByRef = new Map<string, ResizeTarget>();
     for (const target of targets) {
         targetByRef.set(target.paneRef, target);
@@ -62,9 +59,7 @@ export async function convergeToTarget(
 
         // Apply biggest deltas first so neighbours absorb the change.
         const sorted = [...deltas].sort(
-            (a, b) =>
-                Math.max(Math.abs(b.dCols), Math.abs(b.dRows)) -
-                Math.max(Math.abs(a.dCols), Math.abs(a.dRows)),
+            (a, b) => Math.max(Math.abs(b.dCols), Math.abs(b.dRows)) - Math.max(Math.abs(a.dCols), Math.abs(a.dRows))
         );
 
         for (const { paneRef, dCols, dRows } of sorted) {
@@ -109,7 +104,7 @@ async function tryResize(
     workspaceRef: string,
     paneRef: string,
     direction: "-L" | "-R" | "-U" | "-D",
-    amount: number,
+    amount: number
 ): Promise<void> {
     try {
         await runCmuxOk([
@@ -125,7 +120,7 @@ async function tryResize(
     } catch (error) {
         logger.warn(
             { error: error instanceof Error ? error.message : String(error), workspaceRef, paneRef, direction, amount },
-            "[resize] resize-pane failed; skipping this delta",
+            "[resize] resize-pane failed; skipping this delta"
         );
     }
 }

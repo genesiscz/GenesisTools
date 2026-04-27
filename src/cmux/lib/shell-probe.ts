@@ -1,8 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import logger from "@app/logger";
 import type { CommandSource } from "@app/cmux/lib/types";
+import logger from "@app/logger";
 
 /**
  * cmux exposes no PID/tty for surfaces, but it does set tab titles from OSC-7 cwd escapes.
@@ -63,7 +63,10 @@ export function lastHistoryHint(): { value: string | undefined; source: CommandS
                 continue;
             }
             const raw = readFileSync(path, "utf8");
-            const lines = raw.split("\n").map((l) => l.trim()).filter(Boolean);
+            const lines = raw
+                .split("\n")
+                .map((l) => l.trim())
+                .filter(Boolean);
             if (lines.length === 0) {
                 continue;
             }

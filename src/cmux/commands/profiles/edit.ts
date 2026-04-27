@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
-import { Command } from "commander";
 import { ProfileNotFoundError, ProfileStore } from "@app/cmux/lib/store";
+import type { Command } from "commander";
 
 export function registerEditCommand(parent: Command): void {
     parent

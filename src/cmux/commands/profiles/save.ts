@@ -1,12 +1,12 @@
-import { Command } from "commander";
-import * as p from "@clack/prompts";
-import pc from "picocolors";
-import logger from "@app/logger";
 import { captureProfile, getCmuxVersion, type SnapshotOptions } from "@app/cmux/lib/snapshot";
 import { ProfileExistsError, ProfileStore } from "@app/cmux/lib/store";
 import type { ProfileScope, Window } from "@app/cmux/lib/types";
+import logger from "@app/logger";
 import { isInteractive, suggestCommand } from "@app/utils/cli";
 import { withCancel } from "@app/utils/prompts/clack/helpers";
+import * as p from "@clack/prompts";
+import type { Command } from "commander";
+import pc from "picocolors";
 
 interface SaveFlags {
     scope?: string;
@@ -47,14 +47,12 @@ async function runSave(rawName: string | undefined, flags: SaveFlags): Promise<v
     if (store.exists(name) && !forceWrite) {
         if (!interactive) {
             console.error(`Profile "${name}" already exists. Use --force to overwrite.`);
-            console.error(
-                suggestCommand("tools cmux profiles save", { add: ["--force"] }),
-            );
+            console.error(suggestCommand("tools cmux profiles save", { add: ["--force"] }));
             process.exitCode = 1;
             return;
         }
         const overwrite = await withCancel(
-            p.confirm({ message: `Profile "${name}" exists. Overwrite?`, initialValue: false }),
+            p.confirm({ message: `Profile "${name}" exists. Overwrite?`, initialValue: false })
         );
         if (!overwrite) {
             p.cancel("Save aborted.");
@@ -139,16 +137,12 @@ async function resolveScope(flags: SaveFlags, interactive: boolean): Promise<Pro
                 { value: "workspace", label: "Current workspace only", hint: "just the focused workspace" },
             ],
             initialValue: "all",
-        }),
+        })
     );
     return choice;
 }
 
-async function resolveName(
-    rawName: string | undefined,
-    scope: ProfileScope,
-    interactive: boolean,
-): Promise<string> {
+async function resolveName(rawName: string | undefined, scope: ProfileScope, interactive: boolean): Promise<string> {
     if (rawName) {
         return rawName;
     }
@@ -171,7 +165,7 @@ async function resolveName(
                 }
                 return undefined;
             },
-        }),
+        })
     );
     return value.trim();
 }

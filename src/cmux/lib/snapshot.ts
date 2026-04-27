@@ -1,10 +1,17 @@
-import logger from "@app/logger";
 import { runCmux, runCmuxJSON } from "@app/cmux/lib/cli";
 import { withFocusedWorkspace } from "@app/cmux/lib/focus-guard";
 import { cwdFromTitle, lastHistoryHint } from "@app/cmux/lib/shell-probe";
-import { browserUrl, paneList, type WindowEntry, windowList, type WorkspaceEntry, workspaceList } from "@app/cmux/lib/socket";
+import {
+    browserUrl,
+    paneList,
+    type WindowEntry,
+    type WorkspaceEntry,
+    windowList,
+    workspaceList,
+} from "@app/cmux/lib/socket";
 import type { CommandSource, Pane, Profile, ProfileScope, Surface, Window, Workspace } from "@app/cmux/lib/types";
 import { PROFILE_VERSION } from "@app/cmux/lib/types";
+import logger from "@app/logger";
 
 interface SurfaceListEntry {
     ref: string;
@@ -38,10 +45,7 @@ interface CollectedWorkspace extends WorkspaceEntry {
     window_ref: string;
 }
 
-export async function captureProfile(
-    options: SnapshotOptions,
-    progress: SnapshotProgress = {},
-): Promise<Profile> {
+export async function captureProfile(options: SnapshotOptions, progress: SnapshotProgress = {}): Promise<Profile> {
     const allWindows = await windowList();
     const allWorkspaces = await collectAllWorkspaces(allWindows);
 
@@ -133,7 +137,7 @@ async function getFocusedWorkspaceRef(): Promise<string | undefined> {
 function filterWorkspaces(
     all: CollectedWorkspace[],
     options: SnapshotOptions,
-    focusedWorkspaceRef: string | undefined,
+    focusedWorkspaceRef: string | undefined
 ): CollectedWorkspace[] {
     if (options.scope === "all") {
         return all;
@@ -142,10 +146,7 @@ function filterWorkspaces(
         const focusedWindowRef = focusedWorkspaceRef
             ? all.find((ws) => ws.ref === focusedWorkspaceRef)?.window_ref
             : undefined;
-        const ref =
-            options.targetWindowRef ??
-            focusedWindowRef ??
-            all[0]?.window_ref;
+        const ref = options.targetWindowRef ?? focusedWindowRef ?? all[0]?.window_ref;
         if (!ref) {
             throw new Error("scope=window requires a focused workspace or --window <ref>");
         }

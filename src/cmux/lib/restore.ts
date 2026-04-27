@@ -1,9 +1,9 @@
-import logger from "@app/logger";
 import { runCmuxJSON, runCmuxOk } from "@app/cmux/lib/cli";
 import { withFocusedWorkspace } from "@app/cmux/lib/focus-guard";
 import { convergeToTarget, type ResizeTarget } from "@app/cmux/lib/resize";
-import { paneList, surfaceCreate, type SurfaceSplitResult, workspaceCreate } from "@app/cmux/lib/socket";
+import { paneList, type SurfaceSplitResult, surfaceCreate, workspaceCreate } from "@app/cmux/lib/socket";
 import type { Pane, Profile, Surface, Workspace } from "@app/cmux/lib/types";
+import logger from "@app/logger";
 
 const EDGE_TOLERANCE_PX = 2;
 
@@ -58,7 +58,7 @@ export function buildPlan(profile: Profile, opts: RestoreOptions): RestorePlan {
 export async function restoreProfile(
     profile: Profile,
     opts: RestoreOptions,
-    events: RestoreEvents = {},
+    events: RestoreEvents = {}
 ): Promise<RestoreOutcome> {
     const outcome: RestoreOutcome = { workspaces: [] };
     const totalWorkspaces = profile.windows.reduce((acc, w) => acc + w.workspaces.length, 0);
@@ -78,7 +78,7 @@ export async function restoreProfile(
             } catch (error) {
                 logger.warn(
                     { error, workspaceRef: created.workspace_ref, targetTitle },
-                    "[restore] rename-workspace failed; continuing with auto-generated title",
+                    "[restore] rename-workspace failed; continuing with auto-generated title"
                 );
             }
             const result = await withFocusedWorkspace(created.workspace_ref, async () => {
@@ -105,7 +105,7 @@ interface MaterializeResult {
 async function materializeWorkspace(
     ws: Workspace,
     workspaceRef: string,
-    opts: RestoreOptions,
+    opts: RestoreOptions
 ): Promise<MaterializeResult> {
     if (ws.panes.length === 0) {
         return { converged: true, iterations: 0 };
@@ -113,9 +113,7 @@ async function materializeWorkspace(
 
     const initialLayout = await paneList(workspaceRef);
     if (initialLayout.panes.length !== 1) {
-        throw new Error(
-            `Expected new workspace to start with 1 pane, got ${initialLayout.panes.length}`,
-        );
+        throw new Error(`Expected new workspace to start with 1 pane, got ${initialLayout.panes.length}`);
     }
     const rootPane = initialLayout.panes[0];
     const rootSurface = rootPane.selected_surface_ref;
@@ -131,7 +129,7 @@ async function materializeWorkspace(
         if (!newRef) {
             logger.warn(
                 { savedIndex: savedPane.index, mappedKeys: [...paneRefByIndex.keys()] },
-                "[restore] saved pane index has no new pane mapping",
+                "[restore] saved pane index has no new pane mapping"
             );
             continue;
         }
@@ -220,7 +218,7 @@ function divideRects(rects: RectPane[]): SplitTree {
 
     throw new Error(
         `Pane layout is not representable as nested binary splits (${rects.length} rects). ` +
-            "This usually means the saved layout was modified after capture.",
+            "This usually means the saved layout was modified after capture."
     );
 }
 
@@ -228,7 +226,7 @@ async function applyTree(
     tree: SplitTree,
     anchorSurface: string,
     workspaceRef: string,
-    map: Map<number, string>,
+    map: Map<number, string>
 ): Promise<void> {
     if (tree.kind === "leaf") {
         const layout = await paneList(workspaceRef);
@@ -245,7 +243,7 @@ async function applyTree(
     const split = await splitFromSurface(direction, anchorSurface, workspaceRef);
     logger.debug(
         { direction, anchor: anchorSurface, newPane: split.pane_ref, newSurface: split.surface_ref },
-        "[restore] split",
+        "[restore] split"
     );
 
     if (tree.kind === "vsplit") {
@@ -262,7 +260,7 @@ async function populatePane(
     savedPane: Pane,
     paneRef: string,
     workspaceRef: string,
-    opts: RestoreOptions,
+    opts: RestoreOptions
 ): Promise<void> {
     const expectedCount = savedPane.surfaces.length;
     if (expectedCount === 0) {
@@ -274,7 +272,7 @@ async function populatePane(
     if (!current) {
         throw new Error(`Pane ${paneRef} disappeared mid-restore`);
     }
-    let surfaceRefs = [...current.surface_refs];
+    const surfaceRefs = [...current.surface_refs];
 
     while (surfaceRefs.length < expectedCount) {
         const nextSavedSurface = savedPane.surfaces[surfaceRefs.length];
@@ -312,7 +310,7 @@ async function populatePane(
 async function splitFromSurface(
     direction: "right" | "down",
     surfaceRef: string,
-    workspaceRef: string,
+    workspaceRef: string
 ): Promise<SurfaceSplitResult> {
     return runCmuxJSON<SurfaceSplitResult>([
         "new-split",
@@ -332,7 +330,7 @@ async function replayTerminal(
     surface: Surface & { type: "terminal" },
     workspaceRef: string,
     surfaceRef: string,
-    opts: RestoreOptions,
+    opts: RestoreOptions
 ): Promise<void> {
     if (surface.cwd) {
         await runCmuxOk([
@@ -346,13 +344,6 @@ async function replayTerminal(
     }
     if (opts.replay && surface.command && surface.command_source !== "none") {
         // Send command WITHOUT a trailing newline so the user can confirm before executing.
-        await runCmuxOk([
-            "send",
-            "--workspace",
-            workspaceRef,
-            "--surface",
-            surfaceRef,
-            surface.command,
-        ]);
+        await runCmuxOk(["send", "--workspace", workspaceRef, "--surface", surfaceRef, surface.command]);
     }
 }
