@@ -53,23 +53,57 @@ export function flattenMemories(memories: TimelyEntry[], allowedIds?: Set<number
     return flat.sort((a, b) => a.from.localeCompare(b.from));
 }
 
+/**
+ * Compute wall-clock duration as the UNION of (possibly overlapping) intervals.
+ * Memories from different apps frequently overlap (cmux + Cursor + Teams running
+ * concurrently); summing them double-counts. The server expects merged duration.
+ */
+function unionDurationSeconds(flat: FlatEntry[]): number {
+    if (flat.length === 0) {
+        return 0;
+    }
+
+    const intervals = flat
+        .map((f) => ({ from: new Date(f.from).getTime(), to: new Date(f.to).getTime() }))
+        .filter((iv) => iv.to > iv.from)
+        .sort((a, b) => a.from - b.from);
+
+    if (intervals.length === 0) {
+        return 0;
+    }
+
+    let totalMs = 0;
+    let curFrom = intervals[0].from;
+    let curTo = intervals[0].to;
+    for (let i = 1; i < intervals.length; i++) {
+        const iv = intervals[i];
+        if (iv.from <= curTo) {
+            if (iv.to > curTo) {
+                curTo = iv.to;
+            }
+        } else {
+            totalMs += curTo - curFrom;
+            curFrom = iv.from;
+            curTo = iv.to;
+        }
+    }
+
+    totalMs += curTo - curFrom;
+    return totalMs / 1000;
+}
+
 export function buildPayloadFromFlat(flat: FlatEntry[], day: string, projectId: number, note: string): BuiltPayload {
     if (flat.length === 0) {
         throw new Error(`No usable entries on ${day} — memories are empty or filtered out`);
     }
 
-    let totalSec = 0;
-    const timestamps: CreateEventTimestamp[] = flat.map((f) => {
-        const fromMs = new Date(f.from).getTime();
-        const toMs = new Date(f.to).getTime();
-        totalSec += Math.max(0, (toMs - fromMs) / 1000);
-        return {
-            from: f.from,
-            to: f.to,
-            entry_ids: [`tool_tic_${f.id}`],
-        };
-    });
+    const timestamps: CreateEventTimestamp[] = flat.map((f) => ({
+        from: f.from,
+        to: f.to,
+        entry_ids: [`tool_tic_${f.id}`],
+    }));
 
+    const totalSec = unionDurationSeconds(flat);
     const hours = Math.floor(totalSec / 3600);
     const minutes = Math.floor((totalSec % 3600) / 60);
     const seconds = Math.floor(totalSec % 60);
