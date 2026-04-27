@@ -10,6 +10,7 @@ import type {
     Transcript,
     Video,
     VideoId,
+    VideoLongSummary,
     YoutubeConfigShape,
 } from "@app/youtube/lib/types";
 import type { YoutubeConfigPatch } from "@app/youtube/lib/config.api.types";
@@ -90,10 +91,10 @@ export const apiClient = {
     getVideo: (id: VideoId) => api<{ video: Video; transcripts: Transcript[] }>(`/videos/${encodeURIComponent(id)}`),
     getTranscript: (id: VideoId, opts: { lang?: string; source?: "captions" | "ai" } = {}) =>
         api<{ transcript: Transcript }>(withQuery(`/videos/${encodeURIComponent(id)}/transcript`, [["lang", opts.lang], ["source", opts.source]])),
-    getSummary: async (id: VideoId, mode: "short" | "timestamped") => {
+    getSummary: async (id: VideoId, mode: "short" | "timestamped" | "long") => {
         const response = await api<{
-            summary?: string | TimestampedSummaryEntry[];
-            mode?: "short" | "timestamped";
+            summary?: string | TimestampedSummaryEntry[] | VideoLongSummary | null;
+            mode?: "short" | "timestamped" | "long";
             cached?: boolean;
         }>(withQuery(`/videos/${encodeURIComponent(id)}/summary`, [["mode", mode]]));
 
@@ -104,22 +105,44 @@ export const apiClient = {
             };
         }
 
+        if (mode === "long") {
+            return {
+                long: (response.summary ?? null) as VideoLongSummary | null,
+                cached: response.cached ?? false,
+            };
+        }
+
         return { short: (response.summary ?? "") as string, cached: response.cached ?? false };
     },
     generateSummary: async (
         id: VideoId,
-        opts: { mode: "short" | "timestamped"; force?: boolean; provider?: string; model?: string; targetBins?: number }
+        opts: {
+            mode: "short" | "timestamped" | "long";
+            force?: boolean;
+            provider?: string;
+            model?: string;
+            targetBins?: number;
+            tone?: "insightful" | "funny" | "actionable" | "controversial";
+            format?: "list" | "qa";
+            length?: "short" | "auto" | "detailed";
+        }
     ) => {
-        const response = await api<{ summary: string | TimestampedSummaryEntry[]; mode: "short" | "timestamped"; cached: boolean }>(
-            `/videos/${encodeURIComponent(id)}/summary`,
-            { method: "POST", body: JSON.stringify(opts) }
-        );
+        const response = await api<{
+            summary: string | TimestampedSummaryEntry[] | VideoLongSummary | null;
+            mode: "short" | "timestamped" | "long";
+            cached: boolean;
+            jobId?: number;
+        }>(`/videos/${encodeURIComponent(id)}/summary`, { method: "POST", body: JSON.stringify(opts) });
 
         if (opts.mode === "timestamped") {
-            return { timestamped: (response.summary ?? []) as TimestampedSummaryEntry[], cached: response.cached };
+            return { timestamped: (response.summary ?? []) as TimestampedSummaryEntry[], cached: response.cached, jobId: response.jobId };
         }
 
-        return { short: (response.summary ?? "") as string, cached: response.cached };
+        if (opts.mode === "long") {
+            return { long: (response.summary ?? null) as VideoLongSummary | null, cached: response.cached, jobId: response.jobId };
+        }
+
+        return { short: (response.summary ?? "") as string, cached: response.cached, jobId: response.jobId };
     },
     askVideo: (id: VideoId, opts: { question: string; topK?: number; provider?: string; model?: string }) =>
         api<AskVideoResponse>(`/videos/${encodeURIComponent(id)}/qa`, { method: "POST", body: JSON.stringify(opts) }),

@@ -58,7 +58,7 @@ export function useTranscript(id: VideoId | null, opts: { lang?: string; source?
     });
 }
 
-export function useSummary(id: VideoId | null, mode: "short" | "timestamped") {
+export function useSummary(id: VideoId | null, mode: "short" | "timestamped" | "long") {
     return useQuery({
         queryKey: ["summary", id, mode],
         queryFn: () => apiClient.getSummary(id as VideoId, mode),
@@ -70,11 +70,20 @@ export function useGenerateSummary(id: VideoId) {
     const queryClient = useQueryClient();
 
     return useMutation({
-        mutationFn: (opts: { mode: "short" | "timestamped"; force?: boolean; provider?: string; model?: string; targetBins?: number }) =>
-            apiClient.generateSummary(id, opts),
+        mutationFn: (opts: {
+            mode: "short" | "timestamped" | "long";
+            force?: boolean;
+            provider?: string;
+            model?: string;
+            targetBins?: number;
+            tone?: "insightful" | "funny" | "actionable" | "controversial";
+            format?: "list" | "qa";
+            length?: "short" | "auto" | "detailed";
+        }) => apiClient.generateSummary(id, opts),
         onSuccess: (_data, opts) => {
             queryClient.invalidateQueries({ queryKey: ["summary", id, opts.mode] });
             queryClient.invalidateQueries({ queryKey: ["video", id] });
+            queryClient.invalidateQueries({ queryKey: ["jobs"] });
         },
     });
 }
