@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { SafeJSON } from "@app/utils/json";
 import logger from "@app/logger";
 
 export interface CmuxRunResult {
@@ -10,21 +10,16 @@ export interface CmuxRunResult {
 export async function runCmux(args: string[], opts: { json?: boolean } = {}): Promise<CmuxRunResult> {
     const finalArgs = opts.json ? ["--json", ...args] : args;
     logger.debug({ args: finalArgs }, "[cmux] spawn");
-    return await new Promise<CmuxRunResult>((resolve, reject) => {
-        const child = spawn("cmux", finalArgs, { stdio: ["ignore", "pipe", "pipe"] });
-        let stdout = "";
-        let stderr = "";
-        child.stdout?.on("data", (chunk) => {
-            stdout += chunk.toString();
-        });
-        child.stderr?.on("data", (chunk) => {
-            stderr += chunk.toString();
-        });
-        child.on("error", reject);
-        child.on("close", (code) => {
-            resolve({ code: code ?? 0, stdout, stderr });
-        });
-    });
+    const proc = Bun.spawn(["cmux", ...finalArgs], { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+    ]);
+    if (exitCode === null) {
+        throw new Error(`cmux terminated by signal before exiting`);
+    }
+    return { code: exitCode, stdout, stderr };
 }
 
 export async function runCmuxJSON<T = unknown>(args: string[]): Promise<T> {
@@ -35,15 +30,10 @@ export async function runCmuxJSON<T = unknown>(args: string[]): Promise<T> {
         throw new Error(message);
     }
     try {
-        return JSON.parse(result.stdout) as T;
+        return SafeJSON.parse(result.stdout) as T;
     } catch (error) {
-        logger.error(
-            { args, stdout: result.stdout.slice(0, 500), error },
-            "[cmux] non-JSON response on --json call",
-        );
-        throw new Error(
-            `cmux ${args.join(" ")} returned non-JSON output:\n${result.stdout.slice(0, 500)}\n(${error})`,
-        );
+        logger.error({ args, stdout: result.stdout.slice(0, 500), error }, "[cmux] non-JSON response on --json call");
+        throw new Error(`cmux ${args.join(" ")} returned non-JSON output:\n${result.stdout.slice(0, 500)}\n(${error})`);
     }
 }
 
