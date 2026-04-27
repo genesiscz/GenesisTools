@@ -1,4 +1,4 @@
-export type JobStage = "discover" | "metadata" | "captions" | "audio" | "transcribe" | "summarize";
+export type JobStage = "discover" | "metadata" | "captions" | "audio" | "video" | "transcribe" | "summarize";
 
 export type JobStatus = "pending" | "running" | "completed" | "failed" | "cancelled" | "interrupted";
 

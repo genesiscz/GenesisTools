@@ -895,7 +895,7 @@ function parseJobStages(raw: string): JobStage[] {
 }
 
 function isJobStage(value: unknown): value is JobStage {
-    return value === "discover" || value === "metadata" || value === "captions" || value === "audio" || value === "transcribe" || value === "summarize";
+    return value === "discover" || value === "metadata" || value === "captions" || value === "audio" || value === "video" || value === "transcribe" || value === "summarize";
 }
 
 function isTerminalJobStatus(status: JobStatus): boolean {

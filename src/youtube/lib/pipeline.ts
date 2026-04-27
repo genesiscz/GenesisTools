@@ -153,6 +153,8 @@ export class Pipeline {
                 return Math.max(1, Math.max(concurrency.localTranscribe, concurrency.cloudTranscribe));
             case "summarize":
                 return Math.max(1, concurrency.summarize);
+            case "video":
+                return Math.max(1, concurrency.download);
         }
     }
 
@@ -161,7 +163,7 @@ export class Pipeline {
     }
 }
 
-const JOB_STAGES: JobStage[] = ["discover", "metadata", "captions", "audio", "transcribe", "summarize"];
+const JOB_STAGES: JobStage[] = ["discover", "metadata", "captions", "audio", "video", "transcribe", "summarize"];
 
 function sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));

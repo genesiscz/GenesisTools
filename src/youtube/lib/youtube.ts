@@ -167,6 +167,9 @@ export class Youtube {
                 });
                 this.db.setVideoBinaryPath(video.id, "audio", result.path, result.sizeBytes);
             },
+            video: async (ctx) => {
+                await this.downloadVideo(ctx.job.target as VideoId, { signal: ctx.signal });
+            },
             transcribe: async (ctx) => {
                 await this.transcripts.transcribe({ videoId: ctx.job.target as VideoId, forceTranscribe: true, signal: ctx.signal });
             },
