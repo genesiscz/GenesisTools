@@ -7,21 +7,15 @@ export interface LlmConfirmDialogProps {
     open: boolean;
     title: string;
     description: ReactNode;
-    /** A short summary of what will be sent (e.g. "transcript ~35,000 tokens"). */
+    /** Short summary of what will be sent (e.g. "transcript ~35,000 tokens"). */
     payloadSummary: ReactNode;
-    /** Default provider (e.g. "claude") shown as a placeholder hint only. */
+    /** Default provider shown as placeholder hint only. */
     defaultProvider?: string;
-    /** Default model id (e.g. "claude-haiku-4-5") shown as a placeholder hint only. */
+    /** Default model shown as placeholder hint only. */
     defaultModel?: string;
-    /** Whether the chosen model is billed via a subscription (true) or pay-per-call (false/undefined). */
+    /** Whether the chosen model is billed via subscription (true) or pay-per-call. */
     subscription?: boolean;
-    /** Free-form note about cost/billing. */
     billingNote?: ReactNode;
-    /**
-     * If set, leaving provider+model blank skips the LLM and runs the deterministic path
-     * instead. The button label flips to this text and the billing card softens.
-     */
-    deterministicLabel?: string;
     busy?: boolean;
     confirmLabel?: string;
     cancelLabel?: string;
@@ -38,7 +32,6 @@ export function LlmConfirmDialog({
     defaultModel,
     subscription,
     billingNote,
-    deterministicLabel,
     busy,
     confirmLabel = "Run LLM call",
     cancelLabel = "Cancel",
@@ -47,13 +40,6 @@ export function LlmConfirmDialog({
 }: LlmConfirmDialogProps) {
     const [provider, setProvider] = useState("");
     const [model, setModel] = useState("");
-    const willUseLlm = provider.trim() !== "" || model.trim() !== "";
-    const hasDeterministicFallback = Boolean(deterministicLabel);
-    const effectiveLabel = willUseLlm
-        ? confirmLabel
-        : hasDeterministicFallback
-            ? deterministicLabel ?? confirmLabel
-            : confirmLabel;
 
     if (!open) {
         return null;
@@ -74,28 +60,21 @@ export function LlmConfirmDialog({
                     <div className="grid grid-cols-2 gap-3">
                         <div>
                             <label htmlFor="llm-provider" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Provider</label>
-                            <Input id="llm-provider" placeholder={defaultProvider ?? (hasDeterministicFallback ? "blank = deterministic" : "(server default)")} value={provider} onChange={(event) => setProvider(event.currentTarget.value)} />
+                            <Input id="llm-provider" placeholder={defaultProvider ?? "(server default)"} value={provider} onChange={(event) => setProvider(event.currentTarget.value)} />
                         </div>
                         <div>
                             <label htmlFor="llm-model" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Model</label>
-                            <Input id="llm-model" placeholder={defaultModel ?? (hasDeterministicFallback ? "blank = deterministic" : "(server default)")} value={model} onChange={(event) => setModel(event.currentTarget.value)} />
+                            <Input id="llm-model" placeholder={defaultModel ?? "(server default)"} value={model} onChange={(event) => setModel(event.currentTarget.value)} />
                         </div>
                     </div>
-                    {hasDeterministicFallback && !willUseLlm ? (
-                        <div className="rounded-md border border-emerald-400/35 bg-emerald-500/10 p-3 text-xs text-emerald-100">
-                            <p className="font-semibold">Free path selected</p>
-                            <p className="mt-1">No provider/model = deterministic bucket-and-pick from the transcript. Zero AI calls, zero cost. Fill the fields above to use an LLM instead.</p>
-                        </div>
-                    ) : (
-                        <div className="rounded-md border border-amber-400/40 bg-amber-500/10 p-3 text-xs text-amber-100">
-                            <p className="font-semibold">Billing</p>
-                            <p className="mt-1">{subscription === true ? "Counted against your subscription / plan quota." : subscription === false ? "Pay-per-call API spend on your configured provider." : "Cost depends on your configured provider — check your dashboard."}</p>
-                            {billingNote ? <p className="mt-1 text-amber-200/80">{billingNote}</p> : null}
-                        </div>
-                    )}
+                    <div className="rounded-md border border-amber-400/40 bg-amber-500/10 p-3 text-xs text-amber-100">
+                        <p className="font-semibold">Billing</p>
+                        <p className="mt-1">{subscription === true ? "Counted against your subscription / plan quota." : subscription === false ? "Pay-per-call API spend on your configured provider." : "Cost depends on your configured provider — check your dashboard."}</p>
+                        {billingNote ? <p className="mt-1 text-amber-200/80">{billingNote}</p> : null}
+                    </div>
                     <div className="flex justify-end gap-2 pt-2">
                         <Button variant="ghost" onClick={onCancel} disabled={busy}>{cancelLabel}</Button>
-                        <Button onClick={() => onConfirm({ provider: provider.trim() || undefined, model: model.trim() || undefined })} disabled={busy}>{busy ? "Running…" : effectiveLabel}</Button>
+                        <Button onClick={() => onConfirm({ provider: provider.trim() || undefined, model: model.trim() || undefined })} disabled={busy}>{busy ? "Running…" : confirmLabel}</Button>
                     </div>
                 </CardContent>
             </Card>
