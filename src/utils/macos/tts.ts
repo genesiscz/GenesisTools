@@ -164,7 +164,6 @@ export async function setMute(muted: boolean, app?: string): Promise<void> {
 export async function speak(text: string, options?: SpeakOptions): Promise<void> {
     const config = await getConfig();
 
-    // Check mute status
     if (isMuted(config, options?.app)) {
         process.stderr.write("[say] muted\n");
         return;
@@ -190,49 +189,18 @@ export async function speak(text: string, options?: SpeakOptions): Promise<void>
 
     const rawVolume = options?.volume ?? (app ? config.appVolume[app] : undefined) ?? config.defaultVolume ?? 1;
     const volume = normalizeVolume(rawVolume);
-    const useAfplay = volume < 1;
 
-    // Build say args
-    const sayArgs = ["say"];
-
-    // Voice selection
-    if (options?.voice) {
-        sayArgs.push("-v", options.voice);
-    } else {
-        const voiceName = config.defaultVoice ?? (await detectVoiceForText(text));
-
-        if (voiceName) {
-            sayArgs.push("-v", voiceName);
-        }
-    }
-
-    if (options?.rate) {
-        sayArgs.push("-r", String(options.rate));
-    }
-
-    if (useAfplay) {
-        // Render to AIFF, then play with volume via afplay
-        const tmpFile = join(tmpdir(), `genesis-say-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.aiff`);
-        sayArgs.push("-o", tmpFile);
-        sayArgs.push(text);
-
-        const sayProc = Bun.spawn(sayArgs, { stdout: "ignore", stderr: "ignore" });
-        await sayProc.exited;
-
-        if (!existsSync(tmpFile)) {
-            return;
-        }
-
-        await playAudioFile(tmpFile, { volume, wait: options?.wait, cleanup: true });
-    } else {
-        // Direct say (volume = 1, no need for afplay)
-        sayArgs.push(text);
-        const proc = Bun.spawn(sayArgs, { stdout: "ignore", stderr: "ignore" });
-
-        if (options?.wait) {
-            await proc.exited;
-        }
-    }
+    // Dynamic import avoids a circular module init:
+    // AIMacOSTextToSpeechProvider -> tts.ts (renderToBuffer, listVoicesStructured)
+    // tts.ts -> ai/index -> AIMacOSTextToSpeechProvider
+    const { AI } = await import("@app/utils/ai/index");
+    await AI.speak(text, {
+        provider: "local",
+        voice: options?.voice,
+        rate: options?.rate,
+        volume,
+        wait: options?.wait,
+    });
 }
 
 export interface PlayAudioOptions {
