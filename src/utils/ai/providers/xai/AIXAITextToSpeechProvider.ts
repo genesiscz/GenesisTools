@@ -1,0 +1,295 @@
+import logger from "@app/logger";
+import { rateLimitAwareDelay, retry } from "@app/utils/async";
+import type { AIProviderType } from "@app/utils/config/ai.types";
+import { SafeJSON } from "@app/utils/json";
+import { Storage } from "@app/utils/storage/storage";
+import type { AITask, AITextToSpeechProvider, TTSOptions, TTSResult, TTSVoice } from "../../types";
+import { XAIClient } from "./XAIClient";
+
+const MAX_TTS_DELTA_CHARS = 15_000;
+const VOICE_CACHE_TTL = "7 days";
+const VOICE_CACHE_KEY = "xai-voices.json";
+
+const SUPPORTED_TASKS: ReadonlySet<AITask> = new Set(["tts"]);
+const SYNTHESIZE_RETRY_DELAY = rateLimitAwareDelay();
+
+interface XAIVoiceResponse {
+    voices: Array<{
+        voice_id: string;
+        name: string;
+        description?: string;
+        locale?: string;
+    }>;
+}
+
+interface XAIWsAudioDelta {
+    type: "audio.delta";
+    delta: string;
+}
+
+interface XAIWsAudioDone {
+    type: "audio.done";
+    trace_id?: string;
+}
+
+interface XAIWsError {
+    type: "error";
+    message: string;
+}
+
+type XAIWsTtsEvent = XAIWsAudioDelta | XAIWsAudioDone | XAIWsError;
+
+function shouldRetrySynthesize(error: unknown): boolean {
+    const msg = error instanceof Error ? error.message : String(error);
+
+    if (/\b(400|401|403|404)\b/.test(msg)) {
+        return false;
+    }
+
+    return true;
+}
+
+function pickContentType(format?: TTSOptions["format"]): string {
+    if (format === "wav") {
+        return "audio/wav";
+    }
+
+    return "audio/mpeg";
+}
+
+export interface AIXAITextToSpeechProviderOptions {
+    /** Bypass the 7-day voice list cache (used by tests). */
+    forceFreshVoices?: boolean;
+}
+
+export class AIXAITextToSpeechProvider implements AITextToSpeechProvider {
+    readonly type: AIProviderType = "xai";
+    private readonly client = new XAIClient();
+    private readonly storage = new Storage("ai");
+    private readonly forceFreshVoices: boolean;
+
+    constructor(options?: AIXAITextToSpeechProviderOptions) {
+        this.forceFreshVoices = options?.forceFreshVoices ?? false;
+    }
+
+    async isAvailable(): Promise<boolean> {
+        return this.client.isConfigured();
+    }
+
+    supports(task: AITask): boolean {
+        return SUPPORTED_TASKS.has(task);
+    }
+
+    async synthesize(text: string, options?: TTSOptions): Promise<TTSResult> {
+        if (text.length > MAX_TTS_DELTA_CHARS) {
+            throw new Error(
+                `xAI TTS text exceeds ${MAX_TTS_DELTA_CHARS}-character REST limit. Use streaming via --stream.`
+            );
+        }
+
+        return retry(() => this.synthesizeOnce(text, options), {
+            maxAttempts: 3,
+            getDelay: SYNTHESIZE_RETRY_DELAY,
+            shouldRetry: shouldRetrySynthesize,
+        });
+    }
+
+    private async synthesizeOnce(text: string, options?: TTSOptions): Promise<TTSResult> {
+        const format = options?.format ?? "mp3";
+        const body: Record<string, unknown> = {
+            text,
+            voice_id: options?.voice ?? "eve",
+            language: options?.language ?? "auto",
+        };
+
+        if (format !== "mp3") {
+            body.output_format = { codec: format };
+        }
+
+        if (options?.textNormalization) {
+            body.text_normalization = true;
+        }
+
+        const response = await this.client.fetch("/tts", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: SafeJSON.stringify(body),
+        });
+
+        if (!response.ok) {
+            const errBody = await response.text().catch(() => "");
+            throw new Error(`xAI TTS failed: ${response.status} ${response.statusText} — ${errBody.slice(0, 500)}`);
+        }
+
+        const arrayBuffer = await response.arrayBuffer();
+        const contentType = response.headers.get("content-type") ?? pickContentType(format);
+        return { audio: Buffer.from(arrayBuffer), contentType };
+    }
+
+    /**
+     * Yields audio chunks as they arrive over the WebSocket. Caller can pipe
+     * directly into ffplay's stdin for ~200 ms first-audio latency.
+     */
+    synthesizeStream(text: string, options?: TTSOptions): { audio: AsyncIterable<Uint8Array>; contentType: string } {
+        const client = this.client;
+        const format = options?.format ?? "mp3";
+        const params = new URLSearchParams({
+            language: options?.language ?? "auto",
+            voice: options?.voice ?? "eve",
+            codec: format,
+            optimize_streaming_latency: "1",
+        });
+
+        if (options?.textNormalization) {
+            params.set("text_normalization", "true");
+        }
+
+        const audio = (async function* iter(): AsyncIterable<Uint8Array> {
+            const queue: Uint8Array[] = [];
+            let resolveNext: ((value: IteratorResult<Uint8Array>) => void) | null = null;
+            let done = false;
+            let error: Error | null = null;
+
+            const ws = client.openWebSocket("/tts", params);
+
+            const push = (chunk: Uint8Array): void => {
+                if (resolveNext) {
+                    const r = resolveNext;
+                    resolveNext = null;
+                    r({ value: chunk, done: false });
+                } else {
+                    queue.push(chunk);
+                }
+            };
+
+            const finish = (err?: Error): void => {
+                done = true;
+
+                if (err) {
+                    error = err;
+                }
+
+                if (resolveNext) {
+                    const r = resolveNext;
+                    resolveNext = null;
+                    r({ value: undefined as unknown as Uint8Array, done: true });
+                }
+            };
+
+            ws.addEventListener("open", () => {
+                for (let i = 0; i < text.length; i += MAX_TTS_DELTA_CHARS) {
+                    const chunk = text.slice(i, i + MAX_TTS_DELTA_CHARS);
+                    ws.send(SafeJSON.stringify({ type: "text.delta", delta: chunk }));
+                }
+                ws.send(SafeJSON.stringify({ type: "text.done" }));
+            });
+
+            ws.addEventListener("error", () => finish(new Error("xAI TTS WebSocket error")));
+
+            ws.addEventListener("close", (ev) => {
+                if (!done) {
+                    finish(new Error(`xAI TTS WebSocket closed unexpectedly (code ${ev.code})`));
+                }
+            });
+
+            ws.addEventListener("message", (event) => {
+                let parsed: XAIWsTtsEvent;
+
+                try {
+                    parsed = SafeJSON.parse(typeof event.data === "string" ? event.data : event.data.toString());
+                } catch (err) {
+                    logger.debug(`xAI TTS: malformed event: ${err}`);
+                    return;
+                }
+
+                switch (parsed.type) {
+                    case "audio.delta":
+                        push(Buffer.from(parsed.delta, "base64"));
+                        break;
+                    case "audio.done":
+                        try {
+                            ws.close();
+                        } catch {
+                            /* noop */
+                        }
+                        finish();
+                        break;
+                    case "error":
+                        try {
+                            ws.close();
+                        } catch {
+                            /* noop */
+                        }
+                        finish(new Error(`xAI TTS stream error: ${parsed.message}`));
+                        break;
+                }
+            });
+
+            try {
+                while (true) {
+                    if (queue.length > 0) {
+                        yield queue.shift() as Uint8Array;
+                        continue;
+                    }
+
+                    if (done) {
+                        if (error) {
+                            throw error;
+                        }
+
+                        return;
+                    }
+
+                    const result = await new Promise<IteratorResult<Uint8Array>>((r) => {
+                        resolveNext = r;
+                    });
+
+                    if (result.done) {
+                        if (error) {
+                            throw error;
+                        }
+
+                        return;
+                    }
+
+                    yield result.value;
+                }
+            } finally {
+                try {
+                    ws.close();
+                } catch {
+                    /* noop */
+                }
+            }
+        })();
+
+        return { audio, contentType: pickContentType(format) };
+    }
+
+    async listVoices(): Promise<TTSVoice[]> {
+        if (this.forceFreshVoices) {
+            return this.fetchVoices();
+        }
+
+        return this.storage.getFileOrPut(VOICE_CACHE_KEY, () => this.fetchVoices(), VOICE_CACHE_TTL);
+    }
+
+    private async fetchVoices(): Promise<TTSVoice[]> {
+        const response = await this.client.fetch("/tts/voices");
+
+        if (!response.ok) {
+            const errBody = await response.text().catch(() => "");
+            throw new Error(
+                `xAI list voices failed: ${response.status} ${response.statusText} — ${errBody.slice(0, 500)}`
+            );
+        }
+
+        const data = (await response.json()) as XAIVoiceResponse;
+        return data.voices.map((v) => ({
+            id: v.voice_id,
+            name: v.name,
+            description: v.description,
+            locale: v.locale,
+        }));
+    }
+}
