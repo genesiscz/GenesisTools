@@ -38,12 +38,13 @@ async function runSave(rawName: string | undefined, flags: SaveFlags): Promise<v
     const interactive = isInteractive();
     const captureCwd = flags.cwd !== false;
     const captureHistory = flags.history !== false;
+    let forceWrite = !!flags.force;
 
     const scope = await resolveScope(flags, interactive);
     const name = await resolveName(rawName, scope, interactive);
 
     const store = new ProfileStore();
-    if (store.exists(name) && !flags.force) {
+    if (store.exists(name) && !forceWrite) {
         if (!interactive) {
             console.error(`Profile "${name}" already exists. Use --force to overwrite.`);
             console.error(
@@ -59,6 +60,7 @@ async function runSave(rawName: string | undefined, flags: SaveFlags): Promise<v
             p.cancel("Save aborted.");
             return;
         }
+        forceWrite = true;
     }
 
     p.intro(pc.bgCyan(pc.black(" cmux profiles save ")));
@@ -87,7 +89,7 @@ async function runSave(rawName: string | undefined, flags: SaveFlags): Promise<v
             },
         });
 
-        const path = store.write(name, profile, { force: flags.force });
+        const path = store.write(name, profile, { force: forceWrite });
         spinner.stop(`Captured ${countWorkspaces(profile.windows)} workspace(s) in ${Date.now() - startedAt} ms`);
 
         const summary = store.summarize(profile);
