@@ -3,6 +3,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { AI } from "@app/utils/ai/index.ts";
+import { getModelsForTask } from "@app/utils/ai/ModelManager";
+import { getProvidersForTask } from "@app/utils/ai/providers";
 import type { AIProviderType } from "@app/utils/ai/types.ts";
 import { suggestCommand } from "@app/utils/cli/executor";
 import type { SayConfig } from "@app/utils/macos/tts.ts";
@@ -125,6 +127,37 @@ program
     .action(async () => {
         const rootOpts = program.opts<SayOptions>();
         await printVoiceList(rootOpts.provider);
+    });
+
+// `tools say models` subcommand
+program
+    .command("models")
+    .description("List downloadable TTS/STT models grouped by provider")
+    .option("--task <task>", "Filter by task: tts | transcribe", "tts")
+    .action(async (opts: { task?: string }) => {
+        const task = (opts.task ?? "tts") as "tts" | "transcribe";
+
+        // Collect provider types: those that claim to support the task + "local-hf" always
+        // (AILocalProvider supports transcribe but not tts at runtime — yet the registry has
+        // downloadable TTS models registered under local-hf for future use.)
+        const providerTypes = new Set<string>(getProvidersForTask(task).map((p) => p.type));
+        providerTypes.add("local-hf");
+
+        for (const provider of providerTypes) {
+            const models = getModelsForTask(task, provider);
+
+            if (models.length === 0) {
+                continue;
+            }
+
+            console.log();
+            console.log(pc.bold(pc.cyan(`[${provider}] ${task} models`)));
+            const rows = models.map((m) => [m.id, m.name, m.description.slice(0, 80)]);
+            console.log(formatTable(rows, ["ID", "Name", "Description"]));
+        }
+
+        console.log();
+        console.log(pc.dim("Download with: tools ai models download <id>"));
     });
 
 async function resolveText(messageParts: string[], filePath?: string): Promise<string | null> {
