@@ -6,13 +6,20 @@ import type { YoutubeConfig } from "@app/youtube/lib/config";
 import type { YoutubeDatabase } from "@app/youtube/lib/db";
 import { fetchCaptions } from "@app/youtube/lib/captions";
 import type { Transcript } from "@app/youtube/lib/transcript.types";
-import type { TranscribeOpts, TranscriberProgressInfo, TranscriberResult } from "@app/youtube/lib/transcripts.types";
+import type { TranscribeOpts, TranscriptServiceDeps, TranscriberProgressInfo, TranscriberResult } from "@app/youtube/lib/transcripts.types";
 import { downloadAudio } from "@app/youtube/lib/yt-dlp";
+
+const DEFAULT_TRANSCRIPT_DEPS: TranscriptServiceDeps = {
+    fetchCaptions,
+    downloadAudio,
+    createTranscriber: (opts) => Transcriber.create(opts),
+};
 
 export class TranscriptService {
     constructor(
         private readonly db: YoutubeDatabase,
-        private readonly config: YoutubeConfig
+        private readonly config: YoutubeConfig,
+        private readonly deps: TranscriptServiceDeps = DEFAULT_TRANSCRIPT_DEPS
     ) {}
 
     async transcribe(opts: TranscribeOpts): Promise<Transcript> {
@@ -30,7 +37,7 @@ export class TranscriptService {
             }
 
             const preferredLangs = await this.preferredLangs(opts.lang);
-            const captions = await fetchCaptions({ videoId: opts.videoId, preferredLangs });
+            const captions = await this.deps.fetchCaptions({ videoId: opts.videoId, preferredLangs });
 
             if (captions) {
                 this.db.saveTranscript({
@@ -55,7 +62,7 @@ export class TranscriptService {
             ensureBinaryDir(nextAudio);
             await withFileLock(`${nextAudio}.lock`, async () => {
                 opts.onProgress?.({ phase: "audio", message: "downloading audio" });
-                const result = await downloadAudio({
+                const result = await this.deps.downloadAudio({
                     idOrUrl: opts.videoId,
                     outPath: nextAudio,
                     format: "wav",
@@ -69,7 +76,7 @@ export class TranscriptService {
         }
 
         const provider = await this.config.get("provider");
-        const transcriber = await Transcriber.create({
+        const transcriber = await this.deps.createTranscriber({
             provider: opts.provider ?? provider.transcribe,
             persist: opts.persistProvider,
         });

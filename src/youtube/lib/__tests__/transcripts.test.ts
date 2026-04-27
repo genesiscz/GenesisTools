@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { beforeEach, describe, expect, it, mock } from "bun:test";
+import { beforeEach, describe, expect, it } from "bun:test";
 import { YoutubeConfig } from "@app/youtube/lib/config";
 import { YoutubeDatabase } from "@app/youtube/lib/db";
 import { TranscriptService } from "@app/youtube/lib/transcripts";
@@ -19,43 +19,6 @@ let transcriberResult: unknown = {
     duration: 10,
     segments: [{ text: "AI transcript", start: 0, end: 10 }],
 };
-
-mock.module("@app/youtube/lib/captions", () => ({
-    fetchCaptions: async (opts: unknown) => {
-        captionCalls.push(opts);
-
-        return captionResult;
-    },
-}));
-
-mock.module("@app/youtube/lib/yt-dlp", () => ({
-    downloadAudio: async (opts: { outPath: string; onProgress?: (info: unknown) => void }) => {
-        downloadAudioCalls.push(opts);
-        opts.onProgress?.({ phase: "download", percent: 50, message: "half" });
-        writeFileSync(opts.outPath, "audio");
-
-        return { path: opts.outPath, sizeBytes: 5, durationSec: null };
-    },
-}));
-
-mock.module("@app/utils/ai/tasks/Transcriber", () => ({
-    Transcriber: {
-        create: async (opts: unknown) => {
-            transcriberCreateCalls.push(opts);
-
-            return {
-                transcribe: async (audioPath: string, opts: unknown) => {
-                    transcriberTranscribeCalls.push({ audioPath, opts });
-
-                    return transcriberResult;
-                },
-                dispose: () => {
-                    transcriberDisposeCalls.push(true);
-                },
-            };
-        },
-    },
-}));
 
 beforeEach(() => {
     captionResult = null;
@@ -78,7 +41,7 @@ describe("TranscriptService", () => {
 
         try {
             db.saveTranscript({ videoId: "abc123def45", lang: "en", source: "captions", text: "Cached", segments: [{ text: "Cached", start: 0, end: 1 }] });
-            const service = new TranscriptService(db, config);
+            const service = new TranscriptService(db, config, makeDeps());
 
             await expect(service.transcribe({ videoId: "abc123def45" })).resolves.toMatchObject({ text: "Cached", source: "captions" });
             expect(captionCalls).toHaveLength(0);
@@ -99,7 +62,7 @@ describe("TranscriptService", () => {
                 segments: [{ text: "Caption text", start: 0, end: 2 }],
             };
             await config.set("preferredLangs", ["en", "cs"]);
-            const service = new TranscriptService(db, config);
+            const service = new TranscriptService(db, config, makeDeps());
 
             await expect(service.transcribe({ videoId: "abc123def45", lang: "cs" })).resolves.toMatchObject({ text: "Caption text", lang: "cs", source: "captions" });
             expect(captionCalls).toEqual([{ videoId: "abc123def45", preferredLangs: ["cs", "en"] }]);
@@ -117,7 +80,7 @@ describe("TranscriptService", () => {
 
         try {
             await config.update({ provider: { transcribe: "groq" } });
-            const service = new TranscriptService(db, config);
+            const service = new TranscriptService(db, config, makeDeps());
 
             await expect(service.transcribe({ videoId: "abc123def45", provider: "openai", persistProvider: true, onProgress: (info) => progress.push(info) })).resolves.toMatchObject({
                 text: "AI transcript",
@@ -150,7 +113,7 @@ describe("TranscriptService", () => {
             writeFileSync(existingAudio, "audio");
             db.setVideoBinaryPath("abc123def45", "audio", existingAudio, 5);
             captionResult = { text: "Caption text", lang: "en", segments: [] };
-            const service = new TranscriptService(db, config);
+            const service = new TranscriptService(db, config, makeDeps());
 
             await expect(service.transcribe({ videoId: "abc123def45", forceTranscribe: true })).resolves.toMatchObject({ source: "ai" });
             expect(captionCalls).toHaveLength(0);
@@ -185,4 +148,35 @@ async function makeFixture(): Promise<{ db: YoutubeDatabase; config: YoutubeConf
     db.upsertVideo({ id: "abc123def45", channelHandle: "@mkbhd", title: "Video" });
 
     return { db, config, dir };
+}
+
+function makeDeps() {
+    return {
+        fetchCaptions: async (opts: { videoId: string; preferredLangs?: string[] }) => {
+            captionCalls.push(opts);
+
+            return captionResult as { text: string; segments: Array<{ text: string; start: number; end: number }>; lang: string } | null;
+        },
+        downloadAudio: async (opts: { outPath: string; onProgress?: (info: { phase: "download"; percent: number; message: string }) => void }) => {
+            downloadAudioCalls.push(opts);
+            opts.onProgress?.({ phase: "download", percent: 50, message: "half" });
+            writeFileSync(opts.outPath, "audio");
+
+            return { path: opts.outPath, sizeBytes: 5, durationSec: null };
+        },
+        createTranscriber: async (opts: { provider?: string; persist?: boolean }) => {
+            transcriberCreateCalls.push(opts);
+
+            return {
+                transcribe: async (audioPath: string, opts: unknown) => {
+                    transcriberTranscribeCalls.push({ audioPath, opts });
+
+                    return transcriberResult as { text: string; language?: string; duration?: number; segments?: Array<{ text: string; start: number; end: number }> };
+                },
+                dispose: () => {
+                    transcriberDisposeCalls.push(true);
+                },
+            };
+        },
+    };
 }
