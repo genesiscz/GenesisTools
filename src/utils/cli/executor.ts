@@ -82,10 +82,35 @@ export function suggestCommand(
         replaceCommand?: string[];
         /** Flag names to preserve from original argv when using replaceCommand (e.g., ["--session"]) */
         keepFlags?: string[];
+        /**
+         * Subcommand words that are already embedded in toolName and should be
+         * stripped from the leading argv before assembling the suggestion.
+         * Use when toolName includes the full sub-path, e.g.:
+         *   toolName = "tools macos voice-memos transcribe"
+         *   subcommand = ["macos", "voice-memos", "transcribe"]
+         * Without this, process.argv would be appended verbatim and double the path.
+         */
+        subcommand?: string[];
     } = {}
 ): string {
     // process.argv = [bun, script, ...args]
     let args = process.argv.slice(2);
+
+    // Strip leading subcommand tokens that are already in toolName
+    if (modifications.subcommand?.length) {
+        const sub = modifications.subcommand;
+        let matchLen = 0;
+
+        for (let i = 0; i < sub.length && i < args.length; i++) {
+            if (args[i] === sub[i]) {
+                matchLen++;
+            } else {
+                break;
+            }
+        }
+
+        args = args.slice(matchLen);
+    }
 
     // Replace subcommand: keep global options (flags before the command name),
     // then replace everything from the command name onward with new args

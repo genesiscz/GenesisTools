@@ -257,7 +257,16 @@ async function ensureTranscribeProvider(opts: TranscribeOpts): Promise<string> {
 
     const choices = available.length > 0 ? available.join("|") : "local-hf|cloud|openai|groq|openrouter|xai";
     console.error(pc.red("No --provider specified and not in an interactive terminal."));
-    console.error(pc.dim(suggestCommand("tools voice-memos transcribe", { add: ["--provider", `<${choices}>`] })));
+    console.error(
+        pc.dim(
+            suggestCommand("tools macos voice-memos transcribe", {
+                // The 'tools macos' wrapper passes argv as ["voice-memos", "transcribe", ...]
+                // to the inner process — strip those so they don't double the path.
+                subcommand: ["voice-memos", "transcribe"],
+                add: ["--provider", `<${choices}>`],
+            })
+        )
+    );
     process.exit(1);
 }
 
