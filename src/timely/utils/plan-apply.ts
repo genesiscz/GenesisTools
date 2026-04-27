@@ -130,7 +130,7 @@ export async function applyPlan(args: {
                     project_id: ev.project_id,
                     duration: "00:00",
                     memoryCount: 0,
-                    error: `no flat entries after filter (memory_ids ${ev.memory_ids.join(",")} not found in raw memories)`,
+                    error: `no flat entries after filter (${ev.memory_ids.length} memory_ids not found in raw memories)`,
                 });
                 continue;
             }

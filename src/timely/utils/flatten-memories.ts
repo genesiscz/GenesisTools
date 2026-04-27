@@ -70,7 +70,13 @@ export function flattenMemories(memories: TimelyEntry[], allowedIds?: Set<number
     const merged: FlatEntry[] = [];
     for (const [id, items] of byId) {
         const sorted = items
-            .map((it) => ({ id, fromMs: new Date(it.from).getTime(), toMs: new Date(it.to).getTime(), from: it.from, to: it.to }))
+            .map((it) => ({
+                id,
+                fromMs: new Date(it.from).getTime(),
+                toMs: new Date(it.to).getTime(),
+                from: it.from,
+                to: it.to,
+            }))
             .filter((it) => it.toMs > it.fromMs)
             .sort((a, b) => a.fromMs - b.fromMs);
 
@@ -166,13 +172,16 @@ export function buildPayloadFromFlat(flat: FlatEntry[], day: string, projectId: 
     const minutes = Math.floor((totalSec % 3600) / 60);
     const seconds = Math.floor(totalSec % 60);
 
+    const minFrom = flat.reduce((min, f) => (f.from < min ? f.from : min), flat[0].from);
+    const maxTo = flat.reduce((max, f) => (f.to > max ? f.to : max), flat[0].to);
+
     return {
         input: {
             day,
             project_id: projectId,
             note,
-            from: flat[0].from,
-            to: flat[flat.length - 1].to,
+            from: minFrom,
+            to: maxTo,
             hours,
             minutes,
             seconds,

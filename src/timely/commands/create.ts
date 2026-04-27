@@ -5,7 +5,7 @@ import type { OAuth2Tokens, TimelyEntry } from "@app/timely/types";
 import type { CreatePlanV1, PlanIssue } from "@app/timely/types/plan";
 import { type CategorySuggestion, suggestProjects } from "@app/timely/utils/categorizer";
 import { loadEventCorpus } from "@app/timely/utils/event-corpus";
-import { type BuiltPayload, buildPayloadFromFlat, flattenMemories } from "@app/timely/utils/flatten-memories";
+import { buildPayloadFromFlat, flattenMemories } from "@app/timely/utils/flatten-memories";
 import { fetchMemoriesForDates } from "@app/timely/utils/memories";
 import { applyPlan, validatePlan } from "@app/timely/utils/plan-apply";
 import { buildPlan } from "@app/timely/utils/plan-build";
@@ -28,10 +28,6 @@ interface CreateOptions {
     out?: string;
     apply?: string;
     yes?: boolean;
-}
-
-function buildPayload(memories: TimelyEntry[], day: string, projectId: number, note: string): BuiltPayload {
-    return buildPayloadFromFlat(flattenMemories(memories), day, projectId, note);
 }
 
 function expandDates(options: CreateOptions): string[] {
@@ -186,7 +182,13 @@ async function runCreate(storage: Storage, service: TimelyService, options: Crea
             projectId = suggestions[0].projectId;
         }
 
-        const { input, totalSeconds } = buildPayload(dayMemories, date, projectId, note);
+        const flat = flattenMemories(dayMemories);
+        if (flat.length === 0) {
+            p.log.warn(`${date}: all memories filtered out (too short) — skipping`);
+            continue;
+        }
+
+        const { input, totalSeconds } = buildPayloadFromFlat(flat, date, projectId, note);
 
         if (options.dryRun) {
             p.log.info(`${date} DRY-RUN payload:\n${SafeJSON.stringify(input, null, 2)}`);
@@ -269,7 +271,9 @@ function printPlanSummary(plan: CreatePlanV1): void {
             const app = (m.app || "").slice(0, 20).padEnd(20);
             const note = (m.note || "").slice(0, 70);
             const sub = m.sub_notes.length > 0 ? ` | ${m.sub_notes.slice(0, 2).join("; ").slice(0, 80)}` : "";
-            console.log(`    ${String(m.id).padStart(10)}  ${f}-${t}  ${String(m.duration_min).padStart(4)}m  ${app}  ${note}${sub}`);
+            console.log(
+                `    ${String(m.id).padStart(10)}  ${f}-${t}  ${String(m.duration_min).padStart(4)}m  ${app}  ${note}${sub}`
+            );
         }
     }
 
@@ -277,28 +281,9 @@ function printPlanSummary(plan: CreatePlanV1): void {
 }
 
 function readPlanFile(path: string): CreatePlanV1 {
-    const text = path === "-" ? readFromStdin() : readFileSync(path, "utf8");
+    const text = readFileSync(path === "-" ? 0 : path, "utf8");
     const parsed = SafeJSON.parse(text);
     return parsed as CreatePlanV1;
-}
-
-function readFromStdin(): string {
-    const chunks: Buffer[] = [];
-    const fd = 0;
-    const buf = Buffer.alloc(65_536);
-    let n: number;
-    do {
-        try {
-            n = require("node:fs").readSync(fd, buf, 0, buf.length, null);
-        } catch {
-            break;
-        }
-        if (n > 0) {
-            chunks.push(Buffer.from(buf.subarray(0, n)));
-        }
-    } while (n > 0);
-
-    return Buffer.concat(chunks).toString("utf8");
 }
 
 function printIssues(issues: PlanIssue[]): { errors: number; warnings: number } {
@@ -406,6 +391,11 @@ export function registerCreateCommand(program: Command, storage: Storage, servic
         .option("--apply <path>", "Apply a plan JSON file (use - for stdin)")
         .option("--yes", "Skip warning confirmation when applying")
         .action(async (options: CreateOptions) => {
+            if (options.project !== undefined && Number.isNaN(parseInt(options.project, 10))) {
+                logger.error(`Invalid --project: ${options.project} (must be numeric)`);
+                process.exit(1);
+            }
+
             const modes = [options.plan, !!options.apply].filter(Boolean).length;
             if (modes > 1) {
                 logger.error("--plan and --apply are mutually exclusive");
