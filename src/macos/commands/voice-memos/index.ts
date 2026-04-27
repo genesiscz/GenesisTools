@@ -10,8 +10,10 @@ import {
     selectProvider,
 } from "@app/macos/lib/voice-memos/prompts.ts";
 import { AI } from "@app/utils/ai/index.ts";
+import { getAllProviders } from "@app/utils/ai/providers/index.ts";
 import { formatOutput, type OutputFormat } from "@app/utils/ai/transcription-format.ts";
 import type { AIProviderType } from "@app/utils/ai/types.ts";
+import { isInteractive, suggestCommand } from "@app/utils/cli/executor.ts";
 import { copyToClipboard } from "@app/utils/clipboard.ts";
 import { isCloudProvider } from "@app/utils/config/ai.types";
 import { formatDateTime } from "@app/utils/date.ts";
@@ -213,6 +215,52 @@ interface TranscribeOpts {
     sensitive?: boolean;
 }
 
+async function ensureTranscribeProvider(opts: TranscribeOpts): Promise<string> {
+    if (opts.local) {
+        return "local-hf";
+    }
+
+    if (opts.provider) {
+        return opts.provider;
+    }
+
+    const available: string[] = [];
+
+    for (const provider of getAllProviders()) {
+        if (!provider.supports("transcribe")) {
+            continue;
+        }
+
+        if (await provider.isAvailable()) {
+            available.push(provider.type);
+        }
+    }
+
+    if (isInteractive()) {
+        if (available.length === 0) {
+            console.error(pc.red("No transcription providers are available."));
+            console.error(pc.dim("Set one of: OPENAI_API_KEY, GROQ_API_KEY, OPENROUTER_API_KEY, X_AI_API_KEY"));
+            process.exit(1);
+        }
+
+        const picked = await p.select({
+            message: "Pick a transcription provider:",
+            options: available.map((id) => ({ value: id, label: id })),
+        });
+
+        if (p.isCancel(picked)) {
+            process.exit(1);
+        }
+
+        return picked as string;
+    }
+
+    const choices = available.length > 0 ? available.join("|") : "local-hf|cloud|openai|groq|openrouter|xai";
+    console.error(pc.red("No --provider specified and not in an interactive terminal."));
+    console.error(pc.dim(suggestCommand("tools voice-memos transcribe", { add: ["--provider", `<${choices}>`] })));
+    process.exit(1);
+}
+
 async function transcribeAction(id: number | undefined, opts: TranscribeOpts): Promise<void> {
     // Validate --provider and --model early
     validateProviderOption(opts.provider);
@@ -222,6 +270,8 @@ async function transcribeAction(id: number | undefined, opts: TranscribeOpts): P
         transcribeAll(opts.force ?? false);
         return;
     }
+
+    opts.provider = await ensureTranscribeProvider(opts);
 
     // If no ID provided, prompt for memo selection (TTY) or error (non-TTY)
     let resolvedId = id;
