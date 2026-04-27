@@ -30,7 +30,7 @@ export async function runCmuxJSON<T = unknown>(args: string[]): Promise<T> {
         throw new Error(message);
     }
     try {
-        return SafeJSON.parse(result.stdout) as T;
+        return SafeJSON.parse(result.stdout, { strict: true }) as T;
     } catch (error) {
         logger.error({ args, stdout: result.stdout.slice(0, 500), error }, "[cmux] non-JSON response on --json call");
         throw new Error(`cmux ${args.join(" ")} returned non-JSON output:\n${result.stdout.slice(0, 500)}\n(${error})`);

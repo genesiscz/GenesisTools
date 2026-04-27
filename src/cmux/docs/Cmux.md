@@ -204,7 +204,7 @@ A pane is a rectangle in the workspace. cmux manages them in a binary split tree
 | Operation | CLI | Raw RPC |
 |-----------|-----|---------|
 | List panes in workspace | `cmux list-panes --workspace <ref>` | `pane.list {"workspace":"<ref>"}` |
-| New split (creates a new pane next to the target) | `cmux new-split <left\|right\|up\|down> [--workspace <ref>] [--surface <ref>]` returns `{pane_ref, surface_ref, type, workspace_ref, window_ref}` | `surface.split` (see [the BIG GOTCHA](#the-big-gotcha-surfacesplit-ignores-its-surface-param)) |
+| New split (creates a new pane next to the target) | `cmux new-split <left\|right\|up\|down> [--workspace <ref>] [--surface <ref>]` returns `{pane_ref, surface_ref, type, workspace_ref, window_ref}` | `surface.split` (see [the BIG GOTCHA](#the-big-gotcha-surfacesplit-surfacecreate-and-panelist-all-ignore-their-explicit-params)) |
 | Focus pane | `cmux focus-pane --pane <ref>` | `pane.focus` |
 | Resize pane | `cmux resize-pane --pane <ref> -L\|-R\|-U\|-D --amount <n>` | `pane.resize` |
 | Swap panes | `cmux swap-pane --pane <ref> --target-pane <ref>` | `pane.swap` |

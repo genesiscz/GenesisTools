@@ -15,19 +15,29 @@ export function cwdFromTitle(title: string | undefined | null): string | undefin
         return undefined;
     }
     const trimmed = title.trim();
-    // OSC-7 / OSC-1337 titles: "user@host:/abs/path" or "user@host:~/path"; the path
-    // can contain spaces, so use `.+$` rather than `\S+`.
+    // OSC-7 / OSC-1337 titles: "user@host:/abs/path" or "user@host:~/path". The path
+    // can contain spaces (use `.+$` not `\S+`), but only treat the suffix as a cwd
+    // when it actually looks like a path — otherwise titles like `user@host:build`
+    // would round-trip as `cd build` on restore.
     const userHostMatch = trimmed.match(/^[^\s@:]+@[^\s:]+:(.+)$/);
     if (userHostMatch) {
-        return expandHome(userHostMatch[1]);
+        const suffix = userHostMatch[1];
+        if (isPathLike(suffix)) {
+            return expandHome(suffix);
+        }
+        return undefined;
     }
-    if (trimmed === "…" || trimmed === "~" || trimmed.startsWith("…/") || trimmed.startsWith("~/")) {
+    if (isPathLike(trimmed)) {
         return expandHome(trimmed);
     }
-    if (trimmed.startsWith("/")) {
-        return trimmed;
-    }
     return undefined;
+}
+
+function isPathLike(value: string): boolean {
+    if (value === "~" || value === "…") {
+        return true;
+    }
+    return value.startsWith("/") || value.startsWith("~/") || value.startsWith("…/");
 }
 
 function expandHome(path: string): string {

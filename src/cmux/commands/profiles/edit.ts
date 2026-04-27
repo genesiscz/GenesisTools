@@ -5,19 +5,30 @@ import type { Command } from "commander";
 export function registerEditCommand(parent: Command): void {
     parent
         .command("edit <name>")
-        .description("Open the profile JSON in $EDITOR")
+        .description("Open the profile JSON in $VISUAL or $EDITOR")
         .action(async (name: string) => {
-            const store = new ProfileStore();
-            const path = store.pathFor(name);
-            if (!existsSync(path)) {
-                throw new ProfileNotFoundError(name, path);
-            }
+            try {
+                const store = new ProfileStore();
+                const path = store.pathFor(name);
+                if (!existsSync(path)) {
+                    throw new ProfileNotFoundError(name, path);
+                }
 
-            const editor = pickEditor();
-            const proc = Bun.spawn([editor.bin, ...editor.args, path], { stdio: ["inherit", "inherit", "inherit"] });
-            const exitCode = await proc.exited;
-            if (exitCode !== 0) {
-                throw new Error(`${editor.bin} exited with code ${exitCode}`);
+                const editor = pickEditor();
+                const proc = Bun.spawn([editor.bin, ...editor.args, path], {
+                    stdio: ["inherit", "inherit", "inherit"],
+                });
+                const exitCode = await proc.exited;
+                if (exitCode !== 0) {
+                    throw new Error(`${editor.bin} exited with code ${exitCode}`);
+                }
+            } catch (error) {
+                if (error instanceof ProfileNotFoundError) {
+                    console.error(error.message);
+                    process.exitCode = 1;
+                    return;
+                }
+                throw error;
             }
         });
 }

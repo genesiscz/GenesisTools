@@ -428,7 +428,7 @@ async function tryResize(
         return true;
     } catch (error) {
         logger.warn(
-            { error: error instanceof Error ? error.message : String(error), paneRef, direction, amount },
+            { error, paneRef, direction, amount },
             "[restore] split-time resize failed",
         );
         return false;

@@ -173,13 +173,21 @@ function filterWorkspaces(
         if (!ref) {
             throw new Error("scope=window requires a focused workspace or --window <ref>");
         }
-        return all.filter((ws) => ws.window_ref === ref);
+        const filtered = all.filter((ws) => ws.window_ref === ref);
+        if (filtered.length === 0 && options.targetWindowRef) {
+            throw new Error(`No window matches --window ${options.targetWindowRef}`);
+        }
+        return filtered;
     }
     const ref = options.targetWorkspaceRef ?? focusedWorkspaceRef ?? all.find((ws) => ws.selected)?.ref;
     if (!ref) {
         throw new Error("scope=workspace requires a focused workspace or --workspace <ref>");
     }
-    return all.filter((ws) => ws.ref === ref);
+    const filtered = all.filter((ws) => ws.ref === ref);
+    if (filtered.length === 0 && options.targetWorkspaceRef) {
+        throw new Error(`No workspace matches --workspace ${options.targetWorkspaceRef}`);
+    }
+    return filtered;
 }
 
 async function capturePanes(

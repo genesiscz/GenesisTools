@@ -47,6 +47,7 @@ async function runSave(rawName: string | undefined, flags: SaveFlags): Promise<v
     let forceWrite = !!flags.force;
 
     const scope = await resolveScope(flags, interactive);
+    rejectIncompatibleScopeFlags(scope, flags);
     const { captureCwd, captureScreen, captureHistory } = await resolveCaptureFlags(flags, interactive);
     const name = await resolveName(rawName, scope, interactive);
 
@@ -218,9 +219,22 @@ async function resolveCaptureFlags(flags: SaveFlags, interactive: boolean): Prom
     };
 }
 
+const NAME_PATTERN = /^[A-Za-z0-9._-]+$/;
+
+function validateProfileName(input: string): string {
+    const value = input.trim();
+    if (!value) {
+        throw new Error("Profile name cannot be empty");
+    }
+    if (!NAME_PATTERN.test(value)) {
+        throw new Error("Profile name must only contain letters, digits, dots, underscores, or dashes");
+    }
+    return value;
+}
+
 async function resolveName(rawName: string | undefined, scope: ProfileScope, interactive: boolean): Promise<string> {
     if (rawName) {
-        return rawName;
+        return validateProfileName(rawName);
     }
     if (!interactive) {
         console.error("Profile name required as the first positional argument in non-interactive mode.");
@@ -236,14 +250,26 @@ async function resolveName(rawName: string | undefined, scope: ProfileScope, int
                 if (!input || !input.trim()) {
                     return "Name cannot be empty";
                 }
-                if (!/^[A-Za-z0-9._-]+$/.test(input)) {
+                if (!NAME_PATTERN.test(input)) {
                     return "Use letters, digits, dots, underscores, or dashes only";
                 }
                 return undefined;
             },
         })
     );
-    return value.trim();
+    return validateProfileName(value);
+}
+
+function rejectIncompatibleScopeFlags(scope: ProfileScope, flags: SaveFlags): void {
+    if (flags.window && flags.workspace) {
+        throw new Error("Use only one of --window or --workspace, not both");
+    }
+    if (flags.window && scope !== "window") {
+        throw new Error("--window requires --scope window");
+    }
+    if (flags.workspace && scope !== "workspace") {
+        throw new Error("--workspace requires --scope workspace");
+    }
 }
 
 function defaultName(scope: ProfileScope): string {
