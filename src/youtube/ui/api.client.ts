@@ -90,18 +90,38 @@ export const apiClient = {
     getTranscript: (id: VideoId, opts: { lang?: string; source?: "captions" | "ai" } = {}) =>
         api<{ transcript: Transcript }>(withQuery(`/videos/${encodeURIComponent(id)}/transcript`, [["lang", opts.lang], ["source", opts.source]])),
     getSummary: async (id: VideoId, mode: "short" | "timestamped") => {
-        const response = await api<{ summary?: string | TimestampedSummaryEntry[]; short?: string; timestamped?: TimestampedSummaryEntry[] }>(
-            withQuery(`/videos/${encodeURIComponent(id)}/summary`, [["mode", mode]])
-        );
+        const response = await api<{
+            summary?: string | TimestampedSummaryEntry[];
+            mode?: "short" | "timestamped";
+            cached?: boolean;
+        }>(withQuery(`/videos/${encodeURIComponent(id)}/summary`, [["mode", mode]]));
 
         if (mode === "timestamped") {
-            return { timestamped: (response.timestamped ?? response.summary ?? []) as TimestampedSummaryEntry[] };
+            return {
+                timestamped: (response.summary ?? []) as TimestampedSummaryEntry[],
+                cached: response.cached ?? false,
+            };
         }
 
-        return { short: (response.short ?? response.summary ?? "") as string };
+        return { short: (response.summary ?? "") as string, cached: response.cached ?? false };
     },
-    askVideo: (id: VideoId, question: string, topK?: number) =>
-        api<AskVideoResponse>(`/videos/${encodeURIComponent(id)}/qa`, { method: "POST", body: JSON.stringify({ question, topK }) }),
+    generateSummary: async (
+        id: VideoId,
+        opts: { mode: "short" | "timestamped"; force?: boolean; provider?: string; model?: string; targetBins?: number }
+    ) => {
+        const response = await api<{ summary: string | TimestampedSummaryEntry[]; mode: "short" | "timestamped"; cached: boolean }>(
+            `/videos/${encodeURIComponent(id)}/summary`,
+            { method: "POST", body: JSON.stringify(opts) }
+        );
+
+        if (opts.mode === "timestamped") {
+            return { timestamped: (response.summary ?? []) as TimestampedSummaryEntry[], cached: response.cached };
+        }
+
+        return { short: (response.summary ?? "") as string, cached: response.cached };
+    },
+    askVideo: (id: VideoId, opts: { question: string; topK?: number; provider?: string; model?: string }) =>
+        api<AskVideoResponse>(`/videos/${encodeURIComponent(id)}/qa`, { method: "POST", body: JSON.stringify(opts) }),
     listJobs: (params: { status?: JobStatus; limit?: number } = {}) => api<{ jobs: PipelineJob[] }>(withQuery("/jobs", [["status", params.status], ["limit", params.limit]])),
     getJob: (id: number) => api<{ job: PipelineJob }>(`/jobs/${id}`),
     cancelJob: (id: number) => api<{ job: PipelineJob | null }>(`/jobs/${id}/cancel`, { method: "POST" }),

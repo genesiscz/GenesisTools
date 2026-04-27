@@ -30,4 +30,32 @@ export type JobEvent =
     | { type: "stage:completed"; jobId: number; stage: JobStage }
     | { type: "job:completed"; job: PipelineJob }
     | { type: "job:failed"; job: PipelineJob; error: string }
-    | { type: "job:cancelled"; jobId: number };
+    | { type: "job:cancelled"; jobId: number }
+    | { type: "job:activity"; jobId: number; activityId: number };
+
+export type JobActivityKind = "llm" | "embed" | "transcribe";
+
+/**
+ * One AI/API event recorded against a pipeline job (LLM call, embedding batch, transcription).
+ * Surfaces in the jobs inspector drawer so the operator can see prompt/response/cost per call.
+ */
+export interface JobActivity {
+    id: number;
+    jobId: number;
+    stage: JobStage | null;
+    kind: JobActivityKind;
+    action: string | null;
+    provider: string | null;
+    model: string | null;
+    prompt: string | null;
+    response: string | null;
+    tokensIn: number | null;
+    tokensOut: number | null;
+    tokensTotal: number | null;
+    costUsd: number | null;
+    durationMs: number | null;
+    startedAt: string | null;
+    completedAt: string | null;
+    error: string | null;
+    createdAt: string;
+}

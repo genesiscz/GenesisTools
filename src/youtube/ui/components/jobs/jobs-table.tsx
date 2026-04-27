@@ -4,7 +4,8 @@ import { Progress } from "@app/utils/ui/components/progress";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@app/utils/ui/components/table";
 import { EmptyState } from "@app/yt/components/shared/empty-state";
 import { JobStatusBadge } from "@app/yt/components/jobs/job-status-badge";
-import { formatDateTime, formatDuration } from "@app/yt/lib/format";
+import { formatDuration } from "@app/utils/format";
+import { formatDateTime, parseSqliteDate } from "@app/yt/lib/format";
 import { useCancelJob } from "@app/yt/api.hooks";
 import type { PipelineJob } from "@app/youtube/lib/types";
 import { Ban, PlayCircle } from "lucide-react";
@@ -56,8 +57,8 @@ export function JobsTable({ jobs }: { jobs: PipelineJob[] }) {
                             </TableCell>
                             <TableCell className="min-w-52">
                                 <div className="flex items-center gap-3">
-                                    <Progress value={job.progress} className="h-2 bg-black/40 [&>div]:bg-gradient-to-r [&>div]:from-primary [&>div]:to-secondary" />
-                                    <span className="w-10 font-mono text-xs text-secondary">{job.progress}%</span>
+                                    <Progress value={Math.round((job.progress ?? 0) * 100)} className="h-2 bg-black/40 [&>div]:bg-gradient-to-r [&>div]:from-primary [&>div]:to-secondary" />
+                                    <span className="w-10 font-mono text-xs text-secondary">{Math.round((job.progress ?? 0) * 100)}%</span>
                                 </div>
                                 {job.progressMessage ? <div className="mt-1 max-w-52 truncate text-xs text-muted-foreground">{job.progressMessage}</div> : null}
                             </TableCell>
@@ -81,12 +82,12 @@ export function JobsTable({ jobs }: { jobs: PipelineJob[] }) {
 }
 
 function formatJobDuration(job: PipelineJob): string {
-    const start = new Date(job.claimedAt ?? job.createdAt).getTime();
-    const end = new Date(job.completedAt ?? job.updatedAt).getTime();
+    const start = parseSqliteDate(job.claimedAt ?? job.createdAt)?.getTime();
+    const end = parseSqliteDate(job.completedAt ?? job.updatedAt)?.getTime();
 
-    if (Number.isNaN(start) || Number.isNaN(end)) {
+    if (start === undefined || end === undefined || Number.isNaN(start) || Number.isNaN(end)) {
         return formatDateTime(job.updatedAt);
     }
 
-    return formatDuration(Math.max(0, Math.round((end - start) / 1000)));
+    return formatDuration(Math.max(0, end - start), "ms", "hms");
 }

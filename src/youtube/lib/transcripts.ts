@@ -1,5 +1,6 @@
 import { dirname, join } from "node:path";
 import { Transcriber } from "@app/utils/ai/tasks/Transcriber";
+import { recordYoutubeUsage } from "@app/youtube/lib/usage";
 import { withFileLock } from "@app/utils/storage";
 import { audioPath, ensureBinaryDir } from "@app/youtube/lib/cache";
 import type { YoutubeConfig } from "@app/youtube/lib/config";
@@ -87,6 +88,12 @@ export class TranscriptService {
                 language: opts.lang,
                 onProgress: (info: TranscriberProgressInfo) => opts.onProgress?.({ phase: "transcribe", percent: info.percent, message: info.message }),
             })) as TranscriberResult;
+            await recordYoutubeUsage({
+                action: "transcribe:ai",
+                provider: opts.provider ?? provider.transcribe ?? "default",
+                model: "(transcriber-default)",
+                scope: opts.videoId,
+            });
             const lang = result.language ?? opts.lang ?? "en";
             this.db.saveTranscript({
                 videoId: opts.videoId,

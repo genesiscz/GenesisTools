@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { BaseDatabase } from "@app/utils/database";
+import { BaseDatabase, SQL_NOW_UTC } from "@app/utils/database";
 import { withFileLock } from "@app/utils/storage";
 import { deleteIfExists } from "@app/youtube/lib/cache";
 import type { Channel, ChannelHandle } from "@app/youtube/lib/channel.types";
@@ -12,6 +12,7 @@ import type {
     ListVideosOpts,
     PruneExpiredBinariesOpts,
     PruneExpiredBinariesResult,
+    RecordJobActivityInput,
     SaveTranscriptInput,
     SearchTranscriptsOpts,
     SetVideoBinaryPathInput,
@@ -22,7 +23,7 @@ import type {
     UpsertQaChunkInput,
     UpsertVideoInput,
 } from "@app/youtube/lib/db.types";
-import type { JobStage, JobStatus, JobTargetKind, PipelineJob } from "@app/youtube/lib/jobs.types";
+import type { JobActivity, JobActivityKind, JobStage, JobStatus, JobTargetKind, PipelineJob } from "@app/youtube/lib/jobs.types";
 import type { QaChunk } from "@app/youtube/lib/qa.types";
 import type { Language, Transcript, TranscriptSegment } from "@app/youtube/lib/transcript.types";
 import type { TimestampedSummaryEntry, Video, VideoId } from "@app/youtube/lib/video.types";
@@ -42,7 +43,7 @@ export class YoutubeDatabase extends BaseDatabase {
 
             CREATE TABLE IF NOT EXISTS schema_version (
                 version INTEGER PRIMARY KEY,
-                applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+                applied_at TEXT NOT NULL DEFAULT (${SQL_NOW_UTC})
             );
 
             CREATE TABLE IF NOT EXISTS channels (
@@ -53,8 +54,8 @@ export class YoutubeDatabase extends BaseDatabase {
                 subscriber_count INTEGER,
                 thumb_url TEXT,
                 last_synced_at TEXT,
-                created_at TEXT NOT NULL DEFAULT (datetime('now')),
-                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+                created_at TEXT NOT NULL DEFAULT (${SQL_NOW_UTC}),
+                updated_at TEXT NOT NULL DEFAULT (${SQL_NOW_UTC})
             );
 
             CREATE TABLE IF NOT EXISTS videos (
@@ -82,8 +83,9 @@ export class YoutubeDatabase extends BaseDatabase {
                 video_cached_at TEXT,
                 thumb_path TEXT,
                 thumb_cached_at TEXT,
-                created_at TEXT NOT NULL DEFAULT (datetime('now')),
-                updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                pinned INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT (${SQL_NOW_UTC}),
+                updated_at TEXT NOT NULL DEFAULT (${SQL_NOW_UTC}),
                 FOREIGN KEY (channel_handle) REFERENCES channels(handle) ON DELETE CASCADE
             );
             CREATE INDEX IF NOT EXISTS idx_videos_channel ON videos(channel_handle, upload_date DESC);
@@ -100,7 +102,7 @@ export class YoutubeDatabase extends BaseDatabase {
                 text TEXT NOT NULL,
                 segments_json TEXT,
                 duration_sec REAL,
-                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                created_at TEXT NOT NULL DEFAULT (${SQL_NOW_UTC}),
                 FOREIGN KEY (video_id) REFERENCES videos(id) ON DELETE CASCADE,
                 UNIQUE (video_id, lang, source)
             );
@@ -144,8 +146,8 @@ export class YoutubeDatabase extends BaseDatabase {
                 parent_job_id INTEGER,
                 worker_id TEXT,
                 claimed_at TEXT,
-                created_at TEXT NOT NULL DEFAULT (datetime('now')),
-                updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                created_at TEXT NOT NULL DEFAULT (${SQL_NOW_UTC}),
+                updated_at TEXT NOT NULL DEFAULT (${SQL_NOW_UTC}),
                 completed_at TEXT,
                 FOREIGN KEY (parent_job_id) REFERENCES jobs(id) ON DELETE SET NULL
             );
@@ -163,12 +165,47 @@ export class YoutubeDatabase extends BaseDatabase {
                 embedding BLOB,
                 embedding_dims INTEGER,
                 embedder_model TEXT,
-                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                created_at TEXT NOT NULL DEFAULT (${SQL_NOW_UTC}),
                 FOREIGN KEY (video_id) REFERENCES videos(id) ON DELETE CASCADE,
                 UNIQUE (video_id, chunk_idx, embedder_model)
             );
             CREATE INDEX IF NOT EXISTS idx_qa_chunks_video ON qa_chunks(video_id);
+
+            CREATE TABLE IF NOT EXISTS job_activity (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                job_id INTEGER NOT NULL,
+                stage TEXT,
+                kind TEXT NOT NULL,
+                action TEXT,
+                provider TEXT,
+                model TEXT,
+                prompt TEXT,
+                response TEXT,
+                tokens_in INTEGER,
+                tokens_out INTEGER,
+                tokens_total INTEGER,
+                cost_usd REAL,
+                duration_ms INTEGER,
+                started_at TEXT,
+                completed_at TEXT,
+                error TEXT,
+                created_at TEXT NOT NULL DEFAULT (${SQL_NOW_UTC}),
+                FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_job_activity_job ON job_activity(job_id, created_at DESC);
         `);
+
+        this.runMigration("add-videos-pinned", () => {
+            const cols = this.db.query<{ name: string }, []>("PRAGMA table_info(videos)").all() as Array<{ name: string }>;
+
+            if (!cols.some((column) => column.name === "pinned")) {
+                this.db.exec("ALTER TABLE videos ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0");
+            }
+        });
+
+        this.runMigration("normalize-legacy-timestamps-utc", () => {
+            this.normalizeLegacyTimestamps();
+        });
 
         const existing = this.db
             .query<{ version: number }, [number]>("SELECT version FROM schema_version WHERE version = ?")
@@ -179,17 +216,53 @@ export class YoutubeDatabase extends BaseDatabase {
         }
     }
 
+    /**
+     * Rewrites pre-`SQL_NOW_UTC` timestamp values (`'YYYY-MM-DD HH:MM:SS'`, no `T`/`Z`)
+     * to ISO-8601 UTC (`'YYYY-MM-DDTHH:MM:SS.000Z'`). Idempotent: rows already in the
+     * new format (`LIKE '%Z'` or containing `'T'`) are skipped.
+     */
+    private normalizeLegacyTimestamps(): void {
+        const targets: Array<{ table: string; columns: string[] }> = [
+            { table: "schema_version", columns: ["applied_at"] },
+            { table: "channels", columns: ["last_synced_at", "created_at", "updated_at"] },
+            { table: "videos", columns: ["audio_cached_at", "video_cached_at", "thumb_cached_at", "created_at", "updated_at"] },
+            { table: "transcripts", columns: ["created_at"] },
+            { table: "jobs", columns: ["claimed_at", "created_at", "updated_at", "completed_at"] },
+            { table: "qa_chunks", columns: ["created_at"] },
+        ];
+
+        for (const { table, columns } of targets) {
+            for (const column of columns) {
+                this.db.run(
+                    `UPDATE ${table}
+                     SET ${column} = strftime('%Y-%m-%dT%H:%M:%fZ', ${column})
+                     WHERE ${column} IS NOT NULL
+                       AND ${column} NOT LIKE '%Z'
+                       AND ${column} NOT LIKE '%T%'`
+                );
+            }
+        }
+    }
+
+    private runMigration(_name: string, apply: () => void): void {
+        try {
+            apply();
+        } catch (error) {
+            throw new Error(`migration "${_name}" failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+
     upsertChannel(input: UpsertChannelInput): void {
         this.db.run(
             `INSERT INTO channels (handle, channel_id, title, description, subscriber_count, thumb_url, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+             VALUES (?, ?, ?, ?, ?, ?, ${SQL_NOW_UTC})
              ON CONFLICT(handle) DO UPDATE SET
                 channel_id = COALESCE(excluded.channel_id, channels.channel_id),
                 title = COALESCE(excluded.title, channels.title),
                 description = COALESCE(excluded.description, channels.description),
                 subscriber_count = COALESCE(excluded.subscriber_count, channels.subscriber_count),
                 thumb_url = COALESCE(excluded.thumb_url, channels.thumb_url),
-                updated_at = datetime('now')`,
+                updated_at = ${SQL_NOW_UTC}`,
             [
                 input.handle,
                 input.channelId ?? null,
@@ -222,13 +295,13 @@ export class YoutubeDatabase extends BaseDatabase {
     }
 
     setChannelSynced(handle: ChannelHandle): void {
-        this.db.run("UPDATE channels SET last_synced_at = datetime('now'), updated_at = datetime('now') WHERE handle = ?", [handle]);
+        this.db.run(`UPDATE channels SET last_synced_at = ${SQL_NOW_UTC}, updated_at = ${SQL_NOW_UTC} WHERE handle = ?`, [handle]);
     }
 
     upsertVideo(input: UpsertVideoInput): void {
         this.db.run(
             `INSERT INTO videos (id, channel_handle, title, description, upload_date, duration_sec, view_count, like_count, language, available_caption_langs, tags_json, is_short, is_live, thumb_url, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${SQL_NOW_UTC})
              ON CONFLICT(id) DO UPDATE SET
                 channel_handle = excluded.channel_handle,
                 title = excluded.title,
@@ -243,7 +316,7 @@ export class YoutubeDatabase extends BaseDatabase {
                 is_short = excluded.is_short,
                 is_live = excluded.is_live,
                 thumb_url = COALESCE(excluded.thumb_url, videos.thumb_url),
-                updated_at = datetime('now')`,
+                updated_at = ${SQL_NOW_UTC}`,
             [
                 input.id,
                 input.channelHandle,
@@ -310,15 +383,15 @@ export class YoutubeDatabase extends BaseDatabase {
     setVideoBinaryPath(inputOrId: SetVideoBinaryPathInput | VideoId, kind?: "audio" | "video" | "thumb", path?: string | null, sizeBytes?: number): void {
         const input = typeof inputOrId === "string" ? normalizeVideoBinaryPathInput(inputOrId, kind, path, sizeBytes) : inputOrId;
         const columns = videoBinaryColumns(input.kind);
-        const cachedAt = input.path ? "datetime('now')" : "NULL";
+        const cachedAt = input.path ? SQL_NOW_UTC : "NULL";
 
         if (columns.sizeColumn) {
             this.db.run(
-                `UPDATE videos SET ${columns.pathColumn} = ?, ${columns.sizeColumn} = ?, ${columns.cachedAtColumn} = ${cachedAt}, updated_at = datetime('now') WHERE id = ?`,
+                `UPDATE videos SET ${columns.pathColumn} = ?, ${columns.sizeColumn} = ?, ${columns.cachedAtColumn} = ${cachedAt}, updated_at = ${SQL_NOW_UTC} WHERE id = ?`,
                 [input.path, input.path ? input.sizeBytes ?? null : null, input.id]
             );
         } else {
-            this.db.run(`UPDATE videos SET ${columns.pathColumn} = ?, ${columns.cachedAtColumn} = ${cachedAt}, updated_at = datetime('now') WHERE id = ?`, [input.path, input.id]);
+            this.db.run(`UPDATE videos SET ${columns.pathColumn} = ?, ${columns.cachedAtColumn} = ${cachedAt}, updated_at = ${SQL_NOW_UTC} WHERE id = ?`, [input.path, input.id]);
         }
     }
 
@@ -329,7 +402,7 @@ export class YoutubeDatabase extends BaseDatabase {
         const column = input.kind === "short" ? "summary_short" : "summary_timestamped_json";
         const serialized = typeof input.value === "string" ? input.value : JSON.stringify(input.value);
 
-        this.db.run(`UPDATE videos SET ${column} = ?, updated_at = datetime('now') WHERE id = ?`, [serialized, input.id]);
+        this.db.run(`UPDATE videos SET ${column} = ?, updated_at = ${SQL_NOW_UTC} WHERE id = ?`, [serialized, input.id]);
     }
 
     saveTranscript(input: SaveTranscriptInput): void {
@@ -340,7 +413,7 @@ export class YoutubeDatabase extends BaseDatabase {
                 text = excluded.text,
                 segments_json = excluded.segments_json,
                 duration_sec = excluded.duration_sec,
-                created_at = datetime('now')`,
+                created_at = ${SQL_NOW_UTC}`,
             [input.videoId, input.lang, input.source, input.text, JSON.stringify(input.segments), input.durationSec ?? null]
         );
     }
@@ -475,11 +548,11 @@ export class YoutubeDatabase extends BaseDatabase {
     }
 
     claimNextJob(workerId: string, opts: ClaimJobOpts = {}): PipelineJob | null {
-        const stageClause = opts.stage ? "AND EXISTS (SELECT 1 FROM json_each(jobs.stages) WHERE value = ?)" : "";
+        const stageClause = opts.stage ? "AND json_extract(jobs.stages, '$[0]') = ?" : "";
         const row = opts.stage
             ? this.db
                   .query<JobRow, [string, string]>(
-                      `UPDATE jobs SET status = 'running', worker_id = ?, claimed_at = datetime('now'), updated_at = datetime('now')
+                      `UPDATE jobs SET status = 'running', worker_id = ?, claimed_at = ${SQL_NOW_UTC}, updated_at = ${SQL_NOW_UTC}
                        WHERE id = (
                            SELECT id FROM jobs WHERE status = 'pending' ${stageClause} ORDER BY id ASC LIMIT 1
                        )
@@ -488,7 +561,7 @@ export class YoutubeDatabase extends BaseDatabase {
                   .get(workerId, opts.stage)
             : this.db
                   .query<JobRow, [string]>(
-                      `UPDATE jobs SET status = 'running', worker_id = ?, claimed_at = datetime('now'), updated_at = datetime('now')
+                      `UPDATE jobs SET status = 'running', worker_id = ?, claimed_at = ${SQL_NOW_UTC}, updated_at = ${SQL_NOW_UTC}
                        WHERE id = (
                            SELECT id FROM jobs WHERE status = 'pending' ORDER BY id ASC LIMIT 1
                        )
@@ -518,7 +591,7 @@ export class YoutubeDatabase extends BaseDatabase {
             params.push(partial.status);
 
             if (isTerminalJobStatus(partial.status) && partial.completedAt === undefined) {
-                sets.push("completed_at = datetime('now')");
+                sets.push(`completed_at = ${SQL_NOW_UTC}`);
             }
         }
 
@@ -551,7 +624,7 @@ export class YoutubeDatabase extends BaseDatabase {
             return;
         }
 
-        sets.push("updated_at = datetime('now')");
+        sets.push(`updated_at = ${SQL_NOW_UTC}`);
         params.push(id);
         this.db.run(`UPDATE jobs SET ${sets.join(", ")} WHERE id = ?`, params);
     }
@@ -591,7 +664,7 @@ export class YoutubeDatabase extends BaseDatabase {
     markInterruptedJobsForRequeue(): number {
         const result = this.db.run(
             `UPDATE jobs SET status = 'pending', worker_id = NULL, claimed_at = NULL, current_stage = NULL,
-                             progress = 0, progress_message = NULL, updated_at = datetime('now')
+                             progress = 0, progress_message = NULL, updated_at = ${SQL_NOW_UTC}
              WHERE status = 'running'`
         );
 
@@ -612,7 +685,56 @@ export class YoutubeDatabase extends BaseDatabase {
         }
 
         assertJobTransition(existing.status, "cancelled", "cancelJob");
-        this.db.run("UPDATE jobs SET status = 'cancelled', completed_at = datetime('now'), updated_at = datetime('now') WHERE id = ?", [id]);
+        this.db.run(`UPDATE jobs SET status = 'cancelled', completed_at = ${SQL_NOW_UTC}, updated_at = ${SQL_NOW_UTC} WHERE id = ?`, [id]);
+    }
+
+    recordJobActivity(input: RecordJobActivityInput): JobActivity {
+        const result = this.db
+            .query<{ id: number }, Array<string | number | null>>(
+                `INSERT INTO job_activity
+                    (job_id, stage, kind, action, provider, model, prompt, response,
+                     tokens_in, tokens_out, tokens_total, cost_usd,
+                     duration_ms, started_at, completed_at, error)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`
+            )
+            .get(
+                input.jobId,
+                input.stage ?? null,
+                input.kind,
+                input.action ?? null,
+                input.provider ?? null,
+                input.model ?? null,
+                truncateForActivity(input.prompt),
+                truncateForActivity(input.response),
+                input.tokensIn ?? null,
+                input.tokensOut ?? null,
+                input.tokensTotal ?? null,
+                input.costUsd ?? null,
+                input.durationMs ?? null,
+                input.startedAt ?? null,
+                input.completedAt ?? null,
+                input.error ?? null
+            );
+
+        if (!result) {
+            throw new Error("recordJobActivity failed: insert returned no id");
+        }
+
+        const row = this.db.query<JobActivityRow, [number]>("SELECT * FROM job_activity WHERE id = ?").get(result.id);
+
+        if (!row) {
+            throw new Error(`recordJobActivity: inserted id=${result.id} but read returned null`);
+        }
+
+        return rowToJobActivity(row);
+    }
+
+    listJobActivity(jobId: number): JobActivity[] {
+        const rows = this.db
+            .query<JobActivityRow, [number]>("SELECT * FROM job_activity WHERE job_id = ? ORDER BY id ASC")
+            .all(jobId);
+
+        return rows.map(rowToJobActivity);
     }
 
     async pruneExpiredBinaries(opts: PruneExpiredBinariesOpts): Promise<PruneExpiredBinariesResult> {
@@ -634,7 +756,7 @@ export class YoutubeDatabase extends BaseDatabase {
             .query<PruneBinaryRow, [string]>(
                 `SELECT id, ${columns.pathColumn} AS path
                  FROM videos
-                 WHERE ${columns.pathColumn} IS NOT NULL AND ${columns.cachedAtColumn} < ?
+                 WHERE ${columns.pathColumn} IS NOT NULL AND ${columns.cachedAtColumn} < ? AND pinned = 0
                  ORDER BY ${columns.cachedAtColumn} ASC`
             )
             .all(cutoff);
@@ -657,16 +779,20 @@ export class YoutubeDatabase extends BaseDatabase {
         return count;
     }
 
+    setVideoPinned(id: VideoId, pinned: boolean): void {
+        this.db.run(`UPDATE videos SET pinned = ?, updated_at = ${SQL_NOW_UTC} WHERE id = ?`, [pinned ? 1 : 0, id]);
+    }
+
     private clearVideoBinaryPath(id: VideoId, kind: "audio" | "video" | "thumb"): void {
         const columns = videoBinaryColumns(kind);
 
         if (columns.sizeColumn) {
             this.db.run(
-                `UPDATE videos SET ${columns.pathColumn} = NULL, ${columns.sizeColumn} = NULL, ${columns.cachedAtColumn} = NULL, updated_at = datetime('now') WHERE id = ?`,
+                `UPDATE videos SET ${columns.pathColumn} = NULL, ${columns.sizeColumn} = NULL, ${columns.cachedAtColumn} = NULL, updated_at = ${SQL_NOW_UTC} WHERE id = ?`,
                 [id]
             );
         } else {
-            this.db.run(`UPDATE videos SET ${columns.pathColumn} = NULL, ${columns.cachedAtColumn} = NULL, updated_at = datetime('now') WHERE id = ?`, [id]);
+            this.db.run(`UPDATE videos SET ${columns.pathColumn} = NULL, ${columns.cachedAtColumn} = NULL, updated_at = ${SQL_NOW_UTC} WHERE id = ?`, [id]);
         }
     }
 
@@ -997,4 +1123,66 @@ function rowToChannel(row: ChannelRow): Channel {
         createdAt: row.created_at,
         updatedAt: row.updated_at,
     };
+}
+
+const ACTIVITY_TEXT_LIMIT = 64 * 1024;
+
+function truncateForActivity(value: string | null | undefined): string | null {
+    if (value === null || value === undefined) {
+        return null;
+    }
+
+    if (value.length <= ACTIVITY_TEXT_LIMIT) {
+        return value;
+    }
+
+    return `${value.slice(0, ACTIVITY_TEXT_LIMIT)}…[truncated ${value.length - ACTIVITY_TEXT_LIMIT} chars]`;
+}
+
+interface JobActivityRow {
+    id: number;
+    job_id: number;
+    stage: string | null;
+    kind: string;
+    action: string | null;
+    provider: string | null;
+    model: string | null;
+    prompt: string | null;
+    response: string | null;
+    tokens_in: number | null;
+    tokens_out: number | null;
+    tokens_total: number | null;
+    cost_usd: number | null;
+    duration_ms: number | null;
+    started_at: string | null;
+    completed_at: string | null;
+    error: string | null;
+    created_at: string;
+}
+
+function rowToJobActivity(row: JobActivityRow): JobActivity {
+    return {
+        id: row.id,
+        jobId: row.job_id,
+        stage: isJobStage(row.stage) ? row.stage : null,
+        kind: isJobActivityKind(row.kind) ? row.kind : "llm",
+        action: row.action,
+        provider: row.provider,
+        model: row.model,
+        prompt: row.prompt,
+        response: row.response,
+        tokensIn: row.tokens_in,
+        tokensOut: row.tokens_out,
+        tokensTotal: row.tokens_total,
+        costUsd: row.cost_usd,
+        durationMs: row.duration_ms,
+        startedAt: row.started_at,
+        completedAt: row.completed_at,
+        error: row.error,
+        createdAt: row.created_at,
+    };
+}
+
+function isJobActivityKind(value: unknown): value is JobActivityKind {
+    return value === "llm" || value === "embed" || value === "transcribe";
 }

@@ -1,4 +1,5 @@
 import { callLLM } from "@app/utils/ai/call-llm";
+import { identifyProviderChoice, recordYoutubeUsage } from "@app/youtube/lib/usage";
 import { Embedder } from "@app/utils/ai/tasks/Embedder";
 import type { YoutubeConfig } from "@app/youtube/lib/config";
 import type { YoutubeDatabase } from "@app/youtube/lib/db";
@@ -45,6 +46,12 @@ export class QaService {
             opts.signal?.throwIfAborted();
             const chunks = chunkTranscript(transcript);
             const vectors = await embedder.embedBatch(chunks.map((chunk) => chunk.text));
+            await recordYoutubeUsage({
+                action: "qa:embed",
+                provider: opts.provider ?? provider.embed ?? "default",
+                model: modelId,
+                scope: opts.videoId,
+            });
 
             for (let i = 0; i < chunks.length; i++) {
                 opts.signal?.throwIfAborted();
@@ -100,6 +107,14 @@ export class QaService {
                 providerChoice: opts.providerChoice,
                 streaming: opts.streaming,
                 streamTarget: opts.streamTarget,
+            });
+            const ids = identifyProviderChoice(opts.providerChoice);
+            await recordYoutubeUsage({
+                action: "qa:ask",
+                provider: ids.provider,
+                model: ids.model,
+                usage: result.usage,
+                scope: opts.videoIds.join(","),
             });
 
             return {

@@ -66,9 +66,22 @@ export function useSummary(id: VideoId | null, mode: "short" | "timestamped") {
     });
 }
 
+export function useGenerateSummary(id: VideoId) {
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        mutationFn: (opts: { mode: "short" | "timestamped"; force?: boolean; provider?: string; model?: string; targetBins?: number }) =>
+            apiClient.generateSummary(id, opts),
+        onSuccess: (_data, opts) => {
+            queryClient.invalidateQueries({ queryKey: ["summary", id, opts.mode] });
+            queryClient.invalidateQueries({ queryKey: ["video", id] });
+        },
+    });
+}
+
 export function useAskVideo(id: VideoId) {
     return useMutation({
-        mutationFn: (vars: { question: string; topK?: number }) => apiClient.askVideo(id, vars.question, vars.topK),
+        mutationFn: (vars: { question: string; topK?: number; provider?: string; model?: string }) => apiClient.askVideo(id, vars),
     });
 }
 

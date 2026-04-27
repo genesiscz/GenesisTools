@@ -72,7 +72,8 @@ export function registerChannelsCommand(program: Command): void {
                 emptyMessage: "No saved channels — try `tools youtube channels add @mkbhd`.",
                 schema: [
                     { header: "Handle", get: (channel) => channel.handle, minWidth: 16 },
-                    { header: "Title", get: (channel) => channel.title ?? pc.dim("(unsynced)"), maxWidth: 40 },
+                    { header: "Title", get: (channel) => channel.title ?? pc.dim("—"), maxWidth: 40 },
+                    { header: "Videos", get: (channel) => channel.lastSyncedAt ? "synced" : pc.dim("not synced"), minWidth: 10 },
                     { header: "Last sync", get: (channel) => channel.lastSyncedAt ?? "—", color: (value) => pc.dim(value) },
                 ],
             });

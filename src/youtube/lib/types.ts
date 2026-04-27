@@ -3,6 +3,8 @@ export type { FetchCaptionsOpts, FetchCaptionsResult } from "@app/youtube/lib/ca
 export type { Channel, ChannelHandle } from "@app/youtube/lib/channel.types";
 export type { YoutubeConfigShape } from "@app/youtube/lib/config.types";
 export type {
+    JobActivity,
+    JobActivityKind,
     JobEvent,
     JobStage,
     JobStatus,

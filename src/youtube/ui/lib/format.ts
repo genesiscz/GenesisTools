@@ -1,3 +1,7 @@
+import { parseSqliteOrIsoDate } from "@app/utils/sql-time";
+
+export { parseSqliteOrIsoDate as parseSqliteDate } from "@app/utils/sql-time";
+
 export function formatNumber(value: number | null | undefined): string {
     if (value === null || value === undefined) {
         return "—";
@@ -15,11 +19,13 @@ export function formatDate(value: string | null | undefined): string {
 }
 
 export function formatDateTime(value: string | null | undefined): string {
-    if (!value) {
+    const parsed = parseSqliteOrIsoDate(value);
+
+    if (!parsed) {
         return "—";
     }
 
-    return new Intl.DateTimeFormat("en", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(value));
+    return new Intl.DateTimeFormat("en", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(parsed);
 }
 
 export function formatDuration(seconds: number | null | undefined): string {

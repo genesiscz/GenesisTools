@@ -7,7 +7,7 @@ import { ProgressBar } from "@app/yt/components/pipeline/progress-bar";
 import { Loading } from "@app/yt/components/shared/loading";
 import { YouTubeIframe, VideoDetailTabs, type VideoDetailDataSource, type VideoDetailTab } from "@app/utils/ui/components/youtube";
 import { formatDate, formatDuration, formatNumber } from "@app/yt/lib/format";
-import { useAskVideo, useSummary, useTranscript, useVideo } from "@app/yt/api.hooks";
+import { useAskVideo, useGenerateSummary, useSummary, useTranscript, useVideo } from "@app/yt/api.hooks";
 import { useEventStream } from "@app/yt/ws.client";
 import type { VideoId } from "@app/youtube/lib/types";
 import { Captions, Eye, Radio } from "lucide-react";
@@ -16,6 +16,7 @@ const videoDetailDataSource: VideoDetailDataSource = {
     useVideo,
     useTranscript,
     useSummary,
+    useGenerateSummary,
     useAskVideo,
 };
 

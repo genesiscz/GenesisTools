@@ -1,4 +1,5 @@
 import { stat } from "node:fs/promises";
+import logger from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import type { ChannelHandle } from "@app/youtube/lib/channel.types";
 import type {
@@ -12,17 +13,17 @@ import type {
     YtDlpAvailability,
 } from "@app/youtube/lib/yt-dlp.types";
 
-interface RawListing {
-    entries?: RawListedVideo[];
-}
-
 interface RawListedVideo {
     id?: string;
     title?: string;
     duration?: number;
     upload_date?: string;
     live_status?: string;
+    release_timestamp?: number;
+    timestamp?: number;
 }
+
+type ChannelTab = "videos" | "streams" | "shorts";
 
 interface RawDumpJson {
     id?: string;
@@ -57,29 +58,37 @@ export async function checkYtDlp(): Promise<YtDlpAvailability> {
 }
 
 export async function listChannelVideos(opts: ListChannelVideosOpts): Promise<ListedVideo[]> {
-    const normalVideos = await runChannelListing(opts, false);
+    logger.info({ handle: opts.handle, limit: opts.limit, includeShorts: opts.includeShorts }, "yt-dlp listChannelVideos started");
 
-    if (!opts.includeShorts) {
-        return normalVideos;
+    const tabs: ChannelTab[] = opts.includeShorts ? ["videos", "streams", "shorts"] : ["videos", "streams"];
+    const collected: ListedVideo[] = [];
+
+    for (const tab of tabs) {
+        try {
+            const tabVideos = await runChannelListing(opts, tab);
+            collected.push(...tabVideos);
+        } catch (error) {
+            logger.warn({ handle: opts.handle, tab, error: error instanceof Error ? error.message : String(error) }, "yt-dlp listChannelVideos tab failed (continuing)");
+        }
     }
 
-    const shortVideos = await runChannelListing(opts, true);
     const seen = new Set<string>();
-
-    return [...normalVideos, ...shortVideos].filter((video) => {
+    const videos = collected.filter((video) => {
         if (seen.has(video.id)) {
             return false;
         }
-
         seen.add(video.id);
-
         return true;
     });
+
+    logger.info({ handle: opts.handle, videos: videos.length, tabs }, "yt-dlp listChannelVideos completed");
+
+    return videos;
 }
 
-async function runChannelListing(opts: ListChannelVideosOpts, shortsOnly: boolean): Promise<ListedVideo[]> {
-    const url = `https://www.youtube.com/${opts.handle}/videos`;
-    const args = ["yt-dlp", "--flat-playlist", "--dump-single-json", "--no-warnings"];
+async function runChannelListing(opts: ListChannelVideosOpts, tab: ChannelTab): Promise<ListedVideo[]> {
+    const url = `https://www.youtube.com/${opts.handle}/${tab}`;
+    const args = ["yt-dlp", "--flat-playlist", "--no-warnings", "--print", "%(.{id,title,duration,upload_date,live_status,release_timestamp,timestamp})j"];
 
     if (opts.limit) {
         args.push("--playlist-end", String(opts.limit));
@@ -89,12 +98,6 @@ async function runChannelListing(opts: ListChannelVideosOpts, shortsOnly: boolea
         args.push("--dateafter", opts.sinceUploadDate.replaceAll("-", ""));
     }
 
-    if (shortsOnly) {
-        args.push("--match-filter", "is_short");
-    } else if (!opts.includeShorts) {
-        args.push("--match-filter", "!is_short");
-    }
-
     args.push(url);
     const proc = Bun.spawn(args, { stdio: ["ignore", "pipe", "pipe"], signal: opts.signal });
     const stdout = await new Response(proc.stdout).text();
@@ -102,16 +105,28 @@ async function runChannelListing(opts: ListChannelVideosOpts, shortsOnly: boolea
 
     if (exit !== 0) {
         const stderr = await new Response(proc.stderr).text();
-        throw new Error(`yt-dlp listChannelVideos failed: ${stderr.trim()}`);
+        logger.warn({ handle: opts.handle, tab, exit, stderr: stderr.trim() }, "yt-dlp listChannelVideos tab failed");
+        throw new Error(`yt-dlp listChannelVideos failed for tab ${tab}: ${stderr.trim()}`);
     }
 
-    const raw = SafeJSON.parse(stdout, { strict: true }) as RawListing | undefined;
+    const lines = stdout.split("\n").map((line) => line.trim()).filter(Boolean);
+    const out: ListedVideo[] = [];
 
-    return (raw?.entries ?? []).flatMap((entry) => normalizeListedVideo(entry, shortsOnly));
+    for (const line of lines) {
+        const entry = SafeJSON.parse(line, { strict: false }) as RawListedVideo | undefined;
+        if (!entry) {
+            continue;
+        }
+        out.push(...normalizeListedVideo(entry, tab));
+    }
+
+    return out;
 }
 
 export async function dumpVideoMetadata(idOrUrl: string, opts: { signal?: AbortSignal } = {}): Promise<DumpedVideoMetadata> {
-    const proc = Bun.spawn(["yt-dlp", "--skip-download", "--dump-json", "--no-warnings", idOrUrl], {
+    const target = normalizeVideoTarget(idOrUrl);
+    logger.info({ target: idOrUrl, normalizedTarget: target }, "yt-dlp dumpVideoMetadata started");
+    const proc = Bun.spawn(["yt-dlp", "--skip-download", "--dump-json", "--no-warnings", target], {
         stdio: ["ignore", "pipe", "pipe"],
         signal: opts.signal,
     });
@@ -120,6 +135,7 @@ export async function dumpVideoMetadata(idOrUrl: string, opts: { signal?: AbortS
 
     if (exit !== 0) {
         const stderr = await new Response(proc.stderr).text();
+        logger.error({ target: idOrUrl, normalizedTarget: target, exit, stderr: stderr.trim() }, "yt-dlp dumpVideoMetadata failed");
         throw new Error(`yt-dlp dumpVideoMetadata failed: ${stderr.trim()}`);
     }
 
@@ -195,6 +211,7 @@ async function runDownloadWithProgress(args: string[], signal: AbortSignal | und
     const exit = await proc.exited;
 
     if (exit !== 0) {
+        logger.error({ label, exit, stderr: stderr.trim() }, "yt-dlp download failed");
         throw new Error(`yt-dlp ${label} failed: ${stderr.trim()}`);
     }
 
@@ -244,18 +261,35 @@ async function streamProgress(stream: ReadableStream<Uint8Array>, onLine: (line:
     }
 }
 
-function normalizeListedVideo(entry: RawListedVideo, isShort: boolean): ListedVideo[] {
+function normalizeVideoTarget(idOrUrl: string): string {
+    const trimmed = idOrUrl.trim();
+
+    if (trimmed.includes("://")) {
+        return trimmed;
+    }
+
+    if (/^[A-Za-z0-9_-]{11}$/.test(trimmed)) {
+        return `https://www.youtube.com/watch?v=${trimmed}`;
+    }
+
+    return trimmed;
+}
+
+function normalizeListedVideo(entry: RawListedVideo, tab: ChannelTab): ListedVideo[] {
     if (!entry.id || !entry.title) {
         return [];
     }
+
+    const uploadDate = normalizeUploadDate(entry.upload_date)
+        ?? normalizeTimestampToDate(entry.release_timestamp ?? entry.timestamp);
 
     return [
         {
             id: entry.id,
             title: entry.title,
             durationSec: entry.duration ?? null,
-            uploadDate: normalizeUploadDate(entry.upload_date),
-            isShort,
+            uploadDate,
+            isShort: tab === "shorts",
             isLive: entry.live_status === "is_live" || entry.live_status === "is_upcoming",
         },
     ];
@@ -267,4 +301,13 @@ function normalizeUploadDate(uploadDate?: string): string | null {
     }
 
     return `${uploadDate.slice(0, 4)}-${uploadDate.slice(4, 6)}-${uploadDate.slice(6, 8)}`;
+}
+
+function normalizeTimestampToDate(unixSeconds?: number): string | null {
+    if (typeof unixSeconds !== "number" || !Number.isFinite(unixSeconds) || unixSeconds <= 0) {
+        return null;
+    }
+
+    const iso = new Date(unixSeconds * 1000).toISOString();
+    return iso.slice(0, 10);
 }

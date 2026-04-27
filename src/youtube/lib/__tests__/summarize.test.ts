@@ -9,13 +9,17 @@ import { bucketSegments, SummaryService } from "@app/youtube/lib/summarize";
 const summarizerCreateCalls: unknown[] = [];
 const summarizeCalls: unknown[] = [];
 const disposeCalls: unknown[] = [];
+const callLlmCalls: unknown[] = [];
 let summaries: string[] = [];
+let llmResponses: string[] = [];
 
 beforeEach(() => {
     summarizerCreateCalls.length = 0;
     summarizeCalls.length = 0;
     disposeCalls.length = 0;
+    callLlmCalls.length = 0;
     summaries = [];
+    llmResponses = [];
 });
 
 describe("SummaryService", () => {
@@ -55,30 +59,65 @@ describe("SummaryService", () => {
         }
     });
 
-    it("summarizes timestamped bins and persists them", async () => {
+    it("summarizes timestamped output via a single Summarizer call (no providerChoice)", async () => {
         const { db, config, dir } = await makeFixture();
         const progress: unknown[] = [];
 
         try {
-            summaries = ["Bin one", "Bin two"];
+            summaries = [JSON.stringify([
+                { startSec: 0, endSec: 10, text: "First half" },
+                { startSec: 10, endSec: 20, text: "Second half" },
+            ])];
             const service = new SummaryService(db, config, makeDeps());
 
-            await expect(service.summarize({ videoId: "abc123def45", mode: "timestamped", binSizeSec: 10, provider: "groq", onProgress: (info) => progress.push(info) })).resolves.toEqual({
+            await expect(service.summarize({ videoId: "abc123def45", mode: "timestamped", provider: "groq", onProgress: (info) => progress.push(info) })).resolves.toEqual({
                 timestamped: [
-                    { startSec: 0, endSec: 10, text: "Bin one" },
-                    { startSec: 10, endSec: 20, text: "Bin two" },
+                    { startSec: 0, endSec: 10, text: "First half" },
+                    { startSec: 10, endSec: 20, text: "Second half" },
                 ],
             });
             expect(summarizerCreateCalls).toEqual([{ provider: "groq" }]);
-            expect(summarizeCalls).toEqual(["First second", "third fourth"]);
+            expect(summarizeCalls).toHaveLength(1);
             expect(db.getVideo("abc123def45")?.summaryTimestamped).toEqual([
-                { startSec: 0, endSec: 10, text: "Bin one" },
-                { startSec: 10, endSec: 20, text: "Bin two" },
+                { startSec: 0, endSec: 10, text: "First half" },
+                { startSec: 10, endSec: 20, text: "Second half" },
             ]);
-            expect(progress).toEqual([
-                { phase: "summarize", percent: 0, message: "Summarizing bin 1/2" },
-                { phase: "summarize", percent: 0.5, message: "Summarizing bin 2/2" },
-            ]);
+            expect(progress).toEqual([{ phase: "summarize", message: "Summarizing entire transcript in one call" }]);
+        } finally {
+            db.close();
+            await rm(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("summarizes timestamped output via callLLM when providerChoice is supplied", async () => {
+        const { db, config, dir } = await makeFixture();
+
+        try {
+            llmResponses = ["```json\n[{\"startSec\":0,\"endSec\":20,\"text\":\"All of it\"}]\n```"];
+            const service = new SummaryService(db, config, makeDeps());
+
+            const fakeChoice = { provider: "fake", model: "fake" } as unknown as Parameters<typeof service.summarize>[0]["providerChoice"];
+            await expect(service.summarize({ videoId: "abc123def45", mode: "timestamped", providerChoice: fakeChoice })).resolves.toEqual({
+                timestamped: [{ startSec: 0, endSec: 20, text: "All of it" }],
+            });
+            expect(callLlmCalls).toHaveLength(1);
+            expect(summarizeCalls).toHaveLength(0);
+        } finally {
+            db.close();
+            await rm(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("falls back to a single bin if the LLM response cannot be parsed as JSON", async () => {
+        const { db, config, dir } = await makeFixture();
+
+        try {
+            summaries = ["Plain prose, not JSON at all."];
+            const service = new SummaryService(db, config, makeDeps());
+
+            const result = await service.summarize({ videoId: "abc123def45", mode: "timestamped" });
+            expect(result.timestamped?.length).toBe(1);
+            expect(result.timestamped?.[0].text).toContain("Plain prose");
         } finally {
             db.close();
             await rm(dir, { recursive: true, force: true });
@@ -149,6 +188,11 @@ function makeDeps() {
                     disposeCalls.push(true);
                 },
             };
+        },
+        callLLM: async (opts: unknown) => {
+            callLlmCalls.push(opts);
+
+            return { content: llmResponses.shift() ?? "[]" };
         },
     };
 }

@@ -37,21 +37,42 @@ export function useSummary(id: VideoId | null, mode: "short" | "timestamped") {
     return useQuery({
         queryKey: ["summary", id, mode],
         queryFn: async () => {
-            const response = await send<{ summary?: string | TimestampedSummaryEntry[]; short?: string; timestamped?: TimestampedSummaryEntry[] }>({ type: "api:getSummary", id: id as VideoId, mode });
+            const response = await send<ExtensionApiMap["api:getSummary"]>({ type: "api:getSummary", id: id as VideoId, mode });
 
             if (mode === "timestamped") {
-                return { timestamped: (response.timestamped ?? response.summary ?? []) as TimestampedSummaryEntry[] };
+                return { timestamped: (response.summary ?? []) as TimestampedSummaryEntry[], cached: response.cached ?? false };
             }
 
-            return { short: (response.short ?? response.summary ?? "") as string };
+            return { short: (response.summary ?? "") as string, cached: response.cached ?? false };
         },
         enabled: id !== null,
     });
 }
 
+export function useGenerateSummary(id: VideoId) {
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        mutationFn: async (opts: { mode: "short" | "timestamped"; force?: boolean; provider?: string; model?: string; targetBins?: number }) => {
+            const response = await send<ExtensionApiMap["api:generateSummary"]>({ type: "api:generateSummary", id, ...opts });
+
+            if (opts.mode === "timestamped") {
+                return { timestamped: (response.summary ?? []) as TimestampedSummaryEntry[], cached: response.cached ?? false };
+            }
+
+            return { short: (response.summary ?? "") as string, cached: response.cached ?? false };
+        },
+        onSuccess: (_data, opts) => {
+            queryClient.invalidateQueries({ queryKey: ["summary", id, opts.mode] });
+            queryClient.invalidateQueries({ queryKey: ["video", id] });
+        },
+    });
+}
+
 export function useAskVideo(id: VideoId) {
     return useMutation({
-        mutationFn: (vars: { question: string; topK?: number }) => send<ExtensionApiMap["api:askVideo"]>({ type: "api:askVideo", id, question: vars.question, topK: vars.topK }),
+        mutationFn: (vars: { question: string; topK?: number; provider?: string; model?: string }) =>
+            send<ExtensionApiMap["api:askVideo"]>({ type: "api:askVideo", id, ...vars }),
     });
 }
 
@@ -76,6 +97,7 @@ export const dataSource: VideoDetailDataSource = {
     useVideo,
     useTranscript,
     useSummary,
+    useGenerateSummary,
     useAskVideo,
 };
 

@@ -53,57 +53,82 @@ describe("checkYtDlp", () => {
 });
 
 describe("listChannelVideos", () => {
-    it("parses flat playlist JSON and excludes shorts by default", async () => {
+    it("queries /videos and /streams tabs and tags entries appropriately", async () => {
         spyOn(Bun, "spawn").mockImplementation((cmd) => {
             const args = cmd as string[];
             spawnCalls.push(args);
+            const url = args[args.length - 1];
 
-            expect(args).toContain("--match-filter");
-            expect(args).toContain("!is_short");
+            if (url.endsWith("/streams")) {
+                return mockProcess(`${JSON.stringify({ id: "live1234567", title: "Stream", duration: 3600, live_status: "was_live" })}\n`);
+            }
 
-            return mockProcess(JSON.stringify({
-                entries: [
-                    { id: "abc123def45", title: "One", duration: 123, upload_date: "20260401", live_status: "not_live" },
-                    { id: "def456ghi78", title: "Live", live_status: "is_live" },
-                ],
-            }));
+            return mockProcess([
+                JSON.stringify({ id: "abc123def45", title: "One", duration: 123, upload_date: "20260401" }),
+                JSON.stringify({ id: "def456ghi78", title: "Live", live_status: "is_live" }),
+            ].join("\n") + "\n");
         });
 
-        await expect(listChannelVideos({ handle: "@mkbhd", limit: 2, sinceUploadDate: "2026-01-02" })).resolves.toEqual([
+        const result = await listChannelVideos({ handle: "@mkbhd", limit: 2, sinceUploadDate: "2026-01-02" });
+        expect(result).toEqual([
             { id: "abc123def45", title: "One", durationSec: 123, uploadDate: "2026-04-01", isShort: false, isLive: false },
             { id: "def456ghi78", title: "Live", durationSec: null, uploadDate: null, isShort: false, isLive: true },
+            { id: "live1234567", title: "Stream", durationSec: 3600, uploadDate: null, isShort: false, isLive: false },
         ]);
+        expect(spawnCalls).toHaveLength(2);
         expect(spawnCalls[0]).toContain("--playlist-end");
         expect(spawnCalls[0]).toContain("2");
         expect(spawnCalls[0]).toContain("--dateafter");
         expect(spawnCalls[0]).toContain("20260102");
+        expect(spawnCalls[0]).toContain("--print");
+        expect(spawnCalls[0][spawnCalls[0].length - 1]).toBe("https://www.youtube.com/@mkbhd/videos");
+        expect(spawnCalls[1][spawnCalls[1].length - 1]).toBe("https://www.youtube.com/@mkbhd/streams");
     });
 
-    it("runs a second shorts pass when includeShorts is true", async () => {
+    it("queries /shorts in addition when includeShorts is true and tags shorts", async () => {
         spyOn(Bun, "spawn").mockImplementation((cmd) => {
             const args = cmd as string[];
             spawnCalls.push(args);
-            const isShortsPass = args.includes("is_short");
+            const url = args[args.length - 1];
 
-            if (isShortsPass) {
-                return mockProcess(JSON.stringify({ entries: [{ id: "short123456", title: "Short", duration: 32, upload_date: "20260303" }] }));
+            if (url.endsWith("/shorts")) {
+                return mockProcess(`${JSON.stringify({ id: "short123456", title: "Short", duration: 32 })}\n`);
+            }
+            if (url.endsWith("/streams")) {
+                return mockProcess("");
             }
 
-            return mockProcess(JSON.stringify({ entries: [{ id: "long1234567", title: "Long", duration: 300, upload_date: "20260302" }] }));
+            return mockProcess(`${JSON.stringify({ id: "long1234567", title: "Long", duration: 300 })}\n`);
         });
 
-        await expect(listChannelVideos({ handle: "@mkbhd", includeShorts: true })).resolves.toEqual([
-            { id: "long1234567", title: "Long", durationSec: 300, uploadDate: "2026-03-02", isShort: false, isLive: false },
-            { id: "short123456", title: "Short", durationSec: 32, uploadDate: "2026-03-03", isShort: true, isLive: false },
+        const result = await listChannelVideos({ handle: "@mkbhd", includeShorts: true });
+        expect(result).toEqual([
+            { id: "long1234567", title: "Long", durationSec: 300, uploadDate: null, isShort: false, isLive: false },
+            { id: "short123456", title: "Short", durationSec: 32, uploadDate: null, isShort: true, isLive: false },
         ]);
-        expect(spawnCalls).toHaveLength(2);
-        expect(spawnCalls[1]).toContain("is_short");
+        expect(spawnCalls).toHaveLength(3);
+        const urls = spawnCalls.map((args) => args[args.length - 1]);
+        expect(urls).toContain("https://www.youtube.com/@mkbhd/videos");
+        expect(urls).toContain("https://www.youtube.com/@mkbhd/streams");
+        expect(urls).toContain("https://www.youtube.com/@mkbhd/shorts");
     });
 
-    it("throws stderr when yt-dlp listing fails", async () => {
-        spyOn(Bun, "spawn").mockImplementation(() => mockProcess("", "no channel", 1));
+    it("returns successful tabs and skips failed tabs without throwing", async () => {
+        spyOn(Bun, "spawn").mockImplementation((cmd) => {
+            const args = cmd as string[];
+            const url = args[args.length - 1];
 
-        await expect(listChannelVideos({ handle: "@missing" })).rejects.toThrow("yt-dlp listChannelVideos failed: no channel");
+            if (url.endsWith("/streams")) {
+                return mockProcess("", "no channel streams", 1);
+            }
+
+            return mockProcess(`${JSON.stringify({ id: "abc123def45", title: "Only Video" })}\n`);
+        });
+
+        const result = await listChannelVideos({ handle: "@missing" });
+        expect(result).toEqual([
+            { id: "abc123def45", title: "Only Video", durationSec: null, uploadDate: null, isShort: false, isLive: false },
+        ]);
     });
 });
 
@@ -151,7 +176,7 @@ describe("dumpVideoMetadata", () => {
             channelId: "UCBJycsmduvYEL83R_U4JriQ",
             channelTitle: "MKBHD",
         });
-        expect(spawnCalls[0]).toEqual(["yt-dlp", "--skip-download", "--dump-json", "--no-warnings", "abc123def45"]);
+        expect(spawnCalls[0]).toEqual(["yt-dlp", "--skip-download", "--dump-json", "--no-warnings", "https://www.youtube.com/watch?v=abc123def45"]);
     });
 
     it("throws stderr when metadata dumping fails", async () => {

@@ -25,11 +25,11 @@ describe("youtube server command", () => {
         stdoutSpy.mockRestore();
     });
 
-    it("lists server lifecycle subcommands in help", () => {
+    it("lists server lifecycle subcommands in help", async () => {
         const program = new Command().exitOverride((error) => {
             throw error;
         });
-        const { registerServerCommand } = require("@app/youtube/commands/server") as typeof import("@app/youtube/commands/server");
+        const { registerServerCommand } = await import("@app/youtube/commands/server");
         registerServerCommand(program);
 
         expect(() => program.parse(["node", "test", "server", "--help"])).toThrow("(outputHelp)");

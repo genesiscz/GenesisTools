@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { fetchUiConfig } from "@app/yt/config.client";
 import type { JobEvent } from "@app/youtube/lib/types";
 
@@ -20,7 +20,15 @@ export async function createEventStream(opts: UseEventStreamOpts = {}): Promise<
     const ws = new WebSocket(url);
     const handle: EventStreamHandle = {
         connected: false,
-        close: () => ws.close(),
+        close: () => {
+            ws.onclose = null;
+            ws.onerror = null;
+            ws.close();
+        },
+    };
+
+    ws.onerror = () => {
+        handle.connected = false;
     };
 
     ws.onopen = () => {
@@ -43,35 +51,74 @@ export async function createEventStream(opts: UseEventStreamOpts = {}): Promise<
     return handle;
 }
 
+const RECONNECT_DELAYS_MS = [500, 1000, 2000, 5000, 10_000, 30_000];
+
 export function useEventStream(opts: UseEventStreamOpts = {}) {
     const [connected, setConnected] = useState(false);
+    const [reconnects, setReconnects] = useState(0);
+    const latestOpts = useRef(opts);
+    latestOpts.current = opts;
+
+    const enabled = opts.enabled !== false;
     const jobIdsKey = useMemo(() => opts.jobIds?.join(",") ?? "", [opts.jobIds]);
 
     useEffect(() => {
-        if (opts.enabled === false) {
+        if (!enabled) {
+            setConnected(false);
             return;
         }
 
         let active = true;
+        let attempt = 0;
         let handle: EventStreamHandle | null = null;
+        let reconnectTimer: number | null = null;
 
-        createEventStream({
-            ...opts,
-            onClose: () => {
-                setConnected(false);
-                opts.onClose?.();
-            },
-        })
-            .then((stream) => {
+        function scheduleConnect(initial: boolean) {
+            const delay = initial ? 0 : RECONNECT_DELAYS_MS[Math.min(attempt, RECONNECT_DELAYS_MS.length - 1)];
+
+            reconnectTimer = window.setTimeout(() => {
                 if (!active) {
-                    stream.close();
                     return;
                 }
 
-                handle = stream;
-                setConnected(stream.connected);
-            })
-            .catch(() => setConnected(false));
+                createEventStream({
+                    jobIds: latestOpts.current.jobIds,
+                    onEvent: (event) => latestOpts.current.onEvent?.(event),
+                    onClose: () => {
+                        if (!active) {
+                            return;
+                        }
+
+                        setConnected(false);
+                        latestOpts.current.onClose?.();
+                        attempt += 1;
+                        setReconnects((value) => value + 1);
+                        scheduleConnect(false);
+                    },
+                })
+                    .then((stream) => {
+                        if (!active) {
+                            stream.close();
+                            return;
+                        }
+
+                        handle = stream;
+                        attempt = 0;
+                        setConnected(stream.connected);
+                    })
+                    .catch(() => {
+                        if (!active) {
+                            return;
+                        }
+
+                        setConnected(false);
+                        attempt += 1;
+                        scheduleConnect(false);
+                    });
+            }, delay) as unknown as number;
+        }
+
+        scheduleConnect(true);
 
         const interval = window.setInterval(() => {
             setConnected(handle?.connected ?? false);
@@ -79,10 +126,15 @@ export function useEventStream(opts: UseEventStreamOpts = {}) {
 
         return () => {
             active = false;
+
+            if (reconnectTimer !== null) {
+                window.clearTimeout(reconnectTimer);
+            }
+
             window.clearInterval(interval);
             handle?.close();
         };
-    }, [opts.enabled, jobIdsKey, opts.onEvent, opts.onClose]);
+    }, [enabled, jobIdsKey]);
 
-    return { connected };
+    return { connected, reconnects };
 }

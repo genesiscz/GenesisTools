@@ -1,5 +1,5 @@
 import type { ChannelHandle } from "@app/youtube/lib/channel.types";
-import type { JobStage, JobStatus, JobTargetKind } from "@app/youtube/lib/jobs.types";
+import type { JobActivityKind, JobStage, JobStatus, JobTargetKind } from "@app/youtube/lib/jobs.types";
 import type { Language, TranscriptSegment } from "@app/youtube/lib/transcript.types";
 import type { TimestampedSummaryEntry, VideoId } from "@app/youtube/lib/video.types";
 
@@ -128,4 +128,23 @@ export interface PruneExpiredBinariesResult {
     audio: number;
     video: number;
     thumb: number;
+}
+
+export interface RecordJobActivityInput {
+    jobId: number;
+    stage?: JobStage | null;
+    kind: JobActivityKind;
+    action?: string | null;
+    provider?: string | null;
+    model?: string | null;
+    prompt?: string | null;
+    response?: string | null;
+    tokensIn?: number | null;
+    tokensOut?: number | null;
+    tokensTotal?: number | null;
+    costUsd?: number | null;
+    durationMs?: number | null;
+    startedAt?: string | null;
+    completedAt?: string | null;
+    error?: string | null;
 }

@@ -6,6 +6,8 @@ import { formatTimecode } from "@app/utils/ui/components/youtube/time";
 import type { Transcript, TranscriptSegment, VideoId } from "@app/youtube/lib/types";
 import { Search } from "lucide-react";
 
+const DEFAULT_RENDER_LIMIT = 200;
+
 export interface TranscriptTabProps {
     videoId: VideoId;
     onSeek: (seconds: number) => void;
@@ -14,8 +16,10 @@ export interface TranscriptTabProps {
 
 export function TranscriptTab({ videoId, onSeek, useTranscript }: TranscriptTabProps) {
     const [query, setQuery] = useState("");
+    const [showAll, setShowAll] = useState(false);
     const transcript = useTranscript(videoId);
     const segments = transcript.data?.transcript.segments ?? [];
+
     const filtered = useMemo(() => {
         if (!query.trim()) {
             return segments;
@@ -24,9 +28,27 @@ export function TranscriptTab({ videoId, onSeek, useTranscript }: TranscriptTabP
         return segments.filter((segment) => segment.text.toLowerCase().includes(query.toLowerCase()));
     }, [segments, query]);
 
+    const trimmed = useMemo(() => {
+        if (showAll || query.trim() || filtered.length <= DEFAULT_RENDER_LIMIT) {
+            return filtered;
+        }
+
+        return filtered.slice(0, DEFAULT_RENDER_LIMIT);
+    }, [filtered, showAll, query]);
+
     if (transcript.isPending) {
         return <Loading label="Loading transcript" />;
     }
+
+    if (segments.length === 0) {
+        return (
+            <p className="rounded-2xl border border-dashed border-primary/25 p-5 text-muted-foreground">
+                No transcript yet. Run <code className="font-mono">tools youtube transcribe &lt;id&gt;</code> or kick off a pipeline that includes the <code className="font-mono">captions</code> stage.
+            </p>
+        );
+    }
+
+    const hidden = filtered.length - trimmed.length;
 
     return (
         <div className="space-y-4">
@@ -34,6 +56,7 @@ export function TranscriptTab({ videoId, onSeek, useTranscript }: TranscriptTabP
                 <div>
                     <p className="font-mono text-xs uppercase tracking-[0.28em] text-secondary">Transcript</p>
                     <h3 className="mt-2 text-2xl font-bold">Searchable timecodes</h3>
+                    <p className="mt-1 text-xs text-muted-foreground">{segments.length.toLocaleString()} segments · {transcript.data?.transcript.source ?? "captions"}</p>
                 </div>
                 <div className="relative">
                     <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -41,8 +64,14 @@ export function TranscriptTab({ videoId, onSeek, useTranscript }: TranscriptTabP
                 </div>
             </div>
             <div className="yt-scroll max-h-[62vh] space-y-2 overflow-auto pr-2">
-                {filtered.map((segment, index) => <TranscriptRow key={`${segment.start}-${index}`} segment={segment} query={query} onSeek={onSeek} />)}
+                {trimmed.map((segment, index) => <TranscriptRow key={`${segment.start}-${index}`} segment={segment} query={query} onSeek={onSeek} />)}
             </div>
+            {hidden > 0 ? (
+                <div className="flex items-center justify-center gap-3 rounded-2xl border border-dashed border-primary/30 bg-primary/5 p-3 text-sm">
+                    <span className="text-muted-foreground">Showing first {DEFAULT_RENDER_LIMIT.toLocaleString()} of {filtered.length.toLocaleString()} segments.</span>
+                    <Button variant="ghost" size="sm" onClick={() => setShowAll(true)}>Show all {filtered.length.toLocaleString()}</Button>
+                </div>
+            ) : null}
         </div>
     );
 }

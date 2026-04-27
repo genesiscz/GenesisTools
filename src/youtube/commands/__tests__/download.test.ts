@@ -8,8 +8,15 @@ const calls = {
     start: 0,
 };
 
+const pinned: Array<{ id: string; pinned: boolean }> = [];
+
 mock.module("@app/youtube/commands/_shared/ensure-pipeline", () => ({
     getYoutube: async () => ({
+        db: {
+            setVideoPinned: (id: string, pin: boolean) => {
+                pinned.push({ id, pinned: pin });
+            },
+        },
         pipeline: {
             enqueue: (input: unknown) => {
                 calls.enqueue.push(input);
@@ -111,6 +118,7 @@ describe("youtube download command", () => {
 
         await program.parseAsync(["node", "test", "download", "dQw4w9WgXcQ", "--keep"]);
 
-        expect(stderr).toContain("--keep noted");
+        expect(stderr).toContain("--keep applied");
+        expect(pinned).toEqual([{ id: "dQw4w9WgXcQ", pinned: true }]);
     });
 });

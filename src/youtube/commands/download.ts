@@ -2,7 +2,7 @@ import { renderColumns } from "@app/youtube/commands/_shared/columns";
 import { getYoutube } from "@app/youtube/commands/_shared/ensure-pipeline";
 import { renderOrEmit } from "@app/youtube/commands/_shared/render";
 import { resolveTargetKind } from "@app/youtube/commands/_shared/utils";
-import type { JobStage, PipelineJob } from "@app/youtube/lib/types";
+import type { JobStage, PipelineJob, VideoId } from "@app/youtube/lib/types";
 import { Command } from "commander";
 import pc from "picocolors";
 
@@ -33,8 +33,12 @@ export function registerDownloadCommand(program: Command): void {
             });
 
             await yt.pipeline.start();
-            if (opts.keep && !cmd.optsWithGlobals().silent) {
-                process.stderr.write("--keep noted; configure cache video TTL to preserve downloaded video files.\n");
+            if (opts.keep && resolveTargetKind(target) === "video") {
+                yt.db.setVideoPinned(target as VideoId, true);
+
+                if (!cmd.optsWithGlobals().silent) {
+                    process.stderr.write(`--keep applied: ${target} pinned (cache prune will skip it).\n`);
+                }
             }
 
             const final = await waitForJob(yt, job.id);

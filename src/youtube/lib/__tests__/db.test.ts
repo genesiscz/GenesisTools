@@ -68,6 +68,35 @@ describe("YoutubeDatabase schema", () => {
         expect(rows.length).toBe(1);
         expect(rows[0].version).toBe(1);
     });
+
+    it("normalizes legacy non-UTC timestamps and leaves modern UTC values untouched", () => {
+        const raw = db.getDb();
+        raw.run(
+            `INSERT INTO channels (handle, last_synced_at, created_at, updated_at)
+             VALUES ('@legacy', '2026-04-27 18:30:00', '2026-04-27 18:30:00', '2026-04-27 18:30:00')`
+        );
+        raw.run(
+            `INSERT INTO channels (handle, last_synced_at, created_at, updated_at)
+             VALUES ('@modern', '2026-04-27T18:30:00.000Z', '2026-04-27T18:30:00.000Z', '2026-04-27T18:30:00.000Z')`
+        );
+
+        db.initSchemaForTest();
+
+        const rows = raw
+            .query("SELECT handle, last_synced_at, created_at, updated_at FROM channels ORDER BY handle")
+            .all() as Array<{ handle: string; last_synced_at: string; created_at: string; updated_at: string }>;
+
+        const legacy = rows.find((row) => row.handle === "@legacy");
+        const modern = rows.find((row) => row.handle === "@modern");
+
+        expect(legacy?.last_synced_at).toBe("2026-04-27T18:30:00.000Z");
+        expect(legacy?.created_at).toBe("2026-04-27T18:30:00.000Z");
+        expect(legacy?.updated_at).toBe("2026-04-27T18:30:00.000Z");
+
+        expect(modern?.last_synced_at).toBe("2026-04-27T18:30:00.000Z");
+        expect(modern?.created_at).toBe("2026-04-27T18:30:00.000Z");
+        expect(modern?.updated_at).toBe("2026-04-27T18:30:00.000Z");
+    });
 });
 
 describe("YoutubeDatabase channels", () => {
@@ -180,7 +209,7 @@ describe("YoutubeDatabase videos", () => {
         db.setVideoBinaryPath("vid00000001", "audio", audioPath, 5);
         db.setVideoBinaryPath("vid00000001", "video", videoPath, 5);
         db.setVideoBinaryPath("vid00000001", "thumb", thumbPath);
-        db.getDb().run("UPDATE videos SET audio_cached_at = datetime('now', '-10 days'), video_cached_at = datetime('now', '-10 days'), thumb_cached_at = datetime('now') WHERE id = ?", [
+        db.getDb().run("UPDATE videos SET audio_cached_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-10 days'), video_cached_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-10 days'), thumb_cached_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?", [
             "vid00000001",
         ]);
 
@@ -298,18 +327,16 @@ describe("YoutubeDatabase jobs", () => {
         expect(db.getJob(job.id)?.target).toBe("vid00000001");
     });
 
-    it("claims one pending job atomically and filters by stage", () => {
+    it("claims only jobs whose next stage matches the worker stage", () => {
+        const discoverThenMetadata = db.enqueueJob({ targetKind: "channel", target: "@mkbhd", stages: ["discover", "metadata"] });
         const metadataOnly = db.enqueueJob({ targetKind: "video", target: "meta", stages: ["metadata"] });
-        const audioJob = db.enqueueJob({ targetKind: "video", target: "audio", stages: ["audio"] });
-        const claimed = db.claimNextJob("worker-1", { stage: "audio" });
-        const secondClaim = db.claimNextJob("worker-2", { stage: "audio" });
+        const claimed = db.claimNextJob("worker-1", { stage: "metadata" });
 
-        expect(claimed?.id).toBe(audioJob.id);
+        expect(claimed?.id).toBe(metadataOnly.id);
         expect(claimed?.status).toBe("running");
         expect(claimed?.workerId).toBe("worker-1");
         expect(claimed?.claimedAt).toBeString();
-        expect(secondClaim).toBeNull();
-        expect(db.getJob(metadataOnly.id)?.status).toBe("pending");
+        expect(db.getJob(discoverThenMetadata.id)?.status).toBe("pending");
     });
 
     it("updates running jobs through completion", () => {

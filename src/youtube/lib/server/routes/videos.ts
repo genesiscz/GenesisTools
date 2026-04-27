@@ -1,4 +1,5 @@
 import { SafeJSON } from "@app/utils/json";
+import { resolveProviderChoice } from "@app/youtube/lib/provider-choice";
 import { CORS_HEADERS } from "@app/youtube/lib/server/cors";
 import { toErrorResponse } from "@app/youtube/lib/server/error";
 import type { ChannelHandle, Transcript, VideoId } from "@app/youtube/lib/types";
@@ -49,17 +50,77 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                 return jsonError("video not found", 404);
             }
 
-            const mode = url.searchParams.get("mode") ?? "short";
+            const mode = url.searchParams.get("mode") === "timestamped" ? "timestamped" : "short";
+            const cached = mode === "timestamped" ? video.summaryTimestamped : video.summaryShort;
 
-            if (mode === "timestamped") {
-                return Response.json({ summary: video.summaryTimestamped ?? [] }, { headers: CORS_HEADERS });
+            return Response.json({ summary: cached ?? (mode === "timestamped" ? [] : ""), mode, cached: cached !== null && cached !== undefined }, { headers: CORS_HEADERS });
+        }
+
+        if (id && action === "summary" && req.method === "POST") {
+            const video = yt.videos.show(id as VideoId);
+
+            if (!video) {
+                return jsonError("video not found", 404);
             }
 
-            return Response.json({ summary: video.summaryShort ?? "" }, { headers: CORS_HEADERS });
+            const body = (await safeJsonBody(req)) ?? {};
+            const mode = body.mode === "timestamped" ? "timestamped" : "short";
+            const force = body.force === true;
+            const provider = typeof body.provider === "string" ? body.provider : undefined;
+            const model = typeof body.model === "string" ? body.model : undefined;
+            const targetBins = typeof body.targetBins === "number" ? body.targetBins : undefined;
+
+            const transcript = yt.db.getTranscript(id as VideoId);
+
+            if (!transcript) {
+                return jsonError("no transcript yet for this video — run pipeline / transcribe first", 409);
+            }
+
+            const providerChoice = (provider || model) ? await resolveProviderChoice({ provider, model }) : undefined;
+            const result = await yt.summary.summarize({
+                videoId: id as VideoId,
+                mode,
+                provider,
+                providerChoice,
+                targetBins,
+                forceRecompute: force,
+            });
+
+            return Response.json({ summary: mode === "timestamped" ? result.timestamped ?? [] : result.short ?? "", mode, cached: false }, { headers: CORS_HEADERS });
         }
 
         if (id && action === "qa" && req.method === "POST") {
-            return jsonError("qa route requires CLI provider wiring from Plan 2", 501);
+            const video = yt.videos.show(id as VideoId);
+
+            if (!video) {
+                return jsonError("video not found", 404);
+            }
+
+            const body = await safeJsonBody(req);
+
+            if (!body || typeof body.question !== "string" || body.question.trim() === "") {
+                return jsonError("body must include {question: string}", 400);
+            }
+
+            const transcript = yt.db.getTranscript(id as VideoId);
+
+            if (!transcript) {
+                return jsonError("no transcript yet for this video — run pipeline / transcribe first", 409);
+            }
+
+            await yt.qa.index({ videoId: id as VideoId });
+            const providerChoice = await resolveProviderChoice({
+                provider: typeof body.provider === "string" ? body.provider : undefined,
+                model: typeof body.model === "string" ? body.model : undefined,
+            });
+            const result = await yt.qa.ask({
+                videoIds: [id as VideoId],
+                question: body.question,
+                topK: typeof body.topK === "number" ? body.topK : undefined,
+                providerChoice,
+            });
+
+            return Response.json(result, { headers: CORS_HEADERS });
         }
 
         return jsonError("not found", 404);
@@ -122,4 +183,22 @@ function jsonError(error: string, status: number): Response {
         status,
         headers: { "Content-Type": "application/json", ...CORS_HEADERS },
     });
+}
+
+async function safeJsonBody(req: Request): Promise<Record<string, unknown> | null> {
+    if (!req.headers.get("content-type")?.includes("application/json")) {
+        return null;
+    }
+
+    try {
+        const parsed = await req.json();
+
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+            return parsed as Record<string, unknown>;
+        }
+    } catch {
+        // ignore — caller treats null as "no body"
+    }
+
+    return null;
 }

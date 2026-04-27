@@ -49,8 +49,16 @@ export async function handleRequest(req: ExtensionRequest): Promise<ExtensionRes
         }
         case "api:getSummary":
             return apiCall(`${base}/api/v1/videos/${encodeURIComponent(req.id)}/summary?mode=${encodeURIComponent(req.mode)}`);
+        case "api:generateSummary":
+            return apiCall(`${base}/api/v1/videos/${encodeURIComponent(req.id)}/summary`, {
+                method: "POST",
+                body: JSON.stringify({ mode: req.mode, force: req.force, provider: req.provider, model: req.model, targetBins: req.targetBins }),
+            });
         case "api:askVideo":
-            return apiCall(`${base}/api/v1/videos/${encodeURIComponent(req.id)}/qa`, { method: "POST", body: JSON.stringify({ question: req.question, topK: req.topK }) });
+            return apiCall(`${base}/api/v1/videos/${encodeURIComponent(req.id)}/qa`, {
+                method: "POST",
+                body: JSON.stringify({ question: req.question, topK: req.topK, provider: req.provider, model: req.model }),
+            });
         case "api:startPipeline":
             return apiCall(`${base}/api/v1/pipeline`, { method: "POST", body: JSON.stringify({ target: req.target, targetKind: req.targetKind, stages: req.stages }) });
         case "api:getJob":

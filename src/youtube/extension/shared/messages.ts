@@ -9,7 +9,8 @@ export type ExtensionRequest =
     | { type: "api:getVideo"; id: VideoId }
     | { type: "api:getTranscript"; id: VideoId; lang?: string; source?: "captions" | "ai" }
     | { type: "api:getSummary"; id: VideoId; mode: "short" | "timestamped" }
-    | { type: "api:askVideo"; id: VideoId; question: string; topK?: number }
+    | { type: "api:generateSummary"; id: VideoId; mode: "short" | "timestamped"; force?: boolean; provider?: string; model?: string; targetBins?: number }
+    | { type: "api:askVideo"; id: VideoId; question: string; topK?: number; provider?: string; model?: string }
     | { type: "api:startPipeline"; target: string; targetKind?: "video" | "channel" | "url"; stages: JobStage[] }
     | { type: "api:getJob"; id: number };
 
@@ -28,7 +29,8 @@ export interface ExtensionApiMap {
     "api:addChannel": { added: ChannelHandle[] };
     "api:getVideo": { video: Video; transcripts: Transcript[] };
     "api:getTranscript": { transcript: Transcript };
-    "api:getSummary": { short?: string; timestamped?: Array<{ startSec: number; endSec: number; text: string }> };
+    "api:getSummary": { summary?: string | Array<{ startSec: number; endSec: number; text: string }>; mode?: "short" | "timestamped"; cached?: boolean };
+    "api:generateSummary": { summary?: string | Array<{ startSec: number; endSec: number; text: string }>; mode?: "short" | "timestamped"; cached?: boolean };
     "api:askVideo": { answer: string; citations: Array<{ videoId: string; chunkIdx: number; startSec: number | null; endSec: number | null }> };
     "api:startPipeline": { job: PipelineJob };
     "api:getJob": { job: PipelineJob };
