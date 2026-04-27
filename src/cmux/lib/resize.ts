@@ -82,6 +82,24 @@ export async function convergeToTarget(
     }
 
     if (!converged) {
+        const finalLayout = await paneList(workspaceRef);
+        deltas = [];
+        converged = true;
+        for (const pane of finalLayout.panes) {
+            const target = targetByRef.get(pane.ref);
+            if (!target) {
+                continue;
+            }
+            const dCols = target.columns - pane.columns;
+            const dRows = target.rows - pane.rows;
+            deltas.push({ paneRef: pane.ref, dCols, dRows });
+            if (Math.abs(dCols) > TOLERANCE_CELLS || Math.abs(dRows) > TOLERANCE_CELLS) {
+                converged = false;
+            }
+        }
+    }
+
+    if (!converged) {
         logger.warn({ iteration, deltas }, "[resize] did not fully converge");
     }
     return { iterations: iteration, converged, deltas };
