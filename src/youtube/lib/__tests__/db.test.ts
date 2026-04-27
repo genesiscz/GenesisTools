@@ -99,3 +99,61 @@ describe("YoutubeDatabase channels", () => {
         expect(channel?.lastSyncedAt).toBeString();
     });
 });
+
+describe("YoutubeDatabase videos", () => {
+    beforeEach(() => {
+        db.upsertChannel({ handle: "@mkbhd", title: "MKBHD" });
+    });
+
+    it("upserts and gets a video", () => {
+        db.upsertVideo({
+            id: "vid00000001",
+            channelHandle: "@mkbhd",
+            title: "Video 1",
+            uploadDate: "2026-04-01",
+            durationSec: 100,
+            availableCaptionLangs: ["en", "cs"],
+            tags: ["tech"],
+        });
+        const video = db.getVideo("vid00000001");
+
+        expect(video?.title).toBe("Video 1");
+        expect(video?.availableCaptionLangs).toEqual(["en", "cs"]);
+        expect(video?.tags).toEqual(["tech"]);
+    });
+
+    it("lists videos with channel, date, shorts, live, limit, and offset filters", () => {
+        db.upsertChannel({ handle: "@other", title: "Other" });
+        db.upsertVideo({ id: "vid00000001", channelHandle: "@mkbhd", title: "Old", uploadDate: "2026-01-01" });
+        db.upsertVideo({ id: "vid00000002", channelHandle: "@mkbhd", title: "New", uploadDate: "2026-04-01" });
+        db.upsertVideo({ id: "vid00000003", channelHandle: "@mkbhd", title: "Short", uploadDate: "2026-05-01", isShort: true });
+        db.upsertVideo({ id: "vid00000004", channelHandle: "@mkbhd", title: "Live", uploadDate: "2026-06-01", isLive: true });
+        db.upsertVideo({ id: "vid00000005", channelHandle: "@other", title: "Other", uploadDate: "2026-07-01" });
+        const list = db.listVideos({ channel: "@mkbhd", since: "2026-02-01", limit: 1, offset: 0 });
+
+        expect(list.map((video) => video.id)).toEqual(["vid00000002"]);
+    });
+
+    it("round-trips binary paths", () => {
+        db.upsertVideo({ id: "vid00000001", channelHandle: "@mkbhd", title: "Video 1" });
+        db.setVideoBinaryPath("vid00000001", "audio", "/tmp/audio.wav", 123);
+        db.setVideoBinaryPath("vid00000001", "thumb", "/tmp/thumb.jpg");
+        const video = db.getVideo("vid00000001");
+
+        expect(video?.audioPath).toBe("/tmp/audio.wav");
+        expect(video?.audioSizeBytes).toBe(123);
+        expect(video?.audioCachedAt).toBeString();
+        expect(video?.thumbPath).toBe("/tmp/thumb.jpg");
+        expect(video?.thumbCachedAt).toBeString();
+    });
+
+    it("stores short and timestamped summaries", () => {
+        db.upsertVideo({ id: "vid00000001", channelHandle: "@mkbhd", title: "Video 1" });
+        db.setVideoSummary("vid00000001", "short", "Short summary");
+        db.setVideoSummary("vid00000001", "timestamped", [{ startSec: 0, endSec: 10, text: "Intro" }]);
+        const video = db.getVideo("vid00000001");
+
+        expect(video?.summaryShort).toBe("Short summary");
+        expect(video?.summaryTimestamped).toEqual([{ startSec: 0, endSec: 10, text: "Intro" }]);
+    });
+});
