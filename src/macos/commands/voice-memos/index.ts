@@ -678,9 +678,11 @@ async function interactiveMode(): Promise<void> {
                 exportAction(memo.id, dest);
                 break;
             }
-            case "transcribe":
-                await transcribeOne({ id: memo.id });
+            case "transcribe": {
+                const provider = await ensureTranscribeProvider({});
+                await transcribeOne({ id: memo.id, provider });
                 break;
+            }
         }
     }
 }
