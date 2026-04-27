@@ -16,9 +16,7 @@ interface SurfaceListEntry {
     selected?: boolean;
 }
 
-interface ListPaneSurfacesResponse {
-    surfaces: SurfaceListEntry[];
-}
+type ListPaneSurfacesResponse = SurfaceListEntry[];
 
 export interface SnapshotOptions {
     name: string;
@@ -47,7 +45,8 @@ export async function captureProfile(
     const allWindows = await windowList();
     const allWorkspaces = await collectAllWorkspaces(allWindows);
 
-    const targetWorkspaces = filterWorkspaces(allWorkspaces, options);
+    const focusedRef = await getFocusedWorkspaceRef();
+    const targetWorkspaces = filterWorkspaces(allWorkspaces, options, focusedRef);
     const targetWindowRefs = new Set(targetWorkspaces.map((ws) => ws.window_ref));
     const targetWindows = allWindows.filter((w) => targetWindowRefs.has(w.ref));
 
@@ -122,21 +121,37 @@ async function collectAllWorkspaces(windows: WindowEntry[]): Promise<CollectedWo
     return out;
 }
 
-function filterWorkspaces(all: CollectedWorkspace[], options: SnapshotOptions): CollectedWorkspace[] {
+async function getFocusedWorkspaceRef(): Promise<string | undefined> {
+    try {
+        const identify = await runCmuxJSON<{ focused?: { workspace_ref?: string } }>(["identify"]);
+        return identify.focused?.workspace_ref;
+    } catch {
+        return undefined;
+    }
+}
+
+function filterWorkspaces(
+    all: CollectedWorkspace[],
+    options: SnapshotOptions,
+    focusedWorkspaceRef: string | undefined,
+): CollectedWorkspace[] {
     if (options.scope === "all") {
         return all;
     }
     if (options.scope === "window") {
+        const focusedWindowRef = focusedWorkspaceRef
+            ? all.find((ws) => ws.ref === focusedWorkspaceRef)?.window_ref
+            : undefined;
         const ref =
             options.targetWindowRef ??
-            all.find((ws) => ws.selected)?.window_ref ??
+            focusedWindowRef ??
             all[0]?.window_ref;
         if (!ref) {
             throw new Error("scope=window requires a focused workspace or --window <ref>");
         }
         return all.filter((ws) => ws.window_ref === ref);
     }
-    const ref = options.targetWorkspaceRef ?? all.find((ws) => ws.selected)?.ref;
+    const ref = options.targetWorkspaceRef ?? focusedWorkspaceRef ?? all.find((ws) => ws.selected)?.ref;
     if (!ref) {
         throw new Error("scope=workspace requires a focused workspace or --workspace <ref>");
     }
@@ -156,7 +171,7 @@ async function capturePanes(workspaceRef: string, options: SnapshotOptions): Pro
             paneInfo.ref,
         ]);
 
-        const sortedEntries = [...surfacesInfo.surfaces].sort((a, b) => a.index - b.index);
+        const sortedEntries = [...surfacesInfo].sort((a, b) => a.index - b.index);
         const surfaces: Surface[] = [];
         let selectedIndex = 0;
         for (const surfaceEntry of sortedEntries) {
