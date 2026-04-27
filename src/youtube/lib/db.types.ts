@@ -1,7 +1,7 @@
 import type { ChannelHandle } from "@app/youtube/lib/channel.types";
 import type { JobActivityKind, JobStage, JobStatus, JobTargetKind } from "@app/youtube/lib/jobs.types";
 import type { Language, TranscriptSegment } from "@app/youtube/lib/transcript.types";
-import type { TimestampedSummaryEntry, VideoId } from "@app/youtube/lib/video.types";
+import type { TimestampedSummaryEntry, VideoId, VideoLongSummary } from "@app/youtube/lib/video.types";
 
 export interface UpsertChannelInput {
     handle: ChannelHandle;
@@ -47,8 +47,8 @@ export interface SetVideoBinaryPathInput {
 
 export interface SetVideoSummaryInput {
     id: VideoId;
-    kind: "short" | "timestamped";
-    value: string | TimestampedSummaryEntry[];
+    kind: "short" | "timestamped" | "long";
+    value: string | TimestampedSummaryEntry[] | VideoLongSummary;
 }
 
 export interface SaveTranscriptInput {

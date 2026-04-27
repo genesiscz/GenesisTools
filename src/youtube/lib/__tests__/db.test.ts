@@ -196,6 +196,39 @@ describe("YoutubeDatabase videos", () => {
         expect(video?.summaryTimestamped).toEqual([{ startSec: 0, endSec: 10, text: "Intro" }]);
     });
 
+    it("stores and reads back a long-form summary", () => {
+        db.upsertChannel({ handle: "@mkbhd" });
+        db.upsertVideo({ id: "vid_long01234", channelHandle: "@mkbhd", title: "T" });
+
+        const long = {
+            tldr: "Tldr line.",
+            keyPoints: ["kp 1", "kp 2", "kp 3"],
+            learnings: ["lesson a", "lesson b"],
+            chapters: [{ title: "Intro", summary: "intro chapter" }],
+            conclusion: "Final thought.",
+        };
+        db.setVideoSummary("vid_long01234", "long", long);
+        const video = db.getVideo("vid_long01234");
+
+        expect(video?.summaryLong).toEqual(long);
+    });
+
+    it("preserves null summaryLong when the column has never been written", () => {
+        db.upsertChannel({ handle: "@mkbhd" });
+        db.upsertVideo({ id: "vid_long_null", channelHandle: "@mkbhd", title: "T" });
+
+        expect(db.getVideo("vid_long_null")?.summaryLong).toBeNull();
+    });
+
+    it("re-runs add-videos-summary-long-json migration idempotently", () => {
+        const cols = db.getDb().query<{ name: string }, []>("PRAGMA table_info(videos)").all() as Array<{ name: string }>;
+        expect(cols.some((c) => c.name === "summary_long_json")).toBe(true);
+
+        db.initSchemaForTest();
+        const cols2 = db.getDb().query<{ name: string }, []>("PRAGMA table_info(videos)").all() as Array<{ name: string }>;
+        expect(cols2.filter((c) => c.name === "summary_long_json").length).toBe(1);
+    });
+
     it("prunes expired binary files and clears database paths", async () => {
         const tempDir = mkdtempSync(join(tmpdir(), "youtube-db-prune-"));
         tempDirs.push(tempDir);

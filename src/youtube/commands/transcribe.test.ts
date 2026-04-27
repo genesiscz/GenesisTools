@@ -29,6 +29,7 @@ const video: Video = {
     thumbUrl: null,
     summaryShort: null,
     summaryTimestamped: null,
+    summaryLong: null,
     audioPath: null,
     audioSizeBytes: null,
     audioCachedAt: null,

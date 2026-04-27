@@ -20,6 +20,7 @@ const videos: Video[] = [
         thumbUrl: null,
         summaryShort: "Short summary",
         summaryTimestamped: null,
+        summaryLong: null,
         audioPath: null,
         audioSizeBytes: null,
         audioCachedAt: null,

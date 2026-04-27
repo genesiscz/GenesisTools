@@ -29,7 +29,7 @@ import type {
 import type { JobActivity, JobActivityKind, JobStage, JobStatus, JobTargetKind, PipelineJob } from "@app/youtube/lib/jobs.types";
 import type { QaChunk } from "@app/youtube/lib/qa.types";
 import type { Language, Transcript, TranscriptSegment } from "@app/youtube/lib/transcript.types";
-import type { TimestampedSummaryEntry, Video, VideoId } from "@app/youtube/lib/video.types";
+import type { TimestampedSummaryEntry, Video, VideoId, VideoLongSummary } from "@app/youtube/lib/video.types";
 
 export const DEFAULT_DB_PATH = join(homedir(), ".genesis-tools", "youtube", "youtube.db");
 
@@ -78,6 +78,7 @@ export class YoutubeDatabase extends BaseDatabase {
                 thumb_url TEXT,
                 summary_short TEXT,
                 summary_timestamped_json TEXT,
+                summary_long_json TEXT,
                 audio_path TEXT,
                 audio_size_bytes INTEGER,
                 audio_cached_at TEXT,
@@ -208,6 +209,14 @@ export class YoutubeDatabase extends BaseDatabase {
 
         this.runMigration("normalize-legacy-timestamps-utc", () => {
             this.normalizeLegacyTimestamps();
+        });
+
+        this.runMigration("add-videos-summary-long-json", () => {
+            const cols = this.db.query<{ name: string }, []>("PRAGMA table_info(videos)").all() as Array<{ name: string }>;
+
+            if (!cols.some((column) => column.name === "summary_long_json")) {
+                this.db.exec("ALTER TABLE videos ADD COLUMN summary_long_json TEXT");
+            }
         });
 
         const existing = this.db
@@ -422,10 +431,17 @@ export class YoutubeDatabase extends BaseDatabase {
     }
 
     setVideoSummary(input: SetVideoSummaryInput): void;
-    setVideoSummary(id: VideoId, kind: "short" | "timestamped", value: string | TimestampedSummaryEntry[]): void;
-    setVideoSummary(inputOrId: SetVideoSummaryInput | VideoId, kind?: "short" | "timestamped", value?: string | TimestampedSummaryEntry[]): void {
+    setVideoSummary(id: VideoId, kind: "short" | "timestamped" | "long", value: string | TimestampedSummaryEntry[] | VideoLongSummary): void;
+    setVideoSummary(
+        inputOrId: SetVideoSummaryInput | VideoId,
+        kind?: "short" | "timestamped" | "long",
+        value?: string | TimestampedSummaryEntry[] | VideoLongSummary
+    ): void {
         const input = typeof inputOrId === "string" ? normalizeVideoSummaryInput(inputOrId, kind, value) : inputOrId;
-        const column = input.kind === "short" ? "summary_short" : "summary_timestamped_json";
+        const column =
+            input.kind === "short" ? "summary_short"
+            : input.kind === "timestamped" ? "summary_timestamped_json"
+            : "summary_long_json";
         const serialized = typeof input.value === "string" ? input.value : JSON.stringify(input.value);
 
         this.db.run(`UPDATE videos SET ${column} = ?, updated_at = ${SQL_NOW_UTC} WHERE id = ?`, [serialized, input.id]);
@@ -888,6 +904,7 @@ interface VideoRow {
     thumb_url: string | null;
     summary_short: string | null;
     summary_timestamped_json: string | null;
+    summary_long_json: string | null;
     audio_path: string | null;
     audio_size_bytes: number | null;
     audio_cached_at: string | null;
@@ -924,6 +941,7 @@ function rowToVideo(row: VideoRow): Video {
         thumbUrl: row.thumb_url,
         summaryShort: row.summary_short,
         summaryTimestamped: parseNullableJsonArray<TimestampedSummaryEntry>(row.summary_timestamped_json),
+        summaryLong: parseNullableJson<VideoLongSummary>(row.summary_long_json),
         audioPath: row.audio_path,
         audioSizeBytes: row.audio_size_bytes,
         audioCachedAt: row.audio_cached_at,
@@ -962,7 +980,11 @@ function normalizeVideoBinaryPathInput(id: VideoId, kind: "audio" | "video" | "t
     };
 }
 
-function normalizeVideoSummaryInput(id: VideoId, kind: "short" | "timestamped" | undefined, value: string | TimestampedSummaryEntry[] | undefined): SetVideoSummaryInput {
+function normalizeVideoSummaryInput(
+    id: VideoId,
+    kind: "short" | "timestamped" | "long" | undefined,
+    value: string | TimestampedSummaryEntry[] | VideoLongSummary | undefined
+): SetVideoSummaryInput {
     if (!kind) {
         throw new Error("setVideoSummary requires a summary kind");
     }
@@ -1004,6 +1026,18 @@ function parseNullableJsonArray<T>(raw: string | null): T[] | null {
     }
 
     return parsed as T[];
+}
+
+function parseNullableJson<T>(raw: string | null): T | null {
+    if (!raw) {
+        return null;
+    }
+
+    try {
+        return JSON.parse(raw) as T;
+    } catch {
+        return null;
+    }
 }
 
 interface PruneBinaryRow {
