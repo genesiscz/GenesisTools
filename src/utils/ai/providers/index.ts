@@ -5,7 +5,7 @@ import { AICoreMLProvider } from "./AICoreMLProvider";
 import { AIDarwinKitProvider } from "./AIDarwinKitProvider";
 import { AIGoogleProvider } from "./AIGoogleProvider";
 import { AILocalProvider } from "./AILocalProvider";
-import { AIMacosProvider } from "./AIMacosProvider";
+import { AIMacOSTextToSpeechProvider } from "./AIMacOSTextToSpeechProvider";
 import { AIOllamaProvider } from "./AIOllamaProvider";
 import { AIXAIProvider } from "./AIXAIProvider";
 
@@ -67,7 +67,7 @@ export function getProvider(type: AIProviderType): AIProvider {
             provider = new AIXAIProvider();
             break;
         case "macos":
-            provider = new AIMacosProvider();
+            provider = new AIMacOSTextToSpeechProvider();
             break;
         default:
             throw new Error(`Unknown provider type: ${type}`);
@@ -157,10 +157,7 @@ import type {
  * Return all registered providers that support `task`, optionally filtered by kind.
  * Note: does NOT call isAvailable() — caller decides whether to filter further.
  */
-export function getProvidersForTask(
-    task: AITask,
-    filter?: { kind?: "local" | "cloud" | "any" }
-): AIProvider[] {
+export function getProvidersForTask(task: AITask, filter?: { kind?: "local" | "cloud" | "any" }): AIProvider[] {
     const all = getAllProviders().filter((p) => p.supports(task));
     const kind = filter?.kind ?? "any";
 
@@ -250,6 +247,6 @@ export { AICoreMLProvider } from "./AICoreMLProvider";
 export { AIDarwinKitProvider } from "./AIDarwinKitProvider";
 export { AIGoogleProvider } from "./AIGoogleProvider";
 export { AILocalProvider } from "./AILocalProvider";
-export { AIMacosProvider } from "./AIMacosProvider";
+export { AIMacOSTextToSpeechProvider } from "./AIMacOSTextToSpeechProvider";
 export { AIOllamaProvider } from "./AIOllamaProvider";
 export { AIXAIProvider } from "./AIXAIProvider";
