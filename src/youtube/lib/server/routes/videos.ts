@@ -122,7 +122,8 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
             const targetBins = typeof body.targetBins === "number" ? body.targetBins : undefined;
 
             const hasTranscript = yt.db.getTranscript(id) !== null;
-            const providerChoice = provider || model ? await resolveProviderChoice({ provider, model }) : undefined;
+            const needsProvider = mode !== "short" || !!provider || !!model;
+            const providerChoice = needsProvider ? await resolveProviderChoice({ provider, model }) : undefined;
             const stages = hasTranscript ? (["summarize"] as const) : (["captions", "summarize"] as const);
             const job = yt.db.enqueueJob({ targetKind: "video", target: id, stages: [...stages] });
             const startedAt = new Date().toISOString();
