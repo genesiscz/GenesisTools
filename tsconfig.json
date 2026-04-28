@@ -36,7 +36,11 @@
             "@app/*": ["./src/*"],
             "@ask/*": ["./src/ask/*"],
             "@ui/*": ["./src/utils/ui/*"],
-            "@ui": ["./src/utils/ui/index.ts"]
+            "@ui": ["./src/utils/ui/index.ts"],
+            "@ext/*": ["./src/youtube/extension/*"],
+            "@app/yt/*": ["./src/youtube/ui/*"],
+            "@app/yt": ["./src/youtube/ui/index.ts"],
+            "@ext": ["./src/youtube/extension/index.ts"]
         }
     },
     "include": ["src/**/*", "./test-*.ts"]

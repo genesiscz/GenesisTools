@@ -2,6 +2,9 @@ import { Database as BunDatabase } from "bun:sqlite";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import logger from "@app/logger";
+import { nowUtcIso, parseSqliteOrIsoDate } from "@app/utils/sql-time";
+
+export { nowUtcIso, parseSqliteOrIsoDate, SQL_NOW_UTC } from "@app/utils/sql-time";
 
 const VALID_IDENTIFIER = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 
@@ -17,6 +20,7 @@ export abstract class BaseDatabase {
 
         this.db = new BunDatabase(dbPath);
         this.db.exec("PRAGMA journal_mode = WAL;");
+        this.db.exec("PRAGMA busy_timeout = 5000;");
         this.initSchema();
     }
 
@@ -29,6 +33,16 @@ export abstract class BaseDatabase {
 
     close(): void {
         this.db.close();
+    }
+
+    /** Returns the current UTC time as an ISO-8601 string (matches `SQL_NOW_UTC` shape). */
+    static nowUtcIso(): string {
+        return nowUtcIso();
+    }
+
+    /** Parse a SQLite/ISO timestamp string into a UTC Date (or null if unparseable). */
+    static parseDate(value: string | null | undefined): Date | null {
+        return parseSqliteOrIsoDate(value);
     }
 
     pruneTable(table: string, timestampColumn: string, days: number): number {
