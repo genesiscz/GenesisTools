@@ -10,8 +10,10 @@ import {
     selectProvider,
 } from "@app/macos/lib/voice-memos/prompts.ts";
 import { AI } from "@app/utils/ai/index.ts";
+import { getAllProviders } from "@app/utils/ai/providers/index.ts";
 import { formatOutput, type OutputFormat } from "@app/utils/ai/transcription-format.ts";
 import type { AIProviderType } from "@app/utils/ai/types.ts";
+import { isInteractive, suggestCommand } from "@app/utils/cli/executor.ts";
 import { copyToClipboard } from "@app/utils/clipboard.ts";
 import { isCloudProvider } from "@app/utils/config/ai.types";
 import { formatDateTime } from "@app/utils/date.ts";
@@ -30,8 +32,8 @@ import * as p from "@clack/prompts";
 import { Command } from "commander";
 import pc from "picocolors";
 
-const VALID_PROVIDERS: AIProviderType[] = ["cloud", "local-hf", "darwinkit", "openai", "groq", "openrouter"];
-const TRANSCRIBE_PROVIDERS: AIProviderType[] = ["local-hf", "cloud", "openai", "groq", "openrouter"];
+const VALID_PROVIDERS: AIProviderType[] = ["cloud", "local-hf", "darwinkit", "openai", "groq", "openrouter", "xai"];
+const TRANSCRIBE_PROVIDERS: AIProviderType[] = ["local-hf", "cloud", "openai", "groq", "openrouter", "xai"];
 
 export function registerVoiceMemosCommand(program: Command): void {
     const vm = new Command("voice-memos");
@@ -213,6 +215,61 @@ interface TranscribeOpts {
     sensitive?: boolean;
 }
 
+async function ensureTranscribeProvider(opts: TranscribeOpts): Promise<string> {
+    if (opts.local) {
+        return "local-hf";
+    }
+
+    if (opts.provider) {
+        return opts.provider;
+    }
+
+    const available: string[] = [];
+
+    for (const provider of getAllProviders()) {
+        if (!provider.supports("transcribe")) {
+            continue;
+        }
+
+        if (await provider.isAvailable()) {
+            available.push(provider.type);
+        }
+    }
+
+    if (isInteractive()) {
+        if (available.length === 0) {
+            console.error(pc.red("No transcription providers are available."));
+            console.error(pc.dim("Set one of: OPENAI_API_KEY, GROQ_API_KEY, OPENROUTER_API_KEY, X_AI_API_KEY"));
+            process.exit(1);
+        }
+
+        const picked = await p.select({
+            message: "Pick a transcription provider:",
+            options: available.map((id) => ({ value: id, label: id })),
+        });
+
+        if (p.isCancel(picked)) {
+            process.exit(1);
+        }
+
+        return picked as string;
+    }
+
+    const choices = available.length > 0 ? available.join("|") : "local-hf|cloud|openai|groq|openrouter|xai";
+    console.error(pc.red("No --provider specified and not in an interactive terminal."));
+    console.error(
+        pc.dim(
+            suggestCommand("tools macos voice-memos transcribe", {
+                // The 'tools macos' wrapper passes argv as ["voice-memos", "transcribe", ...]
+                // to the inner process — strip those so they don't double the path.
+                subcommand: ["voice-memos", "transcribe"],
+                add: ["--provider", `<${choices}>`],
+            })
+        )
+    );
+    process.exit(1);
+}
+
 async function transcribeAction(id: number | undefined, opts: TranscribeOpts): Promise<void> {
     // Validate --provider and --model early
     validateProviderOption(opts.provider);
@@ -222,6 +279,8 @@ async function transcribeAction(id: number | undefined, opts: TranscribeOpts): P
         transcribeAll(opts.force ?? false);
         return;
     }
+
+    opts.provider = await ensureTranscribeProvider(opts);
 
     // If no ID provided, prompt for memo selection (TTY) or error (non-TTY)
     let resolvedId = id;
@@ -413,7 +472,23 @@ async function transcribeOne(opts: {
     const isTTY = !!process.stdout.isTTY;
     let confirmedLang: string | undefined = opts.lang;
 
-    const transcribeOpts = {
+    // After the first confirm we pin transcribeOpts.language so retries (Transcriber
+    // wraps provider.transcribe in retry()) skip language detection entirely on the
+    // provider side — bulletproof against any closure/scope quirks.
+    const transcribeOpts: {
+        language?: string;
+        model?: string;
+        onProgress: (info: { message: string }) => void;
+        onSegment: (seg: { start: number; text: string }) => void;
+        confirmLanguage?: (
+            detected: import("@app/utils/ai/LanguageDetector.ts").LanguageDetectionResult
+        ) => Promise<string>;
+        thresholds?: {
+            noSpeechThreshold: number;
+            logprobThreshold: number;
+            compressionRatioThreshold: number;
+        };
+    } = {
         language: opts.lang,
         model: opts.model,
         onProgress: (info: { message: string }) => {
@@ -423,29 +498,27 @@ async function transcribeOne(opts: {
             const ts = formatDuration(seg.start * 1000, "ms", "tiered");
             process.stderr.write(`${pc.dim(`  [${ts}] ${seg.text.trim()}`)}\n`);
         },
-        ...(isTTY && !opts.lang
-            ? {
-                  confirmLanguage: async (
-                      detected: import("@app/utils/ai/LanguageDetector.ts").LanguageDetectionResult
-                  ) => {
-                      s.stop(`Detected: ${detected.language} (${Math.round(detected.confidence * 100)}%)`);
-                      const confirmed = await promptLanguage(detected);
-                      confirmedLang = confirmed;
-                      s.start("Transcribing...");
-                      return confirmed;
-                  },
-              }
-            : {}),
-        ...(opts.sensitive
-            ? {
-                  thresholds: {
-                      noSpeechThreshold: 0.3,
-                      logprobThreshold: -0.5,
-                      compressionRatioThreshold: 2.4,
-                  },
-              }
-            : {}),
     };
+
+    if (isTTY && !opts.lang) {
+        transcribeOpts.confirmLanguage = async (detected) => {
+            s.stop(`Detected: ${detected.language} (${Math.round(detected.confidence * 100)}%)`);
+            const confirmed = await promptLanguage(detected);
+            confirmedLang = confirmed;
+            transcribeOpts.language = confirmed;
+            transcribeOpts.confirmLanguage = undefined;
+            s.start("Transcribing...");
+            return confirmed;
+        };
+    }
+
+    if (opts.sensitive) {
+        transcribeOpts.thresholds = {
+            noSpeechThreshold: 0.3,
+            logprobThreshold: -0.5,
+            compressionRatioThreshold: 2.4,
+        };
+    }
 
     let transcriber = await AI.Transcriber.create({
         provider: opts.provider,
@@ -608,9 +681,18 @@ async function interactiveMode(): Promise<void> {
                 exportAction(memo.id, dest);
                 break;
             }
-            case "transcribe":
-                await transcribeOne({ id: memo.id });
+            case "transcribe": {
+                const opts: TranscribeOpts = {};
+                opts.provider = await ensureTranscribeProvider(opts);
+                const resolved = await resolveTranscribeOptions(opts);
+                await transcribeOne({
+                    id: memo.id,
+                    provider: resolved.provider,
+                    model: resolved.model,
+                    format: resolved.format,
+                });
                 break;
+            }
         }
     }
 }

@@ -18,7 +18,7 @@ const DEFAULT_TASKS: Record<string, TaskConfig> = {
     classify: { provider: "darwinkit" },
     embed: { provider: "darwinkit" },
     sentiment: { provider: "darwinkit" },
-    tts: { provider: "cloud" },
+    tts: { provider: "macos" },
 };
 
 /** Fill missing fields with sensible defaults on raw config from disk */
