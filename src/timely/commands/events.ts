@@ -49,7 +49,7 @@ const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Frid
 function slimEvent(event: TimelyEvent): TimelyEventSlim {
     const d = event.duration;
     const durationStr = `${String(d.hours).padStart(2, "0")}:${String(d.minutes).padStart(2, "0")}`;
-    const dayOfWeek = DAY_NAMES[new Date(event.day + "T00:00:00").getDay()];
+    const dayOfWeek = DAY_NAMES[new Date(`${event.day}T00:00:00`).getDay()];
     return {
         id: event.id,
         day: event.day,
