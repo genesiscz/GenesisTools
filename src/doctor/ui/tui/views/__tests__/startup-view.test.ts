@@ -1,5 +1,5 @@
-import type { Action, Finding } from "@app/doctor/lib/types";
 import { describe, expect, it } from "bun:test";
+import type { Action, Finding } from "@app/doctor/lib/types";
 import { startupView } from "../startup-view";
 
 const removeAction: Action = {

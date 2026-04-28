@@ -1,5 +1,5 @@
-import type { Action, Finding } from "@app/doctor/lib/types";
 import { describe, expect, it } from "bun:test";
+import type { Action, Finding } from "@app/doctor/lib/types";
 import { networkView } from "../network-view";
 
 const flushAction: Action = {

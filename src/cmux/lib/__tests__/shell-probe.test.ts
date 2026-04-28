@@ -1,6 +1,6 @@
+import { describe, expect, it } from "bun:test";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "bun:test";
 import { cwdFromTitle, lastCommandFromCapture } from "@app/cmux/lib/shell-probe";
 
 describe("cwdFromTitle", () => {

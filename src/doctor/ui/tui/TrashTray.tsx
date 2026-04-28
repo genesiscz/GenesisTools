@@ -31,12 +31,13 @@ export function TrashTray(props: TrashTrayProps) {
                 <For each={props.items.slice(0, 5)}>
                     {(item) => (
                         <text fg={THEME.fgDim}>
-                            {"  "}{item.label ?? item.path} · {formatBytes(item.bytes)}
+                            {"  "}
+                            {item.label ?? item.path} · {formatBytes(item.bytes)}
                         </text>
                     )}
                 </For>
                 <Show when={props.items.length > 5}>
-                    <text fg={THEME.fgDim}>  and {props.items.length - 5} more</text>
+                    <text fg={THEME.fgDim}> and {props.items.length - 5} more</text>
                 </Show>
             </box>
         </Show>

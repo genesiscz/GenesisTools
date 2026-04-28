@@ -13,10 +13,10 @@
  *   tools cmux profiles path <name>
  */
 
-import { Command } from "commander";
 import { registerProfilesCommand } from "@app/cmux/commands/profiles";
 import { enhanceHelp } from "@app/utils/cli";
 import { handleReadmeFlag } from "@app/utils/readme";
+import { Command } from "commander";
 
 handleReadmeFlag(import.meta.url);
 

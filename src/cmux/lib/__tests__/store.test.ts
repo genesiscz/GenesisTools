@@ -1,9 +1,9 @@
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { ProfileExistsError, ProfileNotFoundError, ProfileStore } from "@app/cmux/lib/store";
-import { type Profile, PROFILE_VERSION } from "@app/cmux/lib/types";
+import { PROFILE_VERSION, type Profile } from "@app/cmux/lib/types";
 
 const sampleProfile: Profile = {
     version: PROFILE_VERSION,

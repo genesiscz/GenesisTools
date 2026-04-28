@@ -1,5 +1,5 @@
-import type { Action, Finding } from "@app/doctor/lib/types";
 import { describe, expect, it } from "bun:test";
+import type { Action, Finding } from "@app/doctor/lib/types";
 import { systemCachesView } from "../system-caches-view";
 
 const noopAction: Action = {

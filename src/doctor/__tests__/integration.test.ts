@@ -1,9 +1,9 @@
+import { describe, expect, it, setDefaultTimeout } from "bun:test";
 import { DiskSpaceAnalyzer } from "@app/doctor/analyzers/disk-space";
 import { MemoryAnalyzer } from "@app/doctor/analyzers/memory";
 import { ProcessesAnalyzer } from "@app/doctor/analyzers/processes";
 import { Engine } from "@app/doctor/lib/engine";
 import { classifyCachePath, classifyProcess } from "@app/doctor/lib/safety";
-import { describe, expect, it, setDefaultTimeout } from "bun:test";
 
 setDefaultTimeout(60_000);
 
@@ -18,10 +18,13 @@ describe("integration smoke (dry-run, live machine)", () => {
             }
         });
 
-        const results = await engine.run(
-            [new DiskSpaceAnalyzer(), new MemoryAnalyzer(), new ProcessesAnalyzer()],
-            { concurrency: 4, thorough: false, fresh: true, runId: "smoke", dryRun: true }
-        );
+        const results = await engine.run([new DiskSpaceAnalyzer(), new MemoryAnalyzer(), new ProcessesAnalyzer()], {
+            concurrency: 4,
+            thorough: false,
+            fresh: true,
+            runId: "smoke",
+            dryRun: true,
+        });
 
         expect(errors).toEqual([]);
         expect(results.get("memory")?.findings.length).toBeGreaterThan(0);
@@ -29,10 +32,13 @@ describe("integration smoke (dry-run, live machine)", () => {
 
     it("no non-blocked finding references a blacklisted cache path", async () => {
         const engine = new Engine();
-        const results = await engine.run(
-            [new DiskSpaceAnalyzer(), new MemoryAnalyzer(), new ProcessesAnalyzer()],
-            { concurrency: 4, thorough: false, fresh: true, runId: "smoke", dryRun: true }
-        );
+        const results = await engine.run([new DiskSpaceAnalyzer(), new MemoryAnalyzer(), new ProcessesAnalyzer()], {
+            concurrency: 4,
+            thorough: false,
+            fresh: true,
+            runId: "smoke",
+            dryRun: true,
+        });
 
         for (const result of results.values()) {
             for (const finding of result.findings) {

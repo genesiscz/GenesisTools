@@ -9,11 +9,7 @@ interface ErrorBoundaryProps {
 }
 
 export function ErrorBoundary(props: ErrorBoundaryProps) {
-    return (
-        <SolidErrorBoundary fallback={(err: Error) => renderError(err)}>
-            {props.children}
-        </SolidErrorBoundary>
-    );
+    return <SolidErrorBoundary fallback={(err: Error) => renderError(err)}>{props.children}</SolidErrorBoundary>;
 }
 
 function renderError(err: Error) {

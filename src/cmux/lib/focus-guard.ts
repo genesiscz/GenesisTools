@@ -1,5 +1,5 @@
-import logger from "@app/logger";
 import { runCmuxJSON, runCmuxOk } from "@app/cmux/lib/cli";
+import logger from "@app/logger";
 
 interface IdentifyFocused {
     workspace_ref?: string;
