@@ -1,0 +1,16 @@
+export const THEME = {
+    bg: "#1a1b26",
+    bgAlt: "#24283b",
+    bgHighlight: "#2a2f4a",
+    fg: "#c0caf5",
+    fgDim: "#565f89",
+    accent: "#7aa2f7",
+    success: "#9ece6a",
+    warn: "#e0af68",
+    danger: "#f7768e",
+    muted: "#414868",
+    sevSafe: "#9ece6a",
+    sevCautious: "#e0af68",
+    sevDangerous: "#f7768e",
+    sevBlocked: "#565f89",
+} as const;

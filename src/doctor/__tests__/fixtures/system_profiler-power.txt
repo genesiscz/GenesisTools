@@ -1,0 +1,15 @@
+Power:
+
+    Battery Information:
+
+      Model Information:
+          Serial Number: D8675309ABC
+          Manufacturer: SMP
+          Device Name: bq40z651
+      Charge Information:
+          Fully Charged: No
+          State of Charge (%): 83
+      Health Information:
+          Cycle Count: 178
+          Condition: Normal
+          Maximum Capacity: 94%

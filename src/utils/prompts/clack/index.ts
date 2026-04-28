@@ -10,3 +10,4 @@ export * from "./multiline";
 export * from "./search-multiselect";
 export * from "./search-select";
 export * from "./settings-summary";
+export * from "./trash-staging";
