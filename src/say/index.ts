@@ -1,75 +1,236 @@
 #!/usr/bin/env bun
 
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { AI } from "@app/utils/ai/index.ts";
+import { getModelsForTask } from "@app/utils/ai/ModelManager";
+import { getProvidersForTask } from "@app/utils/ai/providers";
+import type { AIProviderType } from "@app/utils/ai/types.ts";
+import { suggestCommand } from "@app/utils/cli/executor";
 import type { SayConfig } from "@app/utils/macos/tts.ts";
-import {
-    getConfigForRead,
-    listVoicesStructured,
-    normalizeVolume,
-    setConfig,
-    setMute,
-    speak,
-} from "@app/utils/macos/tts.ts";
+import { getConfigForRead, listVoicesStructured, normalizeVolume, setConfig, setMute } from "@app/utils/macos/tts.ts";
 import { formatTable } from "@app/utils/table.ts";
 import * as p from "@clack/prompts";
 import { Command } from "commander";
 import pc from "picocolors";
 
+type SayProvider = "macos" | "xai" | "openai";
+
+interface SayOptions {
+    volume?: number;
+    voice?: string | true;
+    rate?: number;
+    wait?: boolean;
+    app?: string;
+    mute?: boolean;
+    unmute?: boolean;
+    provider?: SayProvider;
+    language?: string;
+    format?: "mp3" | "wav";
+    file?: string;
+    stream?: boolean;
+    noStream?: boolean;
+    model?: string;
+}
+
 const program = new Command()
     .name("say")
-    .description("Text-to-speech with volume control, auto language detection, and mute support")
-    .argument("[message...]", "Text to speak")
+    .description("Text-to-speech with pluggable backends (macOS, xAI Grok, OpenAI)")
+    .argument("[message...]", "Text to speak (omit to read --file or enter interactive mode)")
     .option("--volume <n>", "Volume (0.0-1.0 or 0-100%); saved per-app with --app", parseFloat)
-    .option("--voice <name>", "Override voice name")
-    .option("--rate <wpm>", "Words per minute", parseInt)
+    .option("--voice [name]", "Voice id (provider-specific). Pass --voice with no value to list available voices.")
+    .option("--rate <wpm>", "Words per minute (macOS only)", parseInt)
     .option("--wait", "Block until speech finishes")
     .option("--app <name>", "Caller identity for per-app mute")
     .option("--mute", "Mute (global or per-app with --app)")
     .option("--unmute", "Unmute (global or per-app with --app)")
-    .action(
-        async (
-            messageParts: string[],
-            opts: {
-                volume?: number;
-                voice?: string;
-                rate?: number;
-                wait?: boolean;
-                app?: string;
-                mute?: boolean;
-                unmute?: boolean;
-            }
-        ) => {
-            // Handle mute/unmute commands
-            if (opts.mute) {
-                await setMute(true, opts.app);
-                const scope = opts.app ? `app "${opts.app}"` : "global";
-                console.log(pc.yellow(`[say] ${scope} muted`));
-                return;
-            }
-
-            if (opts.unmute) {
-                await setMute(false, opts.app);
-                const scope = opts.app ? `app "${opts.app}"` : "global";
-                console.log(pc.green(`[say] ${scope} unmuted`));
-                return;
-            }
-
-            // No message → interactive mode
-            if (messageParts.length === 0) {
-                await interactiveMode();
-                return;
-            }
-
-            const message = messageParts.join(" ");
-
-            await speak(message, {
-                volume: opts.volume,
-                voice: opts.voice,
-                rate: opts.rate,
-                wait: opts.wait,
-                app: opts.app,
-            });
+    .option("--provider <name>", "TTS backend: macos (default), xai, openai")
+    .option("--language <bcp47>", "Language hint (xai only; defaults to 'auto')")
+    .option("--format <codec>", "Output codec: mp3 (default) or wav")
+    .option("--file <path>", "Read text from a file instead of args")
+    .option("--stream", "Force streaming path")
+    .option("--no-stream", "Force REST/non-streaming path")
+    .option("--model <id>", "Provider-specific model (e.g. tts-1, gpt-4o-mini-tts for openai)")
+    .action(async (messageParts: string[], opts: SayOptions) => {
+        if (opts.mute) {
+            await setMute(true, opts.app);
+            console.log(pc.yellow(`[say] ${opts.app ? `app "${opts.app}"` : "global"} muted`));
+            return;
         }
+
+        if (opts.unmute) {
+            await setMute(false, opts.app);
+            console.log(pc.green(`[say] ${opts.app ? `app "${opts.app}"` : "global"} unmuted`));
+            return;
+        }
+
+        if (opts.voice === true) {
+            await printVoiceList(opts.provider);
+            return;
+        }
+
+        const text = await resolveText(messageParts, opts.file);
+
+        if (text == null) {
+            await interactiveMode();
+            return;
+        }
+
+        const muted = await isMutedForApp(opts.app);
+
+        if (muted) {
+            process.stderr.write("[say] muted\n");
+            return;
+        }
+
+        const provider: SayProvider = opts.provider ?? "macos";
+
+        if (provider !== "macos" && !envForProvider(provider)) {
+            console.error(pc.red(`[say] env var for ${provider} is not set.`));
+            console.error(pc.dim(suggestCommand("tools say", { add: ["--provider", "macos"] })));
+            process.exit(1);
+        }
+
+        const volume = opts.volume != null ? normalizeVolume(opts.volume) : undefined;
+        const stream = opts.stream === true ? true : opts.noStream === true ? false : undefined;
+
+        try {
+            await AI.speak(text, {
+                provider,
+                voice: typeof opts.voice === "string" ? opts.voice : undefined,
+                language: opts.language,
+                format: opts.format,
+                rate: opts.rate,
+                volume,
+                stream,
+                wait: opts.wait,
+                model: opts.model,
+            });
+        } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            console.error(pc.red(`[say] TTS failed: ${message}`));
+
+            if (isVoiceNotFoundError(message)) {
+                await printVoiceList(provider);
+            }
+
+            process.exit(1);
+        }
+    });
+
+// `tools say voices` subcommand
+// Note: --provider lives on the root command (program.opts()), not here.
+// Commander parses root options globally, so reading from opts would always be undefined.
+program
+    .command("voices")
+    .description("List voices grouped by provider (use root --provider to filter)")
+    .action(async () => {
+        const rootOpts = program.opts<SayOptions>();
+        await printVoiceList(rootOpts.provider);
+    });
+
+// `tools say models` subcommand
+program
+    .command("models")
+    .description("List downloadable TTS/STT models grouped by provider")
+    .option("--task <task>", "Filter by task: tts | transcribe", "tts")
+    .action(async (opts: { task?: string }) => {
+        const task = (opts.task ?? "tts") as "tts" | "transcribe";
+
+        // Collect provider types: those that claim to support the task + "local-hf" always
+        // (AILocalProvider supports transcribe but not tts at runtime — yet the registry has
+        // downloadable TTS models registered under local-hf for future use.)
+        const providerTypes = new Set<string>(getProvidersForTask(task).map((p) => p.type));
+        providerTypes.add("local-hf");
+
+        for (const provider of providerTypes) {
+            const models = getModelsForTask(task, provider);
+
+            if (models.length === 0) {
+                continue;
+            }
+
+            console.log();
+            console.log(pc.bold(pc.cyan(`[${provider}] ${task} models`)));
+            const rows = models.map((m) => [m.id, m.name, m.description.slice(0, 80)]);
+            console.log(formatTable(rows, ["ID", "Name", "Description"]));
+        }
+
+        console.log();
+        console.log(pc.dim("Download with: tools ai models download <id>"));
+    });
+
+async function resolveText(messageParts: string[], filePath?: string): Promise<string | null> {
+    if (filePath) {
+        const abs = resolve(filePath);
+
+        if (!existsSync(abs)) {
+            console.error(pc.red(`[say] file not found: ${abs}`));
+            process.exit(1);
+        }
+
+        return readFileSync(abs, "utf8");
+    }
+
+    if (messageParts.length === 0) {
+        return null;
+    }
+
+    return messageParts.join(" ");
+}
+
+function envForProvider(provider: SayProvider): boolean {
+    if (provider === "xai") {
+        return !!process.env.X_AI_API_KEY;
+    }
+
+    if (provider === "openai") {
+        return !!process.env.OPENAI_API_KEY;
+    }
+
+    return true;
+}
+
+async function isMutedForApp(app: string | undefined): Promise<boolean> {
+    const config = await getConfigForRead();
+
+    if (app && app in config.appMute) {
+        return config.appMute[app];
+    }
+
+    return config.globalMute;
+}
+
+function isVoiceNotFoundError(message: string): boolean {
+    return /\b404\b/.test(message) || /voice .* not found/i.test(message);
+}
+
+async function printVoiceList(filter?: SayProvider): Promise<void> {
+    const grouped = await AI.Synthesizer.create({ provider: "any" }).then((s) =>
+        s.listVoices(filter ? { provider: filter as AIProviderType } : undefined)
     );
+
+    for (const [providerType, voices] of Object.entries(grouped)) {
+        const label =
+            providerType === "macos"
+                ? "macOS"
+                : providerType === "xai"
+                  ? "xAI"
+                  : providerType === "openai"
+                    ? "OpenAI"
+                    : providerType;
+        console.log();
+        console.log(pc.bold(pc.cyan(`[${label}] (${voices.length} voices)`)));
+
+        if (voices.length === 0) {
+            console.error(pc.dim("  (no voices)"));
+            continue;
+        }
+
+        const rows = voices.map((v) => [v.id, v.name, v.locale ?? "", (v.description ?? "").slice(0, 60)]);
+        console.log(formatTable(rows, ["ID", "Name", "Locale", "Description"]));
+    }
+}
 
 async function main(): Promise<void> {
     try {
@@ -91,8 +252,6 @@ async function interactiveMode(): Promise<void> {
     p.intro(pc.bgCyan(pc.black(" tools say ")));
 
     const config = await getConfigForRead();
-
-    // Show current status
     showStatus(config);
 
     const action = await p.select({
@@ -166,13 +325,7 @@ async function handleTest(config: SayConfig): Promise<void> {
 
     const s = p.spinner();
     s.start("Speaking...");
-
-    await speak(text, {
-        volume: config.defaultVolume,
-        voice: config.defaultVoice ?? undefined,
-        wait: true,
-    });
-
+    await AI.speak(String(text), { provider: "macos", volume: config.defaultVolume, wait: true });
     s.stop("Done");
 }
 

@@ -40,6 +40,14 @@ function getCloudTranscriptionModels(): ModelInfo[] {
     return models;
 }
 
+function getXAITranscriptionModels(): ModelInfo[] {
+    if (!process.env.X_AI_API_KEY) {
+        return [];
+    }
+
+    return [{ id: "grok-stt", name: "xAI STT", description: "xAI's hosted STT (voice-think)" }];
+}
+
 /**
  * Get the default (first/recommended) model for a task + provider.
  * Returns the model ID string, or undefined if no models are known.
@@ -56,6 +64,10 @@ export function getModelsForTask(task: string, provider: string): ModelInfo[] {
     if (provider === "local-hf") {
         const entries = getModelsByProvider(task as Parameters<typeof getModelsByProvider>[0], "local-hf");
         return entries.map(toModelInfo);
+    }
+
+    if (provider === "xai" && task === "transcribe") {
+        return getXAITranscriptionModels();
     }
 
     if (isCloudProvider(provider as AIProviderType) && task === "transcribe") {

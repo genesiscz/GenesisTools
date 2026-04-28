@@ -1,10 +1,10 @@
 #!/usr/bin/env bun
 
 import logger from "@app/logger";
+import { transcriptionManager } from "@app/utils/ai/transcription/TranscriptionManager";
 import { input } from "@app/utils/prompts/clack";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { AIChat } from "@ask/AIChat";
-import { transcriptionManager } from "@ask/audio/TranscriptionManager";
 import { ChatEngine } from "@ask/chat/ChatEngine";
 import type { ChatState, CommandResult } from "@ask/chat/CommandHandler";
 import { commandHandler } from "@ask/chat/CommandHandler";

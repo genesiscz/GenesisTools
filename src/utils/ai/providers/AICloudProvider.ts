@@ -2,6 +2,7 @@ import { unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import logger from "@app/logger";
+import { TranscriptionManager } from "@app/utils/ai/transcription/TranscriptionManager";
 import type {
     AIEmbeddingProvider,
     AISummarizationProvider,
@@ -18,7 +19,6 @@ import type {
     TranslationResult,
 } from "@app/utils/ai/types";
 import type { AIProviderType } from "@app/utils/config/ai.types";
-import { TranscriptionManager } from "@ask/audio/TranscriptionManager";
 
 type LlmCloudType = "openai" | "groq" | "openrouter";
 type TranscribeOnlyCloudType = "assemblyai" | "deepgram" | "gladia";

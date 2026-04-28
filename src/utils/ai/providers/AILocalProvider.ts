@@ -359,7 +359,13 @@ export class AILocalProvider
 
             await this.ensureHfToken();
 
-            const { device } = await resolveDevice();
+            const { device: rawDevice } = await resolveDevice();
+            // transformers.js's onnxruntime-node binding only registers "cpu" on macOS
+            // (see node_modules/@huggingface/transformers/src/backends/onnx.js — case 'darwin'
+            // pushes nothing before the cpu push). CoreML is reachable through darwinkit
+            // for the AICoreMLProvider, but not through transformers.js. Force cpu here
+            // to avoid "Unsupported device: 'coreml'" from transformers.js.
+            const device = process.platform === "darwin" && rawDevice === "coreml" ? "cpu" : rawDevice;
 
             // Build pipeline options once — reused by retry paths
             const pipelineOpts = (extraSessionOpts?: Record<string, unknown>) => ({

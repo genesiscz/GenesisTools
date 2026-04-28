@@ -164,7 +164,6 @@ export async function setMute(muted: boolean, app?: string): Promise<void> {
 export async function speak(text: string, options?: SpeakOptions): Promise<void> {
     const config = await getConfig();
 
-    // Check mute status
     if (isMuted(config, options?.app)) {
         process.stderr.write("[say] muted\n");
         return;
@@ -190,57 +189,95 @@ export async function speak(text: string, options?: SpeakOptions): Promise<void>
 
     const rawVolume = options?.volume ?? (app ? config.appVolume[app] : undefined) ?? config.defaultVolume ?? 1;
     const volume = normalizeVolume(rawVolume);
-    const useAfplay = volume < 1;
 
-    // Build say args
-    const sayArgs = ["say"];
+    // Dynamic import avoids a circular module init:
+    // AIMacOSTextToSpeechProvider -> tts.ts (renderToBuffer, listVoicesStructured)
+    // tts.ts -> ai/index -> AIMacOSTextToSpeechProvider
+    const { AI } = await import("@app/utils/ai/index");
+    await AI.speak(text, {
+        provider: "local",
+        voice: options?.voice,
+        rate: options?.rate,
+        volume,
+        wait: options?.wait,
+    });
+}
 
-    // Voice selection
-    if (options?.voice) {
-        sayArgs.push("-v", options.voice);
-    } else {
-        const voiceName = config.defaultVoice ?? (await detectVoiceForText(text));
+export interface PlayAudioOptions {
+    /** Playback volume 0.0-1.0 (passed to `afplay -v`). */
+    volume?: number;
+    /** Block until playback finishes. */
+    wait?: boolean;
+    /** Delete the file after playback. */
+    cleanup?: boolean;
+}
 
-        if (voiceName) {
-            sayArgs.push("-v", voiceName);
+/**
+ * Play an audio file via macOS `afplay`. Used by both the macOS TTS path
+ * (volume-attenuated AIFF) and the xAI TTS path (mp3/wav from the API).
+ */
+export async function playAudioFile(path: string, options?: PlayAudioOptions): Promise<void> {
+    const args = ["afplay"];
+
+    if (options?.volume != null) {
+        args.push("-v", String(options.volume));
+    }
+
+    args.push(path);
+
+    const proc = Bun.spawn(args, { stdout: "ignore", stderr: "ignore" });
+
+    const finalize = (): void => {
+        if (options?.cleanup) {
+            cleanupTmpFile(path);
         }
+    };
+
+    if (options?.wait) {
+        await proc.exited;
+        finalize();
+    } else {
+        proc.exited.then(finalize);
+    }
+}
+
+/**
+ * Render text to an audio buffer using macOS `say -o`. Returns AIFF bytes.
+ * Used by AIMacosProvider.synthesize() so the macOS path goes through the
+ * same AITextToSpeechProvider interface as cloud providers.
+ */
+export async function renderToBuffer(text: string, options?: { voice?: string; rate?: number }): Promise<Buffer> {
+    const tmpFile = join(tmpdir(), `genesis-say-render-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.aiff`);
+    const args = ["say"];
+
+    let voiceName = options?.voice ?? null;
+
+    if (!voiceName) {
+        voiceName = await detectVoiceForText(text);
+    }
+
+    if (voiceName) {
+        args.push("-v", voiceName);
     }
 
     if (options?.rate) {
-        sayArgs.push("-r", String(options.rate));
+        args.push("-r", String(options.rate));
     }
 
-    if (useAfplay) {
-        // Render to AIFF, then play with volume via afplay
-        const tmpFile = join(tmpdir(), `genesis-say-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.aiff`);
-        sayArgs.push("-o", tmpFile);
-        sayArgs.push(text);
+    args.push("-o", tmpFile, text);
 
-        const sayProc = Bun.spawn(sayArgs, { stdout: "ignore", stderr: "ignore" });
-        await sayProc.exited;
+    const proc = Bun.spawn(args, { stdout: "ignore", stderr: "ignore" });
+    await proc.exited;
 
-        if (!existsSync(tmpFile)) {
-            return;
-        }
+    if (!existsSync(tmpFile)) {
+        throw new Error("macOS `say` failed to produce output file");
+    }
 
-        const afplayArgs = ["afplay", "-v", String(volume), tmpFile];
-        const afplayProc = Bun.spawn(afplayArgs, { stdout: "ignore", stderr: "ignore" });
-
-        if (options?.wait) {
-            await afplayProc.exited;
-            cleanupTmpFile(tmpFile);
-        } else {
-            // Clean up after playback finishes in background
-            afplayProc.exited.then(() => cleanupTmpFile(tmpFile));
-        }
-    } else {
-        // Direct say (volume = 1, no need for afplay)
-        sayArgs.push(text);
-        const proc = Bun.spawn(sayArgs, { stdout: "ignore", stderr: "ignore" });
-
-        if (options?.wait) {
-            await proc.exited;
-        }
+    try {
+        const file = Bun.file(tmpFile);
+        return Buffer.from(await file.arrayBuffer());
+    } finally {
+        cleanupTmpFile(tmpFile);
     }
 }
 
