@@ -217,19 +217,30 @@ export interface TimelyEvent {
 // Create Event Input
 // ============================================
 
+export interface CreateEventTimestamp {
+    from: string; // ISO datetime
+    to: string; // ISO datetime
+    entry_ids: string[]; // e.g. ["tool_tic_<memoryId>"]
+}
+
 export interface CreateEventInput {
     day: string; // YYYY-MM-DD
     hours: number;
     minutes: number;
+    seconds?: number;
     note?: string;
     project_id?: number;
     user_id?: number;
-    from?: string; // HH:MM
-    to?: string; // HH:MM
+    from?: string; // ISO datetime or HH:MM
+    to?: string;
     estimated_hours?: number;
     estimated_minutes?: number;
     label_ids?: number[];
     external_id?: string;
+    timestamps?: CreateEventTimestamp[];
+    created_from?: string;
+    updated_from?: string;
+    timer_state?: number;
 }
 
 // ============================================
@@ -251,19 +262,19 @@ export interface TimelyExtraAttribute {
     value: string;
 }
 
-export interface TimelyEntry {
-    id: number;
-    type: string; // e.g., "macOS"
+export interface TimelyAppEntry {
+    id: number; // memory ID — used in `tool_tic_<id>` for timestamps[].entry_ids
+    type: string;
     uid: string;
-    title: string; // Application name, e.g., "Cursor"
-    note: string; // Main note/description
+    title: string;
+    note: string;
     description: string;
-    date: string; // YYYY-MM-DD
+    date: string;
     from: string; // ISO datetime
     to: string; // ISO datetime
     entry_type: string | null;
     duration: Duration;
-    at: string; // ISO datetime
+    at: string;
     extra_attributes: TimelyExtraAttribute[];
     icon: string | null;
     color: string | null;
@@ -271,7 +282,33 @@ export interface TimelyEntry {
     icon_url: string;
     icon_fallback_url: string;
     url: string;
-    entry_ids?: number[]; // Present on suggested_entries (memories) — IDs of sub-entries
+    importance?: number;
+    spam?: boolean;
+    updated_by?: string;
+}
+
+export interface TimelyEntry {
+    id: number;
+    type: string;
+    uid: string;
+    title: string;
+    note: string;
+    description: string;
+    date: string;
+    from: string;
+    to: string;
+    entry_type: string | null;
+    duration: Duration;
+    at: string;
+    extra_attributes: TimelyExtraAttribute[];
+    icon: string | null;
+    color: string | null;
+    sub_entries: TimelySubEntry[];
+    icon_url: string;
+    icon_fallback_url: string;
+    url: string;
+    entry_ids?: number[]; // top-level memory bucket: IDs of contained entries
+    entries?: TimelyAppEntry[]; // top-level memory bucket: actual app entries with from/to
 }
 
 // TimelyEntryResponse is now just an array of TimelyEntry
