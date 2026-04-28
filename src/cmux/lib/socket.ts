@@ -1,6 +1,7 @@
 import { connect } from "node:net";
-import logger from "@app/logger";
 import { runCmuxJSON } from "@app/cmux/lib/cli";
+import logger from "@app/logger";
+import { SafeJSON } from "@app/utils/json";
 
 interface IdentifyResponse {
     socket_path: string;
@@ -38,11 +39,11 @@ let requestCounter = 0;
 export async function rpc<TResult = unknown>(
     method: string,
     params: Record<string, unknown> = {},
-    opts: { timeoutMs?: number } = {},
+    opts: { timeoutMs?: number } = {}
 ): Promise<TResult> {
     const path = await getSocketPath();
     const id = `cmux-${Date.now()}-${++requestCounter}`;
-    const payload = `${JSON.stringify({ id, method, params })}\n`;
+    const payload = `${SafeJSON.stringify({ id, method, params })}\n`;
     const timeoutMs = opts.timeoutMs ?? 5_000;
 
     return await new Promise<TResult>((resolve, reject) => {
@@ -85,15 +86,15 @@ export async function rpc<TResult = unknown>(
             const line = buffer.slice(0, newlineIndex);
             clearTimeout(timer);
             try {
-                const parsed = JSON.parse(line) as JsonRpcResponse<TResult>;
+                const parsed = SafeJSON.parse(line) as JsonRpcResponse<TResult>;
                 if (!parsed.ok) {
                     logger.error({ method, params, error: parsed.error }, "[socket] RPC error");
                     settle(() =>
                         reject(
                             new Error(
-                                `cmux RPC ${method} failed: ${parsed.error?.code ?? "unknown"} ${parsed.error?.message ?? ""}`.trim(),
-                            ),
-                        ),
+                                `cmux RPC ${method} failed: ${parsed.error?.code ?? "unknown"} ${parsed.error?.message ?? ""}`.trim()
+                            )
+                        )
                     );
                     return;
                 }
@@ -176,13 +177,9 @@ export interface WorkspaceCreateResult {
     window_id: string;
 }
 
-export async function workspaceCreate(opts: {
-    name?: string;
-    description?: string;
-    cwd?: string;
-    command?: string;
-    window?: string;
-} = {}): Promise<WorkspaceCreateResult> {
+export async function workspaceCreate(
+    opts: { name?: string; description?: string; cwd?: string; command?: string; window?: string } = {}
+): Promise<WorkspaceCreateResult> {
     const params: Record<string, unknown> = {};
     if (opts.name) {
         params.name = opts.name;
@@ -213,7 +210,7 @@ export interface SurfaceSplitResult {
 export async function surfaceSplit(
     direction: "left" | "right" | "up" | "down",
     surfaceRef: string,
-    workspaceRef: string,
+    workspaceRef: string
 ): Promise<SurfaceSplitResult> {
     return rpc<SurfaceSplitResult>("surface.split", {
         direction,

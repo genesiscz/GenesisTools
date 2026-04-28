@@ -1,5 +1,5 @@
-import { Command } from "commander";
 import { ProfileStore } from "@app/cmux/lib/store";
+import type { Command } from "commander";
 
 export function registerPathCommand(parent: Command): void {
     parent

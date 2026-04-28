@@ -303,7 +303,7 @@ async function resizeNewBorder(
     tree: Exclude<SplitTree, { kind: "leaf" }>,
     anchorSurface: string,
     newPaneRef: string,
-    workspaceRef: string,
+    workspaceRef: string
 ): Promise<void> {
     const MAX_ATTEMPTS = 8;
     let lastDelta = Number.POSITIVE_INFINITY;
@@ -314,7 +314,7 @@ async function resizeNewBorder(
         if (!oldPane || !newPane) {
             logger.warn(
                 { anchorSurface, newPaneRef, kind: tree.kind },
-                "[restore] could not locate split pair — aborting resize",
+                "[restore] could not locate split pair — aborting resize"
             );
             return;
         }
@@ -340,7 +340,7 @@ async function resizeNewBorder(
             if (Math.abs(deltaCells) >= lastDelta) {
                 logger.warn(
                     { newPane: newPane.ref, deltaCells, lastDelta, attempt },
-                    "[restore] vsplit resize made no progress — bailing",
+                    "[restore] vsplit resize made no progress — bailing"
                 );
                 return;
             }
@@ -360,7 +360,7 @@ async function resizeNewBorder(
                     targetCols: targetOldCols,
                     fraction: tree.leftFraction,
                 },
-                "[restore] vsplit resize",
+                "[restore] vsplit resize"
             );
             const moved = await tryResize(workspaceRef, target.ref, dir, amountPx);
             if (!moved) {
@@ -378,7 +378,7 @@ async function resizeNewBorder(
         if (Math.abs(deltaCells) >= lastDelta) {
             logger.warn(
                 { newPane: newPane.ref, deltaCells, lastDelta, attempt },
-                "[restore] hsplit resize made no progress — bailing",
+                "[restore] hsplit resize made no progress — bailing"
             );
             return;
         }
@@ -398,7 +398,7 @@ async function resizeNewBorder(
                 targetRows: targetOldRows,
                 fraction: tree.topFraction,
             },
-            "[restore] hsplit resize",
+            "[restore] hsplit resize"
         );
         const moved = await tryResize(workspaceRef, target.ref, dir, amountPx);
         if (!moved) {
@@ -412,7 +412,7 @@ async function tryResize(
     workspaceRef: string,
     paneRef: string,
     direction: "-L" | "-R" | "-U" | "-D",
-    amount: number,
+    amount: number
 ): Promise<boolean> {
     try {
         await runCmuxOk([
@@ -427,10 +427,7 @@ async function tryResize(
         ]);
         return true;
     } catch (error) {
-        logger.warn(
-            { error, paneRef, direction, amount },
-            "[restore] split-time resize failed",
-        );
+        logger.warn({ error, paneRef, direction, amount }, "[restore] split-time resize failed");
         return false;
     }
 }
@@ -460,15 +457,7 @@ async function populatePane(
         // currently focused pane (same routing-bug class as `surface.split`). The CLI
         // routes through V2 and honors the params, so additional tabs land in the
         // correct pane instead of all stacking into the anchor.
-        const args = [
-            "new-surface",
-            "--workspace",
-            workspaceRef,
-            "--pane",
-            paneRef,
-            "--type",
-            nextSavedSurface.type,
-        ];
+        const args = ["new-surface", "--workspace", workspaceRef, "--pane", paneRef, "--type", nextSavedSurface.type];
         if (nextSavedSurface.type === "browser" && nextSavedSurface.url) {
             args.push("--url", nextSavedSurface.url);
         }
@@ -476,7 +465,7 @@ async function populatePane(
         if (created.pane_ref !== paneRef) {
             logger.warn(
                 { requested: paneRef, got: created.pane_ref, surfaceRef: created.surface_ref },
-                "[restore] new-surface landed in unexpected pane",
+                "[restore] new-surface landed in unexpected pane"
             );
         }
         surfaceRefs.push(created.surface_ref);

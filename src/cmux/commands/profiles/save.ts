@@ -29,11 +29,11 @@ export function registerSaveCommand(parent: Command): void {
         .option("--no-cwd", "Skip per-pane cwd capture")
         .option(
             "--no-screen",
-            "Skip per-pane visible-screen capture (default on: each terminal pane's rendered content is captured so restore can paint it back)",
+            "Skip per-pane visible-screen capture (default on: each terminal pane's rendered content is captured so restore can paint it back)"
         )
         .option(
             "--no-history",
-            "Skip per-pane last-shell-command capture (default on: scrollback is parsed for the most recent shell prompt+command, e.g. `claude --resume <id>`, and that command is pre-typed at the new prompt on restore)",
+            "Skip per-pane last-shell-command capture (default on: scrollback is parsed for the most recent shell prompt+command, e.g. `claude --resume <id>`, and that command is pre-typed at the new prompt on restore)"
         )
         .option("--note <text>", "Free-form note stored on the profile")
         .option("-f, --force", "Overwrite an existing profile of the same name")

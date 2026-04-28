@@ -1,7 +1,8 @@
-import { Command } from "commander";
-import pc from "picocolors";
 import { renderProfileList } from "@app/cmux/lib/format";
 import { ProfileStore } from "@app/cmux/lib/store";
+import { SafeJSON } from "@app/utils/json";
+import type { Command } from "commander";
+import pc from "picocolors";
 
 export function registerListCommand(parent: Command): void {
     parent
@@ -13,7 +14,7 @@ export function registerListCommand(parent: Command): void {
             const store = new ProfileStore();
             const summaries = store.list();
             if (opts.json) {
-                console.log(JSON.stringify(summaries, null, 2));
+                console.log(SafeJSON.stringify(summaries, null, 2));
                 return;
             }
             console.log(renderProfileList(summaries));

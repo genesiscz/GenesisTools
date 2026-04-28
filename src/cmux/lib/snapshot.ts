@@ -193,7 +193,7 @@ function filterWorkspaces(
 async function capturePanes(
     workspaceRef: string,
     options: SnapshotOptions,
-    callerSurfaceRef: string | undefined,
+    callerSurfaceRef: string | undefined
 ): Promise<Pane[]> {
     const layout = await paneList(workspaceRef);
     const panes: Pane[] = [];
@@ -235,7 +235,7 @@ async function captureSurface(
     entry: SurfaceListEntry,
     workspaceRef: string,
     options: SnapshotOptions,
-    callerSurfaceRef: string | undefined,
+    callerSurfaceRef: string | undefined
 ): Promise<Surface> {
     const title = entry.title ?? "";
     if (entry.type === "browser") {

@@ -1,5 +1,5 @@
-import type { Finding } from "@app/doctor/lib/types";
 import { describe, expect, it } from "bun:test";
+import type { Finding } from "@app/doctor/lib/types";
 import { batteryView } from "../battery-view";
 
 const summary: Finding = {

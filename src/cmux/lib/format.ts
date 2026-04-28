@@ -1,12 +1,11 @@
-import pc from "picocolors";
+import type { Pane, Profile, ProfileSummary, Surface } from "@app/cmux/lib/types";
 import { formatBytes } from "@app/utils/format";
 import { stripAnsi } from "@app/utils/string";
-import type { Pane, Profile, ProfileSummary, Surface } from "@app/cmux/lib/types";
+import pc from "picocolors";
 
 const TREE_VERTICAL = pc.dim("│");
 const TREE_BRANCH = pc.dim("├─");
 const TREE_LAST = pc.dim("└─");
-const TREE_GAP = pc.dim("  ");
 
 export function renderProfileList(summaries: ProfileSummary[]): string {
     if (summaries.length === 0) {
@@ -56,7 +55,7 @@ export function renderProfileTree(profile: Profile): string {
         const isLastWindow = wi === profile.windows.length - 1;
         const windowPrefix = isLastWindow ? TREE_LAST : TREE_BRANCH;
         lines.push(
-            `${windowPrefix} ${pc.bold(window.title || window.ref)} ${pc.dim(`${window.container_frame.width.toFixed(0)}×${window.container_frame.height.toFixed(0)} px`)}`,
+            `${windowPrefix} ${pc.bold(window.title || window.ref)} ${pc.dim(`${window.container_frame.width.toFixed(0)}×${window.container_frame.height.toFixed(0)} px`)}`
         );
 
         const childIndent = isLastWindow ? "   " : `${TREE_VERTICAL}  `;
@@ -65,7 +64,7 @@ export function renderProfileTree(profile: Profile): string {
             const wsPrefix = isLastWs ? TREE_LAST : TREE_BRANCH;
             const wsBadge = ws.selected ? pc.green(" ★") : "";
             lines.push(
-                `${childIndent}${wsPrefix} ${pc.cyan(ws.title)}${wsBadge} ${pc.dim(`(${ws.panes.length} pane${ws.panes.length === 1 ? "" : "s"})`)}`,
+                `${childIndent}${wsPrefix} ${pc.cyan(ws.title)}${wsBadge} ${pc.dim(`(${ws.panes.length} pane${ws.panes.length === 1 ? "" : "s"})`)}`
             );
             const wsChildIndent = childIndent + (isLastWs ? "   " : `${TREE_VERTICAL}  `);
             ws.panes.forEach((pane, pi) => {
@@ -89,7 +88,7 @@ export function renderProfileTree(profile: Profile): string {
 function formatPaneHeader(pane: Pane): string {
     const dims = pc.dim(`${pane.columns}×${pane.rows}`);
     const px = pc.dim(
-        `@(${pane.pixel_frame.x.toFixed(0)},${pane.pixel_frame.y.toFixed(0)}) ${pane.pixel_frame.width.toFixed(0)}×${pane.pixel_frame.height.toFixed(0)}px`,
+        `@(${pane.pixel_frame.x.toFixed(0)},${pane.pixel_frame.y.toFixed(0)}) ${pane.pixel_frame.width.toFixed(0)}×${pane.pixel_frame.height.toFixed(0)}px`
     );
     return `${pc.bold(`pane ${pane.index}`)} ${dims} ${px}`;
 }
@@ -149,8 +148,7 @@ function renderTable(rows: string[][]): string {
                     const visible = stripAnsi(cell).length;
                     return cell + " ".repeat(widths[i] - visible);
                 })
-                .join("  "),
+                .join("  ")
         )
         .join("\n");
 }
-

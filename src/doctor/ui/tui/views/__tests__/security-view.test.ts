@@ -1,5 +1,5 @@
-import type { Finding } from "@app/doctor/lib/types";
 import { describe, expect, it } from "bun:test";
+import type { Finding } from "@app/doctor/lib/types";
 import { securityView } from "../security-view";
 
 const filevaultOn: Finding = {

@@ -23,7 +23,9 @@ export interface EngineState {
     reset(focusedAnalyzerId: string): void;
 }
 
-function initialState(focusedAnalyzerId = ""): Omit<
+function initialState(
+    focusedAnalyzerId = ""
+): Omit<
     EngineState,
     | "applyEvent"
     | "toggleFinding"

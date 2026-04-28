@@ -31,11 +31,7 @@ export function selectionCell(finding: Finding, selected: Set<string>, bg?: stri
     return [{ text: on ? "[x]" : "[ ]", fg: on ? THEME.success : THEME.fgDim, bg }];
 }
 
-export function sliceAroundCursor<T>(
-    items: T[],
-    cursor: number,
-    rows: number,
-): { rows: T[]; startIndex: number } {
+export function sliceAroundCursor<T>(items: T[], cursor: number, rows: number): { rows: T[]; startIndex: number } {
     if (items.length <= rows) {
         return { rows: items, startIndex: 0 };
     }

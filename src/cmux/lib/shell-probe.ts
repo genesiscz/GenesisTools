@@ -1,8 +1,8 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import logger from "@app/logger";
 import { runCmux } from "@app/cmux/lib/cli";
 import type { CommandSource, ScreenSnapshot } from "@app/cmux/lib/types";
+import logger from "@app/logger";
 
 /**
  * cmux exposes no PID/tty for surfaces, but it does set tab titles from OSC-7 cwd escapes.
@@ -69,7 +69,7 @@ const PROMPT_PATTERNS: RegExp[] = [
     // [user@host dir]$ <command>
     /^\[[^\]]+\]\s*[$#%]\s+(\S.*?)\s*$/u,
     // user@host:dir$ <command>  (typical bash)
-    /^[\w.\-]+@[\w.\-]+:\S*[$#%]\s+(\S.*?)\s*$/u,
+    /^[\w.-]+@[\w.-]+:\S*[$#%]\s+(\S.*?)\s*$/u,
 ];
 
 interface CommandHint {
@@ -121,7 +121,7 @@ export interface SurfaceCaptureResult {
 export async function captureSurfaceState(
     workspaceRef: string,
     surfaceRef: string,
-    options: { screen: boolean; history: boolean },
+    options: { screen: boolean; history: boolean }
 ): Promise<SurfaceCaptureResult> {
     if (!options.screen && !options.history) {
         return { command: NO_COMMAND };
@@ -144,17 +144,11 @@ export async function captureSurfaceState(
 
 async function runCaptureSafely(workspaceRef: string, surfaceRef: string): Promise<string | undefined> {
     try {
-        const result = await runCmux([
-            "capture-pane",
-            "--workspace",
-            workspaceRef,
-            "--surface",
-            surfaceRef,
-        ]);
+        const result = await runCmux(["capture-pane", "--workspace", workspaceRef, "--surface", surfaceRef]);
         if (result.code !== 0) {
             logger.debug(
                 { workspaceRef, surfaceRef, stderr: result.stderr.trim() },
-                "[shell-probe] capture-pane non-zero exit",
+                "[shell-probe] capture-pane non-zero exit"
             );
             return undefined;
         }
