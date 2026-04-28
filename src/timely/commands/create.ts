@@ -37,11 +37,11 @@ function expandDates(options: CreateOptions): string[] {
 
     if (options.from && options.to) {
         const dates: string[] = [];
-        const cur = new Date(options.from);
-        const end = new Date(options.to);
+        const cur = new Date(`${options.from}T00:00:00Z`);
+        const end = new Date(`${options.to}T00:00:00Z`);
         while (cur <= end) {
             dates.push(cur.toISOString().slice(0, 10));
-            cur.setDate(cur.getDate() + 1);
+            cur.setUTCDate(cur.getUTCDate() + 1);
         }
 
         return dates;
@@ -287,9 +287,24 @@ function printPlanSummary(plan: CreatePlanV1): void {
 }
 
 function readPlanFile(path: string): CreatePlanV1 {
-    const text = readFileSync(path === "-" ? 0 : path, "utf8");
-    const parsed = SafeJSON.parse(text);
-    return parsed as CreatePlanV1;
+    let text: string;
+    try {
+        text = readFileSync(path === "-" ? 0 : path, "utf8");
+    } catch (error) {
+        logger.error(
+            `Cannot read plan from ${path === "-" ? "stdin" : path}: ${error instanceof Error ? error.message : String(error)}`
+        );
+        process.exit(1);
+    }
+
+    try {
+        return SafeJSON.parse(text) as CreatePlanV1;
+    } catch (error) {
+        logger.error(
+            `Invalid plan JSON in ${path === "-" ? "stdin" : path}: ${error instanceof Error ? error.message : String(error)}`
+        );
+        process.exit(1);
+    }
 }
 
 function printIssues(issues: PlanIssue[]): { errors: number; warnings: number } {
