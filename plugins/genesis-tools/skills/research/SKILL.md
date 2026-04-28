@@ -81,21 +81,27 @@ If the user picks **Skip** or **Don't ask again**, dispatch immediately with the
 Tool lists are **strong nudges**, not bans: agents should prefer these; missing ones are dropped per the availability protocol; agents may use other live MCPs when clearly better.
 
 ### factual
+
 "what version of X", "does Y support Z"
+
 - **Agent:** single `general-purpose`, Haiku
 - **Tools:** `mcp__jina__search_web`, `mcp__jina__read_url`, `mcp__brave-search__brave_web_search` — fall back to `WebSearch` + `WebFetch` if all missing
 - **Min sources:** 3
 - **Save:** inline only unless user asks
 
 ### news
+
 "what happened with X recently", time-sensitive
+
 - **Agent:** single `gt:explore` (or `general-purpose` if `gt:explore` not installed), Haiku
 - **Tools:** `mcp__brave-search__brave_web_search`, `mcp__jina__parallel_read_url`; if `obsidian:defuddle` skill is available use it for clean article capture
 - **Min sources:** 4
 - **Save:** if user asked or said "save to obsidian", default to `.claude/work/research/YYYY-MM-DD-HHMM-<CamelCaseTopic>.md` (time in name because news is a dated snapshot); add an Obsidian copy ONLY if the user has set `OBSIDIAN_VAULT_PATH` env var or explicitly named the vault path
 
 ### comparison
+
 "compare X vs Y vs Z", "what's the best library for"
+
 - **Agents (parallel, 2–3):**
   - A — Sonnet, `general-purpose`, docs + official sources (`mcp__jina__search_web`, `mcp__jina__parallel_read_url`, `mcp__brave-search__brave_web_search`)
   - B — Haiku, `general-purpose`, Reddit (`mcp__reddit-mcp-server__search_reddit`, `mcp__reddit-mcp-server__get_post_comments`, `mcp__reddit-mcp-server__get_top_posts`) — drop entire angle if `reddit-mcp-server` missing AND user declined install; substitute `site:reddit.com` web search if proceeding degraded
@@ -104,7 +110,9 @@ Tool lists are **strong nudges**, not bans: agents should prefer these; missing 
 - **Save:** always
 
 ### deep_technical
+
 "how does X work under the hood"
+
 - **Depth gate:** if user didn't indicate depth, call `AskUserQuestion` once: "skim / normal / deep-dive".
 - **Agents (parallel, 2):**
   - A — Sonnet, `gt:explore` if available else `general-purpose`, official docs + deep-reads (`mcp__jina__parallel_read_url`; if a library is named AND `context7-mcp` is live, `mcp__context7-mcp__resolve-library-id` then `mcp__context7-mcp__get-library-docs`)
@@ -113,7 +121,9 @@ Tool lists are **strong nudges**, not bans: agents should prefer these; missing 
 - **Save:** always
 
 ### code_hunt
+
 "find examples of X on github", "how do people implement Y"
+
 - **Agent:** single `general-purpose`, Sonnet (precision matters for code)
 - **Tools:** `mcp__gh_grep__searchGitHub` (primary), `gt:github` skill for issues/PRs if available, `mcp__jina__read_url` for specific files
 - **Min sources:** 3 real code examples, each cited with repo + path
@@ -121,9 +131,11 @@ Tool lists are **strong nudges**, not bans: agents should prefer these; missing 
 - **Nudge the user** if the query is vague — "find auth examples" is too broad; ask what language/framework/approach before dispatching.
 
 ### sentiment
+
 "what do people complain about with X", "is X worth using"
+
 - **Agents (parallel, 2, both Haiku):**
-  - A — Reddit angle (`mcp__reddit-mcp-server__search_reddit` + `get_post_comments` + `get_top_posts`); fall back to `site:reddit.com` web search if missing
+  - A — Reddit angle (`mcp__reddit-mcp-server__search_reddit` + `mcp__reddit-mcp-server__get_post_comments` + `mcp__reddit-mcp-server__get_top_posts`); fall back to `site:reddit.com` web search if missing
   - B — GitHub issue threads via `gt:github` skill (sorted by reactions); fall back to `WebSearch` for `site:github.com` issues if missing
 - **Min sources:** 6 distinct posts/threads
 - **Save:** optional; inline unless asked
@@ -199,7 +211,7 @@ _Sources: [title](url)_
 
 Main Claude fills in per agent. Keep each agent narrow to one angle.
 
-```
+```text
 ROLE: <one-line: "Reddit sentiment angle", "official docs deep-read", etc.>
 
 QUERY: <user's original ask, verbatim>
