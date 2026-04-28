@@ -52,11 +52,13 @@ Tools used by this skill: `mcp__brave-search__brave_web_search`, `mcp__brave-sea
 Local stdio server. User needs a Brave Search API key from <https://brave.com/search/api/>.
 
 Install:
+
 ```bash
 bun add --global @modelcontextprotocol/server-brave-search
 ```
 
 Config snippet:
+
 ```json
 {
   "mcpServers": {
@@ -73,16 +75,18 @@ Config snippet:
 
 ### reddit-mcp-server
 
-Tools used by this skill: `mcp__reddit-mcp-server__search_reddit`, `get_post_comments`, `get_top_posts`.
+Tools used by this skill: `mcp__reddit-mcp-server__search_reddit`, `mcp__reddit-mcp-server__get_post_comments`, `mcp__reddit-mcp-server__get_top_posts`.
 
 Local stdio server. Read-only mode works without credentials; for write actions the user adds `REDDIT_USERNAME` / `REDDIT_PASSWORD` env vars (this skill never writes).
 
 Install:
+
 ```bash
 bun add --global reddit-mcp-server
 ```
 
 Config snippet:
+
 ```json
 {
   "mcpServers": {
@@ -121,11 +125,13 @@ Tools used by this skill (only when a named library is being researched): `mcp__
 Local stdio server. User needs a Context7 API key from <https://context7.com>.
 
 Install:
+
 ```bash
 bun add --global @upstash/context7-mcp
 ```
 
 Config snippet:
+
 ```json
 {
   "mcpServers": {
