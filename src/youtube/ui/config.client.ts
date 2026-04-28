@@ -1,3 +1,4 @@
+import { SafeJSON } from "@app/utils/json";
 import type { YoutubeConfigPatch } from "@app/youtube/lib/config.api.types";
 import type { YoutubeConfigShape } from "@app/youtube/lib/types";
 
@@ -74,7 +75,7 @@ export async function patchUiConfig(patch: YoutubeConfigPatch): Promise<UiConfig
     const res = await fetch(url, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(patch),
+        body: SafeJSON.stringify(patch),
     });
 
     if (!res.ok) {

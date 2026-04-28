@@ -7,7 +7,10 @@ import type { Youtube } from "@app/youtube/lib/youtube";
 export async function handleConfigRoute(req: Request, _url: URL, yt: Youtube): Promise<Response> {
     try {
         if (req.method === "GET") {
-            return Response.json({ config: await yt.config.getAll(), where: yt.config.where() }, { headers: CORS_HEADERS });
+            return Response.json(
+                { config: await yt.config.getAll(), where: yt.config.where() },
+                { headers: CORS_HEADERS }
+            );
         }
 
         if (req.method === "PATCH") {

@@ -1,1 +1,5 @@
-export { VideoDetailTabs, type VideoDetailDataSource, type VideoDetailTab } from "@app/utils/ui/components/youtube/tabs";
+export {
+    type VideoDetailDataSource,
+    type VideoDetailTab,
+    VideoDetailTabs,
+} from "@app/utils/ui/components/youtube/tabs";

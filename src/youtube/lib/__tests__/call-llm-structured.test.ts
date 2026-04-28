@@ -1,12 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { SafeJSON } from "@app/utils/json";
 import { z } from "zod";
 
 const generateObjectMock = mock();
 
 mock.module("ai", () => ({
     generateObject: (...args: unknown[]) => generateObjectMock(...args),
-    generateText: () => { throw new Error("generateText should not be called by callLLMStructured"); },
-    streamText: () => { throw new Error("streamText should not be called by callLLMStructured"); },
+    generateText: () => {
+        throw new Error("generateText should not be called by callLLMStructured");
+    },
+    streamText: () => {
+        throw new Error("streamText should not be called by callLLMStructured");
+    },
 }));
 
 const fakeProviderChoice = {
@@ -54,7 +59,7 @@ describe("callLLMStructured", () => {
         });
 
         expect(result.object).toEqual({ tldr: "hello", points: ["a", "b"] });
-        expect(result.content).toBe(JSON.stringify({ tldr: "hello", points: ["a", "b"] }, null, 2));
+        expect(result.content).toBe(SafeJSON.stringify({ tldr: "hello", points: ["a", "b"] }, null, 2));
         expect(result.usage).toEqual({ inputTokens: 100, outputTokens: 20, totalTokens: 120 });
         expect(generateObjectMock).toHaveBeenCalledTimes(1);
         const args = generateObjectMock.mock.calls[0][0] as Record<string, unknown>;

@@ -51,10 +51,7 @@ describe("compactTranscript", () => {
         ]);
         const compact = compactTranscript(transcript);
 
-        expect(compact.segments.map((segment) => segment.text)).toEqual([
-            "first real line",
-            "second real line",
-        ]);
+        expect(compact.segments.map((segment) => segment.text)).toEqual(["first real line", "second real line"]);
     });
 
     it("dedups segments whose text is a substring of the prior segment", () => {
@@ -81,7 +78,9 @@ describe("compactTranscript", () => {
         const compact = compactTranscript(transcript, { mergeSentences: true });
 
         expect(compact.segments).toHaveLength(2);
-        expect(compact.segments[0].text).toBe("I now want you to prompt each agent to do an in-depth review of the project and prepare to assist me.");
+        expect(compact.segments[0].text).toBe(
+            "I now want you to prompt each agent to do an in-depth review of the project and prepare to assist me."
+        );
         expect(compact.segments[0].start).toBe(37);
         expect(compact.segments[0].end).toBe(48);
         expect(compact.segments[1].text).toBe("Let's go chat.");
@@ -129,9 +128,7 @@ describe("compactTranscript", () => {
     });
 
     it("returns the same shape when no transformation applies", () => {
-        const transcript = makeTranscript([
-            { text: "lonely sentence.", start: 0, end: 5 },
-        ]);
+        const transcript = makeTranscript([{ text: "lonely sentence.", start: 0, end: 5 }]);
         const compact = compactTranscript(transcript);
 
         expect(compact.segments).toEqual([{ text: "lonely sentence.", start: 0, end: 5 }]);

@@ -26,7 +26,9 @@ describe("extension storage", () => {
     it("persists partial config patches", async () => {
         const store = installStorage({ apiBaseUrl: "http://localhost:1234" });
 
-        await expect(setExtensionConfig({ apiBaseUrl: "http://localhost:9999" })).resolves.toEqual({ apiBaseUrl: "http://localhost:9999" });
+        await expect(setExtensionConfig({ apiBaseUrl: "http://localhost:9999" })).resolves.toEqual({
+            apiBaseUrl: "http://localhost:9999",
+        });
         expect(store.apiBaseUrl).toBe("http://localhost:9999");
     });
 });

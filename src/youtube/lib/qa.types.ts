@@ -1,8 +1,8 @@
-import type { ProviderChoice } from "@ask/types";
 import type { CallLLMOptions, CallLLMResult } from "@app/utils/ai/call-llm";
 import type { EmbeddingResult } from "@app/utils/ai/types";
 import type { Transcript } from "@app/youtube/lib/transcript.types";
 import type { VideoId } from "@app/youtube/lib/video.types";
+import type { ProviderChoice } from "@ask/types";
 
 export interface IndexOpts {
     videoId: VideoId;

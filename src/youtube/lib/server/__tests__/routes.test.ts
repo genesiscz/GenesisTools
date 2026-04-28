@@ -1,7 +1,8 @@
+import { describe, expect, it } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "bun:test";
+import { SafeJSON } from "@app/utils/json";
 import { startServer } from "@app/youtube/lib/server";
 import type { SummarizeOpts, SummarizeResult } from "@app/youtube/lib/summarize.types";
 
@@ -47,7 +48,7 @@ describe("youtube server foundation", () => {
             const addResponse = await fetch(`http://localhost:${handle.port}/api/v1/channels`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ handles: ["mkbhd", "@veritasium"] }),
+                body: SafeJSON.stringify({ handles: ["mkbhd", "@veritasium"] }),
             });
             const addBody = await addResponse.json();
 
@@ -57,9 +58,14 @@ describe("youtube server foundation", () => {
             const listResponse = await fetch(`http://localhost:${handle.port}/api/v1/channels`);
             const listBody = await listResponse.json();
 
-            expect(listBody.channels.map((channel: { handle: string }) => channel.handle)).toEqual(["@mkbhd", "@veritasium"]);
+            expect(listBody.channels.map((channel: { handle: string }) => channel.handle)).toEqual([
+                "@mkbhd",
+                "@veritasium",
+            ]);
 
-            const deleteResponse = await fetch(`http://localhost:${handle.port}/api/v1/channels/%40mkbhd`, { method: "DELETE" });
+            const deleteResponse = await fetch(`http://localhost:${handle.port}/api/v1/channels/%40mkbhd`, {
+                method: "DELETE",
+            });
             const deleteBody = await deleteResponse.json();
 
             expect(deleteResponse.status).toBe(200);
@@ -76,7 +82,12 @@ describe("youtube server foundation", () => {
 
         try {
             handle.youtube.db.upsertChannel({ handle: "@mkbhd" });
-            handle.youtube.db.upsertVideo({ id: "abc123def45", channelHandle: "@mkbhd", title: "Test Video", uploadDate: "2026-04-01" });
+            handle.youtube.db.upsertVideo({
+                id: "abc123def45",
+                channelHandle: "@mkbhd",
+                title: "Test Video",
+                uploadDate: "2026-04-01",
+            });
             handle.youtube.db.saveTranscript({
                 videoId: "abc123def45",
                 lang: "en",
@@ -87,7 +98,9 @@ describe("youtube server foundation", () => {
             });
             handle.youtube.db.setVideoSummary("abc123def45", "short", "Cached summary");
 
-            const listResponse = await fetch(`http://localhost:${handle.port}/api/v1/videos?channel=%40mkbhd&includeShorts=true`);
+            const listResponse = await fetch(
+                `http://localhost:${handle.port}/api/v1/videos?channel=%40mkbhd&includeShorts=true`
+            );
             const listBody = await listResponse.json();
 
             expect(listResponse.status).toBe(200);
@@ -100,7 +113,9 @@ describe("youtube server foundation", () => {
             expect(showBody.video.title).toBe("Test Video");
             expect(showBody.transcripts).toHaveLength(1);
 
-            const transcriptResponse = await fetch(`http://localhost:${handle.port}/api/v1/videos/abc123def45/transcript?format=text`);
+            const transcriptResponse = await fetch(
+                `http://localhost:${handle.port}/api/v1/videos/abc123def45/transcript?format=text`
+            );
 
             expect(transcriptResponse.headers.get("content-type")).toContain("text/plain");
             expect(await transcriptResponse.text()).toBe("hello searchable world");
@@ -129,7 +144,7 @@ describe("youtube server foundation", () => {
             const enqueueResponse = await fetch(`http://localhost:${handle.port}/api/v1/pipeline`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ target: "abc123def45", stages: ["metadata"] }),
+                body: SafeJSON.stringify({ target: "abc123def45", stages: ["metadata"] }),
             });
             const enqueueBody = await enqueueResponse.json();
 
@@ -147,7 +162,9 @@ describe("youtube server foundation", () => {
 
             expect(showBody.job.id).toBe(id);
 
-            const cancelResponse = await fetch(`http://localhost:${handle.port}/api/v1/jobs/${id}/cancel`, { method: "POST" });
+            const cancelResponse = await fetch(`http://localhost:${handle.port}/api/v1/jobs/${id}/cancel`, {
+                method: "POST",
+            });
             const cancelBody = await cancelResponse.json();
 
             expect(cancelResponse.status).toBe(200);
@@ -164,7 +181,12 @@ describe("youtube server foundation", () => {
 
         try {
             handle.youtube.db.upsertChannel({ handle: "@mkbhd" });
-            handle.youtube.db.upsertVideo({ id: "abc123def45", channelHandle: "@mkbhd", title: "Test Video", uploadDate: "2026-04-01" });
+            handle.youtube.db.upsertVideo({
+                id: "abc123def45",
+                channelHandle: "@mkbhd",
+                title: "Test Video",
+                uploadDate: "2026-04-01",
+            });
             handle.youtube.db.saveTranscript({
                 videoId: "abc123def45",
                 lang: "en",
@@ -191,7 +213,7 @@ describe("youtube server foundation", () => {
             const res = await fetch(`http://localhost:${handle.port}/api/v1/videos/abc123def45/summary`, {
                 method: "POST",
                 headers: { "content-type": "application/json" },
-                body: JSON.stringify({
+                body: SafeJSON.stringify({
                     mode: "long",
                     tone: "actionable",
                     format: "qa",
@@ -200,7 +222,7 @@ describe("youtube server foundation", () => {
                     model: "claude-haiku-4-5",
                 }),
             });
-            const body = await res.json() as { summary: { tldr: string }; mode: string; jobId: number };
+            const body = (await res.json()) as { summary: { tldr: string }; mode: string; jobId: number };
 
             expect(res.status).toBe(200);
             expect(body.mode).toBe("long");
@@ -225,7 +247,14 @@ describe("youtube server foundation", () => {
         try {
             handle.youtube.db.upsertChannel({ handle: "@mkbhd" });
             handle.youtube.db.upsertVideo({ id: "abc123def45", channelHandle: "@mkbhd", title: "Test Video" });
-            handle.youtube.db.saveTranscript({ videoId: "abc123def45", lang: "en", source: "captions", text: "hello", segments: [], durationSec: 1 });
+            handle.youtube.db.saveTranscript({
+                videoId: "abc123def45",
+                lang: "en",
+                source: "captions",
+                text: "hello",
+                segments: [],
+                durationSec: 1,
+            });
 
             const statsResponse = await fetch(`http://localhost:${handle.port}/api/v1/cache/stats`);
             const statsBody = await statsResponse.json();
@@ -245,7 +274,7 @@ describe("youtube server foundation", () => {
             const patchResponse = await fetch(`http://localhost:${handle.port}/api/v1/config`, {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ apiPort: 9999 }),
+                body: SafeJSON.stringify({ apiPort: 9999 }),
             });
             const patchBody = await patchResponse.json();
 
@@ -255,7 +284,7 @@ describe("youtube server foundation", () => {
             const pruneResponse = await fetch(`http://localhost:${handle.port}/api/v1/cache/prune`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ dryRun: true }),
+                body: SafeJSON.stringify({ dryRun: true }),
             });
             const pruneBody = await pruneResponse.json();
 

@@ -1,7 +1,7 @@
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { YoutubeDatabase } from "@app/youtube/lib/db";
 
 let db: YoutubeDatabase;
@@ -38,10 +38,9 @@ describe("YoutubeDatabase schema", () => {
     });
 
     it("creates the FTS5 virtual table and triggers", () => {
-        const tables = db
-            .getDb()
-            .query("SELECT name FROM sqlite_master WHERE name='transcripts_fts'")
-            .all() as Array<{ name: string }>;
+        const tables = db.getDb().query("SELECT name FROM sqlite_master WHERE name='transcripts_fts'").all() as Array<{
+            name: string;
+        }>;
         const triggers = db
             .getDb()
             .query("SELECT name FROM sqlite_master WHERE type='trigger' ORDER BY name")
@@ -165,8 +164,20 @@ describe("YoutubeDatabase videos", () => {
         db.upsertChannel({ handle: "@other", title: "Other" });
         db.upsertVideo({ id: "vid00000001", channelHandle: "@mkbhd", title: "Old", uploadDate: "2026-01-01" });
         db.upsertVideo({ id: "vid00000002", channelHandle: "@mkbhd", title: "New", uploadDate: "2026-04-01" });
-        db.upsertVideo({ id: "vid00000003", channelHandle: "@mkbhd", title: "Short", uploadDate: "2026-05-01", isShort: true });
-        db.upsertVideo({ id: "vid00000004", channelHandle: "@mkbhd", title: "Live", uploadDate: "2026-06-01", isLive: true });
+        db.upsertVideo({
+            id: "vid00000003",
+            channelHandle: "@mkbhd",
+            title: "Short",
+            uploadDate: "2026-05-01",
+            isShort: true,
+        });
+        db.upsertVideo({
+            id: "vid00000004",
+            channelHandle: "@mkbhd",
+            title: "Live",
+            uploadDate: "2026-06-01",
+            isLive: true,
+        });
         db.upsertVideo({ id: "vid00000005", channelHandle: "@other", title: "Other", uploadDate: "2026-07-01" });
         const list = db.listVideos({ channel: "@mkbhd", since: "2026-02-01", limit: 1, offset: 0 });
 
@@ -221,11 +232,15 @@ describe("YoutubeDatabase videos", () => {
     });
 
     it("re-runs add-videos-summary-long-json migration idempotently", () => {
-        const cols = db.getDb().query<{ name: string }, []>("PRAGMA table_info(videos)").all() as Array<{ name: string }>;
+        const cols = db.getDb().query<{ name: string }, []>("PRAGMA table_info(videos)").all() as Array<{
+            name: string;
+        }>;
         expect(cols.some((c) => c.name === "summary_long_json")).toBe(true);
 
         db.initSchemaForTest();
-        const cols2 = db.getDb().query<{ name: string }, []>("PRAGMA table_info(videos)").all() as Array<{ name: string }>;
+        const cols2 = db.getDb().query<{ name: string }, []>("PRAGMA table_info(videos)").all() as Array<{
+            name: string;
+        }>;
         expect(cols2.filter((c) => c.name === "summary_long_json").length).toBe(1);
     });
 
@@ -242,11 +257,16 @@ describe("YoutubeDatabase videos", () => {
         db.setVideoBinaryPath("vid00000001", "audio", audioPath, 5);
         db.setVideoBinaryPath("vid00000001", "video", videoPath, 5);
         db.setVideoBinaryPath("vid00000001", "thumb", thumbPath);
-        db.getDb().run("UPDATE videos SET audio_cached_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-10 days'), video_cached_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-10 days'), thumb_cached_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?", [
-            "vid00000001",
-        ]);
+        db.getDb().run(
+            "UPDATE videos SET audio_cached_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-10 days'), video_cached_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-10 days'), thumb_cached_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?",
+            ["vid00000001"]
+        );
 
-        const result = await db.pruneExpiredBinaries({ audioOlderThanDays: 7, videoOlderThanDays: 7, thumbOlderThanDays: 7 });
+        const result = await db.pruneExpiredBinaries({
+            audioOlderThanDays: 7,
+            videoOlderThanDays: 7,
+            thumbOlderThanDays: 7,
+        });
         const video = db.getVideo("vid00000001");
 
         expect(result).toEqual({ audio: 1, video: 1, thumb: 0 });
@@ -284,7 +304,13 @@ describe("YoutubeDatabase transcripts", () => {
 
     it("prefers captions over AI by default", () => {
         db.saveTranscript({ videoId: "vid00000001", lang: "en", source: "ai", text: "AI text", segments: [] });
-        db.saveTranscript({ videoId: "vid00000001", lang: "en", source: "captions", text: "Caption text", segments: [] });
+        db.saveTranscript({
+            videoId: "vid00000001",
+            lang: "en",
+            source: "captions",
+            text: "Caption text",
+            segments: [],
+        });
         const transcript = db.getTranscript("vid00000001");
 
         expect(transcript?.source).toBe("captions");
@@ -299,7 +325,13 @@ describe("YoutubeDatabase transcripts", () => {
     });
 
     it("FTS5 search finds matches", () => {
-        db.saveTranscript({ videoId: "vid00000001", lang: "en", source: "captions", text: "talking about iPhones today", segments: [] });
+        db.saveTranscript({
+            videoId: "vid00000001",
+            lang: "en",
+            source: "captions",
+            text: "talking about iPhones today",
+            segments: [],
+        });
         const hits = db.searchTranscripts("iphones");
 
         expect(hits.length).toBe(1);
@@ -310,8 +342,22 @@ describe("YoutubeDatabase transcripts", () => {
 describe("YoutubeDatabase video metadata search", () => {
     beforeEach(() => {
         db.upsertChannel({ handle: "@mkbhd" });
-        db.upsertVideo({ id: "vid_phone001", channelHandle: "@mkbhd", title: "iPhone 16 review", description: "A long detailed phone review", tags: ["apple", "review"], uploadDate: "2026-04-01" });
-        db.upsertVideo({ id: "vid_macsoda1", channelHandle: "@mkbhd", title: "MacBook test", description: "Battery and chip review", tags: ["macbook", "agentic"], uploadDate: "2026-03-01" });
+        db.upsertVideo({
+            id: "vid_phone001",
+            channelHandle: "@mkbhd",
+            title: "iPhone 16 review",
+            description: "A long detailed phone review",
+            tags: ["apple", "review"],
+            uploadDate: "2026-04-01",
+        });
+        db.upsertVideo({
+            id: "vid_macsoda1",
+            channelHandle: "@mkbhd",
+            title: "MacBook test",
+            description: "Battery and chip review",
+            tags: ["macbook", "agentic"],
+            uploadDate: "2026-03-01",
+        });
     });
 
     it("matches title via SQL LIKE", () => {
@@ -359,7 +405,14 @@ describe("YoutubeDatabase QA chunks", () => {
 
     it("upserts and lists chunks in chunk order", () => {
         db.upsertQaChunk({ videoId: "vid00000001", chunkIdx: 1, text: "Second", embedderModel: "test-model" });
-        db.upsertQaChunk({ videoId: "vid00000001", chunkIdx: 0, text: "First", startSec: 0, endSec: 10, embedderModel: "test-model" });
+        db.upsertQaChunk({
+            videoId: "vid00000001",
+            chunkIdx: 0,
+            text: "First",
+            startSec: 0,
+            endSec: 10,
+            embedderModel: "test-model",
+        });
         const chunks = db.listQaChunks("vid00000001", "test-model");
 
         expect(chunks.map((chunk) => chunk.text)).toEqual(["First", "Second"]);
@@ -405,7 +458,11 @@ describe("YoutubeDatabase jobs", () => {
     });
 
     it("claims only jobs whose next stage matches the worker stage", () => {
-        const discoverThenMetadata = db.enqueueJob({ targetKind: "channel", target: "@mkbhd", stages: ["discover", "metadata"] });
+        const discoverThenMetadata = db.enqueueJob({
+            targetKind: "channel",
+            target: "@mkbhd",
+            stages: ["discover", "metadata"],
+        });
         const metadataOnly = db.enqueueJob({ targetKind: "video", target: "meta", stages: ["metadata"] });
         const claimed = db.claimNextJob("worker-1", { stage: "metadata" });
 
@@ -433,7 +490,9 @@ describe("YoutubeDatabase jobs", () => {
     it("rejects invalid job state transitions", () => {
         const job = db.enqueueJob({ targetKind: "video", target: "vid00000001", stages: ["metadata"] });
 
-        expect(() => db.updateJob(job.id, { status: "completed" })).toThrow("invalid job transition pending -> completed");
+        expect(() => db.updateJob(job.id, { status: "completed" })).toThrow(
+            "invalid job transition pending -> completed"
+        );
     });
 
     it("cancels pending and running jobs", () => {

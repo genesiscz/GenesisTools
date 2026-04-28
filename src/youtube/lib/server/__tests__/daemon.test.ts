@@ -1,7 +1,7 @@
+import { describe, expect, it } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "bun:test";
 import { clearPid, readPid, writePid } from "@app/youtube/lib/server/daemon";
 import { generateLaunchdPlist } from "@app/youtube/lib/server/launchd";
 

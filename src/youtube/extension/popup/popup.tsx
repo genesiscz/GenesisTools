@@ -1,11 +1,11 @@
-import { StrictMode, useEffect, useState } from "react";
-import { createRoot } from "react-dom/client";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Button } from "@app/utils/ui/components/button";
 import { Input } from "@app/utils/ui/components/input";
 import { send } from "@ext/api.bridge";
 import { ApiStatus } from "@ext/popup/components/api-status";
 import { QuickActions } from "@ext/popup/components/quick-actions";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { StrictMode, useEffect, useState } from "react";
+import { createRoot } from "react-dom/client";
 import "./popup.css";
 
 const queryClient = new QueryClient();
@@ -16,7 +16,9 @@ function Popup() {
     const [busy, setBusy] = useState(false);
 
     useEffect(() => {
-        send<{ apiBaseUrl: string }>({ type: "config:get" }).then((config) => setApiUrl(config.apiBaseUrl)).catch(() => setStatus("down"));
+        send<{ apiBaseUrl: string }>({ type: "config:get" })
+            .then((config) => setApiUrl(config.apiBaseUrl))
+            .catch(() => setStatus("down"));
     }, []);
 
     async function checkHealth(): Promise<void> {
@@ -46,7 +48,9 @@ function Popup() {
 
     function runAction(stages: Array<"metadata" | "captions" | "transcribe" | "summarize">): void {
         setBusy(true);
-        chrome.runtime.sendMessage({ type: "api:startPipeline", target: "current", targetKind: "video", stages }).finally(() => setBusy(false));
+        chrome.runtime
+            .sendMessage({ type: "api:startPipeline", target: "current", targetKind: "video", stages })
+            .finally(() => setBusy(false));
     }
 
     return (
@@ -59,14 +63,30 @@ function Popup() {
                 <ApiStatus status={status} />
             </header>
             <section className="space-y-2">
-                <label className="text-xs text-muted-foreground" htmlFor="apiBaseUrl">API base URL</label>
-                <Input id="apiBaseUrl" value={apiUrl} onChange={(event) => setApiUrl(event.target.value)} placeholder="http://localhost:9876" />
+                <label className="text-xs text-muted-foreground" htmlFor="apiBaseUrl">
+                    API base URL
+                </label>
+                <Input
+                    id="apiBaseUrl"
+                    value={apiUrl}
+                    onChange={(event) => setApiUrl(event.target.value)}
+                    placeholder="http://localhost:9876"
+                />
             </section>
             <div className="grid grid-cols-2 gap-2">
-                <Button onClick={save} disabled={busy}>Save</Button>
-                <Button onClick={checkHealth} variant="secondary" disabled={busy}>Test</Button>
+                <Button onClick={save} disabled={busy}>
+                    Save
+                </Button>
+                <Button onClick={checkHealth} variant="secondary" disabled={busy}>
+                    Test
+                </Button>
             </div>
-            <QuickActions onOpenDashboard={openDashboard} onTranscribe={() => runAction(["metadata", "captions", "transcribe"])} onSummarise={() => runAction(["metadata", "captions", "summarize"])} disabled={busy} />
+            <QuickActions
+                onOpenDashboard={openDashboard}
+                onTranscribe={() => runAction(["metadata", "captions", "transcribe"])}
+                onSummarise={() => runAction(["metadata", "captions", "summarize"])}
+                disabled={busy}
+            />
         </main>
     );
 }

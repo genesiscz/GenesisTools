@@ -1,16 +1,16 @@
-import { useState } from "react";
-import { toast } from "sonner";
+import { formatDuration } from "@app/utils/format";
 import { Button } from "@app/utils/ui/components/button";
 import { Progress } from "@app/utils/ui/components/progress";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@app/utils/ui/components/table";
-import { EmptyState } from "@app/yt/components/shared/empty-state";
+import type { PipelineJob } from "@app/youtube/lib/types";
+import { useCancelJob } from "@app/yt/api.hooks";
 import { JobActivityDrawer } from "@app/yt/components/jobs/job-activity-drawer";
 import { JobStatusBadge } from "@app/yt/components/jobs/job-status-badge";
-import { formatDuration } from "@app/utils/format";
+import { EmptyState } from "@app/yt/components/shared/empty-state";
 import { formatDateTime, parseSqliteDate } from "@app/yt/lib/format";
-import { useCancelJob } from "@app/yt/api.hooks";
-import type { PipelineJob } from "@app/youtube/lib/types";
 import { Activity, Ban, ChevronRight, PlayCircle } from "lucide-react";
+import { useState } from "react";
+import { toast } from "sonner";
 
 export function JobsTable({ jobs }: { jobs: PipelineJob[] }) {
     const cancelJob = useCancelJob();
@@ -23,7 +23,12 @@ export function JobsTable({ jobs }: { jobs: PipelineJob[] }) {
     }
 
     if (jobs.length === 0) {
-        return <EmptyState title="No jobs match this filter" body="Pipeline runs you start (or channel syncs you trigger) will appear here in real time." />;
+        return (
+            <EmptyState
+                title="No jobs match this filter"
+                body="Pipeline runs you start (or channel syncs you trigger) will appear here in real time."
+            />
+        );
     }
 
     return (
@@ -32,14 +37,30 @@ export function JobsTable({ jobs }: { jobs: PipelineJob[] }) {
                 <Table>
                     <TableHeader>
                         <TableRow className="border-primary/20 hover:bg-transparent">
-                            <TableHead className="font-mono text-[0.65rem] uppercase tracking-[0.22em] text-muted-foreground">Status</TableHead>
-                            <TableHead className="font-mono text-[0.65rem] uppercase tracking-[0.22em] text-muted-foreground">Job</TableHead>
-                            <TableHead className="font-mono text-[0.65rem] uppercase tracking-[0.22em] text-muted-foreground">Target</TableHead>
-                            <TableHead className="font-mono text-[0.65rem] uppercase tracking-[0.22em] text-muted-foreground">Stages</TableHead>
-                            <TableHead className="font-mono text-[0.65rem] uppercase tracking-[0.22em] text-muted-foreground">Progress</TableHead>
-                            <TableHead className="font-mono text-[0.65rem] uppercase tracking-[0.22em] text-muted-foreground">Duration</TableHead>
-                            <TableHead className="font-mono text-[0.65rem] uppercase tracking-[0.22em] text-muted-foreground">Error</TableHead>
-                            <TableHead className="text-right font-mono text-[0.65rem] uppercase tracking-[0.22em] text-muted-foreground">Actions</TableHead>
+                            <TableHead className="font-mono text-[0.65rem] uppercase tracking-[0.22em] text-muted-foreground">
+                                Status
+                            </TableHead>
+                            <TableHead className="font-mono text-[0.65rem] uppercase tracking-[0.22em] text-muted-foreground">
+                                Job
+                            </TableHead>
+                            <TableHead className="font-mono text-[0.65rem] uppercase tracking-[0.22em] text-muted-foreground">
+                                Target
+                            </TableHead>
+                            <TableHead className="font-mono text-[0.65rem] uppercase tracking-[0.22em] text-muted-foreground">
+                                Stages
+                            </TableHead>
+                            <TableHead className="font-mono text-[0.65rem] uppercase tracking-[0.22em] text-muted-foreground">
+                                Progress
+                            </TableHead>
+                            <TableHead className="font-mono text-[0.65rem] uppercase tracking-[0.22em] text-muted-foreground">
+                                Duration
+                            </TableHead>
+                            <TableHead className="font-mono text-[0.65rem] uppercase tracking-[0.22em] text-muted-foreground">
+                                Error
+                            </TableHead>
+                            <TableHead className="text-right font-mono text-[0.65rem] uppercase tracking-[0.22em] text-muted-foreground">
+                                Actions
+                            </TableHead>
                         </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -53,13 +74,19 @@ export function JobsTable({ jobs }: { jobs: PipelineJob[] }) {
                                     className="group cursor-pointer border-primary/10 transition-all duration-200 hover:bg-primary/[0.06] hover:shadow-[inset_3px_0_0_rgb(245_158_11_/_70%)]"
                                     onClick={() => setActivityJobId(job.id)}
                                 >
-                                    <TableCell><JobStatusBadge status={job.status} /></TableCell>
+                                    <TableCell>
+                                        <JobStatusBadge status={job.status} />
+                                    </TableCell>
                                     <TableCell>
                                         <span className="font-mono text-sm font-semibold text-primary">#{job.id}</span>
                                     </TableCell>
                                     <TableCell>
-                                        <div className="max-w-72 truncate font-medium text-foreground/95">{job.target}</div>
-                                        <div className="mt-0.5 font-mono text-[0.65rem] uppercase tracking-[0.2em] text-muted-foreground">{job.targetKind}</div>
+                                        <div className="max-w-72 truncate font-medium text-foreground/95">
+                                            {job.target}
+                                        </div>
+                                        <div className="mt-0.5 font-mono text-[0.65rem] uppercase tracking-[0.2em] text-muted-foreground">
+                                            {job.targetKind}
+                                        </div>
                                     </TableCell>
                                     <TableCell>
                                         <div className="flex max-w-64 flex-wrap gap-1">
@@ -91,19 +118,30 @@ export function JobsTable({ jobs }: { jobs: PipelineJob[] }) {
                                                         : "h-2 bg-black/40 [&>div]:bg-gradient-to-r [&>div]:from-amber-400 [&>div]:to-cyan-300"
                                                 }
                                             />
-                                            <span className="w-10 font-mono text-xs font-semibold text-cyan-200">{Math.round((job.progress ?? 0) * 100)}%</span>
+                                            <span className="w-10 font-mono text-xs font-semibold text-cyan-200">
+                                                {Math.round((job.progress ?? 0) * 100)}%
+                                            </span>
                                         </div>
                                         {job.progressMessage ? (
-                                            <div className="mt-1 max-w-52 truncate font-mono text-[0.7rem] text-muted-foreground">{job.progressMessage}</div>
+                                            <div className="mt-1 max-w-52 truncate font-mono text-[0.7rem] text-muted-foreground">
+                                                {job.progressMessage}
+                                            </div>
                                         ) : null}
                                     </TableCell>
-                                    <TableCell className="font-mono text-xs text-muted-foreground">{formatJobDuration(job)}</TableCell>
-                                    <TableCell className="max-w-72 truncate font-mono text-xs text-red-300/90">{job.error ?? "—"}</TableCell>
+                                    <TableCell className="font-mono text-xs text-muted-foreground">
+                                        {formatJobDuration(job)}
+                                    </TableCell>
+                                    <TableCell className="max-w-72 truncate font-mono text-xs text-red-300/90">
+                                        {job.error ?? "—"}
+                                    </TableCell>
                                     <TableCell className="text-right">
                                         <div className="flex items-center justify-end gap-2">
                                             <button
                                                 type="button"
-                                                onClick={(event) => { event.stopPropagation(); setActivityJobId(job.id); }}
+                                                onClick={(event) => {
+                                                    event.stopPropagation();
+                                                    setActivityJobId(job.id);
+                                                }}
                                                 className="inline-flex items-center gap-1.5 rounded-full border border-cyan-400/30 bg-cyan-400/[0.06] px-2.5 py-1 font-mono text-[0.65rem] uppercase tracking-[0.18em] text-cyan-200 transition hover:border-cyan-300/55 hover:bg-cyan-400/15 hover:shadow-[0_0_18px_rgba(34,211,238,0.25)]"
                                             >
                                                 <Activity className="size-3" />
@@ -134,7 +172,15 @@ export function JobsTable({ jobs }: { jobs: PipelineJob[] }) {
                     </TableBody>
                 </Table>
             </div>
-            <JobActivityDrawer jobId={activityJobId} open={activityJobId !== null} onOpenChange={(open) => { if (!open) { setActivityJobId(null); } }} />
+            <JobActivityDrawer
+                jobId={activityJobId}
+                open={activityJobId !== null}
+                onOpenChange={(open) => {
+                    if (!open) {
+                        setActivityJobId(null);
+                    }
+                }}
+            />
         </>
     );
 }

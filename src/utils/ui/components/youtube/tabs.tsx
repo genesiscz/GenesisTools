@@ -85,14 +85,7 @@ export interface VideoDetailTabsProps {
     runPipeline?: RunPipeline;
 }
 
-export function VideoDetailTabs({
-    videoId,
-    ds,
-    active,
-    onActiveChange,
-    onSeek,
-    runPipeline,
-}: VideoDetailTabsProps) {
+export function VideoDetailTabs({ videoId, ds, active, onActiveChange, onSeek, runPipeline }: VideoDetailTabsProps) {
     return (
         <Tabs
             value={active}

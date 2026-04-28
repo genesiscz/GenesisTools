@@ -1,7 +1,7 @@
+import { describe, expect, it } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "bun:test";
 import { YoutubeConfig } from "@app/youtube/lib/config";
 import { YoutubeDatabase } from "@app/youtube/lib/db";
 import type { JobStage } from "@app/youtube/lib/jobs.types";
@@ -55,7 +55,13 @@ describe("Pipeline", () => {
             await waitFor(() => pipeline.getJob(job.id)?.status === "completed");
 
             expect(handlerCalls).toEqual(["metadata:abc123def45"]);
-            expect(events).toEqual(["job:started", "stage:started:metadata", "stage:progress:0.5:halfway", "stage:completed:metadata", "job:completed"]);
+            expect(events).toEqual([
+                "job:started",
+                "stage:started:metadata",
+                "stage:progress:0.5:halfway",
+                "stage:completed:metadata",
+                "job:completed",
+            ]);
             expect(pipeline.getJob(job.id)).toMatchObject({ status: "completed", progress: 1, currentStage: null });
         } finally {
             await pipeline.stop();
@@ -69,7 +75,11 @@ describe("Pipeline", () => {
         await config.update({ concurrency: { download: 1, localTranscribe: 1, cloudTranscribe: 1, summarize: 1 } });
         const pipeline = new Pipeline(db, config, {
             pollMs: 1,
-            handlers: makeHandlers({ metadata: async () => { throw new Error("boom"); } }),
+            handlers: makeHandlers({
+                metadata: async () => {
+                    throw new Error("boom");
+                },
+            }),
         });
         const failures: unknown[] = [];
         pipeline.on("job:failed", (event) => failures.push(event));
@@ -147,7 +157,9 @@ describe("Pipeline", () => {
 
             expect(pipeline.getJob(cancelledJob.id)?.status).toBe("cancelled");
             expect(cancelled).toEqual([{ type: "job:cancelled", jobId: cancelledJob.id }]);
-            expect(pipeline.listJobs({ status: "completed", limit: 10 }).map((job) => job.id)).toContain(interrupted.id);
+            expect(pipeline.listJobs({ status: "completed", limit: 10 }).map((job) => job.id)).toContain(
+                interrupted.id
+            );
         } finally {
             await pipeline.stop();
             db.close();
@@ -166,7 +178,9 @@ async function makeFixture(): Promise<{ db: YoutubeDatabase; config: YoutubeConf
 
 function makeHandlers(overrides: Partial<PipelineHandlerMap> = {}): PipelineHandlerMap {
     const stages: JobStage[] = ["discover", "metadata", "captions", "audio", "transcribe", "summarize"];
-    const handlers = Object.fromEntries(stages.map((stage) => [stage, async () => {}])) as unknown as PipelineHandlerMap;
+    const handlers = Object.fromEntries(
+        stages.map((stage) => [stage, async () => {}])
+    ) as unknown as PipelineHandlerMap;
 
     return { ...handlers, ...overrides };
 }

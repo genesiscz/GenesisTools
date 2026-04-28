@@ -1,9 +1,9 @@
-import * as p from "@clack/prompts";
-import type { Command } from "commander";
-import pc from "picocolors";
 import { startServer } from "@app/youtube/lib/server";
 import { readPid } from "@app/youtube/lib/server/daemon";
 import { installLaunchd, isLaunchdInstalled } from "@app/youtube/lib/server/launchd";
+import * as p from "@clack/prompts";
+import type { Command } from "commander";
+import pc from "picocolors";
 
 interface StartOpts {
     port?: number;
@@ -11,11 +11,17 @@ interface StartOpts {
 }
 
 export function registerServerStart(parent: Command): void {
-    parent.command("start")
+    parent
+        .command("start")
         .description("Start the YouTube API server (foreground by default)")
-        .option("--port <n>", "Port (defaults to apiPort from server.json or 9876)", (value) => Number.parseInt(value, 10))
+        .option("--port <n>", "Port (defaults to apiPort from server.json or 9876)", (value) =>
+            Number.parseInt(value, 10)
+        )
         .option("--background", "Daemonise via launchd (macOS only)")
-        .addHelpText("after", "\nExamples:\n  $ tools youtube server start\n  $ tools youtube server start --port 9999\n  $ tools youtube server start --background\n")
+        .addHelpText(
+            "after",
+            "\nExamples:\n  $ tools youtube server start\n  $ tools youtube server start --port 9999\n  $ tools youtube server start --background\n"
+        )
         .action(async (opts: StartOpts) => {
             const existing = readPid();
 
@@ -38,7 +44,9 @@ export function registerServerStart(parent: Command): void {
                 }
 
                 await installLaunchd({ port: opts.port ?? 9876 });
-                p.log.success(`Installed launchd agent on port ${opts.port ?? 9876}. Use \`tools youtube server stop --uninstall\` to remove.`);
+                p.log.success(
+                    `Installed launchd agent on port ${opts.port ?? 9876}. Use \`tools youtube server stop --uninstall\` to remove.`
+                );
                 return;
             }
 

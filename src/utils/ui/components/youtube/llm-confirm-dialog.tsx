@@ -54,10 +54,7 @@ export function LlmConfirmDialog({
             data-testid="llm-confirm-dialog"
             onClick={onCancel}
         >
-            <Card
-                className="w-full max-w-lg border-primary/40 shadow-2xl"
-                onClick={(event) => event.stopPropagation()}
-            >
+            <Card className="w-full max-w-lg border-primary/40 shadow-2xl" onClick={(event) => event.stopPropagation()}>
                 <CardHeader>
                     <CardTitle>{title}</CardTitle>
                 </CardHeader>

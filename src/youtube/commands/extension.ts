@@ -17,7 +17,9 @@ export function registerExtensionCommand(program: Command): void {
 export async function buildExtension(): Promise<string> {
     const root = resolve(import.meta.dirname, "..", "extension");
     const dist = resolve(import.meta.dirname, "..", "..", "..", "dist", "extension");
-    const proc = Bun.spawn(["bun", "--bun", "vite", "build", "-c", resolve(root, "vite.config.ts")], { stdio: ["inherit", "inherit", "inherit"] });
+    const proc = Bun.spawn(["bun", "--bun", "vite", "build", "-c", resolve(root, "vite.config.ts")], {
+        stdio: ["inherit", "inherit", "inherit"],
+    });
     const exit = await proc.exited;
 
     if (exit !== 0) {

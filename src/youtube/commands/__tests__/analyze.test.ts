@@ -55,7 +55,11 @@ mock.module("@app/youtube/commands/_shared/ensure-pipeline", () => ({
                 const mode = (opts as { mode: "short" | "timestamped" }).mode;
 
                 if (mode === "timestamped") {
-                    return { timestamped: [{ startSec: 0, endSec: 90, text: "Timestamped summary" }] as TimestampedSummaryEntry[] };
+                    return {
+                        timestamped: [
+                            { startSec: 0, endSec: 90, text: "Timestamped summary" },
+                        ] as TimestampedSummaryEntry[],
+                    };
                 }
 
                 return { short: "Short summary" };
@@ -68,7 +72,10 @@ mock.module("@app/youtube/commands/_shared/ensure-pipeline", () => ({
             },
             ask: async (opts: unknown): Promise<AskResult> => {
                 calls.ask.push(opts);
-                return { answer: "The answer", citations: [{ videoId: "abc123def45" as VideoId, chunkIdx: 0, startSec: 0, endSec: 90 }] };
+                return {
+                    answer: "The answer",
+                    citations: [{ videoId: "abc123def45" as VideoId, chunkIdx: 0, startSec: 0, endSec: 90 }],
+                };
             },
         },
     }),

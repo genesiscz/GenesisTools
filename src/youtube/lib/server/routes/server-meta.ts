@@ -18,7 +18,10 @@ export async function handleMetaRoute(_req: Request, url: URL, opts: MetaRouteOp
     }
 
     if (url.pathname === "/api/v1/version") {
-        return Response.json({ version: "2.0.0", gitSha: process.env.YOUTUBE_GIT_SHA ?? null }, { headers: CORS_HEADERS });
+        return Response.json(
+            { version: "2.0.0", gitSha: process.env.YOUTUBE_GIT_SHA ?? null },
+            { headers: CORS_HEADERS }
+        );
     }
 
     if (url.pathname === "/api/v1/openapi.json") {

@@ -1,13 +1,18 @@
 import { dirname, join } from "node:path";
 import { Transcriber } from "@app/utils/ai/tasks/Transcriber";
-import { recordYoutubeUsage } from "@app/youtube/lib/usage";
 import { withFileLock } from "@app/utils/storage";
 import { audioPath, ensureBinaryDir } from "@app/youtube/lib/cache";
+import { fetchCaptions } from "@app/youtube/lib/captions";
 import type { YoutubeConfig } from "@app/youtube/lib/config";
 import type { YoutubeDatabase } from "@app/youtube/lib/db";
-import { fetchCaptions } from "@app/youtube/lib/captions";
 import type { Transcript } from "@app/youtube/lib/transcript.types";
-import type { TranscribeOpts, TranscriptServiceDeps, TranscriberProgressInfo, TranscriberResult } from "@app/youtube/lib/transcripts.types";
+import type {
+    TranscribeOpts,
+    TranscriberProgressInfo,
+    TranscriberResult,
+    TranscriptServiceDeps,
+} from "@app/youtube/lib/transcripts.types";
+import { recordYoutubeUsage } from "@app/youtube/lib/usage";
 import { downloadAudio } from "@app/youtube/lib/yt-dlp";
 
 const DEFAULT_TRANSCRIPT_DEPS: TranscriptServiceDeps = {
@@ -68,7 +73,8 @@ export class TranscriptService {
                     outPath: nextAudio,
                     format: "wav",
                     sampleRate: 16000,
-                    onProgress: (progress) => opts.onProgress?.({ phase: "audio", percent: progress.percent, message: progress.message }),
+                    onProgress: (progress) =>
+                        opts.onProgress?.({ phase: "audio", percent: progress.percent, message: progress.message }),
                     signal: opts.signal,
                 });
                 this.db.setVideoBinaryPath(video.id, "audio", result.path, result.sizeBytes);
@@ -86,7 +92,8 @@ export class TranscriptService {
             opts.onProgress?.({ phase: "transcribe", message: "running ASR" });
             const result = (await transcriber.transcribe(audio, {
                 language: opts.lang,
-                onProgress: (info: TranscriberProgressInfo) => opts.onProgress?.({ phase: "transcribe", percent: info.percent, message: info.message }),
+                onProgress: (info: TranscriberProgressInfo) =>
+                    opts.onProgress?.({ phase: "transcribe", percent: info.percent, message: info.message }),
             })) as TranscriberResult;
             await recordYoutubeUsage({
                 action: "transcribe:ai",
@@ -100,7 +107,12 @@ export class TranscriptService {
                 lang,
                 source: "ai",
                 text: result.text,
-                segments: result.segments?.map((segment) => ({ text: segment.text, start: segment.start, end: segment.end })) ?? [],
+                segments:
+                    result.segments?.map((segment) => ({
+                        text: segment.text,
+                        start: segment.start,
+                        end: segment.end,
+                    })) ?? [],
                 durationSec: result.duration ?? null,
             });
             const saved = this.db.getTranscript(opts.videoId, { lang, source: "ai" });

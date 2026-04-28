@@ -1,13 +1,18 @@
-import { useNavigate } from "@tanstack/react-router";
-import { toast } from "sonner";
 import { Badge } from "@app/utils/ui/components/badge";
 import { Button } from "@app/utils/ui/components/button";
 import { Card, CardContent } from "@app/utils/ui/components/card";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@app/utils/ui/components/dropdown-menu";
-import { formatDateTime, formatNumber } from "@app/yt/lib/format";
-import { useRemoveChannel, useSyncChannel } from "@app/yt/api.hooks";
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuTrigger,
+} from "@app/utils/ui/components/dropdown-menu";
 import type { Channel } from "@app/youtube/lib/types";
+import { useRemoveChannel, useSyncChannel } from "@app/yt/api.hooks";
+import { formatDateTime, formatNumber } from "@app/yt/lib/format";
+import { useNavigate } from "@tanstack/react-router";
 import { MoreVertical, RefreshCw, Trash2 } from "lucide-react";
+import { toast } from "sonner";
 
 export function ChannelCard({ channel }: { channel: Channel }) {
     const navigate = useNavigate();
@@ -28,9 +33,16 @@ export function ChannelCard({ channel }: { channel: Channel }) {
         <Card className="yt-panel yt-card-hover group overflow-hidden">
             <CardContent className="space-y-4 p-5">
                 <div className="flex items-start justify-between gap-3">
-                    <button className="flex min-w-0 flex-1 items-center gap-3 text-left" onClick={() => navigate({ to: "/channels/$handle", params: { handle: channel.handle } })}>
+                    <button
+                        className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                        onClick={() => navigate({ to: "/channels/$handle", params: { handle: channel.handle } })}
+                    >
                         {channel.thumbUrl ? (
-                            <img src={channel.thumbUrl} alt="" className="size-14 rounded-full border border-primary/30 object-cover" />
+                            <img
+                                src={channel.thumbUrl}
+                                alt=""
+                                className="size-14 rounded-full border border-primary/30 object-cover"
+                            />
                         ) : (
                             <div className="grid size-14 place-items-center rounded-full border border-primary/30 bg-primary/10 font-mono text-lg text-primary">
                                 {channel.handle.slice(1, 3).toUpperCase()}
@@ -43,7 +55,11 @@ export function ChannelCard({ channel }: { channel: Channel }) {
                     </button>
                     <DropdownMenu>
                         <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon" className="opacity-70 transition-opacity group-hover:opacity-100">
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                className="opacity-70 transition-opacity group-hover:opacity-100"
+                            >
                                 <MoreVertical className="size-4" />
                             </Button>
                         </DropdownMenuTrigger>

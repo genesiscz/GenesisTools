@@ -100,9 +100,21 @@ describe("youtube download command", () => {
     it("adds video stage for --video and resolves URL target kind", async () => {
         const program = await makeProgram();
 
-        await program.parseAsync(["node", "test", "download", "https://youtu.be/dQw4w9WgXcQ", "--video", "--quality", "1080p"]);
+        await program.parseAsync([
+            "node",
+            "test",
+            "download",
+            "https://youtu.be/dQw4w9WgXcQ",
+            "--video",
+            "--quality",
+            "1080p",
+        ]);
 
-        expect(calls.enqueue[0]).toEqual({ targetKind: "url", target: "https://youtu.be/dQw4w9WgXcQ", stages: ["metadata", "audio", "video"] });
+        expect(calls.enqueue[0]).toEqual({
+            targetKind: "url",
+            target: "https://youtu.be/dQw4w9WgXcQ",
+            stages: ["metadata", "audio", "video"],
+        });
     });
 
     it("resolves channel target kind", async () => {

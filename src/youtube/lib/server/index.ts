@@ -2,13 +2,13 @@ import logger from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import { CORS_HEADERS } from "@app/youtube/lib/server/cors";
 import { clearPid, registerSignalHandlers, writePid } from "@app/youtube/lib/server/daemon";
-import { clearPortFile, writePortFile } from "@app/youtube/lib/server/port-file";
 import { toErrorResponse } from "@app/youtube/lib/server/error";
+import { clearPortFile, writePortFile } from "@app/youtube/lib/server/port-file";
 import { handleCacheRoute } from "@app/youtube/lib/server/routes/cache";
 import { handleChannelsRoute } from "@app/youtube/lib/server/routes/channels";
 import { handleConfigRoute } from "@app/youtube/lib/server/routes/config";
-import { handleMetaRoute } from "@app/youtube/lib/server/routes/server-meta";
 import { handlePipelineRoute } from "@app/youtube/lib/server/routes/pipeline";
+import { handleMetaRoute } from "@app/youtube/lib/server/routes/server-meta";
 import { handleVideosRoute } from "@app/youtube/lib/server/routes/videos";
 import type { WebsocketState } from "@app/youtube/lib/server/websocket";
 import { setupWebsocket } from "@app/youtube/lib/server/websocket";
@@ -82,7 +82,11 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
                     return await handleConfigRoute(req, url, youtube);
                 }
 
-                if (url.pathname === "/api/v1/healthz" || url.pathname === "/api/v1/version" || url.pathname === "/api/v1/openapi.json") {
+                if (
+                    url.pathname === "/api/v1/healthz" ||
+                    url.pathname === "/api/v1/version" ||
+                    url.pathname === "/api/v1/openapi.json"
+                ) {
                     return await handleMetaRoute(req, url, { startedAt: STARTED_AT });
                 }
 

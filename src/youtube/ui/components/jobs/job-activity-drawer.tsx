@@ -1,12 +1,12 @@
-import { useMemo, useState } from "react";
-import { toast } from "sonner";
+import { formatDuration } from "@app/utils/format";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@app/utils/ui/components/sheet";
 import { Skeleton } from "@app/utils/ui/components/skeleton";
-import { useJobActivity } from "@app/yt/api.hooks";
-import { formatDuration } from "@app/utils/format";
-import { parseSqliteDate } from "@app/yt/lib/format";
 import type { JobActivity } from "@app/youtube/lib/types";
+import { useJobActivity } from "@app/yt/api.hooks";
+import { parseSqliteDate } from "@app/yt/lib/format";
 import { ChevronRight, Cog, Copy, DollarSign, Hash, Sparkles, Telescope, Workflow, Zap } from "lucide-react";
+import { useMemo, useState } from "react";
+import { toast } from "sonner";
 
 interface KindStyle {
     label: string;
@@ -36,7 +36,15 @@ const KIND_STYLES: Record<JobActivity["kind"], KindStyle> = {
     },
 };
 
-export function JobActivityDrawer({ jobId, open, onOpenChange }: { jobId: number | null; open: boolean; onOpenChange: (open: boolean) => void }) {
+export function JobActivityDrawer({
+    jobId,
+    open,
+    onOpenChange,
+}: {
+    jobId: number | null;
+    open: boolean;
+    onOpenChange: (open: boolean) => void;
+}) {
     const activity = useJobActivity(open ? jobId : null);
 
     const totals = useMemo(() => {
@@ -55,21 +63,33 @@ export function JobActivityDrawer({ jobId, open, onOpenChange }: { jobId: number
                 side="right"
                 className="yt-scroll w-full overflow-y-auto border-l border-amber-400/15 bg-gradient-to-b from-[rgba(18,18,25,0.95)] via-[rgba(13,13,20,0.96)] to-[rgba(8,8,14,0.98)] backdrop-blur-2xl sm:max-w-2xl"
             >
-                <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-amber-400/60 to-transparent" />
-                <div aria-hidden className="pointer-events-none absolute -top-32 right-0 h-64 w-64 rounded-full bg-amber-500/[0.06] blur-3xl" />
-                <div aria-hidden className="pointer-events-none absolute top-1/3 -left-20 h-72 w-72 rounded-full bg-cyan-500/[0.05] blur-3xl" />
+                <div
+                    aria-hidden
+                    className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-amber-400/60 to-transparent"
+                />
+                <div
+                    aria-hidden
+                    className="pointer-events-none absolute -top-32 right-0 h-64 w-64 rounded-full bg-amber-500/[0.06] blur-3xl"
+                />
+                <div
+                    aria-hidden
+                    className="pointer-events-none absolute top-1/3 -left-20 h-72 w-72 rounded-full bg-cyan-500/[0.05] blur-3xl"
+                />
 
                 <div className="relative">
                     <SheetHeader className="space-y-3 px-1 pt-2">
                         <div className="flex items-center gap-2">
                             <span className="size-2 rounded-full bg-emerald-400 shadow-[0_0_14px_rgba(16,185,129,0.85)]" />
-                            <span className="font-mono text-[0.65rem] uppercase tracking-[0.32em] text-secondary">Pipeline activity · live</span>
+                            <span className="font-mono text-[0.65rem] uppercase tracking-[0.32em] text-secondary">
+                                Pipeline activity · live
+                            </span>
                         </div>
                         <SheetTitle className="bg-gradient-to-r from-amber-200 via-amber-300 to-cyan-300 bg-clip-text text-3xl font-bold tracking-tight text-transparent">
                             Activity for job <span className="font-mono">#{jobId ?? "?"}</span>
                         </SheetTitle>
                         <SheetDescription className="text-sm leading-6 text-muted-foreground">
-                            Every LLM, embedding, and transcription call recorded against this pipeline job — with prompt, response, token use, and cost.
+                            Every LLM, embedding, and transcription call recorded against this pipeline job — with
+                            prompt, response, token use, and cost.
                         </SheetDescription>
                     </SheetHeader>
 
@@ -102,7 +122,9 @@ export function JobActivityDrawer({ jobId, open, onOpenChange }: { jobId: number
                         <ActivitySkeleton />
                     ) : activity.data && activity.data.length > 0 ? (
                         <ul className="mt-6 space-y-3">
-                            {activity.data.map((row) => <ActivityRow key={row.id} row={row} />)}
+                            {activity.data.map((row) => (
+                                <ActivityRow key={row.id} row={row} />
+                            ))}
                         </ul>
                     ) : (
                         <ActivityEmpty />
@@ -136,7 +158,11 @@ function SummaryCard({
                 {label}
             </div>
             <div className={`mt-2 truncate font-mono text-lg font-bold tabular-nums ${valueClass}`}>{value}</div>
-            {hint ? <div className="mt-0.5 font-mono text-[0.6rem] uppercase tracking-[0.22em] text-muted-foreground/70">{hint}</div> : null}
+            {hint ? (
+                <div className="mt-0.5 font-mono text-[0.6rem] uppercase tracking-[0.22em] text-muted-foreground/70">
+                    {hint}
+                </div>
+            ) : null}
         </div>
     );
 }
@@ -149,7 +175,10 @@ function ActivityRow({ row }: { row: JobActivity }) {
 
     return (
         <li className="group relative overflow-hidden rounded-2xl border border-primary/12 bg-black/35 transition duration-200 hover:-translate-y-0.5 hover:border-amber-400/35 hover:shadow-[0_18px_44px_rgba(0,0,0,0.45),0_0_28px_rgba(245,158,11,0.08)]">
-            <div aria-hidden className={`pointer-events-none absolute inset-y-0 left-0 w-[3px] bg-gradient-to-b ${kind.accentClass}`} />
+            <div
+                aria-hidden
+                className={`pointer-events-none absolute inset-y-0 left-0 w-[3px] bg-gradient-to-b ${kind.accentClass}`}
+            />
             <button
                 type="button"
                 onClick={() => setExpanded((value) => !value)}
@@ -160,11 +189,15 @@ function ActivityRow({ row }: { row: JobActivity }) {
                 </div>
                 <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
-                        <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 font-mono text-[0.6rem] uppercase tracking-[0.2em] ${kind.badgeClass}`}>
+                        <span
+                            className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 font-mono text-[0.6rem] uppercase tracking-[0.2em] ${kind.badgeClass}`}
+                        >
                             {kind.label}
                         </span>
                         {row.stage ? (
-                            <span className="font-mono text-[0.6rem] uppercase tracking-[0.22em] text-muted-foreground">{row.stage}</span>
+                            <span className="font-mono text-[0.6rem] uppercase tracking-[0.22em] text-muted-foreground">
+                                {row.stage}
+                            </span>
                         ) : null}
                         <span className="truncate font-mono text-xs text-foreground/85">
                             <span className="text-secondary">{row.provider ?? "—"}</span>
@@ -178,7 +211,9 @@ function ActivityRow({ row }: { row: JobActivity }) {
                             <span className="mx-0.5 text-muted-foreground/60">/</span>
                             <span className="text-cyan-200/80">{row.tokensOut ?? 0}</span>
                         </Stat>
-                        <Stat label="cost"><span className="text-amber-200">{formatCost(row.costUsd ?? 0)}</span></Stat>
+                        <Stat label="cost">
+                            <span className="text-amber-200">{formatCost(row.costUsd ?? 0)}</span>
+                        </Stat>
                         <Stat label="time">
                             {row.durationMs !== null ? formatDuration(row.durationMs, "ms", "hms") : "—"}
                         </Stat>
@@ -190,7 +225,9 @@ function ActivityRow({ row }: { row: JobActivity }) {
                         </p>
                     ) : null}
                 </div>
-                <ChevronRight className={`mt-1 size-4 shrink-0 text-muted-foreground transition-transform duration-200 ${expanded ? "rotate-90 text-amber-300" : "group-hover:translate-x-0.5"}`} />
+                <ChevronRight
+                    className={`mt-1 size-4 shrink-0 text-muted-foreground transition-transform duration-200 ${expanded ? "rotate-90 text-amber-300" : "group-hover:translate-x-0.5"}`}
+                />
             </button>
             {expanded ? (
                 <div className="space-y-3 border-t border-primary/10 px-4 py-3">
@@ -268,7 +305,8 @@ function ActivityEmpty() {
                 no calls yet
             </p>
             <p className="mt-1 text-sm text-muted-foreground/80">
-                Activity appears the moment a stage runs an LLM, embedder, or transcriber. Pipeline downloads and metadata fetches don't create activity rows.
+                Activity appears the moment a stage runs an LLM, embedder, or transcriber. Pipeline downloads and
+                metadata fetches don't create activity rows.
             </p>
         </div>
     );

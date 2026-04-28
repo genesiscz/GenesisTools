@@ -1,7 +1,7 @@
+import { beforeEach, describe, expect, it } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { beforeEach, describe, expect, it } from "bun:test";
 import { YoutubeConfig } from "@app/youtube/lib/config";
 import { YoutubeDatabase } from "@app/youtube/lib/db";
 import { chunkTranscript, cosine, QaService } from "@app/youtube/lib/qa";
@@ -36,11 +36,21 @@ describe("QaService", () => {
             batchVectors = [new Float32Array([1, 0]), new Float32Array([0, 1])];
             const service = new QaService(db, config, makeDeps());
 
-            await expect(service.index({ videoId: "abc123def45", model: "nomic" })).resolves.toEqual({ indexed: 1, modelId: "nomic" });
+            await expect(service.index({ videoId: "abc123def45", model: "nomic" })).resolves.toEqual({
+                indexed: 1,
+                modelId: "nomic",
+            });
             expect(createEmbedderCalls).toEqual([{ provider: "ollama", model: "nomic" }]);
             expect(embedBatchCalls).toEqual([["alpha beta"]]);
             expect(db.listQaChunks("abc123def45", "nomic")).toMatchObject([
-                { videoId: "abc123def45", chunkIdx: 0, text: "alpha beta", startSec: 0, endSec: 20, embedderModel: "nomic" },
+                {
+                    videoId: "abc123def45",
+                    chunkIdx: 0,
+                    text: "alpha beta",
+                    startSec: 0,
+                    endSec: 20,
+                    embedderModel: "nomic",
+                },
             ]);
             expect(db.listQaChunks("abc123def45", "nomic")[0].embedding).toEqual(new Float32Array([1, 0]));
             expect(disposeCalls).toHaveLength(1);
@@ -54,10 +64,19 @@ describe("QaService", () => {
         const { db, config, dir } = await makeFixture();
 
         try {
-            db.upsertQaChunk({ videoId: "abc123def45", chunkIdx: 0, text: "cached", embedding: new Float32Array([1, 0]), embedderModel: "default" });
+            db.upsertQaChunk({
+                videoId: "abc123def45",
+                chunkIdx: 0,
+                text: "cached",
+                embedding: new Float32Array([1, 0]),
+                embedderModel: "default",
+            });
             const service = new QaService(db, config, makeDeps());
 
-            await expect(service.index({ videoId: "abc123def45" })).resolves.toEqual({ indexed: 0, modelId: "default" });
+            await expect(service.index({ videoId: "abc123def45" })).resolves.toEqual({
+                indexed: 0,
+                modelId: "default",
+            });
             expect(embedBatchCalls).toHaveLength(0);
             expect(disposeCalls).toHaveLength(1);
         } finally {
@@ -70,14 +89,32 @@ describe("QaService", () => {
         const { db, config, dir } = await makeFixture();
 
         try {
-            db.upsertQaChunk({ videoId: "abc123def45", chunkIdx: 0, text: "relevant chunk", startSec: 12, endSec: 18, embedding: new Float32Array([1, 0]), embedderModel: "default" });
-            db.upsertQaChunk({ videoId: "abc123def45", chunkIdx: 1, text: "less relevant", startSec: 60, endSec: 70, embedding: new Float32Array([0, 1]), embedderModel: "default" });
+            db.upsertQaChunk({
+                videoId: "abc123def45",
+                chunkIdx: 0,
+                text: "relevant chunk",
+                startSec: 12,
+                endSec: 18,
+                embedding: new Float32Array([1, 0]),
+                embedderModel: "default",
+            });
+            db.upsertQaChunk({
+                videoId: "abc123def45",
+                chunkIdx: 1,
+                text: "less relevant",
+                startSec: 60,
+                endSec: 70,
+                embedding: new Float32Array([0, 1]),
+                embedderModel: "default",
+            });
             queryVector = new Float32Array([1, 0]);
             llmAnswer = "The answer cites [#1].";
             const service = new QaService(db, config, makeDeps());
             const providerChoice = { provider: { type: "test" }, model: { id: "model" } } as never;
 
-            await expect(service.ask({ videoIds: ["abc123def45"], question: "What matters?", providerChoice, topK: 1 })).resolves.toEqual({
+            await expect(
+                service.ask({ videoIds: ["abc123def45"], question: "What matters?", providerChoice, topK: 1 })
+            ).resolves.toEqual({
                 answer: "The answer cites [#1].",
                 citations: [{ videoId: "abc123def45", chunkIdx: 0, startSec: 12, endSec: 18 }],
             });
@@ -100,8 +137,12 @@ describe("QaService", () => {
         const service = new QaService(db, config, makeDeps());
 
         try {
-            await expect(service.ask({ videoIds: [], question: "q", providerChoice: {} as never })).rejects.toThrow("ask: at least one videoId required");
-            expect(service.keywordSearch("alpha")).toEqual([expect.objectContaining({ videoId: "abc123def45", lang: "en" })]);
+            await expect(service.ask({ videoIds: [], question: "q", providerChoice: {} as never })).rejects.toThrow(
+                "ask: at least one videoId required"
+            );
+            expect(service.keywordSearch("alpha")).toEqual([
+                expect.objectContaining({ videoId: "abc123def45", lang: "en" }),
+            ]);
         } finally {
             db.close();
             await rm(dir, { recursive: true, force: true });

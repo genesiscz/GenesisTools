@@ -1,7 +1,7 @@
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { CONFIG_FILENAME, DEFAULT_YOUTUBE_CONFIG, YoutubeConfig } from "@app/youtube/lib/config";
 
 let baseDir: string;

@@ -25,9 +25,15 @@ export function renderColumns<T>(opts: RenderColumnsOpts<T>): string {
         const headerWidth = column.header.length;
         const cellWidth = Math.max(...cells.map((row) => stripAnsi(row[index]).length));
 
-        return clamp(Math.max(headerWidth, cellWidth), column.minWidth ?? 0, column.maxWidth ?? Number.POSITIVE_INFINITY);
+        return clamp(
+            Math.max(headerWidth, cellWidth),
+            column.minWidth ?? 0,
+            column.maxWidth ?? Number.POSITIVE_INFINITY
+        );
     });
-    const header = opts.schema.map((column, index) => pc.bold(pad(column.header, widths[index], column.align ?? "left"))).join("  ");
+    const header = opts.schema
+        .map((column, index) => pc.bold(pad(column.header, widths[index], column.align ?? "left")))
+        .join("  ");
     const separator = opts.schema.map((_, index) => pc.dim("─".repeat(widths[index]))).join("  ");
     const body = cells.map((row, rowIndex) =>
         row
@@ -43,8 +49,10 @@ export function renderColumns<T>(opts: RenderColumnsOpts<T>): string {
     return [header, separator, ...body].join("\n");
 }
 
+const ANSI_ESCAPE_PATTERN = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g");
+
 export function stripAnsi(value: string): string {
-    return value.replace(/\u001b\[[0-9;]*m/g, "");
+    return value.replace(ANSI_ESCAPE_PATTERN, "");
 }
 
 function pad(value: string, width: number, align: "left" | "right"): string {

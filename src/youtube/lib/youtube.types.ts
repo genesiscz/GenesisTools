@@ -4,7 +4,7 @@ import type { Pipeline } from "@app/youtube/lib/pipeline";
 import type { QaService } from "@app/youtube/lib/qa";
 import type { SummaryService } from "@app/youtube/lib/summarize";
 import type { TranscriptService } from "@app/youtube/lib/transcripts";
-import type { DumpedVideoMetadata, ListedVideo, ListChannelVideosOpts } from "@app/youtube/lib/yt-dlp.types";
+import type { DumpedVideoMetadata, ListChannelVideosOpts, ListedVideo } from "@app/youtube/lib/yt-dlp.types";
 
 export interface YoutubeOptions {
     baseDir?: string;

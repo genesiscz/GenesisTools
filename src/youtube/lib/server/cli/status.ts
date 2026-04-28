@@ -1,12 +1,13 @@
-import type { Command } from "commander";
-import pc from "picocolors";
 import { renderOrEmit } from "@app/youtube/commands/_shared/render";
 import { readPid } from "@app/youtube/lib/server/daemon";
 import { isLaunchdInstalled } from "@app/youtube/lib/server/launchd";
 import { readPortFile } from "@app/youtube/lib/server/port-file";
+import type { Command } from "commander";
+import pc from "picocolors";
 
 export function registerServerStatus(parent: Command): void {
-    parent.command("status")
+    parent
+        .command("status")
         .description("Show server status (PID, port, launchd state)")
         .action(async (_: unknown, cmd: Command) => {
             const pid = readPid();

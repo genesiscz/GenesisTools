@@ -1,12 +1,12 @@
-import * as p from "@clack/prompts";
-import { Command } from "commander";
-import pc from "picocolors";
 import { isInteractive, suggestCommand } from "@app/utils/cli/executor";
 import { SafeJSON } from "@app/utils/json";
 import { getYoutube } from "@app/youtube/commands/_shared/ensure-pipeline";
 import { renderOrEmit } from "@app/youtube/commands/_shared/render";
 import { extractVideoId, formatTimestamp } from "@app/youtube/commands/_shared/utils";
 import type { Transcript, TranscriptSegment, VideoId } from "@app/youtube/lib/types";
+import * as p from "@clack/prompts";
+import { Command } from "commander";
+import pc from "picocolors";
 
 interface TranscribeOptions {
     forceTranscribe?: boolean;
@@ -74,7 +74,15 @@ export function createTranscribeCommand(): Command {
     return command;
 }
 
-async function runTranscribe({ urlArg, opts, cmd }: { urlArg?: string; opts: TranscribeOptions; cmd: Command }): Promise<void> {
+async function runTranscribe({
+    urlArg,
+    opts,
+    cmd,
+}: {
+    urlArg?: string;
+    opts: TranscribeOptions;
+    cmd: Command;
+}): Promise<void> {
     const url = await resolveInput(urlArg, opts, cmd);
 
     if (!url) {
@@ -90,21 +98,24 @@ async function runTranscribe({ urlArg, opts, cmd }: { urlArg?: string; opts: Tra
 
     const yt = await getYoutube();
     await yt.videos.ensureMetadata(videoId);
-    const transcript = opts.cache === false ? null : yt.db.getTranscript(videoId, { preferLang: opts.lang ? [opts.lang] : undefined });
-    const result = transcript ?? (await yt.transcripts.transcribe({
-        videoId,
-        forceTranscribe: opts.forceTranscribe || opts.cache === false,
-        lang: opts.lang,
-        provider: opts.provider,
-        persistProvider: Boolean(opts.provider),
-        onProgress: (info) => {
-            if (cmd.optsWithGlobals().silent) {
-                return;
-            }
+    const transcript =
+        opts.cache === false ? null : yt.db.getTranscript(videoId, { preferLang: opts.lang ? [opts.lang] : undefined });
+    const result =
+        transcript ??
+        (await yt.transcripts.transcribe({
+            videoId,
+            forceTranscribe: opts.forceTranscribe || opts.cache === false,
+            lang: opts.lang,
+            provider: opts.provider,
+            persistProvider: Boolean(opts.provider),
+            onProgress: (info) => {
+                if (cmd.optsWithGlobals().silent) {
+                    return;
+                }
 
-            process.stderr.write(`${info.message}\n`);
-        },
-    }));
+                process.stderr.write(`${info.message}\n`);
+            },
+        }));
     const format = normalizeFormat(opts.format);
     const output = formatTranscript(result, format);
 
@@ -123,7 +134,11 @@ async function runTranscribe({ urlArg, opts, cmd }: { urlArg?: string; opts: Tra
     });
 }
 
-async function resolveInput(urlArg: string | undefined, opts: TranscribeOptions, cmd: Command): Promise<string | null> {
+async function resolveInput(
+    urlArg: string | undefined,
+    opts: TranscribeOptions,
+    _cmd: Command
+): Promise<string | null> {
     if (urlArg) {
         return urlArg;
     }
@@ -240,7 +255,13 @@ function formatTranscript(transcript: Transcript, format: NonNullable<Transcribe
     }
 }
 
-function transcriptToJson(transcript: Transcript): { text: string; segments: TranscriptSegment[]; lang: string; source: string; videoId: VideoId } {
+function transcriptToJson(transcript: Transcript): {
+    text: string;
+    segments: TranscriptSegment[];
+    lang: string;
+    source: string;
+    videoId: VideoId;
+} {
     return {
         text: transcript.text,
         segments: transcript.segments,

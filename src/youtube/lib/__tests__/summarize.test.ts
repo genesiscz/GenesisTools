@@ -1,7 +1,8 @@
+import { beforeEach, describe, expect, it } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { beforeEach, describe, expect, it } from "bun:test";
+import { SafeJSON } from "@app/utils/json";
 import { YoutubeConfig } from "@app/youtube/lib/config";
 import { YoutubeDatabase } from "@app/youtube/lib/db";
 import { bucketSegments, pickSectionCount, SummaryService } from "@app/youtube/lib/summarize";
@@ -69,7 +70,9 @@ describe("SummaryService", () => {
             db.setVideoSummary("abc123def45", "short", "Cached summary");
             const service = new SummaryService(db, config, makeDeps());
 
-            await expect(service.summarize({ videoId: "abc123def45", mode: "short" })).resolves.toEqual({ short: "Cached summary" });
+            await expect(service.summarize({ videoId: "abc123def45", mode: "short" })).resolves.toEqual({
+                short: "Cached summary",
+            });
             expect(summarizeCalls).toHaveLength(0);
             expect(callLlmStructuredCalls).toHaveLength(0);
         } finally {
@@ -82,14 +85,18 @@ describe("SummaryService", () => {
         const { db, config, dir } = await makeFixture();
 
         try {
-            structuredResponses = [{
-                tldr: "All-up tldr.",
-                sections: [
-                    { startSec: 0, endSec: 360, icon: "🎯", title: "Intro", text: "Speaker introduces the topic." },
-                    { startSec: 360, endSec: 720, icon: "💰", title: "ARR moment", text: "ARR hits 128k." },
-                ],
-            }];
-            const fakeChoice = { provider: "fake", model: "fake" } as unknown as Parameters<typeof SummaryService.prototype.summarize>[0]["providerChoice"];
+            structuredResponses = [
+                {
+                    tldr: "All-up tldr.",
+                    sections: [
+                        { startSec: 0, endSec: 360, icon: "🎯", title: "Intro", text: "Speaker introduces the topic." },
+                        { startSec: 360, endSec: 720, icon: "💰", title: "ARR moment", text: "ARR hits 128k." },
+                    ],
+                },
+            ];
+            const fakeChoice = { provider: "fake", model: "fake" } as unknown as Parameters<
+                typeof SummaryService.prototype.summarize
+            >[0]["providerChoice"];
             const service = new SummaryService(db, config, makeDeps());
 
             const result = await service.summarize({
@@ -114,14 +121,18 @@ describe("SummaryService", () => {
         const { db, config, dir } = await makeFixture();
 
         try {
-            structuredResponses = [{
-                tldr: "It's all about ARR.",
-                keyPoints: ["one", "two", "three"],
-                learnings: ["a", "b"],
-                chapters: [{ title: "Intro", summary: "Speaker opens." }],
-                conclusion: "Stay consistent.",
-            }];
-            const fakeChoice = { provider: "fake", model: "fake" } as unknown as Parameters<typeof SummaryService.prototype.summarize>[0]["providerChoice"];
+            structuredResponses = [
+                {
+                    tldr: "It's all about ARR.",
+                    keyPoints: ["one", "two", "three"],
+                    learnings: ["a", "b"],
+                    chapters: [{ title: "Intro", summary: "Speaker opens." }],
+                    conclusion: "Stay consistent.",
+                },
+            ];
+            const fakeChoice = { provider: "fake", model: "fake" } as unknown as Parameters<
+                typeof SummaryService.prototype.summarize
+            >[0]["providerChoice"];
             const service = new SummaryService(db, config, makeDeps());
 
             const result = await service.summarize({
@@ -146,7 +157,9 @@ describe("SummaryService", () => {
         try {
             const service = new SummaryService(db, config, makeDeps());
 
-            await expect(service.summarize({ videoId: "abc123def45", mode: "timestamped" })).rejects.toThrow(/providerChoice/);
+            await expect(service.summarize({ videoId: "abc123def45", mode: "timestamped" })).rejects.toThrow(
+                /providerChoice/
+            );
             await expect(service.summarize({ videoId: "abc123def45", mode: "long" })).rejects.toThrow(/providerChoice/);
         } finally {
             db.close();
@@ -158,8 +171,12 @@ describe("SummaryService", () => {
         const { db, config, dir } = await makeFixture();
 
         try {
-            structuredResponses = [{ tldr: "tldr", sections: [{ startSec: 0, endSec: 19, icon: "🎯", title: "x", text: "x." }] }];
-            const fakeChoice = { provider: "fake", model: "fake" } as unknown as Parameters<typeof SummaryService.prototype.summarize>[0]["providerChoice"];
+            structuredResponses = [
+                { tldr: "tldr", sections: [{ startSec: 0, endSec: 19, icon: "🎯", title: "x", text: "x." }] },
+            ];
+            const fakeChoice = { provider: "fake", model: "fake" } as unknown as Parameters<
+                typeof SummaryService.prototype.summarize
+            >[0]["providerChoice"];
             const service = new SummaryService(db, config, makeDeps());
 
             await service.summarize({ videoId: "abc123def45", mode: "timestamped", providerChoice: fakeChoice });
@@ -179,11 +196,20 @@ describe("SummaryService", () => {
         const { db, config, dir } = await makeFixture();
 
         try {
-            structuredResponses = [{ tldr: "x", sections: [{ startSec: 0, endSec: 19, icon: "🎯", title: "x", text: "x." }] }];
-            const fakeChoice = { provider: "fake", model: "fake" } as unknown as Parameters<typeof SummaryService.prototype.summarize>[0]["providerChoice"];
+            structuredResponses = [
+                { tldr: "x", sections: [{ startSec: 0, endSec: 19, icon: "🎯", title: "x", text: "x." }] },
+            ];
+            const fakeChoice = { provider: "fake", model: "fake" } as unknown as Parameters<
+                typeof SummaryService.prototype.summarize
+            >[0]["providerChoice"];
             const service = new SummaryService(db, config, makeDeps());
 
-            await service.summarize({ videoId: "abc123def45", mode: "timestamped", providerChoice: fakeChoice, tone: "funny" });
+            await service.summarize({
+                videoId: "abc123def45",
+                mode: "timestamped",
+                providerChoice: fakeChoice,
+                tone: "funny",
+            });
 
             const call = callLlmStructuredCalls[0] as { systemPrompt: string };
             expect(call.systemPrompt.toLowerCase()).toContain("funny");
@@ -197,11 +223,24 @@ describe("SummaryService", () => {
         const { db, config, dir } = await makeFixture();
 
         try {
-            structuredResponses = [{
-                tldr: "all qa",
-                sections: [{ startSec: 0, endSec: 19, icon: "❓", title: "Why?", question: "Why does it matter?", text: "Because of X." }],
-            }];
-            const fakeChoice = { provider: "fake", model: "fake" } as unknown as Parameters<typeof SummaryService.prototype.summarize>[0]["providerChoice"];
+            structuredResponses = [
+                {
+                    tldr: "all qa",
+                    sections: [
+                        {
+                            startSec: 0,
+                            endSec: 19,
+                            icon: "❓",
+                            title: "Why?",
+                            question: "Why does it matter?",
+                            text: "Because of X.",
+                        },
+                    ],
+                },
+            ];
+            const fakeChoice = { provider: "fake", model: "fake" } as unknown as Parameters<
+                typeof SummaryService.prototype.summarize
+            >[0]["providerChoice"];
             const service = new SummaryService(db, config, makeDeps());
 
             const result = await service.summarize({
@@ -295,7 +334,7 @@ function makeDeps() {
                 throw new Error("test: no structured response queued");
             }
 
-            return { object: response as T, content: JSON.stringify(response, null, 2), usage: undefined };
+            return { object: response as T, content: SafeJSON.stringify(response, null, 2), usage: undefined };
         },
     };
 }

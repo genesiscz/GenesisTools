@@ -217,7 +217,9 @@ function TranscriptRow({
     query: string;
     onSeek: (seconds: number) => void;
 }) {
-    const label = showRange ? `${formatTimecode(block.start)}–${formatTimecode(block.end)}` : formatTimecode(block.start);
+    const label = showRange
+        ? `${formatTimecode(block.start)}–${formatTimecode(block.end)}`
+        : formatTimecode(block.start);
 
     return (
         <article className="grid gap-3 rounded-2xl border border-primary/15 bg-black/20 p-3 sm:grid-cols-[7.5rem_1fr]">

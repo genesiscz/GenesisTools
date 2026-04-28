@@ -1,13 +1,21 @@
+import type { JobStatus } from "@app/youtube/lib/types";
+import { useJobs } from "@app/yt/api.hooks";
+import { JobsTable } from "@app/yt/components/jobs/jobs-table";
+import { Loading } from "@app/yt/components/shared/loading";
+import { useEventStream } from "@app/yt/ws.client";
 import { useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
-import { JobsTable } from "@app/yt/components/jobs/jobs-table";
-import { Loading } from "@app/yt/components/shared/loading";
-import { useJobs } from "@app/yt/api.hooks";
-import { useEventStream } from "@app/yt/ws.client";
-import type { JobStatus } from "@app/youtube/lib/types";
 
-const statusOptions: Array<JobStatus | "all"> = ["all", "pending", "running", "completed", "failed", "cancelled", "interrupted"];
+const statusOptions: Array<JobStatus | "all"> = [
+    "all",
+    "pending",
+    "running",
+    "completed",
+    "failed",
+    "cancelled",
+    "interrupted",
+];
 
 export const Route = createFileRoute("/jobs")({
     component: JobsPage,
@@ -46,7 +54,13 @@ function JobsPage() {
                     <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                         <div className="space-y-2">
                             <div className="flex items-center gap-3">
-                                <span className={stream.connected ? "size-2 rounded-full bg-emerald-400 shadow-[0_0_14px_rgba(16,185,129,0.85)]" : "size-2 rounded-full bg-amber-400/70"} />
+                                <span
+                                    className={
+                                        stream.connected
+                                            ? "size-2 rounded-full bg-emerald-400 shadow-[0_0_14px_rgba(16,185,129,0.85)]"
+                                            : "size-2 rounded-full bg-amber-400/70"
+                                    }
+                                />
                                 <p className="font-mono text-[0.7rem] uppercase tracking-[0.32em] text-secondary">
                                     {stream.connected ? "Pipeline monitor · live" : "Pipeline monitor · reconnecting"}
                                 </p>
@@ -55,7 +69,9 @@ function JobsPage() {
                                 Jobs inspector
                             </h1>
                             <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
-                                Watch discovery, transcript, download, and summarization stages move through the local queue in real time. Click any row to see every LLM, embedding, and transcription call recorded against that job.
+                                Watch discovery, transcript, download, and summarization stages move through the local
+                                queue in real time. Click any row to see every LLM, embedding, and transcription call
+                                recorded against that job.
                             </p>
                         </div>
                         <div className="flex shrink-0 items-center gap-1 rounded-full border border-primary/20 bg-black/30 p-1 font-mono text-[0.7rem] uppercase tracking-[0.18em]">
@@ -82,7 +98,11 @@ function JobsPage() {
                                     }
                                 >
                                     {option}
-                                    <span className={active ? "ml-2 text-amber-200/80" : "ml-2 text-muted-foreground/60"}>{count}</span>
+                                    <span
+                                        className={active ? "ml-2 text-amber-200/80" : "ml-2 text-muted-foreground/60"}
+                                    >
+                                        {count}
+                                    </span>
                                 </button>
                             );
                         })}

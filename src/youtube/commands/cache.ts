@@ -1,11 +1,10 @@
 import { existsSync, statSync, unlinkSync } from "node:fs";
 import { formatBytes } from "@app/utils/format";
-import { confirmDestructive } from "@app/youtube/commands/_shared/confirm";
 import { renderColumns } from "@app/youtube/commands/_shared/columns";
+import { confirmDestructive } from "@app/youtube/commands/_shared/confirm";
 import { getYoutube } from "@app/youtube/commands/_shared/ensure-pipeline";
 import { renderOrEmit } from "@app/youtube/commands/_shared/render";
-import type { Video } from "@app/youtube/lib/types";
-import { Command } from "commander";
+import type { Command } from "commander";
 import pc from "picocolors";
 
 interface ClearOpts {
@@ -91,7 +90,10 @@ export function registerCacheCommand(program: Command): void {
         .option("--thumbs", "Delete all cached thumbnails")
         .option("--all", "Delete all of the above")
         .option("--yes", "Skip confirmation")
-        .addHelpText("after", "\nExamples:\n  $ tools youtube cache clear --thumbs --yes\n  $ tools youtube cache clear --all --yes\n")
+        .addHelpText(
+            "after",
+            "\nExamples:\n  $ tools youtube cache clear --thumbs --yes\n  $ tools youtube cache clear --all --yes\n"
+        )
         .action(async (opts: ClearOpts) => {
             const flags = opts.all ? { audio: true, video: true, thumbs: true } : opts;
 
@@ -101,11 +103,13 @@ export function registerCacheCommand(program: Command): void {
                 return;
             }
 
-            const ok = opts.yes || (await confirmDestructive({
-                message: `clear cached binaries (${selectedKinds(flags).join(", ")})`,
-                toolName: "tools youtube cache clear",
-                assumeYesFlag: "--yes",
-            }));
+            const ok =
+                opts.yes ||
+                (await confirmDestructive({
+                    message: `clear cached binaries (${selectedKinds(flags).join(", ")})`,
+                    toolName: "tools youtube cache clear",
+                    assumeYesFlag: "--yes",
+                }));
 
             if (!ok) {
                 return;
@@ -141,7 +145,10 @@ function cacheStats(yt: Awaited<ReturnType<typeof getYoutube>>): CacheStats {
     };
 }
 
-async function clearBinaries(yt: Awaited<ReturnType<typeof getYoutube>>, flags: Pick<ClearOpts, "audio" | "video" | "thumbs">): Promise<ClearResult> {
+async function clearBinaries(
+    yt: Awaited<ReturnType<typeof getYoutube>>,
+    flags: Pick<ClearOpts, "audio" | "video" | "thumbs">
+): Promise<ClearResult> {
     let deletedCount = 0;
     let freedBytes = 0;
 
@@ -169,7 +176,9 @@ async function clearBinaries(yt: Awaited<ReturnType<typeof getYoutube>>, flags: 
 }
 
 function selectedKinds(flags: Pick<ClearOpts, "audio" | "video" | "thumbs">): string[] {
-    return [flags.audio ? "audio" : null, flags.video ? "video" : null, flags.thumbs ? "thumbs" : null].filter((value): value is string => value !== null);
+    return [flags.audio ? "audio" : null, flags.video ? "video" : null, flags.thumbs ? "thumbs" : null].filter(
+        (value): value is string => value !== null
+    );
 }
 
 function ttlDays(raw: string): number | undefined {

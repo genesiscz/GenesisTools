@@ -40,7 +40,10 @@ export function JobStatusBadge({ status }: { status: JobStatus }) {
     const Icon = tone.icon;
 
     return (
-        <Badge variant="outline" className={`gap-1.5 font-mono text-[0.65rem] uppercase tracking-[0.18em] ${tone.className}`}>
+        <Badge
+            variant="outline"
+            className={`gap-1.5 font-mono text-[0.65rem] uppercase tracking-[0.18em] ${tone.className}`}
+        >
             <Icon className={status === "running" ? "size-3 animate-spin" : "size-3"} />
             {tone.label}
         </Badge>

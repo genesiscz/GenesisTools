@@ -1,7 +1,7 @@
+import { SidePanel } from "@ext/side-panel/side-panel";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { SidePanel } from "@ext/side-panel/side-panel";
 import "@ext/side-panel/side-panel.css";
 
 let mountedRoot: Root | null = null;

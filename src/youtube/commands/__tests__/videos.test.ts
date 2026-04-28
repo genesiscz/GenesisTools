@@ -58,13 +58,34 @@ mock.module("@app/youtube/commands/_shared/ensure-pipeline", () => ({
                 calls.searchMetadata.push({ query, opts });
 
                 return [
-                    { videoId: "abc123def45", field: "title", snippet: "iPhone review", title: "iPhone review", channelHandle: "@mkbhd" },
-                    { videoId: "abc123def45", field: "description", snippet: "A detailed phone review", title: "iPhone review", channelHandle: "@mkbhd" },
+                    {
+                        videoId: "abc123def45",
+                        field: "title",
+                        snippet: "iPhone review",
+                        title: "iPhone review",
+                        channelHandle: "@mkbhd",
+                    },
+                    {
+                        videoId: "abc123def45",
+                        field: "description",
+                        snippet: "A detailed phone review",
+                        title: "iPhone review",
+                        channelHandle: "@mkbhd",
+                    },
                 ];
             },
         },
         db: {
-            getTranscript: (id: VideoId) => ({ id: 1, videoId: id, lang: "en", source: "captions", text: "phone transcript", segments: [], durationSec: null, createdAt: "now" }),
+            getTranscript: (id: VideoId) => ({
+                id: 1,
+                videoId: id,
+                lang: "en",
+                source: "captions",
+                text: "phone transcript",
+                segments: [],
+                durationSec: null,
+                createdAt: "now",
+            }),
         },
     }),
 }));
@@ -108,7 +129,19 @@ describe("youtube videos command", () => {
     it("passes list filters to the facade", async () => {
         const program = await makeProgram();
 
-        await program.parseAsync(["node", "test", "videos", "list", "--channel", "mkbhd", "--since", "2026-01-01", "--limit", "5", "--include-shorts"]);
+        await program.parseAsync([
+            "node",
+            "test",
+            "videos",
+            "list",
+            "--channel",
+            "mkbhd",
+            "--since",
+            "2026-01-01",
+            "--limit",
+            "5",
+            "--include-shorts",
+        ]);
 
         expect(calls.list[0]).toEqual({ channel: "@mkbhd", since: "2026-01-01", limit: 5, includeShorts: true });
         expect(stdout).toContain("iPhone review");
@@ -135,7 +168,19 @@ describe("youtube videos command", () => {
     it("searches transcripts and metadata fields server-side", async () => {
         const program = await makeProgram();
 
-        await program.parseAsync(["node", "test", "videos", "search", "phone", "--in", "transcript,title,desc", "--channel", "mkbhd", "--limit", "10"]);
+        await program.parseAsync([
+            "node",
+            "test",
+            "videos",
+            "search",
+            "phone",
+            "--in",
+            "transcript,title,desc",
+            "--channel",
+            "mkbhd",
+            "--limit",
+            "10",
+        ]);
 
         expect(calls.search[0]).toEqual({ query: "phone", opts: { limit: 10 } });
         expect(calls.searchMetadata[0]).toMatchObject({

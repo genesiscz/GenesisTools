@@ -17,11 +17,24 @@ export function registerUiCommand(program: Command): void {
             }
 
             const uiDir = resolve(import.meta.dirname, "..", "ui");
-            const proc = Bun.spawn(["bun", "--bun", "vite", "dev", "-c", resolve(uiDir, "vite.config.ts"), "--port", String(opts.port), "--strictPort"], {
-                cwd: PROJECT_ROOT,
-                stdio: ["inherit", "inherit", "inherit"],
-                env: { ...process.env, YOUTUBE_PROJECT_CWD: process.cwd() },
-            });
+            const proc = Bun.spawn(
+                [
+                    "bun",
+                    "--bun",
+                    "vite",
+                    "dev",
+                    "-c",
+                    resolve(uiDir, "vite.config.ts"),
+                    "--port",
+                    String(opts.port),
+                    "--strictPort",
+                ],
+                {
+                    cwd: PROJECT_ROOT,
+                    stdio: ["inherit", "inherit", "inherit"],
+                    env: { ...process.env, YOUTUBE_PROJECT_CWD: process.cwd() },
+                }
+            );
             setTimeout(() => openBrowser(`http://localhost:${opts.port}`), 2000);
             await proc.exited;
         });

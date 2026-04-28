@@ -1,8 +1,8 @@
 export type { CacheLayout } from "@app/youtube/lib/cache.types";
-export type { SearchVideosOpts, VideoSearchField, VideoSearchHit } from "@app/youtube/lib/db.types";
 export type { FetchCaptionsOpts, FetchCaptionsResult } from "@app/youtube/lib/captions.types";
 export type { Channel, ChannelHandle } from "@app/youtube/lib/channel.types";
 export type { YoutubeConfigShape } from "@app/youtube/lib/config.types";
+export type { SearchVideosOpts, VideoSearchField, VideoSearchHit } from "@app/youtube/lib/db.types";
 export type {
     JobActivity,
     JobActivityKind,
@@ -12,12 +12,6 @@ export type {
     JobTargetKind,
     PipelineJob,
 } from "@app/youtube/lib/jobs.types";
-export type {
-    SummaryBin,
-    SummarizeOpts,
-    SummarizeResult,
-    SummaryProgressInfo,
-} from "@app/youtube/lib/summarize.types";
 export type {
     EnqueuePipelineJobInput,
     JobEventHandler,
@@ -36,6 +30,12 @@ export type {
     IndexResult,
     QaChunk,
 } from "@app/youtube/lib/qa.types";
+export type {
+    SummarizeOpts,
+    SummarizeResult,
+    SummaryBin,
+    SummaryProgressInfo,
+} from "@app/youtube/lib/summarize.types";
 export type { Language, Transcript, TranscriptSegment } from "@app/youtube/lib/transcript.types";
 export type {
     AudioDownloadProgress,
@@ -56,16 +56,16 @@ export type {
     VideoLongSummaryChapter,
     VideoMetadata,
 } from "@app/youtube/lib/video.types";
+export type { YoutubeDeps, YoutubeOptions, YoutubeServices } from "@app/youtube/lib/youtube.types";
 export type {
     DownloadAudioOpts,
     DownloadAudioResult,
     DownloadVideoOpts,
     DownloadVideoResult,
     DumpedVideoMetadata,
-    ListedVideo,
     ListChannelVideosOpts,
+    ListedVideo,
     YtDlpAvailability,
     YtDlpProgress,
     YtDlpProgressInfo,
 } from "@app/youtube/lib/yt-dlp.types";
-export type { YoutubeDeps, YoutubeOptions, YoutubeServices } from "@app/youtube/lib/youtube.types";

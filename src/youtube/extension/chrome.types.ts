@@ -16,7 +16,15 @@ declare global {
             type SendResponse = (response?: unknown) => void;
 
             const onConnect: { addListener(listener: (port: Port) => void): void };
-            const onMessage: { addListener(listener: (request: ExtensionRequest, sender: MessageSender, sendResponse: SendResponse) => boolean | void): void };
+            const onMessage: {
+                addListener(
+                    listener: (
+                        request: ExtensionRequest,
+                        sender: MessageSender,
+                        sendResponse: SendResponse
+                    ) => boolean | undefined
+                ): void;
+            };
             function sendMessage(request: ExtensionRequest): Promise<ExtensionResponse>;
             function connect(connectInfo?: { name?: string }): Port;
         }
@@ -29,5 +37,3 @@ declare global {
         }
     }
 }
-
-export {};

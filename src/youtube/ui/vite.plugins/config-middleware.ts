@@ -1,6 +1,7 @@
-import type { Plugin } from "vite";
+import { SafeJSON } from "@app/utils/json";
 import { YoutubeConfig } from "@app/youtube/lib/config";
 import type { YoutubeConfigPatch } from "@app/youtube/lib/config.api.types";
+import type { Plugin } from "vite";
 
 export function youtubeConfigPlugin(): Plugin {
     return {
@@ -16,7 +17,7 @@ export function youtubeConfigPlugin(): Plugin {
                 if (req.method === "GET") {
                     const current = await config.getAll();
                     res.setHeader("Content-Type", "application/json");
-                    res.end(JSON.stringify({ config: current, where: config.where() }));
+                    res.end(SafeJSON.stringify({ config: current, where: config.where() }));
                     return;
                 }
 
@@ -26,15 +27,15 @@ export function youtubeConfigPlugin(): Plugin {
                 });
                 req.on("end", async () => {
                     try {
-                        const patch = JSON.parse(body || "{}") as YoutubeConfigPatch;
+                        const patch = SafeJSON.parse(body || "{}") as YoutubeConfigPatch;
                         await config.update(patch);
                         const current = await config.getAll();
                         res.setHeader("Content-Type", "application/json");
-                        res.end(JSON.stringify({ config: current }));
+                        res.end(SafeJSON.stringify({ config: current }));
                     } catch (err) {
                         res.statusCode = 400;
                         res.setHeader("Content-Type", "application/json");
-                        res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+                        res.end(SafeJSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
                     }
                 });
             });

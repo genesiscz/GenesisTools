@@ -12,7 +12,10 @@ export async function fetchCaptions(opts: FetchCaptionsOpts): Promise<FetchCapti
     for (const lang of langs) {
         try {
             const config = lang ? { lang } : undefined;
-            const transcript = (await YoutubeTranscript.fetchTranscript(opts.videoId, config)) as TranscriptResponseWithLang[];
+            const transcript = (await YoutubeTranscript.fetchTranscript(
+                opts.videoId,
+                config
+            )) as TranscriptResponseWithLang[];
 
             if (!transcript.length) {
                 continue;

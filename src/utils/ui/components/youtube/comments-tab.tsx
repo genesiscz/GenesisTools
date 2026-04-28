@@ -13,9 +13,14 @@ export function CommentsTab() {
             </div>
             <div className="grid gap-3">
                 {Array.from({ length: 3 }).map((_, index) => (
-                    <div key={index} className="rounded-2xl border border-dashed border-primary/20 bg-black/20 p-4 opacity-70">
+                    <div
+                        key={index}
+                        className="rounded-2xl border border-dashed border-primary/20 bg-black/20 p-4 opacity-70"
+                    >
                         <div className="mb-3 flex items-center gap-3">
-                            <div className="grid size-10 place-items-center rounded-full bg-secondary/10 text-secondary"><MessageCircle className="size-4" /></div>
+                            <div className="grid size-10 place-items-center rounded-full bg-secondary/10 text-secondary">
+                                <MessageCircle className="size-4" />
+                            </div>
                             <div className="space-y-2">
                                 <div className="h-3 w-32 rounded bg-muted" />
                                 <div className="h-2 w-20 rounded bg-muted/60" />

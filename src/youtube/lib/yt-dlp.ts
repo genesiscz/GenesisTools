@@ -8,8 +8,8 @@ import type {
     DownloadVideoOpts,
     DownloadVideoResult,
     DumpedVideoMetadata,
-    ListedVideo,
     ListChannelVideosOpts,
+    ListedVideo,
     YtDlpAvailability,
 } from "@app/youtube/lib/yt-dlp.types";
 
@@ -58,7 +58,10 @@ export async function checkYtDlp(): Promise<YtDlpAvailability> {
 }
 
 export async function listChannelVideos(opts: ListChannelVideosOpts): Promise<ListedVideo[]> {
-    logger.info({ handle: opts.handle, limit: opts.limit, includeShorts: opts.includeShorts }, "yt-dlp listChannelVideos started");
+    logger.info(
+        { handle: opts.handle, limit: opts.limit, includeShorts: opts.includeShorts },
+        "yt-dlp listChannelVideos started"
+    );
 
     const tabs: ChannelTab[] = opts.includeShorts ? ["videos", "streams", "shorts"] : ["videos", "streams"];
     const collected: ListedVideo[] = [];
@@ -68,7 +71,10 @@ export async function listChannelVideos(opts: ListChannelVideosOpts): Promise<Li
             const tabVideos = await runChannelListing(opts, tab);
             collected.push(...tabVideos);
         } catch (error) {
-            logger.warn({ handle: opts.handle, tab, error: error instanceof Error ? error.message : String(error) }, "yt-dlp listChannelVideos tab failed (continuing)");
+            logger.warn(
+                { handle: opts.handle, tab, error: error instanceof Error ? error.message : String(error) },
+                "yt-dlp listChannelVideos tab failed (continuing)"
+            );
         }
     }
 
@@ -88,7 +94,13 @@ export async function listChannelVideos(opts: ListChannelVideosOpts): Promise<Li
 
 async function runChannelListing(opts: ListChannelVideosOpts, tab: ChannelTab): Promise<ListedVideo[]> {
     const url = `https://www.youtube.com/${opts.handle}/${tab}`;
-    const args = ["yt-dlp", "--flat-playlist", "--no-warnings", "--print", "%(.{id,title,duration,upload_date,live_status,release_timestamp,timestamp})j"];
+    const args = [
+        "yt-dlp",
+        "--flat-playlist",
+        "--no-warnings",
+        "--print",
+        "%(.{id,title,duration,upload_date,live_status,release_timestamp,timestamp})j",
+    ];
 
     if (opts.limit) {
         args.push("--playlist-end", String(opts.limit));
@@ -109,7 +121,10 @@ async function runChannelListing(opts: ListChannelVideosOpts, tab: ChannelTab): 
         throw new Error(`yt-dlp listChannelVideos failed for tab ${tab}: ${stderr.trim()}`);
     }
 
-    const lines = stdout.split("\n").map((line) => line.trim()).filter(Boolean);
+    const lines = stdout
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean);
     const out: ListedVideo[] = [];
 
     for (const line of lines) {
@@ -123,7 +138,10 @@ async function runChannelListing(opts: ListChannelVideosOpts, tab: ChannelTab): 
     return out;
 }
 
-export async function dumpVideoMetadata(idOrUrl: string, opts: { signal?: AbortSignal } = {}): Promise<DumpedVideoMetadata> {
+export async function dumpVideoMetadata(
+    idOrUrl: string,
+    opts: { signal?: AbortSignal } = {}
+): Promise<DumpedVideoMetadata> {
     const target = normalizeVideoTarget(idOrUrl);
     logger.info({ target: idOrUrl, normalizedTarget: target }, "yt-dlp dumpVideoMetadata started");
     const proc = Bun.spawn(["yt-dlp", "--skip-download", "--dump-json", "--no-warnings", target], {
@@ -135,7 +153,10 @@ export async function dumpVideoMetadata(idOrUrl: string, opts: { signal?: AbortS
 
     if (exit !== 0) {
         const stderr = await new Response(proc.stderr).text();
-        logger.error({ target: idOrUrl, normalizedTarget: target, exit, stderr: stderr.trim() }, "yt-dlp dumpVideoMetadata failed");
+        logger.error(
+            { target: idOrUrl, normalizedTarget: target, exit, stderr: stderr.trim() },
+            "yt-dlp dumpVideoMetadata failed"
+        );
         throw new Error(`yt-dlp dumpVideoMetadata failed: ${stderr.trim()}`);
     }
 
@@ -175,9 +196,14 @@ export async function downloadAudio(opts: DownloadAudioOpts): Promise<DownloadAu
     }
 
     args.push(opts.idOrUrl);
-    await runDownloadWithProgress(args, opts.signal, (line) => {
-        parseProgressLine(line, opts.onProgress);
-    }, "downloadAudio");
+    await runDownloadWithProgress(
+        args,
+        opts.signal,
+        (line) => {
+            parseProgressLine(line, opts.onProgress);
+        },
+        "downloadAudio"
+    );
     const file = await stat(opts.outPath);
 
     return { path: opts.outPath, sizeBytes: file.size, durationSec: null };
@@ -189,17 +215,38 @@ export async function downloadVideo(opts: DownloadVideoOpts): Promise<DownloadVi
         opts.quality === "best"
             ? "bv*+ba/b"
             : `bv*[height<=${heightMap[opts.quality]}]+ba/b[height<=${heightMap[opts.quality]}]`;
-    const args = ["yt-dlp", "-f", fmtFilter, "--merge-output-format", "mp4", "--no-playlist", "--newline", "-o", opts.outPath, opts.idOrUrl];
+    const args = [
+        "yt-dlp",
+        "-f",
+        fmtFilter,
+        "--merge-output-format",
+        "mp4",
+        "--no-playlist",
+        "--newline",
+        "-o",
+        opts.outPath,
+        opts.idOrUrl,
+    ];
 
-    await runDownloadWithProgress(args, opts.signal, (line) => {
-        parseProgressLine(line, opts.onProgress);
-    }, "downloadVideo");
+    await runDownloadWithProgress(
+        args,
+        opts.signal,
+        (line) => {
+            parseProgressLine(line, opts.onProgress);
+        },
+        "downloadVideo"
+    );
     const file = await stat(opts.outPath);
 
     return { path: opts.outPath, sizeBytes: file.size };
 }
 
-async function runDownloadWithProgress(args: string[], signal: AbortSignal | undefined, onLine: (line: string) => void, label: string): Promise<string> {
+async function runDownloadWithProgress(
+    args: string[],
+    signal: AbortSignal | undefined,
+    onLine: (line: string) => void,
+    label: string
+): Promise<string> {
     const proc = Bun.spawn(args, { stdio: ["ignore", "pipe", "pipe"], signal });
     let stderr = "";
 
@@ -280,8 +327,8 @@ function normalizeListedVideo(entry: RawListedVideo, tab: ChannelTab): ListedVid
         return [];
     }
 
-    const uploadDate = normalizeUploadDate(entry.upload_date)
-        ?? normalizeTimestampToDate(entry.release_timestamp ?? entry.timestamp);
+    const uploadDate =
+        normalizeUploadDate(entry.upload_date) ?? normalizeTimestampToDate(entry.release_timestamp ?? entry.timestamp);
 
     return [
         {

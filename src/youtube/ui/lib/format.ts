@@ -7,7 +7,10 @@ export function formatNumber(value: number | null | undefined): string {
         return "—";
     }
 
-    return new Intl.NumberFormat("en", { notation: value >= 10_000 ? "compact" : "standard", maximumFractionDigits: 1 }).format(value);
+    return new Intl.NumberFormat("en", {
+        notation: value >= 10_000 ? "compact" : "standard",
+        maximumFractionDigits: 1,
+    }).format(value);
 }
 
 export function formatDate(value: string | null | undefined): string {
@@ -25,7 +28,9 @@ export function formatDateTime(value: string | null | undefined): string {
         return "—";
     }
 
-    return new Intl.DateTimeFormat("en", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(parsed);
+    return new Intl.DateTimeFormat("en", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(
+        parsed
+    );
 }
 
 export function formatDuration(seconds: number | null | undefined): string {

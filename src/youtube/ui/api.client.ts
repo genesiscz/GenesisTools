@@ -1,4 +1,5 @@
-import { fetchUiConfig } from "@app/yt/config.client";
+import { SafeJSON } from "@app/utils/json";
+import type { YoutubeConfigPatch } from "@app/youtube/lib/config.api.types";
 import type {
     Channel,
     ChannelHandle,
@@ -13,7 +14,7 @@ import type {
     VideoLongSummary,
     YoutubeConfigShape,
 } from "@app/youtube/lib/types";
-import type { YoutubeConfigPatch } from "@app/youtube/lib/config.api.types";
+import { fetchUiConfig } from "@app/yt/config.client";
 
 export interface AskVideoResponse {
     answer: string;
@@ -82,15 +83,32 @@ function withQuery(path: string, values: Array<[string, string | number | boolea
 
 export const apiClient = {
     listChannels: () => api<{ channels: Channel[] }>("/channels"),
-    addChannels: (handles: string[]) => api<{ added: ChannelHandle[] }>("/channels", { method: "POST", body: JSON.stringify({ handles }) }),
-    removeChannel: (handle: ChannelHandle) => api<{ removed: ChannelHandle }>(`/channels/${encodeURIComponent(handle)}`, { method: "DELETE" }),
+    addChannels: (handles: string[]) =>
+        api<{ added: ChannelHandle[] }>("/channels", { method: "POST", body: SafeJSON.stringify({ handles }) }),
+    removeChannel: (handle: ChannelHandle) =>
+        api<{ removed: ChannelHandle }>(`/channels/${encodeURIComponent(handle)}`, { method: "DELETE" }),
     syncChannel: (handle: ChannelHandle, _body: { limit?: number; includeShorts?: boolean; since?: string } = {}) =>
-        api<{ enqueuedJobId: number; enqueuedJobIds?: number[] }>(`/channels/${encodeURIComponent(handle)}/sync`, { method: "POST", body: JSON.stringify(_body) }),
+        api<{ enqueuedJobId: number; enqueuedJobIds?: number[] }>(`/channels/${encodeURIComponent(handle)}/sync`, {
+            method: "POST",
+            body: SafeJSON.stringify(_body),
+        }),
     listVideos: (params: { channel?: ChannelHandle; since?: string; limit?: number; includeShorts?: boolean } = {}) =>
-        api<{ videos: Video[] }>(withQuery("/videos", [["channel", params.channel], ["since", params.since], ["limit", params.limit], ["includeShorts", params.includeShorts]])),
+        api<{ videos: Video[] }>(
+            withQuery("/videos", [
+                ["channel", params.channel],
+                ["since", params.since],
+                ["limit", params.limit],
+                ["includeShorts", params.includeShorts],
+            ])
+        ),
     getVideo: (id: VideoId) => api<{ video: Video; transcripts: Transcript[] }>(`/videos/${encodeURIComponent(id)}`),
     getTranscript: (id: VideoId, opts: { lang?: string; source?: "captions" | "ai" } = {}) =>
-        api<{ transcript: Transcript }>(withQuery(`/videos/${encodeURIComponent(id)}/transcript`, [["lang", opts.lang], ["source", opts.source]])),
+        api<{ transcript: Transcript }>(
+            withQuery(`/videos/${encodeURIComponent(id)}/transcript`, [
+                ["lang", opts.lang],
+                ["source", opts.source],
+            ])
+        ),
     getSummary: async (id: VideoId, mode: "short" | "timestamped" | "long") => {
         const response = await api<{
             summary?: string | TimestampedSummaryEntry[] | VideoLongSummary | null;
@@ -132,31 +150,56 @@ export const apiClient = {
             mode: "short" | "timestamped" | "long";
             cached: boolean;
             jobId?: number;
-        }>(`/videos/${encodeURIComponent(id)}/summary`, { method: "POST", body: JSON.stringify(opts) });
+        }>(`/videos/${encodeURIComponent(id)}/summary`, { method: "POST", body: SafeJSON.stringify(opts) });
 
         if (opts.mode === "timestamped") {
-            return { timestamped: (response.summary ?? []) as TimestampedSummaryEntry[], cached: response.cached, jobId: response.jobId };
+            return {
+                timestamped: (response.summary ?? []) as TimestampedSummaryEntry[],
+                cached: response.cached,
+                jobId: response.jobId,
+            };
         }
 
         if (opts.mode === "long") {
-            return { long: (response.summary ?? null) as VideoLongSummary | null, cached: response.cached, jobId: response.jobId };
+            return {
+                long: (response.summary ?? null) as VideoLongSummary | null,
+                cached: response.cached,
+                jobId: response.jobId,
+            };
         }
 
         return { short: (response.summary ?? "") as string, cached: response.cached, jobId: response.jobId };
     },
     askVideo: (id: VideoId, opts: { question: string; topK?: number; provider?: string; model?: string }) =>
-        api<AskVideoResponse>(`/videos/${encodeURIComponent(id)}/qa`, { method: "POST", body: JSON.stringify(opts) }),
-    listJobs: (params: { status?: JobStatus; limit?: number } = {}) => api<{ jobs: PipelineJob[] }>(withQuery("/jobs", [["status", params.status], ["limit", params.limit]])),
+        api<AskVideoResponse>(`/videos/${encodeURIComponent(id)}/qa`, {
+            method: "POST",
+            body: SafeJSON.stringify(opts),
+        }),
+    listJobs: (params: { status?: JobStatus; limit?: number } = {}) =>
+        api<{ jobs: PipelineJob[] }>(
+            withQuery("/jobs", [
+                ["status", params.status],
+                ["limit", params.limit],
+            ])
+        ),
     getJob: (id: number) => api<{ job: PipelineJob }>(`/jobs/${id}`),
     getJobActivity: (id: number) => api<{ activity: JobActivity[] }>(`/jobs/${id}/activity`),
     cancelJob: (id: number) => api<{ job: PipelineJob | null }>(`/jobs/${id}/cancel`, { method: "POST" }),
     startPipeline: (body: { target: string; targetKind?: "video" | "channel" | "url"; stages: JobStage[] }) =>
-        api<{ job: PipelineJob }>("/pipeline", { method: "POST", body: JSON.stringify(body) }),
+        api<{ job: PipelineJob }>("/pipeline", { method: "POST", body: SafeJSON.stringify(body) }),
     getCacheStats: () => api<CacheStatsResponse>("/cache/stats"),
-    pruneCache: (dryRun: boolean) => api<{ audio: number; video: number; thumb: number; dryRun?: boolean }>("/cache/prune", { method: "POST", body: JSON.stringify({ dryRun }) }),
+    pruneCache: (dryRun: boolean) =>
+        api<{ audio: number; video: number; thumb: number; dryRun?: boolean }>("/cache/prune", {
+            method: "POST",
+            body: SafeJSON.stringify({ dryRun }),
+        }),
     clearCache: (body: { audio?: boolean; video?: boolean; thumbs?: boolean; all?: boolean }) =>
-        api<{ deletedCount: number; freedBytes: number }>("/cache/clear", { method: "POST", body: JSON.stringify(body) }),
+        api<{ deletedCount: number; freedBytes: number }>("/cache/clear", {
+            method: "POST",
+            body: SafeJSON.stringify(body),
+        }),
     getConfig: () => api<{ config: YoutubeConfigShape; where: string }>("/config"),
-    patchConfig: (patch: YoutubeConfigPatch) => api<{ config: YoutubeConfigShape }>("/config", { method: "PATCH", body: JSON.stringify(patch) }),
+    patchConfig: (patch: YoutubeConfigPatch) =>
+        api<{ config: YoutubeConfigShape }>("/config", { method: "PATCH", body: SafeJSON.stringify(patch) }),
     health: () => api<{ ok?: boolean; status?: string }>("/healthz"),
 };

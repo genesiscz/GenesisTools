@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { fetchUiConfig } from "@app/yt/config.client";
+import { SafeJSON } from "@app/utils/json";
 import type { JobEvent } from "@app/youtube/lib/types";
+import { fetchUiConfig } from "@app/yt/config.client";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 export interface UseEventStreamOpts {
     enabled?: boolean;
@@ -33,7 +34,7 @@ export async function createEventStream(opts: UseEventStreamOpts = {}): Promise<
 
     ws.onopen = () => {
         handle.connected = true;
-        ws.send(JSON.stringify({ type: "subscribe", jobIds: opts.jobIds }));
+        ws.send(SafeJSON.stringify({ type: "subscribe", jobIds: opts.jobIds }));
     };
 
     ws.onclose = () => {
@@ -43,9 +44,8 @@ export async function createEventStream(opts: UseEventStreamOpts = {}): Promise<
 
     ws.onmessage = (message) => {
         try {
-            opts.onEvent?.(JSON.parse(message.data as string) as JobEvent);
-        } catch {
-        }
+            opts.onEvent?.(SafeJSON.parse(message.data as string) as JobEvent);
+        } catch {}
     };
 
     return handle;

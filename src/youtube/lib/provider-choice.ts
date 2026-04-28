@@ -1,7 +1,7 @@
+import { AIConfig } from "@app/utils/ai/AIConfig";
 import { modelSelector } from "@ask/providers/ModelSelector";
 import { providerManager } from "@ask/providers/ProviderManager";
 import type { ProviderChoice } from "@ask/types";
-import { AIConfig } from "@app/utils/ai/AIConfig";
 
 export interface ResolveProviderChoiceOpts {
     provider?: string;

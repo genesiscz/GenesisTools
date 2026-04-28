@@ -1,7 +1,7 @@
+import { describe, expect, it } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "bun:test";
 import { YoutubeConfig } from "@app/youtube/lib/config";
 import { YoutubeDatabase } from "@app/youtube/lib/db";
 import { Pipeline } from "@app/youtube/lib/pipeline";
@@ -32,15 +32,32 @@ describe("Youtube", () => {
     it("syncs channel listings into channels and videos", async () => {
         const { yt, db, dir } = await makeFixture({
             listChannelVideos: async () => [
-                { id: "abc123def45", title: "Video 1", durationSec: 42, uploadDate: "2026-04-01", isShort: false, isLive: false },
-                { id: "def456ghi78", title: "Video 2", durationSec: 30, uploadDate: "2026-04-02", isShort: true, isLive: false },
+                {
+                    id: "abc123def45",
+                    title: "Video 1",
+                    durationSec: 42,
+                    uploadDate: "2026-04-01",
+                    isShort: false,
+                    isLive: false,
+                },
+                {
+                    id: "def456ghi78",
+                    title: "Video 2",
+                    durationSec: 30,
+                    uploadDate: "2026-04-02",
+                    isShort: true,
+                    isLive: false,
+                },
             ],
         });
 
         try {
             await expect(yt.channels.sync("@mkbhd", { includeShorts: true, limit: 2 })).resolves.toBe(2);
             expect(db.getChannel("@mkbhd")?.lastSyncedAt).toBeString();
-            expect(db.listVideos({ channel: "@mkbhd", includeShorts: true }).map((video) => video.id)).toEqual(["def456ghi78", "abc123def45"]);
+            expect(db.listVideos({ channel: "@mkbhd", includeShorts: true }).map((video) => video.id)).toEqual([
+                "def456ghi78",
+                "abc123def45",
+            ]);
         } finally {
             await yt.dispose();
             await rm(dir, { recursive: true, force: true });
@@ -65,19 +82,46 @@ describe("Youtube", () => {
     it("channel discover enqueues remaining stages for discovered videos", async () => {
         const { yt, db, dir } = await makeFixture({
             listChannelVideos: async () => [
-                { id: "abc123def45", title: "Video 1", durationSec: 42, uploadDate: "2026-04-01", isShort: false, isLive: false },
-                { id: "def456ghi78", title: "Video 2", durationSec: 30, uploadDate: "2026-04-02", isShort: true, isLive: false },
+                {
+                    id: "abc123def45",
+                    title: "Video 1",
+                    durationSec: 42,
+                    uploadDate: "2026-04-01",
+                    isShort: false,
+                    isLive: false,
+                },
+                {
+                    id: "def456ghi78",
+                    title: "Video 2",
+                    durationSec: 30,
+                    uploadDate: "2026-04-02",
+                    isShort: true,
+                    isLive: false,
+                },
             ],
         });
 
         try {
-            const parent = yt.pipeline.enqueue({ targetKind: "channel", target: "@mkbhd", stages: ["discover", "metadata"] });
+            const parent = yt.pipeline.enqueue({
+                targetKind: "channel",
+                target: "@mkbhd",
+                stages: ["discover", "metadata"],
+            });
             await yt.pipeline.start();
             await waitFor(() => yt.pipeline.getJob(parent.id)?.status === "completed");
             await yt.pipeline.stop();
 
             const childJobs = db.listJobs({ parentJobId: parent.id, limit: 10 });
-            expect(childJobs.map((job) => ({ targetKind: job.targetKind, target: job.target, stages: job.stages, parentJobId: job.parentJobId })).sort((a, b) => a.target.localeCompare(b.target))).toEqual([
+            expect(
+                childJobs
+                    .map((job) => ({
+                        targetKind: job.targetKind,
+                        target: job.target,
+                        stages: job.stages,
+                        parentJobId: job.parentJobId,
+                    }))
+                    .sort((a, b) => a.target.localeCompare(b.target))
+            ).toEqual([
                 { targetKind: "video", target: "abc123def45", stages: ["metadata"], parentJobId: parent.id },
                 { targetKind: "video", target: "def456ghi78", stages: ["metadata"], parentJobId: parent.id },
             ]);
@@ -91,7 +135,10 @@ describe("Youtube", () => {
         const { yt, db, dir, calls } = await makeFixture();
 
         try {
-            await expect(yt.videos.ensureMetadata("abc123def45")).resolves.toMatchObject({ id: "abc123def45", title: "Dumped" });
+            await expect(yt.videos.ensureMetadata("abc123def45")).resolves.toMatchObject({
+                id: "abc123def45",
+                title: "Dumped",
+            });
             expect(calls.dump).toBe(1);
             expect(db.getChannel("@mkbhd")).toMatchObject({ channelId: "UC123", title: "MKBHD" });
             expect(db.getVideo("abc123def45")).toMatchObject({ title: "Dumped", availableCaptionLangs: ["en"] });
@@ -174,4 +221,3 @@ async function waitFor(predicate: () => boolean, timeoutMs = 1000): Promise<void
         await new Promise((resolve) => setTimeout(resolve, 5));
     }
 }
-

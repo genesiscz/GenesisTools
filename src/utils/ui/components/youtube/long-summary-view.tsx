@@ -1,6 +1,6 @@
-import { useState } from "react";
-import { ChevronDown, CheckCircle2 } from "lucide-react";
 import type { VideoLongSummary } from "@app/youtube/lib/types";
+import { CheckCircle2, ChevronDown } from "lucide-react";
+import { useState } from "react";
 
 export interface LongSummaryViewProps {
     summary: VideoLongSummary;
@@ -85,9 +85,7 @@ function ChapterCard({ title, summary }: { title: string; summary: string }) {
                 <h5 className="font-semibold text-foreground/95">{title}</h5>
                 <ChevronDown
                     className={
-                        expanded
-                            ? "size-4 rotate-180 text-cyan-200 transition"
-                            : "size-4 text-cyan-200/70 transition"
+                        expanded ? "size-4 rotate-180 text-cyan-200 transition" : "size-4 text-cyan-200/70 transition"
                     }
                 />
             </button>

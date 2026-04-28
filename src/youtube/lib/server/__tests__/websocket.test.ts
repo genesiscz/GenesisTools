@@ -1,7 +1,8 @@
+import { describe, expect, it } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "bun:test";
+import { SafeJSON } from "@app/utils/json";
 import { startServer } from "@app/youtube/lib/server";
 
 interface WsMessage {
@@ -20,11 +21,15 @@ describe("youtube server websocket", () => {
             const hello = await nextMessage(ws);
             expect(hello.type).toBe("hello");
 
-            ws.send(JSON.stringify({ type: "ping" }));
+            ws.send(SafeJSON.stringify({ type: "ping" }));
             const pong = await nextMessage(ws);
             expect(pong.type).toBe("pong");
 
-            const job = handle.youtube.pipeline.enqueue({ targetKind: "video", target: "abc123def45", stages: ["metadata"] });
+            const job = handle.youtube.pipeline.enqueue({
+                targetKind: "video",
+                target: "abc123def45",
+                stages: ["metadata"],
+            });
             const created = await nextMessage(ws);
 
             expect(created.type).toBe("job:created");
@@ -44,12 +49,16 @@ describe("youtube server websocket", () => {
         try {
             await nextMessage(ws);
 
-            ws.send(JSON.stringify({ type: "subscribe", jobIds: [2] }));
+            ws.send(SafeJSON.stringify({ type: "subscribe", jobIds: [2] }));
             const subscribed = await nextMessage(ws);
             expect(subscribed.type).toBe("subscribed");
 
             handle.youtube.pipeline.enqueue({ targetKind: "video", target: "first", stages: ["metadata"] });
-            const secondJob = handle.youtube.pipeline.enqueue({ targetKind: "video", target: "second", stages: ["metadata"] });
+            const secondJob = handle.youtube.pipeline.enqueue({
+                targetKind: "video",
+                target: "second",
+                stages: ["metadata"],
+            });
             const created = await nextMessage(ws);
 
             expect(secondJob.id).toBe(2);
@@ -78,7 +87,7 @@ function nextMessage(ws: WebSocket): Promise<WsMessage> {
 
         function onMessage(event: MessageEvent): void {
             cleanup();
-            resolve(JSON.parse(String(event.data)) as WsMessage);
+            resolve(SafeJSON.parse(String(event.data)) as WsMessage);
         }
 
         function onError(): void {

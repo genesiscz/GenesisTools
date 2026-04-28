@@ -1,10 +1,10 @@
 import { renderColumns } from "@app/youtube/commands/_shared/columns";
 import { getYoutube } from "@app/youtube/commands/_shared/ensure-pipeline";
 import { renderOrEmit } from "@app/youtube/commands/_shared/render";
-import { resolveTargetKind, splitTargets, toJobStages } from "@app/youtube/commands/_shared/utils";
 import { statusIcon } from "@app/youtube/commands/_shared/status-icon";
-import type { JobStage, PipelineJob } from "@app/youtube/lib/types";
-import { Command } from "commander";
+import { resolveTargetKind, splitTargets, toJobStages } from "@app/youtube/commands/_shared/utils";
+import type { PipelineJob } from "@app/youtube/lib/types";
+import type { Command } from "commander";
 
 interface PipelineOpts {
     stages: string[];
@@ -17,8 +17,19 @@ export function registerPipelineCommand(program: Command): void {
         .command("pipeline")
         .description("Run a multi-stage pipeline against one or more targets")
         .argument("<targets...>", "Video IDs, URLs, or @handles")
-        .option("--stages <list>", "Comma-separated: metadata,captions,audio,video,transcribe,summarize", (value) => value.split(",").map((part) => part.trim()).filter(Boolean), ["metadata", "captions", "transcribe", "summarize"])
-        .option("--concurrency <n>", "Override every per-stage concurrency cap to this value", (value) => Number.parseInt(value, 10))
+        .option(
+            "--stages <list>",
+            "Comma-separated: metadata,captions,audio,video,transcribe,summarize",
+            (value) =>
+                value
+                    .split(",")
+                    .map((part) => part.trim())
+                    .filter(Boolean),
+            ["metadata", "captions", "transcribe", "summarize"]
+        )
+        .option("--concurrency <n>", "Override every per-stage concurrency cap to this value", (value) =>
+            Number.parseInt(value, 10)
+        )
         .option("--watch", "Stream live progress; default is to print final summary only")
         .addHelpText("after", buildPipelineExamples())
         .action(async (targets: string[], opts: PipelineOpts) => {
@@ -29,11 +40,13 @@ export function registerPipelineCommand(program: Command): void {
                 yt.pipeline.setGlobalConcurrencyOverride(opts.concurrency);
             }
 
-            const jobs = splitTargets(targets).map((target) => yt.pipeline.enqueue({
-                targetKind: resolveTargetKind(target),
-                target,
-                stages,
-            }));
+            const jobs = splitTargets(targets).map((target) =>
+                yt.pipeline.enqueue({
+                    targetKind: resolveTargetKind(target),
+                    target,
+                    stages,
+                })
+            );
             await yt.pipeline.start();
 
             const finalRows = opts.watch
@@ -62,7 +75,9 @@ export async function waitForJob(yt: Awaited<ReturnType<typeof getYoutube>>, job
 
             if (job && isFinal(job)) {
                 clearInterval(timer);
-                cleanup.forEach((dispose) => dispose());
+                for (const dispose of cleanup) {
+                    dispose();
+                }
                 resolve(job);
             }
         }, 100);
@@ -71,14 +86,18 @@ export async function waitForJob(yt: Awaited<ReturnType<typeof getYoutube>>, job
             yt.pipeline.on("job:completed", (event) => {
                 if (event.job.id === jobId) {
                     clearInterval(timer);
-                    cleanup.forEach((dispose) => dispose());
+                    for (const dispose of cleanup) {
+                        dispose();
+                    }
                     resolve(event.job);
                 }
             }),
             yt.pipeline.on("job:failed", (event) => {
                 if (event.job.id === jobId) {
                     clearInterval(timer);
-                    cleanup.forEach((dispose) => dispose());
+                    for (const dispose of cleanup) {
+                        dispose();
+                    }
                     reject(new Error(event.error));
                 }
             })
@@ -86,7 +105,11 @@ export async function waitForJob(yt: Awaited<ReturnType<typeof getYoutube>>, job
     });
 }
 
-export async function streamJobToCompletion(yt: Awaited<ReturnType<typeof getYoutube>>, jobId: number, shouldPrint: boolean): Promise<PipelineJob> {
+export async function streamJobToCompletion(
+    yt: Awaited<ReturnType<typeof getYoutube>>,
+    jobId: number,
+    shouldPrint: boolean
+): Promise<PipelineJob> {
     const dispose = yt.pipeline.on("stage:progress", (event) => {
         if (!shouldPrint || event.jobId !== jobId) {
             return;

@@ -4,7 +4,7 @@ import { dirname } from "node:path";
 import logger from "@app/logger";
 import { nowUtcIso, parseSqliteOrIsoDate } from "@app/utils/sql-time";
 
-export { SQL_NOW_UTC, nowUtcIso, parseSqliteOrIsoDate } from "@app/utils/sql-time";
+export { nowUtcIso, parseSqliteOrIsoDate, SQL_NOW_UTC } from "@app/utils/sql-time";
 
 const VALID_IDENTIFIER = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 

@@ -1,10 +1,18 @@
 import { callLLM } from "@app/utils/ai/call-llm";
-import { identifyProviderChoice, recordYoutubeUsage } from "@app/youtube/lib/usage";
 import { Embedder } from "@app/utils/ai/tasks/Embedder";
 import type { YoutubeConfig } from "@app/youtube/lib/config";
 import type { YoutubeDatabase } from "@app/youtube/lib/db";
 import type { TranscriptSearchHit } from "@app/youtube/lib/db.types";
-import type { AskOpts, AskResult, ChunkedTranscript, IndexOpts, IndexResult, QaServiceDeps, TranscriptChunkSource } from "@app/youtube/lib/qa.types";
+import type {
+    AskOpts,
+    AskResult,
+    ChunkedTranscript,
+    IndexOpts,
+    IndexResult,
+    QaServiceDeps,
+    TranscriptChunkSource,
+} from "@app/youtube/lib/qa.types";
+import { identifyProviderChoice, recordYoutubeUsage } from "@app/youtube/lib/usage";
 import type { VideoId } from "@app/youtube/lib/video.types";
 
 const TARGET_TOKENS_PER_CHUNK = 1500;
@@ -97,9 +105,13 @@ export class QaService {
                 .slice(0, opts.topK ?? TOP_K_DEFAULT);
 
             const context = ranked
-                .map((rankedChunk, i) => `[#${i + 1} ${rankedChunk.chunk.videoId} @${formatTime(rankedChunk.chunk.startSec)}] ${rankedChunk.chunk.text}`)
+                .map(
+                    (rankedChunk, i) =>
+                        `[#${i + 1} ${rankedChunk.chunk.videoId} @${formatTime(rankedChunk.chunk.startSec)}] ${rankedChunk.chunk.text}`
+                )
                 .join("\n\n");
-            const systemPrompt = "You answer questions about YouTube video transcripts. Cite the [#N] markers from the context to back every claim. If the context doesn't contain the answer, say so plainly.";
+            const systemPrompt =
+                "You answer questions about YouTube video transcripts. Cite the [#N] markers from the context to back every claim. If the context doesn't contain the answer, say so plainly.";
             const userPrompt = `Question: ${opts.question}\n\nContext from transcripts:\n${context}`;
             const startedAt = new Date();
             const result = await this.deps.callLLM({

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { SafeJSON } from "@app/utils/json";
 import { createEventStream } from "@app/yt/ws.client";
 
 interface WebSocketConstructor {
@@ -29,13 +30,16 @@ class FakeWebSocket {
 const originalFetch = globalThis.fetch;
 const originalWebSocket = globalThis.WebSocket;
 
-function resetHooks() {
-}
+function resetHooks() {}
 
 describe("useEventStream", () => {
     beforeEach(() => {
         FakeWebSocket.instances.length = 0;
-        globalThis.fetch = (async () => Response.json({ config: { apiBaseUrl: "http://api.example.test" }, where: "/tmp/server.json" })) as unknown as typeof fetch;
+        globalThis.fetch = (async () =>
+            Response.json({
+                config: { apiBaseUrl: "http://api.example.test" },
+                where: "/tmp/server.json",
+            })) as unknown as typeof fetch;
         globalThis.WebSocket = FakeWebSocket as unknown as WebSocketConstructor & typeof WebSocket;
         resetHooks();
     });
@@ -55,9 +59,9 @@ describe("useEventStream", () => {
         expect(stream.connected).toBe(false);
 
         socket?.onopen?.();
-        expect(socket?.sent[0]).toBe(JSON.stringify({ type: "subscribe", jobIds: [1, 2] }));
+        expect(socket?.sent[0]).toBe(SafeJSON.stringify({ type: "subscribe", jobIds: [1, 2] }));
 
-        socket?.onmessage?.({ data: JSON.stringify({ type: "job:cancelled", jobId: 1 }) } as MessageEvent<string>);
+        socket?.onmessage?.({ data: SafeJSON.stringify({ type: "job:cancelled", jobId: 1 }) } as MessageEvent<string>);
         expect(events).toEqual([{ type: "job:cancelled", jobId: 1 }]);
     });
 });

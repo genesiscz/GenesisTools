@@ -1,7 +1,7 @@
 import { copyFile, mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
-import { defineConfig, type Plugin } from "vite";
 import viteReact from "@vitejs/plugin-react";
+import { defineConfig, type Plugin } from "vite";
 
 const root = resolve(import.meta.dirname);
 const dist = resolve(root, "../../../dist/extension");

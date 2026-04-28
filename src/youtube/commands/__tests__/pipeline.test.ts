@@ -107,7 +107,14 @@ describe("youtube pipeline command", () => {
     it("parses custom stages and comma-separated targets", async () => {
         const program = await makeProgram();
 
-        await program.parseAsync(["node", "test", "pipeline", "a1b2c3d4e5f,https://youtu.be/dQw4w9WgXcQ", "--stages", "metadata,audio,video"]);
+        await program.parseAsync([
+            "node",
+            "test",
+            "pipeline",
+            "a1b2c3d4e5f,https://youtu.be/dQw4w9WgXcQ",
+            "--stages",
+            "metadata,audio,video",
+        ]);
 
         expect(calls.enqueue).toEqual([
             { targetKind: "video", target: "a1b2c3d4e5f", stages: ["metadata", "audio", "video"] },

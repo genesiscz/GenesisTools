@@ -1,6 +1,7 @@
-import type { ServerWebSocket, WebSocketHandler } from "bun";
+import { SafeJSON } from "@app/utils/json";
 import type { JobEvent } from "@app/youtube/lib/jobs.types";
 import type { Youtube } from "@app/youtube/lib/youtube";
+import type { ServerWebSocket, WebSocketHandler } from "bun";
 
 export interface WebsocketState {
     subscribedJobIds: Set<number> | "all";
@@ -29,7 +30,7 @@ export function setupWebsocket(yt: Youtube): WebsocketServer {
     const offHandlers = PIPELINE_EVENTS.map((event) => yt.pipeline.on(event, broadcast));
 
     function broadcast(event: JobEvent): void {
-        const payload = JSON.stringify(event);
+        const payload = SafeJSON.stringify(event);
 
         for (const ws of sockets) {
             if (filterMatches(ws.data, event)) {
@@ -43,7 +44,7 @@ export function setupWebsocket(yt: Youtube): WebsocketServer {
             open(ws) {
                 ws.data = { subscribedJobIds: "all" };
                 sockets.add(ws);
-                ws.send(JSON.stringify({ type: "hello", protocolVersion: 1 }));
+                ws.send(SafeJSON.stringify({ type: "hello", protocolVersion: 1 }));
             },
             close(ws) {
                 sockets.delete(ws);
@@ -56,12 +57,12 @@ export function setupWebsocket(yt: Youtube): WebsocketServer {
                 }
 
                 if (message.type === "ping") {
-                    ws.send(JSON.stringify({ type: "pong" }));
+                    ws.send(SafeJSON.stringify({ type: "pong" }));
                     return;
                 }
 
                 ws.data = { subscribedJobIds: message.jobIds ? new Set(message.jobIds) : "all" };
-                ws.send(JSON.stringify({ type: "subscribed", jobIds: message.jobIds ?? null }));
+                ws.send(SafeJSON.stringify({ type: "subscribed", jobIds: message.jobIds ?? null }));
             },
         },
         close() {
@@ -102,7 +103,7 @@ function getEventJobId(event: JobEvent): number | null {
 function parseClientMessage(raw: string | Buffer): ClientMessage | null {
     try {
         const text = typeof raw === "string" ? raw : new TextDecoder().decode(raw);
-        const parsed = JSON.parse(text) as { type?: unknown; jobIds?: unknown };
+        const parsed = SafeJSON.parse(text) as { type?: unknown; jobIds?: unknown };
 
         if (parsed.type === "ping") {
             return { type: "ping" };

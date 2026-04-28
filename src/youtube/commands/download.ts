@@ -3,7 +3,7 @@ import { getYoutube } from "@app/youtube/commands/_shared/ensure-pipeline";
 import { renderOrEmit } from "@app/youtube/commands/_shared/render";
 import { resolveTargetKind } from "@app/youtube/commands/_shared/utils";
 import type { JobStage, PipelineJob, VideoId } from "@app/youtube/lib/types";
-import { Command } from "commander";
+import type { Command } from "commander";
 import pc from "picocolors";
 
 interface DownloadOpts {
@@ -22,7 +22,10 @@ export function registerDownloadCommand(program: Command): void {
         .option("--video", "Download a video file too")
         .option("--quality <q>", "720p | 1080p | best (default: 720p)", "720p")
         .option("--keep", "Override the default video TTL — keeps file beyond auto-prune")
-        .addHelpText("after", "\nExamples:\n  $ tools youtube download dQw4w9WgXcQ --audio\n  $ tools youtube download dQw4w9WgXcQ --video --quality 1080p\n")
+        .addHelpText(
+            "after",
+            "\nExamples:\n  $ tools youtube download dQw4w9WgXcQ --audio\n  $ tools youtube download dQw4w9WgXcQ --video --quality 1080p\n"
+        )
         .action(async (target: string, opts: DownloadOpts) => {
             const yt = await getYoutube();
             const stages = downloadStages(opts);
@@ -70,7 +73,10 @@ function downloadStages(opts: DownloadOpts): JobStage[] {
 async function waitForJob(yt: Awaited<ReturnType<typeof getYoutube>>, jobId: number): Promise<PipelineJob> {
     const immediate = yt.pipeline.getJob(jobId);
 
-    if (immediate && (immediate.status === "completed" || immediate.status === "failed" || immediate.status === "cancelled")) {
+    if (
+        immediate &&
+        (immediate.status === "completed" || immediate.status === "failed" || immediate.status === "cancelled")
+    ) {
         return immediate;
     }
 
@@ -85,7 +91,9 @@ async function waitForJob(yt: Awaited<ReturnType<typeof getYoutube>>, jobId: num
 
             if (job.status === "completed" || job.status === "failed" || job.status === "cancelled") {
                 clearInterval(timer);
-                cleanup.forEach((dispose) => dispose());
+                for (const dispose of cleanup) {
+                    dispose();
+                }
                 resolve(job);
             }
         }, 100);
@@ -94,14 +102,18 @@ async function waitForJob(yt: Awaited<ReturnType<typeof getYoutube>>, jobId: num
             yt.pipeline.on("job:completed", (event) => {
                 if (event.job.id === jobId) {
                     clearInterval(timer);
-                    cleanup.forEach((dispose) => dispose());
+                    for (const dispose of cleanup) {
+                        dispose();
+                    }
                     resolve(event.job);
                 }
             }),
             yt.pipeline.on("job:failed", (event) => {
                 if (event.job.id === jobId) {
                     clearInterval(timer);
-                    cleanup.forEach((dispose) => dispose());
+                    for (const dispose of cleanup) {
+                        dispose();
+                    }
                     reject(new Error(event.error));
                 }
             })

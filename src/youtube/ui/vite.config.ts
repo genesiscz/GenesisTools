@@ -10,7 +10,11 @@ export default createDashboardViteConfig({
     root,
     port,
     plugins: [
-        tanstackRouter({ target: "react", routesDirectory: resolve(root, "routes"), generatedRouteTree: resolve(root, "routeTree.gen.ts") }),
+        tanstackRouter({
+            target: "react",
+            routesDirectory: resolve(root, "routes"),
+            generatedRouteTree: resolve(root, "routeTree.gen.ts"),
+        }),
         youtubeConfigPlugin(),
     ],
     aliases: { "@app/yt": root, "@app": resolve(root, "../..") },

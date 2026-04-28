@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { Command } from "commander";
 
-async function makeProgram(): Promise<Command> {
+async function _makeProgram(): Promise<Command> {
     const { registerServerCommand } = await import("@app/youtube/commands/server");
     const program = new Command().exitOverride();
     registerServerCommand(program);

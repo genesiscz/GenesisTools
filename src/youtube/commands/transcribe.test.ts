@@ -1,7 +1,8 @@
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
+import { SafeJSON } from "@app/utils/json";
 import type { ChannelHandle, Transcript, Video, VideoId } from "@app/youtube/lib/types";
 import { Command } from "commander";
 import { type CaptionSegment, extractVideoId, formatTimestamp, toSRT, toVTT } from "./transcribe";
@@ -244,10 +245,26 @@ describe("youtube transcribe command", () => {
     it("bypasses cached transcript with --no-cache", async () => {
         const program = await makeProgram();
 
-        await program.parseAsync(["node", "test", "transcribe", "dQw4w9WgXcQ", "--no-cache", "--provider", "local-hf", "--lang", "en", "--silent"]);
+        await program.parseAsync([
+            "node",
+            "test",
+            "transcribe",
+            "dQw4w9WgXcQ",
+            "--no-cache",
+            "--provider",
+            "local-hf",
+            "--lang",
+            "en",
+            "--silent",
+        ]);
 
         expect(calls.getTranscript).toEqual([]);
-        expect(calls.transcribe[0]).toMatchObject({ videoId: "dQw4w9WgXcQ", forceTranscribe: true, provider: "local-hf", lang: "en" });
+        expect(calls.transcribe[0]).toMatchObject({
+            videoId: "dQw4w9WgXcQ",
+            forceTranscribe: true,
+            provider: "local-hf",
+            lang: "en",
+        });
         expect(stdout).toContain("Generated transcript");
     });
 
@@ -256,7 +273,7 @@ describe("youtube transcribe command", () => {
 
         await program.parseAsync(["node", "test", "--json", "transcribe", "dQw4w9WgXcQ"]);
 
-        const parsed = JSON.parse(stdout) as { videoId: string; text: string };
+        const parsed = SafeJSON.parse(stdout) as { videoId: string; text: string };
         expect(parsed.videoId).toBe("dQw4w9WgXcQ");
         expect(parsed.text).toBe("Never gonna give you up");
     });

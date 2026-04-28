@@ -1,6 +1,3 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
-import { toast } from "sonner";
 import {
     AlertDialog,
     AlertDialogAction,
@@ -17,12 +14,15 @@ import { Card, CardContent, CardHeader, CardTitle } from "@app/utils/ui/componen
 import { Input } from "@app/utils/ui/components/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@app/utils/ui/components/select";
 import { Switch } from "@app/utils/ui/components/switch";
-import { Loading } from "@app/yt/components/shared/loading";
-import { formatBytes } from "@app/yt/lib/format";
+import type { YoutubeConfigShape } from "@app/youtube/lib/types";
 import { apiClient } from "@app/yt/api.client";
 import { useCacheStats, useClearCache, usePatchServerConfig, usePruneCache, useServerConfig } from "@app/yt/api.hooks";
-import type { YoutubeConfigShape } from "@app/youtube/lib/types";
+import { Loading } from "@app/yt/components/shared/loading";
+import { formatBytes } from "@app/yt/lib/format";
+import { createFileRoute } from "@tanstack/react-router";
 import { CheckCircle2, DatabaseZap, RotateCcw, Save, Server, Trash2 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
 
 const providerOptions = ["local-hf", "cloud", "openai", "groq", "openrouter", "ollama", "anthropic", "google"];
 
@@ -79,7 +79,9 @@ function SettingsPage() {
 
     async function onPrune() {
         const result = await prune.mutateAsync(dryRun);
-        toast.success(dryRun ? "Dry run complete" : `Pruned ${result.audio + result.video + result.thumb} cache entries`);
+        toast.success(
+            dryRun ? "Dry run complete" : `Pruned ${result.audio + result.video + result.thumb} cache entries`
+        );
     }
 
     async function onClearAll() {
@@ -96,43 +98,101 @@ function SettingsPage() {
             <header className="yt-panel rounded-3xl p-5">
                 <p className="font-mono text-xs uppercase tracking-[0.3em] text-secondary">Control room</p>
                 <h1 className="mt-2 text-3xl font-bold">Settings</h1>
-                <p className="mt-2 text-sm text-muted-foreground">Config path: {config.data?.where ?? "~/.genesis-tools/youtube/server.json"}</p>
+                <p className="mt-2 text-sm text-muted-foreground">
+                    Config path: {config.data?.where ?? "~/.genesis-tools/youtube/server.json"}
+                </p>
             </header>
 
             <SettingsCard icon={<Server className="size-5" />} title="API Endpoint">
                 <div className="grid gap-3 md:grid-cols-[1fr_auto] md:items-end">
                     <Field label="Base URL">
-                        <Input value={draft.apiBaseUrl} onChange={(event) => setDraft({ ...draft, apiBaseUrl: event.target.value })} />
+                        <Input
+                            value={draft.apiBaseUrl}
+                            onChange={(event) => setDraft({ ...draft, apiBaseUrl: event.target.value })}
+                        />
                     </Field>
                     <Button variant="outline" onClick={onTestConnection} disabled={healthStatus === "checking"}>
-                        <CheckCircle2 className="mr-2 size-4" /> {healthStatus === "checking" ? "Checking" : "Test connection"}
+                        <CheckCircle2 className="mr-2 size-4" />{" "}
+                        {healthStatus === "checking" ? "Checking" : "Test connection"}
                     </Button>
                 </div>
             </SettingsCard>
 
             <SettingsCard title="Provider preferences">
                 <div className="grid gap-4 md:grid-cols-3">
-                    <ProviderSelect label="Transcribe" value={draft.provider.transcribe ?? "local-hf"} onChange={(value) => setDraft({ ...draft, provider: { ...draft.provider, transcribe: value } })} />
-                    <ProviderSelect label="Summarize" value={draft.provider.summarize ?? "cloud"} onChange={(value) => setDraft({ ...draft, provider: { ...draft.provider, summarize: value } })} />
-                    <ProviderSelect label="QA" value={draft.provider.qa ?? "cloud"} onChange={(value) => setDraft({ ...draft, provider: { ...draft.provider, qa: value } })} />
+                    <ProviderSelect
+                        label="Transcribe"
+                        value={draft.provider.transcribe ?? "local-hf"}
+                        onChange={(value) => setDraft({ ...draft, provider: { ...draft.provider, transcribe: value } })}
+                    />
+                    <ProviderSelect
+                        label="Summarize"
+                        value={draft.provider.summarize ?? "cloud"}
+                        onChange={(value) => setDraft({ ...draft, provider: { ...draft.provider, summarize: value } })}
+                    />
+                    <ProviderSelect
+                        label="QA"
+                        value={draft.provider.qa ?? "cloud"}
+                        onChange={(value) => setDraft({ ...draft, provider: { ...draft.provider, qa: value } })}
+                    />
                 </div>
             </SettingsCard>
 
             <SettingsCard title="Concurrency">
                 <div className="grid gap-4 md:grid-cols-4">
-                    <NumberField label="Download" value={draft.concurrency.download} onChange={(value) => setDraft({ ...draft, concurrency: { ...draft.concurrency, download: value } })} />
-                    <NumberField label="Local transcribe" value={draft.concurrency.localTranscribe} onChange={(value) => setDraft({ ...draft, concurrency: { ...draft.concurrency, localTranscribe: value } })} />
-                    <NumberField label="Cloud transcribe" value={draft.concurrency.cloudTranscribe} onChange={(value) => setDraft({ ...draft, concurrency: { ...draft.concurrency, cloudTranscribe: value } })} />
-                    <NumberField label="Summarize" value={draft.concurrency.summarize} onChange={(value) => setDraft({ ...draft, concurrency: { ...draft.concurrency, summarize: value } })} />
+                    <NumberField
+                        label="Download"
+                        value={draft.concurrency.download}
+                        onChange={(value) =>
+                            setDraft({ ...draft, concurrency: { ...draft.concurrency, download: value } })
+                        }
+                    />
+                    <NumberField
+                        label="Local transcribe"
+                        value={draft.concurrency.localTranscribe}
+                        onChange={(value) =>
+                            setDraft({ ...draft, concurrency: { ...draft.concurrency, localTranscribe: value } })
+                        }
+                    />
+                    <NumberField
+                        label="Cloud transcribe"
+                        value={draft.concurrency.cloudTranscribe}
+                        onChange={(value) =>
+                            setDraft({ ...draft, concurrency: { ...draft.concurrency, cloudTranscribe: value } })
+                        }
+                    />
+                    <NumberField
+                        label="Summarize"
+                        value={draft.concurrency.summarize}
+                        onChange={(value) =>
+                            setDraft({ ...draft, concurrency: { ...draft.concurrency, summarize: value } })
+                        }
+                    />
                 </div>
             </SettingsCard>
 
             <SettingsCard title="TTLs">
                 <div className="grid gap-4 md:grid-cols-4">
-                    <TextField label="Audio" value={draft.ttls.audio} onChange={(value) => setDraft({ ...draft, ttls: { ...draft.ttls, audio: value } })} />
-                    <TextField label="Video" value={draft.ttls.video} onChange={(value) => setDraft({ ...draft, ttls: { ...draft.ttls, video: value } })} />
-                    <TextField label="Thumb" value={draft.ttls.thumb} onChange={(value) => setDraft({ ...draft, ttls: { ...draft.ttls, thumb: value } })} />
-                    <TextField label="Channel listing" value={draft.ttls.channelListing} onChange={(value) => setDraft({ ...draft, ttls: { ...draft.ttls, channelListing: value } })} />
+                    <TextField
+                        label="Audio"
+                        value={draft.ttls.audio}
+                        onChange={(value) => setDraft({ ...draft, ttls: { ...draft.ttls, audio: value } })}
+                    />
+                    <TextField
+                        label="Video"
+                        value={draft.ttls.video}
+                        onChange={(value) => setDraft({ ...draft, ttls: { ...draft.ttls, video: value } })}
+                    />
+                    <TextField
+                        label="Thumb"
+                        value={draft.ttls.thumb}
+                        onChange={(value) => setDraft({ ...draft, ttls: { ...draft.ttls, thumb: value } })}
+                    />
+                    <TextField
+                        label="Channel listing"
+                        value={draft.ttls.channelListing}
+                        onChange={(value) => setDraft({ ...draft, ttls: { ...draft.ttls, channelListing: value } })}
+                    />
                 </div>
             </SettingsCard>
 
@@ -147,15 +207,22 @@ function SettingsPage() {
                     <label className="flex items-center gap-2 rounded-xl border border-secondary/20 bg-secondary/10 px-3 py-2 text-sm">
                         <Switch checked={dryRun} onCheckedChange={setDryRun} /> Dry run
                     </label>
-                    <Button variant="outline" onClick={onPrune} disabled={prune.isPending}>Prune expired</Button>
+                    <Button variant="outline" onClick={onPrune} disabled={prune.isPending}>
+                        Prune expired
+                    </Button>
                     <AlertDialog>
                         <AlertDialogTrigger asChild>
-                            <Button variant="destructive"><Trash2 className="mr-2 size-4" /> Clear cache</Button>
+                            <Button variant="destructive">
+                                <Trash2 className="mr-2 size-4" /> Clear cache
+                            </Button>
                         </AlertDialogTrigger>
                         <AlertDialogContent>
                             <AlertDialogHeader>
                                 <AlertDialogTitle>Clear all cached media?</AlertDialogTitle>
-                                <AlertDialogDescription>This removes cached audio, video, and thumbnail files. Metadata and jobs remain available.</AlertDialogDescription>
+                                <AlertDialogDescription>
+                                    This removes cached audio, video, and thumbnail files. Metadata and jobs remain
+                                    available.
+                                </AlertDialogDescription>
                             </AlertDialogHeader>
                             <AlertDialogFooter>
                                 <AlertDialogCancel>Cancel</AlertDialogCancel>
@@ -163,13 +230,17 @@ function SettingsPage() {
                             </AlertDialogFooter>
                         </AlertDialogContent>
                     </AlertDialog>
-                    <span className="text-xs text-muted-foreground">{jobsCount} recent jobs tracked in cache stats.</span>
+                    <span className="text-xs text-muted-foreground">
+                        {jobsCount} recent jobs tracked in cache stats.
+                    </span>
                 </div>
             </SettingsCard>
 
             <SettingsCard title="Reset to defaults">
                 <div className="flex flex-wrap items-center justify-between gap-3">
-                    <p className="text-sm text-muted-foreground">Reload the last saved server config and discard unsaved changes.</p>
+                    <p className="text-sm text-muted-foreground">
+                        Reload the last saved server config and discard unsaved changes.
+                    </p>
                     <Button variant="outline" onClick={() => setDraft(config.data?.config ?? draft)}>
                         <RotateCcw className="mr-2 size-4" /> Reset draft
                     </Button>
@@ -189,7 +260,10 @@ function SettingsCard({ title, icon, children }: { title: string; icon?: React.R
     return (
         <Card className="yt-panel">
             <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-xl">{icon}{title}</CardTitle>
+                <CardTitle className="flex items-center gap-2 text-xl">
+                    {icon}
+                    {title}
+                </CardTitle>
             </CardHeader>
             <CardContent>{children}</CardContent>
         </Card>
@@ -197,24 +271,56 @@ function SettingsCard({ title, icon, children }: { title: string; icon?: React.R
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
-    return <label className="space-y-2"><span className="font-mono text-xs uppercase tracking-[0.22em] text-muted-foreground">{label}</span>{children}</label>;
+    return (
+        <label className="space-y-2">
+            <span className="font-mono text-xs uppercase tracking-[0.22em] text-muted-foreground">{label}</span>
+            {children}
+        </label>
+    );
 }
 
 function TextField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
-    return <Field label={label}><Input value={value} onChange={(event) => onChange(event.target.value)} /></Field>;
+    return (
+        <Field label={label}>
+            <Input value={value} onChange={(event) => onChange(event.target.value)} />
+        </Field>
+    );
 }
 
 function NumberField({ label, value, onChange }: { label: string; value: number; onChange: (value: number) => void }) {
-    return <Field label={label}><Input type="number" min={1} value={value} onChange={(event) => onChange(Number.parseInt(event.target.value || "1", 10))} /></Field>;
+    return (
+        <Field label={label}>
+            <Input
+                type="number"
+                min={1}
+                value={value}
+                onChange={(event) => onChange(Number.parseInt(event.target.value || "1", 10))}
+            />
+        </Field>
+    );
 }
 
-function ProviderSelect({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+function ProviderSelect({
+    label,
+    value,
+    onChange,
+}: {
+    label: string;
+    value: string;
+    onChange: (value: string) => void;
+}) {
     return (
         <Field label={label}>
             <Select value={value} onValueChange={onChange}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger>
+                    <SelectValue />
+                </SelectTrigger>
                 <SelectContent>
-                    {providerOptions.map((option) => <SelectItem key={option} value={option}>{option}</SelectItem>)}
+                    {providerOptions.map((option) => (
+                        <SelectItem key={option} value={option}>
+                            {option}
+                        </SelectItem>
+                    ))}
                 </SelectContent>
             </Select>
         </Field>
@@ -222,5 +328,10 @@ function ProviderSelect({ label, value, onChange }: { label: string; value: stri
 }
 
 function Metric({ label, value }: { label: string; value: string | number }) {
-    return <div className="rounded-2xl border border-primary/20 bg-black/20 p-4"><p className="font-mono text-xs uppercase tracking-[0.22em] text-muted-foreground">{label}</p><p className="mt-2 text-2xl font-bold text-primary">{value}</p></div>;
+    return (
+        <div className="rounded-2xl border border-primary/20 bg-black/20 p-4">
+            <p className="font-mono text-xs uppercase tracking-[0.22em] text-muted-foreground">{label}</p>
+            <p className="mt-2 text-2xl font-bold text-primary">{value}</p>
+        </div>
+    );
 }

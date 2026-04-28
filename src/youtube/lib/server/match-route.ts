@@ -13,7 +13,12 @@
  *
  * Returns `null` when there's no match — callers fall through to the next route.
  */
-export function matchRoute(req: Request, method: string, pattern: string, pathname: string): Record<string, string> | null {
+export function matchRoute(
+    req: Request,
+    method: string,
+    pattern: string,
+    pathname: string
+): Record<string, string> | null {
     if (req.method !== method) {
         return null;
     }

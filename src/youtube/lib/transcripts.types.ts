@@ -37,12 +37,18 @@ export interface TranscriberResult {
 }
 
 export interface TranscriptServiceTranscriber {
-    transcribe(audioPath: string, opts: { language?: Language; onProgress?: (info: TranscriberProgressInfo) => void }): Promise<TranscriberResult>;
+    transcribe(
+        audioPath: string,
+        opts: { language?: Language; onProgress?: (info: TranscriberProgressInfo) => void }
+    ): Promise<TranscriberResult>;
     dispose(): void;
 }
 
 export interface TranscriptServiceDeps {
-    fetchCaptions: (opts: { videoId: VideoId; preferredLangs?: Language[] }) => Promise<{ text: string; segments: TranscriberSegment[]; lang: Language } | null>;
+    fetchCaptions: (opts: {
+        videoId: VideoId;
+        preferredLangs?: Language[];
+    }) => Promise<{ text: string; segments: TranscriberSegment[]; lang: Language } | null>;
     downloadAudio: (opts: DownloadAudioOpts) => Promise<DownloadAudioResult>;
     createTranscriber: (opts: { provider?: string; persist?: boolean }) => Promise<TranscriptServiceTranscriber>;
 }

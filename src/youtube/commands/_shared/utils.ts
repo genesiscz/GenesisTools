@@ -1,8 +1,8 @@
+import { formatDuration } from "@app/utils/format";
 import { renderColumns } from "@app/youtube/commands/_shared/columns";
 import { renderOrEmit } from "@app/youtube/commands/_shared/render";
 import type { ChannelHandle, JobStage, JobTargetKind, TimestampedSummaryEntry, VideoId } from "@app/youtube/lib/types";
 import type { Youtube } from "@app/youtube/lib/youtube";
-import { formatDuration } from "@app/utils/format";
 import pc from "picocolors";
 
 export interface GlobalFlags {
@@ -69,7 +69,12 @@ export function resolveTargetKind(target: string): JobTargetKind {
 }
 
 export function splitTargets(targets: string[]): string[] {
-    return targets.flatMap((target) => target.split(",").map((part) => part.trim()).filter(Boolean));
+    return targets.flatMap((target) =>
+        target
+            .split(",")
+            .map((part) => part.trim())
+            .filter(Boolean)
+    );
 }
 
 export async function resolveTargetsToVideoIds(yt: Youtube, targets: string[]): Promise<VideoId[]> {
@@ -77,7 +82,12 @@ export async function resolveTargetsToVideoIds(yt: Youtube, targets: string[]): 
 
     for (const target of splitTargets(targets)) {
         if (target.startsWith("@")) {
-            const videos = yt.videos.list({ channel: normaliseHandle(target), limit: 5_000, includeShorts: true, includeLive: true });
+            const videos = yt.videos.list({
+                channel: normaliseHandle(target),
+                limit: 5_000,
+                includeShorts: true,
+                includeLive: true,
+            });
             ids.push(...videos.map((video) => video.id));
             continue;
         }
@@ -94,7 +104,15 @@ export async function resolveTargetsToVideoIds(yt: Youtube, targets: string[]): 
 }
 
 export function toJobStages(values: string[]): JobStage[] {
-    const allowed = new Set<JobStage>(["discover", "metadata", "captions", "audio", "video", "transcribe", "summarize"]);
+    const allowed = new Set<JobStage>([
+        "discover",
+        "metadata",
+        "captions",
+        "audio",
+        "video",
+        "transcribe",
+        "summarize",
+    ]);
 
     return values.map((value) => {
         if (!allowed.has(value as JobStage)) {
@@ -138,7 +156,11 @@ export function formatTimestamp(seconds: number): string {
     return `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}.${ms.toString().padStart(3, "0")}`;
 }
 
-export function formatSummary(videoId: VideoId, result: { short?: string; timestamped?: TimestampedSummaryEntry[] }, mode: "short" | "timestamped"): string {
+export function formatSummary(
+    videoId: VideoId,
+    result: { short?: string; timestamped?: TimestampedSummaryEntry[] },
+    mode: "short" | "timestamped"
+): string {
     if (mode === "short") {
         return [pc.bold(videoId), wrap(result.short ?? "", 88)].join("\n");
     }

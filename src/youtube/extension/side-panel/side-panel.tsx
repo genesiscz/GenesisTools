@@ -1,9 +1,9 @@
-import { useEffect, useState } from "react";
 import { Button } from "@app/utils/ui/components/button";
-import { VideoDetailTabs, type VideoDetailTab } from "@app/utils/ui/components/youtube/tabs";
+import { type VideoDetailTab, VideoDetailTabs } from "@app/utils/ui/components/youtube/tabs";
 import { dataSource, useStartPipeline } from "@ext/api.hooks";
-import { connectEventPort } from "@ext/side-panel/port";
 import { Header } from "@ext/side-panel/header";
+import { connectEventPort } from "@ext/side-panel/port";
+import { useEffect, useState } from "react";
 
 export function SidePanel({ videoId, onClose }: { videoId: string | null; onClose: () => void }) {
     const [active, setActive] = useState<VideoDetailTab>("summary");
@@ -23,7 +23,11 @@ export function SidePanel({ videoId, onClose }: { videoId: string | null; onClos
             return;
         }
 
-        await startPipeline.mutateAsync({ target: videoId, targetKind: "video", stages: ["metadata", "captions", "transcribe", "summarize"] });
+        await startPipeline.mutateAsync({
+            target: videoId,
+            targetKind: "video",
+            stages: ["metadata", "captions", "transcribe", "summarize"],
+        });
     }
 
     return (
@@ -39,7 +43,13 @@ export function SidePanel({ videoId, onClose }: { videoId: string | null; onClos
                         </Button>
                     </div>
                     <div className="yt-scroll min-h-0 flex-1 overflow-auto p-3">
-                        <VideoDetailTabs videoId={videoId} ds={dataSource} onSeek={seek} active={active} onActiveChange={setActive} />
+                        <VideoDetailTabs
+                            videoId={videoId}
+                            ds={dataSource}
+                            onSeek={seek}
+                            active={active}
+                            onActiveChange={setActive}
+                        />
                     </div>
                 </>
             )}

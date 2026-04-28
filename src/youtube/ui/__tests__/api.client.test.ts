@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { SafeJSON } from "@app/utils/json";
 import type { JobStage } from "@app/youtube/lib/types";
 
 const fetchCalls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
@@ -19,7 +20,14 @@ describe("youtube ui apiClient", () => {
         moduleToken++;
         globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
             fetchCalls.push({ input, init });
-            return Response.json({ channels: [], videos: [], jobs: [], added: ["@mkbhd"], job: { id: 1 }, summary: "ok" });
+            return Response.json({
+                channels: [],
+                videos: [],
+                jobs: [],
+                added: ["@mkbhd"],
+                job: { id: 1 },
+                summary: "ok",
+            });
         }) as typeof fetch;
     });
 
@@ -34,7 +42,7 @@ describe("youtube ui apiClient", () => {
 
         expect(fetchCalls[0]?.input).toBe("http://api.example.test/api/v1/channels");
         expect(fetchCalls[0]?.init?.method).toBe("POST");
-        expect(fetchCalls[0]?.init?.body).toBe(JSON.stringify({ handles: ["@mkbhd"] }));
+        expect(fetchCalls[0]?.init?.body).toBe(SafeJSON.stringify({ handles: ["@mkbhd"] }));
         expect(result.added).toEqual(["@mkbhd"]);
     });
 
@@ -45,9 +53,11 @@ describe("youtube ui apiClient", () => {
         await apiClient.listVideos({ channel: "@mkbhd", limit: 12, includeShorts: true, since: "2026-01-01" });
         await apiClient.startPipeline({ target: "abc123", targetKind: "video", stages });
 
-        expect(fetchCalls[0]?.input).toBe("http://api.example.test/api/v1/videos?channel=%40mkbhd&since=2026-01-01&limit=12&includeShorts=true");
+        expect(fetchCalls[0]?.input).toBe(
+            "http://api.example.test/api/v1/videos?channel=%40mkbhd&since=2026-01-01&limit=12&includeShorts=true"
+        );
         expect(fetchCalls[1]?.input).toBe("http://api.example.test/api/v1/pipeline");
-        expect(fetchCalls[1]?.init?.body).toBe(JSON.stringify({ target: "abc123", targetKind: "video", stages }));
+        expect(fetchCalls[1]?.init?.body).toBe(SafeJSON.stringify({ target: "abc123", targetKind: "video", stages }));
     });
 
     it("normalizes server summary responses by mode", async () => {

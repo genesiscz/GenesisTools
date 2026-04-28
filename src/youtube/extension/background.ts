@@ -1,5 +1,6 @@
-import { getExtensionConfig, setExtensionConfig } from "@ext/shared/storage";
+import { SafeJSON } from "@app/utils/json";
 import type { ExtensionEvent, ExtensionRequest, ExtensionResponse } from "@ext/shared/messages";
+import { getExtensionConfig, setExtensionConfig } from "@ext/shared/storage";
 
 const ports = new Set<chrome.runtime.Port>();
 let ws: WebSocket | null = null;
@@ -11,7 +12,9 @@ chrome.runtime.onConnect.addListener((port) => {
 });
 
 chrome.runtime.onMessage.addListener((req: ExtensionRequest, _sender, sendResponse) => {
-    handleRequest(req).then(sendResponse, (error) => sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) }));
+    handleRequest(req).then(sendResponse, (error) =>
+        sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) })
+    );
     return true;
 });
 
@@ -33,7 +36,10 @@ export async function handleRequest(req: ExtensionRequest): Promise<ExtensionRes
         case "api:listChannels":
             return apiCall(`${base}/api/v1/channels`);
         case "api:addChannel":
-            return apiCall(`${base}/api/v1/channels`, { method: "POST", body: JSON.stringify({ handles: [req.handle] }) });
+            return apiCall(`${base}/api/v1/channels`, {
+                method: "POST",
+                body: SafeJSON.stringify({ handles: [req.handle] }),
+            });
         case "api:getVideo":
             return apiCall(`${base}/api/v1/videos/${encodeURIComponent(req.id)}`);
         case "api:getTranscript": {
@@ -48,19 +54,35 @@ export async function handleRequest(req: ExtensionRequest): Promise<ExtensionRes
             return apiCall(`${base}/api/v1/videos/${encodeURIComponent(req.id)}/transcript${suffix}`);
         }
         case "api:getSummary":
-            return apiCall(`${base}/api/v1/videos/${encodeURIComponent(req.id)}/summary?mode=${encodeURIComponent(req.mode)}`);
+            return apiCall(
+                `${base}/api/v1/videos/${encodeURIComponent(req.id)}/summary?mode=${encodeURIComponent(req.mode)}`
+            );
         case "api:generateSummary":
             return apiCall(`${base}/api/v1/videos/${encodeURIComponent(req.id)}/summary`, {
                 method: "POST",
-                body: JSON.stringify({ mode: req.mode, force: req.force, provider: req.provider, model: req.model, targetBins: req.targetBins }),
+                body: SafeJSON.stringify({
+                    mode: req.mode,
+                    force: req.force,
+                    provider: req.provider,
+                    model: req.model,
+                    targetBins: req.targetBins,
+                }),
             });
         case "api:askVideo":
             return apiCall(`${base}/api/v1/videos/${encodeURIComponent(req.id)}/qa`, {
                 method: "POST",
-                body: JSON.stringify({ question: req.question, topK: req.topK, provider: req.provider, model: req.model }),
+                body: SafeJSON.stringify({
+                    question: req.question,
+                    topK: req.topK,
+                    provider: req.provider,
+                    model: req.model,
+                }),
             });
         case "api:startPipeline":
-            return apiCall(`${base}/api/v1/pipeline`, { method: "POST", body: JSON.stringify({ target: req.target, targetKind: req.targetKind, stages: req.stages }) });
+            return apiCall(`${base}/api/v1/pipeline`, {
+                method: "POST",
+                body: SafeJSON.stringify({ target: req.target, targetKind: req.targetKind, stages: req.stages }),
+            });
         case "api:getJob":
             return apiCall(`${base}/api/v1/jobs/${req.id}`);
     }
@@ -68,7 +90,10 @@ export async function handleRequest(req: ExtensionRequest): Promise<ExtensionRes
 
 async function apiCall(url: string, init: RequestInit = {}): Promise<ExtensionResponse> {
     try {
-        const res = await fetch(url, { ...init, headers: { "Content-Type": "application/json", ...(init.headers ?? {}) } });
+        const res = await fetch(url, {
+            ...init,
+            headers: { "Content-Type": "application/json", ...(init.headers ?? {}) },
+        });
         if (!res.ok) {
             return { ok: false, error: `${res.status} ${res.statusText}` };
         }
@@ -97,10 +122,9 @@ async function reconnectWebsocket(): Promise<void> {
         ws.onopen = () => broadcast({ type: "ws:status", connected: true });
         ws.onmessage = (message) => {
             try {
-                const event = JSON.parse(typeof message.data === "string" ? message.data : String(message.data));
+                const event = SafeJSON.parse(typeof message.data === "string" ? message.data : String(message.data));
                 broadcast({ type: "job:event", event });
-            } catch {
-            }
+            } catch {}
         };
         ws.onclose = () => {
             broadcast({ type: "ws:status", connected: false });
