@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { BaseDatabase, SQL_NOW_UTC } from "@app/utils/database";
+import { SafeJSON } from "@app/utils/json";
 import { withFileLock } from "@app/utils/storage";
 import { deleteIfExists } from "@app/youtube/lib/cache";
 import type { Channel, ChannelHandle } from "@app/youtube/lib/channel.types";
@@ -26,7 +27,14 @@ import type {
     VideoSearchField,
     VideoSearchHit,
 } from "@app/youtube/lib/db.types";
-import type { JobActivity, JobActivityKind, JobStage, JobStatus, JobTargetKind, PipelineJob } from "@app/youtube/lib/jobs.types";
+import type {
+    JobActivity,
+    JobActivityKind,
+    JobStage,
+    JobStatus,
+    JobTargetKind,
+    PipelineJob,
+} from "@app/youtube/lib/jobs.types";
 import type { QaChunk } from "@app/youtube/lib/qa.types";
 import type { Language, Transcript, TranscriptSegment } from "@app/youtube/lib/transcript.types";
 import type { TimestampedSummaryEntry, Video, VideoId, VideoLongSummary } from "@app/youtube/lib/video.types";
@@ -200,7 +208,9 @@ export class YoutubeDatabase extends BaseDatabase {
         `);
 
         this.runMigration("add-videos-pinned", () => {
-            const cols = this.db.query<{ name: string }, []>("PRAGMA table_info(videos)").all() as Array<{ name: string }>;
+            const cols = this.db.query<{ name: string }, []>("PRAGMA table_info(videos)").all() as Array<{
+                name: string;
+            }>;
 
             if (!cols.some((column) => column.name === "pinned")) {
                 this.db.exec("ALTER TABLE videos ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0");
@@ -212,7 +222,9 @@ export class YoutubeDatabase extends BaseDatabase {
         });
 
         this.runMigration("add-videos-summary-long-json", () => {
-            const cols = this.db.query<{ name: string }, []>("PRAGMA table_info(videos)").all() as Array<{ name: string }>;
+            const cols = this.db.query<{ name: string }, []>("PRAGMA table_info(videos)").all() as Array<{
+                name: string;
+            }>;
 
             if (!cols.some((column) => column.name === "summary_long_json")) {
                 this.db.exec("ALTER TABLE videos ADD COLUMN summary_long_json TEXT");
@@ -237,7 +249,10 @@ export class YoutubeDatabase extends BaseDatabase {
         const targets: Array<{ table: string; columns: string[] }> = [
             { table: "schema_version", columns: ["applied_at"] },
             { table: "channels", columns: ["last_synced_at", "created_at", "updated_at"] },
-            { table: "videos", columns: ["audio_cached_at", "video_cached_at", "thumb_cached_at", "created_at", "updated_at"] },
+            {
+                table: "videos",
+                columns: ["audio_cached_at", "video_cached_at", "thumb_cached_at", "created_at", "updated_at"],
+            },
             { table: "transcripts", columns: ["created_at"] },
             { table: "jobs", columns: ["claimed_at", "created_at", "updated_at", "completed_at"] },
             { table: "qa_chunks", columns: ["created_at"] },
@@ -307,7 +322,10 @@ export class YoutubeDatabase extends BaseDatabase {
     }
 
     setChannelSynced(handle: ChannelHandle): void {
-        this.db.run(`UPDATE channels SET last_synced_at = ${SQL_NOW_UTC}, updated_at = ${SQL_NOW_UTC} WHERE handle = ?`, [handle]);
+        this.db.run(
+            `UPDATE channels SET last_synced_at = ${SQL_NOW_UTC}, updated_at = ${SQL_NOW_UTC} WHERE handle = ?`,
+            [handle]
+        );
     }
 
     upsertVideo(input: UpsertVideoInput): void {
@@ -339,8 +357,8 @@ export class YoutubeDatabase extends BaseDatabase {
                 input.viewCount ?? null,
                 input.likeCount ?? null,
                 input.language ?? null,
-                input.availableCaptionLangs ? JSON.stringify(input.availableCaptionLangs) : null,
-                input.tags ? JSON.stringify(input.tags) : null,
+                input.availableCaptionLangs ? SafeJSON.stringify(input.availableCaptionLangs) : null,
+                input.tags ? SafeJSON.stringify(input.tags) : null,
                 input.isShort ? 1 : 0,
                 input.isLive ? 1 : 0,
                 input.thumbUrl ?? null,
@@ -407,7 +425,9 @@ export class YoutubeDatabase extends BaseDatabase {
         const limit = opts.limit ?? 30;
         const offset = opts.offset ?? 0;
         const rows = this.db
-            .query<VideoRow, [...Array<string | number>, number, number]>(`SELECT * FROM videos ${whereClause} ORDER BY upload_date DESC LIMIT ? OFFSET ?`)
+            .query<VideoRow, [...Array<string | number>, number, number]>(
+                `SELECT * FROM videos ${whereClause} ORDER BY upload_date DESC LIMIT ? OFFSET ?`
+            )
             .all(...params, limit, offset);
 
         return rows.map(rowToVideo);
@@ -415,23 +435,36 @@ export class YoutubeDatabase extends BaseDatabase {
 
     setVideoBinaryPath(input: SetVideoBinaryPathInput): void;
     setVideoBinaryPath(id: VideoId, kind: "audio" | "video" | "thumb", path: string | null, sizeBytes?: number): void;
-    setVideoBinaryPath(inputOrId: SetVideoBinaryPathInput | VideoId, kind?: "audio" | "video" | "thumb", path?: string | null, sizeBytes?: number): void {
-        const input = typeof inputOrId === "string" ? normalizeVideoBinaryPathInput(inputOrId, kind, path, sizeBytes) : inputOrId;
+    setVideoBinaryPath(
+        inputOrId: SetVideoBinaryPathInput | VideoId,
+        kind?: "audio" | "video" | "thumb",
+        path?: string | null,
+        sizeBytes?: number
+    ): void {
+        const input =
+            typeof inputOrId === "string" ? normalizeVideoBinaryPathInput(inputOrId, kind, path, sizeBytes) : inputOrId;
         const columns = videoBinaryColumns(input.kind);
         const cachedAt = input.path ? SQL_NOW_UTC : "NULL";
 
         if (columns.sizeColumn) {
             this.db.run(
                 `UPDATE videos SET ${columns.pathColumn} = ?, ${columns.sizeColumn} = ?, ${columns.cachedAtColumn} = ${cachedAt}, updated_at = ${SQL_NOW_UTC} WHERE id = ?`,
-                [input.path, input.path ? input.sizeBytes ?? null : null, input.id]
+                [input.path, input.path ? (input.sizeBytes ?? null) : null, input.id]
             );
         } else {
-            this.db.run(`UPDATE videos SET ${columns.pathColumn} = ?, ${columns.cachedAtColumn} = ${cachedAt}, updated_at = ${SQL_NOW_UTC} WHERE id = ?`, [input.path, input.id]);
+            this.db.run(
+                `UPDATE videos SET ${columns.pathColumn} = ?, ${columns.cachedAtColumn} = ${cachedAt}, updated_at = ${SQL_NOW_UTC} WHERE id = ?`,
+                [input.path, input.id]
+            );
         }
     }
 
     setVideoSummary(input: SetVideoSummaryInput): void;
-    setVideoSummary(id: VideoId, kind: "short" | "timestamped" | "long", value: string | TimestampedSummaryEntry[] | VideoLongSummary): void;
+    setVideoSummary(
+        id: VideoId,
+        kind: "short" | "timestamped" | "long",
+        value: string | TimestampedSummaryEntry[] | VideoLongSummary
+    ): void;
     setVideoSummary(
         inputOrId: SetVideoSummaryInput | VideoId,
         kind?: "short" | "timestamped" | "long",
@@ -439,12 +472,17 @@ export class YoutubeDatabase extends BaseDatabase {
     ): void {
         const input = typeof inputOrId === "string" ? normalizeVideoSummaryInput(inputOrId, kind, value) : inputOrId;
         const column =
-            input.kind === "short" ? "summary_short"
-            : input.kind === "timestamped" ? "summary_timestamped_json"
-            : "summary_long_json";
-        const serialized = typeof input.value === "string" ? input.value : JSON.stringify(input.value);
+            input.kind === "short"
+                ? "summary_short"
+                : input.kind === "timestamped"
+                  ? "summary_timestamped_json"
+                  : "summary_long_json";
+        const serialized = typeof input.value === "string" ? input.value : SafeJSON.stringify(input.value);
 
-        this.db.run(`UPDATE videos SET ${column} = ?, updated_at = ${SQL_NOW_UTC} WHERE id = ?`, [serialized, input.id]);
+        this.db.run(`UPDATE videos SET ${column} = ?, updated_at = ${SQL_NOW_UTC} WHERE id = ?`, [
+            serialized,
+            input.id,
+        ]);
     }
 
     saveTranscript(input: SaveTranscriptInput): void {
@@ -456,7 +494,14 @@ export class YoutubeDatabase extends BaseDatabase {
                 segments_json = excluded.segments_json,
                 duration_sec = excluded.duration_sec,
                 created_at = ${SQL_NOW_UTC}`,
-            [input.videoId, input.lang, input.source, input.text, JSON.stringify(input.segments), input.durationSec ?? null]
+            [
+                input.videoId,
+                input.lang,
+                input.source,
+                input.text,
+                SafeJSON.stringify(input.segments),
+                input.durationSec ?? null,
+            ]
         );
     }
 
@@ -501,7 +546,9 @@ export class YoutubeDatabase extends BaseDatabase {
     }
 
     listTranscripts(videoId: VideoId): Transcript[] {
-        const rows = this.db.query<TranscriptRow, [string]>("SELECT * FROM transcripts WHERE video_id = ? ORDER BY lang, source").all(videoId);
+        const rows = this.db
+            .query<TranscriptRow, [string]>("SELECT * FROM transcripts WHERE video_id = ? ORDER BY lang, source")
+            .all(videoId);
 
         return rows.map(rowToTranscript);
     }
@@ -571,7 +618,9 @@ export class YoutubeDatabase extends BaseDatabase {
     }
 
     upsertQaChunk(input: UpsertQaChunkInput): void {
-        const embedding = input.embedding ? Buffer.from(input.embedding.buffer, input.embedding.byteOffset, input.embedding.byteLength) : null;
+        const embedding = input.embedding
+            ? Buffer.from(input.embedding.buffer, input.embedding.byteOffset, input.embedding.byteLength)
+            : null;
         const embeddingDims = input.embedding ? input.embedding.length : null;
 
         this.db.run(
@@ -598,16 +647,28 @@ export class YoutubeDatabase extends BaseDatabase {
 
     listQaChunks(videoId: VideoId, embedderModel?: string): QaChunk[] {
         const rows = embedderModel
-            ? this.db.query<QaChunkRow, [string, string]>("SELECT * FROM qa_chunks WHERE video_id = ? AND embedder_model = ? ORDER BY chunk_idx").all(videoId, embedderModel)
-            : this.db.query<QaChunkRow, [string]>("SELECT * FROM qa_chunks WHERE video_id = ? ORDER BY chunk_idx").all(videoId);
+            ? this.db
+                  .query<QaChunkRow, [string, string]>(
+                      "SELECT * FROM qa_chunks WHERE video_id = ? AND embedder_model = ? ORDER BY chunk_idx"
+                  )
+                  .all(videoId, embedderModel)
+            : this.db
+                  .query<QaChunkRow, [string]>("SELECT * FROM qa_chunks WHERE video_id = ? ORDER BY chunk_idx")
+                  .all(videoId);
 
         return rows.map(rowToQaChunk);
     }
 
     hasQaChunks(videoId: VideoId, embedderModel?: string): boolean {
         const row = embedderModel
-            ? this.db.query<{ count: number }, [string, string]>("SELECT COUNT(*) AS count FROM qa_chunks WHERE video_id = ? AND embedder_model = ?").get(videoId, embedderModel)
-            : this.db.query<{ count: number }, [string]>("SELECT COUNT(*) AS count FROM qa_chunks WHERE video_id = ?").get(videoId);
+            ? this.db
+                  .query<{ count: number }, [string, string]>(
+                      "SELECT COUNT(*) AS count FROM qa_chunks WHERE video_id = ? AND embedder_model = ?"
+                  )
+                  .get(videoId, embedderModel)
+            : this.db
+                  .query<{ count: number }, [string]>("SELECT COUNT(*) AS count FROM qa_chunks WHERE video_id = ?")
+                  .get(videoId);
 
         return (row?.count ?? 0) > 0;
     }
@@ -618,7 +679,7 @@ export class YoutubeDatabase extends BaseDatabase {
                 `INSERT INTO jobs (target_kind, target, stages, parent_job_id, status)
                  VALUES (?, ?, ?, ?, 'pending') RETURNING id`
             )
-            .get(input.targetKind, input.target, JSON.stringify(input.stages), input.parentJobId ?? null);
+            .get(input.targetKind, input.target, SafeJSON.stringify(input.stages), input.parentJobId ?? null);
 
         if (!result) {
             throw new Error("enqueueJob failed: insert returned no id");
@@ -742,7 +803,11 @@ export class YoutubeDatabase extends BaseDatabase {
         const whereClause = where.length ? `WHERE ${where.join(" AND ")}` : "";
         const limit = opts.limit ?? 100;
         const offset = opts.offset ?? 0;
-        const rows = this.db.query<JobRow, [...Array<string | number>, number, number]>(`SELECT * FROM jobs ${whereClause} ORDER BY id DESC LIMIT ? OFFSET ?`).all(...params, limit, offset);
+        const rows = this.db
+            .query<JobRow, [...Array<string | number>, number, number]>(
+                `SELECT * FROM jobs ${whereClause} ORDER BY id DESC LIMIT ? OFFSET ?`
+            )
+            .all(...params, limit, offset);
 
         return rows.map(rowToJob);
     }
@@ -755,6 +820,20 @@ export class YoutubeDatabase extends BaseDatabase {
         );
 
         return result.changes;
+    }
+
+    advanceJobToNextStage(id: number, remainingStages: JobStage[]): void {
+        if (remainingStages.length === 0) {
+            throw new Error(`advanceJobToNextStage: id=${id} called with empty remainingStages`);
+        }
+
+        this.db.run(
+            `UPDATE jobs SET stages = ?, status = 'pending', worker_id = NULL, claimed_at = NULL,
+                             current_stage = NULL, progress = 0, progress_message = NULL,
+                             updated_at = ${SQL_NOW_UTC}
+             WHERE id = ?`,
+            [SafeJSON.stringify(remainingStages), id]
+        );
     }
 
     getJob(id: number): PipelineJob | null {
@@ -771,7 +850,10 @@ export class YoutubeDatabase extends BaseDatabase {
         }
 
         assertJobTransition(existing.status, "cancelled", "cancelJob");
-        this.db.run(`UPDATE jobs SET status = 'cancelled', completed_at = ${SQL_NOW_UTC}, updated_at = ${SQL_NOW_UTC} WHERE id = ?`, [id]);
+        this.db.run(
+            `UPDATE jobs SET status = 'cancelled', completed_at = ${SQL_NOW_UTC}, updated_at = ${SQL_NOW_UTC} WHERE id = ?`,
+            [id]
+        );
     }
 
     recordJobActivity(input: RecordJobActivityInput): JobActivity {
@@ -837,7 +919,7 @@ export class YoutubeDatabase extends BaseDatabase {
         }
 
         const columns = videoBinaryColumns(kind);
-        const cutoff = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000).toISOString().slice(0, 19).replace("T", " ");
+        const cutoff = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000).toISOString();
         const rows = this.db
             .query<PruneBinaryRow, [string]>(
                 `SELECT id, ${columns.pathColumn} AS path
@@ -878,7 +960,10 @@ export class YoutubeDatabase extends BaseDatabase {
                 [id]
             );
         } else {
-            this.db.run(`UPDATE videos SET ${columns.pathColumn} = NULL, ${columns.cachedAtColumn} = NULL, updated_at = ${SQL_NOW_UTC} WHERE id = ?`, [id]);
+            this.db.run(
+                `UPDATE videos SET ${columns.pathColumn} = NULL, ${columns.cachedAtColumn} = NULL, updated_at = ${SQL_NOW_UTC} WHERE id = ?`,
+                [id]
+            );
         }
     }
 
@@ -967,7 +1052,12 @@ function videoBinaryColumns(kind: "audio" | "video" | "thumb"): VideoBinaryColum
     return { pathColumn: "thumb_path", sizeColumn: null, cachedAtColumn: "thumb_cached_at" };
 }
 
-function normalizeVideoBinaryPathInput(id: VideoId, kind: "audio" | "video" | "thumb" | undefined, path: string | null | undefined, sizeBytes: number | undefined): SetVideoBinaryPathInput {
+function normalizeVideoBinaryPathInput(
+    id: VideoId,
+    kind: "audio" | "video" | "thumb" | undefined,
+    path: string | null | undefined,
+    sizeBytes: number | undefined
+): SetVideoBinaryPathInput {
     if (!kind) {
         throw new Error("setVideoBinaryPath requires a binary kind");
     }
@@ -1005,7 +1095,7 @@ function parseJsonArray(raw: string | null): string[] {
         return [];
     }
 
-    const parsed = JSON.parse(raw) as unknown;
+    const parsed = SafeJSON.parse(raw) as unknown;
 
     if (!Array.isArray(parsed)) {
         return [];
@@ -1019,7 +1109,7 @@ function parseNullableJsonArray<T>(raw: string | null): T[] | null {
         return null;
     }
 
-    const parsed = JSON.parse(raw) as unknown;
+    const parsed = SafeJSON.parse(raw) as unknown;
 
     if (!Array.isArray(parsed)) {
         return null;
@@ -1034,7 +1124,7 @@ function parseNullableJson<T>(raw: string | null): T | null {
     }
 
     try {
-        return JSON.parse(raw) as T;
+        return SafeJSON.parse(raw) as T;
     } catch {
         return null;
     }
@@ -1115,7 +1205,7 @@ function rowToJob(row: JobRow): PipelineJob {
 }
 
 function parseJobStages(raw: string): JobStage[] {
-    const parsed = JSON.parse(raw) as unknown;
+    const parsed = SafeJSON.parse(raw) as unknown;
 
     if (!Array.isArray(parsed)) {
         return [];
@@ -1125,7 +1215,15 @@ function parseJobStages(raw: string): JobStage[] {
 }
 
 function isJobStage(value: unknown): value is JobStage {
-    return value === "discover" || value === "metadata" || value === "captions" || value === "audio" || value === "video" || value === "transcribe" || value === "summarize";
+    return (
+        value === "discover" ||
+        value === "metadata" ||
+        value === "captions" ||
+        value === "audio" ||
+        value === "video" ||
+        value === "transcribe" ||
+        value === "summarize"
+    );
 }
 
 function isTerminalJobStatus(status: JobStatus): boolean {
@@ -1159,7 +1257,13 @@ function rowToQaChunk(row: QaChunkRow): QaChunk {
         text: row.text,
         startSec: row.start_sec,
         endSec: row.end_sec,
-        embedding: row.embedding ? new Float32Array(row.embedding.buffer, row.embedding.byteOffset, row.embedding.byteLength / Float32Array.BYTES_PER_ELEMENT) : null,
+        embedding: row.embedding
+            ? new Float32Array(
+                  row.embedding.buffer,
+                  row.embedding.byteOffset,
+                  row.embedding.byteLength / Float32Array.BYTES_PER_ELEMENT
+              )
+            : null,
         embeddingDims: row.embedding_dims,
         embedderModel: row.embedder_model,
         createdAt: row.created_at,
@@ -1184,7 +1288,7 @@ function parseTranscriptSegments(raw: string | null): TranscriptSegment[] {
         return [];
     }
 
-    const parsed = JSON.parse(raw) as unknown;
+    const parsed = SafeJSON.parse(raw) as unknown;
 
     if (!Array.isArray(parsed)) {
         return [];
@@ -1200,7 +1304,9 @@ function isTranscriptSegment(value: unknown): value is TranscriptSegment {
 
     const candidate = value as { text?: unknown; start?: unknown; end?: unknown };
 
-    return typeof candidate.text === "string" && typeof candidate.start === "number" && typeof candidate.end === "number";
+    return (
+        typeof candidate.text === "string" && typeof candidate.start === "number" && typeof candidate.end === "number"
+    );
 }
 
 interface ChannelRow {

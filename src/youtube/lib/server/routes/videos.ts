@@ -126,6 +126,7 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
             const providerChoice = needsProvider ? await resolveProviderChoice({ provider, model }) : undefined;
             const stages = hasTranscript ? (["summarize"] as const) : (["captions", "summarize"] as const);
             const job = yt.db.enqueueJob({ targetKind: "video", target: id, stages: [...stages] });
+            yt.pipeline.emitExternal({ type: "job:created", job });
             const startedAt = new Date().toISOString();
             yt.db.updateJob(job.id, {
                 status: "running",
@@ -268,11 +269,29 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                 model: typeof body.model === "string" ? body.model : undefined,
             });
             const job = yt.db.enqueueJob({ targetKind: "video", target: id, stages: ["summarize"] });
+            yt.pipeline.emitExternal({ type: "job:created", job });
             yt.db.updateJob(job.id, { status: "running", currentStage: "summarize" });
+            const startedJob = yt.db.getJob(job.id) ?? job;
+            yt.pipeline.emitExternal({ type: "job:started", job: startedJob });
+            yt.pipeline.emitExternal({ type: "stage:started", jobId: job.id, stage: "summarize" });
+            yt.pipeline.emitExternal({
+                type: "stage:progress",
+                jobId: job.id,
+                stage: "summarize",
+                progress: 0.05,
+                message: "Indexing transcript",
+            });
 
             try {
                 const result = await withJobActivity({ jobId: job.id, stage: "summarize", db: yt.db }, async () => {
                     await yt.qa.index({ videoId: id });
+                    yt.pipeline.emitExternal({
+                        type: "stage:progress",
+                        jobId: job.id,
+                        stage: "summarize",
+                        progress: 0.5,
+                        message: "Answering question",
+                    });
                     return yt.qa.ask({
                         videoIds: [id],
                         question,
@@ -286,11 +305,16 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                     currentStage: null,
                     completedAt: new Date().toISOString(),
                 });
+                const completedJob = yt.db.getJob(job.id) ?? job;
+                yt.pipeline.emitExternal({ type: "stage:completed", jobId: job.id, stage: "summarize" });
+                yt.pipeline.emitExternal({ type: "job:completed", job: completedJob });
 
                 return Response.json({ ...result, jobId: job.id }, { headers: CORS_HEADERS });
             } catch (error) {
                 const message = error instanceof Error ? error.message : String(error);
                 yt.db.updateJob(job.id, { status: "failed", error: message, completedAt: new Date().toISOString() });
+                const failedJob = yt.db.getJob(job.id) ?? job;
+                yt.pipeline.emitExternal({ type: "job:failed", job: failedJob, error: message });
                 throw error;
             }
         }

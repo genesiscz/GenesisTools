@@ -142,49 +142,61 @@ export class Pipeline {
         const mergedSignal = AbortSignal.any([signal, jobController.signal]);
 
         try {
-            for (const [index, stage] of stagesForClaimedWorker(job, claimedStage).entries()) {
-                if (!this.running || mergedSignal.aborted) {
-                    return;
-                }
-
-                const handler = this.deps.handlers[stage];
-
-                if (!handler) {
-                    throw new Error(`No handler registered for stage ${stage}`);
-                }
-
-                logger.debug(
-                    { jobId: job.id, stage, targetKind: job.targetKind, target: job.target },
-                    "youtube pipeline stage started"
-                );
-                this.db.updateJob(job.id, {
-                    currentStage: stage,
-                    progress: index / job.stages.length,
-                    progressMessage: null,
-                });
-                this.emit({ type: "stage:started", jobId: job.id, stage });
-
-                const ctx: StageHandlerCtx = {
-                    job: this.db.getJob(job.id) ?? job,
-                    signal: mergedSignal,
-                    onProgress: (progress, message) => {
-                        this.db.updateJob(job.id, { progress, progressMessage: message ?? null });
-                        this.emit({ type: "stage:progress", jobId: job.id, stage, progress, message });
-                    },
-                };
-
-                await withJobActivity({ jobId: job.id, stage, db: this.db }, () => handler(ctx));
-                logger.debug(
-                    { jobId: job.id, stage, targetKind: job.targetKind, target: job.target },
-                    "youtube pipeline stage completed"
-                );
-                this.emit({ type: "stage:completed", jobId: job.id, stage });
+            if (!this.running || mergedSignal.aborted) {
+                return;
             }
+
+            const handler = this.deps.handlers[claimedStage];
+
+            if (!handler) {
+                throw new Error(`No handler registered for stage ${claimedStage}`);
+            }
+
+            const claimedIndex = job.stages.indexOf(claimedStage);
+            const baseProgress = claimedIndex === -1 ? 0 : claimedIndex / job.stages.length;
+
+            logger.debug(
+                { jobId: job.id, stage: claimedStage, targetKind: job.targetKind, target: job.target },
+                "youtube pipeline stage started"
+            );
+            this.db.updateJob(job.id, {
+                currentStage: claimedStage,
+                progress: baseProgress,
+                progressMessage: null,
+            });
+            this.emit({ type: "stage:started", jobId: job.id, stage: claimedStage });
+
+            const ctx: StageHandlerCtx = {
+                job: this.db.getJob(job.id) ?? job,
+                signal: mergedSignal,
+                onProgress: (progress, message) => {
+                    this.db.updateJob(job.id, { progress, progressMessage: message ?? null });
+                    this.emit({ type: "stage:progress", jobId: job.id, stage: claimedStage, progress, message });
+                },
+            };
+
+            await withJobActivity({ jobId: job.id, stage: claimedStage, db: this.db }, () => handler(ctx));
+            logger.debug(
+                { jobId: job.id, stage: claimedStage, targetKind: job.targetKind, target: job.target },
+                "youtube pipeline stage completed"
+            );
+            this.emit({ type: "stage:completed", jobId: job.id, stage: claimedStage });
 
             if (jobController.signal.aborted) {
                 logger.info(
                     { jobId: job.id, targetKind: job.targetKind, target: job.target },
                     "youtube pipeline job stopped (cancelled)"
+                );
+                return;
+            }
+
+            const remaining = remainingStagesAfter(job, claimedStage);
+
+            if (remaining.length > 0) {
+                this.db.advanceJobToNextStage(job.id, remaining);
+                logger.debug(
+                    { jobId: job.id, completed: claimedStage, next: remaining[0] },
+                    "youtube pipeline job advanced to next stage"
                 );
                 return;
             }
@@ -260,15 +272,18 @@ export class Pipeline {
 
 const JOB_STAGES: JobStage[] = ["discover", "metadata", "captions", "audio", "video", "transcribe", "summarize"];
 
-function stagesForClaimedWorker(job: PipelineJob, claimedStage: JobStage): JobStage[] {
-    const startIndex = job.stages.indexOf(claimedStage);
-    const stages = startIndex === -1 ? job.stages : job.stages.slice(startIndex);
-
-    if (job.targetKind === "channel" && stages[0] === "discover") {
-        return ["discover"];
+function remainingStagesAfter(job: PipelineJob, claimedStage: JobStage): JobStage[] {
+    if (job.targetKind === "channel" && claimedStage === "discover") {
+        return [];
     }
 
-    return stages;
+    const idx = job.stages.indexOf(claimedStage);
+
+    if (idx === -1) {
+        return [];
+    }
+
+    return job.stages.slice(idx + 1);
 }
 
 function sleep(ms: number): Promise<void> {
