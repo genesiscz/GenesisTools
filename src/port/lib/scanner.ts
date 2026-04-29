@@ -120,10 +120,15 @@ interface PsRow {
     command: string;
 }
 
-function run(command: string, args: string[]): { stdout: string; stderr: string; status: number | null } {
+function run(
+    command: string,
+    args: string[],
+    options?: { timeoutMs?: number }
+): { stdout: string; stderr: string; status: number | null } {
     const result = spawnSync(command, args, {
         encoding: "utf8",
         stdio: ["ignore", "pipe", "pipe"],
+        timeout: options?.timeoutMs,
     });
 
     return {
@@ -629,17 +634,33 @@ function parseTasklistCsv(output: string): Map<number, { name: string; memoryKb:
     return result;
 }
 
-function getWindowsProcessData(): Map<number, WindowsProcessRow> {
+const WINDOWS_TASKLIST_TIMEOUT_MS = 10000;
+const WINDOWS_WMIC_TIMEOUT_MS = 20000;
+const WINDOWS_NETSTAT_TIMEOUT_MS = 10000;
+
+function getWindowsProcessData(pidFilter?: number[]): Map<number, WindowsProcessRow> {
     const result = new Map<number, WindowsProcessRow>();
-    const taskResult = run("tasklist", ["/FO", "CSV", "/V", "/NH"]);
+
+    // tasklist without /V is much faster (no window-title or username queries)
+    const taskResult = run("tasklist", ["/FO", "CSV", "/NH"], { timeoutMs: WINDOWS_TASKLIST_TIMEOUT_MS });
     const taskMap = taskResult.status === 0 ? parseTasklistCsv(taskResult.stdout) : new Map();
 
-    const wmicResult = run("wmic", [
-        "process",
+    // Filtering wmic by PID is dramatically faster than enumerating every process —
+    // typical Windows hosts run 200-500 processes; we usually only need a handful.
+    const wmicArgs: string[] = ["process"];
+
+    if (pidFilter && pidFilter.length > 0) {
+        const where = pidFilter.map((p) => `ProcessId=${p}`).join(" OR ");
+        wmicArgs.push("where", `(${where})`);
+    }
+
+    wmicArgs.push(
         "get",
         "ProcessId,Name,CommandLine,WorkingDirectory,CreationDate,WorkingSetSize",
-        "/FORMAT:LIST",
-    ]);
+        "/FORMAT:LIST"
+    );
+
+    const wmicResult = run("wmic", wmicArgs, { timeoutMs: WINDOWS_WMIC_TIMEOUT_MS });
 
     if (wmicResult.status === 0 && wmicResult.stdout.trim()) {
         let current: Record<string, string> = {};
@@ -818,7 +839,7 @@ function buildWindowsPortSnapshot(
 }
 
 function getWindowsListeningPorts(): PortSnapshot[] {
-    const netstatResult = run("netstat", ["-ano"]);
+    const netstatResult = run("netstat", ["-ano"], { timeoutMs: WINDOWS_NETSTAT_TIMEOUT_MS });
 
     if (netstatResult.status !== 0 && !netstatResult.stdout.trim()) {
         return [];
@@ -830,7 +851,8 @@ function getWindowsListeningPorts(): PortSnapshot[] {
         return [];
     }
 
-    const processData = getWindowsProcessData();
+    const uniquePids = [...new Set(listening.map(({ pid }) => pid))];
+    const processData = getWindowsProcessData(uniquePids);
 
     return listening
         .map(({ port, pid }) => buildWindowsPortSnapshot(port, pid, "LISTEN", processData))
@@ -839,7 +861,7 @@ function getWindowsListeningPorts(): PortSnapshot[] {
 }
 
 function getWindowsPortDetails(port: number): PortSnapshot[] {
-    const netstatResult = run("netstat", ["-ano"]);
+    const netstatResult = run("netstat", ["-ano"], { timeoutMs: WINDOWS_NETSTAT_TIMEOUT_MS });
 
     if (netstatResult.status !== 0 && !netstatResult.stdout.trim()) {
         return [];
@@ -851,7 +873,8 @@ function getWindowsPortDetails(port: number): PortSnapshot[] {
         return [];
     }
 
-    const processData = getWindowsProcessData();
+    const uniquePids = [...new Set(connections.map(({ pid }) => pid))];
+    const processData = getWindowsProcessData(uniquePids);
 
     return connections
         .map(({ port: p, pid, state }) => buildWindowsPortSnapshot(p, pid, state, processData))
@@ -860,8 +883,9 @@ function getWindowsPortDetails(port: number): PortSnapshot[] {
 }
 
 function getWindowsAllProcesses(): ProcessSnapshot[] {
+    // For the global ps view we genuinely need every process, so no PID filter here.
     const processData = getWindowsProcessData();
-    const netstatResult = run("netstat", ["-ano"]);
+    const netstatResult = run("netstat", ["-ano"], { timeoutMs: WINDOWS_NETSTAT_TIMEOUT_MS });
     const listeningPortMap = new Map<number, number[]>();
 
     if (netstatResult.status === 0) {
