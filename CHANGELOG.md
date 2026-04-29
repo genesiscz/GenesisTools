@@ -4,6 +4,13 @@ All notable changes to GenesisTools will be documented in this file.
 
 Version format: `YYYY.MM.DD.revision` (e.g., `2026.02.18.1`)
 
+## 2026.04.29.3
+
+### Bun runtime / JSX
+- Fixed `tools claude usage` (and any React/Ink TUI) crashing with `Invalid hook call` / `Rendered more hooks than during the previous render` after the doctor (Solid) and youtube (React) tools were merged
+- Root cause: `@opentui/solid/preload`'s Bun plugin matches every `.tsx` (`/\.(js|ts)x(?:[?#].*)?$/`) and runs `babel-preset-solid` on it, rewriting React JSX into Solid runtime calls
+- Replaced the upstream preload with a scoped wrapper at `src/utils/bun/preload-solid-scoped.ts` whose filter is path-restricted to `src/doctor/` only — files outside go through Bun's native react-jsx loader untouched
+
 ## 2026.04.29.2
 
 ### youtube (MAJOR)
