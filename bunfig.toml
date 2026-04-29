@@ -1,4 +1,4 @@
-preload = ["@opentui/solid/preload"]
+preload = ["./src/utils/bun/preload-solid-scoped.ts"]
 
 [test]
-preload = ["@opentui/solid/preload", "./src/utils/search/stores/sqlite-vec-preload.ts"]
+preload = ["./src/utils/bun/preload-solid-scoped.ts", "./src/utils/search/stores/sqlite-vec-preload.ts"]
