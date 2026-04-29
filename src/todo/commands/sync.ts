@@ -1,6 +1,6 @@
 import { findProjectRoot } from "@app/todo/lib/context";
 import { TodoStore } from "@app/todo/lib/store";
-import { type SyncTarget, syncTodo } from "@app/todo/lib/sync";
+import { countSynced, describeSyncFailures, type SyncTarget, syncSucceeded, syncTodo } from "@app/todo/lib/sync";
 import { Command } from "commander";
 import pc from "picocolors";
 
@@ -31,17 +31,35 @@ export function createSyncCommand(): Command {
                 }
 
                 let totalSynced = 0;
+                const failed: { todoId: string; reasons: string[] }[] = [];
 
                 for (const todo of withReminders) {
-                    const count = await syncTodo({ store, todo, target });
+                    const result = await syncTodo({ store, todo, target });
+                    const count = countSynced(result);
 
                     if (count > 0) {
                         console.log(pc.green(`  ✓ ${todo.id}: ${todo.title} (${count} synced)`));
                         totalSynced += count;
                     }
+
+                    const reasons = describeSyncFailures(result);
+
+                    if (reasons.length > 0) {
+                        failed.push({ todoId: todo.id, reasons });
+
+                        for (const r of reasons) {
+                            console.error(pc.red(`  ✗ ${todo.id}: ${r}`));
+                        }
+                    }
                 }
 
                 console.log(`\nSynced ${totalSynced} item(s) to ${target}.`);
+
+                if (failed.length > 0) {
+                    console.error(pc.red(`SYNC_FAILED ${target}: ${failed.length} todo(s) had failures`));
+                    process.exitCode = 1;
+                }
+
                 return;
             }
 
@@ -62,7 +80,23 @@ export function createSyncCommand(): Command {
                 process.exit(1);
             }
 
-            const count = await syncTodo({ store, todo, target });
-            console.log(pc.green(`Synced ${count} item(s) to ${target} for ${todo.id}.`));
+            const result = await syncTodo({ store, todo, target });
+            const count = countSynced(result);
+
+            if (count > 0) {
+                console.log(pc.green(`Synced ${count} item(s) to ${target} for ${todo.id}.`));
+            }
+
+            const failures = describeSyncFailures(result);
+
+            if (failures.length > 0) {
+                for (const line of failures) {
+                    console.error(pc.red(`SYNC_FAILED ${target} ${todo.id}: ${line}`));
+                }
+            }
+
+            if (!syncSucceeded(result)) {
+                process.exitCode = 1;
+            }
         });
 }

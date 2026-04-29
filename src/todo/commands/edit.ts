@@ -3,7 +3,7 @@ import { formatTodo } from "@app/todo/lib/format";
 import { parseLink } from "@app/todo/lib/links";
 import { parseReminderTime } from "@app/todo/lib/reminders";
 import { TodoStore } from "@app/todo/lib/store";
-import { type SyncTarget, syncTodo } from "@app/todo/lib/sync";
+import { countSynced, describeSyncFailures, type SyncTarget, syncSucceeded, syncTodo } from "@app/todo/lib/sync";
 import type { OutputFormat, Todo, TodoPriority } from "@app/todo/lib/types";
 import { isInteractive, parseVariadic } from "@app/utils/cli";
 import { Command, Option } from "commander";
@@ -107,10 +107,23 @@ export function createEditCommand(): Command {
 
             if (opts.syncTo) {
                 const target = opts.syncTo as SyncTarget;
-                const count = await syncTodo({ store, todo, target });
+                const result = await syncTodo({ store, todo, target });
+                const count = countSynced(result);
 
                 if (count > 0) {
                     console.error(pc.green(`Synced ${count} reminder(s) to ${target}.`));
+                }
+
+                const failures = describeSyncFailures(result);
+
+                if (failures.length > 0) {
+                    for (const line of failures) {
+                        console.error(pc.red(`SYNC_FAILED ${target} ${todo.id}: ${line}`));
+                    }
+                }
+
+                if (!syncSucceeded(result)) {
+                    process.exitCode = 1;
                 }
             }
         });
