@@ -142,6 +142,7 @@ See `.claude/docs/tool-template.md` for complete templates (@inquirer + @clack/p
 - **No file-path comments**: Never add `// src/path/to/file.ts` as first line of files
 - **No obvious comments**: Don't add comments that restate what the code already says (e.g. `// Build initial context` before `buildContext()`)
 - **Concise commit messages**: Just a title line, no per-file breakdown in the body. Keep it short and focused on the "why"
+- **Always use `SafeJSON`, never `JSON`**: Import `SafeJSON` from `@app/utils/json` and use `SafeJSON.parse()` / `SafeJSON.stringify()` everywhere — `JSON` is biome-restricted in this repo. `SafeJSON` is a comment-json wrapper that handles `//` comments, multi-line comments, and trailing commas. For strict JSON behavior, pass `{ strict: true }` or `{ jsonl: true }`.
 
 ## Code Style: Conditionals & Spacing
 
