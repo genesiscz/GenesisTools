@@ -4,6 +4,34 @@ All notable changes to GenesisTools will be documented in this file.
 
 Version format: `YYYY.MM.DD.revision` (e.g., `2026.02.18.1`)
 
+## 2026.04.29.2
+
+### youtube (MAJOR)
+- Major buildout: CLI, library, server, React/Vite web UI, browser extension (~17,960 insertions across 182 files)
+- Added routes for jobs, settings, videos, with WebSocket client and Vite config-middleware plugin
+- Server-entry, ws-client, styles, settings/jobs/videos pages
+
+### ai/xai (NEW)
+- Added xAI voice provider — REST + WebSocket transports for both STT and TTS
+- `AIXAITextToSpeechProvider`, `AIXAITranscriptionProvider`, shared `XAIClient` with full test coverage
+
+### ai (synthesizer)
+- Added shared `Synthesizer` task class for per-task TTS provider routing
+- Per-task TTS/STT provider refactor — config now binds providers to specific tasks
+- Added `audio/playback` utility with playback queue + tests
+- Moved `TranscriptionManager` into `utils/ai/transcription/`
+- Removed inline voice-memos transcription code in favor of shared synthesizer/transcription tasks
+
+### indexer
+- Fixed `no such module: vec0` crash on `tools macos mail index` — `Database.setCustomSQLite()` now runs at `IndexerManager.load()` and `MailSource.create()` so it wins the race against the first `bun:sqlite` Database (was happening too late inside `createIndexStore`, leaving Bun bound to Apple's extension-less SQLite)
+
+### tools (CLI runner)
+- Added auto-recovery: when a child tool fails with duplicate-React / missing-module signatures (Invalid hook call, more than one copy of React, Cannot find module …), the wrapper runs `bun install` automatically with full output. Set `TOOLS_SKIP_AUTOINSTALL=1` to opt out
+- Stdout/stdin stay inherited (TUIs and prompts still work); only stderr is teed for pattern detection
+
+### Core / Build
+- Added `.tanstack/` to `.gitignore` for TanStack Start build artifacts
+
 ## 2026.04.29.1
 
 ### doctor (NEW)
