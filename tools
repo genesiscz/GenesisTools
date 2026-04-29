@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import logger from "@app/logger";
@@ -9,6 +9,25 @@ import logger from "@app/logger";
 const SRC_DIR_NAME = "src";
 const INDEX_FILE_NAMES = ["index.ts", "index.tsx"];
 const SCRIPT_EXTENSIONS = [".ts", ".tsx"];
+
+// Stderr patterns that almost always mean node_modules is out of sync —
+// duplicate React copies, missing native binaries, ESM resolution drift.
+// When any of these are seen on a non-zero exit, the wrapper offers to run
+// `bun install` so the user doesn't have to debug it themselves.
+const REINSTALL_HINTS: RegExp[] = [
+    /Invalid hook call/i,
+    /more than one copy of React/i,
+    /resolveDispatcher\(\)\.useState/i,
+    /Cannot find module ['"][^'"]+['"] from/i,
+    /Cannot find package ['"][^'"]+['"] from/i,
+    /MODULE_NOT_FOUND/,
+    /ERR_MODULE_NOT_FOUND/,
+    /Failed to resolve module specifier/i,
+];
+
+function shouldOfferReinstall(stderr: string): boolean {
+    return REINSTALL_HINTS.some((re) => re.test(stderr));
+}
 
 // --- Helper Functions ---
 async function getAvailableTools(srcDir) {
@@ -120,18 +139,88 @@ async function executeTool(scriptId, scriptArgs) {
         }
     }
 
-    // Execute bun run using spawnSync.
-    // cwd must be the workspace root so Bun loads the repo's bunfig.toml
-    // (e.g. @opentui/solid/preload) and resolves @app/* paths via tsconfig.
-    // Pass original shell cwd through INIT_CWD for tools that need it.
-    const result = spawnSync("bun", ["run", targetScript, ...scriptArgs], {
+    // Execute bun run, piping stderr so we can sniff for dependency-mismatch
+    // signatures (duplicate React, missing module) and offer `bun install`.
+    // stdout and stdin stay inherited so TUIs and interactive prompts work.
+    const exitCode = await runWithReinstallGuard(
+        ["run", targetScript, ...scriptArgs],
+        workspaceRoot
+    );
+    process.exit(exitCode);
+}
+
+async function runWithReinstallGuard(args: string[], workspaceRoot: string): Promise<number> {
+    const exitCode = await spawnAndCaptureStderr(args, workspaceRoot);
+
+    if (exitCode === 0) {
+        return 0;
+    }
+
+    if (!shouldOfferReinstall(capturedStderr)) {
+        return exitCode;
+    }
+
+    if (process.env.TOOLS_SKIP_AUTOINSTALL === "1") {
+        return exitCode;
+    }
+
+    process.stderr.write(
+        "\n\x1b[33m[tools]\x1b[0m Detected a likely node_modules mismatch (duplicate React / missing module).\n"
+    );
+    process.stderr.write("\x1b[33m[tools]\x1b[0m Running 'bun install' to repair...\n\n");
+
+    const installResult = spawnSync("bun", ["install"], {
         stdio: "inherit",
         cwd: workspaceRoot,
-        env: { ...process.env, INIT_CWD: process.cwd() },
-        shell: process.platform === "win32",
     });
 
-    process.exit(result.status ?? 1);
+    if (installResult.status !== 0) {
+        process.stderr.write("\n\x1b[31m[tools]\x1b[0m bun install failed — see output above.\n");
+        return exitCode;
+    }
+
+    process.stderr.write("\n\x1b[32m[tools]\x1b[0m bun install complete. Re-run the command to retry.\n");
+    return exitCode;
+}
+
+let capturedStderr = "";
+
+async function spawnAndCaptureStderr(args: string[], workspaceRoot: string): Promise<number> {
+    capturedStderr = "";
+    const TAIL_BYTES = 64 * 1024;
+
+    return new Promise<number>((resolvePromise, reject) => {
+        const child = spawn("bun", args, {
+            stdio: ["inherit", "inherit", "pipe"],
+            cwd: workspaceRoot,
+            env: { ...process.env, INIT_CWD: process.cwd() },
+            shell: process.platform === "win32",
+        });
+
+        child.stderr?.on("data", (chunk: Buffer) => {
+            process.stderr.write(chunk);
+            capturedStderr += chunk.toString("utf8");
+
+            if (capturedStderr.length > TAIL_BYTES) {
+                capturedStderr = capturedStderr.slice(-TAIL_BYTES);
+            }
+        });
+
+        child.on("error", reject);
+        child.on("close", (code, signal) => {
+            if (signal) {
+                resolvePromise(128 + (signalToNumber(signal) ?? 0));
+                return;
+            }
+
+            resolvePromise(code ?? 1);
+        });
+    });
+}
+
+function signalToNumber(signal: NodeJS.Signals): number | undefined {
+    const map: Record<string, number> = { SIGINT: 2, SIGTERM: 15, SIGKILL: 9, SIGHUP: 1, SIGQUIT: 3 };
+    return map[signal];
 }
 
 // --- Main Logic ---
