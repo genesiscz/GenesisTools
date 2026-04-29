@@ -62,10 +62,36 @@ async function handleConfigure(url: string): Promise<void> {
 
     console.log("\nConfiguring az devops defaults...");
     try {
-        await $`az devops configure --defaults organization=${newConfig.org} project=${newConfig.project}`.quiet();
-        console.log("✅ az devops defaults configured");
-    } catch {
-        console.log("⚠️  Could not configure az devops defaults");
+        const result =
+            await $`az devops configure --defaults organization=${newConfig.org} project=${newConfig.project}`
+                .quiet()
+                .nothrow();
+
+        if (result.exitCode === 0) {
+            console.log("✅ az devops defaults configured");
+        } else {
+            const stderr = result.stderr.toString().trim();
+            const stdout = result.stdout.toString().trim();
+            console.log(`⚠️  Could not configure az devops defaults (exit ${result.exitCode})`);
+
+            if (stderr) {
+                console.log(`   stderr: ${stderr}`);
+            }
+
+            if (stdout) {
+                console.log(`   stdout: ${stdout}`);
+            }
+
+            console.log(
+                `   You can run this manually:\n     az devops configure --defaults organization="${newConfig.org}" project="${newConfig.project}"`
+            );
+        }
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.log(`⚠️  Could not configure az devops defaults: ${message}`);
+        console.log(
+            `   You can run this manually:\n     az devops configure --defaults organization="${newConfig.org}" project="${newConfig.project}"`
+        );
     }
 
     console.log(`
