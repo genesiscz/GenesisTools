@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@app/utils/json";
+import { ensureExtensionCapableSQLite } from "@app/utils/search/stores/sqlite-vec-loader";
 import type { Storage } from "@app/utils/storage/storage";
 import { CONFIG_FILENAME, ContextArtifactSource, loadContextConfig } from "./context-artifacts";
 import type { IndexerCallbacks, SyncStats } from "./events";
@@ -29,6 +30,11 @@ export class IndexerManager {
     }
 
     static async load(): Promise<IndexerManager> {
+        // bun:sqlite locks its SQLite library on first Database() — must swap to
+        // Homebrew sqlite (which supports extension loading) before any DB opens,
+        // or sqlite-vec _vec virtual tables fail with "no such module: vec0".
+        ensureExtensionCapableSQLite();
+
         const storage = getIndexerStorage();
         await storage.ensureDirs();
         const manager = new IndexerManager(storage);

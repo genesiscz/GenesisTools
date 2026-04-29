@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
 import { ENVELOPE_INDEX_PATH, normalizeMailboxName, parseMailboxUrl } from "@app/macos/lib/mail/constants";
 import { EmlxBodyExtractor } from "@app/macos/lib/mail/emlx";
+import { ensureExtensionCapableSQLite } from "@app/utils/search/stores/sqlite-vec-loader";
 import {
     type DetectChangesOptions,
     defaultDetectChanges,
@@ -41,6 +42,10 @@ export class MailSource implements IndexerSource {
                     `Expected: ${ENVELOPE_INDEX_PATH}`
             );
         }
+
+        // bun:sqlite locks its SQLite library on first Database(). The indexer DB
+        // (opened later) needs sqlite-vec, so we have to swap before opening any DB.
+        ensureExtensionCapableSQLite();
 
         const db = new Database(ENVELOPE_INDEX_PATH, { readonly: true });
         const emlx = await EmlxBodyExtractor.create();
