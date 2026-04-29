@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 
 let extensionAvailable: boolean | null = null;
 let customSqliteAttempted = false;
+let homebrewDylibFound = false;
 
 /** Known paths for Homebrew sqlite3 with extension support (arm64 first) */
 const HOMEBREW_SQLITE_PATHS = [
@@ -26,11 +27,15 @@ export function ensureExtensionCapableSQLite(): void {
     customSqliteAttempted = true;
 
     if (process.platform !== "darwin") {
+        // Linux and Windows ship Bun with extension-capable SQLite already.
+        homebrewDylibFound = true;
         return;
     }
 
     for (const libPath of HOMEBREW_SQLITE_PATHS) {
         if (existsSync(libPath)) {
+            homebrewDylibFound = true;
+
             try {
                 Database.setCustomSQLite(libPath);
             } catch {
@@ -40,6 +45,42 @@ export function ensureExtensionCapableSQLite(): void {
             return;
         }
     }
+}
+
+/**
+ * On macOS without Homebrew sqlite3, bun:sqlite cannot load the sqlite-vec
+ * extension, so any query against an existing `_vec` virtual table will fail
+ * with "no such module: vec0". Detect that trap at DB-open time and throw a
+ * helpful, actionable error instead of letting the user hit the cryptic one
+ * deeper in the indexer.
+ *
+ * Safe to call after `new Database(...)` -- it only does a sqlite_master
+ * lookup and never touches the vec0 module itself.
+ */
+export function assertVecExtensionAvailable(db: Database, tableName: string): void {
+    if (!customSqliteAttempted) {
+        ensureExtensionCapableSQLite();
+    }
+
+    if (homebrewDylibFound) {
+        return;
+    }
+
+    const vecTable = `${tableName}_vec`;
+    const exists = !!db.query("SELECT name FROM sqlite_master WHERE type='table' AND name = ?").get(vecTable);
+
+    if (!exists) {
+        return;
+    }
+
+    throw new Error(
+        `sqlite-vec is required to read this index ("${tableName}" has a "${vecTable}" virtual table) ` +
+            "but Bun's bundled SQLite on macOS does not support extension loading.\n\n" +
+            "Fix one of:\n" +
+            "  1. brew install sqlite   (then re-run the command)\n" +
+            "  2. Rebuild the index with --vector-driver sqlite-brute (drops sqlite-vec)\n\n" +
+            `Looked for libsqlite3.dylib at:\n  ${HOMEBREW_SQLITE_PATHS.map((p) => `- ${p}`).join("\n  ")}`
+    );
 }
 
 /**

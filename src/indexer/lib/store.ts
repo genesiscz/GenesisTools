@@ -7,7 +7,11 @@ import { acquireLock, type LockHandle } from "@app/utils/fs/lock";
 import { SafeJSON } from "@app/utils/json";
 import { SearchEngine } from "@app/utils/search/drivers/sqlite-fts5/index";
 import type { QdrantVectorStore } from "@app/utils/search/stores/qdrant-vector-store";
-import { ensureExtensionCapableSQLite, loadSqliteVec } from "@app/utils/search/stores/sqlite-vec-loader";
+import {
+    assertVecExtensionAvailable,
+    ensureExtensionCapableSQLite,
+    loadSqliteVec,
+} from "@app/utils/search/stores/sqlite-vec-loader";
 import type { VectorStore } from "@app/utils/search/stores/vector-store";
 import type { SearchOptions, SearchResult } from "@app/utils/search/types";
 import { deserializeMerkleTree } from "./merkle";
@@ -214,6 +218,7 @@ export async function searchIndexReadonly(
 
     const db = new Database(dbPath, { readonly: true });
     const tableName = sanitizeName(indexName);
+    assertVecExtensionAvailable(db, tableName);
 
     try {
         const meta = readMeta(db, { name: indexName } as IndexConfig, Date.now());
@@ -345,6 +350,7 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
         db.run("PRAGMA journal_mode = WAL");
 
         const tableName = sanitizeName(config.name);
+        assertVecExtensionAvailable(db, tableName);
 
         db.run(`CREATE TABLE IF NOT EXISTS index_meta (
         key TEXT PRIMARY KEY,
