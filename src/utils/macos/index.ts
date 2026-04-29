@@ -5,8 +5,11 @@ export { MacCalendar } from "./apple-calendar";
 export type { ReminderInfo, ReminderListInfo } from "./apple-reminders";
 // Apple Reminders
 export {
+    DarwinkitCrashError,
+    DarwinkitTimeoutError,
     MacReminders,
     ReminderPriority,
+    runDarwinkitGuarded,
     todoPriorityToApple,
 } from "./apple-reminders";
 // Auth
