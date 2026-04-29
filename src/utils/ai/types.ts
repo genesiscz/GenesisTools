@@ -180,6 +180,13 @@ export interface AITextToSpeechProvider extends AIProvider {
      */
     speak?(text: string, options?: TTSOptions & { volume?: number; rate?: number; wait?: boolean }): Promise<void>;
     listVoices?(): Promise<TTSVoice[]>;
+    /**
+     * Loudness offset (dB) applied during playback so that --volume 100 matches macOS native `say`
+     * perceived loudness. Cloud TTS sources are typically mastered quieter than native speech
+     * synthesis; positive values boost. Bounded to ≤24 dB by the player and combined with a peak
+     * limiter so the boost never clips. Omit (or set 0) for sources already matched to native.
+     */
+    readonly loudnessOffsetDb?: number;
 }
 
 export interface AITranslationProvider extends AIProvider {

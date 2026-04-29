@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Storage } from "@app/utils/storage/storage.ts";
 import { detectLanguage } from "./nlp";
+import { SayConfigManager } from "./SayConfigManager.ts";
 
 const storage = new Storage("say");
 
@@ -29,22 +30,6 @@ export interface SpeakOptions {
     /** Caller identity for per-app mute */
     app?: string;
 }
-
-export interface SayConfig {
-    defaultVoice: string | null;
-    defaultVolume: number;
-    globalMute: boolean;
-    appMute: Record<string, boolean>;
-    appVolume: Record<string, number>;
-}
-
-const DEFAULT_CONFIG: SayConfig = {
-    defaultVoice: null,
-    defaultVolume: 1,
-    globalMute: false,
-    appMute: {},
-    appVolume: {},
-};
 
 /**
  * Normalize volume: if <= 1, treat as 0.0–1.0 range.
@@ -111,83 +96,24 @@ export async function getVoiceMap(): Promise<Map<string, VoiceInfo>> {
 }
 
 // ============================================
-// Config helpers
-// ============================================
-
-async function getConfig(): Promise<SayConfig> {
-    const config = await storage.getConfig<SayConfig>();
-    return { ...DEFAULT_CONFIG, ...config };
-}
-
-export async function setConfig(config: SayConfig): Promise<void> {
-    await storage.setConfig(config);
-}
-
-export async function getConfigForRead(): Promise<SayConfig> {
-    return getConfig();
-}
-
-// ============================================
-// Mute helpers
-// ============================================
-
-function isMuted(config: SayConfig, app?: string): boolean {
-    if (app && app in config.appMute) {
-        return config.appMute[app];
-    }
-
-    return config.globalMute;
-}
-
-export async function setMute(muted: boolean, app?: string): Promise<void> {
-    const config = await getConfig();
-
-    if (app) {
-        config.appMute[app] = muted;
-    } else {
-        config.globalMute = muted;
-    }
-
-    await setConfig(config);
-}
-
-// ============================================
 // Core TTS
 // ============================================
 
 /**
- * Speak text aloud using macOS `say` command.
- * Automatically detects language and selects appropriate voice.
- * Supports volume control via render-to-AIFF + afplay.
- * Background by default; use `wait: true` to block.
+ * Speak text aloud, resolving voice/volume/etc. through the v2 SayConfig profile
+ * for `options.app` (falls back to the "default" profile). Caller-supplied
+ * options override profile values. Background by default; `wait: true` blocks.
  */
 export async function speak(text: string, options?: SpeakOptions): Promise<void> {
-    const config = await getConfig();
+    const mgr = new SayConfigManager();
 
-    if (isMuted(config, options?.app)) {
+    if (await mgr.isMuted(options?.app)) {
         process.stderr.write("[say] muted\n");
         return;
     }
 
-    // Auto-create app entry on first use + save per-app volume
-    const app = options?.app;
-    let configDirty = false;
-
-    if (app && !(app in config.appMute)) {
-        config.appMute[app] = false;
-        configDirty = true;
-    }
-
-    if (app && options?.volume != null) {
-        config.appVolume[app] = normalizeVolume(options.volume);
-        configDirty = true;
-    }
-
-    if (configDirty) {
-        await setConfig(config);
-    }
-
-    const rawVolume = options?.volume ?? (app ? config.appVolume[app] : undefined) ?? config.defaultVolume ?? 1;
+    const profile = await mgr.resolveApp(options?.app);
+    const rawVolume = options?.volume ?? profile.volume ?? 1;
     const volume = normalizeVolume(rawVolume);
 
     // Dynamic import avoids a circular module init:
@@ -196,8 +122,8 @@ export async function speak(text: string, options?: SpeakOptions): Promise<void>
     const { AI } = await import("@app/utils/ai/index");
     await AI.speak(text, {
         provider: "local",
-        voice: options?.voice,
-        rate: options?.rate,
+        voice: options?.voice ?? profile.voice ?? undefined,
+        rate: options?.rate ?? profile.rate ?? undefined,
         volume,
         wait: options?.wait,
     });

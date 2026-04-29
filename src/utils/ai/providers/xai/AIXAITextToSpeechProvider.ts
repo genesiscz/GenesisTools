@@ -47,6 +47,15 @@ export interface AIXAITextToSpeechProviderOptions {
 
 export class AIXAITextToSpeechProvider implements AITextToSpeechProvider {
     readonly type: AIProviderType = "xai";
+    /**
+     * Measured against macOS `say` rendered to AIFF (Samantha voice) using `ffmpeg volumedetect`:
+     *   macOS native: mean -16.2 dB / peak -1.6 dB / -16.5 LUFS
+     *   xAI mp3 raw:  mean -23.3 dB / peak -6.7 dB / -23.0 LUFS
+     * Mean delta = 7.1 dB. With `volume=7dB,alimiter=limit=0.97`, xAI lands at mean -16.3 dB /
+     * peak -0.3 dB / -16.1 LUFS — within 0.1 dB of native on the channel humans perceive as
+     * loudness. The limiter keeps peaks below -0.3 dBFS so no audible distortion at any user volume.
+     */
+    readonly loudnessOffsetDb = 7;
     private readonly client = new XAIClient();
     private readonly storage = new Storage("ai");
     private readonly forceFreshVoices: boolean;
