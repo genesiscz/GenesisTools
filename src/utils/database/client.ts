@@ -23,7 +23,12 @@ export interface CreateKyselyClientOptions<DB> {
     bootstrap?: string[];
     /** FTS5/trigger DDL or one-off data fixes via the existing migrations framework. */
     migrations?: Migration[];
-    /** Migration scope identifier (defaults to a stable name derived from the path). */
+    /**
+     * Migration scope identifier. **Strongly recommended when `migrations` is set** —
+     * the path-derived fallback changes if the database file moves, which would cause
+     * applied migrations to re-run on the new path. Pin this to a stable string
+     * (e.g. the tool name) so migration history is portable.
+     */
     migrationContext?: MigrationContext;
     pragmas?: Pragmas;
     /** Open in read-only mode (system databases). */
@@ -56,7 +61,18 @@ export function createKyselyClient<DB>(opts: CreateKyselyClientOptions<DB>): Dat
     }
 
     if (!readonly && migrations && migrations.length > 0) {
-        const ctx = migrationContext ?? { tableName: deriveScope(path) };
+        let ctx: MigrationContext;
+
+        if (migrationContext) {
+            ctx = migrationContext;
+        } else {
+            ctx = { tableName: deriveScope(path) };
+            logger.debug(
+                `[db] migrationContext not provided for ${path} — derived "${ctx.tableName}". ` +
+                    `Pin an explicit migrationContext to keep migration history stable across path changes.`,
+            );
+        }
+
         runMigrations(raw, migrations, ctx);
     }
 
@@ -71,7 +87,9 @@ export function createKyselyClient<DB>(opts: CreateKyselyClientOptions<DB>): Dat
         raw,
         path,
         close() {
-            kysely.destroy().catch(() => {});
+            // Don't call kysely.destroy() — it would race with raw.close() to close
+            // the same handle. Our BunSqliteDriver.destroy() does exactly raw.close().
+            // Closing raw directly is safe and synchronous.
             raw.close();
         },
     };
