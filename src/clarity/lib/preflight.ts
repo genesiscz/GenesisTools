@@ -23,7 +23,7 @@ export interface ServiceAuthState {
     fix?: string;
 }
 
-const AZ_LOGIN_FALLBACK = "az logout && az login --allow-no-subscriptions --use-device-code";
+const AZ_LOGIN_FALLBACK = "az login --allow-no-subscriptions --use-device-code";
 
 export async function pingAdo(config: AzureConfigWithTimeLog | null): Promise<ServiceAuthState> {
     if (!config) {

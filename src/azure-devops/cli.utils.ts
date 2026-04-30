@@ -89,10 +89,34 @@ export class AzAuthError extends Error {
     }
 }
 
-/** Pull the suggested `az login ...` line out of an MFA / auth error stderr block. */
+/**
+ * Build a working `az login` command from auth-error stderr.
+ *
+ * `az` itself suggests `az login --tenant <id> --scope <res>/.default`, but that
+ * form fails for accounts with no subscriptions in the tenant (common in
+ * enterprise setups — e.g. ČEZ — where the user has tenant-level access only).
+ * We always emit `--allow-no-subscriptions --use-device-code`, which works in
+ * both cases and doesn't require an interactive browser session.
+ *
+ * Returns null if stderr doesn't look like an auth error.
+ */
 export function extractAzLoginSuggestion(stderr: string): string | null {
-    const match = stderr.match(/^\s*(az login [^\n]+)/m);
-    return match ? match[1].trim() : null;
+    if (!stderr) {
+        return null;
+    }
+
+    const tenantMatch = stderr.match(/--tenant\s+"?([0-9a-fA-F-]{36})"?/);
+    const tenant = tenantMatch?.[1];
+
+    if (tenant) {
+        return `az login --tenant "${tenant}" --allow-no-subscriptions --use-device-code`;
+    }
+
+    if (/AADSTS|az login|multi-factor|Presented multi-factor/i.test(stderr)) {
+        return "az login --allow-no-subscriptions --use-device-code";
+    }
+
+    return null;
 }
 
 /**
