@@ -1,4 +1,4 @@
-import { speak } from "@app/utils/macos/tts";
+import { speakWithProfile } from "@app/say/lib/speak";
 import type { ActionHandler } from "../types";
 
 export const handleSay: ActionHandler = async (message, contact) => {
@@ -9,7 +9,7 @@ export const handleSay: ActionHandler = async (message, contact) => {
         : `${contact.displayName} says: ${message.text}`;
 
     try {
-        await speak(text);
+        await speakWithProfile({ text });
 
         return {
             action: "say",

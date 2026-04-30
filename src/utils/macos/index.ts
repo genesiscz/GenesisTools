@@ -97,9 +97,9 @@ export {
     groupByLanguage,
     rankBySimilarity,
 } from "./text-analysis";
-export type { SpeakOptions, VoiceInfo } from "./tts";
-// TTS
-export { getVoiceMap, listVoices, speak } from "./tts";
+export type { VoiceInfo } from "./tts";
+// TTS primitives. Profile-aware speech lives in `@app/say/lib/speak`.
+export { getVoiceMap, listVoices } from "./tts";
 // Types
 export type {
     AuthAvailableResult,

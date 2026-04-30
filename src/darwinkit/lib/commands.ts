@@ -34,10 +34,10 @@ import {
     rankBySimilarity,
     recognizeText,
     scoreRelevance,
-    speak,
     tagText,
     textDistance,
 } from "@app/utils/macos";
+import { speak } from "@app/utils/macos/tts";
 
 // ─── Types ──────────────────────────────────────────────────────────────────────
 
