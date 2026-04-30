@@ -89,7 +89,7 @@ Mute is a logical-OR of `global.mute` and the app's **own** `mute` field — eit
 
 Some fields are provider-specific:
 
-- `rate` — macOS only (`say -r <wpm>`). xAI / OpenAI ignore it.
+- `rate` — normalized `0..2` multiplier (or `0..200%`). `0`=slowest, `1`=default cadence, `2`=fastest. Provider speeds are matched to macOS native (~0.81×..1.86×) so the same `--rate` sounds identical on macOS, xAI, and OpenAI.
 - `model` — OpenAI only (`tts-1`, `gpt-4o-mini-tts`). xAI uses a hardcoded model; macOS ignores it.
 - `language` — xAI only (BCP-47 hint).
 - `format` — only meaningful for cloud providers writing audio files.
@@ -172,15 +172,16 @@ $ tools say --app claude --mute
 
 ## Interactive config (`tools say config`)
 
-`tools say config` opens a clack-driven manager:
+`tools say config` (or just `tools say` with no args) opens the same clack-driven manager:
 
+- **Speak text (test)** — pick a profile, type something, hear it
+- **Edit an app profile** — pick an existing app or `+ new app`; walks every field once (⏎ keep, `-` inherit, value to set), summary, confirm
 - **List** apps with their resolved (post-inherit) settings
-- **Edit** any app's profile field-by-field (set value, clear, or back)
-- **Add** a new app (name + initial fields)
 - **Delete** an app (the `default` profile is non-removable)
+- **List available voices**
 - **Toggle global mute**
 
-`tools say` with no args still opens the simpler legacy picker (test voice, set default voice/volume, etc.); pick "Full config (apps, profiles)…" from there to drop into the same `config` TUI.
+In a non-TTY context both entry points fail fast — pass `--app <name> --save` (or `<message>`) instead.
 
 ---
 
@@ -191,7 +192,7 @@ $ tools say --app claude --mute
 | `[message...]` | Text to speak (positional, joined with spaces) |
 | `--volume <n>` | Volume `0.0-1.0` or `0-100%` |
 | `--voice [name]` | Voice id; pass without value to list available voices |
-| `--rate <wpm>` | Words per minute (macOS only) |
+| `--rate <n>` | Speed: `0..2` multiplier or `0..200%` (`1` = default). Matched across providers. |
 | `--wait` | Block until speech finishes |
 | `--app <name>` | App profile to load; required target for `--save` |
 | `--mute` | Mute the app (requires `--save`) |
