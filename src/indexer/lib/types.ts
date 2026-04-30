@@ -79,6 +79,19 @@ export interface EmbeddingModelInfo {
     maxEmbedChars?: number;
 }
 
+export interface MetadataColumnSpec {
+    /** Column name; must be a SQL-safe identifier ([A-Za-z_][A-Za-z0-9_]*). */
+    name: string;
+    /** SQLite storage class. */
+    type: "INTEGER" | "TEXT" | "REAL";
+    /** When true, library creates a B-tree index on the column. */
+    indexed?: boolean;
+    /** When true, column is NOT NULL with the given default. */
+    notNull?: boolean;
+    /** SQL DEFAULT value (literal). */
+    default?: number | string;
+}
+
 export function emptyStats(): IndexStats {
     return {
         totalFiles: 0,
@@ -103,6 +116,8 @@ export interface IndexMeta {
     searchEmbedding?: EmbeddingModelInfo;
     /** Current indexing status. Persisted for crash recovery. */
     indexingStatus?: "idle" | "in-progress" | "completed" | "cancelled" | "error";
+    /** Source-declared filterable metadata columns currently materialized in this index. */
+    metadataColumns?: MetadataColumnSpec[];
 }
 
 export interface IndexStats {

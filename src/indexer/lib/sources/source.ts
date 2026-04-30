@@ -1,5 +1,6 @@
 import { detectChangesPreHashed } from "@app/utils/fs/change-detector";
 import { xxhash } from "@app/utils/hash";
+import type { MetadataColumnSpec } from "../types";
 
 export interface SourceEntry {
     /** Unique identifier -- file path for files, rowid for mail, message_id for chat */
@@ -78,6 +79,17 @@ export function defaultHashEntry(entry: SourceEntry): string {
     return xxhash(entry.content);
 }
 
+export interface MetadataPopulateOpts {
+    entries: Array<{ sourceId: string }>;
+    /** Library hint for batch size (default 1000). */
+    batchSize?: number;
+}
+
+export interface MetadataResult {
+    sourceId: string;
+    metadata: Record<string, unknown>;
+}
+
 export interface IndexerSource {
     /** Scan for all indexable content */
     scan(opts?: ScanOptions): Promise<SourceEntry[]>;
@@ -93,4 +105,17 @@ export interface IndexerSource {
 
     /** Release resources (DB connections, file handles) */
     dispose?(): void;
+
+    /**
+     * Declared filterable metadata schema. Stable across versions; new columns
+     * may be appended. Library handles ALTER + index + backfill automatically.
+     */
+    metadataColumns?(): MetadataColumnSpec[];
+
+    /**
+     * Backfill metadata for existing rows after a column is added.
+     * Yields one batch at a time so sources can stream large id sets.
+     * Each yielded batch may be smaller than batchSize (final batch).
+     */
+    populateMetadata?(opts: MetadataPopulateOpts): AsyncGenerator<MetadataResult[]>;
 }

@@ -574,10 +574,10 @@ async function runDirBenchmark(
 
     p.intro(pc.bgCyan(pc.white(` benchmark ${basename(absDir)} `)));
 
-    // Clean up stale bench_ dirs from previous crashed runs
-    getIndexerStorage().cleanStaleDirs("bench_");
+    // Clean up stale gt_bench_ dirs from previous crashed runs
+    getIndexerStorage().cleanStaleDirs("gt_bench_");
 
-    const benchName = `bench_${Date.now()}`;
+    const benchName = `gt_bench_${Date.now()}`;
     const config: IndexConfig = {
         name: benchName,
         baseDir: absDir,

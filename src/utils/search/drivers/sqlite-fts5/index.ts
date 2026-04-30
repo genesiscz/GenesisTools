@@ -158,10 +158,10 @@ export class SearchEngine<TDoc extends Record<string, unknown> = Record<string, 
 
         switch (mode) {
             case "fulltext":
-                results = this.bm25Search(opts.query, limit, opts.boost);
+                results = this.bm25Search(opts.query, limit, opts.boost, opts.filters);
                 break;
             case "vector":
-                results = await this.cosineSearch(vectorText, limit);
+                results = await this.cosineSearch(vectorText, limit, opts.filters);
                 break;
             case "hybrid":
                 results = await this.hybridSearch({
@@ -170,10 +170,11 @@ export class SearchEngine<TDoc extends Record<string, unknown> = Record<string, 
                     limit,
                     boost: opts.boost,
                     weights: opts.hybridWeights,
+                    filters: opts.filters,
                 });
                 break;
             default:
-                results = this.bm25Search(opts.query, limit, opts.boost);
+                results = this.bm25Search(opts.query, limit, opts.boost, opts.filters);
         }
 
         if (opts.minScore !== undefined && opts.minScore > 0) {
@@ -496,6 +497,7 @@ export class SearchEngine<TDoc extends Record<string, unknown> = Record<string, 
         limit: number;
         boost?: Record<string, number>;
         weights?: { text: number; vector: number };
+        filters?: { sql: string; params: Array<string | number> };
     }): Promise<SearchResult<TDoc>[]> {
         // If using Qdrant with hybrid capability, use server-side RRF
         if (this._vectorStore && this.embedder && "searchHybridAsync" in this._vectorStore) {
@@ -541,6 +543,7 @@ export class SearchEngine<TDoc extends Record<string, unknown> = Record<string, 
             limit: opts.limit,
             boost: opts.boost,
             weights: opts.weights,
+            filters: opts.filters,
         });
     }
 
