@@ -33,6 +33,8 @@
  *   tools macos messages search <query> [options]
  *   tools macos messages show <identifier> [options]
  *
+ *   tools macos swap [--limit n] [--top n] [--all] [--json]
+ *
  * Future subcommands:
  *   tools macos contacts search
  */
@@ -43,6 +45,7 @@ import { registerMailCommand } from "@app/macos/commands/mail/index";
 import { registerMessagesCommand } from "@app/macos/commands/messages/index";
 import { registerRemindersCommand } from "@app/macos/commands/reminders/index";
 import { registerSleepCommand } from "@app/macos/commands/sleep/index";
+import { registerSwapCommand } from "@app/macos/commands/swap/index";
 import { registerVoiceMemosCommand } from "@app/macos/commands/voice-memos/index";
 import { closeDarwinKit } from "@app/utils/macos/darwinkit";
 import { Command } from "commander";
@@ -60,6 +63,7 @@ registerMailCommand(program);
 registerMessagesCommand(program);
 registerRemindersCommand(program);
 registerSleepCommand(program);
+registerSwapCommand(program);
 registerVoiceMemosCommand(program);
 
 async function main(): Promise<void> {
