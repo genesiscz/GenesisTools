@@ -21,7 +21,7 @@ function writeFixture(dir: string, name: string, content: string): void {
 
 function uniqueIndexName(): string {
     counter++;
-    return `integration_test_${Date.now()}_${counter}`;
+    return `gt_integration_test_${Date.now()}_${counter}`;
 }
 
 function makeConfig(overrides?: Partial<IndexConfig>): IndexConfig {
@@ -53,7 +53,7 @@ afterEach(() => {
 
 afterAll(async () => {
     const manager = await IndexerManager.load();
-    const names = manager.getIndexNames().filter((n) => n.startsWith("integration_test_") || n.startsWith("test_"));
+    const names = manager.getIndexNames().filter((n) => n.startsWith("gt_integration_test_"));
 
     for (const name of names) {
         try {
@@ -66,8 +66,7 @@ afterAll(async () => {
     await manager.close();
 
     // Clean up stale filesystem leftovers from crashed test runs
-    getIndexerStorage().cleanStaleDirs("integration_test_");
-    getIndexerStorage().cleanStaleDirs("test_");
+    getIndexerStorage().cleanStaleDirs("gt_integration_test_");
 });
 
 describe("IndexerManager lifecycle", () => {

@@ -1,8 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Indexer } from "./indexer";
+import { IndexerManager } from "./manager";
+import { getIndexerStorage } from "./storage";
 import type { IndexConfig } from "./types";
 
 /**
@@ -79,6 +81,24 @@ afterEach(() => {
     } catch {
         // best-effort cleanup
     }
+});
+
+afterAll(async () => {
+    const manager = await IndexerManager.load();
+    const names = manager.getIndexNames().filter((n) => n.startsWith("store_emb_test_"));
+
+    for (const name of names) {
+        try {
+            await manager.removeIndex(name);
+        } catch {
+            // best-effort
+        }
+    }
+
+    await manager.close();
+
+    // Filesystem-only leftovers from interrupted setups.
+    getIndexerStorage().cleanStaleDirs("store_emb_test_");
 });
 
 describe("IndexStore embedder integration", () => {
