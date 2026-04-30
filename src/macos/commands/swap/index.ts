@@ -34,8 +34,10 @@ export function registerSwapCommand(program: Command): void {
 }
 
 async function main(options: SwapOptions): Promise<void> {
-    const limit = Math.max(1, Number.parseInt(options.limit, 10) || 30);
-    const top = Math.max(1, Number.parseInt(options.top, 10) || 25);
+    const parsedLimit = Number.parseInt(options.limit, 10);
+    const parsedTop = Number.parseInt(options.top, 10);
+    const limit = Number.isNaN(parsedLimit) ? 30 : Math.max(1, parsedLimit);
+    const top = Number.isNaN(parsedTop) ? 25 : Math.max(1, parsedTop);
     const all = Boolean(options.all);
 
     if (options.json) {

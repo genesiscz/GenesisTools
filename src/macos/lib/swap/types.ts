@@ -24,4 +24,6 @@ export interface ScanResult {
     totalProcesses: number;
     cacheHits: number;
     freshScans: number;
+    inaccessibleCount: number;
+    wasAllMode: boolean;
 }

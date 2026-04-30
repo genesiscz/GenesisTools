@@ -64,9 +64,13 @@ function renderSummary(result: ScanResult): void {
         result.cacheHits > 0
             ? `${pc.dim("  ·  ")}${pc.white(String(result.freshScans))}${pc.dim(" fresh, ")}${pc.green(String(result.cacheHits))}${pc.dim(" cached")}`
             : "";
+    const inaccessibleNote =
+        result.inaccessibleCount > 0
+            ? `${pc.dim("  ·  ")}${pc.yellow(String(result.inaccessibleCount))}${pc.dim(" inaccessible (root needed)")}`
+            : "";
 
     console.log(
-        `  ${pc.dim("Scanned")}     ${pc.white(String(scannedCount))}${pc.dim(" of ")}${pc.white(String(totalProcesses))}${pc.dim(" processes  ·  ")}${pc.white(String(processes.length))}${pc.dim(" with swap > 0")}${cacheNote}`
+        `  ${pc.dim("Scanned")}     ${pc.white(String(scannedCount))}${pc.dim(" of ")}${pc.white(String(totalProcesses))}${pc.dim(" processes  ·  ")}${pc.white(String(processes.length))}${pc.dim(" with swap > 0")}${cacheNote}${inaccessibleNote}`
     );
     console.log();
 }
@@ -99,9 +103,15 @@ export function renderResult(result: ScanResult, top: number): void {
     renderHeader();
     renderSummary(result);
 
+    const showAllHint = !result.wasAllMode;
+
     if (result.processes.length === 0) {
         console.log(pc.dim("  No processes with swap usage found among the scanned set.\n"));
-        console.log(pc.dim(`  Try ${pc.cyan("tools macos swap --all")} to scan every process (slow).\n`));
+
+        if (showAllHint) {
+            console.log(pc.dim(`  Try ${pc.cyan("tools macos swap --all")} to scan every process (slow).\n`));
+        }
+
         return;
     }
 
@@ -122,9 +132,10 @@ export function renderResult(result: ScanResult, top: number): void {
     console.log();
 
     const totalSwap = sorted.reduce((acc, p) => acc + p.swapBytes, 0);
-    console.log(
-        `${pc.dim(`  Top-${sorted.length} swap total: `)}${pc.white(formatBytes(totalSwap))}${pc.dim("  ·  Run ")}${pc.cyan("tools macos swap --all")}${pc.dim(" to scan everything")}`
-    );
+    const trailing = showAllHint
+        ? `${pc.dim("  ·  Run ")}${pc.cyan("tools macos swap --all")}${pc.dim(" to scan everything")}`
+        : "";
+    console.log(`${pc.dim(`  Top-${sorted.length} swap total: `)}${pc.white(formatBytes(totalSwap))}${trailing}`);
     console.log();
 }
 

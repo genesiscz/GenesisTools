@@ -161,7 +161,7 @@ function sameProcess(cachedStart: number, currentStart: number): boolean {
 }
 
 async function spawn(cmd: string[], timeoutMs?: number): Promise<{ stdout: string; exitCode: number }> {
-    const proc = Bun.spawn({ cmd, stdio: ["ignore", "pipe", "pipe"] });
+    const proc = Bun.spawn({ cmd, stdio: ["ignore", "pipe", "ignore"] });
     let timer: ReturnType<typeof setTimeout> | undefined;
 
     if (timeoutMs !== undefined) {
@@ -180,23 +180,38 @@ async function spawn(cmd: string[], timeoutMs?: number): Promise<{ stdout: strin
 }
 
 async function getSystemSwap(): Promise<SystemSwap> {
-    const { stdout } = await spawn(["sysctl", "vm.swapusage"]);
+    const { stdout, exitCode } = await spawn(["sysctl", "vm.swapusage"]);
+
+    if (exitCode !== 0) {
+        throw new Error(`sysctl vm.swapusage failed with exit code ${exitCode}`);
+    }
+
     return parseSwapUsage(stdout);
 }
 
 async function getAllPsRows(): Promise<PsRow[]> {
-    const { stdout } = await spawn(["ps", "-A", "-o", "pid=,rss=,etime=,comm="]);
+    const { stdout, exitCode } = await spawn(["ps", "-A", "-o", "pid=,rss=,etime=,comm="]);
+
+    if (exitCode !== 0) {
+        throw new Error(`ps -A failed with exit code ${exitCode}`);
+    }
+
     return parsePsOutput(stdout);
 }
 
-async function getProcSwap(pid: number): Promise<number> {
+interface ProbeResult {
+    swapBytes: number;
+    accessible: boolean;
+}
+
+async function getProcSwap(pid: number): Promise<ProbeResult> {
     const { stdout, exitCode } = await spawn(["vmmap", "-summary", String(pid)], VMMAP_TIMEOUT_MS);
 
     if (exitCode !== 0) {
-        return 0;
+        return { swapBytes: 0, accessible: false };
     }
 
-    return parseVmmapSwap(stdout);
+    return { swapBytes: parseVmmapSwap(stdout), accessible: true };
 }
 
 async function pool<T, R>(items: T[], concurrency: number, worker: (item: T) => Promise<R>): Promise<R[]> {
@@ -243,24 +258,28 @@ export async function scan(options: ScanOptions): Promise<ScanResult> {
         }
     }
 
-    const freshSwaps = await pool(toScan, VMMAP_CONCURRENCY, (row) => getProcSwap(row.pid));
+    const freshProbes = await pool(toScan, VMMAP_CONCURRENCY, (row) => getProcSwap(row.pid));
     const freshEntries: ProcessSwap[] = toScan.map((row, i) => ({
         pid: row.pid,
         name: row.name,
         rssBytes: row.rssBytes,
-        swapBytes: freshSwaps[i],
+        swapBytes: freshProbes[i].swapBytes,
         uptimeMs: row.uptimeMs,
     }));
+    const inaccessibleCount = freshProbes.filter((probe) => !probe.accessible).length;
 
     const livePids = new Set(psRows.map((r) => r.pid));
-    const newCacheEntries: CachedEntry[] = toScan.map((row, i) => ({
-        pid: row.pid,
-        name: row.name,
-        swapBytes: freshSwaps[i],
-        startTimeMs: now - row.uptimeMs,
-        cachedAt: now,
-    }));
-    const rescannedPids = new Set(newCacheEntries.map((e) => e.pid));
+    const newCacheEntries: CachedEntry[] = toScan
+        .map((row, i) => ({ row, probe: freshProbes[i] }))
+        .filter(({ probe }) => probe.accessible)
+        .map(({ row, probe }) => ({
+            pid: row.pid,
+            name: row.name,
+            swapBytes: probe.swapBytes,
+            startTimeMs: now - row.uptimeMs,
+            cachedAt: now,
+        }));
+    const rescannedPids = new Set(toScan.map((row) => row.pid));
 
     const survivingCacheEntries: CachedEntry[] = [];
 
@@ -283,5 +302,7 @@ export async function scan(options: ScanOptions): Promise<ScanResult> {
         totalProcesses: psRows.length,
         cacheHits: cacheHitEntries.length,
         freshScans: toScan.length,
+        inaccessibleCount,
+        wasAllMode: options.all,
     };
 }
