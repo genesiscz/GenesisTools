@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
 import logger from "@app/logger";
+import { type Migration, Migrator } from "@app/utils/database/migrations";
 import { MacOS } from "@app/utils/macos/MacOS";
 import { detectTerminalApp } from "@app/utils/terminal";
 
@@ -10,6 +11,8 @@ import { detectTerminalApp } from "@app/utils/terminal";
  */
 export abstract class MacDatabase {
     private db: Database | null = null;
+    protected readonly migrations: Migration[] = [];
+    protected readonly migrationTableName?: string;
 
     constructor() {
         process.on("exit", () => this.close());
@@ -18,6 +21,11 @@ export abstract class MacDatabase {
     protected abstract readonly dbPath: string;
     protected abstract readonly dbLabel: string;
     protected abstract readonly notFoundMessage: string;
+
+    getMigrator(): Migrator {
+        const tableName = this.migrationTableName ?? this.dbLabel.toLowerCase().replace(/[^a-z0-9_]+/g, "_");
+        return new Migrator(this.getDb(), this.migrations, { tableName });
+    }
 
     protected getDb(): Database {
         if (this.db) {
