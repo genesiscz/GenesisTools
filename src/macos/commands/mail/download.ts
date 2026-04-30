@@ -136,7 +136,7 @@ export function registerDownloadCommand(program: Command): void {
 
                     // Fetch recipients for all messages
                     const rowids = filteredMessages.map((m) => m.rowid);
-                    const recipientsMap = db.getRecipients(rowids);
+                    const recipientsMap = await db.getRecipients(rowids);
 
                     // Create EmlxBodyExtractor (fast: ~42 msg/s L2, instant L1)
                     const emlx = await EmlxBodyExtractor.create();

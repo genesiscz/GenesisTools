@@ -142,17 +142,16 @@ export function registerMonitorCommand(program: Command): void {
                 const spinner = p.spinner();
                 spinner.start(`Fetching latest ${limit} messages from INBOX...`);
 
-                const rows = db.listMessages("INBOX", limit);
+                const rows = await db.listMessages("INBOX", limit);
 
                 if (rows.length === 0) {
                     spinner.stop("No messages found in INBOX.");
                     return;
                 }
 
-                // Build MailMessage objects
                 const rowids = rows.map((r) => r.rowid);
-                const attachmentsMap = db.getAttachments(rowids);
-                const recipientsMap = db.getRecipients(rowids);
+                const attachmentsMap = await db.getAttachments(rowids);
+                const recipientsMap = await db.getRecipients(rowids);
                 const messages: MailMessage[] = rows.map((row) => {
                     const msg = rowToMessage(row);
                     msg.attachments = attachmentsMap.get(row.rowid) ?? [];

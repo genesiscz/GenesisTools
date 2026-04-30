@@ -153,7 +153,7 @@ export function registerSearchCommand(program: Command): void {
 
             try {
                 if (options.helpReceivers) {
-                    const receivers = db.listReceivers();
+                    const receivers = await db.listReceivers();
                     announce("\nReceiver addresses (by message count):\n");
 
                     for (const r of receivers) {
@@ -239,7 +239,7 @@ export function registerSearchCommand(program: Command): void {
                     }
 
                     resolvedMethod = ftsResults[0]?.method;
-                    rows = ftsRowids.length > 0 ? db.getMessagesByRowids(ftsRowids) : [];
+                    rows = ftsRowids.length > 0 ? await db.getMessagesByRowids(ftsRowids) : [];
                     searchMethod = "fts";
 
                     const orderByRowid = new Map(ftsRowids.map((rowid, index) => [rowid, index]));
@@ -260,7 +260,7 @@ export function registerSearchCommand(program: Command): void {
 
                     const [spotlightRowids, likeRows] = await Promise.all([
                         mdfindMailRowids(query),
-                        Promise.resolve(db.searchMessages(searchOpts)),
+                        db.searchMessages(searchOpts),
                     ]);
 
                     const rowidSet = new Set<number>(likeRows.map((r) => r.rowid));
@@ -268,7 +268,7 @@ export function registerSearchCommand(program: Command): void {
 
                     const spotlightRows =
                         newSpotlightIds.length > 0
-                            ? db.getMessagesByRowids(newSpotlightIds, {
+                            ? await db.getMessagesByRowids(newSpotlightIds, {
                                   from: searchOpts.from,
                                   to: searchOpts.to,
                                   mailbox: searchOpts.mailbox,
@@ -293,7 +293,7 @@ export function registerSearchCommand(program: Command): void {
 
                 const isFts = searchMethod === "fts";
                 const rowids = rows.map((r) => r.rowid);
-                const attachmentsMap = db.getAttachments(rowids);
+                const attachmentsMap = await db.getAttachments(rowids);
 
                 const messages: MailMessage[] = rows.map((row) => {
                     const msg = rowToMessage(row);
@@ -354,7 +354,7 @@ export function registerSearchCommand(program: Command): void {
                 });
 
                 if (needsRecipients(finalColumns)) {
-                    const recipientsMap = db.getRecipients(rowids);
+                    const recipientsMap = await db.getRecipients(rowids);
 
                     for (const msg of messages) {
                         msg.recipients = recipientsMap.get(msg.rowid) ?? [];

@@ -43,7 +43,7 @@ export function registerListCommand(program: Command): void {
                 const spinner = p.spinner();
                 spinner.start(`Fetching latest ${limit} emails from ${targetMailbox}...`);
 
-                let rows = db.listMessages(targetMailbox, limit);
+                let rows = await db.listMessages(targetMailbox, limit);
 
                 if (options.sinceLastCheck) {
                     const mailStorage = new MailStorage();
@@ -59,9 +59,8 @@ export function registerListCommand(program: Command): void {
                     return;
                 }
 
-                // Enrich with attachments
                 const rowids = rows.map((r) => r.rowid);
-                const attachmentsMap = db.getAttachments(rowids);
+                const attachmentsMap = await db.getAttachments(rowids);
                 const messages: MailMessage[] = rows.map((row) => {
                     const msg = rowToMessage(row);
                     msg.attachments = attachmentsMap.get(row.rowid) ?? [];
@@ -72,7 +71,7 @@ export function registerListCommand(program: Command): void {
 
                 // Enrich with recipients if any recipient column is selected
                 if (needsRecipients(columns)) {
-                    const recipientsMap = db.getRecipients(rowids);
+                    const recipientsMap = await db.getRecipients(rowids);
 
                     for (const msg of messages) {
                         msg.recipients = recipientsMap.get(msg.rowid) ?? [];
