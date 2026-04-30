@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import type { SearchEngine, SearchEngineConfig, SearchOptions, SearchResult } from "./types";
+import type { SearchEngine, SearchEngineConfig, SearchFilterPredicate, SearchOptions, SearchResult } from "./types";
 
 interface TestDoc extends Record<string, unknown> {
     id: string;
@@ -16,12 +16,14 @@ describe("Search types", () => {
             fields: ["title", "body"],
             boost: { title: 2.0 },
             hybridWeights: { text: 0.7, vector: 0.3 },
-            filters: { category: "test" },
+            filters: { sql: "c.category = ?", params: ["test"] },
         };
 
         expect(opts.query).toBe("hello");
         expect(opts.mode).toBe("fulltext");
-        expect(opts.limit).toBe(10);
+        const predicate: SearchFilterPredicate = opts.filters ?? { sql: "", params: [] };
+        expect(predicate.sql).toBe("c.category = ?");
+        expect(predicate.params).toEqual(["test"]);
     });
 
     it("SearchResult can be constructed with all method types", () => {

@@ -1,8 +1,10 @@
 import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import logger from "@app/logger";
 import { Embedder } from "@app/utils/ai/tasks/Embedder";
+import { getPendingMigrations, runMigrations } from "@app/utils/database/migrations";
 import { acquireLock, type LockHandle } from "@app/utils/fs/lock";
 import { SafeJSON } from "@app/utils/json";
 import { SearchEngine } from "@app/utils/search/drivers/sqlite-fts5/index";
@@ -14,7 +16,10 @@ import {
 } from "@app/utils/search/stores/sqlite-vec-loader";
 import type { VectorStore } from "@app/utils/search/stores/vector-store";
 import type { SearchOptions, SearchResult } from "@app/utils/search/types";
+import { buildMetadataPredicate, type MetadataFilter } from "./filters";
+import { INDEXER_MIGRATIONS } from "./indexer-migrations";
 import { deserializeMerkleTree } from "./merkle";
+import { applySourceMetadataSchema, backfillMetadataColumns, coerceMetadataValue } from "./metadata-schema";
 import { PathHashStore } from "./path-hashes";
 import { getDbSizeBytes, getIndexerStorage, sanitizeName } from "./storage";
 import {
@@ -24,6 +29,7 @@ import {
     type IndexMeta,
     type IndexStats,
     type MerkleNode,
+    type MetadataColumnSpec,
 } from "./types";
 
 export interface IndexStore {
@@ -166,6 +172,44 @@ function migrateFromMerkleBlob(db: Database, pathHashStore: PathHashStore): void
     db.run("DROP TABLE merkle_tree");
 }
 
+function mergeSearchFilters(
+    base: { sql: string; params: Array<string | number> } | undefined,
+    extra: { sql: string; params: Array<string | number> }
+): { sql: string; params: Array<string | number> } | undefined {
+    if (!base?.sql && !extra.sql) {
+        return undefined;
+    }
+
+    if (!base?.sql) {
+        return extra.sql ? extra : undefined;
+    }
+
+    if (!extra.sql) {
+        return base;
+    }
+
+    return {
+        sql: `(${base.sql}) AND (${extra.sql})`,
+        params: [...base.params, ...extra.params],
+    };
+}
+
+function mergeChunkMetadata(
+    doc: ChunkRecord & Record<string, unknown>,
+    metadataColumns: MetadataColumnSpec[]
+): Record<string, unknown> {
+    const bag =
+        typeof doc.metadata_json === "string" ? (SafeJSON.parse(doc.metadata_json) as Record<string, unknown>) : {};
+
+    for (const col of metadataColumns) {
+        if (doc[col.name] !== undefined && doc[col.name] !== null) {
+            bag[col.name] = doc[col.name];
+        }
+    }
+
+    return bag;
+}
+
 export type ReadonlySearchMode = "fulltext" | "hybrid" | "vector" | "auto";
 
 export interface ReadonlySearchOptions {
@@ -173,6 +217,12 @@ export interface ReadonlySearchOptions {
     limit?: number;
     /** When false, skip vector-store/embedder construction even if hybrid/vector requested. Default: true. */
     enableVector?: boolean;
+    /** Optional WHERE-clause predicate AND-appended to BM25/cosine queries. */
+    filters?: { sql: string; params: Array<string | number> };
+    /** Optional ATTACH directive applied before search; DETACH in finally. */
+    attach?: { alias: string; dbPath: string; mode?: "ro" | "rw" };
+    /** Optional typed metadata column filters AND-appended to BM25/cosine queries. */
+    metadataFilters?: MetadataFilter[];
 }
 
 async function createReadonlyEmbedder(meta: IndexMeta): Promise<Embedder | null> {
@@ -192,6 +242,11 @@ async function createReadonlyEmbedder(meta: IndexMeta): Promise<Embedder | null>
         return null;
     }
 }
+function sqliteTableExists(db: Database, name: string): boolean {
+    return db.query("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(name) !== null;
+}
+
+const pendingWarnedFor = new Set<string>();
 
 /**
  * Search an index in read-only mode — no lock, safe for concurrent access.
@@ -221,7 +276,44 @@ export async function searchIndexReadonly(
     assertVecExtensionAvailable(db, tableName);
 
     try {
+        if (opts?.attach) {
+            const { alias, dbPath: attachPath, mode = "ro" } = opts.attach;
+
+            if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(alias)) {
+                throw new Error(`Invalid attach alias: ${alias}`);
+            }
+
+            const baseUri = pathToFileURL(resolve(attachPath));
+            if (mode === "ro") {
+                baseUri.search = "mode=ro";
+            }
+            const uri = baseUri.toString().replace(/'/g, "''");
+            db.run(`ATTACH DATABASE '${uri}' AS ${alias}`);
+        }
+
+        if (sqliteTableExists(db, "_migrations")) {
+            const pending = getPendingMigrations(db, INDEXER_MIGRATIONS, { tableName });
+
+            if (pending.length > 0 && !pendingWarnedFor.has(indexName)) {
+                pendingWarnedFor.add(indexName);
+                logger.warn(
+                    `[indexer] outdated schema for "${indexName}" — next "tools macos mail index sync" will apply: ${pending.map((m) => m.id).join(", ")}`
+                );
+            }
+        }
+
         const meta = readMeta(db, { name: indexName } as IndexConfig, Date.now());
+        if (meta.indexingStatus === "in-progress") {
+            const ageMs = Date.now() - (meta.lastSyncAt ?? 0);
+            const staleThresholdMs = 30 * 60 * 1000;
+
+            if (ageMs > staleThresholdMs) {
+                logger.warn(
+                    `[indexer] "${indexName}" status is "in-progress" but last update was ${Math.round(ageMs / 60000)}min ago — likely interrupted. Run: tools macos mail index sync`
+                );
+            }
+        }
+
         const hasEmbeddings = (meta.stats?.totalEmbeddings ?? 0) > 0 && !!meta.indexEmbedding;
 
         const requestedMode = opts?.mode ?? "auto";
@@ -291,19 +383,38 @@ export async function searchIndexReadonly(
             skipSchemaInit: true,
         });
 
+        const metadataPredicate = opts?.metadataFilters?.length
+            ? buildMetadataPredicate(tableName, opts.metadataFilters)
+            : { sql: "", params: [] };
+        const filters = mergeSearchFilters(opts?.filters, metadataPredicate);
+
         const results = await fts.search({
             query,
             mode: resolvedMode,
             limit: opts?.limit ?? 100,
+            filters,
         });
 
-        return results.map((r: SearchResult<ChunkDoc>) => ({
-            doc: r.doc as unknown as ChunkRecord,
-            score: r.score,
-            method: r.method,
-            ftsSnippet: r.ftsSnippet,
-        }));
+        const metadataColumns = meta.metadataColumns ?? [];
+        return results.map((r: SearchResult<ChunkDoc>) => {
+            const doc = r.doc as unknown as ChunkRecord & Record<string, unknown>;
+            doc.sourceId = typeof doc.source_id === "string" ? doc.source_id : doc.sourceId;
+            doc.metadata = mergeChunkMetadata(doc, metadataColumns);
+            return {
+                doc,
+                score: r.score,
+                method: r.method,
+                ftsSnippet: r.ftsSnippet,
+            };
+        });
     } finally {
+        if (opts?.attach) {
+            try {
+                db.run(`DETACH DATABASE ${opts.attach.alias}`);
+            } catch {
+                // detach failures shouldn't mask the search result
+            }
+        }
         db.close();
     }
 }
@@ -446,7 +557,8 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
         let embTableExists =
             vecTableExists || !!db.query("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(embTable);
 
-        // Run source_id column migration once at store creation (B3)
+        // Phase 0: ensure source_id column exists (cannot be a migration because
+        // migrations assume it; this is the bootstrap step from a pre-source_id schema).
         const contentTableExists = db
             .query("SELECT name FROM sqlite_master WHERE type='table' AND name=?")
             .get(contentTable) as { name: string } | null;
@@ -459,6 +571,48 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
             if (!hasSourceId) {
                 db.run(`ALTER TABLE ${contentTable} ADD COLUMN source_id TEXT DEFAULT ''`);
             }
+
+            // Phase 1: run all registered migrations idempotently.
+            runMigrations(db, INDEXER_MIGRATIONS, { tableName });
+
+            // Phase 2: metadata column schema evolution
+            const declaredMeta = config.source?.metadataColumns?.() ?? [];
+            const metaReadNow = readMeta(db, config, createdAt);
+            const currentMeta = metaReadNow.metadataColumns ?? [];
+            const declaredByName = new Map(declaredMeta.map((c) => [c.name, c]));
+            const currentByName = new Map(currentMeta.map((c) => [c.name, c]));
+            const needsMetaPersist =
+                declaredMeta.length !== currentMeta.length ||
+                declaredMeta.some((c) => {
+                    const persisted = currentByName.get(c.name);
+                    return (
+                        !persisted ||
+                        persisted.type !== c.type ||
+                        persisted.indexed !== c.indexed ||
+                        persisted.notNull !== c.notNull ||
+                        persisted.default !== c.default
+                    );
+                });
+            const metaDiff = applySourceMetadataSchema(db, tableName, declaredMeta, currentMeta);
+
+            if (metaDiff.added.length > 0 && config.source?.populateMetadata) {
+                const addedSpecs: MetadataColumnSpec[] = [];
+                for (const name of metaDiff.added) {
+                    const spec = declaredByName.get(name);
+                    if (spec) {
+                        addedSpecs.push(spec);
+                    }
+                }
+                await backfillMetadataColumns(db, tableName, config.source, addedSpecs);
+            }
+
+            if (needsMetaPersist || metaDiff.added.length > 0 || metaDiff.indexed.length > 0) {
+                metaReadNow.metadataColumns = declaredMeta;
+                db.run("INSERT OR REPLACE INTO index_meta (key, value) VALUES (?, ?)", [
+                    "meta",
+                    SafeJSON.stringify(metaReadNow),
+                ]);
+            }
         }
 
         const store: IndexStore = {
@@ -470,11 +624,66 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
                 cachedMeta = null;
 
                 const tx = db.transaction(() => {
+                    const declaredMeta = config.source?.metadataColumns?.() ?? [];
+                    const declaredNames = new Set(declaredMeta.map((c) => c.name));
+                    const hasTypedCols = declaredMeta.length > 0;
+
                     for (const chunk of chunks) {
-                        db.run(
-                            `INSERT OR REPLACE INTO ${contentTable} (id, content, name, filePath, source_id) VALUES (?, ?, ?, ?, ?)`,
-                            [chunk.id, chunk.content, chunk.name ?? "", chunk.filePath, chunk.sourceId ?? ""]
-                        );
+                        if (hasTypedCols && chunk.metadata) {
+                            const metadata = chunk.metadata;
+                            const typedCols = declaredMeta.filter((c) => Object.hasOwn(metadata, c.name));
+                            const typedVals: Array<string | number | null> = typedCols.map((c) =>
+                                coerceMetadataValue(metadata[c.name])
+                            );
+                            const bag: Record<string, unknown> = {};
+
+                            for (const k of Object.keys(metadata)) {
+                                if (!declaredNames.has(k)) {
+                                    bag[k] = metadata[k];
+                                }
+                            }
+
+                            const colNames = [
+                                "id",
+                                "content",
+                                "name",
+                                "filePath",
+                                "source_id",
+                                ...typedCols.map((c) => c.name),
+                                "metadata_json",
+                            ];
+                            const placeholders = colNames.map(() => "?").join(",");
+                            const values: Array<string | number | null> = [
+                                chunk.id,
+                                chunk.content,
+                                chunk.name ?? "",
+                                chunk.filePath,
+                                chunk.sourceId ?? "",
+                                ...typedVals,
+                                SafeJSON.stringify(bag),
+                            ];
+                            db.run(
+                                `INSERT OR REPLACE INTO ${contentTable} (${colNames.join(",")}) VALUES (${placeholders})`,
+                                values
+                            );
+                        } else if (chunk.metadata) {
+                            db.run(
+                                `INSERT OR REPLACE INTO ${contentTable} (id, content, name, filePath, source_id, metadata_json) VALUES (?, ?, ?, ?, ?, ?)`,
+                                [
+                                    chunk.id,
+                                    chunk.content,
+                                    chunk.name ?? "",
+                                    chunk.filePath,
+                                    chunk.sourceId ?? "",
+                                    SafeJSON.stringify(chunk.metadata),
+                                ]
+                            );
+                        } else {
+                            db.run(
+                                `INSERT OR REPLACE INTO ${contentTable} (id, content, name, filePath, source_id) VALUES (?, ?, ?, ?, ?)`,
+                                [chunk.id, chunk.content, chunk.name ?? "", chunk.filePath, chunk.sourceId ?? ""]
+                            );
+                        }
                     }
 
                     if (embeddings && embeddings.size > 0) {
@@ -695,12 +904,18 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
             async search(opts: SearchOptions): Promise<SearchResult<ChunkRecord>[]> {
                 const minScore = opts.minScore ?? config.search?.minScore;
                 const results = await fts.search({ ...opts, minScore });
-                return results.map((r) => ({
-                    doc: r.doc as unknown as ChunkRecord,
-                    score: r.score,
-                    method: r.method,
-                    ftsSnippet: r.ftsSnippet,
-                }));
+                const metadataColumns = readMeta(db, config, createdAt).metadataColumns ?? [];
+                return results.map((r) => {
+                    const doc = r.doc as unknown as ChunkRecord & Record<string, unknown>;
+                    doc.sourceId = typeof doc.source_id === "string" ? doc.source_id : doc.sourceId;
+                    doc.metadata = mergeChunkMetadata(doc, metadataColumns);
+                    return {
+                        doc,
+                        score: r.score,
+                        method: r.method,
+                        ftsSnippet: r.ftsSnippet,
+                    };
+                });
             },
 
             getStats(): IndexStats {

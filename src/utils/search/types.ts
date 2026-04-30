@@ -10,6 +10,11 @@ export interface SearchEngine<TDoc extends Record<string, unknown> = Record<stri
     readonly count: number;
 }
 
+export interface SearchFilterPredicate {
+    sql: string;
+    params: Array<string | number>;
+}
+
 export interface SearchOptions {
     query: string;
     mode?: "fulltext" | "vector" | "hybrid";
@@ -17,7 +22,7 @@ export interface SearchOptions {
     fields?: string[];
     boost?: Record<string, number>;
     hybridWeights?: { text: number; vector: number };
-    filters?: Record<string, unknown>;
+    filters?: SearchFilterPredicate;
     /** Override the text used for vector embedding (e.g., with a task prefix). FTS still uses `query`. */
     vectorQuery?: string;
     /** Minimum score threshold -- results below this are filtered out. Default: no filtering. */
