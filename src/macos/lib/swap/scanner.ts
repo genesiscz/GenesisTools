@@ -1,4 +1,4 @@
-import type { SystemSwap } from "./types";
+import type { ProcessSwap, ScanOptions, ScanResult, SystemSwap } from "./types";
 
 const UNIT_MULT: Record<string, number> = {
     K: 1024,
@@ -102,4 +102,87 @@ export function parseVmmapSwap(output: string): number {
     }
 
     return 0;
+}
+
+const VMMAP_TIMEOUT_MS = 4000;
+const VMMAP_CONCURRENCY = 8;
+
+async function spawn(cmd: string[], timeoutMs?: number): Promise<{ stdout: string; exitCode: number }> {
+    const proc = Bun.spawn({ cmd, stdio: ["ignore", "pipe", "pipe"] });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    if (timeoutMs !== undefined) {
+        timer = setTimeout(() => proc.kill(), timeoutMs);
+    }
+
+    try {
+        const stdout = await new Response(proc.stdout).text();
+        const exitCode = await proc.exited;
+        return { stdout, exitCode };
+    } finally {
+        if (timer) {
+            clearTimeout(timer);
+        }
+    }
+}
+
+async function getSystemSwap(): Promise<SystemSwap> {
+    const { stdout } = await spawn(["sysctl", "vm.swapusage"]);
+    return parseSwapUsage(stdout);
+}
+
+async function getAllPsRows(): Promise<PsRow[]> {
+    const { stdout } = await spawn(["ps", "-A", "-o", "pid=,rss=,etime=,comm="]);
+    return parsePsOutput(stdout);
+}
+
+async function getProcSwap(pid: number): Promise<number> {
+    const { stdout, exitCode } = await spawn(["vmmap", "-summary", String(pid)], VMMAP_TIMEOUT_MS);
+
+    if (exitCode !== 0) {
+        return 0;
+    }
+
+    return parseVmmapSwap(stdout);
+}
+
+async function pool<T, R>(items: T[], concurrency: number, worker: (item: T) => Promise<R>): Promise<R[]> {
+    const results: R[] = new Array(items.length);
+    let cursor = 0;
+
+    async function run(): Promise<void> {
+        while (cursor < items.length) {
+            const i = cursor++;
+            results[i] = await worker(items[i]);
+        }
+    }
+
+    await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, run));
+    return results;
+}
+
+export async function scan(options: ScanOptions): Promise<ScanResult> {
+    const [system, psRows] = await Promise.all([getSystemSwap(), getAllPsRows()]);
+
+    const sortedByRss = [...psRows].sort((a, b) => b.rssBytes - a.rssBytes);
+    const candidates = options.all ? sortedByRss : sortedByRss.slice(0, options.limit);
+
+    const swaps = await pool(candidates, VMMAP_CONCURRENCY, (row) => getProcSwap(row.pid));
+
+    const processes: ProcessSwap[] = candidates
+        .map((row, i) => ({
+            pid: row.pid,
+            name: row.name,
+            rssBytes: row.rssBytes,
+            swapBytes: swaps[i],
+            uptimeMs: row.uptimeMs,
+        }))
+        .filter((entry) => entry.swapBytes > 0);
+
+    return {
+        system,
+        processes,
+        scannedCount: candidates.length,
+        totalProcesses: psRows.length,
+    };
 }
