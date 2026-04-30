@@ -63,7 +63,7 @@ export function registerShowCommand(program: Command): void {
                     process.exit(1);
                 }
 
-                const row = db.getMessageById(rowid);
+                const row = await db.getMessageById(rowid);
 
                 if (!row) {
                     console.error(`Message ${rowid} not found.`);
@@ -72,10 +72,9 @@ export function registerShowCommand(program: Command): void {
 
                 const msg = rowToMessage(row);
 
-                // Enrich with recipients and attachments
-                const recipientsMap = db.getRecipients([rowid]);
+                const recipientsMap = await db.getRecipients([rowid]);
                 msg.recipients = recipientsMap.get(rowid) ?? [];
-                const attachmentsMap = db.getAttachments([rowid]);
+                const attachmentsMap = await db.getAttachments([rowid]);
                 msg.attachments = attachmentsMap.get(rowid) ?? [];
 
                 // Get body via EmlxBodyExtractor

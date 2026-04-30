@@ -1,10 +1,10 @@
-import { Database, type Statement } from "bun:sqlite";
-import { existsSync, mkdirSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { getAskDatabase, openAskDatabase } from "@app/ask/lib/db";
+import type { AskDB } from "@app/ask/lib/db-types";
 import logger from "@app/logger";
+import type { DatabaseClient } from "@app/utils/database";
 import { SafeJSON } from "@app/utils/json";
 import type { LanguageModelUsage } from "ai";
+import { sql } from "kysely";
 
 export interface UsageRecord {
     id?: number;
@@ -45,57 +45,13 @@ export interface ModelUsage {
     avgCostPerMessage: number;
 }
 
+const sinceDays = (days: number) => sql<string>`date('now', ${`-${days} days`})`;
+
 export class UsageDatabase {
-    private db: Database;
-    private dbPath: string;
+    private readonly client: DatabaseClient<AskDB>;
 
     constructor(dbPath?: string) {
-        // Default to ~/.genesis-tools/ask.sqlite
-        const defaultPath = join(homedir(), ".genesis-tools", "ask.sqlite");
-        this.dbPath = dbPath || defaultPath;
-
-        // Ensure directory exists
-        const dbDir = dirname(this.dbPath);
-        if (!existsSync(dbDir)) {
-            mkdirSync(dbDir, { recursive: true });
-            logger.info(`Created directory: ${dbDir}`);
-        }
-
-        // Open database
-        this.db = new Database(this.dbPath);
-        this.db.exec("PRAGMA journal_mode = WAL;"); // Better concurrency
-
-        this.initializeSchema();
-    }
-
-    private initializeSchema(): void {
-        // Usage records table
-        this.db.exec(`
-            CREATE TABLE IF NOT EXISTS usage_records (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id TEXT NOT NULL,
-                provider TEXT NOT NULL,
-                model TEXT NOT NULL,
-                input_tokens INTEGER NOT NULL DEFAULT 0,
-                output_tokens INTEGER NOT NULL DEFAULT 0,
-                cached_input_tokens INTEGER NOT NULL DEFAULT 0,
-                total_tokens INTEGER NOT NULL DEFAULT 0,
-                cost REAL NOT NULL DEFAULT 0,
-                timestamp TEXT NOT NULL,
-                message_index INTEGER,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
-        `);
-
-        // Indexes for faster queries
-        this.db.exec(`
-            CREATE INDEX IF NOT EXISTS idx_session_id ON usage_records(session_id);
-            CREATE INDEX IF NOT EXISTS idx_timestamp ON usage_records(timestamp);
-            CREATE INDEX IF NOT EXISTS idx_provider_model ON usage_records(provider, model);
-            CREATE INDEX IF NOT EXISTS idx_date ON usage_records(date(timestamp));
-        `);
-
-        logger.debug("Usage database schema initialized");
+        this.client = dbPath ? openAskDatabase(dbPath) : getAskDatabase();
     }
 
     async recordUsage(
@@ -106,11 +62,9 @@ export class UsageDatabase {
         cost: number,
         messageIndex?: number
     ): Promise<number> {
-        // DEBUG: Log what we're storing
         logger.debug(`[UsageDatabase] recordUsage called for ${provider}/${model}`);
         logger.debug({ usage: SafeJSON.stringify(usage, null, 2) }, `[UsageDatabase] usage object`);
 
-        // Extract tokens using new API naming
         const inputTokens = usage.inputTokens ?? 0;
         const outputTokens = usage.outputTokens ?? 0;
         const cachedInputTokens = usage.cachedInputTokens ?? 0;
@@ -121,55 +75,42 @@ export class UsageDatabase {
             `[UsageDatabase] Storing tokens`
         );
 
-        const timestamp = new Date().toISOString();
+        const result = await this.client.kysely
+            .insertInto("usage_records")
+            .values({
+                session_id: sessionId,
+                provider,
+                model,
+                input_tokens: inputTokens,
+                output_tokens: outputTokens,
+                cached_input_tokens: cachedInputTokens,
+                total_tokens: totalTokens,
+                cost,
+                timestamp: new Date().toISOString(),
+                message_index: messageIndex ?? null,
+            })
+            .executeTakeFirstOrThrow();
 
-        const stmt = this.db.prepare(`
-            INSERT INTO usage_records (
-                session_id, provider, model,
-                input_tokens, output_tokens, cached_input_tokens, total_tokens,
-                cost, timestamp, message_index
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `);
+        const id = Number(result.insertId ?? 0);
+        logger.debug(`[UsageDatabase] Record inserted with ID: ${id}`);
 
-        const result = stmt.run(
-            sessionId,
-            provider,
-            model,
-            inputTokens,
-            outputTokens,
-            cachedInputTokens,
-            totalTokens,
-            cost,
-            timestamp,
-            messageIndex ?? null
-        );
-
-        logger.debug(`[UsageDatabase] Record inserted with ID: ${result.lastInsertRowid}`);
-
-        return result.lastInsertRowid as number;
+        return id;
     }
 
-    getDailyUsage(days: number = 30): DailyUsage[] {
-        const stmt = this.db.prepare(`
-            SELECT 
-                date(timestamp) as date,
-                SUM(cost) as total_cost,
-                SUM(total_tokens) as total_tokens,
-                COUNT(*) as message_count,
-                COUNT(DISTINCT provider) as provider_count
-            FROM usage_records
-            WHERE date(timestamp) >= date('now', '-' || ? || ' days')
-            GROUP BY date(timestamp)
-            ORDER BY date DESC
-        `);
-
-        const rows = stmt.all(days) as Array<{
-            date: string;
-            total_cost: number;
-            total_tokens: number;
-            message_count: number;
-            provider_count: number;
-        }>;
+    async getDailyUsage(days = 30): Promise<DailyUsage[]> {
+        const rows = await this.client.kysely
+            .selectFrom("usage_records")
+            .select([
+                sql<string>`date(timestamp)`.as("date"),
+                sql<number>`SUM(cost)`.as("total_cost"),
+                sql<number>`SUM(total_tokens)`.as("total_tokens"),
+                sql<number>`COUNT(*)`.as("message_count"),
+                sql<number>`COUNT(DISTINCT provider)`.as("provider_count"),
+            ])
+            .where(sql<string>`date(timestamp)`, ">=", sinceDays(days))
+            .groupBy(sql`date(timestamp)`)
+            .orderBy("date", "desc")
+            .execute();
 
         return rows.map((row) => ({
             date: row.date,
@@ -180,27 +121,20 @@ export class UsageDatabase {
         }));
     }
 
-    getProviderUsage(days: number = 30): ProviderUsage[] {
-        const stmt = this.db.prepare(`
-            SELECT 
-                provider,
-                SUM(cost) as total_cost,
-                SUM(total_tokens) as total_tokens,
-                COUNT(*) as message_count,
-                AVG(cost) as avg_cost_per_message
-            FROM usage_records
-            WHERE date(timestamp) >= date('now', '-' || ? || ' days')
-            GROUP BY provider
-            ORDER BY total_cost DESC
-        `);
-
-        const rows = stmt.all(days) as Array<{
-            provider: string;
-            total_cost: number;
-            total_tokens: number;
-            message_count: number;
-            avg_cost_per_message: number;
-        }>;
+    async getProviderUsage(days = 30): Promise<ProviderUsage[]> {
+        const rows = await this.client.kysely
+            .selectFrom("usage_records")
+            .select([
+                "provider",
+                sql<number>`SUM(cost)`.as("total_cost"),
+                sql<number>`SUM(total_tokens)`.as("total_tokens"),
+                sql<number>`COUNT(*)`.as("message_count"),
+                sql<number>`AVG(cost)`.as("avg_cost_per_message"),
+            ])
+            .where(sql<string>`date(timestamp)`, ">=", sinceDays(days))
+            .groupBy("provider")
+            .orderBy("total_cost", "desc")
+            .execute();
 
         return rows.map((row) => ({
             provider: row.provider,
@@ -211,29 +145,21 @@ export class UsageDatabase {
         }));
     }
 
-    getModelUsage(days: number = 30): ModelUsage[] {
-        const stmt = this.db.prepare(`
-            SELECT 
-                provider,
-                model,
-                SUM(cost) as total_cost,
-                SUM(total_tokens) as total_tokens,
-                COUNT(*) as message_count,
-                AVG(cost) as avg_cost_per_message
-            FROM usage_records
-            WHERE date(timestamp) >= date('now', '-' || ? || ' days')
-            GROUP BY provider, model
-            ORDER BY total_cost DESC
-        `);
-
-        const rows = stmt.all(days) as Array<{
-            provider: string;
-            model: string;
-            total_cost: number;
-            total_tokens: number;
-            message_count: number;
-            avg_cost_per_message: number;
-        }>;
+    async getModelUsage(days = 30): Promise<ModelUsage[]> {
+        const rows = await this.client.kysely
+            .selectFrom("usage_records")
+            .select([
+                "provider",
+                "model",
+                sql<number>`SUM(cost)`.as("total_cost"),
+                sql<number>`SUM(total_tokens)`.as("total_tokens"),
+                sql<number>`COUNT(*)`.as("message_count"),
+                sql<number>`AVG(cost)`.as("avg_cost_per_message"),
+            ])
+            .where(sql<string>`date(timestamp)`, ">=", sinceDays(days))
+            .groupBy(["provider", "model"])
+            .orderBy("total_cost", "desc")
+            .execute();
 
         return rows.map((row) => ({
             provider: row.provider,
@@ -245,30 +171,25 @@ export class UsageDatabase {
         }));
     }
 
-    getSessionUsage(sessionId: string): UsageRecord[] {
-        const stmt = this.db.prepare(`
-            SELECT 
-                id, session_id, provider, model,
-                input_tokens, output_tokens, cached_input_tokens, total_tokens,
-                cost, timestamp, message_index
-            FROM usage_records
-            WHERE session_id = ?
-            ORDER BY timestamp ASC
-        `);
-
-        const rows = stmt.all(sessionId) as Array<{
-            id: number;
-            session_id: string;
-            provider: string;
-            model: string;
-            input_tokens: number;
-            output_tokens: number;
-            cached_input_tokens: number;
-            total_tokens: number;
-            cost: number;
-            timestamp: string;
-            message_index: number | null;
-        }>;
+    async getSessionUsage(sessionId: string): Promise<UsageRecord[]> {
+        const rows = await this.client.kysely
+            .selectFrom("usage_records")
+            .select([
+                "id",
+                "session_id",
+                "provider",
+                "model",
+                "input_tokens",
+                "output_tokens",
+                "cached_input_tokens",
+                "total_tokens",
+                "cost",
+                "timestamp",
+                "message_index",
+            ])
+            .where("session_id", "=", sessionId)
+            .orderBy("timestamp", "asc")
+            .execute();
 
         return rows.map((row) => ({
             id: row.id,
@@ -285,109 +206,64 @@ export class UsageDatabase {
         }));
     }
 
-    getTotalUsage(days?: number): {
+    async getTotalUsage(days?: number): Promise<{
         totalCost: number;
         totalTokens: number;
         messageCount: number;
         sessionCount: number;
-    } {
-        let stmt: Statement;
+    }> {
+        let query = this.client.kysely
+            .selectFrom("usage_records")
+            .select([
+                sql<number | null>`SUM(cost)`.as("total_cost"),
+                sql<number | null>`SUM(total_tokens)`.as("total_tokens"),
+                sql<number>`COUNT(*)`.as("message_count"),
+                sql<number>`COUNT(DISTINCT session_id)`.as("session_count"),
+            ]);
+
         if (days) {
-            stmt = this.db.prepare(`
-                SELECT
-                    SUM(cost) as total_cost,
-                    SUM(total_tokens) as total_tokens,
-                    COUNT(*) as message_count,
-                    COUNT(DISTINCT session_id) as session_count
-                FROM usage_records
-                WHERE date(timestamp) >= date('now', '-' || ? || ' days')
-            `);
-        } else {
-            stmt = this.db.prepare(`
-                SELECT
-                    SUM(cost) as total_cost,
-                    SUM(total_tokens) as total_tokens,
-                    COUNT(*) as message_count,
-                    COUNT(DISTINCT session_id) as session_count
-                FROM usage_records
-            `);
+            query = query.where(sql<string>`date(timestamp)`, ">=", sinceDays(days));
         }
 
-        const row = (days ? stmt.get(days) : stmt.get()) as {
-            total_cost: number | null;
-            total_tokens: number | null;
-            message_count: number;
-            session_count: number;
-        };
+        const row = await query.executeTakeFirstOrThrow();
 
         return {
-            totalCost: row.total_cost || 0,
-            totalTokens: row.total_tokens || 0,
+            totalCost: row.total_cost ?? 0,
+            totalTokens: row.total_tokens ?? 0,
             messageCount: row.message_count,
             sessionCount: row.session_count,
         };
     }
 
-    getCostTrend(days: number = 7): Array<{ date: string; cost: number }> {
-        const stmt = this.db.prepare(`
-            SELECT 
-                date(timestamp) as date,
-                SUM(cost) as cost
-            FROM usage_records
-            WHERE date(timestamp) >= date('now', '-' || ? || ' days')
-            GROUP BY date(timestamp)
-            ORDER BY date ASC
-        `);
+    async getCostTrend(days = 7): Promise<Array<{ date: string; cost: number }>> {
+        const rows = await this.client.kysely
+            .selectFrom("usage_records")
+            .select([sql<string>`date(timestamp)`.as("date"), sql<number>`SUM(cost)`.as("cost")])
+            .where(sql<string>`date(timestamp)`, ">=", sinceDays(days))
+            .groupBy(sql`date(timestamp)`)
+            .orderBy("date", "asc")
+            .execute();
 
-        const rows = stmt.all(days) as Array<{ date: string; cost: number }>;
-
-        return rows.map((row) => ({
-            date: row.date,
-            cost: row.cost,
-        }));
+        return rows.map((row) => ({ date: row.date, cost: row.cost }));
     }
 
-    getTopModels(limit: number = 10, days?: number): ModelUsage[] {
-        let stmt: Statement;
+    async getTopModels(limit = 10, days?: number): Promise<ModelUsage[]> {
+        let query = this.client.kysely
+            .selectFrom("usage_records")
+            .select([
+                "provider",
+                "model",
+                sql<number>`SUM(cost)`.as("total_cost"),
+                sql<number>`SUM(total_tokens)`.as("total_tokens"),
+                sql<number>`COUNT(*)`.as("message_count"),
+                sql<number>`AVG(cost)`.as("avg_cost_per_message"),
+            ]);
+
         if (days) {
-            stmt = this.db.prepare(`
-                SELECT 
-                    provider,
-                    model,
-                    SUM(cost) as total_cost,
-                    SUM(total_tokens) as total_tokens,
-                    COUNT(*) as message_count,
-                    AVG(cost) as avg_cost_per_message
-                FROM usage_records
-                WHERE date(timestamp) >= date('now', '-' || ? || ' days')
-                GROUP BY provider, model
-                ORDER BY total_cost DESC
-                LIMIT ?
-            `);
-        } else {
-            stmt = this.db.prepare(`
-                SELECT 
-                    provider,
-                    model,
-                    SUM(cost) as total_cost,
-                    SUM(total_tokens) as total_tokens,
-                    COUNT(*) as message_count,
-                    AVG(cost) as avg_cost_per_message
-                FROM usage_records
-                GROUP BY provider, model
-                ORDER BY total_cost DESC
-                LIMIT ?
-            `);
+            query = query.where(sql<string>`date(timestamp)`, ">=", sinceDays(days));
         }
 
-        const rows = (days ? stmt.all(days, limit) : stmt.all(limit)) as Array<{
-            provider: string;
-            model: string;
-            total_cost: number;
-            total_tokens: number;
-            message_count: number;
-            avg_cost_per_message: number;
-        }>;
+        const rows = await query.groupBy(["provider", "model"]).orderBy("total_cost", "desc").limit(limit).execute();
 
         return rows.map((row) => ({
             provider: row.provider,
@@ -400,9 +276,8 @@ export class UsageDatabase {
     }
 
     close(): void {
-        this.db.close();
+        this.client.close();
     }
 }
 
-// Singleton instance
 export const usageDatabase = new UsageDatabase();

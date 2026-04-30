@@ -1,16 +1,23 @@
 import { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
 import logger from "@app/logger";
+import { BunSqliteDialect } from "@app/utils/database";
 import { type Migration, Migrator } from "@app/utils/database/migrations";
 import { MacOS } from "@app/utils/macos/MacOS";
 import { detectTerminalApp } from "@app/utils/terminal";
+import { Kysely } from "kysely";
 
 /**
  * Base class for readonly macOS SQLite databases with lazy connection
  * and automatic cleanup on process exit.
+ *
+ * Subclasses can use either:
+ *   - `getDb()` for raw bun:sqlite (legacy / FTS5 / introspection)
+ *   - `getKysely<DB>()` for typed Kysely queries against the schema interface
  */
 export abstract class MacDatabase {
     private db: Database | null = null;
+    private kysely: Kysely<unknown> | null = null;
     protected readonly migrations: Migration[] = [];
     protected readonly migrationTableName?: string;
 
@@ -66,7 +73,22 @@ export abstract class MacDatabase {
         return this.db;
     }
 
+    protected getKysely<DB>(): Kysely<DB> {
+        if (!this.kysely) {
+            this.kysely = new Kysely<unknown>({
+                dialect: new BunSqliteDialect({ database: this.getDb() }),
+            });
+        }
+
+        return this.kysely as Kysely<DB>;
+    }
+
     close(): void {
+        if (this.kysely) {
+            this.kysely.destroy().catch(() => {});
+            this.kysely = null;
+        }
+
         if (this.db) {
             this.db.close();
             this.db = null;

@@ -8,6 +8,13 @@ export { nowUtcIso, parseSqliteOrIsoDate, SQL_NOW_UTC } from "@app/utils/sql-tim
 
 const VALID_IDENTIFIER = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 
+/**
+ * Base class for tools that historically held a raw `bun:sqlite` handle.
+ *
+ * **Prefer `createKyselyClient` for new code.** This class remains for adapters
+ * that haven't migrated yet (FTS5 drivers, dynamic-column subsystems) and for
+ * legacy `pruneTable` ergonomics.
+ */
 export abstract class BaseDatabase {
     protected db: BunDatabase;
 
@@ -26,7 +33,6 @@ export abstract class BaseDatabase {
 
     protected abstract initSchema(): void;
 
-    /** Expose raw database for modules that need to add tables */
     getDb(): BunDatabase {
         return this.db;
     }
@@ -35,12 +41,10 @@ export abstract class BaseDatabase {
         this.db.close();
     }
 
-    /** Returns the current UTC time as an ISO-8601 string (matches `SQL_NOW_UTC` shape). */
     static nowUtcIso(): string {
         return nowUtcIso();
     }
 
-    /** Parse a SQLite/ISO timestamp string into a UTC Date (or null if unparseable). */
     static parseDate(value: string | null | undefined): Date | null {
         return parseSqliteOrIsoDate(value);
     }

@@ -108,8 +108,7 @@ export async function runPreset(
 
             results.push({ id: step.id, name: step.name, result });
 
-            // Log step to SQLite
-            runLogger?.logStep(i, step.id, step.name, step.action, result);
+            await runLogger?.logStep(i, step.id, step.name, step.action, result);
 
             if (result.status === "success") {
                 spinner.stop(pc.green(`${stepLabel} (${formatDuration(result.duration)})`));
@@ -153,7 +152,7 @@ export async function runPreset(
             ctx.steps[step.id] = exceptionResult;
             results.push({ id: step.id, name: step.name, result: exceptionResult });
 
-            runLogger?.logStep(i, step.id, step.name, step.action, exceptionResult);
+            await runLogger?.logStep(i, step.id, step.name, step.action, exceptionResult);
 
             const errorStrategy = step.onError ?? "stop";
             if (errorStrategy === "stop") {
@@ -167,8 +166,7 @@ export async function runPreset(
     const totalDuration = Date.now() - totalStart;
     const allSuccess = results.every((r) => r.result.status === "success" || r.result.status === "skipped");
 
-    // Finish run logging
-    runLogger?.finishRun(
+    await runLogger?.finishRun(
         allSuccess,
         results.length,
         totalDuration,

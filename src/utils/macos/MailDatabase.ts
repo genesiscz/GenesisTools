@@ -1,5 +1,6 @@
 import logger from "@app/logger";
 import { ENVELOPE_INDEX_PATH } from "@app/macos/lib/mail/constants";
+import type { MailDB } from "@app/macos/lib/mail/db-types";
 import type {
     AccountInfo,
     MailAttachment,
@@ -8,163 +9,209 @@ import type {
     ReceiverInfo,
     SearchOptions,
 } from "@app/macos/lib/mail/types";
+import { buildOrderedLikePattern, escapeLike } from "@app/utils/database";
+import { type Expression, type SqlBool, sql } from "kysely";
 import { MacDatabase } from "./MacDatabase";
-import {
-    ATTACHMENT_JOIN,
-    buildFilters,
-    escapeLike,
-    LIKE_ESCAPE_CLAUSE,
-    type MailFilterOptions,
-    MESSAGE_SELECT,
-    SQL_BIND_BATCH,
-} from "./mail-sql";
+import { type MailFilterOptions, SQL_BIND_BATCH } from "./mail-sql";
+
+/**
+ * Build raw SQL filter fragments for date range / mailbox / receiver / account.
+ * Returned as boolean Expressions to be combined with `eb.and(...)`.
+ */
+function buildMailFilterExpressions(opts: MailFilterOptions): Expression<SqlBool>[] {
+    const filters: Expression<SqlBool>[] = [];
+
+    if (opts.from) {
+        const seconds = Math.floor(opts.from.getTime() / 1000);
+        filters.push(sql<SqlBool>`m.date_sent >= ${seconds}`);
+    }
+
+    if (opts.to) {
+        const seconds = Math.floor(opts.to.getTime() / 1000);
+        filters.push(sql<SqlBool>`m.date_sent <= ${seconds}`);
+    }
+
+    if (opts.mailbox) {
+        const pattern = `%${escapeLike(opts.mailbox)}%`;
+        filters.push(sql<SqlBool>`mb.url LIKE ${pattern} ESCAPE '\\'`);
+    }
+
+    if (opts.receiver) {
+        const pattern = `%${escapeLike(opts.receiver)}%`;
+        filters.push(sql<SqlBool>`m.ROWID IN (
+            SELECT r.message FROM recipients r
+            JOIN addresses a ON r.address = a.ROWID
+            WHERE a.address LIKE ${pattern} ESCAPE '\\'
+        )`);
+    }
+
+    if (opts.account) {
+        const pattern = `%${escapeLike(opts.account)}%`;
+        filters.push(sql<SqlBool>`mb.url LIKE ${pattern} ESCAPE '\\'`);
+    }
+
+    return filters;
+}
+
+const MESSAGE_SELECT_COLUMNS = [
+    sql<number>`m.ROWID`.as("rowid"),
+    "s.subject",
+    sql<string>`a.address`.as("senderAddress"),
+    sql<string | null>`a.comment`.as("senderName"),
+    sql<number>`m.date_sent`.as("dateSent"),
+    sql<number>`m.date_received`.as("dateReceived"),
+    sql<string>`mb.url`.as("mailboxUrl"),
+    "m.read",
+    "m.flagged",
+    "m.deleted",
+    "m.size",
+] as const;
 
 export class MailDatabase extends MacDatabase {
     protected readonly dbPath = ENVELOPE_INDEX_PATH;
     protected readonly dbLabel = "Mail database";
     protected readonly notFoundMessage = "Make sure Mail.app is configured and has downloaded messages.";
 
-    searchMessages(opts: SearchOptions): MailMessageRow[] {
-        const db = this.getDb();
-        const params: Record<string, string | number> = {};
+    private k() {
+        return this.getKysely<MailDB>();
+    }
 
+    async searchMessages(opts: SearchOptions): Promise<MailMessageRow[]> {
         const tokens = opts.query.split(/\s+/).filter((t) => t.length > 0);
 
         if (tokens.length === 0) {
             return [];
         }
 
-        // Two complementary patterns:
-        //  - ordered wildcard: %tok1%tok2%tok3% — matches "invoice pay now" within longer text
-        //  - any-order ANDed: each individual %tokN% must match somewhere
-        const orderedPattern = `%${tokens.map((t) => escapeLike(t)).join("%")}%`;
-        params.$ordered = orderedPattern;
-
-        const orderedClause = `(s.subject LIKE $ordered ${LIKE_ESCAPE_CLAUSE} OR a.address LIKE $ordered ${LIKE_ESCAPE_CLAUSE} OR a.comment LIKE $ordered ${LIKE_ESCAPE_CLAUSE} OR att.name LIKE $ordered ${LIKE_ESCAPE_CLAUSE})`;
-
-        const anyOrderClauses: string[] = tokens.map((_, i) => {
-            const key = `$tok${i}`;
-            return `(s.subject LIKE ${key} ${LIKE_ESCAPE_CLAUSE} OR a.address LIKE ${key} ${LIKE_ESCAPE_CLAUSE} OR a.comment LIKE ${key} ${LIKE_ESCAPE_CLAUSE} OR att.name LIKE ${key} ${LIKE_ESCAPE_CLAUSE})`;
-        });
-
-        for (let i = 0; i < tokens.length; i++) {
-            params[`$tok${i}`] = `%${escapeLike(tokens[i])}%`;
-        }
-
-        const filters: string[] = ["m.deleted = 0", ...buildFilters(opts, params)];
-        const whereClause = filters.length > 0 ? `AND ${filters.join(" AND ")}` : "";
-
-        // Drop the LIMIT — fallback path takes care of pagination after merge.
-        const sql = `${MESSAGE_SELECT}
-            ${ATTACHMENT_JOIN}
-            WHERE (${orderedClause} OR (${anyOrderClauses.join(" AND ")}))
-            ${whereClause}
-            ORDER BY m.date_sent DESC`;
+        const ordered = buildOrderedLikePattern(tokens);
+        const escapedTokens = tokens.map((t) => `%${escapeLike(t)}%`);
+        const filterExpressions = buildMailFilterExpressions(opts);
 
         logger.debug(`Running search query (wildcard) with ${tokens.length} token(s): ${tokens.join(", ")}`);
-        return db.prepare(sql).all(params) as MailMessageRow[];
+
+        const rows = await this.k()
+            .selectFrom("messages as m")
+            .innerJoin("subjects as s", "s.ROWID", "m.subject")
+            .innerJoin("addresses as a", "a.ROWID", "m.sender")
+            .innerJoin("mailboxes as mb", "mb.ROWID", "m.mailbox")
+            .leftJoin("attachments as att", "att.message", "m.ROWID")
+            .select(MESSAGE_SELECT_COLUMNS as never)
+            .distinct()
+            .where("m.deleted", "=", 0)
+            .where((eb) =>
+                eb.or([
+                    sql<SqlBool>`s.subject LIKE ${ordered} ESCAPE '\\'`,
+                    sql<SqlBool>`a.address LIKE ${ordered} ESCAPE '\\'`,
+                    sql<SqlBool>`a.comment LIKE ${ordered} ESCAPE '\\'`,
+                    sql<SqlBool>`att.name LIKE ${ordered} ESCAPE '\\'`,
+                    eb.and(
+                        escapedTokens.map(
+                            (pattern) => sql<SqlBool>`(
+                                s.subject LIKE ${pattern} ESCAPE '\\'
+                                OR a.address LIKE ${pattern} ESCAPE '\\'
+                                OR a.comment LIKE ${pattern} ESCAPE '\\'
+                                OR att.name LIKE ${pattern} ESCAPE '\\'
+                            )`
+                        )
+                    ),
+                ])
+            )
+            .where((eb) => eb.and(filterExpressions))
+            .orderBy("m.date_sent", "desc")
+            .execute();
+
+        return rows as unknown as MailMessageRow[];
     }
 
-    getMessagesByRowids(rowids: number[], opts?: MailFilterOptions): MailMessageRow[] {
+    async getMessagesByRowids(rowids: number[], opts?: MailFilterOptions): Promise<MailMessageRow[]> {
         if (rowids.length === 0) {
             return [];
         }
 
-        const db = this.getDb();
         const results: MailMessageRow[] = [];
+        const filterExpressions = opts ? buildMailFilterExpressions(opts) : [];
 
         for (let offset = 0; offset < rowids.length; offset += SQL_BIND_BATCH) {
             const batch = rowids.slice(offset, offset + SQL_BIND_BATCH);
-            const params: Record<string, string | number> = {};
-            const filters: string[] = ["m.deleted = 0"];
 
-            const placeholders = batch.map((_, i) => `$r${i}`).join(",");
+            const rows = await this.k()
+                .selectFrom("messages as m")
+                .innerJoin("subjects as s", "s.ROWID", "m.subject")
+                .innerJoin("addresses as a", "a.ROWID", "m.sender")
+                .innerJoin("mailboxes as mb", "mb.ROWID", "m.mailbox")
+                .select(MESSAGE_SELECT_COLUMNS as never)
+                .distinct()
+                .where("m.deleted", "=", 0)
+                .where("m.ROWID", "in", batch)
+                .where((eb) => eb.and(filterExpressions))
+                .orderBy("m.date_sent", "desc")
+                .execute();
 
-            for (let i = 0; i < batch.length; i++) {
-                params[`$r${i}`] = batch[i];
-            }
-
-            filters.push(`m.ROWID IN (${placeholders})`);
-
-            if (opts) {
-                filters.push(...buildFilters(opts, params));
-            }
-
-            const sql = `${MESSAGE_SELECT}
-                WHERE ${filters.join(" AND ")}
-                ORDER BY m.date_sent DESC`;
-
-            results.push(...(db.prepare(sql).all(params) as MailMessageRow[]));
+            results.push(...(rows as unknown as MailMessageRow[]));
         }
 
         return results;
     }
 
-    listMessages(mailbox: string, limit: number): MailMessageRow[] {
-        const db = this.getDb();
-        const mailboxPattern = `%${escapeLike(mailbox)}%`;
+    async listMessages(mailbox: string, limit: number): Promise<MailMessageRow[]> {
+        const pattern = `%${escapeLike(mailbox)}%`;
 
-        const sql = `${MESSAGE_SELECT}
-            WHERE m.deleted = 0
-              AND mb.url LIKE $mailbox ${LIKE_ESCAPE_CLAUSE}
-            ORDER BY m.date_sent DESC
-            LIMIT $limit`;
+        const rows = await this.k()
+            .selectFrom("messages as m")
+            .innerJoin("subjects as s", "s.ROWID", "m.subject")
+            .innerJoin("addresses as a", "a.ROWID", "m.sender")
+            .innerJoin("mailboxes as mb", "mb.ROWID", "m.mailbox")
+            .select(MESSAGE_SELECT_COLUMNS as never)
+            .distinct()
+            .where("m.deleted", "=", 0)
+            .where(sql<SqlBool>`mb.url LIKE ${pattern} ESCAPE '\\'`)
+            .orderBy("m.date_sent", "desc")
+            .limit(limit)
+            .execute();
 
-        return db.prepare(sql).all({ $mailbox: mailboxPattern, $limit: limit }) as MailMessageRow[];
+        return rows as unknown as MailMessageRow[];
     }
 
-    getAttachments(messageRowids: number[]): Map<number, MailAttachment[]> {
+    async getAttachments(messageRowids: number[]): Promise<Map<number, MailAttachment[]>> {
         if (messageRowids.length === 0) {
             return new Map();
         }
 
-        const db = this.getDb();
-        const placeholders = messageRowids.map(() => "?").join(",");
-        const sql = `
-            SELECT message, name, attachment_id as attachmentId
-            FROM attachments
-            WHERE message IN (${placeholders})
-            ORDER BY message, ROWID
-        `;
-
-        const rows = db.prepare(sql).all(...messageRowids) as Array<{
-            message: number;
-            name: string;
-            attachmentId: string | null;
-        }>;
+        const rows = await this.k()
+            .selectFrom("attachments")
+            .select(["message", "name", "attachment_id as attachmentId", "ROWID"])
+            .where("message", "in", messageRowids)
+            .orderBy(["message", "ROWID"])
+            .execute();
 
         const map = new Map<number, MailAttachment[]>();
 
         for (const row of rows) {
             const list = map.get(row.message) ?? [];
-            list.push({ name: row.name, attachmentId: row.attachmentId ?? "" });
+            list.push({ name: row.name ?? "", attachmentId: row.attachmentId ?? "" });
             map.set(row.message, list);
         }
 
         return map;
     }
 
-    getRecipients(messageRowids: number[]): Map<number, MailRecipient[]> {
+    async getRecipients(messageRowids: number[]): Promise<Map<number, MailRecipient[]>> {
         if (messageRowids.length === 0) {
             return new Map();
         }
 
-        const db = this.getDb();
-        const placeholders = messageRowids.map(() => "?").join(",");
-        const sql = `
-            SELECT r.message, a.address, a.comment as name, r.type
-            FROM recipients r
-            JOIN addresses a ON r.address = a.ROWID
-            WHERE r.message IN (${placeholders})
-            ORDER BY r.message, r.type, r.position
-        `;
-
-        const rows = db.prepare(sql).all(...messageRowids) as Array<{
-            message: number;
-            address: string;
-            name: string;
-            type: number;
-        }>;
+        const rows = await this.k()
+            .selectFrom("recipients as r")
+            .innerJoin("addresses as a", "a.ROWID", "r.address")
+            .select([
+                sql<number>`r.message`.as("message"),
+                sql<string>`a.address`.as("address"),
+                sql<string | null>`a.comment`.as("name"),
+                sql<number>`r.type`.as("type"),
+            ])
+            .where("r.message", "in", messageRowids)
+            .orderBy(["r.message", "r.type", "r.position"])
+            .execute();
 
         const map = new Map<number, MailRecipient[]>();
 
@@ -172,7 +219,7 @@ export class MailDatabase extends MacDatabase {
             const list = map.get(row.message) ?? [];
             list.push({
                 address: row.address,
-                name: row.name,
+                name: row.name ?? "",
                 type: row.type === 0 ? "to" : "cc",
             });
             map.set(row.message, list);
@@ -181,48 +228,70 @@ export class MailDatabase extends MacDatabase {
         return map;
     }
 
-    listReceivers(): ReceiverInfo[] {
-        const db = this.getDb();
-        const sql = `
-            SELECT
-                a.address,
-                a.comment as name,
-                COUNT(DISTINCT r.message) as messageCount
-            FROM recipients r
-            JOIN addresses a ON r.address = a.ROWID
-            WHERE r.type = 0
-            GROUP BY a.address, a.comment
-            HAVING messageCount > 10
-            ORDER BY messageCount DESC
-            LIMIT 50
-        `;
-        return db.prepare(sql).all() as ReceiverInfo[];
+    async listReceivers(): Promise<ReceiverInfo[]> {
+        const rows = await this.k()
+            .selectFrom("recipients as r")
+            .innerJoin("addresses as a", "a.ROWID", "r.address")
+            .select([
+                sql<string>`a.address`.as("address"),
+                sql<string | null>`a.comment`.as("name"),
+                sql<number>`COUNT(DISTINCT r.message)`.as("messageCount"),
+            ])
+            .where("r.type", "=", 0)
+            .groupBy(["a.address", "a.comment"])
+            .having(sql`COUNT(DISTINCT r.message)`, ">", 10)
+            .orderBy("messageCount", "desc")
+            .limit(50)
+            .execute();
+
+        return rows.map((r) => ({
+            address: r.address,
+            name: r.name ?? "",
+            messageCount: r.messageCount,
+        }));
     }
 
-    listMailboxes(): Array<{ url: string; totalCount: number; unreadCount: number }> {
-        const db = this.getDb();
-        const sql = `
-            SELECT url, total_count as totalCount, unread_count as unreadCount
-            FROM mailboxes
-            WHERE total_count > 0
-            ORDER BY total_count DESC
-        `;
-        return db.prepare(sql).all() as Array<{ url: string; totalCount: number; unreadCount: number }>;
+    async listMailboxes(): Promise<Array<{ url: string; totalCount: number; unreadCount: number }>> {
+        const rows = await this.k()
+            .selectFrom("mailboxes")
+            .select(["url", sql<number>`total_count`.as("totalCount"), sql<number>`unread_count`.as("unreadCount")])
+            .where("total_count", ">", 0)
+            .orderBy("total_count", "desc")
+            .execute();
+
+        return rows;
     }
 
-    getMessageById(rowid: number): MailMessageRow | null {
-        const db = this.getDb();
-        const sql = `${MESSAGE_SELECT}
-            WHERE m.ROWID = $rowid`;
-        return (db.prepare(sql).get({ $rowid: rowid }) as MailMessageRow) ?? null;
+    async getMessageById(rowid: number): Promise<MailMessageRow | null> {
+        const row = await this.k()
+            .selectFrom("messages as m")
+            .innerJoin("subjects as s", "s.ROWID", "m.subject")
+            .innerJoin("addresses as a", "a.ROWID", "m.sender")
+            .innerJoin("mailboxes as mb", "mb.ROWID", "m.mailbox")
+            .select(MESSAGE_SELECT_COLUMNS as never)
+            .distinct()
+            .where("m.ROWID", "=", rowid)
+            .executeTakeFirst();
+
+        return (row as unknown as MailMessageRow | undefined) ?? null;
     }
 
-    listAccounts(): AccountInfo[] {
-        const db = this.getDb();
+    async getMessageCount(): Promise<number> {
+        const row = await this.k()
+            .selectFrom("messages")
+            .select(sql<number>`COUNT(*)`.as("cnt"))
+            .where("deleted", "=", 0)
+            .executeTakeFirstOrThrow();
 
-        const mailboxes = db
-            .prepare("SELECT url, total_count as totalCount FROM mailboxes WHERE total_count > 0")
-            .all() as Array<{ url: string; totalCount: number }>;
+        return row.cnt;
+    }
+
+    async listAccounts(): Promise<AccountInfo[]> {
+        const mailboxes = await this.k()
+            .selectFrom("mailboxes")
+            .select(["url", sql<number>`total_count`.as("totalCount")])
+            .where("total_count", ">", 0)
+            .execute();
 
         const accounts = new Map<string, { protocol: string; mailboxCount: number; messageCount: number }>();
 
@@ -241,51 +310,52 @@ export class MailDatabase extends MacDatabase {
             accounts.set(uuid, existing);
         }
 
-        type AccountEmailRow = { accountUuid: string; address: string; cnt: number };
+        const accountUuidExpr = sql<string>`SUBSTR(mb.url, INSTR(mb.url, '://') + 3,
+            INSTR(SUBSTR(mb.url, INSTR(mb.url, '://') + 3), '/') - 1)`;
 
-        // Primary: messages.sender in Sent/Drafts/Outbox folders — strongest signal.
-        const sentSenders = db
-            .prepare(
-                `SELECT
-                    SUBSTR(mb.url, INSTR(mb.url, '://') + 3,
-                        INSTR(SUBSTR(mb.url, INSTR(mb.url, '://') + 3), '/') - 1) AS accountUuid,
-                    a.address,
-                    COUNT(*) AS cnt
-                FROM messages m
-                JOIN mailboxes mb ON m.mailbox = mb.ROWID
-                JOIN addresses a ON m.sender = a.ROWID
-                WHERE m.deleted = 0
-                  AND (mb.url LIKE '%/Sent%' OR mb.url LIKE '%Sent%20Items%'
-                       OR mb.url LIKE '%Sent%20Messages%' OR mb.url LIKE '%Outbox%'
-                       OR mb.url LIKE '%Drafts%')
-                GROUP BY accountUuid, a.address
-                ORDER BY accountUuid, cnt DESC`
+        const sentSenders = await this.k()
+            .selectFrom("messages as m")
+            .innerJoin("mailboxes as mb", "mb.ROWID", "m.mailbox")
+            .innerJoin("addresses as a", "a.ROWID", "m.sender")
+            .select([
+                accountUuidExpr.as("accountUuid"),
+                sql<string>`a.address`.as("address"),
+                sql<number>`COUNT(*)`.as("cnt"),
+            ])
+            .where("m.deleted", "=", 0)
+            .where((eb) =>
+                eb.or([
+                    sql<boolean>`mb.url LIKE '%/Sent%'`,
+                    sql<boolean>`mb.url LIKE '%Sent%20Items%'`,
+                    sql<boolean>`mb.url LIKE '%Sent%20Messages%'`,
+                    sql<boolean>`mb.url LIKE '%Outbox%'`,
+                    sql<boolean>`mb.url LIKE '%Drafts%'`,
+                ])
             )
-            .all() as AccountEmailRow[];
+            .groupBy(["accountUuid", "a.address"])
+            .orderBy(["accountUuid", "cnt desc"])
+            .execute();
 
-        // Fallback: most-frequent type=0 (To) recipient across non-sent folders.
-        const inboxRecipients = db
-            .prepare(
-                `SELECT
-                    SUBSTR(mb.url, INSTR(mb.url, '://') + 3,
-                        INSTR(SUBSTR(mb.url, INSTR(mb.url, '://') + 3), '/') - 1) AS accountUuid,
-                    a.address,
-                    COUNT(*) AS cnt
-                FROM messages m
-                JOIN mailboxes mb ON m.mailbox = mb.ROWID
-                JOIN recipients r ON r.message = m.ROWID
-                JOIN addresses a ON r.address = a.ROWID
-                WHERE m.deleted = 0
-                  AND r.type = 0
-                  AND mb.url NOT LIKE '%/Sent%'
-                  AND mb.url NOT LIKE '%Sent%20Items%'
-                  AND mb.url NOT LIKE '%Sent%20Messages%'
-                  AND mb.url NOT LIKE '%Outbox%'
-                  AND mb.url NOT LIKE '%Drafts%'
-                GROUP BY accountUuid, a.address
-                ORDER BY accountUuid, cnt DESC`
-            )
-            .all() as AccountEmailRow[];
+        const inboxRecipients = await this.k()
+            .selectFrom("messages as m")
+            .innerJoin("mailboxes as mb", "mb.ROWID", "m.mailbox")
+            .innerJoin("recipients as r", "r.message", "m.ROWID")
+            .innerJoin("addresses as a", "a.ROWID", "r.address")
+            .select([
+                accountUuidExpr.as("accountUuid"),
+                sql<string>`a.address`.as("address"),
+                sql<number>`COUNT(*)`.as("cnt"),
+            ])
+            .where("m.deleted", "=", 0)
+            .where("r.type", "=", 0)
+            .where(sql<boolean>`mb.url NOT LIKE '%/Sent%'`)
+            .where(sql<boolean>`mb.url NOT LIKE '%Sent%20Items%'`)
+            .where(sql<boolean>`mb.url NOT LIKE '%Sent%20Messages%'`)
+            .where(sql<boolean>`mb.url NOT LIKE '%Outbox%'`)
+            .where(sql<boolean>`mb.url NOT LIKE '%Drafts%'`)
+            .groupBy(["accountUuid", "a.address"])
+            .orderBy(["accountUuid", "cnt desc"])
+            .execute();
 
         const emailByAccount = new Map<string, string>();
 
@@ -314,11 +384,5 @@ export class MailDatabase extends MacDatabase {
         }
 
         return result.sort((a, b) => b.messageCount - a.messageCount);
-    }
-
-    getMessageCount(): number {
-        const db = this.getDb();
-        const row = db.prepare("SELECT COUNT(*) as cnt FROM messages WHERE deleted = 0").get() as { cnt: number };
-        return row.cnt;
     }
 }

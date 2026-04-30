@@ -4,30 +4,31 @@ import type { StepResult } from "./types";
 
 export interface RunLogger {
     runId: number;
-    logStep(stepIndex: number, stepId: string, stepName: string, action: string, result: StepResult): void;
-    finishRun(success: boolean, stepCount: number, totalDuration: number, error?: string): void;
+    logStep(stepIndex: number, stepId: string, stepName: string, action: string, result: StepResult): Promise<void>;
+    finishRun(success: boolean, stepCount: number, totalDuration: number, error?: string): Promise<void>;
 }
 
-export function createRunLogger(
+export async function createRunLogger(
     presetName: string,
     scheduleId: number | null,
     triggerType: "manual" | "schedule",
     db?: AutomateDatabase
-): RunLogger {
+): Promise<RunLogger> {
     const database = db ?? getDb();
-    const runId = database.startRun(presetName, scheduleId, triggerType);
+    const runId = await database.startRun(presetName, scheduleId, triggerType);
 
     return {
         runId,
 
-        logStep(stepIndex, stepId, stepName, action, result) {
+        async logStep(stepIndex, stepId, stepName, action, result) {
             const output =
                 result.output != null
                     ? typeof result.output === "string"
                         ? result.output
                         : SafeJSON.stringify(result.output)
                     : null;
-            database.logStep(
+
+            await database.logStep(
                 runId,
                 stepIndex,
                 stepId,
@@ -40,8 +41,8 @@ export function createRunLogger(
             );
         },
 
-        finishRun(success, stepCount, totalDuration, error) {
-            database.finishRun(runId, success ? "success" : "error", stepCount, totalDuration, error);
+        async finishRun(success, stepCount, totalDuration, error) {
+            await database.finishRun(runId, success ? "success" : "error", stepCount, totalDuration, error);
         },
     };
 }

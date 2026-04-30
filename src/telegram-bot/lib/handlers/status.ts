@@ -10,7 +10,7 @@ export function registerStatusCommand(bot: Bot): void {
         const daemonStatus = await getDaemonStatus();
         const fgPid = getDaemonPid();
         const db = getDb();
-        const schedules = db.listSchedules();
+        const schedules = await db.listSchedules();
         const enabled = schedules.filter((s) => s.enabled);
 
         const lines = [

@@ -8,11 +8,11 @@ export function registerAccountsCommand(program: Command): void {
     program
         .command("accounts")
         .description("List configured mail accounts")
-        .action(() => {
+        .action(async () => {
             const db = new MailDatabase();
 
             try {
-                const accounts = db.listAccounts();
+                const accounts = await db.listAccounts();
 
                 if (accounts.length === 0) {
                     console.log("No mail accounts found.");

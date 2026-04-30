@@ -144,6 +144,7 @@
         "ink-text-input": "^6.0.0",
         "jsdom": "^26.1.0",
         "jsonpath": "^1.1.1",
+        "kysely": "^0.28.16",
         "loglevel": "^1.9.2",
         "mailparser": "^3.9.4",
         "markdown-it": "^14.1.0",
