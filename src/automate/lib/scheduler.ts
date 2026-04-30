@@ -20,7 +20,7 @@ export async function runSchedulerLoop(db: AutomateDatabase): Promise<void> {
 
     while (running) {
         const now = new Date().toISOString();
-        const dueSchedules = db.getDueSchedules(now);
+        const dueSchedules = await db.getDueSchedules(now);
 
         for (const schedule of dueSchedules) {
             if (activeRuns.has(schedule.id)) {
@@ -31,19 +31,19 @@ export async function runSchedulerLoop(db: AutomateDatabase): Promise<void> {
             activeRuns.add(schedule.id);
             executeDueSchedule(db, schedule)
                 .catch((err) => logger.error({ err, scheduleId: schedule.id }, "Schedule execution failed"))
-                .finally(() => {
+                .finally(async () => {
                     activeRuns.delete(schedule.id);
                     try {
                         const parsed = parseInterval(schedule.interval);
                         const nextRunAt = computeNextRunAt(parsed).toISOString();
-                        db.updateScheduleAfterRun(schedule.id, nextRunAt);
+                        await db.updateScheduleAfterRun(schedule.id, nextRunAt);
                     } catch (err) {
                         logger.error({ err, scheduleId: schedule.id }, "Failed to update next_run_at");
                     }
                 });
         }
 
-        const nextWakeup = getNextWakeupMs(db);
+        const nextWakeup = await getNextWakeupMs(db);
         const sleepMs = Math.min(Math.max(nextWakeup, 1000), 60_000);
         logger.debug({ sleepMs }, "Sleeping until next schedule");
         await Bun.sleep(sleepMs);
@@ -63,7 +63,7 @@ export async function runSchedulerLoop(db: AutomateDatabase): Promise<void> {
 async function executeDueSchedule(db: AutomateDatabase, schedule: ScheduleRow): Promise<void> {
     logger.info({ name: schedule.name, preset: schedule.preset_name }, "Executing scheduled preset");
     const preset = await loadPreset(schedule.preset_name);
-    const runLogger = createRunLogger(preset.name, schedule.id, "schedule", db);
+    const runLogger = await createRunLogger(preset.name, schedule.id, "schedule", db);
     const vars = schedule.vars_json ? (SafeJSON.parse(schedule.vars_json) as Record<string, string>) : undefined;
     const options = {
         vars: vars ? Object.entries(vars).map(([k, v]) => `${k}=${v}`) : undefined,
@@ -76,18 +76,23 @@ async function executeDueSchedule(db: AutomateDatabase, schedule: ScheduleRow): 
     );
 }
 
-function getNextWakeupMs(db: AutomateDatabase): number {
-    const schedules = db.listSchedules().filter((s) => s.enabled);
+async function getNextWakeupMs(db: AutomateDatabase): Promise<number> {
+    const schedules = (await db.listSchedules()).filter((s) => s.enabled);
+
     if (schedules.length === 0) {
         return 60_000;
     }
+
     const now = Date.now();
-    let earliest = Infinity;
+    let earliest = Number.POSITIVE_INFINITY;
+
     for (const s of schedules) {
         const nextMs = new Date(s.next_run_at).getTime() - now;
+
         if (nextMs < earliest) {
             earliest = nextMs;
         }
     }
+
     return earliest;
 }

@@ -37,8 +37,7 @@ export function registerRunCommand(program: Command): void {
                 p.log.info(pc.dim(preset.description));
             }
 
-            // Create run logger for SQLite tracking (skip for dry runs)
-            const runLogger = opts.dryRun ? undefined : createRunLogger(preset.name, null, "manual");
+            const runLogger = opts.dryRun ? undefined : await createRunLogger(preset.name, null, "manual");
 
             // Execute the preset
             const result = await runPreset(

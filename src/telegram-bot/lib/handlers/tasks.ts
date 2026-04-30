@@ -7,7 +7,7 @@ export function registerTasksCommand(bot: Bot): void {
     bot.command("tasks", async (ctx) => {
         p.log.step("/tasks → fetching run history");
         const db = getDb();
-        const runs = db.listRuns(10);
+        const runs = await db.listRuns(10);
 
         if (runs.length === 0) {
             p.log.success("/tasks → no runs");

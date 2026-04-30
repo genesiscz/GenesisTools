@@ -1,145 +1,178 @@
-import { Database } from "bun:sqlite";
-import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import logger from "@app/logger";
+import { createKyselyClient, type DatabaseClient } from "@app/utils/database";
+import { sql } from "kysely";
+import type { AutomateDB, RunLogRow, RunRow, ScheduleRow } from "./db-types";
+
+export type { RunLogRow, RunRow, ScheduleRow } from "./db-types";
 
 const DB_PATH = join(homedir(), ".genesis-tools", "automate", "automate.db");
 const SCHEMA_VERSION = 1;
 
+const BOOTSTRAP: string[] = [
+    `CREATE TABLE IF NOT EXISTS schema_version (
+        version INTEGER NOT NULL
+    )`,
+    `CREATE TABLE IF NOT EXISTS schedules (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        name        TEXT NOT NULL UNIQUE,
+        preset_name TEXT NOT NULL,
+        interval    TEXT NOT NULL,
+        enabled     INTEGER NOT NULL DEFAULT 1,
+        last_run_at TEXT,
+        next_run_at TEXT NOT NULL,
+        created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
+        vars_json   TEXT
+    )`,
+    `CREATE TABLE IF NOT EXISTS runs (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        schedule_id  INTEGER,
+        preset_name  TEXT NOT NULL,
+        trigger_type TEXT NOT NULL DEFAULT 'manual',
+        started_at   TEXT NOT NULL,
+        finished_at  TEXT,
+        status       TEXT NOT NULL DEFAULT 'running',
+        step_count   INTEGER NOT NULL DEFAULT 0,
+        duration_ms  INTEGER,
+        error        TEXT,
+        FOREIGN KEY (schedule_id) REFERENCES schedules(id) ON DELETE SET NULL
+    )`,
+    `CREATE TABLE IF NOT EXISTS run_logs (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id      INTEGER NOT NULL,
+        step_index  INTEGER NOT NULL,
+        step_id     TEXT NOT NULL,
+        step_name   TEXT NOT NULL,
+        action      TEXT NOT NULL,
+        status      TEXT NOT NULL,
+        output      TEXT,
+        duration_ms INTEGER NOT NULL DEFAULT 0,
+        error       TEXT,
+        logged_at   TEXT NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY (run_id) REFERENCES runs(id) ON DELETE CASCADE
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_runs_schedule_id ON runs(schedule_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_runs_preset_name ON runs(preset_name)`,
+    `CREATE INDEX IF NOT EXISTS idx_runs_started_at ON runs(started_at)`,
+    `CREATE INDEX IF NOT EXISTS idx_run_logs_run_id ON run_logs(run_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_schedules_next_run ON schedules(next_run_at) WHERE enabled = 1`,
+];
+
 export class AutomateDatabase {
-    private db: Database;
+    private readonly client: DatabaseClient<AutomateDB>;
 
     constructor(dbPath: string = DB_PATH) {
-        const dir = dirname(dbPath);
-        if (!existsSync(dir)) {
-            mkdirSync(dir, { recursive: true });
-        }
+        this.client = createKyselyClient<AutomateDB>({
+            path: dbPath,
+            bootstrap: BOOTSTRAP,
+            pragmas: { foreignKeys: true },
+        });
 
-        this.db = new Database(dbPath);
-        this.db.exec("PRAGMA journal_mode = WAL");
-        this.db.exec("PRAGMA foreign_keys = ON");
-        this.initSchema();
+        this.recordSchemaVersionIfNeeded();
     }
 
-    private initSchema(): void {
-        this.db.exec(`
-      CREATE TABLE IF NOT EXISTS schema_version (
-        version INTEGER NOT NULL
-      );
-    `);
+    private recordSchemaVersionIfNeeded(): void {
+        const row = this.client.raw.query("SELECT version FROM schema_version LIMIT 1").get() as {
+            version: number;
+        } | null;
 
-        const row = this.db.query("SELECT version FROM schema_version LIMIT 1").get() as { version: number } | null;
         if (!row || row.version < SCHEMA_VERSION) {
-            this.db.exec(`
-        CREATE TABLE IF NOT EXISTS schedules (
-          id          INTEGER PRIMARY KEY AUTOINCREMENT,
-          name        TEXT NOT NULL UNIQUE,
-          preset_name TEXT NOT NULL,
-          interval    TEXT NOT NULL,
-          enabled     INTEGER NOT NULL DEFAULT 1,
-          last_run_at TEXT,
-          next_run_at TEXT NOT NULL,
-          created_at  TEXT NOT NULL DEFAULT (datetime('now')),
-          updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
-          vars_json   TEXT
-        );
-
-        CREATE TABLE IF NOT EXISTS runs (
-          id           INTEGER PRIMARY KEY AUTOINCREMENT,
-          schedule_id  INTEGER,
-          preset_name  TEXT NOT NULL,
-          trigger_type TEXT NOT NULL DEFAULT 'manual',
-          started_at   TEXT NOT NULL,
-          finished_at  TEXT,
-          status       TEXT NOT NULL DEFAULT 'running',
-          step_count   INTEGER NOT NULL DEFAULT 0,
-          duration_ms  INTEGER,
-          error        TEXT,
-          FOREIGN KEY (schedule_id) REFERENCES schedules(id) ON DELETE SET NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS run_logs (
-          id          INTEGER PRIMARY KEY AUTOINCREMENT,
-          run_id      INTEGER NOT NULL,
-          step_index  INTEGER NOT NULL,
-          step_id     TEXT NOT NULL,
-          step_name   TEXT NOT NULL,
-          action      TEXT NOT NULL,
-          status      TEXT NOT NULL,
-          output      TEXT,
-          duration_ms INTEGER NOT NULL DEFAULT 0,
-          error       TEXT,
-          logged_at   TEXT NOT NULL DEFAULT (datetime('now')),
-          FOREIGN KEY (run_id) REFERENCES runs(id) ON DELETE CASCADE
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_runs_schedule_id ON runs(schedule_id);
-        CREATE INDEX IF NOT EXISTS idx_runs_preset_name ON runs(preset_name);
-        CREATE INDEX IF NOT EXISTS idx_runs_started_at ON runs(started_at);
-        CREATE INDEX IF NOT EXISTS idx_run_logs_run_id ON run_logs(run_id);
-        CREATE INDEX IF NOT EXISTS idx_schedules_next_run ON schedules(next_run_at) WHERE enabled = 1;
-
-        INSERT OR REPLACE INTO schema_version (rowid, version) VALUES (1, ${SCHEMA_VERSION});
-      `);
+            this.client.raw.run("INSERT OR REPLACE INTO schema_version (rowid, version) VALUES (1, ?)", [
+                SCHEMA_VERSION,
+            ]);
             logger.debug("AutomateDatabase schema initialized");
         }
     }
 
-    // --- Schedule CRUD ---
+    async createSchedule(
+        name: string,
+        presetName: string,
+        interval: string,
+        nextRunAt: string,
+        varsJson?: string
+    ): Promise<number> {
+        const result = await this.client.kysely
+            .insertInto("schedules")
+            .values({
+                name,
+                preset_name: presetName,
+                interval,
+                next_run_at: nextRunAt,
+                vars_json: varsJson ?? null,
+            })
+            .executeTakeFirstOrThrow();
 
-    createSchedule(name: string, presetName: string, interval: string, nextRunAt: string, varsJson?: string): number {
-        const stmt = this.db.prepare(`
-      INSERT INTO schedules (name, preset_name, interval, next_run_at, vars_json)
-      VALUES (?, ?, ?, ?, ?)
-    `);
-        const result = stmt.run(name, presetName, interval, nextRunAt, varsJson ?? null);
-        return Number(result.lastInsertRowid);
+        return Number(result.insertId ?? 0);
     }
 
-    getSchedule(name: string): ScheduleRow | null {
-        return this.db.query("SELECT * FROM schedules WHERE name = ?").get(name) as ScheduleRow | null;
+    async getSchedule(name: string): Promise<ScheduleRow | null> {
+        const row = await this.client.kysely
+            .selectFrom("schedules")
+            .selectAll()
+            .where("name", "=", name)
+            .executeTakeFirst();
+
+        return (row as ScheduleRow | undefined) ?? null;
     }
 
-    listSchedules(): ScheduleRow[] {
-        return this.db.query("SELECT * FROM schedules ORDER BY name").all() as ScheduleRow[];
+    async listSchedules(): Promise<ScheduleRow[]> {
+        const rows = await this.client.kysely.selectFrom("schedules").selectAll().orderBy("name").execute();
+        return rows as ScheduleRow[];
     }
 
-    getDueSchedules(now: string): ScheduleRow[] {
-        return this.db
-            .query("SELECT * FROM schedules WHERE enabled = 1 AND next_run_at <= ? ORDER BY next_run_at")
-            .all(now) as ScheduleRow[];
+    async getDueSchedules(now: string): Promise<ScheduleRow[]> {
+        const rows = await this.client.kysely
+            .selectFrom("schedules")
+            .selectAll()
+            .where("enabled", "=", 1)
+            .where("next_run_at", "<=", now)
+            .orderBy("next_run_at")
+            .execute();
+        return rows as ScheduleRow[];
     }
 
-    setScheduleEnabled(name: string, enabled: boolean): void {
-        this.db
-            .prepare("UPDATE schedules SET enabled = ?, updated_at = datetime('now') WHERE name = ?")
-            .run(enabled ? 1 : 0, name);
+    async setScheduleEnabled(name: string, enabled: boolean): Promise<void> {
+        await this.client.kysely
+            .updateTable("schedules")
+            .set({ enabled: enabled ? 1 : 0, updated_at: sql`datetime('now')` })
+            .where("name", "=", name)
+            .execute();
     }
 
-    deleteSchedule(name: string): void {
-        this.db.prepare("DELETE FROM schedules WHERE name = ?").run(name);
+    async deleteSchedule(name: string): Promise<void> {
+        await this.client.kysely.deleteFrom("schedules").where("name", "=", name).execute();
     }
 
-    updateScheduleAfterRun(id: number, nextRunAt: string): void {
-        this.db
-            .prepare(
-                "UPDATE schedules SET last_run_at = datetime('now'), next_run_at = ?, updated_at = datetime('now') WHERE id = ?"
-            )
-            .run(nextRunAt, id);
+    async updateScheduleAfterRun(id: number, nextRunAt: string): Promise<void> {
+        await this.client.kysely
+            .updateTable("schedules")
+            .set({
+                last_run_at: sql`datetime('now')`,
+                next_run_at: nextRunAt,
+                updated_at: sql`datetime('now')`,
+            })
+            .where("id", "=", id)
+            .execute();
     }
 
-    // --- Run tracking ---
+    async startRun(presetName: string, scheduleId: number | null, triggerType: "manual" | "schedule"): Promise<number> {
+        const result = await this.client.kysely
+            .insertInto("runs")
+            .values({
+                schedule_id: scheduleId,
+                preset_name: presetName,
+                trigger_type: triggerType,
+                started_at: sql`datetime('now')`,
+                status: "running",
+            })
+            .executeTakeFirstOrThrow();
 
-    startRun(presetName: string, scheduleId: number | null, triggerType: "manual" | "schedule"): number {
-        const stmt = this.db.prepare(`
-      INSERT INTO runs (schedule_id, preset_name, trigger_type, started_at, status)
-      VALUES (?, ?, ?, datetime('now'), 'running')
-    `);
-        return Number(stmt.run(scheduleId, presetName, triggerType).lastInsertRowid);
+        return Number(result.insertId ?? 0);
     }
 
-    logStep(
+    async logStep(
         runId: number,
         stepIndex: number,
         stepId: string,
@@ -149,101 +182,82 @@ export class AutomateDatabase {
         output: string | null,
         durationMs: number,
         error: string | null
-    ): void {
+    ): Promise<void> {
         const truncatedOutput = output && output.length > 65536 ? `${output.slice(0, 65536)}\n... (truncated)` : output;
-        this.db
-            .prepare(`
-      INSERT INTO run_logs (run_id, step_index, step_id, step_name, action, status, output, duration_ms, error)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `)
-            .run(runId, stepIndex, stepId, stepName, action, status, truncatedOutput, Math.round(durationMs), error);
+
+        await this.client.kysely
+            .insertInto("run_logs")
+            .values({
+                run_id: runId,
+                step_index: stepIndex,
+                step_id: stepId,
+                step_name: stepName,
+                action,
+                status,
+                output: truncatedOutput,
+                duration_ms: Math.round(durationMs),
+                error,
+            })
+            .execute();
     }
 
-    finishRun(
+    async finishRun(
         runId: number,
         status: "success" | "error" | "cancelled",
         stepCount: number,
         durationMs: number,
         error?: string
-    ): void {
-        this.db
-            .prepare(`
-      UPDATE runs SET finished_at = datetime('now'), status = ?, step_count = ?, duration_ms = ?, error = ?
-      WHERE id = ?
-    `)
-            .run(status, stepCount, Math.round(durationMs), error ?? null, runId);
+    ): Promise<void> {
+        await this.client.kysely
+            .updateTable("runs")
+            .set({
+                finished_at: sql`datetime('now')`,
+                status,
+                step_count: stepCount,
+                duration_ms: Math.round(durationMs),
+                error: error ?? null,
+            })
+            .where("id", "=", runId)
+            .execute();
     }
 
-    // --- Query runs ---
-
-    listRuns(limit: number = 50): RunRow[] {
-        return this.db.query("SELECT * FROM runs ORDER BY started_at DESC LIMIT ?").all(limit) as RunRow[];
+    async listRuns(limit = 50): Promise<RunRow[]> {
+        const rows = await this.client.kysely
+            .selectFrom("runs")
+            .selectAll()
+            .orderBy("started_at", "desc")
+            .limit(limit)
+            .execute();
+        return rows as RunRow[];
     }
 
-    getRun(runId: number): RunRow | null {
-        return this.db.query("SELECT * FROM runs WHERE id = ?").get(runId) as RunRow | null;
+    async getRun(runId: number): Promise<RunRow | null> {
+        const row = await this.client.kysely.selectFrom("runs").selectAll().where("id", "=", runId).executeTakeFirst();
+        return (row as RunRow | undefined) ?? null;
     }
 
-    getRunLogs(runId: number): RunLogRow[] {
-        return this.db.query("SELECT * FROM run_logs WHERE run_id = ? ORDER BY step_index").all(runId) as RunLogRow[];
+    async getRunLogs(runId: number): Promise<RunLogRow[]> {
+        const rows = await this.client.kysely
+            .selectFrom("run_logs")
+            .selectAll()
+            .where("run_id", "=", runId)
+            .orderBy("step_index")
+            .execute();
+        return rows as RunLogRow[];
     }
-
-    // --- Cleanup ---
 
     close(): void {
-        this.db.close();
+        this.client.close();
     }
 }
 
-// --- Row types ---
-
-export interface ScheduleRow {
-    id: number;
-    name: string;
-    preset_name: string;
-    interval: string;
-    enabled: number;
-    last_run_at: string | null;
-    next_run_at: string;
-    created_at: string;
-    updated_at: string;
-    vars_json: string | null;
-}
-
-export interface RunRow {
-    id: number;
-    schedule_id: number | null;
-    preset_name: string;
-    trigger_type: string;
-    started_at: string;
-    finished_at: string | null;
-    status: string;
-    step_count: number;
-    duration_ms: number | null;
-    error: string | null;
-}
-
-export interface RunLogRow {
-    id: number;
-    run_id: number;
-    step_index: number;
-    step_id: string;
-    step_name: string;
-    action: string;
-    status: string;
-    output: string | null;
-    duration_ms: number;
-    error: string | null;
-    logged_at: string;
-}
-
-// --- Singleton ---
 let _instance: AutomateDatabase | null = null;
 
 export function getDb(): AutomateDatabase {
     if (!_instance) {
         _instance = new AutomateDatabase();
     }
+
     return _instance;
 }
 

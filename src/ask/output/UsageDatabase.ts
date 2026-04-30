@@ -1,10 +1,10 @@
-import { sql } from "kysely";
-import logger from "@app/logger";
 import { getAskDatabase, openAskDatabase } from "@app/ask/lib/db";
 import type { AskDB } from "@app/ask/lib/db-types";
+import logger from "@app/logger";
 import type { DatabaseClient } from "@app/utils/database";
 import { SafeJSON } from "@app/utils/json";
 import type { LanguageModelUsage } from "ai";
+import { sql } from "kysely";
 
 export interface UsageRecord {
     id?: number;
@@ -60,7 +60,7 @@ export class UsageDatabase {
         model: string,
         usage: LanguageModelUsage,
         cost: number,
-        messageIndex?: number,
+        messageIndex?: number
     ): Promise<number> {
         logger.debug(`[UsageDatabase] recordUsage called for ${provider}/${model}`);
         logger.debug({ usage: SafeJSON.stringify(usage, null, 2) }, `[UsageDatabase] usage object`);
@@ -72,7 +72,7 @@ export class UsageDatabase {
 
         logger.debug(
             { inputTokens, outputTokens, cachedInputTokens, totalTokens, cost },
-            `[UsageDatabase] Storing tokens`,
+            `[UsageDatabase] Storing tokens`
         );
 
         const result = await this.client.kysely
@@ -212,12 +212,14 @@ export class UsageDatabase {
         messageCount: number;
         sessionCount: number;
     }> {
-        let query = this.client.kysely.selectFrom("usage_records").select([
-            sql<number | null>`SUM(cost)`.as("total_cost"),
-            sql<number | null>`SUM(total_tokens)`.as("total_tokens"),
-            sql<number>`COUNT(*)`.as("message_count"),
-            sql<number>`COUNT(DISTINCT session_id)`.as("session_count"),
-        ]);
+        let query = this.client.kysely
+            .selectFrom("usage_records")
+            .select([
+                sql<number | null>`SUM(cost)`.as("total_cost"),
+                sql<number | null>`SUM(total_tokens)`.as("total_tokens"),
+                sql<number>`COUNT(*)`.as("message_count"),
+                sql<number>`COUNT(DISTINCT session_id)`.as("session_count"),
+            ]);
 
         if (days) {
             query = query.where(sql<string>`date(timestamp)`, ">=", sinceDays(days));
@@ -246,24 +248,22 @@ export class UsageDatabase {
     }
 
     async getTopModels(limit = 10, days?: number): Promise<ModelUsage[]> {
-        let query = this.client.kysely.selectFrom("usage_records").select([
-            "provider",
-            "model",
-            sql<number>`SUM(cost)`.as("total_cost"),
-            sql<number>`SUM(total_tokens)`.as("total_tokens"),
-            sql<number>`COUNT(*)`.as("message_count"),
-            sql<number>`AVG(cost)`.as("avg_cost_per_message"),
-        ]);
+        let query = this.client.kysely
+            .selectFrom("usage_records")
+            .select([
+                "provider",
+                "model",
+                sql<number>`SUM(cost)`.as("total_cost"),
+                sql<number>`SUM(total_tokens)`.as("total_tokens"),
+                sql<number>`COUNT(*)`.as("message_count"),
+                sql<number>`AVG(cost)`.as("avg_cost_per_message"),
+            ]);
 
         if (days) {
             query = query.where(sql<string>`date(timestamp)`, ">=", sinceDays(days));
         }
 
-        const rows = await query
-            .groupBy(["provider", "model"])
-            .orderBy("total_cost", "desc")
-            .limit(limit)
-            .execute();
+        const rows = await query.groupBy(["provider", "model"]).orderBy("total_cost", "desc").limit(limit).execute();
 
         return rows.map((row) => ({
             provider: row.provider,

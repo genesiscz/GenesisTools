@@ -16,13 +16,15 @@ export function registerTaskCommand(parent: Command): void {
         .command("list", { isDefault: true })
         .alias("ls")
         .description("Show all scheduled tasks")
-        .action(() => {
+        .action(async () => {
             const db = getDb();
-            const schedules = db.listSchedules();
+            const schedules = await db.listSchedules();
+
             if (schedules.length === 0) {
                 p.log.info("No scheduled tasks. Run: tools automate task create");
                 return;
             }
+
             const headers = ["Name", "Preset", "Interval", "Enabled", "Last Run", "Next Run"];
             const rows = schedules.map((s) => [
                 s.name,
@@ -67,12 +69,17 @@ export function registerTaskCommand(parent: Command): void {
                     if (!val || !/^[a-zA-Z0-9_-]+$/.test(val)) {
                         return "Only alphanumeric, hyphens, underscores";
                     }
-                    const db = getDb();
-                    if (db.getSchedule(val)) {
-                        return "Task name already exists";
-                    }
                 },
             });
+
+            if (!p.isCancel(name)) {
+                const db = getDb();
+
+                if (await db.getSchedule(name as string)) {
+                    p.log.error("Task name already exists");
+                    return;
+                }
+            }
             if (p.isCancel(name)) {
                 return;
             }
@@ -99,7 +106,7 @@ export function registerTaskCommand(parent: Command): void {
             const nextRunAt = computeNextRunAt(parsed).toISOString();
 
             const db = getDb();
-            db.createSchedule(name as string, presetName as string, interval as string, nextRunAt);
+            await db.createSchedule(name as string, presetName as string, interval as string, nextRunAt);
             p.log.success(`Task "${name}" created. Next run: ${nextRunAt}`);
             p.log.info("Start the daemon to begin executing: tools automate daemon start");
             p.outro("");
@@ -109,13 +116,13 @@ export function registerTaskCommand(parent: Command): void {
     parent
         .command("show <name-or-id>")
         .description("Show task details (by name) or run details (by numeric ID)")
-        .action((arg: string) => {
+        .action(async (arg: string) => {
             const db = getDb();
             const asNum = parseInt(arg, 10);
 
-            // If it's a number, show run details
             if (!Number.isNaN(asNum) && String(asNum) === arg) {
-                const run = db.getRun(asNum);
+                const run = await db.getRun(asNum);
+
                 if (!run) {
                     p.log.error(`Run #${asNum} not found`);
                     return;
@@ -125,11 +132,13 @@ export function registerTaskCommand(parent: Command): void {
                 p.log.info(
                     `Trigger: ${run.trigger_type} | Status: ${run.status} | Duration: ${run.duration_ms != null ? formatDuration(run.duration_ms) : "running"}`
                 );
+
                 if (run.error) {
                     p.log.error(`Error: ${run.error}`);
                 }
 
-                const logs = db.getRunLogs(asNum);
+                const logs = await db.getRunLogs(asNum);
+
                 if (logs.length === 0) {
                     p.log.info("No step logs recorded.");
                     return;
@@ -152,8 +161,8 @@ export function registerTaskCommand(parent: Command): void {
                 return;
             }
 
-            // Otherwise, show schedule details
-            const schedule = db.getSchedule(arg);
+            const schedule = await db.getSchedule(arg);
+
             if (!schedule) {
                 p.log.error(`Task "${arg}" not found`);
                 return;
@@ -166,8 +175,7 @@ export function registerTaskCommand(parent: Command): void {
             p.log.info(`Last run: ${schedule.last_run_at ?? pc.dim("never")}`);
             p.log.info(`Next run: ${schedule.enabled ? schedule.next_run_at : pc.dim("—")}`);
 
-            // Show recent runs for this schedule
-            const runs = db.listRuns(10);
+            const runs = await db.listRuns(10);
             const scheduleRuns = runs.filter(
                 (r) => r.preset_name === schedule.preset_name && r.trigger_type === "schedule"
             );
@@ -188,35 +196,37 @@ export function registerTaskCommand(parent: Command): void {
             }
         });
 
-    // task enable <name>
     parent
         .command("enable <name>")
         .description("Enable a scheduled task")
-        .action((name: string) => {
+        .action(async (name: string) => {
             const db = getDb();
-            const existing = db.getSchedule(name);
+            const existing = await db.getSchedule(name);
+
             if (!existing) {
                 p.log.error(`Task "${name}" not found`);
                 return;
             }
+
             const parsed = parseInterval(existing.interval);
             const nextRunAt = computeNextRunAt(parsed).toISOString();
-            db.setScheduleEnabled(name, true);
-            db.updateScheduleAfterRun(existing.id, nextRunAt);
+            await db.setScheduleEnabled(name, true);
+            await db.updateScheduleAfterRun(existing.id, nextRunAt);
             p.log.success(`Task "${name}" enabled. Next run: ${nextRunAt}`);
         });
 
-    // task disable <name>
     parent
         .command("disable <name>")
         .description("Disable a scheduled task")
-        .action((name: string) => {
+        .action(async (name: string) => {
             const db = getDb();
-            if (!db.getSchedule(name)) {
+
+            if (!(await db.getSchedule(name))) {
                 p.log.error(`Task "${name}" not found`);
                 return;
             }
-            db.setScheduleEnabled(name, false);
+
+            await db.setScheduleEnabled(name, false);
             p.log.success(`Task "${name}" disabled`);
         });
 
@@ -226,15 +236,19 @@ export function registerTaskCommand(parent: Command): void {
         .description("Delete a scheduled task")
         .action(async (name: string) => {
             const db = getDb();
-            if (!db.getSchedule(name)) {
+
+            if (!(await db.getSchedule(name))) {
                 p.log.error(`Task "${name}" not found`);
                 return;
             }
+
             const confirm = await p.confirm({ message: `Delete task "${name}"?` });
+
             if (p.isCancel(confirm) || !confirm) {
                 return;
             }
-            db.deleteSchedule(name);
+
+            await db.deleteSchedule(name);
             p.log.success(`Task "${name}" deleted`);
         });
 
@@ -245,7 +259,8 @@ export function registerTaskCommand(parent: Command): void {
         .option("-v, --verbose", "Verbose output")
         .action(async (name: string, opts: { verbose?: boolean }) => {
             const db = getDb();
-            const schedule = db.getSchedule(name);
+            const schedule = await db.getSchedule(name);
+
             if (!schedule) {
                 p.log.error(`Task "${name}" not found`);
                 return;
@@ -257,7 +272,7 @@ export function registerTaskCommand(parent: Command): void {
             const vars = schedule.vars_json
                 ? (SafeJSON.parse(schedule.vars_json, { strict: true }) as Record<string, string>)
                 : undefined;
-            const runLogger = createRunLogger(preset.name, schedule.id, "manual");
+            const runLogger = await createRunLogger(preset.name, schedule.id, "manual");
 
             const result = await runPreset(
                 preset,
@@ -294,9 +309,10 @@ export function registerTaskCommand(parent: Command): void {
         .command("history")
         .description("Show recent execution runs")
         .option("-n, --limit <n>", "Number of runs to show", "20")
-        .action((opts) => {
+        .action(async (opts) => {
             const db = getDb();
-            const runs = db.listRuns(parseInt(opts.limit, 10));
+            const runs = await db.listRuns(parseInt(opts.limit, 10));
+
             if (runs.length === 0) {
                 p.log.info("No runs recorded yet.");
                 return;
