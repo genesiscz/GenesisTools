@@ -24,3 +24,62 @@ export function parseSwapUsage(output: string): SystemSwap {
         freeBytes: unitToBytes(Number.parseFloat(m[5]), m[6]),
     };
 }
+
+export function parseEtime(etime: string): number {
+    const trimmed = etime.trim();
+    const match = trimmed.match(/^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)$/);
+
+    if (!match) {
+        return 0;
+    }
+
+    const days = match[1] ? Number.parseInt(match[1], 10) : 0;
+    const hours = match[2] ? Number.parseInt(match[2], 10) : 0;
+    const minutes = Number.parseInt(match[3], 10);
+    const seconds = Number.parseInt(match[4], 10);
+    return (days * 86400 + hours * 3600 + minutes * 60 + seconds) * 1000;
+}
+
+export interface PsRow {
+    pid: number;
+    rssBytes: number;
+    uptimeMs: number;
+    name: string;
+}
+
+export function parsePsOutput(output: string): PsRow[] {
+    const rows: PsRow[] = [];
+
+    for (const raw of output.split("\n")) {
+        const line = raw.trim();
+
+        if (line === "") {
+            continue;
+        }
+
+        const parts = line.split(/\s+/);
+
+        if (parts.length < 4) {
+            continue;
+        }
+
+        const pid = Number.parseInt(parts[0], 10);
+        const rssKb = Number.parseInt(parts[1], 10);
+
+        if (Number.isNaN(pid) || Number.isNaN(rssKb)) {
+            continue;
+        }
+
+        const etime = parts[2];
+        const name = parts.slice(3).join(" ");
+
+        rows.push({
+            pid,
+            rssBytes: rssKb * 1024,
+            uptimeMs: parseEtime(etime),
+            name,
+        });
+    }
+
+    return rows;
+}
