@@ -55,7 +55,7 @@ function formatDate(dateStr: string): string {
 }
 
 async function showSummary(db: UsageDatabase, days: number) {
-    const total = db.getTotalUsage(days);
+    const total = await db.getTotalUsage(days);
 
     console.log(chalk.bold.cyan("\n📊 USAGE SUMMARY\n"));
     console.log(chalk.white(`Period: Last ${days} days`));
@@ -73,7 +73,7 @@ async function showSummary(db: UsageDatabase, days: number) {
 }
 
 async function showDailyUsage(db: UsageDatabase, days: number) {
-    const dailyUsage = db.getDailyUsage(days);
+    const dailyUsage = await db.getDailyUsage(days);
 
     if (dailyUsage.length === 0) {
         console.log(chalk.yellow("\nNo usage data found for the specified period."));
@@ -101,7 +101,7 @@ async function showDailyUsage(db: UsageDatabase, days: number) {
 }
 
 async function showProviderUsage(db: UsageDatabase, days: number) {
-    const providerUsage = db.getProviderUsage(days);
+    const providerUsage = await db.getProviderUsage(days);
 
     if (providerUsage.length === 0) {
         return;
@@ -128,7 +128,7 @@ async function showProviderUsage(db: UsageDatabase, days: number) {
 }
 
 async function showModelUsage(db: UsageDatabase, days: number) {
-    const modelUsage = db.getModelUsage(days);
+    const modelUsage = await db.getModelUsage(days);
 
     if (modelUsage.length === 0) {
         return;
@@ -163,7 +163,7 @@ async function showModelUsage(db: UsageDatabase, days: number) {
 }
 
 async function showCostTrend(db: UsageDatabase, days: number) {
-    const trend = db.getCostTrend(Math.min(days, 7)); // Show last 7 days for trend
+    const trend = await db.getCostTrend(Math.min(days, 7));
 
     if (trend.length === 0) {
         return;
@@ -182,10 +182,10 @@ async function showCostTrend(db: UsageDatabase, days: number) {
 }
 
 async function showJSON(db: UsageDatabase, days: number, _provider?: string, _model?: string) {
-    const total = db.getTotalUsage(days);
-    const dailyUsage = db.getDailyUsage(days);
-    const providerUsage = db.getProviderUsage(days);
-    const modelUsage = db.getModelUsage(days);
+    const total = await db.getTotalUsage(days);
+    const dailyUsage = await db.getDailyUsage(days);
+    const providerUsage = await db.getProviderUsage(days);
+    const modelUsage = await db.getModelUsage(days);
 
     const output = {
         period: {
