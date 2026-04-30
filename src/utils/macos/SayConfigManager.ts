@@ -363,7 +363,7 @@ export class SayConfigManager {
         await this.patchApp(args.app, { mute: args.mute });
     }
 
-    /** Whether a given app (or the implicit caller) is muted. */
+    /** Whether a given app (or the implicit caller using the default profile) is muted. */
     async isMuted(app?: string): Promise<boolean> {
         const c = await this.load();
 
@@ -371,11 +371,8 @@ export class SayConfigManager {
             return true;
         }
 
-        if (!app) {
-            return false;
-        }
-
-        const a = c.apps.find((x) => x.name === app);
+        const targetApp = app ?? DEFAULT_APP_NAME;
+        const a = c.apps.find((x) => x.name === targetApp);
         return a?.mute === true;
     }
 }
