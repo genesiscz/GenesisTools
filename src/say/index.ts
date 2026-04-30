@@ -17,7 +17,7 @@ import {
     SETTABLE_FIELDS,
     type SettableField,
 } from "@app/utils/macos/SayConfigManager.ts";
-import { listVoicesStructured, normalizeVolume } from "@app/utils/macos/tts.ts";
+import { normalizeVolume } from "@app/utils/macos/tts.ts";
 import { formatTable } from "@app/utils/table.ts";
 import * as p from "@clack/prompts";
 import { Command } from "commander";
@@ -659,28 +659,71 @@ async function listAppsTUI(mgr: SayConfigManager): Promise<void> {
     console.log(formatTable(rows, ["App", "Voice", "Volume", "Provider", "Mute"]));
 }
 
+/**
+ * Sequential single-pass editor: cycles through every settable field once,
+ * accepts ⏎ to keep / "-" to inherit / a value to set, then commits all
+ * changes atomically after a confirm. Cancelling at any prompt aborts with
+ * no writes.
+ */
 async function editAppFields(mgr: SayConfigManager, app: string): Promise<void> {
-    while (true) {
-        const profile = (await mgr.getApp(app)) ?? { name: app };
+    const profile = (await mgr.getApp(app)) ?? { name: app };
+    renderProfileHeader(app, profile);
 
-        const field = await p.select({
-            message: `Edit "${app}" — pick a field`,
-            options: [
-                ...SETTABLE_FIELDS.map((f) => ({
-                    value: f,
-                    label: f,
-                    hint: formatFieldValue(profile, f),
-                })),
-                { value: "__back__", label: pc.dim("← back") },
-            ],
-        });
+    const patch: Partial<SayAppConfig> = {};
+    const clearList: SettableField[] = [];
 
-        if (p.isCancel(field) || field === "__back__") {
+    for (const field of SETTABLE_FIELDS) {
+        const decision = await promptField(field, profile);
+
+        if (decision === "cancel") {
+            p.log.info(pc.dim("Cancelled — no changes saved."));
             return;
         }
 
-        await editSingleField(mgr, app, field as SettableField);
+        if (decision === "keep") {
+            continue;
+        }
+
+        if (decision.kind === "clear") {
+            clearList.push(field);
+            continue;
+        }
+
+        Object.assign(patch, decision.patch);
     }
+
+    if (Object.keys(patch).length === 0 && clearList.length === 0) {
+        p.log.info(pc.dim("Nothing changed."));
+        return;
+    }
+
+    p.log.message(buildSummary(patch, clearList));
+
+    const confirmed = await p.confirm({ message: "Save changes?", initialValue: true });
+
+    if (p.isCancel(confirmed) || !confirmed) {
+        p.log.info(pc.dim("Cancelled — no changes saved."));
+        return;
+    }
+
+    if (Object.keys(patch).length > 0) {
+        await mgr.patchApp(app, patch);
+    }
+
+    if (clearList.length > 0) {
+        await mgr.unsetAppFields(app, clearList);
+    }
+
+    p.log.success(`Saved "${app}".`);
+}
+
+function renderProfileHeader(app: string, profile: SayAppConfig): void {
+    const rows = SETTABLE_FIELDS.map((f) => [f, formatFieldValue(profile, f)]);
+    console.log();
+    console.log(pc.bold(`Edit "${app}"`));
+    console.log(formatTable(rows, ["Field", "Current"]));
+    console.log(pc.dim("  ⏎ keep  ·  - inherit (clear)  ·  any value to set"));
+    console.log();
 }
 
 function formatFieldValue(profile: SayAppConfig, field: SettableField): string {
@@ -697,97 +740,99 @@ function formatFieldValue(profile: SayAppConfig, field: SettableField): string {
     return String(v);
 }
 
-async function editSingleField(mgr: SayConfigManager, app: string, field: SettableField): Promise<void> {
+type FieldDecision = "keep" | "cancel" | { kind: "clear" } | { kind: "set"; patch: Partial<SayAppConfig> };
+
+const KEEP = "__keep__";
+const CLEAR = "__clear__";
+
+async function promptField(field: SettableField, profile: SayAppConfig): Promise<FieldDecision> {
     if (field === "mute") {
-        const profile = (await mgr.getApp(app)) ?? { name: app };
-        const current = profile.mute === true;
-        await mgr.setMute({ app, mute: !current });
-        p.log.success(`${app}.mute = ${!current}`);
-        return;
-    }
-
-    const action = await p.select({
-        message: `${field}:`,
-        options: [
-            { value: "set", label: "Set value" },
-            { value: "clear", label: "Clear (inherit from default)" },
-            { value: "back", label: pc.dim("← back") },
-        ],
-    });
-
-    if (p.isCancel(action) || action === "back") {
-        return;
-    }
-
-    if (action === "clear") {
-        await mgr.unsetAppFields(app, [field]);
-        p.log.success(`${app}.${field} cleared`);
-        return;
+        return promptMute(profile);
     }
 
     if (field === "provider") {
-        const v = await p.select({
-            message: "Provider:",
-            options: [
-                { value: "macos", label: "macos" },
-                { value: "xai", label: "xai" },
-                { value: "openai", label: "openai" },
-            ],
-        });
-
-        if (p.isCancel(v)) {
-            return;
-        }
-
-        await mgr.setProvider({ app, provider: v as SayProvider });
-        p.log.success(`${app}.provider = ${v}`);
-        return;
+        return promptEnum(field, profile, ["macos", "xai", "openai"]);
     }
 
     if (field === "format") {
-        const v = await p.select({
-            message: "Format:",
-            options: [
-                { value: "mp3", label: "mp3" },
-                { value: "wav", label: "wav" },
-            ],
-        });
-
-        if (p.isCancel(v)) {
-            return;
-        }
-
-        await mgr.setFormat({ app, format: v as "mp3" | "wav" });
-        p.log.success(`${app}.format = ${v}`);
-        return;
+        return promptEnum(field, profile, ["mp3", "wav"]);
     }
 
-    if (field === "voice") {
-        const voices = await listVoicesStructured();
+    return promptText(field, profile);
+}
 
-        const v = await p.select({
-            message: "Voice (macOS list shown — for xai/openai pass any provider voice id manually via --save):",
-            options: voices.map((vc) => ({
-                value: vc.name,
-                label: vc.name,
-                hint: vc.locale,
-            })),
-        });
+async function promptMute(profile: SayAppConfig): Promise<FieldDecision> {
+    const current = profile.mute === null || profile.mute === undefined ? "(inherit)" : String(profile.mute);
+    const choice = await p.select({
+        message: `mute  [${current}]`,
+        options: [
+            { value: KEEP, label: "Keep" },
+            { value: "true", label: "Mute" },
+            { value: "false", label: "Unmute" },
+            { value: CLEAR, label: pc.dim("Inherit (clear)") },
+        ],
+        initialValue: KEEP,
+    });
 
-        if (p.isCancel(v)) {
-            return;
-        }
-
-        await mgr.setVoice({ app, voice: String(v) });
-        p.log.success(`${app}.voice = ${v}`);
-        return;
+    if (p.isCancel(choice)) {
+        return "cancel";
     }
 
+    if (choice === KEEP) {
+        return "keep";
+    }
+
+    if (choice === CLEAR) {
+        return { kind: "clear" };
+    }
+
+    return { kind: "set", patch: { mute: choice === "true" } };
+}
+
+async function promptEnum(
+    field: "provider" | "format",
+    profile: SayAppConfig,
+    values: readonly string[]
+): Promise<FieldDecision> {
+    const current = formatFieldValue(profile, field);
+    const choice = await p.select({
+        message: `${field}  [${current}]`,
+        options: [
+            { value: KEEP, label: "Keep" },
+            { value: CLEAR, label: pc.dim("Inherit (clear)") },
+            ...values.map((v) => ({ value: v, label: v })),
+        ],
+        initialValue: KEEP,
+    });
+
+    if (p.isCancel(choice)) {
+        return "cancel";
+    }
+
+    if (choice === KEEP) {
+        return "keep";
+    }
+
+    if (choice === CLEAR) {
+        return { kind: "clear" };
+    }
+
+    if (field === "provider") {
+        return { kind: "set", patch: { provider: choice as SayProvider } };
+    }
+
+    return { kind: "set", patch: { format: choice as "mp3" | "wav" } };
+}
+
+async function promptText(field: SettableField, profile: SayAppConfig): Promise<FieldDecision> {
+    const current = formatFieldValue(profile, field);
     const input = await p.text({
-        message: `${field}:`,
+        message: `${field}  [${current}]`,
+        placeholder: "⏎ keep  ·  - inherit  ·  value to set",
+        defaultValue: "",
         validate(v: string | undefined) {
-            if (!v) {
-                return "Value required";
+            if (!v || v === "-") {
+                return;
             }
 
             if (field === "volume" || field === "rate") {
@@ -801,20 +846,66 @@ async function editSingleField(mgr: SayConfigManager, app: string, field: Settab
     });
 
     if (p.isCancel(input)) {
-        return;
+        return "cancel";
+    }
+
+    const raw = String(input);
+
+    if (raw === "") {
+        return "keep";
+    }
+
+    if (raw === "-") {
+        return { kind: "clear" };
     }
 
     if (field === "volume") {
-        await mgr.setVolume({ app, volume: normalizeVolume(Number.parseFloat(String(input))) });
-    } else if (field === "rate") {
-        await mgr.setRate({ app, rate: Number.parseFloat(String(input)) });
-    } else if (field === "model") {
-        await mgr.setModel({ app, model: String(input) });
-    } else if (field === "language") {
-        await mgr.setLanguage({ app, language: String(input) });
+        return { kind: "set", patch: { volume: normalizeVolume(Number.parseFloat(raw)) } };
     }
 
-    p.log.success(`${app}.${field} = ${input}`);
+    if (field === "rate") {
+        return { kind: "set", patch: { rate: Number.parseFloat(raw) } };
+    }
+
+    if (field === "voice") {
+        return { kind: "set", patch: { voice: raw } };
+    }
+
+    if (field === "model") {
+        return { kind: "set", patch: { model: raw } };
+    }
+
+    if (field === "language") {
+        return { kind: "set", patch: { language: raw } };
+    }
+
+    return "keep";
+}
+
+function buildSummary(patch: Partial<SayAppConfig>, clearList: SettableField[]): string {
+    const parts: string[] = [];
+    const changed = Object.keys(patch);
+
+    if (changed.length > 0) {
+        const formatted = changed.map((k) => `${k}=${formatPatchValue(patch, k as keyof SayAppConfig)}`);
+        parts.push(`${pc.green("changed:")} ${formatted.join(", ")}`);
+    }
+
+    if (clearList.length > 0) {
+        parts.push(`${pc.yellow("cleared:")} ${clearList.join(", ")}`);
+    }
+
+    return parts.join("   ");
+}
+
+function formatPatchValue(patch: Partial<SayAppConfig>, key: keyof SayAppConfig): string {
+    const v = patch[key];
+
+    if (key === "volume" && typeof v === "number") {
+        return `${Math.round(v * 100)}%`;
+    }
+
+    return String(v);
 }
 
 async function deleteAppTUI(mgr: SayConfigManager): Promise<void> {
