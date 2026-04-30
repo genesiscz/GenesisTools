@@ -60,8 +60,13 @@ function renderSummary(result: ScanResult): void {
     console.log(
         `  ${pc.dim("System swap")} ${usedColor(formatBytes(system.usedBytes))}${pc.dim(" / ")}${pc.white(formatBytes(system.totalBytes))} ${pc.dim(`(${pct}%)`)}`
     );
+    const cacheNote =
+        result.cacheHits > 0
+            ? `${pc.dim("  ·  ")}${pc.white(String(result.freshScans))}${pc.dim(" fresh, ")}${pc.green(String(result.cacheHits))}${pc.dim(" cached")}`
+            : "";
+
     console.log(
-        `  ${pc.dim("Scanned")}     ${pc.white(String(scannedCount))}${pc.dim(" of ")}${pc.white(String(totalProcesses))}${pc.dim(" processes  ·  ")}${pc.white(String(processes.length))}${pc.dim(" with swap > 0")}`
+        `  ${pc.dim("Scanned")}     ${pc.white(String(scannedCount))}${pc.dim(" of ")}${pc.white(String(totalProcesses))}${pc.dim(" processes  ·  ")}${pc.white(String(processes.length))}${pc.dim(" with swap > 0")}${cacheNote}`
     );
     console.log();
 }

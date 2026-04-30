@@ -22,4 +22,6 @@ export interface ScanResult {
     processes: ProcessSwap[];
     scannedCount: number;
     totalProcesses: number;
+    cacheHits: number;
+    freshScans: number;
 }

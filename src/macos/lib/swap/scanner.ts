@@ -1,3 +1,7 @@
+import { mkdirSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
+import { SafeJSON } from "@app/utils/json";
 import type { ProcessSwap, ScanOptions, ScanResult, SystemSwap } from "./types";
 
 const UNIT_MULT: Record<string, number> = {
@@ -107,6 +111,54 @@ export function parseVmmapSwap(output: string): number {
 const VMMAP_TIMEOUT_MS = 4000;
 const VMMAP_CONCURRENCY = 32;
 const RSS_FLOOR_BYTES = 25 * 1024 * 1024;
+const CACHE_TTL_MS = 2 * 60 * 1000;
+const START_TIME_TOLERANCE_MS = 5000;
+const CACHE_PATH = join(homedir(), ".genesis-tools", "macos-swap", "cache.json");
+
+interface CachedEntry {
+    pid: number;
+    name: string;
+    swapBytes: number;
+    startTimeMs: number;
+    cachedAt: number;
+}
+
+interface CacheFile {
+    entries: CachedEntry[];
+}
+
+async function loadCache(): Promise<Map<number, CachedEntry>> {
+    const map = new Map<number, CachedEntry>();
+
+    try {
+        const text = await Bun.file(CACHE_PATH).text();
+        const data = SafeJSON.parse(text) as CacheFile;
+        const now = Date.now();
+
+        for (const entry of data.entries ?? []) {
+            if (now - entry.cachedAt < CACHE_TTL_MS) {
+                map.set(entry.pid, entry);
+            }
+        }
+    } catch {
+        // missing or corrupt cache — treat as empty
+    }
+
+    return map;
+}
+
+async function saveCache(entries: CachedEntry[]): Promise<void> {
+    try {
+        mkdirSync(dirname(CACHE_PATH), { recursive: true });
+        await Bun.write(CACHE_PATH, SafeJSON.stringify({ entries }));
+    } catch {
+        // cache is best-effort; don't fail the scan if disk is full
+    }
+}
+
+function sameProcess(cachedStart: number, currentStart: number): boolean {
+    return Math.abs(cachedStart - currentStart) < START_TIME_TOLERANCE_MS;
+}
 
 async function spawn(cmd: string[], timeoutMs?: number): Promise<{ stdout: string; exitCode: number }> {
     const proc = Bun.spawn({ cmd, stdio: ["ignore", "pipe", "pipe"] });
@@ -163,29 +215,73 @@ async function pool<T, R>(items: T[], concurrency: number, worker: (item: T) => 
 }
 
 export async function scan(options: ScanOptions): Promise<ScanResult> {
-    const [system, psRows] = await Promise.all([getSystemSwap(), getAllPsRows()]);
+    const [system, psRows, cache] = await Promise.all([getSystemSwap(), getAllPsRows(), loadCache()]);
+    const now = Date.now();
 
     const sortedByRss = [...psRows].sort((a, b) => b.rssBytes - a.rssBytes);
     const candidates = options.all
         ? sortedByRss.filter((row) => row.rssBytes >= RSS_FLOOR_BYTES)
         : sortedByRss.slice(0, options.limit);
 
-    const swaps = await pool(candidates, VMMAP_CONCURRENCY, (row) => getProcSwap(row.pid));
+    const cacheHitEntries: ProcessSwap[] = [];
+    const toScan: PsRow[] = [];
 
-    const processes: ProcessSwap[] = candidates
-        .map((row, i) => ({
-            pid: row.pid,
-            name: row.name,
-            rssBytes: row.rssBytes,
-            swapBytes: swaps[i],
-            uptimeMs: row.uptimeMs,
-        }))
-        .filter((entry) => entry.swapBytes > 0);
+    for (const row of candidates) {
+        const cached = cache.get(row.pid);
+        const currentStart = now - row.uptimeMs;
+
+        if (cached && sameProcess(cached.startTimeMs, currentStart)) {
+            cacheHitEntries.push({
+                pid: row.pid,
+                name: row.name,
+                rssBytes: row.rssBytes,
+                swapBytes: cached.swapBytes,
+                uptimeMs: row.uptimeMs,
+            });
+        } else {
+            toScan.push(row);
+        }
+    }
+
+    const freshSwaps = await pool(toScan, VMMAP_CONCURRENCY, (row) => getProcSwap(row.pid));
+    const freshEntries: ProcessSwap[] = toScan.map((row, i) => ({
+        pid: row.pid,
+        name: row.name,
+        rssBytes: row.rssBytes,
+        swapBytes: freshSwaps[i],
+        uptimeMs: row.uptimeMs,
+    }));
+
+    const livePids = new Set(psRows.map((r) => r.pid));
+    const newCacheEntries: CachedEntry[] = toScan.map((row, i) => ({
+        pid: row.pid,
+        name: row.name,
+        swapBytes: freshSwaps[i],
+        startTimeMs: now - row.uptimeMs,
+        cachedAt: now,
+    }));
+    const rescannedPids = new Set(newCacheEntries.map((e) => e.pid));
+
+    const survivingCacheEntries: CachedEntry[] = [];
+
+    for (const entry of cache.values()) {
+        if (!livePids.has(entry.pid) || rescannedPids.has(entry.pid)) {
+            continue;
+        }
+
+        survivingCacheEntries.push(entry);
+    }
+
+    void saveCache([...newCacheEntries, ...survivingCacheEntries]);
+
+    const processes: ProcessSwap[] = [...cacheHitEntries, ...freshEntries].filter((p) => p.swapBytes > 0);
 
     return {
         system,
         processes,
         scannedCount: candidates.length,
         totalProcesses: psRows.length,
+        cacheHits: cacheHitEntries.length,
+        freshScans: toScan.length,
     };
 }
