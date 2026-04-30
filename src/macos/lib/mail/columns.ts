@@ -23,6 +23,15 @@ function formatRecipientEmails(msg: MailMessage, type: "to" | "cc"): string {
         .join(", ");
 }
 
+function formatBodyPreview(text: string | undefined, maxChars = 120): string {
+    if (!text) {
+        return "";
+    }
+
+    const single = text.replace(/\s+/g, " ").trim();
+    return single.length > maxChars ? `${single.slice(0, maxChars)}…` : single;
+}
+
 export const MAIL_COLUMNS = {
     id: {
         label: "ID",
@@ -54,7 +63,7 @@ export const MAIL_COLUMNS = {
     },
     subject: {
         label: "Subject",
-        get: (m: MailMessage) => (m.subject.length > 60 ? `${m.subject.slice(0, 60)}...` : m.subject),
+        get: (m: MailMessage) => m.subject,
     },
     mailbox: {
         label: "Mailbox",
@@ -82,14 +91,23 @@ export const MAIL_COLUMNS = {
     },
     body: {
         label: "Body",
-        get: (m: MailMessage) => {
-            if (!m.body) {
-                return "";
-            }
-
-            const single = m.body.replace(/\s+/g, " ").trim();
-            return single.length > 120 ? `${single.slice(0, 120)}…` : single;
-        },
+        get: (m: MailMessage) => formatBodyPreview(m.body ?? m.bodyText),
+    },
+    bodyText: {
+        label: "Body Text",
+        get: (m: MailMessage) => m.bodyText ?? m.body ?? "",
+    },
+    bodyHtml: {
+        label: "Body HTML",
+        get: (m: MailMessage) => m.bodyHtml ?? "",
+    },
+    bodyMarkdown: {
+        label: "Body Markdown",
+        get: (m: MailMessage) => m.bodyMarkdown ?? "",
+    },
+    bodyRaw: {
+        label: "Body Raw",
+        get: (m: MailMessage) => m.bodyRaw ?? "",
     },
     bodyMatch: {
         label: "Body Match",

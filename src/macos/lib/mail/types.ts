@@ -28,6 +28,10 @@ export interface MailMessage {
     size: number;
     attachments: MailAttachment[];
     body?: string;
+    bodyText?: string;
+    bodyHtml?: string;
+    bodyMarkdown?: string;
+    bodyRaw?: string;
     /** First ~200 chars of the FTS/vector hit chunk, surfaced in search results. */
     ftsSnippet?: string;
     bodyMatchesQuery?: boolean;

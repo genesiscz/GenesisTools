@@ -6,13 +6,53 @@ import { MailDatabase } from "@app/utils/macos/MailDatabase";
 import chalk from "chalk";
 import type { Command } from "commander";
 
+type BodyFormat = "text" | "markdown" | "html" | "raw";
+
+interface ShowOptions {
+    maxChars?: string;
+    json?: boolean;
+    bodyFormat?: BodyFormat;
+}
+
+function truncateOptionalBody(text: string | undefined, maxChars: number | undefined): string | undefined {
+    if (!text) {
+        return text;
+    }
+
+    return maxChars ? truncateBody(text, maxChars) : text;
+}
+
+function selectDisplayBody(
+    parts: { text: string; markdown: string; html: string; raw: string } | null,
+    format: BodyFormat
+): string | undefined {
+    if (!parts) {
+        return undefined;
+    }
+
+    if (format === "markdown") {
+        return parts.markdown;
+    }
+
+    if (format === "html") {
+        return parts.html;
+    }
+
+    if (format === "raw") {
+        return parts.raw;
+    }
+
+    return parts.text;
+}
+
 export function registerShowCommand(program: Command): void {
     program
         .command("show <message-id>")
         .description("Show full email details including body")
         .option("--max-chars <n>", "Truncate body to N characters")
+        .option("--body-format <format>", "Body format for human output: text, markdown, html, raw", "text")
         .option("--json", "Output as JSON")
-        .action(async (messageIdArg: string, options: { maxChars?: string; json?: boolean }) => {
+        .action(async (messageIdArg: string, options: ShowOptions) => {
             const db = new MailDatabase();
 
             try {
@@ -40,14 +80,37 @@ export function registerShowCommand(program: Command): void {
 
                 // Get body via EmlxBodyExtractor
                 const emlx = await EmlxBodyExtractor.create();
-                const body = await emlx.getBody(rowid);
+                const bodyParts = await emlx.getBodyParts(rowid);
                 emlx.dispose();
 
                 const maxChars = options.maxChars ? Number.parseInt(options.maxChars, 10) : undefined;
-                const displayBody = body && maxChars ? truncateBody(body, maxChars) : body;
+                const bodyFormat = options.bodyFormat ?? "text";
+                const bodyText = truncateOptionalBody(bodyParts?.text, maxChars);
+                const bodyHtml = truncateOptionalBody(bodyParts?.html, maxChars);
+                const bodyMarkdown = truncateOptionalBody(bodyParts?.markdown, maxChars);
+                const bodyRaw = truncateOptionalBody(bodyParts?.raw, maxChars);
+                const displayBody = truncateOptionalBody(selectDisplayBody(bodyParts, bodyFormat), maxChars);
+                msg.body = bodyText;
+                msg.bodyText = bodyText;
+                msg.bodyHtml = bodyHtml;
+                msg.bodyMarkdown = bodyMarkdown;
+                msg.bodyRaw = bodyRaw;
 
                 if (options.json) {
-                    console.log(SafeJSON.stringify({ ...msg, body: displayBody }, null, 2));
+                    console.log(
+                        SafeJSON.stringify(
+                            {
+                                ...msg,
+                                body: bodyText,
+                                bodyText,
+                                bodyHtml,
+                                bodyMarkdown,
+                                bodyRaw,
+                            },
+                            null,
+                            2
+                        )
+                    );
                     return;
                 }
 
@@ -81,6 +144,7 @@ export function registerShowCommand(program: Command): void {
                 console.log(`Mailbox:  ${msg.mailbox}`);
                 console.log(`Size:     ${formatBytes(msg.size)}`);
                 console.log(`ID:       ${rowid}`);
+                console.log(`Body:     ${bodyFormat}`);
 
                 if (msg.attachments.length > 0) {
                     console.log(`Attach:   ${msg.attachments.map((a) => a.name).join(", ")}`);

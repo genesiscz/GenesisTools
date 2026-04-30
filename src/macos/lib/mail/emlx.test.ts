@@ -1,7 +1,9 @@
+import { Database } from "bun:sqlite";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { ENVELOPE_INDEX_PATH } from "./constants";
 import { EmlxBodyExtractor } from "./emlx";
 
 const MAIL_DIR = join(homedir(), "Library/Mail/V10");
@@ -30,8 +32,7 @@ describe.skipIf(!hasMailDir)("EmlxBodyExtractor", () => {
     });
 
     it("getBody returns body text for a known message", async () => {
-        const { getDatabase } = await import("./sqlite");
-        const db = getDatabase();
+        const db = new Database(ENVELOPE_INDEX_PATH, { readonly: true });
         const row = db.query("SELECT ROWID FROM messages WHERE deleted = 0 LIMIT 1").get() as { ROWID: number } | null;
 
         if (!row) {
@@ -44,8 +45,7 @@ describe.skipIf(!hasMailDir)("EmlxBodyExtractor", () => {
     });
 
     it("getBodies returns bodies for multiple rowids", async () => {
-        const { getDatabase } = await import("./sqlite");
-        const db = getDatabase();
+        const db = new Database(ENVELOPE_INDEX_PATH, { readonly: true });
         const rows = db.query("SELECT ROWID FROM messages WHERE deleted = 0 LIMIT 5").all() as Array<{ ROWID: number }>;
         const rowids = rows.map((r) => r.ROWID);
 

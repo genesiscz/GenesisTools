@@ -28,6 +28,7 @@ function makeMockMessage(overrides?: Partial<MailMessage>): MailMessage {
 describe("columns", () => {
     describe("ALL_COLUMN_KEYS", () => {
         const expectedKeys: MailColumnKey[] = [
+            "id",
             "date",
             "from",
             "fromEmail",
@@ -42,6 +43,12 @@ describe("columns", () => {
             "size",
             "attachments",
             "body",
+            "bodyText",
+            "bodyHtml",
+            "bodyMarkdown",
+            "bodyRaw",
+            "bodyMatch",
+            "ftsSnippet",
             "relevance",
         ];
 
@@ -117,12 +124,10 @@ describe("columns", () => {
             expect(MAIL_COLUMNS.fromEmail.get(msg)).toBe("alice@example.com");
         });
 
-        it("subject truncates at 60 chars", () => {
-            const longSubject = "A".repeat(80);
+        it("subject returns the full subject without preview truncation", () => {
+            const longSubject = `Amazon Web Services Billing Statement Available [Account: 82${"A".repeat(80)}`;
             const msg = makeMockMessage({ subject: longSubject });
-            const result = MAIL_COLUMNS.subject.get(msg);
-            expect(result.length).toBe(63); // 60 chars + "..."
-            expect(result).toEndWith("...");
+            expect(MAIL_COLUMNS.subject.get(msg)).toBe(longSubject);
         });
 
         it("subject keeps short subjects intact", () => {
@@ -180,14 +185,32 @@ describe("columns", () => {
             expect(MAIL_COLUMNS.attachments.get(msg)).toBe("");
         });
 
-        it("body returns 'yes' when bodyMatchesQuery is true", () => {
-            const msg = makeMockMessage({ bodyMatchesQuery: true });
-            expect(MAIL_COLUMNS.body.get(msg)).toBe("yes");
+        it("body previews body text when present", () => {
+            const msg = makeMockMessage({ body: "Hello\n\nworld", bodyText: "Hello\n\nworld" });
+            expect(MAIL_COLUMNS.body.get(msg)).toBe("Hello world");
         });
 
-        it("body returns empty when bodyMatchesQuery is false", () => {
-            const msg = makeMockMessage({ bodyMatchesQuery: false });
-            expect(MAIL_COLUMNS.body.get(msg)).toBe("");
+        it("body rich columns return their corresponding body parts", () => {
+            const msg = makeMockMessage({
+                bodyText: "Plain text body",
+                bodyHtml: '<a href="https://example.com">Link</a>',
+                bodyMarkdown: "[Link](https://example.com)",
+                bodyRaw: "Content-Type: text/html\n\n<html>raw</html>",
+            });
+
+            expect(MAIL_COLUMNS.bodyText.get(msg)).toBe("Plain text body");
+            expect(MAIL_COLUMNS.bodyHtml.get(msg)).toBe('<a href="https://example.com">Link</a>');
+            expect(MAIL_COLUMNS.bodyMarkdown.get(msg)).toBe("[Link](https://example.com)");
+            expect(MAIL_COLUMNS.bodyRaw.get(msg)).toContain("Content-Type: text/html");
+        });
+
+        it("body rich columns return empty strings when missing", () => {
+            const msg = makeMockMessage();
+
+            expect(MAIL_COLUMNS.bodyText.get(msg)).toBe("");
+            expect(MAIL_COLUMNS.bodyHtml.get(msg)).toBe("");
+            expect(MAIL_COLUMNS.bodyMarkdown.get(msg)).toBe("");
+            expect(MAIL_COLUMNS.bodyRaw.get(msg)).toBe("");
         });
 
         it("relevance returns formatted score when semanticScore is set", () => {
