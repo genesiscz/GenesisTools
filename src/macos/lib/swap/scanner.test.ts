@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { parseEtime, parsePsOutput, parseSwapUsage } from "./scanner";
+import { parseEtime, parsePsOutput, parseSwapUsage, parseVmmapSwap } from "./scanner";
 
 describe("parseSwapUsage", () => {
     it("parses standard sysctl output in MB", () => {
@@ -59,5 +59,28 @@ describe("parsePsOutput", () => {
         const rows = parsePsOutput(out);
         expect(rows).toHaveLength(1);
         expect(rows[0].pid).toBe(123);
+    });
+});
+
+describe("parseVmmapSwap", () => {
+    it("parses GB swap with percent suffix", () => {
+        const out =
+            "Writable regions: Total=5.5G written=4.2G(76%) resident=1.9G(35%) swapped_out=2.4G(44%) unallocated=1.2G(21%)";
+        expect(parseVmmapSwap(out)).toBeCloseTo(2.4 * 1024 ** 3);
+    });
+
+    it("parses MB swap", () => {
+        const out =
+            "Writable regions: Total=900M written=500M(55%) resident=200M(22%) swapped_out=210.5M(23%) unallocated=89.5M(10%)";
+        expect(parseVmmapSwap(out)).toBeCloseTo(210.5 * 1024 ** 2);
+    });
+
+    it("parses zero swap with no unit", () => {
+        const out = "Writable regions: Total=10M written=5M resident=5M swapped_out=0 unallocated=0";
+        expect(parseVmmapSwap(out)).toBe(0);
+    });
+
+    it("returns 0 when no Writable regions line is present", () => {
+        expect(parseVmmapSwap("garbage\noutput")).toBe(0);
     });
 });

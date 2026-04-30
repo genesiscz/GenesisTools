@@ -83,3 +83,23 @@ export function parsePsOutput(output: string): PsRow[] {
 
     return rows;
 }
+
+export function parseVmmapSwap(output: string): number {
+    for (const line of output.split("\n")) {
+        if (!line.startsWith("Writable regions:")) {
+            continue;
+        }
+
+        const m = line.match(/swapped_out=([\d.]+)\s*([KMG])?/);
+
+        if (!m) {
+            return 0;
+        }
+
+        const value = Number.parseFloat(m[1]);
+        const unit = m[2] ?? "";
+        return value * (UNIT_MULT[unit.toUpperCase()] ?? 1);
+    }
+
+    return 0;
+}
