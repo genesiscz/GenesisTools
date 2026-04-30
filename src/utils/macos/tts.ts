@@ -20,31 +20,13 @@ export interface VoiceInfo {
 export interface SpeakOptions {
     /** Override voice (skips language detection) */
     voice?: string;
-    /** Words per minute (default: macOS default ~175) */
+    /** Normalized rate on a 0..2 scale (1 = default cadence). See AI Synthesizer for mapping. */
     rate?: number;
     /** Volume 0.0 - 1.0, default: 1 */
     volume?: number;
     /** Block until done, default: false */
     wait?: boolean;
-    /** Caller identity for per-app mute */
-    app?: string;
 }
-
-export interface SayConfig {
-    defaultVoice: string | null;
-    defaultVolume: number;
-    globalMute: boolean;
-    appMute: Record<string, boolean>;
-    appVolume: Record<string, number>;
-}
-
-const DEFAULT_CONFIG: SayConfig = {
-    defaultVoice: null,
-    defaultVolume: 1,
-    globalMute: false,
-    appMute: {},
-    appVolume: {},
-};
 
 /**
  * Normalize volume: if <= 1, treat as 0.0–1.0 range.
@@ -111,88 +93,20 @@ export async function getVoiceMap(): Promise<Map<string, VoiceInfo>> {
 }
 
 // ============================================
-// Config helpers
-// ============================================
-
-async function getConfig(): Promise<SayConfig> {
-    const config = await storage.getConfig<SayConfig>();
-    return { ...DEFAULT_CONFIG, ...config };
-}
-
-export async function setConfig(config: SayConfig): Promise<void> {
-    await storage.setConfig(config);
-}
-
-export async function getConfigForRead(): Promise<SayConfig> {
-    return getConfig();
-}
-
-// ============================================
-// Mute helpers
-// ============================================
-
-function isMuted(config: SayConfig, app?: string): boolean {
-    if (app && app in config.appMute) {
-        return config.appMute[app];
-    }
-
-    return config.globalMute;
-}
-
-export async function setMute(muted: boolean, app?: string): Promise<void> {
-    const config = await getConfig();
-
-    if (app) {
-        config.appMute[app] = muted;
-    } else {
-        config.globalMute = muted;
-    }
-
-    await setConfig(config);
-}
-
-// ============================================
 // Core TTS
 // ============================================
 
 /**
- * Speak text aloud using macOS `say` command.
- * Automatically detects language and selects appropriate voice.
- * Supports volume control via render-to-AIFF + afplay.
- * Background by default; use `wait: true` to block.
+ * Pure macOS TTS pass-through. Speaks `text` via the local provider with the
+ * caller-supplied options. Profile / mute / app resolution live at the CLI layer
+ * (`src/say/lib/speak.ts:speakWithProfile`); this primitive intentionally has no
+ * `SayConfig` knowledge so it can be reused by non-CLI callers.
+ *
+ * Dynamic `AI` import avoids a load-time cycle: `AIMacOSTextToSpeechProvider`
+ * imports `renderToBuffer` / `listVoicesStructured` from this file.
  */
 export async function speak(text: string, options?: SpeakOptions): Promise<void> {
-    const config = await getConfig();
-
-    if (isMuted(config, options?.app)) {
-        process.stderr.write("[say] muted\n");
-        return;
-    }
-
-    // Auto-create app entry on first use + save per-app volume
-    const app = options?.app;
-    let configDirty = false;
-
-    if (app && !(app in config.appMute)) {
-        config.appMute[app] = false;
-        configDirty = true;
-    }
-
-    if (app && options?.volume != null) {
-        config.appVolume[app] = normalizeVolume(options.volume);
-        configDirty = true;
-    }
-
-    if (configDirty) {
-        await setConfig(config);
-    }
-
-    const rawVolume = options?.volume ?? (app ? config.appVolume[app] : undefined) ?? config.defaultVolume ?? 1;
-    const volume = normalizeVolume(rawVolume);
-
-    // Dynamic import avoids a circular module init:
-    // AIMacOSTextToSpeechProvider -> tts.ts (renderToBuffer, listVoicesStructured)
-    // tts.ts -> ai/index -> AIMacOSTextToSpeechProvider
+    const volume = options?.volume != null ? normalizeVolume(options.volume) : undefined;
     const { AI } = await import("@app/utils/ai/index");
     await AI.speak(text, {
         provider: "local",

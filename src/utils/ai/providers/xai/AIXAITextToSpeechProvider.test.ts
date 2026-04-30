@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { SafeJSON } from "@app/utils/json";
 import { AIXAITextToSpeechProvider } from "./AIXAITextToSpeechProvider";
 
 describe("AIXAITextToSpeechProvider", () => {
@@ -74,5 +75,141 @@ describe("AIXAITextToSpeechProvider", () => {
         } finally {
             globalThis.fetch = originalFetch;
         }
+    });
+});
+
+type Listener = (ev: unknown) => void;
+
+class FakeWebSocket {
+    private listeners: Record<string, Listener[]> = {};
+    sent: string[] = [];
+
+    addEventListener(name: string, fn: Listener): void {
+        if (!this.listeners[name]) {
+            this.listeners[name] = [];
+        }
+
+        this.listeners[name].push(fn);
+    }
+
+    send(payload: string): void {
+        this.sent.push(payload);
+    }
+
+    close(): void {
+        /* noop */
+    }
+
+    emit(name: string, ev: unknown): void {
+        for (const fn of this.listeners[name] ?? []) {
+            fn(ev);
+        }
+    }
+}
+
+function withFakeWs(provider: AIXAITextToSpeechProvider): FakeWebSocket {
+    const fake = new FakeWebSocket();
+    const client = (provider as unknown as { client: { openWebSocket: () => FakeWebSocket } }).client;
+    client.openWebSocket = () => fake;
+    return fake;
+}
+
+describe("AIXAITextToSpeechProvider.synthesizeStream", () => {
+    test("sends text.delta + text.done and yields decoded audio.delta until audio.done", async () => {
+        const provider = new AIXAITextToSpeechProvider();
+        const fake = withFakeWs(provider);
+
+        const { audio, contentType } = provider.synthesizeStream("hello world", { voice: "eve", language: "en" });
+        expect(contentType).toBe("audio/mpeg");
+
+        const collected: Uint8Array[] = [];
+        const consumer = (async () => {
+            for await (const chunk of audio) {
+                collected.push(chunk);
+            }
+        })();
+
+        fake.emit("open", {});
+        fake.emit("message", {
+            data: SafeJSON.stringify({ type: "audio.delta", delta: Buffer.from("AAAA").toString("base64") }),
+        });
+        fake.emit("message", {
+            data: SafeJSON.stringify({ type: "audio.delta", delta: Buffer.from("BBBB").toString("base64") }),
+        });
+        fake.emit("message", { data: SafeJSON.stringify({ type: "audio.done" }) });
+
+        await consumer;
+
+        expect(fake.sent).toEqual([
+            SafeJSON.stringify({ type: "text.delta", delta: "hello world" }),
+            SafeJSON.stringify({ type: "text.done" }),
+        ]);
+        expect(Buffer.concat(collected).toString("utf8")).toBe("AAAABBBB");
+    });
+
+    test("splits text > 5000 chars into multiple text.delta frames", async () => {
+        const provider = new AIXAITextToSpeechProvider();
+        const fake = withFakeWs(provider);
+
+        const long = "x".repeat(12_500);
+        const { audio } = provider.synthesizeStream(long);
+
+        const consumer = (async () => {
+            for await (const _ of audio) {
+                /* drain */
+            }
+        })();
+
+        fake.emit("open", {});
+        fake.emit("message", { data: SafeJSON.stringify({ type: "audio.done" }) });
+        await consumer;
+
+        const deltas = fake.sent.filter((s) => s.includes('"text.delta"'));
+        const done = fake.sent.filter((s) => s.includes('"text.done"'));
+        expect(deltas).toHaveLength(3); // 5000 + 5000 + 2500
+        expect(done).toHaveLength(1);
+    });
+
+    test("uses audio/wav content type when format=wav", () => {
+        const provider = new AIXAITextToSpeechProvider();
+        withFakeWs(provider);
+        const { contentType } = provider.synthesizeStream("hi", { format: "wav" });
+        expect(contentType).toBe("audio/wav");
+    });
+
+    test("surfaces error frames as iterator throw", async () => {
+        const provider = new AIXAITextToSpeechProvider();
+        const fake = withFakeWs(provider);
+
+        const { audio } = provider.synthesizeStream("test");
+
+        const consumer = (async () => {
+            for await (const _ of audio) {
+                /* drain */
+            }
+        })();
+
+        fake.emit("open", {});
+        fake.emit("message", { data: SafeJSON.stringify({ type: "error", message: "voice not found" }) });
+
+        await expect(consumer).rejects.toThrow(/xAI TTS error: voice not found/);
+    });
+
+    test("flags unexpected close (code 1006) before audio.done", async () => {
+        const provider = new AIXAITextToSpeechProvider();
+        const fake = withFakeWs(provider);
+
+        const { audio } = provider.synthesizeStream("test");
+
+        const consumer = (async () => {
+            for await (const _ of audio) {
+                /* drain */
+            }
+        })();
+
+        fake.emit("open", {});
+        fake.emit("close", { code: 1006 });
+
+        await expect(consumer).rejects.toThrow(/closed before audio\.done \(code 1006\)/);
     });
 });

@@ -6,15 +6,23 @@ import { AI } from "@app/utils/ai/index.ts";
 import { getModelsForTask } from "@app/utils/ai/ModelManager";
 import { getProvidersForTask } from "@app/utils/ai/providers";
 import type { AIProviderType } from "@app/utils/ai/types.ts";
-import { suggestCommand } from "@app/utils/cli/executor";
-import type { SayConfig } from "@app/utils/macos/tts.ts";
-import { getConfigForRead, listVoicesStructured, normalizeVolume, setConfig, setMute } from "@app/utils/macos/tts.ts";
+import { isInteractive, suggestCommand } from "@app/utils/cli/executor";
+import { parseVariadic } from "@app/utils/cli/variadic";
+import {
+    DEFAULT_APP_NAME,
+    isSettableField,
+    type SayAppConfig,
+    SayConfigManager,
+    type SayProvider,
+    SETTABLE_FIELDS,
+    type SettableField,
+} from "@app/utils/macos/SayConfigManager.ts";
+import { normalizeVolume } from "@app/utils/macos/tts.ts";
 import { formatTable } from "@app/utils/table.ts";
 import * as p from "@clack/prompts";
 import { Command } from "commander";
 import pc from "picocolors";
-
-type SayProvider = "macos" | "xai" | "openai";
+import { speakWithProfile } from "./lib/speak";
 
 interface SayOptions {
     volume?: number;
@@ -31,59 +39,98 @@ interface SayOptions {
     stream?: boolean;
     noStream?: boolean;
     model?: string;
+    save?: boolean;
+    unset?: string[];
 }
 
 const program = new Command()
     .name("say")
-    .description("Text-to-speech with pluggable backends (macOS, xAI Grok, OpenAI)")
-    .argument("[message...]", "Text to speak (omit to read --file or enter interactive mode)")
-    .option("--volume <n>", "Volume (0.0-1.0 or 0-100%); saved per-app with --app", parseFloat)
+    .description("Text-to-speech with pluggable backends (macOS, xAI Grok, OpenAI). Supports per-app config profiles.")
+    .argument("[message...]", "Text to speak (omit to read --file or open the config TUI)")
+    .option("--volume <n>", "Volume (0.0-1.0 or 0-100%)", parseFloat)
     .option("--voice [name]", "Voice id (provider-specific). Pass --voice with no value to list available voices.")
-    .option("--rate <wpm>", "Words per minute (macOS only)", parseInt)
+    .option(
+        "--rate <n>",
+        "Speed: 0..2 multiplier or 0..200%. 0=slowest, 1 (or 100)=default, 2 (or 200)=fastest. Provider speeds are matched to macOS native (~0.81×..1.86×) so the same --rate sounds identical on macOS and xAI.",
+        parseFloat
+    )
     .option("--wait", "Block until speech finishes")
-    .option("--app <name>", "Caller identity for per-app mute")
-    .option("--mute", "Mute (global or per-app with --app)")
-    .option("--unmute", "Unmute (global or per-app with --app)")
-    .option("--provider <name>", "TTS backend: macos (default), xai, openai")
+    .option("--app <name>", "App profile to load (and required target for --save)")
+    .option("--mute", "Mute (requires --save to persist)")
+    .option("--unmute", "Unmute (requires --save to persist)")
+    .option("--provider <name>", "TTS backend: macos, xai, openai (defaults to profile or macos)")
     .option("--language <bcp47>", "Language hint (xai only; defaults to 'auto')")
-    .option("--format <codec>", "Output codec: mp3 (default) or wav")
+    .option("--format <codec>", "Output codec: mp3 or wav")
     .option("--file <path>", "Read text from a file instead of args")
     .option("--stream", "Force streaming path")
     .option("--no-stream", "Force REST/non-streaming path")
     .option("--model <id>", "Provider-specific model (e.g. tts-1, gpt-4o-mini-tts for openai)")
-    .action(async (messageParts: string[], opts: SayOptions) => {
-        if (opts.mute) {
-            await setMute(true, opts.app);
-            console.log(pc.yellow(`[say] ${opts.app ? `app "${opts.app}"` : "global"} muted`));
-            return;
+    .option("--save", "Persist explicitly-passed flags to the --app profile")
+    .option(
+        "--unset <fields>",
+        "Comma-separated profile fields to ignore this run (or remove with --save)",
+        parseVariadic,
+        [] as string[]
+    )
+    .action(async (messageParts: string[], opts: SayOptions, cmd: Command) => {
+        const mgr = new SayConfigManager();
+
+        if (opts.mute && opts.unmute) {
+            console.error(pc.red("[say] --mute and --unmute are mutually exclusive."));
+            process.exit(1);
         }
 
-        if (opts.unmute) {
-            await setMute(false, opts.app);
-            console.log(pc.green(`[say] ${opts.app ? `app "${opts.app}"` : "global"} unmuted`));
-            return;
-        }
+        const unsetList = validateUnsetFields(opts.unset ?? []);
 
         if (opts.voice === true) {
             await printVoiceList(opts.provider);
             return;
         }
 
+        if ((opts.mute || opts.unmute) && !opts.save) {
+            console.error(pc.red("[say] --mute / --unmute now require --save to persist."));
+            console.error(pc.dim("  e.g.: tools say --app claude --mute --save"));
+            console.error(pc.dim("  or:   tools say config   (interactive)"));
+            process.exit(1);
+        }
+
         const text = await resolveText(messageParts, opts.file);
 
-        if (text == null) {
-            await interactiveMode();
+        const saveApp = opts.save ? await resolveSaveApp(opts.app, mgr) : undefined;
+        const patch = opts.save ? buildPatchFromCLI(cmd, opts) : null;
+
+        // Save-only invocation: --save without text. Persist and exit, do not speak,
+        // do not enter interactive mode.
+        if (opts.save && text == null) {
+            await applySave({ mgr, app: saveApp as string, patch: patch as Partial<SayAppConfig>, unsetList });
+            console.log(pc.green(`[say] saved profile "${saveApp}"`));
             return;
         }
 
-        const muted = await isMutedForApp(opts.app);
+        // No text and no save: open the unified config TUI (TTY only).
+        if (text == null) {
+            if (!isInteractive()) {
+                console.error(pc.red("[say] no message provided."));
+                console.error(pc.dim(suggestCommand("tools say", { add: ["<message>"] })));
+                process.exit(1);
+            }
 
-        if (muted) {
+            await configCommand(mgr);
+            return;
+        }
+
+        // If --save is requesting a mute change, don't short-circuit on the
+        // existing mute state — otherwise --unmute --save / --unset mute --save
+        // can never be persisted from a currently-muted profile.
+        const wantsMuteWrite = opts.save === true && (opts.unmute === true || unsetList.includes("mute"));
+
+        if (!wantsMuteWrite && (await mgr.isMuted(opts.app))) {
             process.stderr.write("[say] muted\n");
             return;
         }
 
-        const provider: SayProvider = opts.provider ?? "macos";
+        const effective = await resolveEffective({ mgr, opts, unsetList });
+        const provider: SayProvider = effective.provider ?? "macos";
 
         if (provider !== "macos" && !envForProvider(provider)) {
             console.error(pc.red(`[say] env var for ${provider} is not set.`));
@@ -91,20 +138,19 @@ const program = new Command()
             process.exit(1);
         }
 
-        const volume = opts.volume != null ? normalizeVolume(opts.volume) : undefined;
         const stream = opts.stream === true ? true : opts.noStream === true ? false : undefined;
 
         try {
             await AI.speak(text, {
                 provider,
-                voice: typeof opts.voice === "string" ? opts.voice : undefined,
-                language: opts.language,
-                format: opts.format,
-                rate: opts.rate,
-                volume,
+                voice: effective.voice ?? undefined,
+                language: effective.language ?? undefined,
+                format: effective.format ?? undefined,
+                rate: effective.rate ?? undefined,
+                volume: effective.volume ?? undefined,
                 stream,
                 wait: opts.wait,
-                model: opts.model,
+                model: effective.model ?? undefined,
             });
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
@@ -116,11 +162,13 @@ const program = new Command()
 
             process.exit(1);
         }
+
+        if (opts.save && saveApp && patch) {
+            await applySave({ mgr, app: saveApp, patch, unsetList });
+            console.log(pc.green(`[say] saved profile "${saveApp}"`));
+        }
     });
 
-// `tools say voices` subcommand
-// Note: --provider lives on the root command (program.opts()), not here.
-// Commander parses root options globally, so reading from opts would always be undefined.
 program
     .command("voices")
     .description("List voices grouped by provider (use root --provider to filter)")
@@ -129,18 +177,13 @@ program
         await printVoiceList(rootOpts.provider);
     });
 
-// `tools say models` subcommand
 program
     .command("models")
     .description("List downloadable TTS/STT models grouped by provider")
     .option("--task <task>", "Filter by task: tts | transcribe", "tts")
     .action(async (opts: { task?: string }) => {
         const task = (opts.task ?? "tts") as "tts" | "transcribe";
-
-        // Collect provider types: those that claim to support the task + "local-hf" always
-        // (AILocalProvider supports transcribe but not tts at runtime — yet the registry has
-        // downloadable TTS models registered under local-hf for future use.)
-        const providerTypes = new Set<string>(getProvidersForTask(task).map((p) => p.type));
+        const providerTypes = new Set<string>(getProvidersForTask(task).map((pr) => pr.type));
         providerTypes.add("local-hf");
 
         for (const provider of providerTypes) {
@@ -159,6 +202,49 @@ program
         console.log();
         console.log(pc.dim("Download with: tools ai models download <id>"));
     });
+
+program
+    .command("config")
+    .description("Manage per-app TTS profiles (add/edit/delete) interactively")
+    .action(async () => {
+        if (!isInteractive()) {
+            console.error(pc.red("[say] config requires a TTY."));
+            console.error(pc.dim(suggestCommand("tools say", { add: ["--app", "<name>", "--save"] })));
+            process.exit(1);
+        }
+
+        await configCommand(new SayConfigManager());
+    });
+
+// ============================================
+// Helpers
+// ============================================
+
+interface EffectiveSettings {
+    voice?: string | null;
+    volume?: number | null;
+    provider?: SayProvider | null;
+    rate?: number | null;
+    model?: string | null;
+    format?: "mp3" | "wav" | null;
+    language?: string | null;
+}
+
+function validateUnsetFields(raw: string[]): SettableField[] {
+    const out: SettableField[] = [];
+
+    for (const u of raw) {
+        if (!isSettableField(u)) {
+            console.error(pc.red(`[say] --unset: unknown field "${u}"`));
+            console.error(pc.dim(`  valid: ${SETTABLE_FIELDS.join(", ")}`));
+            process.exit(1);
+        }
+
+        out.push(u);
+    }
+
+    return out;
+}
 
 async function resolveText(messageParts: string[], filePath?: string): Promise<string | null> {
     if (filePath) {
@@ -191,18 +277,151 @@ function envForProvider(provider: SayProvider): boolean {
     return true;
 }
 
-async function isMutedForApp(app: string | undefined): Promise<boolean> {
-    const config = await getConfigForRead();
-
-    if (app && app in config.appMute) {
-        return config.appMute[app];
-    }
-
-    return config.globalMute;
-}
-
 function isVoiceNotFoundError(message: string): boolean {
     return /\b404\b/.test(message) || /voice .* not found/i.test(message);
+}
+
+async function resolveSaveApp(app: string | undefined, mgr: SayConfigManager): Promise<string> {
+    if (app) {
+        return app;
+    }
+
+    if (!isInteractive()) {
+        console.error(pc.red("[say] --save requires --app <name> in non-interactive mode."));
+        console.error(pc.dim(suggestCommand("tools say", { add: ["--app", "<name>"] })));
+        process.exit(1);
+    }
+
+    const apps = await mgr.listApps();
+    const NEW_APP = "__new__";
+
+    const choice = await p.select({
+        message: "Save to which app profile?",
+        options: [
+            ...apps.map((a) => ({ value: a.name, label: a.name })),
+            { value: NEW_APP, label: pc.cyan("+ new app") },
+        ],
+    });
+
+    if (p.isCancel(choice)) {
+        p.cancel("Cancelled");
+        process.exit(1);
+    }
+
+    if (choice !== NEW_APP) {
+        return String(choice);
+    }
+
+    const name = await p.text({
+        message: "New app name:",
+        validate(v: string | undefined) {
+            if (!v) {
+                return "Name required";
+            }
+
+            if (v === DEFAULT_APP_NAME) {
+                return `"${DEFAULT_APP_NAME}" is reserved`;
+            }
+
+            if (apps.some((a) => a.name === v)) {
+                return `"${v}" already exists`;
+            }
+        },
+    });
+
+    if (p.isCancel(name)) {
+        p.cancel("Cancelled");
+        process.exit(1);
+    }
+
+    return String(name);
+}
+
+function isFromCLI(cmd: Command, key: string): boolean {
+    return cmd.getOptionValueSource(key) === "cli";
+}
+
+function buildPatchFromCLI(cmd: Command, opts: SayOptions): Partial<SayAppConfig> {
+    const patch: Partial<SayAppConfig> = {};
+
+    if (isFromCLI(cmd, "voice") && typeof opts.voice === "string") {
+        patch.voice = opts.voice;
+    }
+
+    if (isFromCLI(cmd, "volume") && opts.volume != null) {
+        patch.volume = normalizeVolume(opts.volume);
+    }
+
+    if (isFromCLI(cmd, "provider") && opts.provider) {
+        patch.provider = opts.provider;
+    }
+
+    if (isFromCLI(cmd, "rate") && opts.rate != null) {
+        patch.rate = opts.rate;
+    }
+
+    if (isFromCLI(cmd, "model") && opts.model) {
+        patch.model = opts.model;
+    }
+
+    if (isFromCLI(cmd, "format") && opts.format) {
+        patch.format = opts.format;
+    }
+
+    if (isFromCLI(cmd, "language") && opts.language) {
+        patch.language = opts.language;
+    }
+
+    if (isFromCLI(cmd, "mute") && opts.mute) {
+        patch.mute = true;
+    } else if (isFromCLI(cmd, "unmute") && opts.unmute) {
+        patch.mute = false;
+    }
+
+    return patch;
+}
+
+async function applySave(args: {
+    mgr: SayConfigManager;
+    app: string;
+    patch: Partial<SayAppConfig>;
+    unsetList: SettableField[];
+}): Promise<void> {
+    const { mgr, app, patch, unsetList } = args;
+
+    if (Object.keys(patch).length > 0) {
+        await mgr.patchApp(app, patch);
+    } else if (unsetList.length === 0) {
+        // Edge: --save with no flags and no --unset → ensure the app exists.
+        await mgr.patchApp(app, {});
+    }
+
+    if (unsetList.length > 0) {
+        await mgr.unsetAppFields(app, unsetList);
+    }
+}
+
+async function resolveEffective(args: {
+    mgr: SayConfigManager;
+    opts: SayOptions;
+    unsetList: SettableField[];
+}): Promise<EffectiveSettings> {
+    const { mgr, opts, unsetList } = args;
+    const profile = await mgr.resolveApp(opts.app);
+
+    for (const f of unsetList) {
+        delete profile[f];
+    }
+
+    return {
+        voice: typeof opts.voice === "string" ? opts.voice : (profile.voice ?? null),
+        volume: opts.volume != null ? normalizeVolume(opts.volume) : (profile.volume ?? null),
+        provider: opts.provider ?? profile.provider ?? null,
+        rate: opts.rate ?? profile.rate ?? null,
+        model: opts.model ?? profile.model ?? null,
+        format: opts.format ?? profile.format ?? null,
+        language: opts.language ?? profile.language ?? null,
+    };
 }
 
 async function printVoiceList(filter?: SayProvider): Promise<void> {
@@ -245,74 +464,158 @@ async function main(): Promise<void> {
 main();
 
 // ============================================
-// Interactive mode
+// `tools say config` — unified app/profile manager
 // ============================================
 
-async function interactiveMode(): Promise<void> {
-    p.intro(pc.bgCyan(pc.black(" tools say ")));
+async function configCommand(mgr: SayConfigManager): Promise<void> {
+    p.intro(pc.bgCyan(pc.black(" tools say config ")));
 
-    const config = await getConfigForRead();
-    showStatus(config);
+    while (true) {
+        const apps = await mgr.listApps();
+        const globalMute = await mgr.getGlobalMute();
 
-    const action = await p.select({
-        message: "What would you like to do?",
+        const action = await p.select({
+            message: `What next? ${pc.dim(`(${apps.length} app${apps.length === 1 ? "" : "s"}, global mute: ${globalMute ? "ON" : "off"})`)}`,
+            options: [
+                { value: "speak", label: "Speak text (test)", hint: "speak with a chosen profile" },
+                { value: "edit", label: "Edit an app profile", hint: "or create a new one" },
+                { value: "list", label: "List apps with resolved settings" },
+                { value: "delete", label: "Delete an app profile" },
+                { value: "voices", label: "List available voices" },
+                { value: "global-mute", label: `Toggle global mute (currently ${globalMute ? "ON" : "off"})` },
+                { value: "exit", label: "Exit" },
+            ],
+        });
+
+        if (p.isCancel(action) || action === "exit") {
+            p.outro(pc.green("Done"));
+            return;
+        }
+
+        switch (action) {
+            case "speak":
+                await speakActionTUI(mgr);
+                break;
+            case "edit":
+                await pickAndEditAppTUI(mgr);
+                break;
+            case "list":
+                await listAppsTUI(mgr);
+                break;
+            case "delete":
+                await deleteAppTUI(mgr);
+                break;
+            case "voices":
+                await printVoiceList();
+                break;
+            case "global-mute":
+                await mgr.setGlobalMute(!globalMute);
+                p.log.success(`Global mute: ${!globalMute ? "ON" : "off"}`);
+                break;
+        }
+    }
+}
+
+const NEW_APP_SENTINEL = "__new__";
+
+async function pickAndEditAppTUI(mgr: SayConfigManager): Promise<void> {
+    const apps = await mgr.listApps();
+
+    const target = await p.select({
+        message: "Which profile?",
         options: [
-            { value: "test", label: "Test voice", hint: "speak a sample" },
-            { value: "mute", label: "Toggle mute", hint: config.globalMute ? "currently muted" : "currently unmuted" },
-            { value: "app-mute", label: "App mute settings", hint: `${Object.keys(config.appMute).length} apps` },
-            { value: "voice", label: "Set default voice" },
-            { value: "volume", label: "Set default volume", hint: `current: ${config.defaultVolume}` },
-            { value: "voices", label: "List available voices" },
+            ...apps.map((a) => ({
+                value: a.name,
+                label: a.name + (a.name === DEFAULT_APP_NAME ? pc.dim(" (base)") : ""),
+                hint: appPickerHint(a),
+            })),
+            { value: NEW_APP_SENTINEL, label: pc.cyan("+ new app") },
         ],
     });
 
-    if (p.isCancel(action)) {
-        p.cancel("Cancelled");
+    if (p.isCancel(target)) {
         return;
     }
 
-    switch (action) {
-        case "test":
-            await handleTest(config);
-            break;
-        case "mute":
-            await handleToggleMute(config);
-            break;
-        case "app-mute":
-            await handleAppMute(config);
-            break;
-        case "voice":
-            await handleSetVoice(config);
-            break;
-        case "volume":
-            await handleSetVolume(config);
-            break;
-        case "voices":
-            await handleListVoices();
-            break;
+    if (target === NEW_APP_SENTINEL) {
+        const name = await promptNewAppName(apps);
+
+        if (name == null) {
+            return;
+        }
+
+        await mgr.upsertApp({ name });
+        p.log.success(`Created profile "${name}"`);
+        await editAppFields(mgr, name);
+        return;
     }
 
-    p.outro(pc.green("Done"));
+    await editAppFields(mgr, String(target));
 }
 
-function showStatus(config: SayConfig): void {
-    const muteStatus = config.globalMute ? pc.red("MUTED") : pc.green("active");
-    const voice = config.defaultVoice ?? "auto-detect";
-    const volume = `${Math.round(config.defaultVolume * 100)}%`;
+function appPickerHint(a: SayAppConfig): string {
+    const bits: string[] = [];
 
-    console.log();
-    console.log(`  Status: ${muteStatus}  |  Voice: ${pc.cyan(voice)}  |  Volume: ${pc.cyan(volume)}`);
-
-    const mutedApps = Object.entries(config.appMute).filter(([, v]) => v);
-
-    if (mutedApps.length > 0) {
-        console.log(`  Muted apps: ${mutedApps.map(([k]) => pc.red(k)).join(", ")}`);
+    if (a.voice) {
+        bits.push(`voice=${a.voice}`);
     }
 
-    console.log();
+    if (a.volume != null) {
+        bits.push(`vol=${Math.round(a.volume * 100)}%`);
+    }
+
+    if (a.provider) {
+        bits.push(a.provider);
+    }
+
+    if (a.mute) {
+        bits.push("muted");
+    }
+
+    return bits.join(" · ");
 }
 
-async function handleTest(config: SayConfig): Promise<void> {
+async function promptNewAppName(apps: SayAppConfig[]): Promise<string | null> {
+    const name = await p.text({
+        message: "App name:",
+        validate(v: string | undefined) {
+            if (!v) {
+                return "Name required";
+            }
+
+            if (v === DEFAULT_APP_NAME) {
+                return `"${DEFAULT_APP_NAME}" is reserved`;
+            }
+
+            if (apps.some((a) => a.name === v)) {
+                return `"${v}" already exists — pick "Edit" instead`;
+            }
+        },
+    });
+
+    if (p.isCancel(name)) {
+        return null;
+    }
+
+    return String(name);
+}
+
+async function speakActionTUI(mgr: SayConfigManager): Promise<void> {
+    const apps = await mgr.listApps();
+
+    const appChoice = await p.select({
+        message: "Speak with which profile?",
+        options: apps.map((a) => ({
+            value: a.name,
+            label: a.name + (a.name === DEFAULT_APP_NAME ? pc.dim(" (base)") : ""),
+            hint: appPickerHint(a),
+        })),
+    });
+
+    if (p.isCancel(appChoice)) {
+        return;
+    }
+
     const text = await p.text({
         message: "Text to speak:",
         placeholder: "Hello world",
@@ -325,110 +628,312 @@ async function handleTest(config: SayConfig): Promise<void> {
 
     const s = p.spinner();
     s.start("Speaking...");
-    await AI.speak(String(text), { provider: "macos", volume: config.defaultVolume, wait: true });
-    s.stop("Done");
-}
-
-async function handleToggleMute(config: SayConfig): Promise<void> {
-    const newState = !config.globalMute;
-    await setMute(newState);
-
-    if (newState) {
-        p.log.warn("Global mute: ON");
-    } else {
-        p.log.success("Global mute: OFF");
+    try {
+        await speakWithProfile({
+            text: String(text),
+            app: String(appChoice) === DEFAULT_APP_NAME ? undefined : String(appChoice),
+            wait: true,
+        });
+        s.stop("Done");
+    } catch (err) {
+        s.stop(pc.red("Failed"));
+        p.log.error(err instanceof Error ? err.message : String(err));
     }
 }
 
-async function handleAppMute(config: SayConfig): Promise<void> {
-    const apps = Object.entries(config.appMute);
+async function listAppsTUI(mgr: SayConfigManager): Promise<void> {
+    const apps = await mgr.listApps();
+    const rows: string[][] = [];
 
-    if (apps.length === 0) {
-        p.log.info("No apps registered yet. Apps are auto-registered on first use via --app flag.");
+    for (const a of apps) {
+        const eff = a.name === DEFAULT_APP_NAME ? a : await mgr.resolveApp(a.name);
+        rows.push([
+            a.name + (a.name === DEFAULT_APP_NAME ? pc.dim(" (base)") : ""),
+            eff.voice ?? pc.dim("(auto)"),
+            eff.volume != null ? `${Math.round(eff.volume * 100)}%` : pc.dim("(default)"),
+            eff.provider ?? pc.dim("(macos)"),
+            a.mute ? pc.red("muted") : pc.green("active"),
+        ]);
+    }
+
+    console.log(formatTable(rows, ["App", "Voice", "Volume", "Provider", "Mute"]));
+}
+
+/**
+ * Sequential single-pass editor: cycles through every settable field once,
+ * accepts ⏎ to keep / "-" to inherit / a value to set, then commits all
+ * changes atomically after a confirm. Cancelling at any prompt aborts with
+ * no writes.
+ */
+async function editAppFields(mgr: SayConfigManager, app: string): Promise<void> {
+    const profile = (await mgr.getApp(app)) ?? { name: app };
+    renderProfileHeader(app, profile);
+
+    const patch: Partial<SayAppConfig> = {};
+    const clearList: SettableField[] = [];
+
+    for (const field of SETTABLE_FIELDS) {
+        const decision = await promptField(field, profile);
+
+        if (decision === "cancel") {
+            p.log.info(pc.dim("Cancelled — no changes saved."));
+            return;
+        }
+
+        if (decision === "keep") {
+            continue;
+        }
+
+        if (decision.kind === "clear") {
+            clearList.push(field);
+            continue;
+        }
+
+        Object.assign(patch, decision.patch);
+    }
+
+    if (Object.keys(patch).length === 0 && clearList.length === 0) {
+        p.log.info(pc.dim("Nothing changed."));
         return;
     }
 
-    const rows = apps.map(([name, muted]) => {
-        const vol = config.appVolume[name];
-        const volStr = vol != null ? `${Math.round(vol * 100)}%` : "default";
-        return [name, muted ? pc.red("muted") : pc.green("active"), pc.cyan(volStr)];
-    });
-    console.log(formatTable(rows, ["App", "Status", "Volume"]));
+    p.log.message(buildSummary(patch, clearList));
 
-    const appToToggle = await p.select({
-        message: "Toggle mute for app:",
-        options: apps.map(([name, muted]) => ({
-            value: name,
-            label: name,
-            hint: muted ? "muted -> unmute" : "active -> mute",
-        })),
-    });
+    const confirmed = await p.confirm({ message: "Save changes?", initialValue: true });
 
-    if (p.isCancel(appToToggle)) {
+    if (p.isCancel(confirmed) || !confirmed) {
+        p.log.info(pc.dim("Cancelled — no changes saved."));
         return;
     }
 
-    const currentlyMuted = config.appMute[appToToggle];
-    await setMute(!currentlyMuted, appToToggle);
-
-    if (currentlyMuted) {
-        p.log.success(`${appToToggle}: unmuted`);
-    } else {
-        p.log.warn(`${appToToggle}: muted`);
+    if (Object.keys(patch).length > 0) {
+        await mgr.patchApp(app, patch);
     }
+
+    if (clearList.length > 0) {
+        await mgr.unsetAppFields(app, clearList);
+    }
+
+    p.log.success(`Saved "${app}".`);
 }
 
-async function handleSetVoice(config: SayConfig): Promise<void> {
-    const voices = await listVoicesStructured();
+function renderProfileHeader(app: string, profile: SayAppConfig): void {
+    const rows = SETTABLE_FIELDS.map((f) => [f, formatFieldValue(profile, f)]);
+    console.log();
+    console.log(pc.bold(`Edit "${app}"`));
+    console.log(formatTable(rows, ["Field", "Current"]));
+    console.log(pc.dim("  ⏎ keep  ·  - inherit (clear)  ·  any value to set"));
+    console.log();
+}
 
-    const options = [
-        { value: "__auto__" as string, label: "Auto-detect", hint: "detect language automatically" },
-        ...voices.map((v) => ({
-            value: v.name,
-            label: v.name,
-            hint: `${v.locale} — ${v.sample.slice(0, 40)}`,
-        })),
-    ];
+function formatFieldValue(profile: SayAppConfig, field: SettableField): string {
+    const v = profile[field];
 
-    const selected = await p.select({
-        message: "Default voice:",
-        options,
+    if (v === undefined || v === null) {
+        return pc.dim("(inherit)");
+    }
+
+    if (field === "volume" && typeof v === "number") {
+        return `${Math.round(v * 100)}%`;
+    }
+
+    return String(v);
+}
+
+type FieldDecision = "keep" | "cancel" | { kind: "clear" } | { kind: "set"; patch: Partial<SayAppConfig> };
+
+const KEEP = "__keep__";
+const CLEAR = "__clear__";
+
+async function promptField(field: SettableField, profile: SayAppConfig): Promise<FieldDecision> {
+    if (field === "mute") {
+        return promptMute(profile);
+    }
+
+    if (field === "provider") {
+        return promptEnum(field, profile, ["macos", "xai", "openai"]);
+    }
+
+    if (field === "format") {
+        return promptEnum(field, profile, ["mp3", "wav"]);
+    }
+
+    return promptText(field, profile);
+}
+
+async function promptMute(profile: SayAppConfig): Promise<FieldDecision> {
+    const current = profile.mute === null || profile.mute === undefined ? "(inherit)" : String(profile.mute);
+    const choice = await p.select({
+        message: `mute  [${current}]`,
+        options: [
+            { value: KEEP, label: "Keep" },
+            { value: "true", label: "Mute" },
+            { value: "false", label: "Unmute" },
+            { value: CLEAR, label: pc.dim("Inherit (clear)") },
+        ],
+        initialValue: KEEP,
     });
 
-    if (p.isCancel(selected)) {
-        return;
+    if (p.isCancel(choice)) {
+        return "cancel";
     }
 
-    config.defaultVoice = selected === "__auto__" ? null : selected;
-    await setConfig(config);
-    p.log.success(`Default voice: ${config.defaultVoice ?? "auto-detect"}`);
+    if (choice === KEEP) {
+        return "keep";
+    }
+
+    if (choice === CLEAR) {
+        return { kind: "clear" };
+    }
+
+    return { kind: "set", patch: { mute: choice === "true" } };
 }
 
-async function handleSetVolume(config: SayConfig): Promise<void> {
+async function promptEnum(
+    field: "provider" | "format",
+    profile: SayAppConfig,
+    values: readonly string[]
+): Promise<FieldDecision> {
+    const current = formatFieldValue(profile, field);
+    const choice = await p.select({
+        message: `${field}  [${current}]`,
+        options: [
+            { value: KEEP, label: "Keep" },
+            { value: CLEAR, label: pc.dim("Inherit (clear)") },
+            ...values.map((v) => ({ value: v, label: v })),
+        ],
+        initialValue: KEEP,
+    });
+
+    if (p.isCancel(choice)) {
+        return "cancel";
+    }
+
+    if (choice === KEEP) {
+        return "keep";
+    }
+
+    if (choice === CLEAR) {
+        return { kind: "clear" };
+    }
+
+    if (field === "provider") {
+        return { kind: "set", patch: { provider: choice as SayProvider } };
+    }
+
+    return { kind: "set", patch: { format: choice as "mp3" | "wav" } };
+}
+
+async function promptText(field: SettableField, profile: SayAppConfig): Promise<FieldDecision> {
+    const current = formatFieldValue(profile, field);
     const input = await p.text({
-        message: "Default volume (0.0-1.0 or 0-100%):",
-        placeholder: String(config.defaultVolume),
-        defaultValue: String(config.defaultVolume),
-        validate(value: string | undefined) {
-            const n = parseFloat(value ?? "");
+        message: `${field}  [${current}]`,
+        placeholder: "⏎ keep  ·  - inherit  ·  value to set",
+        defaultValue: "",
+        validate(v: string | undefined) {
+            if (!v || v === "-") {
+                return;
+            }
 
-            if (Number.isNaN(n) || n < 0) {
-                return "Must be a non-negative number (0.0-1.0 or 0-100)";
+            if (field === "volume" || field === "rate") {
+                const n = Number.parseFloat(v);
+
+                if (Number.isNaN(n) || n < 0) {
+                    return "Must be a non-negative number";
+                }
             }
         },
     });
 
     if (p.isCancel(input)) {
+        return "cancel";
+    }
+
+    const raw = String(input);
+
+    if (raw === "") {
+        return "keep";
+    }
+
+    if (raw === "-") {
+        return { kind: "clear" };
+    }
+
+    if (field === "volume") {
+        return { kind: "set", patch: { volume: normalizeVolume(Number.parseFloat(raw)) } };
+    }
+
+    if (field === "rate") {
+        return { kind: "set", patch: { rate: Number.parseFloat(raw) } };
+    }
+
+    if (field === "voice") {
+        return { kind: "set", patch: { voice: raw } };
+    }
+
+    if (field === "model") {
+        return { kind: "set", patch: { model: raw } };
+    }
+
+    if (field === "language") {
+        return { kind: "set", patch: { language: raw } };
+    }
+
+    return "keep";
+}
+
+function buildSummary(patch: Partial<SayAppConfig>, clearList: SettableField[]): string {
+    const parts: string[] = [];
+    const changed = Object.keys(patch);
+
+    if (changed.length > 0) {
+        const formatted = changed.map((k) => `${k}=${formatPatchValue(patch, k as keyof SayAppConfig)}`);
+        parts.push(`${pc.green("changed:")} ${formatted.join(", ")}`);
+    }
+
+    if (clearList.length > 0) {
+        parts.push(`${pc.yellow("cleared:")} ${clearList.join(", ")}`);
+    }
+
+    return parts.join("   ");
+}
+
+function formatPatchValue(patch: Partial<SayAppConfig>, key: keyof SayAppConfig): string {
+    const v = patch[key];
+
+    if (key === "volume" && typeof v === "number") {
+        return `${Math.round(v * 100)}%`;
+    }
+
+    return String(v);
+}
+
+async function deleteAppTUI(mgr: SayConfigManager): Promise<void> {
+    const apps = (await mgr.listApps()).filter((a) => a.name !== DEFAULT_APP_NAME);
+
+    if (apps.length === 0) {
+        p.log.info("No deletable apps (the default profile is non-removable).");
         return;
     }
 
-    config.defaultVolume = normalizeVolume(parseFloat(input));
-    await setConfig(config);
-    p.log.success(`Default volume: ${config.defaultVolume}`);
-}
+    const target = await p.select({
+        message: "Delete which profile?",
+        options: apps.map((a) => ({ value: a.name, label: a.name })),
+    });
 
-async function handleListVoices(): Promise<void> {
-    const voices = await listVoicesStructured();
-    const rows = voices.map((v) => [v.lang, v.name, v.locale, v.sample.slice(0, 50)]);
-    console.log(formatTable(rows, ["Lang", "Voice", "Locale", "Sample"]));
+    if (p.isCancel(target)) {
+        return;
+    }
+
+    const confirmed = await p.confirm({
+        message: `Really delete "${target}"? This cannot be undone.`,
+        initialValue: false,
+    });
+
+    if (p.isCancel(confirmed) || !confirmed) {
+        return;
+    }
+
+    await mgr.deleteApp(String(target));
+    p.log.success(`Deleted "${target}"`);
 }

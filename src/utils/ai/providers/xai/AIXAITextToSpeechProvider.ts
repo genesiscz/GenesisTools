@@ -1,4 +1,3 @@
-import logger from "@app/logger";
 import { rateLimitAwareDelay, retry } from "@app/utils/async";
 import type { AIProviderType } from "@app/utils/config/ai.types";
 import { SafeJSON } from "@app/utils/json";
@@ -9,13 +8,7 @@ import { XAIClient } from "./XAIClient";
 const MAX_TTS_DELTA_CHARS = 15_000;
 const VOICE_CACHE_TTL = "7 days";
 const VOICE_CACHE_KEY = "xai-voices.json";
-
-/**
- * Realtime endpoint model — best quality for grok-voice-think-fast-1.0.
- * The `/v1/realtime` endpoint uses OpenAI-compatible event protocol.
- * Audio output is PCM16 24kHz mono, delivered as base64 in response.audio.delta.
- */
-const REALTIME_MODEL = "grok-voice-think-fast-1.0";
+const TEXT_DELTA_CHUNK_SIZE = 5_000;
 
 const SUPPORTED_TASKS: ReadonlySet<AITask> = new Set(["tts"]);
 const SYNTHESIZE_RETRY_DELAY = rateLimitAwareDelay();
@@ -28,35 +21,6 @@ interface XAIVoiceResponse {
         locale?: string;
     }>;
 }
-
-// ---------------------------------------------------------------------------
-// Realtime WebSocket event types (OpenAI-realtime-compatible protocol)
-// ---------------------------------------------------------------------------
-
-interface XAIRealtimeAudioDelta {
-    type: "response.audio.delta";
-    delta: string; // base64-encoded PCM16 24kHz mono
-}
-
-interface XAIRealtimeDone {
-    type: "response.done";
-}
-
-interface XAIRealtimeError {
-    type: "error";
-    error: { message: string; code?: string };
-}
-
-interface XAIRealtimeConversationCreated {
-    type: "conversation.created";
-}
-
-type XAIRealtimeEvent =
-    | XAIRealtimeAudioDelta
-    | XAIRealtimeDone
-    | XAIRealtimeError
-    | XAIRealtimeConversationCreated
-    | { type: string };
 
 function shouldRetrySynthesize(error: unknown): boolean {
     const msg = error instanceof Error ? error.message : String(error);
@@ -83,6 +47,15 @@ export interface AIXAITextToSpeechProviderOptions {
 
 export class AIXAITextToSpeechProvider implements AITextToSpeechProvider {
     readonly type: AIProviderType = "xai";
+    /**
+     * Measured against macOS `say` rendered to AIFF (Samantha voice) using `ffmpeg volumedetect`:
+     *   macOS native: mean -16.2 dB / peak -1.6 dB / -16.5 LUFS
+     *   xAI mp3 raw:  mean -23.3 dB / peak -6.7 dB / -23.0 LUFS
+     * Mean delta = 7.1 dB. With `volume=7dB,alimiter=limit=0.97`, xAI lands at mean -16.3 dB /
+     * peak -0.3 dB / -16.1 LUFS — within 0.1 dB of native on the channel humans perceive as
+     * loudness. The limiter keeps peaks below -0.3 dBFS so no audible distortion at any user volume.
+     */
+    readonly loudnessOffsetDb = 7;
     private readonly client = new XAIClient();
     private readonly storage = new Storage("ai");
     private readonly forceFreshVoices: boolean;
@@ -146,20 +119,30 @@ export class AIXAITextToSpeechProvider implements AITextToSpeechProvider {
     }
 
     /**
-     * Yields audio chunks via the xAI Realtime WebSocket (`wss://api.x.ai/v1/realtime`).
+     * Streams audio from xAI's dedicated TTS WebSocket (`wss://api.x.ai/v1/tts`).
      *
-     * Protocol (OpenAI-realtime-compatible):
-     *   1. Server sends `conversation.created` on connect.
-     *   2. Client sends `conversation.item.create` (input_text) + `response.create` (modalities: ["audio"]).
-     *   3. Server sends `response.audio.delta` events (base64 PCM16 24kHz mono).
-     *   4. Server sends `response.done` when finished.
+     * Protocol:
+     *   client → {type: "text.delta", delta: <chunk>} (one or many)
+     *   client → {type: "text.done"}
+     *   server → {type: "audio.delta", delta: <base64>}
+     *   server → {type: "audio.done"}            // graceful end
+     *   server → {type: "error", message: <msg>} // failure
      *
-     * Audio format is PCM16 24kHz mono — content-type: audio/pcm.
+     * Cost is identical to REST ($4.20 / 1M input chars). No total-text limit.
      */
     synthesizeStream(text: string, options?: TTSOptions): { audio: AsyncIterable<Uint8Array>; contentType: string } {
         const client = this.client;
         const voice = options?.voice ?? "eve";
-        const realtimeParams = new URLSearchParams({ model: REALTIME_MODEL });
+        const language = options?.language ?? "auto";
+        const codec = options?.format ?? "mp3";
+        const contentType = codec === "wav" ? "audio/wav" : "audio/mpeg";
+
+        const params = new URLSearchParams({
+            language,
+            voice,
+            codec,
+            sample_rate: "24000",
+        });
 
         const audio = (async function* iter(): AsyncIterable<Uint8Array> {
             const queue: Uint8Array[] = [];
@@ -167,7 +150,7 @@ export class AIXAITextToSpeechProvider implements AITextToSpeechProvider {
             let done = false;
             let error: Error | null = null;
 
-            const ws = client.openWebSocket("/realtime", realtimeParams);
+            const ws = client.openWebSocket("/tts", params);
 
             const push = (chunk: Uint8Array): void => {
                 if (resolveNext) {
@@ -180,6 +163,10 @@ export class AIXAITextToSpeechProvider implements AITextToSpeechProvider {
             };
 
             const finish = (err?: Error): void => {
+                if (done) {
+                    return;
+                }
+
                 done = true;
 
                 if (err) {
@@ -194,78 +181,61 @@ export class AIXAITextToSpeechProvider implements AITextToSpeechProvider {
             };
 
             ws.addEventListener("open", () => {
-                // Send the text input and request an audio response
-                ws.send(
-                    SafeJSON.stringify({
-                        type: "conversation.item.create",
-                        item: {
-                            type: "message",
-                            role: "user",
-                            content: [{ type: "input_text", text }],
-                        },
-                    })
-                );
-                ws.send(
-                    SafeJSON.stringify({
-                        type: "response.create",
-                        response: {
-                            modalities: ["audio"],
-                            voice,
-                        },
-                    })
-                );
+                for (let i = 0; i < text.length; i += TEXT_DELTA_CHUNK_SIZE) {
+                    ws.send(
+                        SafeJSON.stringify({
+                            type: "text.delta",
+                            delta: text.slice(i, i + TEXT_DELTA_CHUNK_SIZE),
+                        })
+                    );
+                }
+
+                ws.send(SafeJSON.stringify({ type: "text.done" }));
             });
 
-            ws.addEventListener("error", () => finish(new Error("xAI Realtime WebSocket error")));
+            ws.addEventListener("error", () => finish(new Error("xAI TTS WebSocket transport error")));
 
             ws.addEventListener("close", (ev) => {
                 if (!done) {
-                    finish(new Error(`xAI Realtime WebSocket closed unexpectedly (code ${ev.code})`));
+                    finish(new Error(`xAI TTS WebSocket closed before audio.done (code ${ev.code})`));
                 }
             });
 
             ws.addEventListener("message", (event) => {
-                let parsed: XAIRealtimeEvent;
+                let parsed: { type: string; delta?: string; message?: string };
 
                 try {
                     parsed = SafeJSON.parse(typeof event.data === "string" ? event.data : event.data.toString());
-                } catch (err) {
-                    logger.debug(`xAI Realtime: malformed event: ${err}`);
+                } catch {
                     return;
                 }
 
                 switch (parsed.type) {
-                    case "conversation.created":
-                        // Connection established — messages already queued in open handler
-                        break;
-                    case "response.audio.delta": {
-                        const delta = (parsed as XAIRealtimeAudioDelta).delta;
-                        push(Buffer.from(delta, "base64"));
-                        break;
-                    }
-                    case "response.done":
-                        try {
-                            ws.close();
-                        } catch {
-                            /* noop */
+                    case "audio.delta":
+                        if (parsed.delta) {
+                            push(Buffer.from(parsed.delta, "base64"));
                         }
+                        break;
+                    case "audio.done":
                         finish();
-                        break;
-                    case "error": {
-                        const errEvent = parsed as XAIRealtimeError;
-                        const msg = errEvent.error?.message ?? "Unknown realtime error";
 
                         try {
                             ws.close();
                         } catch {
                             /* noop */
                         }
-
-                        finish(new Error(`xAI Realtime error: ${msg}`));
                         break;
-                    }
+                    case "error":
+                        finish(new Error(`xAI TTS error: ${parsed.message ?? "unknown"}`));
+
+                        try {
+                            ws.close();
+                        } catch {
+                            /* noop */
+                        }
+                        break;
                     default:
-                        logger.debug(`xAI Realtime: unhandled event type: ${parsed.type}`);
+                        break;
                 }
             });
 
@@ -307,8 +277,7 @@ export class AIXAITextToSpeechProvider implements AITextToSpeechProvider {
             }
         })();
 
-        // Realtime endpoint delivers PCM16 24kHz mono
-        return { audio, contentType: "audio/pcm" };
+        return { audio, contentType };
     }
 
     async listVoices(): Promise<TTSVoice[]> {

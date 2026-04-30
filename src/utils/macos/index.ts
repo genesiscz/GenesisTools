@@ -76,6 +76,8 @@ export {
     recognizeText,
     recognizeTextFromBuffer,
 } from "./ocr";
+export type { SayAppConfig, SayConfigV2, SayProvider, SettableField } from "./SayConfigManager";
+export { DEFAULT_APP_NAME, isSettableField, SayConfigManager, SETTABLE_FIELDS } from "./SayConfigManager";
 // System
 export { getCapabilities } from "./system";
 export type {
@@ -95,9 +97,9 @@ export {
     groupByLanguage,
     rankBySimilarity,
 } from "./text-analysis";
-export type { SayConfig, SpeakOptions, VoiceInfo } from "./tts";
-// TTS
-export { getConfigForRead, getVoiceMap, listVoices, setConfig as setTtsConfig, speak } from "./tts";
+export type { VoiceInfo } from "./tts";
+// TTS primitives. Profile-aware speech lives in `@app/say/lib/speak`.
+export { getVoiceMap, listVoices } from "./tts";
 // Types
 export type {
     AuthAvailableResult,
