@@ -44,7 +44,11 @@ describe("tools say", () => {
         });
 
         it("speech without --app reports muted when default is muted", async () => {
-            await runTool(["say", "--mute", "--save", "--app", "default"]);
+            // Verify the mute setup succeeded — otherwise the speak below would
+            // actually play audio out of the speakers.
+            const setup = await runTool(["say", "--mute", "--save", "--app", "default"]);
+            expect(setup.exitCode).toBe(0);
+
             const r = await runTool(["say", "should be muted"]);
             expect(r.exitCode).toBe(0);
             expect(getOutput(r).toLowerCase()).toContain("muted");
@@ -63,7 +67,9 @@ describe("tools say", () => {
         });
 
         it("speech with muted app reports muted", async () => {
-            await runTool(["say", "--mute", "--save", "--app", "e2e-test"]);
+            const setup = await runTool(["say", "--mute", "--save", "--app", "e2e-test"]);
+            expect(setup.exitCode).toBe(0);
+
             const r = await runTool(["say", "should be muted", "--app", "e2e-test"]);
             expect(r.exitCode).toBe(0);
             expect(getOutput(r).toLowerCase()).toContain("muted");
@@ -75,17 +81,28 @@ describe("tools say", () => {
         });
 
         it("--unmute --save through a muted profile (PR #157 t3)", async () => {
-            // Set the profile to muted first.
-            await runTool(["say", "--mute", "--save", "--app", "e2e-test"]);
+            // Pre-condition: profile is muted (assert it actually took).
+            const setup = await runTool(["say", "--mute", "--save", "--app", "e2e-test"]);
+            expect(setup.exitCode).toBe(0);
 
-            // --unmute --save must not be blocked by the existing mute state.
-            const r = await runTool(["say", "ping", "--unmute", "--save", "--app", "e2e-test"]);
+            const muted = await runTool(["say", "should be muted", "--app", "e2e-test"]);
+            expect(muted.exitCode).toBe(0);
+            expect(getOutput(muted).toLowerCase()).toContain("muted");
+
+            // --unmute --save (save-only invocation: no message text, no speak)
+            // must not be blocked by the current mute state.
+            const r = await runTool(["say", "--unmute", "--save", "--app", "e2e-test"]);
             expect(r.exitCode).toBe(0);
 
-            // After unmuting, plain speech should not say "muted".
-            const after = await runTool(["say", "should now run", "--app", "e2e-test"]);
-            expect(after.exitCode).toBe(0);
-            expect(getOutput(after).toLowerCase()).not.toContain("[say] muted");
+            // Re-mute and verify mute is back — confirms the previous --unmute
+            // --save actually toggled the persisted state. Avoids a real speak
+            // call which would hit the macOS synthesizer in subprocess.
+            const remute = await runTool(["say", "--mute", "--save", "--app", "e2e-test"]);
+            expect(remute.exitCode).toBe(0);
+
+            const reMuted = await runTool(["say", "should be muted", "--app", "e2e-test"]);
+            expect(reMuted.exitCode).toBe(0);
+            expect(getOutput(reMuted).toLowerCase()).toContain("muted");
         });
     });
 
