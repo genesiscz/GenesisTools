@@ -3,7 +3,7 @@ import { Badge } from "@ui/components/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
 import { Skeleton } from "@ui/components/skeleton";
 import { AlertTriangle, Shield } from "lucide-react";
-import type { GranularStatus } from "../server/settings";
+import type { GranularStatus, ServiceAuthState } from "../server/settings";
 
 async function fetchGranularStatus(): Promise<GranularStatus> {
     const res = await fetch("/api/granular-status");
@@ -43,8 +43,20 @@ function AuthBadge({ hasAuth }: { hasAuth: boolean }) {
     );
 }
 
-function clarityDotColor(clarity: GranularStatus["clarity"]): "green" | "red" {
-    return clarity.configured && clarity.hasAuth ? "green" : "red";
+function clarityDotColor(clarity: GranularStatus["clarity"]): "green" | "amber" | "red" {
+    if (!clarity.configured) {
+        return "red";
+    }
+
+    if (clarity.status === "ok") {
+        return "green";
+    }
+
+    if (clarity.status === "expired" || clarity.status === "error") {
+        return "red";
+    }
+
+    return clarity.hasAuth ? "amber" : "red";
 }
 
 function adoDotColor(ado: GranularStatus["ado"]): "green" | "amber" | "red" {
@@ -52,19 +64,48 @@ function adoDotColor(ado: GranularStatus["ado"]): "green" | "amber" | "red" {
         return "red";
     }
 
-    return ado.hasOrgId ? "green" : "amber";
-}
-
-function timelogDotColor(timelog: GranularStatus["timelog"]): "green" | "amber" | "red" {
-    if (timelog.configured && timelog.defaultUser) {
+    if (ado.status === "ok") {
         return "green";
     }
 
-    if (timelog.configured || timelog.hasFunctionsKey) {
-        return "amber";
+    if (ado.status === "expired" || ado.status === "error") {
+        return "red";
     }
 
-    return "red";
+    return ado.hasOrgId ? "amber" : "red";
+}
+
+function timelogDotColor(timelog: GranularStatus["timelog"]): "green" | "amber" | "red" {
+    if (!timelog.configured) {
+        return "red";
+    }
+
+    if (timelog.status === "ok") {
+        return "green";
+    }
+
+    if (timelog.status === "expired" || timelog.status === "error") {
+        return "red";
+    }
+
+    return timelog.defaultUser ? "amber" : "red";
+}
+
+function AuthError({ state }: { state: ServiceAuthState }) {
+    if (state.status === "ok" || state.status === "unknown" || !state.error) {
+        return null;
+    }
+
+    return (
+        <div className="ml-4 mt-1 rounded border border-red-500/30 bg-red-500/5 px-3 py-2 space-y-1">
+            <div className="text-xs font-mono text-red-300 break-words">{state.error}</div>
+            {state.fix && (
+                <div className="text-xs font-mono text-gray-400">
+                    Fix: <code className="text-foreground/90 select-all">{state.fix}</code>
+                </div>
+            )}
+        </div>
+    );
 }
 
 function DirectoryWarning({ projectCwd }: { projectCwd: string }) {
@@ -102,6 +143,7 @@ function ClaritySection({ clarity }: { clarity: GranularStatus["clarity"] }) {
             ) : (
                 <div className="ml-4 text-xs font-mono text-gray-500">Not configured — paste a cURL command below</div>
             )}
+            <AuthError state={clarity} />
         </div>
     );
 }
@@ -130,6 +172,7 @@ function AdoSection({ ado }: { ado: GranularStatus["ado"] }) {
                     <span className="font-mono">tools azure-devops configure &lt;url&gt;</span>
                 </div>
             )}
+            <AuthError state={ado} />
         </div>
     );
 }
@@ -162,6 +205,7 @@ function TimelogSection({ timelog }: { timelog: GranularStatus["timelog"] }) {
                     <span className="font-mono">tools azure-devops timelog configure</span>
                 </div>
             )}
+            <AuthError state={timelog} />
         </div>
     );
 }

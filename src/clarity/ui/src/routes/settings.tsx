@@ -474,7 +474,7 @@ function SettingsPage() {
             {/* Update Auth section */}
             <Card className="border-primary/20 mb-6">
                 <CardHeader className="pb-3">
-                    <CardTitle className="text-sm font-mono text-gray-400">Configure / Update Auth</CardTitle>
+                    <CardTitle className="text-sm font-mono text-gray-400">Clarity Configuration</CardTitle>
                 </CardHeader>
                 <CardContent>
                     <div className="text-xs text-gray-500 font-mono mb-3 space-y-1">

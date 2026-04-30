@@ -65,8 +65,34 @@ export function isAuthError(message: string): boolean {
         message.includes("login command") ||
         message.includes("setup credentials") ||
         message.includes("az login") ||
-        message.includes("az devops login")
+        message.includes("az devops login") ||
+        message.includes("AADSTS50078") ||
+        message.includes("AADSTS70043") ||
+        message.includes("multi-factor authentication has expired") ||
+        message.includes("Presented multi-factor")
     );
+}
+
+/**
+ * Thrown by `Api.getAccessToken()` when `az account get-access-token` fails.
+ * Carries the raw stderr and a parsed-out `az login ...` suggestion when present.
+ */
+export class AzAuthError extends Error {
+    readonly stderr: string;
+    readonly suggestedCommand: string | null;
+
+    constructor(message: string, stderr: string, suggestedCommand: string | null) {
+        super(message);
+        this.name = "AzAuthError";
+        this.stderr = stderr;
+        this.suggestedCommand = suggestedCommand;
+    }
+}
+
+/** Pull the suggested `az login ...` line out of an MFA / auth error stderr block. */
+export function extractAzLoginSuggestion(stderr: string): string | null {
+    const match = stderr.match(/^\s*(az login [^\n]+)/m);
+    return match ? match[1].trim() : null;
 }
 
 /**

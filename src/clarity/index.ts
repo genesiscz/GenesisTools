@@ -7,6 +7,7 @@ import { registerConfigureCommand } from "./commands/configure.js";
 import { registerFillCommand } from "./commands/fill.js";
 import { registerLinkCommand } from "./commands/link-workitems.js";
 import { registerTimesheetCommand } from "./commands/timesheet.js";
+import { runClarityPreflight } from "./lib/preflight.js";
 
 const program = new Command()
     .name("clarity")
@@ -39,22 +40,33 @@ program
             process.exit(1);
         }
 
+        const { failures } = await runClarityPreflight();
+        if (failures.length > 0) {
+            // Soft warning — don't block startup. The user may want to open the UI
+            // and reconfigure (paste a fresh cURL, rotate a key, etc.) from Settings.
+            // Settings → Configuration status will surface the same errors inline.
+            console.warn("\n⚠  Clarity dashboard is starting with auth/connection issues — fix in UI Settings:\n");
+            for (const f of failures) {
+                console.warn(`  • [${f.service}] ${f.error}`);
+                if (f.fix) {
+                    console.warn(`      Fix: ${f.fix}`);
+                }
+            }
+            console.warn("");
+        }
+
         console.log(`Starting Clarity dashboard at ${url} ...`);
         console.log("(first start can take a few seconds; output below comes from Vite)\n");
 
         // Spawn vite.js directly via bun rather than relying on node_modules/.bin/vite
         // — on Windows the .bin entry is a .cmd shim that Bun.spawn can fail to resolve
         // silently, leaving the user staring at a frozen terminal.
-        const child = spawn(
-            "bun",
-            ["--bun", viteEntry, "dev", "-c", configPath, "--strictPort"],
-            {
-                cwd: PROJECT_ROOT,
-                stdio: "inherit",
-                env: { ...process.env, CLARITY_PROJECT_CWD: process.cwd() },
-                shell: process.platform === "win32",
-            }
-        );
+        const child = spawn("bun", ["--bun", viteEntry, "dev", "-c", configPath, "--strictPort"], {
+            cwd: PROJECT_ROOT,
+            stdio: "inherit",
+            env: { ...process.env, CLARITY_PROJECT_CWD: process.cwd() },
+            shell: process.platform === "win32",
+        });
 
         child.on("error", (err) => {
             console.error(`✗ Failed to start vite: ${err.message}`);

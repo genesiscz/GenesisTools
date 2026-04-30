@@ -7,8 +7,11 @@ import { fetchTimeLogFunctionsKey } from "@app/azure-devops/lib/timelog-configur
 import type { AzureConfigWithTimeLog } from "@app/azure-devops/types";
 import { getConfig, saveConfig } from "@app/clarity/config";
 import { parseAuthCurl } from "@app/clarity/lib/parse-auth-curl";
+import { type AuthStatus, pingAdo, pingClarity, pingTimelog, type ServiceAuthState } from "@app/clarity/lib/preflight";
 import { ClarityApi } from "@app/utils/clarity";
 import { SafeJSON } from "@app/utils/json";
+
+export type { AuthStatus, ServiceAuthState };
 
 export interface StatusResult {
     configured: boolean;
@@ -138,28 +141,78 @@ export async function updateAuth(curl: string): Promise<{ success: boolean; mess
 
 // ============= Granular Configuration Status =============
 
+interface ClarityShape {
+    configured: boolean;
+    baseUrl: string | null;
+    hasAuth: boolean;
+    mappingsCount: number;
+    resourceId: number | null;
+    uniqueName: string | null;
+}
+
+interface AdoShape {
+    configured: boolean;
+    org: string | null;
+    project: string | null;
+    projectId: string | null;
+    hasOrgId: boolean;
+}
+
+interface TimelogShape {
+    configured: boolean;
+    hasFunctionsKey: boolean;
+    defaultUser: { userId: string; userName: string; userEmail: string } | null;
+}
+
 export interface GranularStatus {
-    clarity: {
-        configured: boolean;
-        baseUrl: string | null;
-        hasAuth: boolean;
-        mappingsCount: number;
-        resourceId: number | null;
-        uniqueName: string | null;
-    };
-    ado: {
-        configured: boolean;
-        org: string | null;
-        project: string | null;
-        projectId: string | null;
-        hasOrgId: boolean;
-    };
-    timelog: {
-        configured: boolean;
-        hasFunctionsKey: boolean;
-        defaultUser: { userId: string; userName: string; userEmail: string } | null;
-    };
+    clarity: ClarityShape & ServiceAuthState;
+    ado: AdoShape & ServiceAuthState;
+    timelog: TimelogShape & ServiceAuthState;
     projectCwd: string;
+}
+
+function buildClarityShape(config: Awaited<ReturnType<typeof getConfig>>): ClarityShape {
+    if (!config) {
+        return {
+            configured: false,
+            baseUrl: null,
+            hasAuth: false,
+            mappingsCount: 0,
+            resourceId: null,
+            uniqueName: null,
+        };
+    }
+
+    return {
+        configured: true,
+        baseUrl: config.baseUrl,
+        hasAuth: !!config.authToken && !!config.sessionId,
+        mappingsCount: config.mappings.length,
+        resourceId: config.resourceId ?? null,
+        uniqueName: config.uniqueName ?? null,
+    };
+}
+
+function buildAdoShape(config: AzureConfigWithTimeLog | null): AdoShape {
+    if (!config) {
+        return { configured: false, org: null, project: null, projectId: null, hasOrgId: false };
+    }
+
+    return {
+        configured: true,
+        org: config.org,
+        project: config.project,
+        projectId: config.projectId,
+        hasOrgId: !!config.orgId,
+    };
+}
+
+function buildTimelogShape(config: AzureConfigWithTimeLog | null): TimelogShape {
+    return {
+        configured: !!config?.timelog?.functionsKey,
+        hasFunctionsKey: !!config?.timelog?.functionsKey,
+        defaultUser: config?.timelog?.defaultUser ?? null,
+    };
 }
 
 export async function getGranularStatus(): Promise<GranularStatus> {
@@ -167,47 +220,18 @@ export async function getGranularStatus(): Promise<GranularStatus> {
     const adoConfig = loadAdoConfig() as AzureConfigWithTimeLog | null;
     const projectCwd = process.env.CLARITY_PROJECT_CWD || process.cwd();
 
-    const clarity: GranularStatus["clarity"] = clarityConfig
-        ? {
-              configured: true,
-              baseUrl: clarityConfig.baseUrl,
-              hasAuth: !!clarityConfig.authToken && !!clarityConfig.sessionId,
-              mappingsCount: clarityConfig.mappings.length,
-              resourceId: clarityConfig.resourceId ?? null,
-              uniqueName: clarityConfig.uniqueName ?? null,
-          }
-        : {
-              configured: false,
-              baseUrl: null,
-              hasAuth: false,
-              mappingsCount: 0,
-              resourceId: null,
-              uniqueName: null,
-          };
+    const [clarityAuth, adoAuth, timelogAuth] = await Promise.all([
+        pingClarity(clarityConfig),
+        pingAdo(adoConfig),
+        pingTimelog(adoConfig),
+    ]);
 
-    const ado: GranularStatus["ado"] = adoConfig
-        ? {
-              configured: true,
-              org: adoConfig.org,
-              project: adoConfig.project,
-              projectId: adoConfig.projectId,
-              hasOrgId: !!(adoConfig as AzureConfigWithTimeLog).orgId,
-          }
-        : {
-              configured: false,
-              org: null,
-              project: null,
-              projectId: null,
-              hasOrgId: false,
-          };
-
-    const timelog: GranularStatus["timelog"] = {
-        configured: !!adoConfig?.timelog?.functionsKey,
-        hasFunctionsKey: !!adoConfig?.timelog?.functionsKey,
-        defaultUser: adoConfig?.timelog?.defaultUser ?? null,
+    return {
+        clarity: { ...buildClarityShape(clarityConfig), ...clarityAuth },
+        ado: { ...buildAdoShape(adoConfig), ...adoAuth },
+        timelog: { ...buildTimelogShape(adoConfig), ...timelogAuth },
+        projectCwd,
     };
-
-    return { clarity, ado, timelog, projectCwd };
 }
 
 // ============= ADO Configuration =============

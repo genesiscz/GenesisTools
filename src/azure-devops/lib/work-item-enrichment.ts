@@ -9,6 +9,7 @@
  */
 
 import { loadWorkItemCache, saveWorkItemCache, storage, WORKITEM_FRESHNESS_MINUTES } from "@app/azure-devops/cache";
+import { AzAuthError, isAuthError } from "@app/azure-devops/cli.utils";
 
 async function createApi(config: import("@app/azure-devops/types").AzureConfig) {
     const { Api } = await import("@app/azure-devops/api");
@@ -109,10 +110,17 @@ export async function enrichWorkItems(
                 comments: false,
                 updates: false,
             });
-        } catch {
-            // Batch fetch failed (e.g. one inaccessible item returns 404 for entire batch).
-            // Fall back to fetching items individually, skipping failures.
-            logger.warn(`[enrichment] Batch fetch failed, falling back to individual fetches`);
+        } catch (err) {
+            // Auth/network failures are not per-item issues — abort enrichment
+            // entirely and propagate, so callers can surface a real error.
+            if (err instanceof AzAuthError || isAuthError(err instanceof Error ? err.message : String(err))) {
+                throw err;
+            }
+
+            // Genuine batch failure (one bad ID can fail the whole batch) → fall back
+            // to per-item fetches, treating only true 404s as skippable.
+            const batchMsg = err instanceof Error ? err.message : String(err);
+            logger.warn(`[enrichment] Batch fetch failed (${batchMsg}), falling back to per-item fetches`);
             fetched = new Map();
 
             for (const id of idsToFetch) {
@@ -121,8 +129,19 @@ export async function enrichWorkItems(
                     for (const [sId, sItem] of single) {
                         fetched.set(sId, sItem);
                     }
-                } catch {
-                    logger.warn(`[enrichment] Skipping inaccessible work item #${id}`);
+                } catch (singleErr) {
+                    if (
+                        singleErr instanceof AzAuthError ||
+                        isAuthError(singleErr instanceof Error ? singleErr.message : String(singleErr))
+                    ) {
+                        throw singleErr;
+                    }
+                    const msg = singleErr instanceof Error ? singleErr.message : String(singleErr);
+                    if (msg.includes("404") || msg.includes("does not exist")) {
+                        logger.warn(`[enrichment] Skipping work item #${id} (404 not found)`);
+                    } else {
+                        logger.warn(`[enrichment] Failed to fetch #${id}: ${msg}`);
+                    }
                 }
             }
         }

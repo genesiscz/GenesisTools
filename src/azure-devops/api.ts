@@ -16,6 +16,7 @@ import type {
     TeamsListResponse,
 } from "@app/azure-devops/api.types";
 import { loadTeamMembersCache, saveTeamMembersCache } from "@app/azure-devops/cache";
+import { AzAuthError, extractAzLoginSuggestion } from "@app/azure-devops/cli.utils";
 import type {
     AzureConfig,
     AzWorkItemRaw,
@@ -171,30 +172,35 @@ export class Api {
      * Caches token for 5 minutes to avoid repeated az CLI calls
      */
     private async getAccessToken(): Promise<string> {
-        // Return cached token if still valid (with 1 minute buffer)
-        if (this.cachedToken && Date.now() < this.tokenExpiry - 60000) {
+        if (this.cachedToken && Date.now() < this.tokenExpiry - 60_000) {
             logger.debug("[api] Using cached access token");
             return this.cachedToken;
         }
 
         logger.debug("[api] Fetching new access token via: az account get-access-token");
-        try {
-            const result =
-                await $`az account get-access-token --resource ${AZURE_DEVOPS_RESOURCE_ID} --query accessToken -o tsv`.quiet();
-            const token = result.text().trim();
-            if (!token) {
-                throw new Error("Empty token received. Ensure you're logged in with 'az login'");
-            }
-            // Cache token for 5 minutes
-            this.cachedToken = token;
-            this.tokenExpiry = Date.now() + 5 * 60 * 1000;
-            logger.debug("[api] Access token obtained and cached");
-            return token;
-        } catch (error) {
-            const stderr = (error as { stderr?: { toString(): string } })?.stderr?.toString?.()?.trim();
-            const message = stderr || (error instanceof Error ? error.message : String(error));
-            throw new Error(`Failed to get Azure access token:\n${message}`);
+        // .nothrow() so a non-zero exit returns a result instead of throwing — lets us read stderr,
+        // which is where AADSTS / MFA-expired / proxy errors live.
+        const result =
+            await $`az account get-access-token --resource ${AZURE_DEVOPS_RESOURCE_ID} --query accessToken -o tsv`
+                .nothrow()
+                .quiet();
+
+        const stdout = result.stdout.toString().trim();
+        const stderr = result.stderr.toString().trim();
+
+        if (result.exitCode !== 0 || !stdout) {
+            // First stderr line typically begins with "ERROR: " — strip it so the prefix isn't doubled.
+            const firstLine = stderr.split("\n")[0] ?? "";
+            const summary = firstLine.replace(/^ERROR:\s*/i, "") || "az account get-access-token returned no token";
+            const suggestion = extractAzLoginSuggestion(stderr);
+            logger.error(`[Azure DevOps] ${summary}${suggestion ? ` — Fix: ${suggestion}` : ""}`);
+            throw new AzAuthError(`Azure CLI auth failed: ${summary}`, stderr, suggestion);
         }
+
+        this.cachedToken = stdout;
+        this.tokenExpiry = Date.now() + 5 * 60_000;
+        logger.debug("[api] Access token obtained and cached");
+        return stdout;
     }
 
     /**
