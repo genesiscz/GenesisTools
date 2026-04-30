@@ -105,7 +105,8 @@ export function parseVmmapSwap(output: string): number {
 }
 
 const VMMAP_TIMEOUT_MS = 4000;
-const VMMAP_CONCURRENCY = 8;
+const VMMAP_CONCURRENCY = 32;
+const RSS_FLOOR_BYTES = 25 * 1024 * 1024;
 
 async function spawn(cmd: string[], timeoutMs?: number): Promise<{ stdout: string; exitCode: number }> {
     const proc = Bun.spawn({ cmd, stdio: ["ignore", "pipe", "pipe"] });
@@ -165,7 +166,9 @@ export async function scan(options: ScanOptions): Promise<ScanResult> {
     const [system, psRows] = await Promise.all([getSystemSwap(), getAllPsRows()]);
 
     const sortedByRss = [...psRows].sort((a, b) => b.rssBytes - a.rssBytes);
-    const candidates = options.all ? sortedByRss : sortedByRss.slice(0, options.limit);
+    const candidates = options.all
+        ? sortedByRss.filter((row) => row.rssBytes >= RSS_FLOOR_BYTES)
+        : sortedByRss.slice(0, options.limit);
 
     const swaps = await pool(candidates, VMMAP_CONCURRENCY, (row) => getProcSwap(row.pid));
 

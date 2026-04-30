@@ -15,9 +15,9 @@ export function registerSwapCommand(program: Command): void {
     const swap = new Command("swap");
 
     swap.description("List processes by swap usage (with RSS and uptime)")
-        .option("-l, --limit <n>", "number of top-RSS processes to vmmap-scan", "60")
+        .option("-l, --limit <n>", "number of top-RSS processes to vmmap-scan", "30")
         .option("-t, --top <n>", "number of rows to display", "25")
-        .option("-a, --all", "scan ALL processes (slow, 1–2 min)", false)
+        .option("-a, --all", "scan ALL processes with RSS ≥ 25 MB (slow)", false)
         .option("--json", "machine-readable JSON output", false)
         .action(async (options: SwapOptions) => {
             try {
@@ -34,20 +34,21 @@ export function registerSwapCommand(program: Command): void {
 }
 
 async function main(options: SwapOptions): Promise<void> {
-    const limit = Math.max(1, Number.parseInt(options.limit, 10) || 60);
+    const limit = Math.max(1, Number.parseInt(options.limit, 10) || 30);
     const top = Math.max(1, Number.parseInt(options.top, 10) || 25);
     const all = Boolean(options.all);
 
-    if (!options.json) {
-        p.log.info(`Scanning ${all ? "all" : `top ${limit} by RSS`}…`);
-    }
-
-    const result = await scan({ limit, all });
-
     if (options.json) {
+        const result = await scan({ limit, all });
         renderJson(result);
         return;
     }
 
+    const spinner = p.spinner();
+    spinner.start(all ? "Scanning all processes (this can take a while)…" : `Scanning top ${limit} by RSS…`);
+
+    const result = await scan({ limit, all });
+
+    spinner.stop(`Scanned ${result.scannedCount} of ${result.totalProcesses} processes`);
     renderResult(result, top);
 }
