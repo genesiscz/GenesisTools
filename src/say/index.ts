@@ -22,6 +22,7 @@ import { formatTable } from "@app/utils/table.ts";
 import * as p from "@clack/prompts";
 import { Command } from "commander";
 import pc from "picocolors";
+import { speakWithProfile } from "./lib/speak";
 
 interface SayOptions {
     volume?: number;
@@ -45,7 +46,7 @@ interface SayOptions {
 const program = new Command()
     .name("say")
     .description("Text-to-speech with pluggable backends (macOS, xAI Grok, OpenAI). Supports per-app config profiles.")
-    .argument("[message...]", "Text to speak (omit to read --file or enter interactive mode)")
+    .argument("[message...]", "Text to speak (omit to read --file or open the config TUI)")
     .option("--volume <n>", "Volume (0.0-1.0 or 0-100%)", parseFloat)
     .option("--voice [name]", "Voice id (provider-specific). Pass --voice with no value to list available voices.")
     .option(
@@ -106,9 +107,15 @@ const program = new Command()
             return;
         }
 
-        // No text and no save: drop into legacy interactive picker.
+        // No text and no save: open the unified config TUI (TTY only).
         if (text == null) {
-            await interactiveMode(mgr);
+            if (!isInteractive()) {
+                console.error(pc.red("[say] no message provided."));
+                console.error(pc.dim(suggestCommand("tools say", { add: ["<message>"] })));
+                process.exit(1);
+            }
+
+            await configCommand(mgr);
             return;
         }
 
@@ -200,6 +207,12 @@ program
     .command("config")
     .description("Manage per-app TTS profiles (add/edit/delete) interactively")
     .action(async () => {
+        if (!isInteractive()) {
+            console.error(pc.red("[say] config requires a TTY."));
+            console.error(pc.dim(suggestCommand("tools say", { add: ["--app", "<name>", "--save"] })));
+            process.exit(1);
+        }
+
         await configCommand(new SayConfigManager());
     });
 
@@ -451,208 +464,7 @@ async function main(): Promise<void> {
 main();
 
 // ============================================
-// Interactive mode (legacy "no args" picker)
-// ============================================
-
-async function interactiveMode(mgr: SayConfigManager): Promise<void> {
-    p.intro(pc.bgCyan(pc.black(" tools say ")));
-
-    await showStatus(mgr);
-
-    const action = await p.select({
-        message: "What would you like to do?",
-        options: [
-            { value: "test", label: "Test voice", hint: "speak a sample" },
-            { value: "mute", label: "Toggle global mute" },
-            { value: "app-mute", label: "App mute settings" },
-            { value: "voice", label: "Set default voice" },
-            { value: "volume", label: "Set default volume" },
-            { value: "voices", label: "List available voices" },
-            { value: "config", label: "Full config (apps, profiles)…" },
-        ],
-    });
-
-    if (p.isCancel(action)) {
-        p.cancel("Cancelled");
-        return;
-    }
-
-    switch (action) {
-        case "test":
-            await handleTest(mgr);
-            break;
-        case "mute":
-            await handleToggleMute(mgr);
-            break;
-        case "app-mute":
-            await handleAppMute(mgr);
-            break;
-        case "voice":
-            await handleSetVoice(mgr);
-            break;
-        case "volume":
-            await handleSetVolume(mgr);
-            break;
-        case "voices":
-            await handleListVoices();
-            break;
-        case "config":
-            await configCommand(mgr);
-            break;
-    }
-
-    p.outro(pc.green("Done"));
-}
-
-async function showStatus(mgr: SayConfigManager): Promise<void> {
-    const def = await mgr.getDefaultApp();
-    const globalMute = await mgr.getGlobalMute();
-    const apps = await mgr.listApps();
-    const muteStatus = globalMute ? pc.red("MUTED (global)") : pc.green("active");
-    const voice = def.voice ?? "auto-detect";
-    const volume = def.volume != null ? `${Math.round(def.volume * 100)}%` : "100%";
-
-    console.log();
-    console.log(`  Default: ${muteStatus}  |  Voice: ${pc.cyan(voice)}  |  Volume: ${pc.cyan(volume)}`);
-
-    const mutedApps = apps.filter((a) => a.mute);
-
-    if (mutedApps.length > 0) {
-        console.log(`  Muted apps: ${mutedApps.map((a) => pc.red(a.name)).join(", ")}`);
-    }
-
-    console.log();
-}
-
-async function handleTest(mgr: SayConfigManager): Promise<void> {
-    const text = await p.text({
-        message: "Text to speak:",
-        placeholder: "Hello world",
-        defaultValue: "Hello world",
-    });
-
-    if (p.isCancel(text)) {
-        return;
-    }
-
-    const profile = await mgr.getDefaultApp();
-    const s = p.spinner();
-    s.start("Speaking...");
-    await AI.speak(String(text), { provider: "macos", volume: profile.volume ?? undefined, wait: true });
-    s.stop("Done");
-}
-
-async function handleToggleMute(mgr: SayConfigManager): Promise<void> {
-    const cur = await mgr.getGlobalMute();
-    await mgr.setGlobalMute(!cur);
-
-    if (!cur) {
-        p.log.warn("Global mute: ON");
-    } else {
-        p.log.success("Global mute: OFF");
-    }
-}
-
-async function handleAppMute(mgr: SayConfigManager): Promise<void> {
-    const apps = (await mgr.listApps()).filter((a) => a.name !== DEFAULT_APP_NAME);
-
-    if (apps.length === 0) {
-        p.log.info("No app profiles yet. Create one with `tools say config` or `--save`.");
-        return;
-    }
-
-    const rows = apps.map((a) => {
-        const vol = a.volume;
-        const volStr = vol != null ? `${Math.round(vol * 100)}%` : "default";
-        return [a.name, a.mute ? pc.red("muted") : pc.green("active"), pc.cyan(volStr)];
-    });
-    console.log(formatTable(rows, ["App", "Status", "Volume"]));
-
-    const appToToggle = await p.select({
-        message: "Toggle mute for app:",
-        options: apps.map((a) => ({
-            value: a.name,
-            label: a.name,
-            hint: a.mute ? "muted -> unmute" : "active -> mute",
-        })),
-    });
-
-    if (p.isCancel(appToToggle)) {
-        return;
-    }
-
-    const target = apps.find((a) => a.name === appToToggle);
-    const muted = target?.mute === true;
-    await mgr.setMute({ app: String(appToToggle), mute: !muted });
-
-    if (muted) {
-        p.log.success(`${appToToggle}: unmuted`);
-    } else {
-        p.log.warn(`${appToToggle}: muted`);
-    }
-}
-
-async function handleSetVoice(mgr: SayConfigManager): Promise<void> {
-    const voices = await listVoicesStructured();
-    const options = [
-        { value: "__auto__", label: "Auto-detect", hint: "detect language automatically" },
-        ...voices.map((v) => ({
-            value: v.name,
-            label: v.name,
-            hint: `${v.locale} — ${v.sample.slice(0, 40)}`,
-        })),
-    ];
-
-    const selected = await p.select({ message: "Default voice:", options });
-
-    if (p.isCancel(selected)) {
-        return;
-    }
-
-    if (selected === "__auto__") {
-        await mgr.unsetAppFields(DEFAULT_APP_NAME, ["voice"]);
-        p.log.success("Default voice: auto-detect");
-        return;
-    }
-
-    await mgr.setVoice({ app: DEFAULT_APP_NAME, voice: String(selected) });
-    p.log.success(`Default voice: ${selected}`);
-}
-
-async function handleSetVolume(mgr: SayConfigManager): Promise<void> {
-    const def = await mgr.getDefaultApp();
-    const placeholder = def.volume != null ? String(def.volume) : "1";
-
-    const input = await p.text({
-        message: "Default volume (0.0-1.0 or 0-100%):",
-        placeholder,
-        defaultValue: placeholder,
-        validate(value: string | undefined) {
-            const n = Number.parseFloat(value ?? "");
-
-            if (Number.isNaN(n) || n < 0) {
-                return "Must be a non-negative number (0.0-1.0 or 0-100)";
-            }
-        },
-    });
-
-    if (p.isCancel(input)) {
-        return;
-    }
-
-    const v = normalizeVolume(Number.parseFloat(String(input)));
-    await mgr.setVolume({ app: DEFAULT_APP_NAME, volume: v });
-    p.log.success(`Default volume: ${v}`);
-}
-
-async function handleListVoices(): Promise<void> {
-    const voices = await listVoicesStructured();
-    const rows = voices.map((v) => [v.lang, v.name, v.locale, v.sample.slice(0, 50)]);
-    console.log(formatTable(rows, ["Lang", "Voice", "Locale", "Sample"]));
-}
-
-// ============================================
-// `tools say config` — full app/profile manager
+// `tools say config` — unified app/profile manager
 // ============================================
 
 async function configCommand(mgr: SayConfigManager): Promise<void> {
@@ -665,10 +477,11 @@ async function configCommand(mgr: SayConfigManager): Promise<void> {
         const action = await p.select({
             message: `What next? ${pc.dim(`(${apps.length} app${apps.length === 1 ? "" : "s"}, global mute: ${globalMute ? "ON" : "off"})`)}`,
             options: [
+                { value: "speak", label: "Speak text (test)", hint: "speak with a chosen profile" },
+                { value: "edit", label: "Edit an app profile", hint: "or create a new one" },
                 { value: "list", label: "List apps with resolved settings" },
-                { value: "edit", label: "Edit an app profile" },
-                { value: "add", label: "Add a new app profile" },
                 { value: "delete", label: "Delete an app profile" },
+                { value: "voices", label: "List available voices" },
                 { value: "global-mute", label: `Toggle global mute (currently ${globalMute ? "ON" : "off"})` },
                 { value: "exit", label: "Exit" },
             ],
@@ -680,23 +493,151 @@ async function configCommand(mgr: SayConfigManager): Promise<void> {
         }
 
         switch (action) {
+            case "speak":
+                await speakActionTUI(mgr);
+                break;
+            case "edit":
+                await pickAndEditAppTUI(mgr);
+                break;
             case "list":
                 await listAppsTUI(mgr);
                 break;
-            case "edit":
-                await editAppTUI(mgr);
-                break;
-            case "add":
-                await addAppTUI(mgr);
-                break;
             case "delete":
                 await deleteAppTUI(mgr);
+                break;
+            case "voices":
+                await printVoiceList();
                 break;
             case "global-mute":
                 await mgr.setGlobalMute(!globalMute);
                 p.log.success(`Global mute: ${!globalMute ? "ON" : "off"}`);
                 break;
         }
+    }
+}
+
+const NEW_APP_SENTINEL = "__new__";
+
+async function pickAndEditAppTUI(mgr: SayConfigManager): Promise<void> {
+    const apps = await mgr.listApps();
+
+    const target = await p.select({
+        message: "Which profile?",
+        options: [
+            ...apps.map((a) => ({
+                value: a.name,
+                label: a.name + (a.name === DEFAULT_APP_NAME ? pc.dim(" (base)") : ""),
+                hint: appPickerHint(a),
+            })),
+            { value: NEW_APP_SENTINEL, label: pc.cyan("+ new app") },
+        ],
+    });
+
+    if (p.isCancel(target)) {
+        return;
+    }
+
+    if (target === NEW_APP_SENTINEL) {
+        const name = await promptNewAppName(apps);
+
+        if (name == null) {
+            return;
+        }
+
+        await mgr.upsertApp({ name });
+        p.log.success(`Created profile "${name}"`);
+        await editAppFields(mgr, name);
+        return;
+    }
+
+    await editAppFields(mgr, String(target));
+}
+
+function appPickerHint(a: SayAppConfig): string {
+    const bits: string[] = [];
+
+    if (a.voice) {
+        bits.push(`voice=${a.voice}`);
+    }
+
+    if (a.volume != null) {
+        bits.push(`vol=${Math.round(a.volume * 100)}%`);
+    }
+
+    if (a.provider) {
+        bits.push(a.provider);
+    }
+
+    if (a.mute) {
+        bits.push("muted");
+    }
+
+    return bits.join(" · ");
+}
+
+async function promptNewAppName(apps: SayAppConfig[]): Promise<string | null> {
+    const name = await p.text({
+        message: "App name:",
+        validate(v: string | undefined) {
+            if (!v) {
+                return "Name required";
+            }
+
+            if (v === DEFAULT_APP_NAME) {
+                return `"${DEFAULT_APP_NAME}" is reserved`;
+            }
+
+            if (apps.some((a) => a.name === v)) {
+                return `"${v}" already exists — pick "Edit" instead`;
+            }
+        },
+    });
+
+    if (p.isCancel(name)) {
+        return null;
+    }
+
+    return String(name);
+}
+
+async function speakActionTUI(mgr: SayConfigManager): Promise<void> {
+    const apps = await mgr.listApps();
+
+    const appChoice = await p.select({
+        message: "Speak with which profile?",
+        options: apps.map((a) => ({
+            value: a.name,
+            label: a.name + (a.name === DEFAULT_APP_NAME ? pc.dim(" (base)") : ""),
+            hint: appPickerHint(a),
+        })),
+    });
+
+    if (p.isCancel(appChoice)) {
+        return;
+    }
+
+    const text = await p.text({
+        message: "Text to speak:",
+        placeholder: "Hello world",
+        defaultValue: "Hello world",
+    });
+
+    if (p.isCancel(text)) {
+        return;
+    }
+
+    const s = p.spinner();
+    s.start("Speaking...");
+    try {
+        await speakWithProfile({
+            text: String(text),
+            app: String(appChoice) === DEFAULT_APP_NAME ? undefined : String(appChoice),
+            wait: true,
+        });
+        s.stop("Done");
+    } catch (err) {
+        s.stop(pc.red("Failed"));
+        p.log.error(err instanceof Error ? err.message : String(err));
     }
 }
 
@@ -716,53 +657,6 @@ async function listAppsTUI(mgr: SayConfigManager): Promise<void> {
     }
 
     console.log(formatTable(rows, ["App", "Voice", "Volume", "Provider", "Mute"]));
-}
-
-async function addAppTUI(mgr: SayConfigManager): Promise<void> {
-    const apps = await mgr.listApps();
-
-    const name = await p.text({
-        message: "App name:",
-        validate(v: string | undefined) {
-            if (!v) {
-                return "Name required";
-            }
-
-            if (v === DEFAULT_APP_NAME) {
-                return `"${DEFAULT_APP_NAME}" is reserved`;
-            }
-
-            if (apps.some((a) => a.name === v)) {
-                return `"${v}" already exists — pick "Edit" instead`;
-            }
-        },
-    });
-
-    if (p.isCancel(name)) {
-        return;
-    }
-
-    await mgr.upsertApp({ name: String(name) });
-    p.log.success(`Created profile "${name}"`);
-    await editAppFields(mgr, String(name));
-}
-
-async function editAppTUI(mgr: SayConfigManager): Promise<void> {
-    const apps = await mgr.listApps();
-
-    const target = await p.select({
-        message: "Edit which profile?",
-        options: apps.map((a) => ({
-            value: a.name,
-            label: a.name + (a.name === DEFAULT_APP_NAME ? " (base)" : ""),
-        })),
-    });
-
-    if (p.isCancel(target)) {
-        return;
-    }
-
-    await editAppFields(mgr, String(target));
 }
 
 async function editAppFields(mgr: SayConfigManager, app: string): Promise<void> {
