@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { EventName, IndexerEventMap } from "./events";
 import { Indexer } from "./indexer";
+import { IndexerManager } from "./manager";
+import { getIndexerStorage } from "./storage";
 import type { IndexConfig } from "./types";
 
 let tempDir: string;
@@ -20,7 +22,7 @@ function writeFixtureFile(dir: string, name: string, content: string): void {
 
 function createConfig(overrides?: Partial<IndexConfig>): IndexConfig {
     counter++;
-    indexName = `test_index_${Date.now()}_${counter}`;
+    indexName = `gt_indexer_test_${Date.now()}_${counter}`;
     return {
         name: indexName,
         baseDir: tempDir,
@@ -48,9 +50,8 @@ afterEach(() => {
 });
 
 afterAll(async () => {
-    const { IndexerManager } = await import("./manager");
     const manager = await IndexerManager.load();
-    const names = manager.getIndexNames().filter((n) => n.startsWith("test_index_") || n.startsWith("test_"));
+    const names = manager.getIndexNames().filter((n) => n.startsWith("gt_indexer_test_"));
 
     for (const name of names) {
         try {
@@ -61,6 +62,10 @@ afterAll(async () => {
     }
 
     await manager.close();
+
+    // Filesystem-only leftovers from interrupted setups before the manager
+    // registered them.
+    getIndexerStorage().cleanStaleDirs("gt_indexer_test_");
 });
 
 describe("Indexer", () => {

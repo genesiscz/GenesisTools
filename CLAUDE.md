@@ -51,7 +51,7 @@ GenesisTools is a TypeScript-based CLI toolkit that runs on Bun. The architectur
 
 ### Key Components
 
--   **Logger** (`src/logger.ts`): Centralized logging using pino, outputs to `/logs/` directory organized by date
+-   **Logger** (`src/logger.ts`): Centralized logging using pino, writes day-stamped files under `~/.genesis-tools/logs/`
 -   **MCP Integration**: Several tools implement Model Context Protocol servers for AI assistant integration
 -   **No Build Step**: Bun executes TypeScript directly without compilation
 
@@ -208,7 +208,16 @@ Key SDK type files: `sdk.d.ts` (session/message/streaming types), `sdk-tools.d.t
 -   **Global Access**: The `install.sh` script modifies shell config to add GenesisTools to PATH
 -   **No Tests**: The project currently has no test suite
 -   **TypeScript Config**: Strict mode enabled, ES modules, no emit (Bun runs TS directly)
--   **Logging**: Check `/logs/` directory for debug information if tools encounter errors
+-   **Logging**: Check `~/.genesis-tools/logs/` for debug information if tools encounter errors
+
+## Database Infrastructure
+
+- **Storage**: `src/utils/storage/storage.ts` owns per-tool config/cache directories under `~/.genesis-tools/<tool>/`; wrap it with tool-specific subclasses such as `IndexerStorage`.
+- **MacDatabase**: `src/utils/macos/MacDatabase.ts` is the read-only base accessor for system SQLite databases (Mail Envelope Index, Messages, etc.) and exposes subclass-owned `getMigrator()`.
+- **Generic migrations**: `src/utils/database/migrations.ts` provides `Migration`, `runMigrations()`, `getPendingMigrations()`, and `Migrator`; applied IDs are persisted in `_migrations` while schema-aware migrations can use `isApplied`.
+- **Indexer migrations**: `src/indexer/lib/indexer-migrations.ts` defines `INDEXER_MIGRATIONS`, which `createIndexStore()` applies on read-write opens.
+- **Metadata schema**: `src/indexer/lib/metadata-schema.ts` supports per-source typed columns plus `metadata_json TEXT DEFAULT '{}'` for ad-hoc fields; typed columns are used for filter pushdown and unindexed extras round-trip through the JSON bag.
+- **Test pattern**: When adding DB logic, use an in-memory `new Database(":memory:")` in `*.test.ts` files grouped alongside source.
 
 ## Context7 Library IDs for Documentation Lookup
 

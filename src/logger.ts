@@ -1,3 +1,4 @@
+import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { SafeJSON } from "@app/utils/json";
@@ -95,7 +96,7 @@ export const createLogger = (options: LoggerOptions = {}): pino.Logger => {
     // File stream (if enabled) — always captures debug+ regardless of console level
     if (logToFile) {
         const date = new Date().toISOString().split("T")[0];
-        const logDir = path.join(__dirname, "..", "logs");
+        const logDir = path.join(homedir(), ".genesis-tools", "logs");
         const logFilePath = path.join(logDir, `${date}.log`);
         streams.push({
             level: "debug" as pino.Level,

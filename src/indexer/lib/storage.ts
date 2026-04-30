@@ -145,3 +145,59 @@ export function getIndexerStorage(): IndexerStorage {
 
     return _instance;
 }
+
+/**
+ * Test-only: drop the cached singleton so the next `getIndexerStorage()` call
+ * re-reads the env (e.g. picks up a redirected `process.env.HOME`).
+ * Without this, tests that set `HOME = tmpDir` in `beforeAll` leak indexes to
+ * the real homedir if any earlier test in the run already constructed the
+ * singleton.
+ */
+export function _resetIndexerStorageForTesting(): void {
+    _instance = null;
+}
+
+/**
+ * Every prefix or fixed name produced by a test or benchmark. Single source
+ * of truth: tests register here and the run wipes any matching dirs from the
+ * real homedir at startup AND afterAll, so a crashed run can never accumulate.
+ *
+ * Destructive: keep these prefixes narrow and collision-resistant. Do not add
+ * generic names such as "test_" because users may have real indexes with those
+ * names under ~/.genesis-tools/indexer.
+ */
+const TEST_INDEX_PREFIXES = [
+    "gt_bench_",
+    "gt_e2e_test_",
+    "gt_indexer_test_",
+    "gt_integration_test_",
+    "store_emb_test_",
+    "phase2-bf-",
+    "dbg-phase2-",
+] as const;
+
+const TEST_INDEX_FIXED_NAMES = ["attach-test", "filters-test", "phase2-merge", "phase2-filter", "phase2-bare"] as const;
+
+/**
+ * Wipe every leftover test/bench index from the real homedir. Safe to call
+ * unconditionally — only matches names tests own.
+ */
+export function wipeAllTestIndexes(): number {
+    const storage = new IndexerStorage();
+    let removed = 0;
+
+    for (const prefix of TEST_INDEX_PREFIXES) {
+        removed += storage.cleanStaleDirs(prefix);
+    }
+
+    for (const name of TEST_INDEX_FIXED_NAMES) {
+        try {
+            rmSync(storage.getIndexDir(name), { recursive: true, force: true });
+            removed++;
+        } catch {
+            // not present
+        }
+    }
+
+    return removed;
+}

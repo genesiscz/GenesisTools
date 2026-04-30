@@ -12,7 +12,7 @@ let counter = 0;
 
 function uniqueIndexName(): string {
     counter++;
-    return `e2e_test_${Date.now()}_${counter}`;
+    return `gt_e2e_test_${Date.now()}_${counter}`;
 }
 
 function makeConfig(overrides?: Partial<IndexConfig>): IndexConfig {
@@ -42,7 +42,7 @@ afterEach(() => {
 
 afterAll(async () => {
     const manager = await IndexerManager.load();
-    const names = manager.getIndexNames().filter((n) => n.startsWith("e2e_test_"));
+    const names = manager.getIndexNames().filter((n) => n.startsWith("gt_e2e_test_"));
 
     for (const name of names) {
         try {
@@ -55,7 +55,7 @@ afterAll(async () => {
     await manager.close();
 
     // Clean up stale filesystem leftovers from crashed test runs
-    getIndexerStorage().cleanStaleDirs("e2e_test_");
+    getIndexerStorage().cleanStaleDirs("gt_e2e_test_");
 });
 
 describe("E2E: index -> search -> verify", () => {
