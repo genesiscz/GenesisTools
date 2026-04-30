@@ -112,12 +112,17 @@ const program = new Command()
             return;
         }
 
-        if (await mgr.isMuted(opts.app)) {
+        // If --save is requesting a mute change, don't short-circuit on the
+        // existing mute state — otherwise --unmute --save / --unset mute --save
+        // can never be persisted from a currently-muted profile.
+        const wantsMuteWrite = opts.save === true && (opts.unmute === true || unsetList.includes("mute"));
+
+        if (!wantsMuteWrite && (await mgr.isMuted(opts.app))) {
             process.stderr.write("[say] muted\n");
             return;
         }
 
-        const effective = await resolveEffective({ mgr, opts, unsetList: opts.save ? [] : unsetList });
+        const effective = await resolveEffective({ mgr, opts, unsetList });
         const provider: SayProvider = effective.provider ?? "macos";
 
         if (provider !== "macos" && !envForProvider(provider)) {
@@ -908,7 +913,7 @@ async function editSingleField(mgr: SayConfigManager, app: string, field: Settab
     if (field === "volume") {
         await mgr.setVolume({ app, volume: normalizeVolume(Number.parseFloat(String(input))) });
     } else if (field === "rate") {
-        await mgr.setRate({ app, rate: Number.parseInt(String(input), 10) });
+        await mgr.setRate({ app, rate: Number.parseFloat(String(input)) });
     } else if (field === "model") {
         await mgr.setModel({ app, model: String(input) });
     } else if (field === "language") {
