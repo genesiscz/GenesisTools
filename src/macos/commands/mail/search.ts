@@ -1,3 +1,6 @@
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import { getIndexerStorage } from "@app/indexer/lib/storage";
 import { searchIndexReadonly } from "@app/indexer/lib/store";
 import logger from "@app/logger";
 import { ALL_COLUMN_KEYS, type MailColumnKey } from "@app/macos/lib/mail/columns";
@@ -8,27 +11,43 @@ import {
     parseMailDate,
     resolveColumnsFromFlag,
 } from "@app/macos/lib/mail/command-helpers";
+import { ENVELOPE_INDEX_PATH } from "@app/macos/lib/mail/constants";
 import { MailStorage } from "@app/macos/lib/mail/mail-storage";
+import { buildMailFilterPredicate } from "@app/macos/lib/mail/search-filters";
+import {
+    formatFallbackStart,
+    formatFallbackStop,
+    formatSearchLabelEmpty,
+    formatSearchLabelStart,
+    formatSearchLabelStop,
+    type ResolvedMethod,
+} from "@app/macos/lib/mail/search-label";
+import { mdfindMailRowids } from "@app/macos/lib/mail/spotlight";
 import { rowToMessage } from "@app/macos/lib/mail/transform";
 import type { MailMessage, MailMessageRow, SearchOptions } from "@app/macos/lib/mail/types";
+import { isQuietOutput } from "@app/utils/cli/output-mode";
 import { closeDarwinKit, rankBySimilarity } from "@app/utils/macos";
 import { MailDatabase } from "@app/utils/macos/MailDatabase";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 
 type MailSearchMode = "auto" | "fulltext" | "hybrid" | "vector";
-const VALID_MAIL_SEARCH_MODES: readonly MailSearchMode[] = ["auto", "fulltext", "hybrid", "vector"];
+const VALID_MAIL_SEARCH_MODES = new Set<MailSearchMode>(["auto", "fulltext", "hybrid", "vector"]);
+
+function isMailSearchMode(input: string): input is MailSearchMode {
+    return VALID_MAIL_SEARCH_MODES.has(input as MailSearchMode);
+}
 
 function resolveMailSearchMode(input: string | undefined): MailSearchMode {
     if (!input) {
         return "auto";
     }
 
-    if ((VALID_MAIL_SEARCH_MODES as readonly string[]).includes(input)) {
-        return input as MailSearchMode;
+    if (isMailSearchMode(input)) {
+        return input;
     }
 
-    throw new Error(`Unknown --mode: "${input}". Valid: ${VALID_MAIL_SEARCH_MODES.join(", ")}`);
+    throw new Error(`Unknown --mode: "${input}". Valid: ${[...VALID_MAIL_SEARCH_MODES].join(", ")}`);
 }
 
 interface SearchCommandOptions {
@@ -83,6 +102,23 @@ function buildSearchColumns({
     return result;
 }
 
+const MAIL_INDEX_NAME = "macos-mail";
+// Keep hybrid/vector filtered searches under sqlite-vec's k=4096 cap while
+// making small pages stable enough that --limit 20 and --limit 50 share first-N.
+const STABLE_INDEX_FETCH_LIMIT = 250;
+
+interface QuietSpinner {
+    start: (msg: string) => void;
+    stop: (msg: string) => void;
+}
+
+function createQuietSpinner(): QuietSpinner {
+    return {
+        start: (): void => {},
+        stop: (): void => {},
+    };
+}
+
 export function registerSearchCommand(program: Command): void {
     program
         .command("search <query>")
@@ -103,23 +139,31 @@ export function registerSearchCommand(program: Command): void {
         .option("--columns [cols]", `Columns to show (${ALL_COLUMN_KEYS.join(",")})`)
         .option("-f, --format <type>", "Output format: table, json, toon", "table")
         .action(async (query: string, options: SearchCommandOptions) => {
+            const isStructuredOutput = (options.format ?? "table") !== "table";
+            const quiet = isQuietOutput(options.format);
+            const announce = (msg: string): void => {
+                if (isStructuredOutput || quiet) {
+                    logger.info(msg);
+                } else {
+                    p.log.info(msg);
+                }
+            };
+            const spinner = isStructuredOutput || quiet ? createQuietSpinner() : p.spinner();
             const db = new MailDatabase();
 
             try {
-                // Handle --help-receivers: list receiver addresses and exit
                 if (options.helpReceivers) {
                     const receivers = db.listReceivers();
-                    console.log("\nReceiver addresses (by message count):\n");
+                    announce("\nReceiver addresses (by message count):\n");
 
                     for (const r of receivers) {
                         const name = r.name ? ` (${r.name})` : "";
-                        console.log(`  ${r.address}${name}  [${r.messageCount} msgs]`);
+                        announce(`  ${r.address}${name}  [${r.messageCount} msgs]`);
                     }
 
                     return;
                 }
 
-                // Resolve columns
                 const baseColumns = await resolveColumnsFromFlag(options.columns);
 
                 if (!baseColumns) {
@@ -138,98 +182,119 @@ export function registerSearchCommand(program: Command): void {
                     offset: Number.parseInt(options.offset ?? "0", 10),
                 };
 
-                const spinner = p.spinner();
-                let rows: MailMessageRow[];
-                let searchMethod: "fts" | "sqlite" | "jxa" = "sqlite";
-
                 const resolvedMode = resolveMailSearchMode(options.mode);
+                const filterPredicate = buildMailFilterPredicate(searchOpts);
+
+                const indexerStorage = getIndexerStorage();
+                const indexDbPath = join(indexerStorage.getIndexDir(MAIL_INDEX_NAME), "index.db");
+                const indexExists = existsSync(indexDbPath);
+
+                let rows: MailMessageRow[] = [];
                 const snippetByRowid = new Map<number, string>();
-                let ftsMethodLabel = "";
+                let searchMethod: "fts" | "spotlight+like" = "spotlight+like";
+                let resolvedMethod: ResolvedMethod | undefined;
 
-                // Index-based search first (fulltext / hybrid / vector), SQLite LIKE as fallback
-                if (!options.jxa && !searchOpts.withoutBody) {
-                    try {
-                        spinner.start(`Searching (${resolvedMode} index)...`);
-                        const startFts = performance.now();
-                        // Fetch enough candidates for offset+limit pagination
-                        const fetchLimit = (searchOpts.offset ?? 0) + (searchOpts.limit ?? 100);
-                        const ftsResults = await searchIndexReadonly("macos-mail", query, {
-                            mode: resolvedMode,
-                            limit: fetchLimit,
-                        });
-                        const ftsMs = performance.now() - startFts;
-                        // DB column is source_id, ChunkRecord type is sourceId
-                        const ftsRowids: number[] = [];
+                if (indexExists && !options.jxa && !searchOpts.withoutBody) {
+                    spinner.start(formatSearchLabelStart(resolvedMode));
+                    const t0 = performance.now();
 
-                        for (const r of ftsResults) {
-                            const sid = r.doc.sourceId ?? (r.doc as unknown as { source_id?: string }).source_id;
+                    const fetchLimit = Math.max(
+                        (searchOpts.offset ?? 0) + (searchOpts.limit ?? 100),
+                        STABLE_INDEX_FETCH_LIMIT
+                    );
 
-                            if (!sid) {
-                                continue;
-                            }
+                    const ftsResults = await searchIndexReadonly(MAIL_INDEX_NAME, query, {
+                        mode: resolvedMode,
+                        limit: fetchLimit,
+                        ...(filterPredicate && {
+                            filters: filterPredicate,
+                            attach: { alias: "mailapp", dbPath: ENVELOPE_INDEX_PATH, mode: "ro" as const },
+                        }),
+                    });
 
-                            const rowid = Number(sid);
-                            ftsRowids.push(rowid);
+                    const ms = performance.now() - t0;
+                    const ftsRowids: number[] = [];
 
-                            if (!snippetByRowid.has(rowid)) {
-                                const snippet =
-                                    r.ftsSnippet ??
-                                    (typeof r.doc.content === "string"
-                                        ? r.doc.content.replace(/\s+/g, " ").trim().slice(0, 200)
-                                        : undefined);
+                    for (const r of ftsResults) {
+                        const sid = r.doc.sourceId ?? (r.doc as unknown as { source_id?: string }).source_id;
 
-                                if (snippet) {
-                                    snippetByRowid.set(rowid, snippet);
-                                }
-                            }
+                        if (!sid) {
+                            continue;
                         }
 
-                        if (ftsRowids.length > 0) {
-                            rows = db.getMessagesByRowids(ftsRowids, {
-                                from: searchOpts.from,
-                                to: searchOpts.to,
-                                mailbox: searchOpts.mailbox,
-                                receiver: searchOpts.receiver,
-                                account: searchOpts.account,
-                            });
-                            searchMethod = "fts";
-                            ftsMethodLabel = (ftsResults[0]?.method ?? resolvedMode).toUpperCase();
-                            spinner.stop(`${ftsMethodLabel}: ${rows.length} matches in ${(ftsMs / 1000).toFixed(1)}s`);
-                        } else {
-                            spinner.stop(`${resolvedMode}: 0 matches — falling back to metadata search`);
-                            rows = [];
+                        const rowid = Number(sid);
+                        ftsRowids.push(rowid);
+
+                        if (!snippetByRowid.has(rowid)) {
+                            const snippet =
+                                r.ftsSnippet ??
+                                (typeof r.doc.content === "string"
+                                    ? r.doc.content.replace(/\s+/g, " ").trim().slice(0, 200)
+                                    : undefined);
+
+                            if (snippet) {
+                                snippetByRowid.set(rowid, snippet);
+                            }
                         }
-                    } catch (err) {
-                        const errMsg = err instanceof Error ? err.message : String(err);
-                        logger.debug(`[search] index search failed: ${errMsg}`);
-                        spinner.stop("Index unavailable — using metadata search");
-                        rows = [];
                     }
-                } else {
-                    rows = [];
+
+                    resolvedMethod = ftsResults[0]?.method;
+                    rows = ftsRowids.length > 0 ? db.getMessagesByRowids(ftsRowids) : [];
+                    searchMethod = "fts";
+
+                    const orderByRowid = new Map(ftsRowids.map((rowid, index) => [rowid, index]));
+                    rows.sort(
+                        (a, b) => (orderByRowid.get(a.rowid) ?? Infinity) - (orderByRowid.get(b.rowid) ?? Infinity)
+                    );
+
+                    if (rows.length > 0) {
+                        spinner.stop(formatSearchLabelStop(resolvedMode, resolvedMethod, rows.length, ms));
+                    } else {
+                        spinner.stop(formatSearchLabelEmpty(resolvedMode));
+                    }
                 }
 
-                // Fallback to tokenized LIKE
-                if (rows.length === 0) {
-                    const totalMessages = db.getMessageCount();
-                    const label = searchMethod === "fts" ? "No FTS matches — searching" : "Searching";
-                    spinner.start(`${label} metadata across ${totalMessages.toLocaleString()} messages...`);
-                    const startSqlite = performance.now();
-                    rows = db.searchMessages(searchOpts);
-                    const sqliteMs = performance.now() - startSqlite;
-                    searchMethod = "sqlite";
-                    spinner.stop(`Found ${rows.length} metadata matches in ${(sqliteMs / 1000).toFixed(1)}s`);
+                if (!indexExists || (options.jxa ?? false) || (searchOpts.withoutBody ?? false)) {
+                    spinner.start(formatFallbackStart());
+                    const t0 = performance.now();
+
+                    const [spotlightRowids, likeRows] = await Promise.all([
+                        mdfindMailRowids(query),
+                        Promise.resolve(db.searchMessages(searchOpts)),
+                    ]);
+
+                    const rowidSet = new Set<number>(likeRows.map((r) => r.rowid));
+                    const newSpotlightIds = spotlightRowids.filter((r) => !rowidSet.has(r));
+
+                    const spotlightRows =
+                        newSpotlightIds.length > 0
+                            ? db.getMessagesByRowids(newSpotlightIds, {
+                                  from: searchOpts.from,
+                                  to: searchOpts.to,
+                                  mailbox: searchOpts.mailbox,
+                                  receiver: searchOpts.receiver,
+                                  account: searchOpts.account,
+                              })
+                            : [];
+
+                    rows = [...likeRows, ...spotlightRows];
+                    const fallbackOrder = new Map(rows.map((row, index) => [row.rowid, index]));
+                    rows = [...new Map(rows.map((row) => [row.rowid, row])).values()].sort(
+                        (a, b) => (fallbackOrder.get(a.rowid) ?? Infinity) - (fallbackOrder.get(b.rowid) ?? Infinity)
+                    );
+                    const ms = performance.now() - t0;
+                    spinner.stop(formatFallbackStop(rows.length, ms));
                 }
 
                 if (rows.length === 0) {
-                    p.log.info("No messages found matching your query.");
+                    announce("No messages found matching your query.");
                     return;
                 }
 
-                // Enrich with attachments
                 const isFts = searchMethod === "fts";
                 const rowids = rows.map((r) => r.rowid);
                 const attachmentsMap = db.getAttachments(rowids);
+
                 const messages: MailMessage[] = rows.map((row) => {
                     const msg = rowToMessage(row);
                     msg.attachments = attachmentsMap.get(row.rowid) ?? [];
@@ -240,18 +305,13 @@ export function registerSearchCommand(program: Command): void {
 
                 await enrichWithBodies(messages, baseColumns);
 
-                // Optional: Apple NL re-ranking (opt-in with --semantic).
-                // Uses on-device sentence similarity — NOT the indexer's embedding model.
-                // Not recommended: overwrites RRF embedding scores with Apple NL scores.
                 let semanticActive = false;
 
                 if (options.semantic === true && messages.length > 0) {
-                    spinner.start(
-                        `Apple NL re-ranking ${messages.length} results (overwrites RRF embedding scores)...`
-                    );
+                    spinner.start(`Apple NL re-ranking ${messages.length} results…`);
 
                     try {
-                        const maxDist = parseFloat(options.maxDistance ?? "1.2");
+                        const maxDist = Number.parseFloat(options.maxDistance ?? "1.2");
                         const items = messages.map((m) => ({
                             ...m,
                             text: [m.subject, m.senderName, m.senderAddress, m.ftsSnippet ?? m.body ?? ""]
@@ -259,17 +319,12 @@ export function registerSearchCommand(program: Command): void {
                                 .join(" ")
                                 .slice(0, 2000),
                         }));
-                        const ranked = await rankBySimilarity(query, items, {
-                            maxDistance: maxDist,
-                            language: "en",
-                        });
-                        // Re-order messages and attach scores
+                        const ranked = await rankBySimilarity(query, items, { maxDistance: maxDist, language: "en" });
                         const reordered: MailMessage[] = ranked.map((r) => {
                             const msg = r.item as MailMessage;
                             msg.semanticScore = r.score;
                             return msg;
                         });
-                        // Append messages that were filtered out (beyond maxDistance)
                         const rankedIds = new Set(reordered.map((m) => m.rowid));
 
                         for (const msg of messages) {
@@ -284,13 +339,12 @@ export function registerSearchCommand(program: Command): void {
                         spinner.stop(`Semantic ranking complete (${ranked.length} relevant results)`);
                     } catch (err) {
                         spinner.stop(`Semantic ranking skipped: ${err instanceof Error ? err.message : String(err)}`);
-                        logger.warn(`Semantic ranking failed, falling back to keyword order: ${err}`);
+                        logger.warn(`Semantic ranking failed: ${err}`);
                     } finally {
                         closeDarwinKit();
                     }
                 }
 
-                // Build final columns: add body/relevance if active and not already selected
                 const finalColumns = buildSearchColumns({
                     columns: baseColumns,
                     withBody: !searchOpts.withoutBody,
@@ -299,7 +353,6 @@ export function registerSearchCommand(program: Command): void {
                     columnsExplicit: options.columns !== undefined,
                 });
 
-                // Enrich with recipients if any recipient column is selected
                 if (needsRecipients(finalColumns)) {
                     const recipientsMap = db.getRecipients(rowids);
 
@@ -308,20 +361,18 @@ export function registerSearchCommand(program: Command): void {
                     }
                 }
 
-                // Apply pagination (offset/limit) AFTER ranking so ordering is stable
                 const paginationOffset = searchOpts.offset ?? 0;
                 const pageLimit = searchOpts.limit ?? 100;
                 const totalCount = messages.length;
                 const paginatedMessages = messages.slice(paginationOffset, paginationOffset + pageLimit);
 
-                // Output results
                 await outputFormattedResults({
                     messages: paginatedMessages,
                     columns: finalColumns,
                     format: options.format ?? "table",
                 });
 
-                if ((options.format ?? "table") === "table") {
+                if (!isStructuredOutput && !quiet && (options.format ?? "table") === "table") {
                     const rangeEnd = Math.min(paginationOffset + pageLimit, totalCount);
                     const rangeLabel =
                         paginationOffset > 0
@@ -332,12 +383,18 @@ export function registerSearchCommand(program: Command): void {
                     );
                 }
 
-                // Save results for download command
                 const mailStorage = new MailStorage();
                 const resultsPath = mailStorage.saveSearchResults(messages);
                 logger.debug(`Saved search results to ${resultsPath}`);
             } catch (error) {
-                p.log.error(error instanceof Error ? error.message : String(error));
+                const msg = error instanceof Error ? error.message : String(error);
+
+                if (quiet) {
+                    logger.error(msg);
+                } else {
+                    p.log.error(msg);
+                }
+
                 process.exit(1);
             } finally {
                 db.close();

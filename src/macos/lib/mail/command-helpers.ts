@@ -110,10 +110,16 @@ export function needsRecipients(columns: MailColumnKey[]): boolean {
     return columns.some((col) => RECIPIENT_COLUMNS.includes(col));
 }
 
+const BODY_COLUMN_KEYS: MailColumnKey[] = ["body", "bodyText", "bodyHtml", "bodyMarkdown", "bodyRaw"];
+
+function wantsBodyColumn(columns: MailColumnKey[]): boolean {
+    return columns.some((col) => BODY_COLUMN_KEYS.includes(col));
+}
+
 // ─── Body enrichment ────────────────────────────────────────
 
 export async function enrichWithBodies(messages: MailMessage[], columns: MailColumnKey[]): Promise<void> {
-    if (!columns.includes("body") || messages.length === 0) {
+    if (!wantsBodyColumn(columns) || messages.length === 0) {
         return;
     }
 
@@ -121,13 +127,17 @@ export async function enrichWithBodies(messages: MailMessage[], columns: MailCol
 
     try {
         const rowids = messages.map((m) => m.rowid);
-        const bodies = await emlx.getBodies(rowids);
+        const bodyParts = await emlx.getBodyPartsMap(rowids);
 
         for (const msg of messages) {
-            const body = bodies.get(msg.rowid);
+            const parts = bodyParts.get(msg.rowid);
 
-            if (body) {
-                msg.body = body;
+            if (parts) {
+                msg.body = parts.text;
+                msg.bodyText = parts.text;
+                msg.bodyHtml = parts.html;
+                msg.bodyMarkdown = parts.markdown;
+                msg.bodyRaw = parts.raw;
             }
         }
     } finally {

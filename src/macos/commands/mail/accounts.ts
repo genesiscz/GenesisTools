@@ -1,5 +1,7 @@
+import { isQuietOutput } from "@app/utils/cli";
 import { MailDatabase } from "@app/utils/macos/MailDatabase";
 import { formatTable } from "@app/utils/table";
+import * as p from "@clack/prompts";
 import type { Command } from "commander";
 
 export function registerAccountsCommand(program: Command): void {
@@ -29,6 +31,13 @@ export function registerAccountsCommand(program: Command): void {
                 console.log();
                 console.log(formatTable(rows, headers, { alignRight: [2, 3] }));
                 console.log();
+
+                const unknownCount = accounts.filter((a) => a.email === "unknown").length;
+                if (unknownCount > 0 && !isQuietOutput()) {
+                    p.log.info(
+                        `${unknownCount} account(s) have no sent mail and no type=0 recipient data — verify in Mail.app → Settings → Accounts.`
+                    );
+                }
             } finally {
                 db.close();
             }
