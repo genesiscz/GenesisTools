@@ -67,6 +67,8 @@ export interface SearchOptions {
     from?: Date;
     to?: Date;
     mailbox?: string;
+    /** Pre-resolved mailbox ROWID set; populated by `MailDatabase.resolveMailboxFilter`. */
+    mailboxRowids?: number[];
     limit?: number;
     offset?: number;
 }

@@ -170,7 +170,7 @@ export function registerSearchCommand(program: Command): void {
                     return;
                 }
 
-                const searchOpts: SearchOptions = {
+                const searchOpts: SearchOptions = db.resolveMailboxFilter({
                     query,
                     withoutBody: options.withoutBody,
                     receiver: options.receiver,
@@ -180,7 +180,7 @@ export function registerSearchCommand(program: Command): void {
                     mailbox: options.mailbox,
                     limit: Number.parseInt(options.limit ?? "100", 10),
                     offset: Number.parseInt(options.offset ?? "0", 10),
-                };
+                });
 
                 const resolvedMode = resolveMailSearchMode(options.mode);
                 const filterPredicate = buildMailFilterPredicate(searchOpts);
@@ -239,7 +239,7 @@ export function registerSearchCommand(program: Command): void {
                     }
 
                     resolvedMethod = ftsResults[0]?.method;
-                    rows = ftsRowids.length > 0 ? await db.getMessagesByRowids(ftsRowids) : [];
+                    rows = ftsRowids.length > 0 ? await db.getMessagesByRowids(ftsRowids, searchOpts) : [];
                     searchMethod = "fts";
 
                     const orderByRowid = new Map(ftsRowids.map((rowid, index) => [rowid, index]));
@@ -267,15 +267,7 @@ export function registerSearchCommand(program: Command): void {
                     const newSpotlightIds = spotlightRowids.filter((r) => !rowidSet.has(r));
 
                     const spotlightRows =
-                        newSpotlightIds.length > 0
-                            ? await db.getMessagesByRowids(newSpotlightIds, {
-                                  from: searchOpts.from,
-                                  to: searchOpts.to,
-                                  mailbox: searchOpts.mailbox,
-                                  receiver: searchOpts.receiver,
-                                  account: searchOpts.account,
-                              })
-                            : [];
+                        newSpotlightIds.length > 0 ? await db.getMessagesByRowids(newSpotlightIds, searchOpts) : [];
 
                     rows = [...likeRows, ...spotlightRows];
                     const fallbackOrder = new Map(rows.map((row, index) => [row.rowid, index]));

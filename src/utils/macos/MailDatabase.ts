@@ -12,7 +12,7 @@ import type {
 import { buildOrderedLikePattern, escapeLike } from "@app/utils/database";
 import { type Expression, type SqlBool, sql } from "kysely";
 import { MacDatabase } from "./MacDatabase";
-import { type MailFilterOptions, SQL_BIND_BATCH } from "./mail-sql";
+import { type MailFilterOptions, resolveMailboxRowids, SQL_BIND_BATCH } from "./mail-sql";
 
 /**
  * Build raw SQL filter fragments for date range / mailbox / receiver / account.
@@ -31,9 +31,22 @@ function buildMailFilterExpressions(opts: MailFilterOptions): Expression<SqlBool
         filters.push(sql<SqlBool>`m.date_sent <= ${seconds}`);
     }
 
-    if (opts.mailbox) {
-        const pattern = `%${escapeLike(opts.mailbox)}%`;
-        filters.push(sql<SqlBool>`mb.url LIKE ${pattern} ESCAPE '\\'`);
+    if (opts.mailboxRowids !== undefined) {
+        if (opts.mailboxRowids.length === 0) {
+            filters.push(sql<SqlBool>`1 = 0`);
+        } else {
+            filters.push(sql<SqlBool>`m.mailbox IN (${sql.join(opts.mailboxRowids)})`);
+        }
+    } else {
+        if (opts.mailbox) {
+            const pattern = `%${escapeLike(opts.mailbox)}%`;
+            filters.push(sql<SqlBool>`mb.url LIKE ${pattern} ESCAPE '\\'`);
+        }
+
+        if (opts.account) {
+            const pattern = `%${escapeLike(opts.account)}%`;
+            filters.push(sql<SqlBool>`mb.url LIKE ${pattern} ESCAPE '\\'`);
+        }
     }
 
     if (opts.receiver) {
@@ -43,11 +56,6 @@ function buildMailFilterExpressions(opts: MailFilterOptions): Expression<SqlBool
             JOIN addresses a ON r.address = a.ROWID
             WHERE a.address LIKE ${pattern} ESCAPE '\\'
         )`);
-    }
-
-    if (opts.account) {
-        const pattern = `%${escapeLike(opts.account)}%`;
-        filters.push(sql<SqlBool>`mb.url LIKE ${pattern} ESCAPE '\\'`);
     }
 
     return filters;
@@ -76,6 +84,22 @@ export class MailDatabase extends MacDatabase {
         return this.getKysely<MailDB>();
     }
 
+    /**
+     * Resolve `mailbox` / `account` substring filters to a concrete rowid set
+     * via JS URL-decoding (handles non-ASCII names like "Doručená pošta").
+     * Returns the same opts shape with `mailboxRowids` populated when
+     * applicable. Idempotent: re-resolving an already-resolved opts is a
+     * no-op.
+     */
+    resolveMailboxFilter<T extends MailFilterOptions>(opts: T): T {
+        if (opts.mailboxRowids !== undefined) {
+            return opts;
+        }
+
+        const rowids = resolveMailboxRowids(this.getDb(), opts.mailbox, opts.account);
+        return rowids === undefined ? opts : { ...opts, mailboxRowids: rowids };
+    }
+
     async searchMessages(opts: SearchOptions): Promise<MailMessageRow[]> {
         const tokens = opts.query.split(/\s+/).filter((t) => t.length > 0);
 
@@ -85,7 +109,7 @@ export class MailDatabase extends MacDatabase {
 
         const ordered = buildOrderedLikePattern(tokens);
         const escapedTokens = tokens.map((t) => `%${escapeLike(t)}%`);
-        const filterExpressions = buildMailFilterExpressions(opts);
+        const filterExpressions = buildMailFilterExpressions(this.resolveMailboxFilter(opts));
 
         logger.debug(`Running search query (wildcard) with ${tokens.length} token(s): ${tokens.join(", ")}`);
 
@@ -129,7 +153,7 @@ export class MailDatabase extends MacDatabase {
         }
 
         const results: MailMessageRow[] = [];
-        const filterExpressions = opts ? buildMailFilterExpressions(opts) : [];
+        const filterExpressions = opts ? buildMailFilterExpressions(this.resolveMailboxFilter(opts)) : [];
 
         for (let offset = 0; offset < rowids.length; offset += SQL_BIND_BATCH) {
             const batch = rowids.slice(offset, offset + SQL_BIND_BATCH);
@@ -154,7 +178,11 @@ export class MailDatabase extends MacDatabase {
     }
 
     async listMessages(mailbox: string, limit: number): Promise<MailMessageRow[]> {
-        const pattern = `%${escapeLike(mailbox)}%`;
+        const rowids = resolveMailboxRowids(this.getDb(), mailbox);
+
+        if (rowids === undefined || rowids.length === 0) {
+            return [];
+        }
 
         const rows = await this.k()
             .selectFrom("messages as m")
@@ -164,7 +192,7 @@ export class MailDatabase extends MacDatabase {
             .select(MESSAGE_SELECT_COLUMNS as never)
             .distinct()
             .where("m.deleted", "=", 0)
-            .where(sql<SqlBool>`mb.url LIKE ${pattern} ESCAPE '\\'`)
+            .where("m.mailbox", "in", rowids)
             .orderBy("m.date_sent", "desc")
             .limit(limit)
             .execute();

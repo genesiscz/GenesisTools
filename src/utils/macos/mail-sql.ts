@@ -4,6 +4,8 @@
  * Centralized so LIKE escape rules cannot drift between mail search callers.
  */
 
+import type { Database } from "bun:sqlite";
+
 /**
  * SQL fragment to append after a LIKE expression. Runtime form is
  * `ESCAPE '\'` — the SQLite escape argument is exactly one backslash char.
@@ -18,6 +20,70 @@ export interface MailFilterOptions {
     mailbox?: string;
     receiver?: string;
     account?: string;
+    /**
+     * Pre-resolved set of `mailboxes.ROWID`s satisfying the `mailbox` and/or
+     * `account` substring constraints. Filter builders prefer this over the
+     * raw strings — it's the only path that handles URL-encoded UTF-8 (e.g.
+     * Czech "Doručená pošta" stored as `Doru%C4%8Den%C3%A1%20po%C5%A1ta`).
+     */
+    mailboxRowids?: number[];
+}
+
+/**
+ * Normalize a mailbox-name comparand: percent-decode if applicable, then NFC
+ * + lowercase. Mail.app stores `mailboxes.url` percent-encoded as UTF-8 NFD
+ * (combining diacritics), while user input is typically NFC composed — so
+ * raw `String.includes` between the two never matches non-ASCII names.
+ */
+function normalizeMailboxText(s: string): string {
+    let decoded: string;
+
+    try {
+        decoded = decodeURIComponent(s);
+    } catch {
+        decoded = s;
+    }
+
+    return decoded.normalize("NFC").toLowerCase();
+}
+
+/**
+ * Resolve `mailbox` / `account` substring filters to a concrete set of
+ * `mailboxes.ROWID`s by URL-decoding + NFC-normalizing each `mailboxes.url`
+ * in JS and matching case-insensitively. SQLite's built-in LOWER is
+ * ASCII-only and `mailboxes.url` is percent-encoded UTF-8 NFD, so this
+ * resolve is the only way to match non-ASCII names like "Doručená pošta".
+ *
+ * Returns `undefined` when neither filter is set (caller should leave
+ * `mailboxRowids` unset). Returns `[]` when both filters are set but no
+ * mailbox satisfies them — callers should treat that as "no match".
+ */
+export function resolveMailboxRowids(db: Database, mailbox?: string, account?: string): number[] | undefined {
+    if (!mailbox && !account) {
+        return undefined;
+    }
+
+    const rows = db
+        .query("SELECT ROWID, url FROM mailboxes WHERE url IS NOT NULL")
+        .all() as Array<{ ROWID: number; url: string }>;
+    const ml = mailbox ? normalizeMailboxText(mailbox) : undefined;
+    const al = account ? normalizeMailboxText(account) : undefined;
+
+    return rows
+        .filter((r) => {
+            const decoded = normalizeMailboxText(r.url);
+
+            if (ml && !decoded.includes(ml)) {
+                return false;
+            }
+
+            if (al && !decoded.includes(al)) {
+                return false;
+            }
+
+            return true;
+        })
+        .map((r) => r.ROWID);
 }
 
 /** Escape LIKE metacharacters so user input is treated as literal text. */
