@@ -63,9 +63,10 @@ export function resolveMailboxRowids(db: Database, mailbox?: string, account?: s
         return undefined;
     }
 
-    const rows = db
-        .query("SELECT ROWID, url FROM mailboxes WHERE url IS NOT NULL")
-        .all() as Array<{ ROWID: number; url: string }>;
+    const rows = db.query("SELECT ROWID, url FROM mailboxes WHERE url IS NOT NULL").all() as Array<{
+        ROWID: number;
+        url: string;
+    }>;
     const ml = mailbox ? normalizeMailboxText(mailbox) : undefined;
     const al = account ? normalizeMailboxText(account) : undefined;
 
@@ -118,9 +119,24 @@ export function buildFilters(opts: MailFilterOptions, params: Record<string, str
         params.$dateTo = Math.floor(opts.to.getTime() / 1000);
     }
 
-    if (opts.mailbox) {
-        filters.push(`mb.url LIKE $mailbox ${LIKE_ESCAPE_CLAUSE}`);
-        params.$mailbox = `%${escapeLike(opts.mailbox)}%`;
+    if (opts.mailboxRowids !== undefined) {
+        // Pre-resolved rowids: Unicode-safe path. Empty array → guaranteed
+        // no-match predicate so callers don't accidentally match everything.
+        if (opts.mailboxRowids.length === 0) {
+            filters.push("1 = 0");
+        } else {
+            filters.push(`m.mailbox IN (${opts.mailboxRowids.join(",")})`);
+        }
+    } else {
+        if (opts.mailbox) {
+            filters.push(`mb.url LIKE $mailbox ${LIKE_ESCAPE_CLAUSE}`);
+            params.$mailbox = `%${escapeLike(opts.mailbox)}%`;
+        }
+
+        if (opts.account) {
+            filters.push(`mb.url LIKE $account ${LIKE_ESCAPE_CLAUSE}`);
+            params.$account = `%${escapeLike(opts.account)}%`;
+        }
     }
 
     if (opts.receiver) {
@@ -130,11 +146,6 @@ export function buildFilters(opts: MailFilterOptions, params: Record<string, str
             WHERE a.address LIKE $receiver ${LIKE_ESCAPE_CLAUSE}
         )`);
         params.$receiver = `%${escapeLike(opts.receiver)}%`;
-    }
-
-    if (opts.account) {
-        filters.push(`mb.url LIKE $account ${LIKE_ESCAPE_CLAUSE}`);
-        params.$account = `%${escapeLike(opts.account)}%`;
     }
 
     return filters;

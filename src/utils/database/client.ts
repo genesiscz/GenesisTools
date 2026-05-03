@@ -69,7 +69,7 @@ export function createKyselyClient<DB>(opts: CreateKyselyClientOptions<DB>): Dat
             ctx = { tableName: deriveScope(path) };
             logger.debug(
                 `[db] migrationContext not provided for ${path} — derived "${ctx.tableName}". ` +
-                    `Pin an explicit migrationContext to keep migration history stable across path changes.`,
+                    `Pin an explicit migrationContext to keep migration history stable across path changes.`
             );
         }
 

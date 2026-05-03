@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdtempSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { SafeJSON } from "@app/utils/json";
 import { SayAudioCache, type SayCacheParams } from "./cache";
 
 let dir: string;
@@ -71,5 +73,35 @@ describe("SayAudioCache", () => {
         // Total persisted = 16 > 10 → evict a (the older one).
         expect(c.get({ ...baseParams, text: "a" })).toBeNull();
         expect(c.get({ ...baseParams, text: "b" })).not.toBeNull();
+    });
+
+    it("recovers from a deleted audio file: the next miss can re-persist", () => {
+        const c = new SayAudioCache({ dir, threshold: 1 });
+        c.recordMiss(baseParams, Buffer.from([1, 2]), "audio/mpeg");
+        const firstHit = c.get(baseParams);
+        expect(firstHit).not.toBeNull();
+
+        // Simulate a manual deletion / eviction race: the audio file vanishes
+        // but the index still references it.
+        const canon = SafeJSON.stringify({
+            t: baseParams.text,
+            p: baseParams.provider,
+            v: baseParams.voice ?? "",
+            m: baseParams.model ?? "",
+            r: baseParams.rate ?? 1,
+            l: baseParams.language ?? "",
+            f: baseParams.format ?? "",
+        });
+        const hash = createHash("sha256").update(canon).digest("hex").slice(0, 32);
+        unlinkSync(join(dir, `${hash}.mp3`));
+
+        // get() observes the missing file and clears the stale metadata.
+        expect(c.get(baseParams)).toBeNull();
+
+        // recordMiss with new audio should now persist (threshold=1) instead of skipping.
+        c.recordMiss(baseParams, Buffer.from([9, 9, 9]), "audio/mpeg");
+        const recovered = c.get(baseParams);
+        expect(recovered).not.toBeNull();
+        expect(Buffer.compare(recovered!.audio, Buffer.from([9, 9, 9]))).toBe(0);
     });
 });

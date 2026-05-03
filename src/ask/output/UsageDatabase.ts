@@ -264,7 +264,12 @@ export class UsageDatabase {
             query = query.where(sql<string>`date(timestamp)`, ">=", sinceDays(days));
         }
 
-        const rows = await query.groupBy("provider").groupBy("model").orderBy("total_cost", "desc").limit(limit).execute();
+        const rows = await query
+            .groupBy("provider")
+            .groupBy("model")
+            .orderBy("total_cost", "desc")
+            .limit(limit)
+            .execute();
 
         return rows.map((row) => ({
             provider: row.provider,

@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { getIndexerStorage } from "@app/indexer/lib/storage";
 import { searchIndexReadonly } from "@app/indexer/lib/store";
 import logger from "@app/logger";
-import { SafeJSON } from "@app/utils/json";
 import { ALL_COLUMN_KEYS, type MailColumnKey } from "@app/macos/lib/mail/columns";
 import {
     enrichWithBodies,
@@ -28,6 +27,7 @@ import { mdfindMailRowids } from "@app/macos/lib/mail/spotlight";
 import { rowToMessage } from "@app/macos/lib/mail/transform";
 import type { MailMessage, MailMessageRow, SearchOptions } from "@app/macos/lib/mail/types";
 import { isQuietOutput } from "@app/utils/cli/output-mode";
+import { SafeJSON } from "@app/utils/json";
 import { closeDarwinKit, rankBySimilarity } from "@app/utils/macos";
 import { MailDatabase } from "@app/utils/macos/MailDatabase";
 import * as p from "@clack/prompts";
@@ -60,14 +60,16 @@ function resolveMailSearchMode(input: string | undefined): MailSearchMode {
  *
  * stderr-only so `--format json` / `toon` stay machine-readable.
  */
-function warnIfDateRangeOutsideCoverage(indexDbPath: string, from?: Date, to?: Date): void {
+function warnIfDateRangeOutsideCoverage(args: { indexDbPath: string; from?: Date; to?: Date }): void {
+    const { indexDbPath, from, to } = args;
+
     try {
         const metaDb = new Database(indexDbPath, { readonly: true });
 
         try {
-            const row = metaDb.query("SELECT value FROM index_meta WHERE key = 'meta'").get() as
-                | { value: string }
-                | null;
+            const row = metaDb.query("SELECT value FROM index_meta WHERE key = 'meta'").get() as {
+                value: string;
+            } | null;
 
             if (!row) {
                 return;
@@ -248,9 +250,17 @@ export function registerSearchCommand(program: Command): void {
                 const indexerStorage = getIndexerStorage();
                 const indexDbPath = join(indexerStorage.getIndexDir(MAIL_INDEX_NAME), "index.db");
                 const indexExists = existsSync(indexDbPath);
+                const willUseIndex = indexExists && !options.jxa && !searchOpts.withoutBody;
 
-                if (indexExists && (searchOpts.from || searchOpts.to)) {
-                    warnIfDateRangeOutsideCoverage(indexDbPath, searchOpts.from, searchOpts.to);
+                // Only warn about indexed coverage when the search will actually
+                // read the index. --jxa and --without-body bypass it, so the
+                // "run mail index to refresh" advice would be misleading.
+                if (willUseIndex && (searchOpts.from || searchOpts.to)) {
+                    warnIfDateRangeOutsideCoverage({
+                        indexDbPath,
+                        from: searchOpts.from,
+                        to: searchOpts.to,
+                    });
                 }
 
                 let rows: MailMessageRow[] = [];
@@ -258,7 +268,7 @@ export function registerSearchCommand(program: Command): void {
                 let searchMethod: "fts" | "spotlight+like" = "spotlight+like";
                 let resolvedMethod: ResolvedMethod | undefined;
 
-                if (indexExists && !options.jxa && !searchOpts.withoutBody) {
+                if (willUseIndex) {
                     spinner.start(formatSearchLabelStart(resolvedMode));
                     const t0 = performance.now();
 

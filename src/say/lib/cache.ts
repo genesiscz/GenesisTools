@@ -127,7 +127,22 @@ export class SayAudioCache {
         const key = this.hash(p);
         const entry = idx.entries[key];
 
-        if (!entry || entry.count < this.threshold || !entry.audioPath || !existsSync(entry.audioPath)) {
+        if (!entry) {
+            return null;
+        }
+
+        // If the audio file went missing (manual delete, eviction race,
+        // disk wipe), clear the stale metadata so the next miss can persist
+        // a replacement instead of skipping forever.
+        if (entry.audioPath && !existsSync(entry.audioPath)) {
+            entry.audioPath = undefined;
+            entry.contentType = undefined;
+            entry.sizeBytes = 0;
+            this.writeIndex(idx);
+            return null;
+        }
+
+        if (entry.count < this.threshold || !entry.audioPath) {
             return null;
         }
 
@@ -152,6 +167,14 @@ export class SayAudioCache {
         const existing: IndexEntry = idx.entries[key] ?? { count: 0, lastUsed: Date.now(), sizeBytes: 0 };
         existing.count += 1;
         existing.lastUsed = Date.now();
+
+        // If a previously-persisted audio file vanished under us, drop the
+        // stale path so the persist-branch below can write a replacement.
+        if (existing.audioPath && !existsSync(existing.audioPath)) {
+            existing.audioPath = undefined;
+            existing.contentType = undefined;
+            existing.sizeBytes = 0;
+        }
 
         if (existing.count >= this.threshold && !existing.audioPath && audio && contentType) {
             const ext = CONTENT_TYPE_TO_EXT[contentType] ?? "bin";

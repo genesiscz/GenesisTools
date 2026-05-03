@@ -49,7 +49,9 @@ describe("pruneStaleMailChunks", () => {
         setupIndex(idx);
         setupEnvelope(env);
 
-        idx.exec("INSERT INTO macos_mail_content (source_id, metadata_json) VALUES ('100', '{\"dateSent\":1700000000}')");
+        idx.exec(
+            "INSERT INTO macos_mail_content (source_id, metadata_json) VALUES ('100', '{\"dateSent\":1700000000}')"
+        );
         env.exec("INSERT INTO messages (ROWID, date_sent, deleted) VALUES (100, 1700000000, 1)");
 
         expect(pruneStaleMailChunks(idx, env, "macos_mail")).toBe(1);
@@ -61,7 +63,9 @@ describe("pruneStaleMailChunks", () => {
         setupIndex(idx);
         setupEnvelope(env);
 
-        idx.exec("INSERT INTO macos_mail_content (source_id, metadata_json) VALUES ('100', '{\"dateSent\":1700000000}')");
+        idx.exec(
+            "INSERT INTO macos_mail_content (source_id, metadata_json) VALUES ('100', '{\"dateSent\":1700000000}')"
+        );
         // Same ROWID, different message — Mail.app reuses ROWIDs after deletes.
         env.exec("INSERT INTO messages (ROWID, date_sent) VALUES (100, 1800000000)");
 
@@ -74,7 +78,9 @@ describe("pruneStaleMailChunks", () => {
         setupIndex(idx);
         setupEnvelope(env);
 
-        idx.exec("INSERT INTO macos_mail_content (source_id, metadata_json) VALUES ('100', '{\"dateSent\":1700000000}')");
+        idx.exec(
+            "INSERT INTO macos_mail_content (source_id, metadata_json) VALUES ('100', '{\"dateSent\":1700000000}')"
+        );
         env.exec("INSERT INTO messages (ROWID, date_sent) VALUES (100, 1700000000)");
 
         expect(pruneStaleMailChunks(idx, env, "macos_mail")).toBe(0);

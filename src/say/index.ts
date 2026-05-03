@@ -304,8 +304,12 @@ interface SpeakCachedArgs {
 async function speakCached(args: SpeakCachedArgs): Promise<void> {
     const { mgr, text, provider, effective, opts, stream } = args;
 
-    if (provider === "macos") {
-        // Local & free — bypass the cache entirely.
+    // Bypass the cache when:
+    //   - provider is macos (local & free)
+    //   - the user explicitly asked for streaming — caching needs the whole
+    //     buffer up front, which would silently negate `--stream` for cloud
+    //     providers. Honor the flag instead.
+    if (provider === "macos" || stream === true) {
         await AI.speak(text, {
             provider,
             voice: effective.voice ?? undefined,

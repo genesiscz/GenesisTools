@@ -654,11 +654,7 @@ function getWindowsProcessData(pidFilter?: number[]): Map<number, WindowsProcess
         wmicArgs.push("where", `(${where})`);
     }
 
-    wmicArgs.push(
-        "get",
-        "ProcessId,Name,CommandLine,WorkingDirectory,CreationDate,WorkingSetSize",
-        "/FORMAT:LIST"
-    );
+    wmicArgs.push("get", "ProcessId,Name,CommandLine,WorkingDirectory,CreationDate,WorkingSetSize", "/FORMAT:LIST");
 
     const wmicResult = run("wmic", wmicArgs, { timeoutMs: WINDOWS_WMIC_TIMEOUT_MS });
 
