@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdtempSync, unlinkSync } from "node:fs";
+import { mkdtempSync, readFileSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@app/utils/json";
@@ -103,5 +103,19 @@ describe("SayAudioCache", () => {
         const recovered = c.get(baseParams);
         expect(recovered).not.toBeNull();
         expect(Buffer.compare(recovered!.audio, Buffer.from([9, 9, 9]))).toBe(0);
+    });
+
+    it("stores the literal source text alongside each entry for inspection", () => {
+        const c = new SayAudioCache({ dir, threshold: 5 });
+        c.recordMiss({ ...baseParams, text: "hello world" });
+        c.recordMiss({ ...baseParams, text: "hello world" });
+
+        const raw = SafeJSON.parse(readFileSync(join(dir, "index.json"), "utf8")) as {
+            entries: Record<string, { text?: string; count: number }>;
+        };
+        const entries = Object.values(raw.entries);
+        expect(entries.length).toBe(1);
+        expect(entries[0].text).toBe("hello world");
+        expect(entries[0].count).toBe(2);
     });
 });

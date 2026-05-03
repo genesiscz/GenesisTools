@@ -20,6 +20,14 @@ export interface SayCacheHit {
 }
 
 interface IndexEntry {
+    /**
+     * Literal text that produced this cache key. The key is a salted hash
+     * (so it stays stable + private), but humans inspecting `index.json`
+     * can't reverse it — record the source text alongside so `tools say
+     * cache` listings stay useful. Optional for backward compatibility
+     * with entries written before this field existed.
+     */
+    text?: string;
     count: number;
     audioPath?: string;
     contentType?: string;
@@ -183,6 +191,7 @@ export class SayAudioCache {
         const existing: IndexEntry = idx.entries[key] ?? { count: 0, lastUsed: Date.now(), sizeBytes: 0 };
         existing.count += 1;
         existing.lastUsed = Date.now();
+        existing.text = p.text;
 
         // If a previously-persisted audio file vanished under us, drop the
         // stale path so the persist-branch below can write a replacement.
