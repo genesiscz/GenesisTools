@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { createHash, randomBytes } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import logger from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
@@ -21,10 +21,10 @@ export interface SayCacheHit {
 
 interface IndexEntry {
     /**
-     * Literal text that produced this cache key. The key is a salted hash
-     * (so it stays stable + private), but humans inspecting `index.json`
-     * can't reverse it — record the source text alongside so `tools say
-     * cache` listings stay useful. Optional for backward compatibility
+     * Literal text that produced this cache key. The key itself is a
+     * truncated SHA-256 of the request tuple — deterministic but not
+     * human-readable, so we store the source text alongside it for
+     * `tools say cache` listings. Optional for backward compatibility
      * with entries written before this field existed.
      */
     text?: string;
@@ -111,14 +111,51 @@ export class SayAudioCache {
         }
 
         try {
-            return SafeJSON.parse(readFileSync(this.indexPath, "utf8")) as IndexShape;
+            const raw: unknown = SafeJSON.parse(readFileSync(this.indexPath, "utf8"));
+
+            if (
+                raw !== null &&
+                typeof raw === "object" &&
+                (raw as { version?: unknown }).version === 1 &&
+                typeof (raw as { entries?: unknown }).entries === "object" &&
+                (raw as { entries?: unknown }).entries !== null &&
+                !Array.isArray((raw as { entries?: unknown }).entries)
+            ) {
+                return raw as IndexShape;
+            }
+
+            logger.debug(`[say/cache] ${this.indexPath} has unexpected shape; resetting to empty index`);
+            return { version: 1, entries: {} };
         } catch {
             return { version: 1, entries: {} };
         }
     }
 
+    /**
+     * Atomic write: serialize to a unique temp file in the same directory,
+     * then `rename` into place. Guarantees a reader never sees a partial JSON
+     * payload after a crash. Note: this is NOT a lock — concurrent `tools say`
+     * processes can still last-writer-win on counters. That's acceptable for a
+     * best-effort cache: a lost increment just delays threshold convergence by
+     * one invocation, never corrupts state.
+     */
     private writeIndex(idx: IndexShape): void {
-        writeFileSync(this.indexPath, SafeJSON.stringify(idx, null, 2));
+        const tmpPath = `${this.indexPath}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
+
+        try {
+            writeFileSync(tmpPath, SafeJSON.stringify(idx, null, 2));
+            renameSync(tmpPath, this.indexPath);
+        } catch (err) {
+            try {
+                if (existsSync(tmpPath)) {
+                    unlinkSync(tmpPath);
+                }
+            } catch {
+                // best-effort cleanup
+            }
+
+            logger.debug(`[say/cache] index write failed (${this.indexPath}): ${err}`);
+        }
     }
 
     private skip(p: SayCacheParams): boolean {
