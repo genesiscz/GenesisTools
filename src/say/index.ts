@@ -1,11 +1,13 @@
 #!/usr/bin/env bun
 
 import { existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
+import logger from "@app/logger";
 import { AI } from "@app/utils/ai/index.ts";
 import { getModelsForTask } from "@app/utils/ai/ModelManager";
 import { getProvidersForTask } from "@app/utils/ai/providers";
 import type { AIProviderType } from "@app/utils/ai/types.ts";
+import { playBuffer } from "@app/utils/audio/playback";
 import { isInteractive, suggestCommand } from "@app/utils/cli/executor";
 import { parseVariadic } from "@app/utils/cli/variadic";
 import {
@@ -18,10 +20,12 @@ import {
     type SettableField,
 } from "@app/utils/macos/SayConfigManager.ts";
 import { normalizeVolume } from "@app/utils/macos/tts.ts";
+import { Storage } from "@app/utils/storage/storage.ts";
 import { formatTable } from "@app/utils/table.ts";
 import * as p from "@clack/prompts";
 import { Command } from "commander";
 import pc from "picocolors";
+import { SayAudioCache } from "./lib/cache";
 import { speakWithProfile } from "./lib/speak";
 
 interface SayOptions {
@@ -130,7 +134,21 @@ const program = new Command()
         }
 
         const effective = await resolveEffective({ mgr, opts, unsetList });
-        const provider: SayProvider = effective.provider ?? "macos";
+        let provider: SayProvider = effective.provider ?? "macos";
+
+        // Per-text provider override: route phrases like "Permission needed"
+        // to a different provider (typically local macos) regardless of the
+        // resolved profile. First substring match wins, case-insensitive.
+        const overrides = await mgr.listTextOverrides();
+        const lowerText = text.toLowerCase();
+        const matchedOverride = overrides.find((o) => lowerText.includes(o.match.toLowerCase()));
+
+        if (matchedOverride && matchedOverride.provider !== provider) {
+            logger.debug(
+                `[say] text override matched "${matchedOverride.match}" → provider ${provider} → ${matchedOverride.provider}`
+            );
+            provider = matchedOverride.provider;
+        }
 
         if (provider !== "macos" && !envForProvider(provider)) {
             console.error(pc.red(`[say] env var for ${provider} is not set.`));
@@ -141,17 +159,7 @@ const program = new Command()
         const stream = opts.stream === true ? true : opts.noStream === true ? false : undefined;
 
         try {
-            await AI.speak(text, {
-                provider,
-                voice: effective.voice ?? undefined,
-                language: effective.language ?? undefined,
-                format: effective.format ?? undefined,
-                rate: effective.rate ?? undefined,
-                volume: effective.volume ?? undefined,
-                stream,
-                wait: opts.wait,
-                model: effective.model ?? undefined,
-            });
+            await speakCached({ mgr, text, provider, effective, opts, stream });
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
             console.error(pc.red(`[say] TTS failed: ${message}`));
@@ -275,6 +283,84 @@ function envForProvider(provider: SayProvider): boolean {
     }
 
     return true;
+}
+
+interface SpeakCachedArgs {
+    mgr: SayConfigManager;
+    text: string;
+    provider: SayProvider;
+    effective: EffectiveSettings;
+    opts: SayOptions;
+    stream?: boolean;
+}
+
+/**
+ * Speak `text` with caching for repeated cloud-TTS phrases. Local macOS
+ * provider always uses the standard `AI.speak` path (no cache, free). For
+ * cloud providers, hash the request — on a hit, play the cached audio
+ * directly; on a miss, synthesize, play, and record the miss so the Nth
+ * occurrence persists.
+ */
+async function speakCached(args: SpeakCachedArgs): Promise<void> {
+    const { mgr, text, provider, effective, opts, stream } = args;
+
+    if (provider === "macos") {
+        // Local & free — bypass the cache entirely.
+        await AI.speak(text, {
+            provider,
+            voice: effective.voice ?? undefined,
+            language: effective.language ?? undefined,
+            format: effective.format ?? undefined,
+            rate: effective.rate ?? undefined,
+            volume: effective.volume ?? undefined,
+            stream,
+            wait: opts.wait,
+            model: effective.model ?? undefined,
+        });
+        return;
+    }
+
+    const { threshold, maxBytes } = await mgr.getCacheSettings();
+    const cacheDir = join(new Storage("say").getBaseDir(), "cache");
+    const cache = new SayAudioCache({ dir: cacheDir, threshold, maxBytes });
+    const params = {
+        text,
+        provider,
+        voice: effective.voice,
+        model: effective.model,
+        rate: effective.rate,
+        language: effective.language,
+        format: effective.format,
+    };
+
+    const hit = cache.get(params);
+
+    if (hit) {
+        logger.debug(`[say] cache hit (${provider}, ${hit.audio.byteLength}B)`);
+        await playBuffer(hit.audio, hit.contentType, {
+            volume: effective.volume ?? undefined,
+            wait: opts.wait,
+        });
+        return;
+    }
+
+    // Miss: synthesize fresh, play the buffer, record the miss (with audio so
+    // it persists once the threshold is crossed). We use synthesize+playBuffer
+    // instead of AI.speak so we always have the buffer in hand for caching,
+    // regardless of length-based stream/buffer routing in the synthesizer.
+    const result = await AI.synthesize(text, {
+        provider,
+        voice: effective.voice ?? undefined,
+        language: effective.language ?? undefined,
+        format: effective.format ?? undefined,
+        rate: effective.rate ?? undefined,
+        model: effective.model ?? undefined,
+    });
+    cache.recordMiss(params, result.audio, result.contentType);
+    await playBuffer(result.audio, result.contentType, {
+        volume: effective.volume ?? undefined,
+        wait: opts.wait,
+    });
 }
 
 function isVoiceNotFoundError(message: string): boolean {
@@ -474,14 +560,21 @@ async function configCommand(mgr: SayConfigManager): Promise<void> {
         const apps = await mgr.listApps();
         const globalMute = await mgr.getGlobalMute();
 
+        const overrideCount = (await mgr.listTextOverrides()).length;
+
         const action = await p.select({
-            message: `What next? ${pc.dim(`(${apps.length} app${apps.length === 1 ? "" : "s"}, global mute: ${globalMute ? "ON" : "off"})`)}`,
+            message: `What next? ${pc.dim(`(${apps.length} app${apps.length === 1 ? "" : "s"}, ${overrideCount} override${overrideCount === 1 ? "" : "s"}, global mute: ${globalMute ? "ON" : "off"})`)}`,
             options: [
                 { value: "speak", label: "Speak text (test)", hint: "speak with a chosen profile" },
                 { value: "edit", label: "Edit an app profile", hint: "or create a new one" },
                 { value: "list", label: "List apps with resolved settings" },
                 { value: "delete", label: "Delete an app profile" },
                 { value: "voices", label: "List available voices" },
+                {
+                    value: "overrides",
+                    label: `Manage text overrides (${overrideCount})`,
+                    hint: "route phrases to a specific provider",
+                },
                 { value: "global-mute", label: `Toggle global mute (currently ${globalMute ? "ON" : "off"})` },
                 { value: "exit", label: "Exit" },
             ],
@@ -508,11 +601,87 @@ async function configCommand(mgr: SayConfigManager): Promise<void> {
             case "voices":
                 await printVoiceList();
                 break;
+            case "overrides":
+                await manageTextOverridesTUI(mgr);
+                break;
             case "global-mute":
                 await mgr.setGlobalMute(!globalMute);
                 p.log.success(`Global mute: ${!globalMute ? "ON" : "off"}`);
                 break;
         }
+    }
+}
+
+async function manageTextOverridesTUI(mgr: SayConfigManager): Promise<void> {
+    const overrides = await mgr.listTextOverrides();
+
+    if (overrides.length > 0) {
+        p.log.info("Current overrides:");
+
+        for (const [i, o] of overrides.entries()) {
+            console.log(`  ${pc.dim(`${i + 1}.`)} "${o.match}" → ${pc.cyan(o.provider)}`);
+        }
+    } else {
+        p.log.info("No text overrides configured.");
+    }
+
+    const action = await p.select({
+        message: "What next?",
+        options: [
+            { value: "add", label: "+ Add override" },
+            ...(overrides.length > 0 ? [{ value: "remove", label: "− Remove override" }] : []),
+            { value: "back", label: "← Back" },
+        ],
+    });
+
+    if (p.isCancel(action) || action === "back") {
+        return;
+    }
+
+    if (action === "add") {
+        const match = await p.text({
+            message: "Substring to match (case-insensitive)",
+            placeholder: "Permission needed",
+            validate: (v) => (v == null || v.trim().length === 0 ? "Cannot be empty" : undefined),
+        });
+
+        if (p.isCancel(match)) {
+            return;
+        }
+
+        const provider = await p.select<SayProvider>({
+            message: "Route to which provider?",
+            options: [
+                { value: "macos", label: "macos (local, free)" },
+                { value: "xai", label: "xai (cloud, requires X_AI_API_KEY)" },
+                { value: "openai", label: "openai (cloud, requires OPENAI_API_KEY)" },
+            ],
+        });
+
+        if (p.isCancel(provider)) {
+            return;
+        }
+
+        await mgr.addTextOverride({ match: match.trim(), provider });
+        p.log.success(`Added: "${match.trim()}" → ${provider}`);
+        return;
+    }
+
+    if (action === "remove") {
+        const idx = await p.select<number>({
+            message: "Which override to remove?",
+            options: overrides.map((o, i) => ({
+                value: i,
+                label: `"${o.match}" → ${o.provider}`,
+            })),
+        });
+
+        if (p.isCancel(idx)) {
+            return;
+        }
+
+        await mgr.removeTextOverride(idx);
+        p.log.success("Removed.");
     }
 }
 

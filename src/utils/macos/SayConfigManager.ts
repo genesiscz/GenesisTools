@@ -17,9 +17,29 @@ export interface SayAppConfig {
     mute?: boolean | null;
 }
 
+/**
+ * Per-text provider override. `match` is a substring matched
+ * case-insensitively against the spoken text; the first match wins. When
+ * matched, `provider` replaces whatever the resolved profile would have
+ * picked — useful for routing chronically-repeated phrases like
+ * "Permission needed" to local macOS `say` instead of an expensive cloud
+ * provider.
+ */
+export interface SayTextOverride {
+    match: string;
+    provider: SayProvider;
+}
+
 export interface SayConfigV2 {
     version: 2;
-    global: { mute: boolean };
+    global: {
+        mute: boolean;
+        textOverrides?: SayTextOverride[];
+        /** Synthesizer-call count after which a phrase's audio is persisted. Default 5. */
+        cacheThreshold?: number;
+        /** Total cache size budget in bytes (LRU eviction). Default 50 MB. */
+        cacheMaxBytes?: number;
+    };
     apps: SayAppConfig[];
 }
 
@@ -242,6 +262,38 @@ export class SayConfigManager {
     async getGlobalMute(): Promise<boolean> {
         const c = await this.load();
         return c.global.mute;
+    }
+
+    async listTextOverrides(): Promise<SayTextOverride[]> {
+        const c = await this.load();
+        return c.global.textOverrides ?? [];
+    }
+
+    async addTextOverride(override: SayTextOverride): Promise<void> {
+        const c = await this.load();
+        c.global.textOverrides = [...(c.global.textOverrides ?? []), override];
+        await this.save(c);
+    }
+
+    async removeTextOverride(index: number): Promise<void> {
+        const c = await this.load();
+        const list = [...(c.global.textOverrides ?? [])];
+
+        if (index < 0 || index >= list.length) {
+            return;
+        }
+
+        list.splice(index, 1);
+        c.global.textOverrides = list;
+        await this.save(c);
+    }
+
+    async getCacheSettings(): Promise<{ threshold: number; maxBytes: number }> {
+        const c = await this.load();
+        return {
+            threshold: c.global.cacheThreshold ?? 5,
+            maxBytes: c.global.cacheMaxBytes ?? 50_000_000,
+        };
     }
 
     /**
