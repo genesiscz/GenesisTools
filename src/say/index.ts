@@ -349,7 +349,16 @@ async function speakCached(args: SpeakCachedArgs): Promise<void> {
         format: effective.format,
     };
 
-    const hit = cache.get(params);
+    // Cache I/O is best-effort — if reading the index fails (e.g. corrupted
+    // JSON, disk error mid-stale-cleanup) we'd rather synthesize fresh than
+    // abort speech.
+    let hit: ReturnType<typeof cache.get> = null;
+
+    try {
+        hit = cache.get(params);
+    } catch (err) {
+        logger.warn(`[say/cache] get() failed, treating as miss: ${err}`);
+    }
 
     if (hit) {
         logger.debug(`[say] cache hit (${provider}, ${hit.audio.byteLength}B)`);
@@ -372,7 +381,16 @@ async function speakCached(args: SpeakCachedArgs): Promise<void> {
         rate: effective.rate ?? undefined,
         model: effective.model ?? undefined,
     });
-    cache.recordMiss(params, result.audio, result.contentType);
+
+    // recordMiss writes to disk synchronously — wrap so a cache-write failure
+    // (ENOSPC, permission, etc.) doesn't drop the audio the user just paid
+    // an API call to synthesize.
+    try {
+        cache.recordMiss(params, result.audio, result.contentType);
+    } catch (err) {
+        logger.warn(`[say/cache] recordMiss() failed, audio not cached: ${err}`);
+    }
+
     await playBuffer(result.audio, result.contentType, {
         volume: effective.volume ?? undefined,
         wait: opts.wait,
