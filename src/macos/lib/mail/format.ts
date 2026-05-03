@@ -18,7 +18,8 @@ function formatSender(msg: MailMessage): string {
     if (msg.senderName && msg.senderName !== msg.senderAddress) {
         return msg.senderName;
     }
-    return msg.senderAddress;
+
+    return msg.senderAddress ?? "(no sender)";
 }
 
 /**
@@ -33,7 +34,7 @@ export function generateEmailMarkdown(msg: MailMessage): string {
     lines.push("");
     lines.push("| Field | Value |");
     lines.push("|-------|-------|");
-    lines.push(`| From | ${msg.senderName} <${msg.senderAddress}> |`);
+    lines.push(`| From | ${msg.senderName ?? ""} <${msg.senderAddress ?? "(no sender)"}> |`);
 
     if (msg.recipients && msg.recipients.length > 0) {
         const toRecipients = msg.recipients

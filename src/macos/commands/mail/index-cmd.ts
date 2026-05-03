@@ -482,6 +482,14 @@ async function incrementalSync(manager: IndexerManager, dateRange: DateRange = {
             const ago = formatDuration(Date.now() - meta.lastSyncAt);
             p.log.info(`  ${pc.dim("Last sync:")} ${ago} ago`);
         }
+
+        const { dateRangeMin, dateRangeMax } = meta.stats;
+
+        if (dateRangeMin && dateRangeMax) {
+            const fromIso = new Date(dateRangeMin * 1000).toISOString().slice(0, 10);
+            const toIso = new Date(dateRangeMax * 1000).toISOString().slice(0, 10);
+            p.log.info(`  ${pc.dim("Range:")} ${fromIso} → ${toIso}`);
+        }
     }
 
     if (dateRange.fromDate || dateRange.toDate) {
@@ -516,16 +524,18 @@ async function incrementalSync(manager: IndexerManager, dateRange: DateRange = {
 
         spinner.stop("Sync complete");
 
-        const totalChanges = stats.chunksAdded + stats.chunksUpdated + stats.chunksRemoved;
+        const chunksPruned = stats.chunksPruned ?? 0;
+        const totalChanges = stats.chunksAdded + stats.chunksUpdated + stats.chunksRemoved + chunksPruned;
 
         if (totalChanges === 0) {
             p.log.info("Index is up to date — no changes detected");
         } else {
+            const stalePart = chunksPruned > 0 ? `, ${pc.red(`-${chunksPruned.toLocaleString()} stale`)}` : "";
             p.log.success(
                 `${stats.filesScanned.toLocaleString()} emails scanned, ` +
                     `${pc.green(`+${stats.chunksAdded.toLocaleString()}`)} chunks added, ` +
                     `${pc.yellow(`~${stats.chunksUpdated.toLocaleString()}`)} updated, ` +
-                    `${pc.red(`-${stats.chunksRemoved.toLocaleString()}`)} removed ` +
+                    `${pc.red(`-${stats.chunksRemoved.toLocaleString()}`)} removed${stalePart} ` +
                     `in ${formatDuration(stats.durationMs)}`
             );
         }

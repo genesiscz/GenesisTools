@@ -168,7 +168,12 @@ export function registerDownloadCommand(program: Command): void {
                                 const safeAttName = basename(att.name).replace(/[^\w.-]/g, "_");
                                 const attPath = join(outputDir, "attachments", safeAttName);
                                 if (!existsSync(attPath)) {
-                                    await saveAttachment(msg.subject, msg.senderAddress, att.name, attPath);
+                                    await saveAttachment(
+                                        msg.subject,
+                                        msg.senderAddress ?? "unknown-sender",
+                                        att.name,
+                                        attPath
+                                    );
                                 } else {
                                     // Disambiguate with rowid to avoid silently dropping duplicates
                                     const dotIdx = safeAttName.lastIndexOf(".");
@@ -177,7 +182,12 @@ export function registerDownloadCommand(program: Command): void {
                                     const disambiguated = `${base}_${msg.rowid}${ext}`;
                                     const altPath = join(outputDir, "attachments", disambiguated);
                                     logger.debug(`Attachment collision: ${safeAttName} → saving as ${disambiguated}`);
-                                    await saveAttachment(msg.subject, msg.senderAddress, att.name, altPath);
+                                    await saveAttachment(
+                                        msg.subject,
+                                        msg.senderAddress ?? "unknown-sender",
+                                        att.name,
+                                        altPath
+                                    );
                                 }
                             }
                         }

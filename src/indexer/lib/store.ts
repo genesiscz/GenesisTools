@@ -4,6 +4,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import logger from "@app/logger";
 import { Embedder } from "@app/utils/ai/tasks/Embedder";
+import { countActiveEmbeddings } from "@app/utils/database/embedding-stats";
 import { getPendingMigrations, runMigrations } from "@app/utils/database/migrations";
 import { acquireLock, type LockHandle } from "@app/utils/fs/lock";
 import { SafeJSON } from "@app/utils/json";
@@ -71,6 +72,13 @@ export interface IndexStore {
     /** Load the persisted code graph, or null if not present */
     loadCodeGraph(): { graphJson: string; builtAt: number } | null;
     logSearch(entry: { query: string; mode: string; resultsCount: number; durationMs: number }): void;
+    /**
+     * Read-write access to the underlying SQLite database. Intended for
+     * source-driven maintenance hooks (e.g. `MailSource.pruneStale`) that need
+     * to run cross-database joins/deletes. Most callers should use the
+     * higher-level methods on this interface instead.
+     */
+    getDb(): import("bun:sqlite").Database;
     close(): Promise<void>;
 }
 
@@ -922,15 +930,7 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
                 const countRow = db.query(`SELECT COUNT(*) AS cnt FROM ${contentTable}`).get() as { cnt: number };
                 const chunkCount = countRow.cnt;
 
-                // Live embedding count from actual table
-                let embeddingCount = 0;
-
-                if (embTableExists) {
-                    const embRow = db.query(`SELECT COUNT(*) AS cnt FROM ${activeEmbTable}`).get() as {
-                        cnt: number;
-                    };
-                    embeddingCount = embRow.cnt;
-                }
+                const embeddingCount = countActiveEmbeddings(db, tableName);
 
                 const dbSizeBytes = getDbSizeBytes(dbPath);
 
@@ -1073,6 +1073,10 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
                     "INSERT INTO search_log (query, mode, results_count, duration_ms, searched_at) VALUES (?, ?, ?, ?, ?)",
                     [entry.query, entry.mode, entry.resultsCount, entry.durationMs, new Date().toISOString()]
                 );
+            },
+
+            getDb(): Database {
+                return db;
             },
 
             async close(): Promise<void> {

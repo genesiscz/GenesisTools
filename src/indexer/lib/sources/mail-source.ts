@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
 import { ENVELOPE_INDEX_PATH, normalizeMailboxName, parseMailboxUrl } from "@app/macos/lib/mail/constants";
 import { EmlxBodyExtractor } from "@app/macos/lib/mail/emlx";
+import { MailDatabase, pruneStaleMailChunks } from "@app/utils/macos/MailDatabase";
 import { ensureExtensionCapableSQLite } from "@app/utils/search/stores/sqlite-vec-loader";
 import {
     type DetectChangesOptions,
@@ -186,6 +187,14 @@ export class MailSource implements IndexerSource {
 
     hashEntry(entry: SourceEntry): string {
         return defaultHashEntry(entry);
+    }
+
+    async pruneStale(indexDb: Database, tableName: string): Promise<number> {
+        return pruneStaleMailChunks(indexDb, this.db, tableName);
+    }
+
+    getDateRange(indexDb: Database, tableName: string): { minTs: number | null; maxTs: number | null } {
+        return MailDatabase.getMailChunkDateRange(indexDb, tableName);
     }
 
     dispose(): void {

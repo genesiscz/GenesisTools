@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { getIndexerStorage } from "@app/indexer/lib/storage";
@@ -26,6 +27,7 @@ import { mdfindMailRowids } from "@app/macos/lib/mail/spotlight";
 import { rowToMessage } from "@app/macos/lib/mail/transform";
 import type { MailMessage, MailMessageRow, SearchOptions } from "@app/macos/lib/mail/types";
 import { isQuietOutput } from "@app/utils/cli/output-mode";
+import { SafeJSON } from "@app/utils/json";
 import { closeDarwinKit, rankBySimilarity } from "@app/utils/macos";
 import { MailDatabase } from "@app/utils/macos/MailDatabase";
 import * as p from "@clack/prompts";
@@ -48,6 +50,66 @@ function resolveMailSearchMode(input: string | undefined): MailSearchMode {
     }
 
     throw new Error(`Unknown --mode: "${input}". Valid: ${[...VALID_MAIL_SEARCH_MODES].join(", ")}`);
+}
+
+/**
+ * Emit a stderr advisory when the user's `--from` / `--to` window falls (even
+ * partially) outside the date span actually covered by the index. Best-effort:
+ * a missing or unreadable meta row silently skips the check — search is the
+ * primary action, not coverage validation.
+ *
+ * stderr-only so `--format json` / `toon` stay machine-readable.
+ */
+function warnIfDateRangeOutsideCoverage(args: { indexDbPath: string; from?: Date; to?: Date }): void {
+    const { indexDbPath, from, to } = args;
+
+    try {
+        const metaDb = new Database(indexDbPath, { readonly: true });
+
+        try {
+            const row = metaDb.query("SELECT value FROM index_meta WHERE key = 'meta'").get() as {
+                value: string;
+            } | null;
+
+            if (!row) {
+                return;
+            }
+
+            const meta = SafeJSON.parse(row.value) as {
+                stats?: { dateRangeMin?: number | null; dateRangeMax?: number | null };
+            };
+            const min = meta.stats?.dateRangeMin ?? null;
+            const max = meta.stats?.dateRangeMax ?? null;
+
+            if (min === null || max === null) {
+                return;
+            }
+
+            // Compare on day-floor to avoid spurious warnings when the user's
+            // `--to` is end-of-day but the indexed max is a message timestamp
+            // earlier in that same day.
+            const isoDay = (ts: number): string => new Date(ts).toISOString().slice(0, 10);
+            const minDay = isoDay(min * 1000);
+            const maxDay = isoDay(max * 1000);
+            const fromDay = from ? isoDay(from.getTime()) : undefined;
+            const toDay = to ? isoDay(to.getTime()) : undefined;
+            const outsideLower = fromDay !== undefined && fromDay < minDay;
+            const outsideUpper = toDay !== undefined && toDay > maxDay;
+
+            if (!outsideLower && !outsideUpper) {
+                return;
+            }
+
+            process.stderr.write(
+                `⚠  Requested range partially outside indexed coverage (${minDay} → ${maxDay}). ` +
+                    `Run "tools macos mail index" to refresh.\n`
+            );
+        } finally {
+            metaDb.close();
+        }
+    } catch (err) {
+        logger.debug(`[mail/search] coverage check skipped: ${err}`);
+    }
 }
 
 interface SearchCommandOptions {
@@ -170,7 +232,7 @@ export function registerSearchCommand(program: Command): void {
                     return;
                 }
 
-                const searchOpts: SearchOptions = {
+                const searchOpts: SearchOptions = db.resolveMailboxFilter({
                     query,
                     withoutBody: options.withoutBody,
                     receiver: options.receiver,
@@ -180,7 +242,7 @@ export function registerSearchCommand(program: Command): void {
                     mailbox: options.mailbox,
                     limit: Number.parseInt(options.limit ?? "100", 10),
                     offset: Number.parseInt(options.offset ?? "0", 10),
-                };
+                });
 
                 const resolvedMode = resolveMailSearchMode(options.mode);
                 const filterPredicate = buildMailFilterPredicate(searchOpts);
@@ -188,13 +250,25 @@ export function registerSearchCommand(program: Command): void {
                 const indexerStorage = getIndexerStorage();
                 const indexDbPath = join(indexerStorage.getIndexDir(MAIL_INDEX_NAME), "index.db");
                 const indexExists = existsSync(indexDbPath);
+                const willUseIndex = indexExists && !options.jxa && !searchOpts.withoutBody;
+
+                // Only warn about indexed coverage when the search will actually
+                // read the index. --jxa and --without-body bypass it, so the
+                // "run mail index to refresh" advice would be misleading.
+                if (willUseIndex && (searchOpts.from || searchOpts.to)) {
+                    warnIfDateRangeOutsideCoverage({
+                        indexDbPath,
+                        from: searchOpts.from,
+                        to: searchOpts.to,
+                    });
+                }
 
                 let rows: MailMessageRow[] = [];
                 const snippetByRowid = new Map<number, string>();
                 let searchMethod: "fts" | "spotlight+like" = "spotlight+like";
                 let resolvedMethod: ResolvedMethod | undefined;
 
-                if (indexExists && !options.jxa && !searchOpts.withoutBody) {
+                if (willUseIndex) {
                     spinner.start(formatSearchLabelStart(resolvedMode));
                     const t0 = performance.now();
 
@@ -239,7 +313,7 @@ export function registerSearchCommand(program: Command): void {
                     }
 
                     resolvedMethod = ftsResults[0]?.method;
-                    rows = ftsRowids.length > 0 ? await db.getMessagesByRowids(ftsRowids) : [];
+                    rows = ftsRowids.length > 0 ? await db.getMessagesByRowids(ftsRowids, searchOpts) : [];
                     searchMethod = "fts";
 
                     const orderByRowid = new Map(ftsRowids.map((rowid, index) => [rowid, index]));
@@ -267,15 +341,7 @@ export function registerSearchCommand(program: Command): void {
                     const newSpotlightIds = spotlightRowids.filter((r) => !rowidSet.has(r));
 
                     const spotlightRows =
-                        newSpotlightIds.length > 0
-                            ? await db.getMessagesByRowids(newSpotlightIds, {
-                                  from: searchOpts.from,
-                                  to: searchOpts.to,
-                                  mailbox: searchOpts.mailbox,
-                                  receiver: searchOpts.receiver,
-                                  account: searchOpts.account,
-                              })
-                            : [];
+                        newSpotlightIds.length > 0 ? await db.getMessagesByRowids(newSpotlightIds, searchOpts) : [];
 
                     rows = [...likeRows, ...spotlightRows];
                     const fallbackOrder = new Map(rows.map((row, index) => [row.rowid, index]));
