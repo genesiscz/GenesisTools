@@ -13,7 +13,7 @@ export interface SyncStats {
     embeddingsGenerated: number;
     durationMs: number;
     cancelled?: boolean;
-    /** Chunks pruned by source.pruneStale() (e.g. mail's recycled-ROWID cleanup). */
+    /** Chunks pruned by source.pruneStale() (e.g. mail's deleted/changed-row cleanup). */
     chunksPruned?: number;
 }
 

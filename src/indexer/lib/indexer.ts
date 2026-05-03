@@ -949,9 +949,10 @@ export class Indexer extends IndexerEventEmitter {
             }
 
             // ── Phase 4: SOURCE-DRIVEN PRUNE ─────────────────────────
-            // Sources like Mail.app recycle ROWIDs after deletes — let the
-            // source remove chunks whose underlying row is now gone or
-            // points at a different message. Append-only sources skip this.
+            // Let the source delete chunks whose backing row has changed
+            // under us — for mail, that's hard-deleted ROWIDs, soft-deleted
+            // messages, and rare server-side date_sent corrections. Sources
+            // with stable identity (file paths, etc.) skip this entirely.
             const tableName = sanitizeName(this.config.name);
             let chunksPruned = 0;
 

@@ -120,10 +120,11 @@ export interface IndexerSource {
     populateMetadata?(opts: MetadataPopulateOpts): AsyncGenerator<MetadataResult[]>;
 
     /**
-     * Prune chunks whose source has changed under the indexer (e.g. Mail.app's
-     * ROWID recycling after deletes). Called on every sync. Returns the number
-     * of chunks deleted. Sources that are append-only or where stable IDs
-     * guarantee freshness should leave this unimplemented.
+     * Prune chunks whose backing source row no longer matches indexed state
+     * (e.g. Mail.app messages that were deleted or whose `date_sent` was
+     * server-corrected since indexing). Called on every sync. Returns the
+     * number of chunks deleted. Sources where stable IDs guarantee freshness
+     * should leave this unimplemented.
      */
     pruneStale?(indexDb: import("bun:sqlite").Database, tableName: string): Promise<number>;
 

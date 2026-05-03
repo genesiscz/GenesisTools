@@ -178,16 +178,10 @@ export class MailDatabase extends MacDatabase {
     }
 
     /**
-     * Resolve `mailbox` / `account` substring filters to a concrete rowid set
-     * via JS URL-decoding (handles non-ASCII names like "Doručená pošta").
-     * Returns the same opts shape with `mailboxRowids` populated when
-     * applicable. Idempotent: re-resolving an already-resolved opts is a
-     * no-op.
-     */
-    /**
-     * Remove stale chunks (deleted/recycled/missing ROWIDs) from an external
-     * indexer's content table based on the current envelope state. Wraps the
-     * exported `pruneStaleMailChunks` helper.
+     * Remove chunks whose backing envelope row has changed since indexing
+     * (hard-deleted, soft-deleted, or date_sent mismatch). Wraps the
+     * exported `pruneStaleMailChunks` helper. See its docstring for the
+     * rationale on why ROWIDs aren't ever recycled.
      */
     async pruneStaleChunks(indexDb: Database, tableName: string): Promise<number> {
         return pruneStaleMailChunks(indexDb, this.getDb(), tableName);
@@ -214,6 +208,13 @@ export class MailDatabase extends MacDatabase {
         return row ?? { minTs: null, maxTs: null };
     }
 
+    /**
+     * Resolve `mailbox` / `account` substring filters to a concrete rowid set
+     * via JS URL-decoding (handles non-ASCII names like "Doručená pošta").
+     * Returns the same opts shape with `mailboxRowids` populated when
+     * applicable. Idempotent: re-resolving an already-resolved opts is a
+     * no-op.
+     */
     resolveMailboxFilter<T extends MailFilterOptions>(opts: T): T {
         if (opts.mailboxRowids !== undefined) {
             return opts;
