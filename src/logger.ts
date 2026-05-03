@@ -1,13 +1,9 @@
 import { homedir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { SafeJSON } from "@app/utils/json";
 import chalk from "chalk";
 import pino from "pino";
 import PinoPretty from "pino-pretty";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 // Parse command line args for log level (simple check without minimist)
 const args = {
