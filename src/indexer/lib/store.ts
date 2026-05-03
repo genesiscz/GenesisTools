@@ -4,6 +4,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import logger from "@app/logger";
 import { Embedder } from "@app/utils/ai/tasks/Embedder";
+import { countActiveEmbeddings } from "@app/utils/database/embedding-stats";
 import { getPendingMigrations, runMigrations } from "@app/utils/database/migrations";
 import { acquireLock, type LockHandle } from "@app/utils/fs/lock";
 import { SafeJSON } from "@app/utils/json";
@@ -922,15 +923,7 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
                 const countRow = db.query(`SELECT COUNT(*) AS cnt FROM ${contentTable}`).get() as { cnt: number };
                 const chunkCount = countRow.cnt;
 
-                // Live embedding count from actual table
-                let embeddingCount = 0;
-
-                if (embTableExists) {
-                    const embRow = db.query(`SELECT COUNT(*) AS cnt FROM ${activeEmbTable}`).get() as {
-                        cnt: number;
-                    };
-                    embeddingCount = embRow.cnt;
-                }
+                const embeddingCount = countActiveEmbeddings(db, tableName);
 
                 const dbSizeBytes = getDbSizeBytes(dbPath);
 

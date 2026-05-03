@@ -29,6 +29,9 @@ export abstract class MacDatabase {
     protected abstract readonly dbLabel: string;
     protected abstract readonly notFoundMessage: string;
 
+    /** Subclasses can override to register UDFs / set extra pragmas after the DB opens. */
+    protected onDbOpened?(db: Database): void;
+
     getMigrator(): Migrator {
         const tableName = this.migrationTableName ?? this.dbLabel.toLowerCase().replace(/[^a-z0-9_]+/g, "_");
         return new Migrator(this.getDb(), this.migrations, { tableName });
@@ -47,6 +50,11 @@ export abstract class MacDatabase {
 
         try {
             this.db = new Database(this.dbPath, { readonly: true });
+            // Live macOS DBs (Mail Envelope, Messages, etc.) get written by their owning app
+            // concurrently; without busy_timeout the readonly connection throws SQLITE_BUSY
+            // on the first contended page.
+            this.db.exec("PRAGMA busy_timeout = 5000");
+            this.onDbOpened?.(this.db);
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
 

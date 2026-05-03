@@ -181,7 +181,8 @@ export class MailDatabase extends MacDatabase {
             .selectFrom("attachments")
             .select(["message", "name", "attachment_id as attachmentId", "ROWID"])
             .where("message", "in", messageRowids)
-            .orderBy(["message", "ROWID"])
+            .orderBy("message")
+            .orderBy("ROWID")
             .execute();
 
         const map = new Map<number, MailAttachment[]>();
@@ -210,7 +211,9 @@ export class MailDatabase extends MacDatabase {
                 sql<number>`r.type`.as("type"),
             ])
             .where("r.message", "in", messageRowids)
-            .orderBy(["r.message", "r.type", "r.position"])
+            .orderBy("r.message")
+            .orderBy("r.type")
+            .orderBy("r.position")
             .execute();
 
         const map = new Map<number, MailRecipient[]>();
@@ -238,7 +241,8 @@ export class MailDatabase extends MacDatabase {
                 sql<number>`COUNT(DISTINCT r.message)`.as("messageCount"),
             ])
             .where("r.type", "=", 0)
-            .groupBy(["a.address", "a.comment"])
+            .groupBy("a.address")
+            .groupBy("a.comment")
             .having(sql`COUNT(DISTINCT r.message)`, ">", 10)
             .orderBy("messageCount", "desc")
             .limit(50)
@@ -332,8 +336,10 @@ export class MailDatabase extends MacDatabase {
                     sql<boolean>`mb.url LIKE '%Drafts%'`,
                 ])
             )
-            .groupBy(["accountUuid", "a.address"])
-            .orderBy(["accountUuid", "cnt desc"])
+            .groupBy("accountUuid")
+            .groupBy("a.address")
+            .orderBy("accountUuid")
+            .orderBy("cnt", "desc")
             .execute();
 
         const inboxRecipients = await this.k()
@@ -353,8 +359,10 @@ export class MailDatabase extends MacDatabase {
             .where(sql<boolean>`mb.url NOT LIKE '%Sent%20Messages%'`)
             .where(sql<boolean>`mb.url NOT LIKE '%Outbox%'`)
             .where(sql<boolean>`mb.url NOT LIKE '%Drafts%'`)
-            .groupBy(["accountUuid", "a.address"])
-            .orderBy(["accountUuid", "cnt desc"])
+            .groupBy("accountUuid")
+            .groupBy("a.address")
+            .orderBy("accountUuid")
+            .orderBy("cnt", "desc")
             .execute();
 
         const emailByAccount = new Map<string, string>();
