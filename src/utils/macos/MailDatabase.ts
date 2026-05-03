@@ -1,3 +1,5 @@
+import type { Database } from "bun:sqlite";
+import { pathToFileURL } from "node:url";
 import logger from "@app/logger";
 import { ENVELOPE_INDEX_PATH } from "@app/macos/lib/mail/constants";
 import type { MailDB } from "@app/macos/lib/mail/db-types";
@@ -12,7 +14,98 @@ import type {
 import { buildOrderedLikePattern, escapeLike } from "@app/utils/database";
 import { type Expression, type SqlBool, sql } from "kysely";
 import { MacDatabase } from "./MacDatabase";
-import { type MailFilterOptions, SQL_BIND_BATCH } from "./mail-sql";
+import { type MailFilterOptions, resolveMailboxRowids, SQL_BIND_BATCH } from "./mail-sql";
+
+/**
+ * Delete chunks from `<tableName>_content` whose `source_id` (Mail.app ROWID)
+ * is now stale relative to the live envelope DB:
+ *   - the message no longer exists in the envelope (hard-deleted), OR
+ *   - the message is soft-deleted (`deleted = 1`), OR
+ *   - the message's `date_sent` differs from what we stored at index time
+ *     (rare — server-side date correction via IMAP/Exchange resync).
+ *
+ * Note on ROWID stability: Mail.app's `messages` table is `INTEGER PRIMARY
+ * KEY AUTOINCREMENT`, so deleted ROWIDs are NEVER reused. Gaps in the
+ * sequence stay permanently empty. We don't need to re-index "recycled"
+ * IDs after a prune (issue #162) — the deleted ROWID slot is gone for good.
+ *
+ * Exported as a free function for direct testing with two `:memory:`
+ * databases. Production code should use `MailDatabase#pruneStaleChunks`.
+ *
+ * @param indexDb     The indexer's read-write DB (e.g. ~/.genesis-tools/indexer/macos-mail/index.db)
+ * @param envelopeDb  Mail.app's Envelope Index (readonly, opened by caller)
+ * @param tableName   Sanitized index name, e.g. "macos_mail"
+ * @returns           Number of chunks deleted.
+ */
+export function pruneStaleMailChunks(indexDb: Database, envelopeDb: Database, tableName: string): number {
+    const contentTable = `${tableName}_content`;
+    const envFilename = (envelopeDb as unknown as { filename?: string }).filename;
+    const usingMemory = !envFilename || envFilename === ":memory:";
+
+    if (usingMemory) {
+        // ATTACH only supports file paths; for in-memory test databases we
+        // copy the envelope's `messages` columns into a TEMP table on the
+        // index DB and run the same join there.
+        indexDb.exec("CREATE TEMP TABLE _env_msg (ROWID INTEGER PRIMARY KEY, date_sent INTEGER, deleted INTEGER)");
+
+        try {
+            const rows = envelopeDb.query("SELECT ROWID, date_sent, deleted FROM messages").all() as Array<{
+                ROWID: number;
+                date_sent: number;
+                deleted: number;
+            }>;
+            const ins = indexDb.prepare("INSERT INTO _env_msg VALUES (?, ?, ?)");
+
+            for (const r of rows) {
+                ins.run(r.ROWID, r.date_sent, r.deleted ?? 0);
+            }
+
+            const result = indexDb.run(`
+                DELETE FROM ${contentTable}
+                WHERE id IN (
+                    SELECT c.id FROM ${contentTable} c
+                    LEFT JOIN _env_msg m ON m.ROWID = CAST(c.source_id AS INTEGER)
+                    WHERE m.ROWID IS NULL
+                       OR m.deleted = 1
+                       OR m.date_sent != CAST(json_extract(c.metadata_json, '$.dateSent') AS INTEGER)
+                )
+            `);
+
+            return Number(result.changes);
+        } finally {
+            indexDb.exec("DROP TABLE _env_msg");
+        }
+    }
+
+    const uri = pathToFileURL(envFilename).toString();
+    indexDb.run(`ATTACH DATABASE '${uri.replace(/'/g, "''")}?mode=ro' AS mailapp`);
+
+    try {
+        const result = indexDb.run(`
+            DELETE FROM ${contentTable}
+            WHERE id IN (
+                SELECT c.id FROM ${contentTable} c
+                LEFT JOIN mailapp.messages m ON m.ROWID = CAST(c.source_id AS INTEGER)
+                WHERE m.ROWID IS NULL
+                   OR m.deleted = 1
+                   OR m.date_sent != CAST(json_extract(c.metadata_json, '$.dateSent') AS INTEGER)
+            )
+        `);
+        const removed = Number(result.changes);
+
+        if (removed > 0) {
+            logger.debug(`[mail/prune] removed ${removed} stale chunks from ${contentTable}`);
+        }
+
+        return removed;
+    } finally {
+        try {
+            indexDb.run("DETACH DATABASE mailapp");
+        } catch {
+            // detach failures shouldn't mask the prune result
+        }
+    }
+}
 
 /**
  * Build raw SQL filter fragments for date range / mailbox / receiver / account.
@@ -31,9 +124,22 @@ function buildMailFilterExpressions(opts: MailFilterOptions): Expression<SqlBool
         filters.push(sql<SqlBool>`m.date_sent <= ${seconds}`);
     }
 
-    if (opts.mailbox) {
-        const pattern = `%${escapeLike(opts.mailbox)}%`;
-        filters.push(sql<SqlBool>`mb.url LIKE ${pattern} ESCAPE '\\'`);
+    if (opts.mailboxRowids !== undefined) {
+        if (opts.mailboxRowids.length === 0) {
+            filters.push(sql<SqlBool>`1 = 0`);
+        } else {
+            filters.push(sql<SqlBool>`m.mailbox IN (${sql.join(opts.mailboxRowids)})`);
+        }
+    } else {
+        if (opts.mailbox) {
+            const pattern = `%${escapeLike(opts.mailbox)}%`;
+            filters.push(sql<SqlBool>`mb.url LIKE ${pattern} ESCAPE '\\'`);
+        }
+
+        if (opts.account) {
+            const pattern = `%${escapeLike(opts.account)}%`;
+            filters.push(sql<SqlBool>`mb.url LIKE ${pattern} ESCAPE '\\'`);
+        }
     }
 
     if (opts.receiver) {
@@ -45,18 +151,13 @@ function buildMailFilterExpressions(opts: MailFilterOptions): Expression<SqlBool
         )`);
     }
 
-    if (opts.account) {
-        const pattern = `%${escapeLike(opts.account)}%`;
-        filters.push(sql<SqlBool>`mb.url LIKE ${pattern} ESCAPE '\\'`);
-    }
-
     return filters;
 }
 
 const MESSAGE_SELECT_COLUMNS = [
     sql<number>`m.ROWID`.as("rowid"),
     "s.subject",
-    sql<string>`a.address`.as("senderAddress"),
+    sql<string | null>`a.address`.as("senderAddress"),
     sql<string | null>`a.comment`.as("senderName"),
     sql<number>`m.date_sent`.as("dateSent"),
     sql<number>`m.date_received`.as("dateReceived"),
@@ -76,6 +177,53 @@ export class MailDatabase extends MacDatabase {
         return this.getKysely<MailDB>();
     }
 
+    /**
+     * Remove chunks whose backing envelope row has changed since indexing
+     * (hard-deleted, soft-deleted, or date_sent mismatch). Wraps the
+     * exported `pruneStaleMailChunks` helper. See its docstring for the
+     * rationale on why ROWIDs aren't ever recycled.
+     */
+    async pruneStaleChunks(indexDb: Database, tableName: string): Promise<number> {
+        return pruneStaleMailChunks(indexDb, this.getDb(), tableName);
+    }
+
+    /**
+     * Compute MIN/MAX `date_sent` (unix seconds) over chunks of an external
+     * indexer table by reading their `metadata_json` bag. Used by the indexer
+     * to record date-range coverage for stderr "out-of-coverage" warnings.
+     * Returns `{minTs: null, maxTs: null}` if the table is empty.
+     */
+    static getMailChunkDateRange(indexDb: Database, tableName: string): { minTs: number | null; maxTs: number | null } {
+        const contentTable = `${tableName}_content`;
+        const row = indexDb
+            .query(
+                `SELECT
+                    MIN(CAST(json_extract(metadata_json, '$.dateSent') AS INTEGER)) AS minTs,
+                    MAX(CAST(json_extract(metadata_json, '$.dateSent') AS INTEGER)) AS maxTs
+                 FROM ${contentTable}
+                 WHERE metadata_json IS NOT NULL`
+            )
+            .get() as { minTs: number | null; maxTs: number | null } | null;
+
+        return row ?? { minTs: null, maxTs: null };
+    }
+
+    /**
+     * Resolve `mailbox` / `account` substring filters to a concrete rowid set
+     * via JS URL-decoding (handles non-ASCII names like "Doručená pošta").
+     * Returns the same opts shape with `mailboxRowids` populated when
+     * applicable. Idempotent: re-resolving an already-resolved opts is a
+     * no-op.
+     */
+    resolveMailboxFilter<T extends MailFilterOptions>(opts: T): T {
+        if (opts.mailboxRowids !== undefined) {
+            return opts;
+        }
+
+        const rowids = resolveMailboxRowids(this.getDb(), opts.mailbox, opts.account);
+        return rowids === undefined ? opts : { ...opts, mailboxRowids: rowids };
+    }
+
     async searchMessages(opts: SearchOptions): Promise<MailMessageRow[]> {
         const tokens = opts.query.split(/\s+/).filter((t) => t.length > 0);
 
@@ -85,14 +233,14 @@ export class MailDatabase extends MacDatabase {
 
         const ordered = buildOrderedLikePattern(tokens);
         const escapedTokens = tokens.map((t) => `%${escapeLike(t)}%`);
-        const filterExpressions = buildMailFilterExpressions(opts);
+        const filterExpressions = buildMailFilterExpressions(this.resolveMailboxFilter(opts));
 
         logger.debug(`Running search query (wildcard) with ${tokens.length} token(s): ${tokens.join(", ")}`);
 
         const rows = await this.k()
             .selectFrom("messages as m")
             .innerJoin("subjects as s", "s.ROWID", "m.subject")
-            .innerJoin("addresses as a", "a.ROWID", "m.sender")
+            .leftJoin("addresses as a", "a.ROWID", "m.sender")
             .innerJoin("mailboxes as mb", "mb.ROWID", "m.mailbox")
             .leftJoin("attachments as att", "att.message", "m.ROWID")
             .select(MESSAGE_SELECT_COLUMNS as never)
@@ -129,7 +277,7 @@ export class MailDatabase extends MacDatabase {
         }
 
         const results: MailMessageRow[] = [];
-        const filterExpressions = opts ? buildMailFilterExpressions(opts) : [];
+        const filterExpressions = opts ? buildMailFilterExpressions(this.resolveMailboxFilter(opts)) : [];
 
         for (let offset = 0; offset < rowids.length; offset += SQL_BIND_BATCH) {
             const batch = rowids.slice(offset, offset + SQL_BIND_BATCH);
@@ -137,7 +285,7 @@ export class MailDatabase extends MacDatabase {
             const rows = await this.k()
                 .selectFrom("messages as m")
                 .innerJoin("subjects as s", "s.ROWID", "m.subject")
-                .innerJoin("addresses as a", "a.ROWID", "m.sender")
+                .leftJoin("addresses as a", "a.ROWID", "m.sender")
                 .innerJoin("mailboxes as mb", "mb.ROWID", "m.mailbox")
                 .select(MESSAGE_SELECT_COLUMNS as never)
                 .distinct()
@@ -154,17 +302,21 @@ export class MailDatabase extends MacDatabase {
     }
 
     async listMessages(mailbox: string, limit: number): Promise<MailMessageRow[]> {
-        const pattern = `%${escapeLike(mailbox)}%`;
+        const rowids = resolveMailboxRowids(this.getDb(), mailbox);
+
+        if (rowids === undefined || rowids.length === 0) {
+            return [];
+        }
 
         const rows = await this.k()
             .selectFrom("messages as m")
             .innerJoin("subjects as s", "s.ROWID", "m.subject")
-            .innerJoin("addresses as a", "a.ROWID", "m.sender")
+            .leftJoin("addresses as a", "a.ROWID", "m.sender")
             .innerJoin("mailboxes as mb", "mb.ROWID", "m.mailbox")
             .select(MESSAGE_SELECT_COLUMNS as never)
             .distinct()
             .where("m.deleted", "=", 0)
-            .where(sql<SqlBool>`mb.url LIKE ${pattern} ESCAPE '\\'`)
+            .where("m.mailbox", "in", rowids)
             .orderBy("m.date_sent", "desc")
             .limit(limit)
             .execute();
@@ -181,7 +333,8 @@ export class MailDatabase extends MacDatabase {
             .selectFrom("attachments")
             .select(["message", "name", "attachment_id as attachmentId", "ROWID"])
             .where("message", "in", messageRowids)
-            .orderBy(["message", "ROWID"])
+            .orderBy("message")
+            .orderBy("ROWID")
             .execute();
 
         const map = new Map<number, MailAttachment[]>();
@@ -210,7 +363,9 @@ export class MailDatabase extends MacDatabase {
                 sql<number>`r.type`.as("type"),
             ])
             .where("r.message", "in", messageRowids)
-            .orderBy(["r.message", "r.type", "r.position"])
+            .orderBy("r.message")
+            .orderBy("r.type")
+            .orderBy("r.position")
             .execute();
 
         const map = new Map<number, MailRecipient[]>();
@@ -238,7 +393,8 @@ export class MailDatabase extends MacDatabase {
                 sql<number>`COUNT(DISTINCT r.message)`.as("messageCount"),
             ])
             .where("r.type", "=", 0)
-            .groupBy(["a.address", "a.comment"])
+            .groupBy("a.address")
+            .groupBy("a.comment")
             .having(sql`COUNT(DISTINCT r.message)`, ">", 10)
             .orderBy("messageCount", "desc")
             .limit(50)
@@ -266,7 +422,7 @@ export class MailDatabase extends MacDatabase {
         const row = await this.k()
             .selectFrom("messages as m")
             .innerJoin("subjects as s", "s.ROWID", "m.subject")
-            .innerJoin("addresses as a", "a.ROWID", "m.sender")
+            .leftJoin("addresses as a", "a.ROWID", "m.sender")
             .innerJoin("mailboxes as mb", "mb.ROWID", "m.mailbox")
             .select(MESSAGE_SELECT_COLUMNS as never)
             .distinct()
@@ -316,7 +472,7 @@ export class MailDatabase extends MacDatabase {
         const sentSenders = await this.k()
             .selectFrom("messages as m")
             .innerJoin("mailboxes as mb", "mb.ROWID", "m.mailbox")
-            .innerJoin("addresses as a", "a.ROWID", "m.sender")
+            .leftJoin("addresses as a", "a.ROWID", "m.sender")
             .select([
                 accountUuidExpr.as("accountUuid"),
                 sql<string>`a.address`.as("address"),
@@ -332,8 +488,10 @@ export class MailDatabase extends MacDatabase {
                     sql<boolean>`mb.url LIKE '%Drafts%'`,
                 ])
             )
-            .groupBy(["accountUuid", "a.address"])
-            .orderBy(["accountUuid", "cnt desc"])
+            .groupBy("accountUuid")
+            .groupBy("a.address")
+            .orderBy("accountUuid")
+            .orderBy("cnt", "desc")
             .execute();
 
         const inboxRecipients = await this.k()
@@ -353,8 +511,10 @@ export class MailDatabase extends MacDatabase {
             .where(sql<boolean>`mb.url NOT LIKE '%Sent%20Messages%'`)
             .where(sql<boolean>`mb.url NOT LIKE '%Outbox%'`)
             .where(sql<boolean>`mb.url NOT LIKE '%Drafts%'`)
-            .groupBy(["accountUuid", "a.address"])
-            .orderBy(["accountUuid", "cnt desc"])
+            .groupBy("accountUuid")
+            .groupBy("a.address")
+            .orderBy("accountUuid")
+            .orderBy("cnt", "desc")
             .execute();
 
         const emailByAccount = new Map<string, string>();

@@ -6,6 +6,12 @@ export interface MailFilterOpts {
     mailbox?: string;
     receiver?: string;
     account?: string;
+    /**
+     * Pre-resolved `mailboxes.ROWID` set for `mailbox`/`account` substring
+     * filters. The FTS path consumes these instead of LIKE so non-ASCII names
+     * (e.g. Czech "Doručená pošta") match correctly.
+     */
+    mailboxRowids?: number[];
 }
 
 /**
@@ -32,21 +38,29 @@ export function buildMailFilterPredicate(opts: MailFilterOpts): { sql: string; p
         params.push(Math.floor(opts.to.getTime() / 1000));
     }
 
-    if (opts.mailbox) {
-        joins.push("JOIN mailapp.mailboxes mb ON mb.ROWID = m.mailbox");
-        joinedMb = true;
-        conds.push(`mb.url LIKE ? ${LIKE_ESCAPE_CLAUSE}`);
-        params.push(`%${escapeLike(opts.mailbox)}%`);
-    }
-
-    if (opts.account) {
-        if (!joinedMb) {
+    if (opts.mailboxRowids !== undefined) {
+        if (opts.mailboxRowids.length === 0) {
+            conds.push("1 = 0");
+        } else {
+            conds.push(`m.mailbox IN (${opts.mailboxRowids.join(",")})`);
+        }
+    } else {
+        if (opts.mailbox) {
             joins.push("JOIN mailapp.mailboxes mb ON mb.ROWID = m.mailbox");
             joinedMb = true;
+            conds.push(`mb.url LIKE ? ${LIKE_ESCAPE_CLAUSE}`);
+            params.push(`%${escapeLike(opts.mailbox)}%`);
         }
 
-        conds.push(`mb.url LIKE ? ${LIKE_ESCAPE_CLAUSE}`);
-        params.push(`%${escapeLike(opts.account)}%`);
+        if (opts.account) {
+            if (!joinedMb) {
+                joins.push("JOIN mailapp.mailboxes mb ON mb.ROWID = m.mailbox");
+                joinedMb = true;
+            }
+
+            conds.push(`mb.url LIKE ? ${LIKE_ESCAPE_CLAUSE}`);
+            params.push(`%${escapeLike(opts.account)}%`);
+        }
     }
 
     if (opts.receiver) {
@@ -58,7 +72,11 @@ export function buildMailFilterPredicate(opts: MailFilterOpts): { sql: string; p
         params.push(`%${escapeLike(opts.receiver)}%`);
     }
 
-    if (params.length === 0) {
+    // `conds` always carries `m.deleted = 0`; a real filter is anything beyond
+    // that. Use conds.length > 1 instead of params.length to detect zero-filter
+    // calls, since a `mailboxRowids` constraint inlines its rowids into the SQL
+    // string rather than producing bind params.
+    if (conds.length === 1) {
         return null;
     }
 

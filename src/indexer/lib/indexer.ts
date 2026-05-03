@@ -14,7 +14,7 @@ import type { ModelInfo } from "./model-registry";
 import { formatModelTable, getMaxEmbedChars, getModelsForType, getTaskPrefix } from "./model-registry";
 import { FileSource } from "./sources/file-source";
 import type { IndexerSource, SourceEntry } from "./sources/source";
-import { getIndexerStorage } from "./storage";
+import { getIndexerStorage, sanitizeName } from "./storage";
 import type { IndexStore } from "./store";
 import { createIndexStore } from "./store";
 import type { ChunkRecord, IndexConfig, IndexStats } from "./types";
@@ -948,6 +948,23 @@ export class Indexer extends IndexerEventEmitter {
                 }
             }
 
+            // ── Phase 4: SOURCE-DRIVEN PRUNE ─────────────────────────
+            // Let the source delete chunks whose backing row has changed
+            // under us — for mail, that's hard-deleted ROWIDs, soft-deleted
+            // messages, and rare server-side date_sent corrections. Sources
+            // with stable identity (file paths, etc.) skip this entirely.
+            const tableName = sanitizeName(this.config.name);
+            let chunksPruned = 0;
+
+            if (typeof this.source.pruneStale === "function" && !this.cancellationRequested) {
+                try {
+                    chunksPruned = await this.source.pruneStale(this.store.getDb(), tableName);
+                } catch (err) {
+                    const msg = err instanceof Error ? err.message : String(err);
+                    logger.warn(`[sync] source.pruneStale failed: ${msg}`);
+                }
+            }
+
             // ── FINALIZE ─────────────────────────────────────────────
             const durationMs = performance.now() - syncStart;
             const totalFiles = pathHashStore.getFileCount();
@@ -964,6 +981,7 @@ export class Indexer extends IndexerEventEmitter {
                 embeddingsGenerated,
                 durationMs,
                 cancelled: wasCancelled || undefined,
+                chunksPruned,
             };
 
             const embeddingModelId = this.config.embedding?.model ?? "darwinkit";
@@ -979,6 +997,21 @@ export class Indexer extends IndexerEventEmitter {
             const finalStats = this.store.getStats();
             const embeddedCount = finalStats.totalChunks - this.store.getUnembeddedCount();
 
+            // Source-driven date-range coverage (mail uses dateSent in metadata_json).
+            let dateRangeMin: number | null = null;
+            let dateRangeMax: number | null = null;
+
+            if (typeof this.source.getDateRange === "function") {
+                try {
+                    const range = this.source.getDateRange(this.store.getDb(), tableName);
+                    dateRangeMin = range.minTs;
+                    dateRangeMax = range.maxTs;
+                } catch (err) {
+                    const msg = err instanceof Error ? err.message : String(err);
+                    logger.warn(`[sync] source.getDateRange failed: ${msg}`);
+                }
+            }
+
             this.store.updateMeta({
                 lastSyncAt: Date.now(),
                 stats: {
@@ -990,6 +1023,8 @@ export class Indexer extends IndexerEventEmitter {
                     lastSyncDurationMs: durationMs,
                     searchCount: finalStats.searchCount,
                     avgSearchDurationMs: finalStats.avgSearchDurationMs,
+                    dateRangeMin,
+                    dateRangeMax,
                 },
                 indexEmbedding: embeddingModelInfo,
                 indexingStatus: wasCancelled ? "cancelled" : "completed",
