@@ -2,8 +2,9 @@
 export interface MailMessageRow {
     rowid: number;
     subject: string;
-    senderAddress: string;
-    senderName: string;
+    /** Null for messages with no sender FK — overwhelmingly drafts. LEFT JOIN keeps these. */
+    senderAddress: string | null;
+    senderName: string | null;
     dateSent: number;
     dateReceived: number;
     mailboxUrl: string;
@@ -17,8 +18,9 @@ export interface MailMessageRow {
 export interface MailMessage {
     rowid: number;
     subject: string;
-    senderAddress: string;
-    senderName: string;
+    /** Null for messages with no sender FK — overwhelmingly drafts. */
+    senderAddress: string | null;
+    senderName: string | null;
     dateSent: Date;
     dateReceived: Date;
     mailbox: string;

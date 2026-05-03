@@ -126,3 +126,36 @@ describe("MailDatabase.getMailChunkDateRange", () => {
         expect(r.maxTs).toBeNull();
     });
 });
+
+describe("MailDatabase null-sender JOIN regression", () => {
+    // Live envelope inspection: 56 of 62,748 messages have m.sender = NULL
+    // (all unsent drafts in Drafts/All-Mail mailboxes). MailDatabase used
+    // INNER JOIN on addresses → those rows were silently dropped from every
+    // search. This test pins the SQL pattern itself: INNER JOIN drops the
+    // NULL-sender row, LEFT JOIN keeps it with a.address as null.
+    it("LEFT JOIN on m.sender = a.ROWID keeps NULL-sender rows", () => {
+        const env = new Database(":memory:");
+        env.exec(`
+            CREATE TABLE messages (ROWID INTEGER PRIMARY KEY, sender INTEGER);
+            CREATE TABLE addresses (ROWID INTEGER PRIMARY KEY, address TEXT);
+            INSERT INTO messages VALUES (100, NULL), (101, 1);
+            INSERT INTO addresses VALUES (1, 'live@example.com');
+        `);
+
+        // The bug: INNER JOIN drops ROWID=100 because sender=NULL has no addresses match.
+        const inner = env
+            .query("SELECT m.ROWID FROM messages m INNER JOIN addresses a ON a.ROWID = m.sender ORDER BY m.ROWID")
+            .all() as Array<{ ROWID: number }>;
+        expect(inner.map((r) => r.ROWID)).toEqual([101]);
+
+        // The fix: LEFT JOIN keeps ROWID=100 with a.address = null.
+        const left = env
+            .query(
+                "SELECT m.ROWID, a.address FROM messages m LEFT JOIN addresses a ON a.ROWID = m.sender ORDER BY m.ROWID"
+            )
+            .all() as Array<{ ROWID: number; address: string | null }>;
+        expect(left).toHaveLength(2);
+        expect(left[0]).toEqual({ ROWID: 100, address: null });
+        expect(left[1]).toEqual({ ROWID: 101, address: "live@example.com" });
+    });
+});

@@ -43,11 +43,13 @@ export const MAIL_COLUMNS = {
     },
     from: {
         label: "From",
-        get: (m: MailMessage) => m.senderName || m.senderAddress,
+        // Drafts (and a handful of corruption cases) have no sender at all —
+        // show a placeholder rather than the literal string "null".
+        get: (m: MailMessage) => m.senderName || m.senderAddress || "(no sender)",
     },
     fromEmail: {
         label: "From Email",
-        get: (m: MailMessage) => m.senderAddress,
+        get: (m: MailMessage) => m.senderAddress ?? "—",
     },
     to: {
         label: "To",

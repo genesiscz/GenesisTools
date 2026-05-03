@@ -121,7 +121,7 @@ export function registerShowCommand(program: Command): void {
                 console.log();
                 console.log(bold(msg.subject));
                 console.log(dim("─".repeat(Math.min(msg.subject.length, 80))));
-                console.log(`From:     ${msg.senderName} <${msg.senderAddress}>`);
+                console.log(`From:     ${msg.senderName ?? ""} <${msg.senderAddress ?? "(no sender)"}>`);
 
                 const toRecipients = msg.recipients?.filter((r) => r.type === "to") ?? [];
 

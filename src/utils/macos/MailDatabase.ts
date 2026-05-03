@@ -157,7 +157,7 @@ function buildMailFilterExpressions(opts: MailFilterOptions): Expression<SqlBool
 const MESSAGE_SELECT_COLUMNS = [
     sql<number>`m.ROWID`.as("rowid"),
     "s.subject",
-    sql<string>`a.address`.as("senderAddress"),
+    sql<string | null>`a.address`.as("senderAddress"),
     sql<string | null>`a.comment`.as("senderName"),
     sql<number>`m.date_sent`.as("dateSent"),
     sql<number>`m.date_received`.as("dateReceived"),
@@ -240,7 +240,7 @@ export class MailDatabase extends MacDatabase {
         const rows = await this.k()
             .selectFrom("messages as m")
             .innerJoin("subjects as s", "s.ROWID", "m.subject")
-            .innerJoin("addresses as a", "a.ROWID", "m.sender")
+            .leftJoin("addresses as a", "a.ROWID", "m.sender")
             .innerJoin("mailboxes as mb", "mb.ROWID", "m.mailbox")
             .leftJoin("attachments as att", "att.message", "m.ROWID")
             .select(MESSAGE_SELECT_COLUMNS as never)
@@ -285,7 +285,7 @@ export class MailDatabase extends MacDatabase {
             const rows = await this.k()
                 .selectFrom("messages as m")
                 .innerJoin("subjects as s", "s.ROWID", "m.subject")
-                .innerJoin("addresses as a", "a.ROWID", "m.sender")
+                .leftJoin("addresses as a", "a.ROWID", "m.sender")
                 .innerJoin("mailboxes as mb", "mb.ROWID", "m.mailbox")
                 .select(MESSAGE_SELECT_COLUMNS as never)
                 .distinct()
@@ -311,7 +311,7 @@ export class MailDatabase extends MacDatabase {
         const rows = await this.k()
             .selectFrom("messages as m")
             .innerJoin("subjects as s", "s.ROWID", "m.subject")
-            .innerJoin("addresses as a", "a.ROWID", "m.sender")
+            .leftJoin("addresses as a", "a.ROWID", "m.sender")
             .innerJoin("mailboxes as mb", "mb.ROWID", "m.mailbox")
             .select(MESSAGE_SELECT_COLUMNS as never)
             .distinct()
@@ -422,7 +422,7 @@ export class MailDatabase extends MacDatabase {
         const row = await this.k()
             .selectFrom("messages as m")
             .innerJoin("subjects as s", "s.ROWID", "m.subject")
-            .innerJoin("addresses as a", "a.ROWID", "m.sender")
+            .leftJoin("addresses as a", "a.ROWID", "m.sender")
             .innerJoin("mailboxes as mb", "mb.ROWID", "m.mailbox")
             .select(MESSAGE_SELECT_COLUMNS as never)
             .distinct()
@@ -472,7 +472,7 @@ export class MailDatabase extends MacDatabase {
         const sentSenders = await this.k()
             .selectFrom("messages as m")
             .innerJoin("mailboxes as mb", "mb.ROWID", "m.mailbox")
-            .innerJoin("addresses as a", "a.ROWID", "m.sender")
+            .leftJoin("addresses as a", "a.ROWID", "m.sender")
             .select([
                 accountUuidExpr.as("accountUuid"),
                 sql<string>`a.address`.as("address"),
