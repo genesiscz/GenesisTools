@@ -102,6 +102,8 @@ export function emptyStats(): IndexStats {
         lastSyncDurationMs: 0,
         searchCount: 0,
         avgSearchDurationMs: 0,
+        dateRangeMin: null,
+        dateRangeMax: null,
     };
 }
 
@@ -129,6 +131,9 @@ export interface IndexStats {
     lastSyncDurationMs: number;
     searchCount: number;
     avgSearchDurationMs: number;
+    /** Min/max chunk timestamp (unix seconds) for date-aware sources. Absent or null for non-temporal indexes. */
+    dateRangeMin?: number | null;
+    dateRangeMax?: number | null;
 }
 
 export interface ChunkRecord {

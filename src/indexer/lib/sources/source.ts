@@ -118,4 +118,24 @@ export interface IndexerSource {
      * Each yielded batch may be smaller than batchSize (final batch).
      */
     populateMetadata?(opts: MetadataPopulateOpts): AsyncGenerator<MetadataResult[]>;
+
+    /**
+     * Prune chunks whose source has changed under the indexer (e.g. Mail.app's
+     * ROWID recycling after deletes). Called on every sync. Returns the number
+     * of chunks deleted. Sources that are append-only or where stable IDs
+     * guarantee freshness should leave this unimplemented.
+     */
+    pruneStale?(indexDb: import("bun:sqlite").Database, tableName: string): Promise<number>;
+
+    /**
+     * Compute MIN/MAX timestamps (unix seconds) covered by chunks of the given
+     * indexer table. Used by the indexer to record date-range coverage so
+     * search commands can warn when `--from`/`--to` falls outside what's
+     * indexed. Sources without a date dimension should leave this
+     * unimplemented (the indexer will record `null`).
+     */
+    getDateRange?(
+        indexDb: import("bun:sqlite").Database,
+        tableName: string
+    ): { minTs: number | null; maxTs: number | null };
 }

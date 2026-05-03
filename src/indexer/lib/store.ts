@@ -72,6 +72,13 @@ export interface IndexStore {
     /** Load the persisted code graph, or null if not present */
     loadCodeGraph(): { graphJson: string; builtAt: number } | null;
     logSearch(entry: { query: string; mode: string; resultsCount: number; durationMs: number }): void;
+    /**
+     * Read-write access to the underlying SQLite database. Intended for
+     * source-driven maintenance hooks (e.g. `MailSource.pruneStale`) that need
+     * to run cross-database joins/deletes. Most callers should use the
+     * higher-level methods on this interface instead.
+     */
+    getDb(): import("bun:sqlite").Database;
     close(): Promise<void>;
 }
 
@@ -1066,6 +1073,10 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
                     "INSERT INTO search_log (query, mode, results_count, duration_ms, searched_at) VALUES (?, ?, ?, ?, ?)",
                     [entry.query, entry.mode, entry.resultsCount, entry.durationMs, new Date().toISOString()]
                 );
+            },
+
+            getDb(): Database {
+                return db;
             },
 
             async close(): Promise<void> {

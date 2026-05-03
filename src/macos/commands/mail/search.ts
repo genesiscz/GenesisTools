@@ -1,8 +1,10 @@
+import { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { getIndexerStorage } from "@app/indexer/lib/storage";
 import { searchIndexReadonly } from "@app/indexer/lib/store";
 import logger from "@app/logger";
+import { SafeJSON } from "@app/utils/json";
 import { ALL_COLUMN_KEYS, type MailColumnKey } from "@app/macos/lib/mail/columns";
 import {
     enrichWithBodies,
@@ -48,6 +50,64 @@ function resolveMailSearchMode(input: string | undefined): MailSearchMode {
     }
 
     throw new Error(`Unknown --mode: "${input}". Valid: ${[...VALID_MAIL_SEARCH_MODES].join(", ")}`);
+}
+
+/**
+ * Emit a stderr advisory when the user's `--from` / `--to` window falls (even
+ * partially) outside the date span actually covered by the index. Best-effort:
+ * a missing or unreadable meta row silently skips the check — search is the
+ * primary action, not coverage validation.
+ *
+ * stderr-only so `--format json` / `toon` stay machine-readable.
+ */
+function warnIfDateRangeOutsideCoverage(indexDbPath: string, from?: Date, to?: Date): void {
+    try {
+        const metaDb = new Database(indexDbPath, { readonly: true });
+
+        try {
+            const row = metaDb.query("SELECT value FROM index_meta WHERE key = 'meta'").get() as
+                | { value: string }
+                | null;
+
+            if (!row) {
+                return;
+            }
+
+            const meta = SafeJSON.parse(row.value) as {
+                stats?: { dateRangeMin?: number | null; dateRangeMax?: number | null };
+            };
+            const min = meta.stats?.dateRangeMin ?? null;
+            const max = meta.stats?.dateRangeMax ?? null;
+
+            if (min === null || max === null) {
+                return;
+            }
+
+            // Compare on day-floor to avoid spurious warnings when the user's
+            // `--to` is end-of-day but the indexed max is a message timestamp
+            // earlier in that same day.
+            const isoDay = (ts: number): string => new Date(ts).toISOString().slice(0, 10);
+            const minDay = isoDay(min * 1000);
+            const maxDay = isoDay(max * 1000);
+            const fromDay = from ? isoDay(from.getTime()) : undefined;
+            const toDay = to ? isoDay(to.getTime()) : undefined;
+            const outsideLower = fromDay !== undefined && fromDay < minDay;
+            const outsideUpper = toDay !== undefined && toDay > maxDay;
+
+            if (!outsideLower && !outsideUpper) {
+                return;
+            }
+
+            process.stderr.write(
+                `⚠  Requested range partially outside indexed coverage (${minDay} → ${maxDay}). ` +
+                    `Run "tools macos mail index" to refresh.\n`
+            );
+        } finally {
+            metaDb.close();
+        }
+    } catch (err) {
+        logger.debug(`[mail/search] coverage check skipped: ${err}`);
+    }
 }
 
 interface SearchCommandOptions {
@@ -188,6 +248,10 @@ export function registerSearchCommand(program: Command): void {
                 const indexerStorage = getIndexerStorage();
                 const indexDbPath = join(indexerStorage.getIndexDir(MAIL_INDEX_NAME), "index.db");
                 const indexExists = existsSync(indexDbPath);
+
+                if (indexExists && (searchOpts.from || searchOpts.to)) {
+                    warnIfDateRangeOutsideCoverage(indexDbPath, searchOpts.from, searchOpts.to);
+                }
 
                 let rows: MailMessageRow[] = [];
                 const snippetByRowid = new Map<number, string>();

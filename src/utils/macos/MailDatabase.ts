@@ -1,3 +1,5 @@
+import type { Database } from "bun:sqlite";
+import { pathToFileURL } from "node:url";
 import logger from "@app/logger";
 import { ENVELOPE_INDEX_PATH } from "@app/macos/lib/mail/constants";
 import type { MailDB } from "@app/macos/lib/mail/db-types";
@@ -13,6 +15,93 @@ import { buildOrderedLikePattern, escapeLike } from "@app/utils/database";
 import { type Expression, type SqlBool, sql } from "kysely";
 import { MacDatabase } from "./MacDatabase";
 import { type MailFilterOptions, resolveMailboxRowids, SQL_BIND_BATCH } from "./mail-sql";
+
+/**
+ * Delete chunks from `<tableName>_content` whose `source_id` (Mail.app ROWID)
+ * is now stale relative to the live envelope DB:
+ *   - the message no longer exists, OR
+ *   - the message is soft-deleted (`deleted = 1`), OR
+ *   - the message's `date_sent` no longer matches what we stored at index time
+ *     (Mail.app reuses ROWIDs after deletes — the live row may now be a
+ *     different message).
+ *
+ * Exported as a free function for direct testing with two `:memory:`
+ * databases. Production code should use `MailDatabase#pruneStaleChunks`.
+ *
+ * @param indexDb     The indexer's read-write DB (e.g. ~/.genesis-tools/indexer/macos-mail/index.db)
+ * @param envelopeDb  Mail.app's Envelope Index (readonly, opened by caller)
+ * @param tableName   Sanitized index name, e.g. "macos_mail"
+ * @returns           Number of chunks deleted.
+ */
+export function pruneStaleMailChunks(indexDb: Database, envelopeDb: Database, tableName: string): number {
+    const contentTable = `${tableName}_content`;
+    const envFilename = (envelopeDb as unknown as { filename?: string }).filename;
+    const usingMemory = !envFilename || envFilename === ":memory:";
+
+    if (usingMemory) {
+        // ATTACH only supports file paths; for in-memory test databases we
+        // copy the envelope's `messages` columns into a TEMP table on the
+        // index DB and run the same join there.
+        indexDb.exec("CREATE TEMP TABLE _env_msg (ROWID INTEGER PRIMARY KEY, date_sent INTEGER, deleted INTEGER)");
+
+        try {
+            const rows = envelopeDb.query("SELECT ROWID, date_sent, deleted FROM messages").all() as Array<{
+                ROWID: number;
+                date_sent: number;
+                deleted: number;
+            }>;
+            const ins = indexDb.prepare("INSERT INTO _env_msg VALUES (?, ?, ?)");
+
+            for (const r of rows) {
+                ins.run(r.ROWID, r.date_sent, r.deleted ?? 0);
+            }
+
+            const result = indexDb.run(`
+                DELETE FROM ${contentTable}
+                WHERE id IN (
+                    SELECT c.id FROM ${contentTable} c
+                    LEFT JOIN _env_msg m ON m.ROWID = CAST(c.source_id AS INTEGER)
+                    WHERE m.ROWID IS NULL
+                       OR m.deleted = 1
+                       OR m.date_sent != CAST(json_extract(c.metadata_json, '$.dateSent') AS INTEGER)
+                )
+            `);
+
+            return Number(result.changes);
+        } finally {
+            indexDb.exec("DROP TABLE _env_msg");
+        }
+    }
+
+    const uri = pathToFileURL(envFilename).toString();
+    indexDb.run(`ATTACH DATABASE '${uri.replace(/'/g, "''")}?mode=ro' AS mailapp`);
+
+    try {
+        const result = indexDb.run(`
+            DELETE FROM ${contentTable}
+            WHERE id IN (
+                SELECT c.id FROM ${contentTable} c
+                LEFT JOIN mailapp.messages m ON m.ROWID = CAST(c.source_id AS INTEGER)
+                WHERE m.ROWID IS NULL
+                   OR m.deleted = 1
+                   OR m.date_sent != CAST(json_extract(c.metadata_json, '$.dateSent') AS INTEGER)
+            )
+        `);
+        const removed = Number(result.changes);
+
+        if (removed > 0) {
+            logger.debug(`[mail/prune] removed ${removed} stale chunks from ${contentTable}`);
+        }
+
+        return removed;
+    } finally {
+        try {
+            indexDb.run("DETACH DATABASE mailapp");
+        } catch {
+            // detach failures shouldn't mask the prune result
+        }
+    }
+}
 
 /**
  * Build raw SQL filter fragments for date range / mailbox / receiver / account.
@@ -91,6 +180,36 @@ export class MailDatabase extends MacDatabase {
      * applicable. Idempotent: re-resolving an already-resolved opts is a
      * no-op.
      */
+    /**
+     * Remove stale chunks (deleted/recycled/missing ROWIDs) from an external
+     * indexer's content table based on the current envelope state. Wraps the
+     * exported `pruneStaleMailChunks` helper.
+     */
+    async pruneStaleChunks(indexDb: Database, tableName: string): Promise<number> {
+        return pruneStaleMailChunks(indexDb, this.getDb(), tableName);
+    }
+
+    /**
+     * Compute MIN/MAX `date_sent` (unix seconds) over chunks of an external
+     * indexer table by reading their `metadata_json` bag. Used by the indexer
+     * to record date-range coverage for stderr "out-of-coverage" warnings.
+     * Returns `{minTs: null, maxTs: null}` if the table is empty.
+     */
+    static getMailChunkDateRange(indexDb: Database, tableName: string): { minTs: number | null; maxTs: number | null } {
+        const contentTable = `${tableName}_content`;
+        const row = indexDb
+            .query(
+                `SELECT
+                    MIN(CAST(json_extract(metadata_json, '$.dateSent') AS INTEGER)) AS minTs,
+                    MAX(CAST(json_extract(metadata_json, '$.dateSent') AS INTEGER)) AS maxTs
+                 FROM ${contentTable}
+                 WHERE metadata_json IS NOT NULL`
+            )
+            .get() as { minTs: number | null; maxTs: number | null } | null;
+
+        return row ?? { minTs: null, maxTs: null };
+    }
+
     resolveMailboxFilter<T extends MailFilterOptions>(opts: T): T {
         if (opts.mailboxRowids !== undefined) {
             return opts;
