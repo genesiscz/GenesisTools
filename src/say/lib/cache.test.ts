@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, unlinkSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@app/utils/json";
@@ -117,5 +117,43 @@ describe("SayAudioCache", () => {
         expect(entries.length).toBe(1);
         expect(entries[0].text).toBe("hello world");
         expect(entries[0].count).toBe(2);
+    });
+
+    it("falls back to an empty index when index.json has the wrong shape", () => {
+        // Valid JSON, but neither a version-1 IndexShape nor garbage that would
+        // fail SafeJSON.parse. Without shape validation, the next access to
+        // `idx.entries[key]` would throw on undefined.
+        writeFileSync(join(dir, "index.json"), "{}");
+        const c = new SayAudioCache({ dir, threshold: 1 });
+        expect(() => c.recordMiss(baseParams, Buffer.from([1]), "audio/mpeg")).not.toThrow();
+        // After the recovery write, the file is now well-formed.
+        const raw = SafeJSON.parse(readFileSync(join(dir, "index.json"), "utf8")) as {
+            version: number;
+            entries: Record<string, unknown>;
+        };
+        expect(raw.version).toBe(1);
+        expect(Object.keys(raw.entries).length).toBe(1);
+    });
+
+    it("falls back when index.json is an array (wrong type)", () => {
+        writeFileSync(join(dir, "index.json"), "[]");
+        const c = new SayAudioCache({ dir, threshold: 1 });
+        expect(() => c.recordMiss(baseParams, Buffer.from([1]), "audio/mpeg")).not.toThrow();
+    });
+
+    it("writes index.json atomically and leaves no temp files behind", () => {
+        const c = new SayAudioCache({ dir, threshold: 1 });
+        c.recordMiss(baseParams, Buffer.from([1, 2]), "audio/mpeg");
+
+        const stragglers = readdirSync(dir).filter((f) => f.endsWith(".tmp"));
+        expect(stragglers).toEqual([]);
+
+        // index.json itself is intact and parseable.
+        const parsed = SafeJSON.parse(readFileSync(join(dir, "index.json"), "utf8")) as {
+            version: number;
+            entries: Record<string, unknown>;
+        };
+        expect(parsed.version).toBe(1);
+        expect(Object.keys(parsed.entries).length).toBe(1);
     });
 });
