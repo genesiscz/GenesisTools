@@ -146,9 +146,25 @@ export class SayAudioCache {
             return null;
         }
 
+        // existsSync above doesn't guard against another `tools say` process
+        // evicting/unlinking the file between the check and the read. Treat
+        // any read failure as a miss (with cleanup) instead of a hard error.
+        let audio: Buffer;
+
+        try {
+            audio = readFileSync(entry.audioPath);
+        } catch (err) {
+            logger.debug(`[say/cache] read failed (${entry.audioPath}): ${err}; treating as miss`);
+            entry.audioPath = undefined;
+            entry.contentType = undefined;
+            entry.sizeBytes = 0;
+            this.writeIndex(idx);
+            return null;
+        }
+
         entry.lastUsed = Date.now();
         this.writeIndex(idx);
-        return { audio: readFileSync(entry.audioPath), contentType: entry.contentType ?? "audio/mpeg" };
+        return { audio, contentType: entry.contentType ?? "audio/mpeg" };
     }
 
     /**

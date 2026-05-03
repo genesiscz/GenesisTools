@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 import { existsSync, readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import logger from "@app/logger";
 import { AI } from "@app/utils/ai/index.ts";
 import { getModelsForTask } from "@app/utils/ai/ModelManager";
@@ -20,13 +20,13 @@ import {
     type SettableField,
 } from "@app/utils/macos/SayConfigManager.ts";
 import { normalizeVolume } from "@app/utils/macos/tts.ts";
-import { Storage } from "@app/utils/storage/storage.ts";
 import { formatTable } from "@app/utils/table.ts";
 import * as p from "@clack/prompts";
 import { Command } from "commander";
 import pc from "picocolors";
 import { SayAudioCache } from "./lib/cache";
 import { speakWithProfile } from "./lib/speak";
+import { getSayStorage } from "./lib/storage";
 
 interface SayOptions {
     volume?: number;
@@ -134,6 +134,7 @@ const program = new Command()
         }
 
         const effective = await resolveEffective({ mgr, opts, unsetList });
+        const effectiveForRun: EffectiveSettings = { ...effective };
         let provider: SayProvider = effective.provider ?? "macos";
 
         // Per-text provider override: route phrases like "Permission needed"
@@ -148,6 +149,18 @@ const program = new Command()
                 `[say] text override matched "${matchedOverride.match}" → provider ${provider} → ${matchedOverride.provider}`
             );
             provider = matchedOverride.provider;
+
+            // Voice and model are provider-specific. A profile like
+            // {provider: macos, voice: Samantha} routed to xai/openai would
+            // try to synthesize "Samantha" on a cloud voice list — drop those
+            // unless the user passed them explicitly on the CLI.
+            if (!isFromCLI(cmd, "voice")) {
+                effectiveForRun.voice = null;
+            }
+
+            if (!isFromCLI(cmd, "model")) {
+                effectiveForRun.model = null;
+            }
         }
 
         if (provider !== "macos" && !envForProvider(provider)) {
@@ -159,7 +172,7 @@ const program = new Command()
         const stream = opts.stream === true ? true : opts.noStream === true ? false : undefined;
 
         try {
-            await speakCached({ mgr, text, provider, effective, opts, stream });
+            await speakCached({ mgr, text, provider, effective: effectiveForRun, opts, stream });
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
             console.error(pc.red(`[say] TTS failed: ${message}`));
@@ -325,8 +338,7 @@ async function speakCached(args: SpeakCachedArgs): Promise<void> {
     }
 
     const { threshold, maxBytes } = await mgr.getCacheSettings();
-    const cacheDir = join(new Storage("say").getBaseDir(), "cache");
-    const cache = new SayAudioCache({ dir: cacheDir, threshold, maxBytes });
+    const cache = new SayAudioCache({ dir: getSayStorage().getCacheDir(), threshold, maxBytes });
     const params = {
         text,
         provider,
