@@ -57,7 +57,7 @@ describe("pruneStaleMailChunks", () => {
         expect(pruneStaleMailChunks(idx, env, "macos_mail")).toBe(1);
     });
 
-    it("removes chunks whose live row's date_sent diverges (recycled ROWID)", () => {
+    it("removes chunks whose live row's date_sent diverges from indexed value", () => {
         const idx = new Database(":memory:");
         const env = new Database(":memory:");
         setupIndex(idx);
@@ -66,7 +66,10 @@ describe("pruneStaleMailChunks", () => {
         idx.exec(
             "INSERT INTO macos_mail_content (source_id, metadata_json) VALUES ('100', '{\"dateSent\":1700000000}')"
         );
-        // Same ROWID, different message — Mail.app reuses ROWIDs after deletes.
+        // Same ROWID, different date_sent — covers rare server-side date
+        // corrections (IMAP/Exchange resync). NOTE: Mail.app uses
+        // AUTOINCREMENT so ROWIDs are never recycled; this isn't the
+        // "old slot got a new message" case (that can't happen).
         env.exec("INSERT INTO messages (ROWID, date_sent) VALUES (100, 1800000000)");
 
         expect(pruneStaleMailChunks(idx, env, "macos_mail")).toBe(1);

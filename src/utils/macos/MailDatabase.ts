@@ -19,11 +19,15 @@ import { type MailFilterOptions, resolveMailboxRowids, SQL_BIND_BATCH } from "./
 /**
  * Delete chunks from `<tableName>_content` whose `source_id` (Mail.app ROWID)
  * is now stale relative to the live envelope DB:
- *   - the message no longer exists, OR
+ *   - the message no longer exists in the envelope (hard-deleted), OR
  *   - the message is soft-deleted (`deleted = 1`), OR
- *   - the message's `date_sent` no longer matches what we stored at index time
- *     (Mail.app reuses ROWIDs after deletes — the live row may now be a
- *     different message).
+ *   - the message's `date_sent` differs from what we stored at index time
+ *     (rare — server-side date correction via IMAP/Exchange resync).
+ *
+ * Note on ROWID stability: Mail.app's `messages` table is `INTEGER PRIMARY
+ * KEY AUTOINCREMENT`, so deleted ROWIDs are NEVER reused. Gaps in the
+ * sequence stay permanently empty. We don't need to re-index "recycled"
+ * IDs after a prune (issue #162) — the deleted ROWID slot is gone for good.
  *
  * Exported as a free function for direct testing with two `:memory:`
  * databases. Production code should use `MailDatabase#pruneStaleChunks`.
