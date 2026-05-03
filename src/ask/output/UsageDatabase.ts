@@ -157,7 +157,8 @@ export class UsageDatabase {
                 sql<number>`AVG(cost)`.as("avg_cost_per_message"),
             ])
             .where(sql<string>`date(timestamp)`, ">=", sinceDays(days))
-            .groupBy(["provider", "model"])
+            .groupBy("provider")
+            .groupBy("model")
             .orderBy("total_cost", "desc")
             .execute();
 
@@ -263,7 +264,12 @@ export class UsageDatabase {
             query = query.where(sql<string>`date(timestamp)`, ">=", sinceDays(days));
         }
 
-        const rows = await query.groupBy(["provider", "model"]).orderBy("total_cost", "desc").limit(limit).execute();
+        const rows = await query
+            .groupBy("provider")
+            .groupBy("model")
+            .orderBy("total_cost", "desc")
+            .limit(limit)
+            .execute();
 
         return rows.map((row) => ({
             provider: row.provider,

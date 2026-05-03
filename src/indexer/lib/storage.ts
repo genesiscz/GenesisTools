@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { countActiveEmbeddings } from "@app/utils/database/embedding-stats";
 import { Storage } from "@app/utils/storage/storage";
 import type { IndexStats } from "./types";
 
@@ -34,7 +35,6 @@ export function getDbSizeBytes(dbPath: string): number {
 export function readLiveStats(db: Database, indexName: string, dbPath: string): Partial<IndexStats> {
     const tableName = sanitizeName(indexName);
     const contentTable = `${tableName}_content`;
-    const embTable = `${tableName}_embeddings`;
 
     const result: Partial<IndexStats> = {};
 
@@ -48,16 +48,7 @@ export function readLiveStats(db: Database, indexName: string, dbPath: string): 
         // expected — table created lazily during first sync
     }
 
-    try {
-        const row = db.query(`SELECT COUNT(*) AS cnt FROM ${embTable}`).get() as { cnt: number } | null;
-
-        if (row) {
-            result.totalEmbeddings = row.cnt;
-        }
-    } catch {
-        // expected — table created lazily during first sync
-    }
-
+    result.totalEmbeddings = countActiveEmbeddings(db, tableName);
     result.dbSizeBytes = getDbSizeBytes(dbPath);
     return result;
 }
