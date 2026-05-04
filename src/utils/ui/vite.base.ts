@@ -205,6 +205,12 @@ export function createDashboardViteConfig({
             },
         },
         resolve: {
+            // TanStack devtools packages each ship their own nested copy of
+            // solid-js (1.9.11 hoisted vs 1.9.12 nested). Without dedupe the
+            // browser loads both, which Solid detects and reports as
+            // "You appear to have multiple instances of Solid". React/react-dom
+            // dedup is already handled by `pinNodeModules` above.
+            dedupe: ["solid-js"],
             alias: [
                 { find: "@ui", replacement: resolve(__dirname, ".") },
                 { find: "node:async_hooks", replacement: BROWSER_ASYNC_HOOKS_POLYFILL },
