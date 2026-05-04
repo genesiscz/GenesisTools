@@ -1,6 +1,8 @@
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { handleDashboardRequest } from "@app/debugging-master/core/dashboard-server";
+import { sseBroadcaster } from "@app/debugging-master/core/sse-broadcaster";
 import type { LogEntry } from "@app/debugging-master/types";
 
 import { SafeJSON } from "@app/utils/json";
@@ -48,7 +50,10 @@ function normalizeEntry(body: string): LogEntry {
 }
 
 /**
- * Start the HTTP ingest server.
+ * Start the HTTP ingest server. Live SSE fan-out is driven by the
+ * `FileTailer` inside `SSEBroadcaster` (watches the JSONL on disk), so the
+ * ingest path doesn't need to broadcast — works whether writes come from
+ * this process or another.
  */
 export function startServer(port: number = 7243): { server: ReturnType<typeof Bun.serve>; port: number } {
     ensureDir();
@@ -103,10 +108,17 @@ export function startServer(port: number = 7243): { server: ReturnType<typeof Bu
                 const path = join(SESSIONS_DIR, `${sessionName}.jsonl`);
                 try {
                     await Bun.write(path, "");
+                    sseBroadcaster.publishCleared(sessionName);
                     return new Response("cleared", { status: 200, headers: corsHeaders });
                 } catch {
                     return new Response("session not found", { status: 404, headers: corsHeaders });
                 }
+            }
+
+            // Dashboard routes (HTML + /api/*)
+            const dashboardResponse = await handleDashboardRequest(req, url, corsHeaders);
+            if (dashboardResponse) {
+                return dashboardResponse;
             }
 
             return new Response("not found", { status: 404, headers: corsHeaders });

@@ -1,0 +1,284 @@
+@import 'tailwindcss';
+@import '@ui/theme/styles.css';
+@import '@ui/theme/cyberpunk.css';
+@source "../../utils/ui";
+@source "./";
+
+@custom-variant dark (&:is(.dark *));
+
+/* ============================================================================
+   FOUNDATION
+   ============================================================================ */
+
+:root {
+    --dbg-bg: #07070d;
+    --dbg-bg-elev: #0d0d18;
+    --dbg-fg: #e6e6f0;
+    --dbg-muted: #6a6a82;
+    --dbg-border: rgba(255, 255, 255, 0.06);
+    --dbg-grid: rgba(168, 85, 247, 0.04);
+
+    /* Per-level neon palette — kept warm/cool paired for sophistication */
+    --lvl-dump: #06b6d4;        /* electric cyan */
+    --lvl-info: #fbbf24;        /* amber */
+    --lvl-warn: #f59e0b;        /* burnt amber */
+    --lvl-error: #f43f5e;       /* hot pink-red */
+    --lvl-timer: #a855f7;       /* purple */
+    --lvl-checkpoint: #10b981;  /* mint */
+    --lvl-assert-pass: #10b981;
+    --lvl-assert-fail: #f43f5e;
+    --lvl-snapshot: #3b82f6;    /* electric blue */
+    --lvl-trace: #8a8aa3;       /* muted */
+    --lvl-raw: #6a6a82;
+}
+
+html, body, #app {
+    height: 100%;
+    margin: 0;
+    background: var(--dbg-bg);
+    color: var(--dbg-fg);
+    font-family: 'JetBrains Mono', ui-monospace, Menlo, Monaco, Consolas, monospace;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+}
+
+body {
+    /* Ambient mesh gradient — barely visible but adds depth */
+    background:
+        radial-gradient(circle at 15% 5%, rgba(168, 85, 247, 0.06), transparent 40%),
+        radial-gradient(circle at 85% 95%, rgba(6, 182, 212, 0.05), transparent 50%),
+        radial-gradient(circle at 50% 50%, rgba(244, 63, 94, 0.03), transparent 60%),
+        var(--dbg-bg);
+    background-attachment: fixed;
+}
+
+/* CRT scan line overlay */
+body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    background: repeating-linear-gradient(
+        0deg,
+        rgba(0, 0, 0, 0.18) 0px,
+        rgba(0, 0, 0, 0.18) 1px,
+        transparent 1px,
+        transparent 3px
+    );
+    pointer-events: none;
+    z-index: 1;
+    mix-blend-mode: multiply;
+}
+
+/* ============================================================================
+   LEVEL CHIP — color-coded pill used everywhere
+   ============================================================================ */
+
+.lvl-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    border: 1px solid currentColor;
+    background: color-mix(in oklab, currentColor 12%, transparent);
+}
+
+.lvl-chip[data-lvl="dump"]        { color: var(--lvl-dump); }
+.lvl-chip[data-lvl="info"]        { color: var(--lvl-info); }
+.lvl-chip[data-lvl="warn"]        { color: var(--lvl-warn); }
+.lvl-chip[data-lvl="error"]       { color: var(--lvl-error); }
+.lvl-chip[data-lvl="timer-start"] { color: var(--lvl-timer); }
+.lvl-chip[data-lvl="timer-end"]   { color: var(--lvl-timer); }
+.lvl-chip[data-lvl="checkpoint"]  { color: var(--lvl-checkpoint); }
+.lvl-chip[data-lvl="assert"]      { color: var(--lvl-checkpoint); }
+.lvl-chip[data-lvl="snapshot"]    { color: var(--lvl-snapshot); }
+.lvl-chip[data-lvl="trace"]       { color: var(--lvl-trace); }
+.lvl-chip[data-lvl="raw"]         { color: var(--lvl-raw); }
+.lvl-chip[data-failed="true"]     { color: var(--lvl-assert-fail); }
+
+/* ============================================================================
+   HYPOTHESIS CHIP — inline tag on rows, click to filter
+   ============================================================================ */
+
+.h-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    color: #c4a8ff;
+    border: 1px solid rgba(168, 85, 247, 0.35);
+    background: rgba(168, 85, 247, 0.1);
+    cursor: pointer;
+    transition: all 0.12s ease;
+    flex-shrink: 0;
+}
+
+.h-chip:hover {
+    color: #e0d0ff;
+    border-color: rgba(168, 85, 247, 0.7);
+    background: rgba(168, 85, 247, 0.18);
+    box-shadow: 0 0 8px rgba(168, 85, 247, 0.4);
+}
+
+/* ============================================================================
+   ENTRY ROW — color-coded left border, hover lift
+   ============================================================================ */
+
+.entry-row {
+    border-left: 3px solid transparent;
+    transition: background 0.12s ease, border-color 0.12s ease, transform 0.12s ease;
+    cursor: pointer;
+    position: relative;
+}
+
+.entry-row[data-lvl="dump"]        { border-left-color: var(--lvl-dump); }
+.entry-row[data-lvl="info"]        { border-left-color: var(--lvl-info); }
+.entry-row[data-lvl="warn"]        { border-left-color: var(--lvl-warn); }
+.entry-row[data-lvl="error"]       { border-left-color: var(--lvl-error); }
+.entry-row[data-lvl="timer-start"] { border-left-color: var(--lvl-timer); }
+.entry-row[data-lvl="timer-end"]   { border-left-color: var(--lvl-timer); }
+.entry-row[data-lvl="checkpoint"]  { border-left-color: var(--lvl-checkpoint); }
+.entry-row[data-lvl="assert"]      { border-left-color: var(--lvl-checkpoint); }
+.entry-row[data-lvl="snapshot"]    { border-left-color: var(--lvl-snapshot); }
+.entry-row[data-lvl="trace"]       { border-left-color: var(--lvl-trace); }
+.entry-row[data-lvl="raw"]         { border-left-color: var(--lvl-raw); }
+.entry-row[data-failed="true"]     { border-left-color: var(--lvl-assert-fail); }
+
+.entry-row:hover {
+    background: rgba(255, 255, 255, 0.025);
+}
+
+/* New-entry flash — runs once on mount */
+.entry-row[data-fresh="true"] {
+    animation: flash-in 1.4s ease-out;
+}
+
+@keyframes flash-in {
+    0%   { background: color-mix(in oklab, currentColor 18%, transparent); }
+    100% { background: transparent; }
+}
+
+/* Error glitch — runs once when an error first arrives */
+.entry-row[data-lvl="error"][data-fresh="true"] {
+    animation: error-glitch 0.4s linear, flash-in 1.4s ease-out;
+}
+
+@keyframes error-glitch {
+    0%   { transform: translateX(0); }
+    20%  { transform: translateX(-2px); }
+    40%  { transform: translateX(2px); }
+    60%  { transform: translateX(-1px); }
+    80%  { transform: translateX(1px); }
+    100% { transform: translateX(0); }
+}
+
+/* ============================================================================
+   STATUS PILL — animated dot
+   ============================================================================ */
+
+.status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.status-live  { background: var(--lvl-checkpoint); box-shadow: 0 0 8px var(--lvl-checkpoint); animation: pulse 1.6s ease-in-out infinite; }
+.status-warn  { background: var(--lvl-info); box-shadow: 0 0 8px var(--lvl-info); animation: pulse 0.9s ease-in-out infinite; }
+.status-down  { background: var(--lvl-error); box-shadow: 0 0 6px var(--lvl-error); }
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50%      { opacity: 0.4; transform: scale(0.85); }
+}
+
+/* ============================================================================
+   FILTER PILLS — toggleable per-level chips
+   ============================================================================ */
+
+.filter-pill {
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    border: 1px solid currentColor;
+    transition: all 0.12s ease;
+    user-select: none;
+    cursor: pointer;
+    background: transparent;
+}
+
+.filter-pill[data-active="true"] {
+    background: color-mix(in oklab, currentColor 18%, transparent);
+    box-shadow:
+        0 0 8px color-mix(in oklab, currentColor 30%, transparent),
+        inset 0 0 8px color-mix(in oklab, currentColor 12%, transparent);
+}
+
+.filter-pill[data-active="false"] {
+    opacity: 0.4;
+}
+
+.filter-pill:hover { opacity: 1; transform: translateY(-1px); }
+
+/* ============================================================================
+   JSON TREE — syntax highlight in expanded view
+   ============================================================================ */
+
+.json-tree {
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.json-key      { color: #c4a8ff; }
+.json-string   { color: #84e1bc; }
+.json-number   { color: #fbbf24; }
+.json-boolean  { color: #f43f5e; }
+.json-null     { color: var(--dbg-muted); }
+.json-bracket  { color: var(--dbg-muted); }
+
+/* ============================================================================
+   BRAND TYPOGRAPHY
+   ============================================================================ */
+
+.brand-title {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-weight: 800;
+    letter-spacing: 0.18em;
+    background: linear-gradient(135deg, #ff9500, #ffd700, #00f0ff);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    text-shadow: 0 0 30px rgba(255, 149, 0, 0.25);
+}
+
+/* ============================================================================
+   SCROLLBAR
+   ============================================================================ */
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+    background: rgba(168, 85, 247, 0.25);
+    border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover { background: rgba(168, 85, 247, 0.4); }
+
+/* ============================================================================
+   UTILITY: monospace truncation with ellipsis on overflow
+   ============================================================================ */
+
+.truncate-mono {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}

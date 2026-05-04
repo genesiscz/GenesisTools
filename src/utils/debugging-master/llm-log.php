@@ -15,10 +15,17 @@
  *   LlmLog::timerEnd('db-query');
  *   LlmLog::snapshot('state', ['user' => $user, 'cart' => $cart]);
  *
+ * Every entry captures the full call stack by default (callers up the chain).
+ * To opt out per-call:           LlmLog::info('msg', null, ['stack' => false])
+ * To opt out globally (one-time): LlmLog::configure(['captureStackByDefault' => false])
+ *
+ * Every method accepts a final `$opts` argument — an associative array with
+ * optional keys: `h` (string, hypothesis tag) and `stack` (false to skip,
+ * string to override). For backwards compatibility, methods that previously
+ * accepted `?string $h` still accept a string in that position.
+ *
  * Logs are written as JSONL to:
  *   ~/.genesis-tools/debugging-master/sessions/<session>.jsonl
- *
- * Each line includes timestamp, caller file:line, and optional hypothesis tag.
  */
 
 class LlmLog
@@ -28,6 +35,7 @@ class LlmLog
 	private static string $currentSession = 'default';
 	private static string $sessionPath = '';
 	private static bool $dirEnsured = false;
+	private static bool $captureStackByDefault = true;
 
 	private static function sessionsDir(): string
 	{
@@ -53,25 +61,81 @@ class LlmLog
 		self::$dirEnsured = true;
 	}
 
-	private static function getCallerLocation(): array
+	/** Render a full backtrace as a multiline string, skipping LlmLog internals. */
+	private static function captureStack(): string
 	{
-		$trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 3);
-		// Frame 0 = this method, Frame 1 = LlmLog method, Frame 2 = caller
-		$frame = $trace[2] ?? $trace[1] ?? [];
-		return [
-			'file' => $frame['file'] ?? 'unknown',
-			'line' => $frame['line'] ?? 0,
-		];
+		$trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS);
+		$lines = [];
+		foreach ($trace as $frame) {
+			$cls = $frame['class'] ?? '';
+			if ($cls === self::class) continue;
+			$file = $frame['file'] ?? 'unknown';
+			$line = $frame['line'] ?? 0;
+			$fn = ($cls !== '' ? $cls . ($frame['type'] ?? '::') : '') . ($frame['function'] ?? '?');
+			$lines[] = "  at $fn ($file:$line)";
+		}
+		return implode("\n", $lines);
 	}
 
-	/** @param array<string, mixed> $entry */
-	private static function write(array $entry): void
+	/** @return array{file: string, line: int} */
+	private static function getCallerLocation(): array
+	{
+		$trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS);
+		// Walk past LlmLog frames to find the real caller.
+		foreach ($trace as $frame) {
+			$cls = $frame['class'] ?? '';
+			if ($cls === self::class) continue;
+			return [
+				'file' => $frame['file'] ?? 'unknown',
+				'line' => $frame['line'] ?? 0,
+			];
+		}
+		return ['file' => 'unknown', 'line' => 0];
+	}
+
+	/**
+	 * Normalize backwards-compatible $opts. Methods used to accept `?string $h`
+	 * as the last arg; that's still allowed and is mapped to ['h' => <string>].
+	 *
+	 * @param string|array<string, mixed>|null $opts
+	 * @return array<string, mixed>
+	 */
+	private static function normalizeOpts(string|array|null $opts): array
+	{
+		if ($opts === null) return [];
+		if (is_string($opts)) return ['h' => $opts];
+		return $opts;
+	}
+
+	/**
+	 * @param array<string, mixed> $entry
+	 * @param array<string, mixed> $opts
+	 */
+	private static function write(array $entry, array $opts = []): void
 	{
 		self::ensureDir();
 		$caller = self::getCallerLocation();
 		$entry['ts'] = (int)(microtime(true) * 1000);
 		$entry['file'] = $caller['file'];
 		$entry['line'] = $caller['line'];
+
+		if (isset($opts['h']) && !isset($entry['h'])) {
+			$entry['h'] = $opts['h'];
+		}
+
+		$includeStack = self::$captureStackByDefault;
+		if (array_key_exists('stack', $opts)) {
+			$includeStack = $opts['stack'] !== false;
+		}
+
+		if (!isset($entry['stack'])) {
+			if (is_string($opts['stack'] ?? null)) {
+				$entry['stack'] = $opts['stack'];
+			} elseif ($includeStack) {
+				$entry['stack'] = self::captureStack();
+			}
+		}
+
 		try {
 			$json = json_encode($entry, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
 		} catch (\Throwable $e) {
@@ -95,30 +159,38 @@ class LlmLog
 		self::$dirEnsured = false;
 	}
 
-	public static function dump(string $label, mixed $data, ?string $h = null): void
+	/** @param array{captureStackByDefault?: bool} $opts */
+	public static function configure(array $opts): void
 	{
-		$entry = ['level' => 'dump', 'label' => $label, 'data' => $data];
-		if ($h !== null) $entry['h'] = $h;
-		self::write($entry);
+		if (isset($opts['captureStackByDefault'])) {
+			self::$captureStackByDefault = (bool)$opts['captureStackByDefault'];
+		}
 	}
 
-	public static function info(string $msg, mixed $data = null, ?string $h = null): void
+	/** @param string|array<string, mixed>|null $opts */
+	public static function dump(string $label, mixed $data, string|array|null $opts = null): void
+	{
+		self::write(['level' => 'dump', 'label' => $label, 'data' => $data], self::normalizeOpts($opts));
+	}
+
+	/** @param string|array<string, mixed>|null $opts */
+	public static function info(string $msg, mixed $data = null, string|array|null $opts = null): void
 	{
 		$entry = ['level' => 'info', 'msg' => $msg];
 		if ($data !== null) $entry['data'] = $data;
-		if ($h !== null) $entry['h'] = $h;
-		self::write($entry);
+		self::write($entry, self::normalizeOpts($opts));
 	}
 
-	public static function warn(string $msg, mixed $data = null, ?string $h = null): void
+	/** @param string|array<string, mixed>|null $opts */
+	public static function warn(string $msg, mixed $data = null, string|array|null $opts = null): void
 	{
 		$entry = ['level' => 'warn', 'msg' => $msg];
 		if ($data !== null) $entry['data'] = $data;
-		if ($h !== null) $entry['h'] = $h;
-		self::write($entry);
+		self::write($entry, self::normalizeOpts($opts));
 	}
 
-	public static function error(string $msg, ?\Throwable $err = null, ?string $h = null): void
+	/** @param string|array<string, mixed>|null $opts */
+	public static function error(string $msg, ?\Throwable $err = null, string|array|null $opts = null): void
 	{
 		$entry = ['level' => 'error', 'msg' => $msg];
 		if ($err !== null) {
@@ -129,50 +201,52 @@ class LlmLog
 				'code' => $err->getCode(),
 			];
 		}
-		if ($h !== null) $entry['h'] = $h;
-		self::write($entry);
+		self::write($entry, self::normalizeOpts($opts));
 	}
 
-	public static function timerStart(string $label): void
+	/** @param array<string, mixed>|null $opts */
+	public static function timerStart(string $label, ?array $opts = null): void
 	{
 		self::$timers[$label] = microtime(true) * 1000;
-		self::write(['level' => 'timer-start', 'label' => $label]);
+		self::write(['level' => 'timer-start', 'label' => $label], self::normalizeOpts($opts));
 	}
 
-	public static function timerEnd(string $label): void
+	/** @param array<string, mixed>|null $opts */
+	public static function timerEnd(string $label, ?array $opts = null): void
 	{
 		$entry = ['level' => 'timer-end', 'label' => $label];
 		if (isset(self::$timers[$label])) {
 			$entry['durationMs'] = (int)(microtime(true) * 1000 - self::$timers[$label]);
 			unset(self::$timers[$label]);
 		}
-		self::write($entry);
+		self::write($entry, self::normalizeOpts($opts));
 	}
 
-	public static function checkpoint(string $label): void
+	/** @param array<string, mixed>|null $opts */
+	public static function checkpoint(string $label, ?array $opts = null): void
 	{
-		self::write(['level' => 'checkpoint', 'label' => $label]);
+		self::write(['level' => 'checkpoint', 'label' => $label], self::normalizeOpts($opts));
 	}
 
-	public static function assert(bool $condition, string $label, mixed $ctx = null): void
+	/** @param array<string, mixed>|null $opts */
+	public static function assert(bool $condition, string $label, mixed $ctx = null, ?array $opts = null): void
 	{
 		$entry = ['level' => 'assert', 'label' => $label, 'passed' => $condition];
 		if ($ctx !== null) $entry['ctx'] = $ctx;
-		self::write($entry);
+		self::write($entry, self::normalizeOpts($opts));
 	}
 
-	public static function snapshot(string $label, array $vars, ?string $h = null): void
+	/** @param string|array<string, mixed>|null $opts */
+	public static function snapshot(string $label, array $vars, string|array|null $opts = null): void
 	{
-		$entry = ['level' => 'snapshot', 'label' => $label, 'vars' => $vars];
-		if ($h !== null) $entry['h'] = $h;
-		self::write($entry);
+		self::write(['level' => 'snapshot', 'label' => $label, 'vars' => $vars], self::normalizeOpts($opts));
 	}
 
-	public static function trace(string $label, mixed $data = null, ?string $h = null): void
+	/** @param string|array<string, mixed>|null $opts */
+	public static function trace(string $label, mixed $data = null, string|array|null $opts = null): void
 	{
 		$entry = ['level' => 'trace', 'label' => $label];
 		if ($data !== null) $entry['data'] = $data;
-		if ($h !== null) $entry['h'] = $h;
-		self::write($entry);
+		self::write($entry, self::normalizeOpts($opts));
 	}
 }

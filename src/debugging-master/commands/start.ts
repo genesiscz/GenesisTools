@@ -1,11 +1,13 @@
 import { copyFileSync, existsSync } from "node:fs";
 import { basename, join, relative, resolve } from "node:path";
+import { ensureDashboardBuilt } from "@app/debugging-master/commands/dashboard";
 import { startServer } from "@app/debugging-master/core/http-server";
 import { SessionManager } from "@app/debugging-master/core/session-manager";
 import type { ProjectConfig } from "@app/debugging-master/types";
 import { suggestCommand } from "@app/utils/cli/executor";
 import { formatRelativeTime } from "@app/utils/format";
 import { getLocalIpv4 } from "@app/utils/network";
+import { renderQr } from "@app/utils/qr";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -178,6 +180,8 @@ export function registerStartCommand(program: Command): void {
 
             // --- Optionally start HTTP server ---
             if (opts.serve) {
+                await ensureDashboardBuilt();
+
                 let actualPort: number;
                 let serverReused = false;
 
@@ -209,9 +213,13 @@ export function registerStartCommand(program: Command): void {
                 }
 
                 const lanIp = getLocalIpv4();
-                console.log(pc.dim(`POST http://${lanIp}:${actualPort}/log/${sessionName}`));
-                console.log(pc.dim(`GET  http://${lanIp}:${actualPort}/health`));
+                const dashboardUrl = `http://${lanIp}:${actualPort}/`;
+                console.log(pc.dim(`  ingest:    POST http://${lanIp}:${actualPort}/log/${sessionName}`));
+                console.log(pc.dim(`  health:    GET  http://${lanIp}:${actualPort}/health`));
+                console.log(`  ${pc.bold(pc.yellow("dashboard:"))} ${pc.bold(dashboardUrl)}`);
                 console.log("");
+                console.log(pc.dim("  scan from your phone:"));
+                console.log(renderQr(dashboardUrl, { small: true }));
 
                 if (!serverReused) {
                     // Keep process alive only if we own the server
