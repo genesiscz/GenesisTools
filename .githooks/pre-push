@@ -1,0 +1,31 @@
+#!/bin/sh
+
+# Pre-push hook — mirrors CI exactly (.github/workflows/ci.yml).
+# Catches issues that pre-commit's --staged mode misses, e.g. the dashboard's
+# tab-indented biome.json (excluded from the root biome includes, so biome
+# --staged from the root or from inside the dashboard reports "Checked 0 files"
+# even when dashboard files are staged).
+#
+# Activate: git config core.hooksPath .githooks
+
+set -e
+
+# Skip if pushing nothing (e.g. delete-only push).
+if ! read -r local_ref local_sha remote_ref remote_sha; then
+    exit 0
+fi
+
+if [ "$local_sha" = "0000000000000000000000000000000000000000" ]; then
+    exit 0
+fi
+
+echo "▶ bun run lint..."
+bun run lint
+
+echo "▶ bun run lint:dashboard..."
+bun run lint:dashboard
+
+echo "▶ bun run typecheck:all..."
+bun run typecheck:all
+
+echo "✔ pre-push passed (CI mirror)"
