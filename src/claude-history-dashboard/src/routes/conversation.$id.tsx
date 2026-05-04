@@ -5,6 +5,7 @@ import { Calendar, FolderOpen, GitBranch } from "lucide-react";
 import { useMemo } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
+import { formatLongDateTime } from "@/lib/utils";
 import { getConversation } from "@/server/conversations";
 import type { SerializableConversationDetail } from "@/server/serializers";
 
@@ -126,18 +127,9 @@ function ConversationPage() {
 								{conversation.gitBranch}
 							</Badge>
 						)}
-						<span
-							className="flex items-center gap-1 text-[11px] font-mono text-muted-foreground/40 tabular-nums"
-							suppressHydrationWarning
-						>
+						<span className="flex items-center gap-1 text-[11px] font-mono text-muted-foreground/40 tabular-nums">
 							<Calendar className="w-3 h-3" />
-							{new Date(conversation.timestamp).toLocaleString("en-US", {
-								weekday: "short",
-								month: "short",
-								day: "numeric",
-								hour: "2-digit",
-								minute: "2-digit",
-							})}
+							{formatLongDateTime(conversation.timestamp)}
 						</span>
 						{conversation.isSubagent && (
 							<Badge variant="outline" className="text-[10px] text-purple-400 border-purple-500/20">

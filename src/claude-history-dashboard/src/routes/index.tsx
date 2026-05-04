@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { formatShortDateTime } from "@/lib/utils";
 import { getConversations } from "@/server/conversations";
 
 export const Route = createFileRoute("/")({
@@ -178,12 +179,7 @@ function IndexPage() {
 											)}
 											<span className="flex items-center gap-1.5 ml-auto">
 												<Calendar className="w-3 h-3" />
-												{new Date(conv.timestamp).toLocaleDateString("en-US", {
-													month: "short",
-													day: "numeric",
-													hour: "2-digit",
-													minute: "2-digit",
-												})}
+												{formatShortDateTime(conv.timestamp)}
 											</span>
 										</div>
 									</CardContent>
