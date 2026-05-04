@@ -26,6 +26,10 @@ echo "▶ bun run lint:dashboard..."
 bun run lint:dashboard
 
 echo "▶ bun run typecheck:all..."
-bun run typecheck:all
+if ! bun run typecheck:all; then
+    echo "▶ typecheck failed — running bun install and retrying..."
+    bun install
+    bun run typecheck:all
+fi
 
 echo "✔ pre-push passed (CI mirror)"
