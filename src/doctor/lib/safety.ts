@@ -1,8 +1,22 @@
 import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { SafeJSON } from "@app/utils/json";
-import { matchesGlob } from "@app/utils/string";
 import { BLACKLIST_FILE } from "./paths";
 import type { Severity } from "./types";
+
+function matchesGlob(path: string, glob: string): boolean {
+    const home = homedir();
+    const normalize = (input: string): string => input.replace(/^~(?=$|[\\/])/, home).replace(/[\\/]+/g, "/");
+
+    const normalizedGlob = normalize(glob);
+    const escaped = normalizedGlob.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+    const pattern = escaped
+        .replace(/\*\*/g, "§DOUBLESTAR§")
+        .replace(/\*/g, "[^/]*")
+        .replace(/§DOUBLESTAR§/g, ".*");
+    const regex = new RegExp(`^${pattern}$`);
+    return regex.test(normalize(path));
+}
 
 export const CACHE_BLACKLIST_GLOBS = [
     "~/Library/Caches/JetBrains/**",

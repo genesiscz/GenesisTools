@@ -4,8 +4,6 @@
  * truncateText, and sanitizeOutput from across the codebase.
  */
 
-import { homedir } from "node:os";
-
 /**
  * Create a URL-safe slug from a title string.
  * Normalizes diacritics, replaces non-alphanumeric with dashes, trims, and limits to 50 chars.
@@ -97,20 +95,6 @@ export function sanitizeOutput(text: string, removeANSI: boolean = false): strin
 export function matchGlob(value: string, pattern: string): boolean {
     const escaped = pattern.replace(/[.+^${}()|[\]\\?]/g, "\\$&").replace(/\*/g, ".*");
     return new RegExp(`^${escaped}$`, "i").test(value);
-}
-
-export function matchesGlob(path: string, glob: string): boolean {
-    const home = homedir();
-    const normalize = (input: string): string => input.replace(/^~(?=$|[\\/])/, home).replace(/[\\/]+/g, "/");
-
-    const normalizedGlob = normalize(glob);
-    const escaped = normalizedGlob.replace(/[.+^${}()|[\]\\]/g, "\\$&");
-    const pattern = escaped
-        .replace(/\*\*/g, "§DOUBLESTAR§")
-        .replace(/\*/g, "[^/]*")
-        .replace(/§DOUBLESTAR§/g, ".*");
-    const regex = new RegExp(`^${pattern}$`);
-    return regex.test(normalize(path));
 }
 
 /**
