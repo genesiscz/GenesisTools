@@ -69,6 +69,13 @@ export function startServer(port: number = 7243): { server: ReturnType<typeof Bu
     const server = Bun.serve({
         port,
         hostname: "0.0.0.0",
+        // Idle timeout 2 minutes. SSE heartbeats fire every 15s (well within
+        // this window) so streams stay open. The non-zero timeout is a safety
+        // net: if a connection genuinely goes silent (network glitch, sleeping
+        // laptop), the server reaps it instead of leaking forever. Bun's
+        // default 10s would kill SSE between heartbeats and trigger a
+        // reconnect storm.
+        idleTimeout: 120,
         async fetch(req) {
             const url = new URL(req.url);
 

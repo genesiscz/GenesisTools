@@ -1,6 +1,5 @@
 import type { IndexedLogEntry } from "@app/debugging-master/types";
-import { useVirtualizer } from "@tanstack/react-virtual";
-import { useEffect, useLayoutEffect, useRef } from "react";
+import { memo, useEffect, useRef } from "react";
 import { EntryRow } from "./EntryRow";
 import type { SortDir } from "./FilterBar";
 
@@ -14,10 +13,7 @@ interface Props {
     onFilterHypothesis: (h: string) => void;
 }
 
-const ESTIMATED_ROW_PX = 44;
-const OVERSCAN = 12;
-
-export function EntryList({
+function EntryListImpl({
     entries,
     expandedIds,
     freshIds,
@@ -28,41 +24,30 @@ export function EntryList({
 }: Props): React.ReactElement {
     const ref = useRef<HTMLDivElement>(null);
 
-    const virtualizer = useVirtualizer({
-        count: entries.length,
-        getScrollElement: () => ref.current,
-        estimateSize: () => ESTIMATED_ROW_PX,
-        overscan: OVERSCAN,
-        getItemKey: (index) => entries[index]?.index ?? index,
-    });
-
     // When sort direction flips, snap to the new active edge.
+    // `Number.MAX_SAFE_INTEGER` is the trick to scroll-to-bottom without
+    // reading `scrollHeight` — the browser clamps internally. Reading
+    // `scrollHeight` forces a sync layout pass, which is what was throttling
+    // bursty ingest at 300+ rows.
     useEffect(() => {
         const el = ref.current;
         if (!el) {
             return;
         }
-        if (sortDir === "desc") {
-            el.scrollTop = 0;
-        } else {
-            el.scrollTop = el.scrollHeight;
-        }
+        el.scrollTop = sortDir === "desc" ? 0 : Number.MAX_SAFE_INTEGER;
     }, [sortDir]);
 
-    // While autoscroll is on, snap to the active edge on every entry change —
-    // synchronously before paint, so the user never sees a flash of the wrong
-    // scroll position. When autoscroll is off, the browser's `overflow-anchor`
-    // keeps the user's visible content stable as new rows prepend/append.
-    useLayoutEffect(() => {
+    // While autoscroll is on, snap to the active edge on every entry change.
+    // `useEffect` (post-paint) instead of `useLayoutEffect` — the bottom-snap
+    // doesn't need to be synchronous; `overflow-anchor` keeps the visible
+    // content stable across the brief gap. Trading a single frame of "wrong"
+    // scroll position for not blocking paint on every burst.
+    useEffect(() => {
         const el = ref.current;
         if (!el || !autoScroll) {
             return;
         }
-        if (sortDir === "desc") {
-            el.scrollTop = 0;
-        } else {
-            el.scrollTop = el.scrollHeight;
-        }
+        el.scrollTop = sortDir === "desc" ? 0 : Number.MAX_SAFE_INTEGER;
     }, [entries, autoScroll, sortDir]);
 
     if (entries.length === 0) {
@@ -76,42 +61,26 @@ export function EntryList({
         );
     }
 
-    const totalSize = virtualizer.getTotalSize();
-    const items = virtualizer.getVirtualItems();
-
     return (
-        <div ref={ref} className="flex-1 overflow-y-auto overflow-x-hidden">
-            <div style={{ height: totalSize, position: "relative", width: "100%" }}>
-                {items.map((vi) => {
-                    const entry = entries[vi.index];
-                    if (!entry) {
-                        return null;
-                    }
-                    return (
-                        <div
-                            key={vi.key}
-                            data-index={vi.index}
-                            ref={virtualizer.measureElement}
-                            style={{
-                                position: "absolute",
-                                top: 0,
-                                left: 0,
-                                width: "100%",
-                                transform: `translateY(${vi.start}px)`,
-                            }}
-                            className="border-b border-white/4"
-                        >
-                            <EntryRow
-                                entry={entry}
-                                expanded={expandedIds.has(entry.index)}
-                                fresh={freshIds.has(entry.index)}
-                                onToggle={onToggle}
-                                onFilterHypothesis={onFilterHypothesis}
-                            />
-                        </div>
-                    );
-                })}
-            </div>
+        <div ref={ref} className="flex-1 overflow-y-auto overflow-x-hidden divide-y divide-white/4">
+            {entries.map((e) => (
+                <EntryRow
+                    key={e.index}
+                    entry={e}
+                    expanded={expandedIds.has(e.index)}
+                    fresh={freshIds.has(e.index)}
+                    onToggle={onToggle}
+                    onFilterHypothesis={onFilterHypothesis}
+                />
+            ))}
         </div>
     );
 }
+
+/**
+ * Memoized so unrelated App-level state churn (sessions polling every 5s,
+ * fresh-marker timers expiring every 1.5s) doesn't walk the 4k+ row tree.
+ * Without this, those polls trigger an `entries.map` + 4k React.memo
+ * prop-equality checks on every tick, even with no data change.
+ */
+export const EntryList = memo(EntryListImpl);

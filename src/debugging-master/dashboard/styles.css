@@ -43,30 +43,38 @@ html, body, #app {
 }
 
 body {
-    /* Ambient mesh gradient — barely visible but adds depth */
+    /* Ambient mesh gradient on the document, NOT fixed-attachment. With
+       `background-attachment: fixed`, every scroll frame forces a full
+       repaint of the backdrop — at ~4k rows that saturates the compositor
+       and the page goes unresponsive. Plain background scrolls with the
+       document and gets the browser's fast-scroll path. */
     background:
         radial-gradient(circle at 15% 5%, rgba(168, 85, 247, 0.06), transparent 40%),
         radial-gradient(circle at 85% 95%, rgba(6, 182, 212, 0.05), transparent 50%),
-        radial-gradient(circle at 50% 50%, rgba(244, 63, 94, 0.03), transparent 60%),
         var(--dbg-bg);
-    background-attachment: fixed;
 }
 
-/* CRT scan line overlay */
+/* CRT scan line overlay — promoted to its own GPU layer via translateZ(0)
+   + will-change. Without the layer hint, Chromium composites the fixed
+   overlay as part of the document layer; every scroll frame then forces a
+   raster pass for the gradient stripes across the whole viewport, pegging
+   the main thread on long log lists. With its own layer, scroll = pure
+   compositor translate, no per-frame raster. */
 body::before {
     content: "";
     position: fixed;
     inset: 0;
     background: repeating-linear-gradient(
         0deg,
-        rgba(0, 0, 0, 0.18) 0px,
-        rgba(0, 0, 0, 0.18) 1px,
+        rgba(0, 0, 0, 0.10) 0px,
+        rgba(0, 0, 0, 0.10) 1px,
         transparent 1px,
         transparent 3px
     );
     pointer-events: none;
     z-index: 1;
-    mix-blend-mode: multiply;
+    transform: translateZ(0);
+    will-change: transform;
 }
 
 /* ============================================================================
@@ -131,11 +139,28 @@ body::before {
    ENTRY ROW — color-coded left border, hover lift
    ============================================================================ */
 
+/* Override the global .glass-card to drop `backdrop-filter: blur(20px)`.
+   Backdrop-filter on sticky elements (header, filter bar) recomputes a
+   gaussian blur across the area behind the overlay on every scroll frame —
+   at ~4k rows it pegs the GPU and the page becomes unclickable. The solid
+   alpha background looks nearly identical without the readback cost. */
+.glass-card {
+    background: rgba(10, 10, 20, 0.92);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
 .entry-row {
     border-left: 3px solid transparent;
-    transition: background 0.12s ease, border-color 0.12s ease, transform 0.12s ease;
     cursor: pointer;
     position: relative;
+}
+
+/* Transition only kicks in on hover — avoids 300+ active transition state
+   machines + restyle invalidations during bursty ingest. */
+.entry-row:hover {
+    transition: background 0.12s ease;
 }
 
 .entry-row[data-lvl="dump"]        { border-left-color: var(--lvl-dump); }

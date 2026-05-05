@@ -57,7 +57,15 @@ export function App(): React.ReactElement {
     const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
     const [freshIds, setFreshIds] = useState<Set<number>>(new Set());
 
-    const freshTimers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
+    // Batched SSE delivery — accumulate incoming entries in a ref and flush
+    // once per animation frame. EventSource fires `message` events as separate
+    // tasks (React 18 doesn't auto-batch them), so a 300-entry backlog catch-up
+    // would otherwise trigger 300 setEntries spreads (O(N²) allocations) and
+    // 300 reconciliations, freezing the main thread.
+    const pendingEntriesRef = useRef<IndexedLogEntry[]>([]);
+    const pendingFreshRef = useRef<number[]>([]);
+    const flushRafRef = useRef<number | null>(null);
+    const freshSweepTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     const refreshSessions = useCallback(async () => {
         try {
@@ -132,15 +140,17 @@ export function App(): React.ReactElement {
         const dispose = connectStream(activeSession, {
             onStatus: setStatus,
             onEntry: (entry) => {
-                setEntries((prev) => {
-                    if (prev.length > 0 && prev[prev.length - 1].index >= entry.index) {
-                        return prev;
-                    }
-                    return [...prev, entry];
-                });
-                markFresh(entry.index);
+                pendingEntriesRef.current.push(entry);
+                pendingFreshRef.current.push(entry.index);
+                scheduleFlush();
             },
             onCleared: () => {
+                pendingEntriesRef.current = [];
+                pendingFreshRef.current = [];
+                if (flushRafRef.current !== null) {
+                    cancelAnimationFrame(flushRafRef.current);
+                    flushRafRef.current = null;
+                }
                 setEntries([]);
                 setExpandedIds(new Set());
                 setFreshIds(new Set());
@@ -151,39 +161,68 @@ export function App(): React.ReactElement {
             cancelled = true;
             dispose();
         };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeSession]);
 
-    const markFresh = useCallback((index: number) => {
-        setFreshIds((prev) => {
-            const next = new Set(prev);
-            next.add(index);
-            return next;
-        });
-        const existing = freshTimers.current.get(index);
-        if (existing) {
-            clearTimeout(existing);
+    // One-shot flush: dedup against current state, append novel entries, mark
+    // them fresh, schedule a single TTL sweep. Replaces the per-entry timer
+    // map that was firing N independent setState calls.
+    const scheduleFlush = useCallback(() => {
+        if (flushRafRef.current !== null) {
+            return;
         }
-        const timer = setTimeout(() => {
-            setFreshIds((prev) => {
-                if (!prev.has(index)) {
+        flushRafRef.current = requestAnimationFrame(() => {
+            flushRafRef.current = null;
+            const incoming = pendingEntriesRef.current;
+            const freshAdds = pendingFreshRef.current;
+            pendingEntriesRef.current = [];
+            pendingFreshRef.current = [];
+            if (incoming.length === 0) {
+                return;
+            }
+
+            setEntries((prev) => {
+                const lastIndex = prev.length > 0 ? prev[prev.length - 1].index : -1;
+                const novel: IndexedLogEntry[] = [];
+                for (const e of incoming) {
+                    if (e.index > lastIndex) {
+                        novel.push(e);
+                    }
+                }
+                if (novel.length === 0) {
                     return prev;
                 }
-                const next = new Set(prev);
-                next.delete(index);
-                return next;
+                return prev.concat(novel);
             });
-            freshTimers.current.delete(index);
-        }, FRESH_TTL_MS);
-        freshTimers.current.set(index, timer);
+
+            if (freshAdds.length > 0) {
+                setFreshIds((prev) => {
+                    const next = new Set(prev);
+                    for (const i of freshAdds) {
+                        next.add(i);
+                    }
+                    return next;
+                });
+                // Single TTL sweep that drains freshIds. Avoids the previous
+                // map-of-N-timers that was the second-largest perf cliff.
+                if (freshSweepTimerRef.current === null) {
+                    freshSweepTimerRef.current = setTimeout(() => {
+                        freshSweepTimerRef.current = null;
+                        setFreshIds(new Set());
+                    }, FRESH_TTL_MS);
+                }
+            }
+        });
     }, []);
 
     useEffect(() => {
-        const timers = freshTimers.current;
         return () => {
-            for (const t of timers.values()) {
-                clearTimeout(t);
+            if (flushRafRef.current !== null) {
+                cancelAnimationFrame(flushRafRef.current);
             }
-            timers.clear();
+            if (freshSweepTimerRef.current !== null) {
+                clearTimeout(freshSweepTimerRef.current);
+            }
         };
     }, []);
 

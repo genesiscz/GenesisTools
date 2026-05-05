@@ -10,7 +10,7 @@ interface Subscriber {
     sessionName: string;
 }
 
-const HEARTBEAT_INTERVAL_MS = 25_000;
+const HEARTBEAT_INTERVAL_MS = 15_000;
 const SESSIONS_DIR = join(homedir(), ".genesis-tools", "debugging-master", "sessions");
 const encoder = new TextEncoder();
 
