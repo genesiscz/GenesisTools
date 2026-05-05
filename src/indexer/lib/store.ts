@@ -848,24 +848,15 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
                         ids,
                         queryFn: (placeholders, batch) => {
                             if (legacyExistsNow) {
-                                db.run(
-                                    `DELETE FROM ${embTable} WHERE doc_id IN (${placeholders})`,
-                                    batch
-                                );
+                                db.run(`DELETE FROM ${embTable} WHERE doc_id IN (${placeholders})`, batch);
                             }
 
                             if (vecExistsNow) {
                                 try {
-                                    db.run(
-                                        `DELETE FROM ${vecTable} WHERE doc_id IN (${placeholders})`,
-                                        batch
-                                    );
+                                    db.run(`DELETE FROM ${vecTable} WHERE doc_id IN (${placeholders})`, batch);
                                 } catch {
                                     if (loadSqliteVec(db)) {
-                                        db.run(
-                                            `DELETE FROM ${vecTable} WHERE doc_id IN (${placeholders})`,
-                                            batch
-                                        );
+                                        db.run(`DELETE FROM ${vecTable} WHERE doc_id IN (${placeholders})`, batch);
                                     }
                                 }
                             }

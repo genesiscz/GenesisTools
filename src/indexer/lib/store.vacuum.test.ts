@@ -36,8 +36,26 @@ describe("store.removeOrphanVectors", () => {
 
         // Seed two content chunks.
         await store.insertChunks([
-            { id: "a", content: "alpha", name: "n1", filePath: "p1", sourceId: "1", startLine: 0, endLine: 0, kind: "x" },
-            { id: "b", content: "beta", name: "n2", filePath: "p2", sourceId: "2", startLine: 0, endLine: 0, kind: "x" },
+            {
+                id: "a",
+                content: "alpha",
+                name: "n1",
+                filePath: "p1",
+                sourceId: "1",
+                startLine: 0,
+                endLine: 0,
+                kind: "x",
+            },
+            {
+                id: "b",
+                content: "beta",
+                name: "n2",
+                filePath: "p2",
+                sourceId: "2",
+                startLine: 0,
+                endLine: 0,
+                kind: "x",
+            },
         ]);
 
         // Manually create + populate the legacy `_embeddings` table with rows for
@@ -57,9 +75,9 @@ describe("store.removeOrphanVectors", () => {
         const result = await store.removeOrphanVectors();
         expect(result.removed).toBe(2);
 
-        const remaining = db
-            .query(`SELECT doc_id FROM ${tableName}_embeddings ORDER BY doc_id`)
-            .all() as Array<{ doc_id: string }>;
+        const remaining = db.query(`SELECT doc_id FROM ${tableName}_embeddings ORDER BY doc_id`).all() as Array<{
+            doc_id: string;
+        }>;
         expect(remaining).toEqual([{ doc_id: "b" }]);
 
         await store.close();

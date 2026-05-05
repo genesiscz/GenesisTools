@@ -473,6 +473,13 @@ async function incrementalSync(manager: IndexerManager, dateRange: DateRange = {
                 `  ${pc.dim("Embedded:")} ${totalEmbeddings.toLocaleString()} / ` +
                     `${totalChunks.toLocaleString()} (${embPct}%)`
             );
+
+            const orphans = meta.stats.orphanEmbeddings ?? 0;
+            if (orphans > 0) {
+                p.log.warn(
+                    `  ${pc.yellow(`${orphans.toLocaleString()} orphan vectors will be cleaned this sync`)}`
+                );
+            }
         }
 
         p.log.info(`  ${pc.dim("Model:")} ${model}`);
@@ -525,23 +532,42 @@ async function incrementalSync(manager: IndexerManager, dateRange: DateRange = {
         spinner.stop("Sync complete");
 
         const chunksPruned = stats.chunksPruned ?? 0;
-        const totalChanges = stats.chunksAdded + stats.chunksUpdated + stats.chunksRemoved + chunksPruned;
+        const vectorsHealed = stats.vectorsHealed ?? 0;
+        const phase2Changes = stats.chunksAdded + stats.chunksUpdated + stats.chunksRemoved;
+        const noWork =
+            phase2Changes === 0 &&
+            chunksPruned === 0 &&
+            stats.embeddingsGenerated === 0 &&
+            vectorsHealed === 0 &&
+            stats.filesScanned === 0;
 
-        if (totalChanges === 0) {
-            p.log.info("Index is up to date — no changes detected");
+        if (noWork) {
+            p.log.info(`Index is up to date in ${formatDuration(stats.durationMs)}`);
         } else {
-            const stalePart = chunksPruned > 0 ? `, ${pc.red(`-${chunksPruned.toLocaleString()} stale`)}` : "";
-            p.log.success(
-                `${stats.filesScanned.toLocaleString()} emails scanned, ` +
-                    `${pc.green(`+${stats.chunksAdded.toLocaleString()}`)} chunks added, ` +
-                    `${pc.yellow(`~${stats.chunksUpdated.toLocaleString()}`)} updated, ` +
-                    `${pc.red(`-${stats.chunksRemoved.toLocaleString()}`)} removed${stalePart} ` +
-                    `in ${formatDuration(stats.durationMs)}`
-            );
-        }
+            if (phase2Changes > 0 || stats.filesScanned > 0) {
+                p.log.success(
+                    `Sync: ${stats.filesScanned.toLocaleString()} emails scanned, ` +
+                        `${pc.green(`+${stats.chunksAdded.toLocaleString()}`)} added, ` +
+                        `${pc.yellow(`~${stats.chunksUpdated.toLocaleString()}`)} updated, ` +
+                        `${pc.red(`-${stats.chunksRemoved.toLocaleString()}`)} removed`
+                );
+            }
 
-        if (stats.embeddingsGenerated > 0) {
-            p.log.info(`Generated ${stats.embeddingsGenerated.toLocaleString()} new embeddings`);
+            if (chunksPruned > 0) {
+                p.log.info(
+                    `Pruned: ${pc.red(`-${chunksPruned.toLocaleString()}`)} chunks whose source row is gone or changed`
+                );
+            }
+
+            if (vectorsHealed > 0) {
+                p.log.info(`Healed: ${pc.red(`-${vectorsHealed.toLocaleString()}`)} orphan vectors`);
+            }
+
+            if (stats.embeddingsGenerated > 0) {
+                p.log.info(`Embedded: ${pc.green(`+${stats.embeddingsGenerated.toLocaleString()}`)} new vectors`);
+            }
+
+            p.log.info(`Total: ${formatDuration(stats.durationMs)}`);
         }
     } catch (err) {
         spinner.stop("Sync failed");

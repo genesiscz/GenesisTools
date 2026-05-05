@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { countActiveEmbeddings } from "@app/utils/database/embedding-stats";
+import { countActiveEmbeddings, countPairedEmbeddings } from "@app/utils/database/embedding-stats";
 import { Storage } from "@app/utils/storage/storage";
 import type { IndexStats } from "./types";
 
@@ -48,7 +48,10 @@ export function readLiveStats(db: Database, indexName: string, dbPath: string): 
         // expected — table created lazily during first sync
     }
 
-    result.totalEmbeddings = countActiveEmbeddings(db, tableName);
+    const paired = countPairedEmbeddings(db, tableName);
+    const total = countActiveEmbeddings(db, tableName);
+    result.totalEmbeddings = paired;
+    result.orphanEmbeddings = Math.max(0, total - paired);
     result.dbSizeBytes = getDbSizeBytes(dbPath);
     return result;
 }

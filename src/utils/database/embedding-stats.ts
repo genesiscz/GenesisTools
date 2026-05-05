@@ -40,3 +40,42 @@ export function countActiveEmbeddings(db: Database, tableName: string): number {
 
     return 0;
 }
+
+/**
+ * Count vectors paired with a live content row. Use this for user-facing
+ * stats — the raw `_vec` count from `countActiveEmbeddings` includes orphans
+ * left behind by historical leaks.
+ */
+export function countPairedEmbeddings(db: Database, tableName: string): number {
+    const contentTable = `${tableName}_content`;
+    const vecTable = `${tableName}_vec`;
+    const embTable = `${tableName}_embeddings`;
+
+    const has = (t: string): boolean =>
+        !!db.query("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(t);
+
+    if (has(vecTable)) {
+        const sql = `SELECT COUNT(*) AS cnt FROM ${vecTable} v JOIN ${contentTable} c ON c.id = v.doc_id`;
+
+        try {
+            const row = db.query(sql).get() as { cnt: number };
+            return row.cnt;
+        } catch {
+            if (loadSqliteVec(db)) {
+                const row = db.query(sql).get() as { cnt: number };
+                return row.cnt;
+            }
+
+            return 0;
+        }
+    }
+
+    if (has(embTable)) {
+        const row = db
+            .query(`SELECT COUNT(*) AS cnt FROM ${embTable} e JOIN ${contentTable} c ON c.id = e.doc_id`)
+            .get() as { cnt: number };
+        return row.cnt;
+    }
+
+    return 0;
+}
