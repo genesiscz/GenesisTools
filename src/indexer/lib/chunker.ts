@@ -774,7 +774,11 @@ function chunkByHeading(opts: { filePath: string; content: string; maxTokens: nu
             currentStartLine = i;
             seenHeading = true;
         } else {
-            if (!seenHeading && currentLines.length === 0 && line.trim().length > 0 && currentName === undefined) {
+            if (!seenHeading && line.trim().length > 0 && currentName === undefined) {
+                // Use the first non-empty line as the section name; falls back to
+                // "(preamble)" if it somehow trims to nothing. Don't gate on
+                // `currentLines.length === 0` — leading blank lines are still
+                // preamble territory.
                 currentName = line.trim().slice(0, 50) || "(preamble)";
             }
 

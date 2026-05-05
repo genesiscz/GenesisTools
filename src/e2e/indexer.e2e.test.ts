@@ -190,7 +190,7 @@ describe("tools indexer (E2E)", () => {
                 if (Array.isArray(parsed) && parsed.length > 0) {
                     const first = parsed[0] as Record<string, unknown>;
                     expect(first).toHaveProperty("file");
-                    expect(first).toHaveProperty("score");
+                    expect(first).toHaveProperty("confidence");
                     expect(first).toHaveProperty("method");
                 }
 

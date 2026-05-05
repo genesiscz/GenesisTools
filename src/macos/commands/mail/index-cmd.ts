@@ -476,9 +476,7 @@ async function incrementalSync(manager: IndexerManager, dateRange: DateRange = {
 
             const orphans = meta.stats.orphanEmbeddings ?? 0;
             if (orphans > 0) {
-                p.log.warn(
-                    `  ${pc.yellow(`${orphans.toLocaleString()} orphan vectors will be cleaned this sync`)}`
-                );
+                p.log.warn(`  ${pc.yellow(`${orphans.toLocaleString()} orphan vectors will be cleaned this sync`)}`);
             }
         }
 
