@@ -36,6 +36,12 @@ import {
 export interface IndexStore {
     insertChunks(chunks: ChunkRecord[], embeddings?: Map<string, Float32Array>): Promise<void>;
     removeChunks(chunkIds: string[]): Promise<void>;
+    /**
+     * Delete vectors whose `doc_id` no longer matches a row in `_content`.
+     * Heals leaks from older releases where chunk deletion bypassed the
+     * vector store. Returns the number of vectors removed.
+     */
+    removeOrphanVectors(): Promise<{ removed: number }>;
     /** Get chunk IDs that exist in content table but have no embedding */
     getUnembeddedChunkIds(): string[];
     /** Count chunks that have no embedding (without loading IDs into memory) */
@@ -788,6 +794,103 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
                         }
                     }
                 }
+            },
+
+            async removeOrphanVectors(): Promise<{ removed: number }> {
+                const vecExistsNow = !!db
+                    .query("SELECT name FROM sqlite_master WHERE type='table' AND name=?")
+                    .get(vecTable);
+                const legacyExistsNow = !!db
+                    .query("SELECT name FROM sqlite_master WHERE type='table' AND name=?")
+                    .get(embTable);
+
+                const orphans = new Set<string>();
+
+                const collect = (table: string): void => {
+                    const rows = db
+                        .query(
+                            `SELECT v.doc_id AS id FROM ${table} v
+                             LEFT JOIN ${contentTable} c ON c.id = v.doc_id
+                             WHERE c.id IS NULL`
+                        )
+                        .all() as Array<{ id: string }>;
+                    for (const r of rows) {
+                        orphans.add(r.id);
+                    }
+                };
+
+                if (vecExistsNow) {
+                    try {
+                        collect(vecTable);
+                    } catch {
+                        // vec0 module not loaded on this connection — load and retry.
+                        if (loadSqliteVec(db)) {
+                            collect(vecTable);
+                        }
+                    }
+                }
+
+                // The legacy `_embeddings` table can coexist with `_vec` (e.g. partial
+                // migration). Diff it independently so both sources of orphans are caught.
+                if (legacyExistsNow) {
+                    collect(embTable);
+                }
+
+                if (orphans.size === 0) {
+                    return { removed: 0 };
+                }
+
+                const ids = [...orphans];
+                cachedMeta = null;
+
+                const tx = db.transaction(() => {
+                    runBatchedQuery({
+                        ids,
+                        queryFn: (placeholders, batch) => {
+                            if (legacyExistsNow) {
+                                db.run(
+                                    `DELETE FROM ${embTable} WHERE doc_id IN (${placeholders})`,
+                                    batch
+                                );
+                            }
+
+                            if (vecExistsNow) {
+                                try {
+                                    db.run(
+                                        `DELETE FROM ${vecTable} WHERE doc_id IN (${placeholders})`,
+                                        batch
+                                    );
+                                } catch {
+                                    if (loadSqliteVec(db)) {
+                                        db.run(
+                                            `DELETE FROM ${vecTable} WHERE doc_id IN (${placeholders})`,
+                                            batch
+                                        );
+                                    }
+                                }
+                            }
+
+                            return [];
+                        },
+                    });
+                });
+                tx();
+
+                // Also flush through the SearchEngine vector store when present, in
+                // case it's an external (e.g. Qdrant) backend not covered by the SQL
+                // delete above.
+                const vectorStoreForRemoval = fts.getVectorStore();
+                if (vectorStoreForRemoval) {
+                    if (vectorStoreForRemoval.removeMany) {
+                        vectorStoreForRemoval.removeMany(ids);
+                    } else {
+                        for (const id of ids) {
+                            vectorStoreForRemoval.remove(id);
+                        }
+                    }
+                }
+
+                return { removed: ids.length };
             },
 
             getUnembeddedChunkIds(): string[] {

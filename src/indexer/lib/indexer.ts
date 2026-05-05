@@ -970,6 +970,22 @@ export class Indexer extends IndexerEventEmitter {
                 }
             }
 
+            // ── Phase 5: ORPHAN VECTOR HEAL ──────────────────────────
+            // Older releases had source.pruneStale delete from `_content` only,
+            // leaking vectors in `_vec` / `_embeddings`. Sweep any orphans on
+            // every sync so the index becomes self-healing.
+            let vectorsHealed = 0;
+
+            if (!this.cancellationRequested) {
+                try {
+                    const result = await this.store.removeOrphanVectors();
+                    vectorsHealed = result.removed;
+                } catch (err) {
+                    const msg = err instanceof Error ? err.message : String(err);
+                    logger.warn(`[sync] removeOrphanVectors failed: ${msg}`);
+                }
+            }
+
             // ── FINALIZE ─────────────────────────────────────────────
             const durationMs = performance.now() - syncStart;
             const totalFiles = pathHashStore.getFileCount();
@@ -987,6 +1003,7 @@ export class Indexer extends IndexerEventEmitter {
                 durationMs,
                 cancelled: wasCancelled || undefined,
                 chunksPruned,
+                vectorsHealed,
             };
 
             const embeddingModelId = this.config.embedding?.model ?? "darwinkit";
