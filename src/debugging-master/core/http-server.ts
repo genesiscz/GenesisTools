@@ -1,13 +1,10 @@
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { handleDashboardRequest } from "@app/debugging-master/core/dashboard-server";
+import { SESSIONS_DIR, sessionFilePath } from "@app/debugging-master/core/paths";
 import { sseBroadcaster } from "@app/debugging-master/core/sse-broadcaster";
 import type { LogEntry } from "@app/debugging-master/types";
 
 import { SafeJSON } from "@app/utils/json";
-
-const SESSIONS_DIR = join(homedir(), ".genesis-tools", "debugging-master", "sessions");
 
 function ensureDir(): void {
     if (!existsSync(SESSIONS_DIR)) {
@@ -100,7 +97,7 @@ export function startServer(port: number = 7243): { server: ReturnType<typeof Bu
 
                 return req.text().then((body) => {
                     const entry = normalizeEntry(body);
-                    const path = join(SESSIONS_DIR, `${sessionName}.jsonl`);
+                    const path = sessionFilePath(sessionName);
                     appendFileSync(path, `${SafeJSON.stringify(entry)}\n`);
                     return new Response("ok", { status: 200, headers: corsHeaders });
                 });
@@ -112,7 +109,7 @@ export function startServer(port: number = 7243): { server: ReturnType<typeof Bu
                 if (!sessionName || !SAFE_SESSION_NAME.test(sessionName)) {
                     return new Response("Invalid session name", { status: 400, headers: corsHeaders });
                 }
-                const path = join(SESSIONS_DIR, `${sessionName}.jsonl`);
+                const path = sessionFilePath(sessionName);
                 try {
                     await Bun.write(path, "");
                     sseBroadcaster.publishCleared(sessionName);

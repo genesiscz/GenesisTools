@@ -7,18 +7,22 @@ Version format: `YYYY.MM.DD.revision` (e.g., `2026.02.18.1`)
 ## 2026.05.04.1
 
 ### claude-history-dashboard
+
 - Fixed crash on every page (`Module "node:os" has been externalized for browser compatibility. Cannot access "node:os.homedir"`); root cause was a top-level `node:os` import in `src/utils/string.ts` reaching the browser bundle via the SessionTimeline import chain — moved `matchesGlob` (the only consumer) into `src/doctor/lib/safety.ts`
 - Fixed React hydration mismatch on date labels — replaced `toLocaleDateString` / `toLocaleString` with deterministic `formatShortDateTime` / `formatLongDateTime` in `src/lib/utils.ts` (Node small-icu vs V8 diverge on "at"); removed leftover `suppressHydrationWarning`
 - Fixed CI biome failure caused by 4-space indent committed under the dashboard's tab-only biome config
 
 ### utils/ui
+
 - Fixed "You appear to have multiple instances of Solid" warning across dashboards via `resolve.dedupe: ["solid-js"]` in the shared Vite config (TanStack devtools ship a nested 1.9.12 alongside the hoisted 1.9.11); React/react-dom dedup already covered by the existing `pinNodeModules` plugin
 
 ### githooks
+
 - Added `.githooks/pre-push` mirroring `.github/workflows/ci.yml` exactly: `bun run lint`, `bun run lint:dashboard`, `bun run typecheck:all` — closes the gap where pre-commit's `--staged` mode skipped the dashboard's separate biome config
 - Pre-push auto-recovers fresh worktrees: when `typecheck:all` fails (missing `node_modules`), runs `bun install` once and retries; lint steps untouched (their failure mode is real violations, not missing deps)
 
 ### say
+
 - Added cloud TTS cache for repeated phrases under `~/.genesis-tools/say/cache` — sha256-keyed by canonical text + provider + voice + model + rate + language + format; threshold-gated (5 misses by default), LRU-evicted under 50 MB cap, skipped when `--stream` is set, self-healing on missing audio files, TOCTOU-safe
 - Added per-text provider overrides — substring match (case-insensitive) routes phrases like "Permission needed" to a chosen provider regardless of profile; voice/model cleared on the override copy unless explicitly passed on the CLI
 - Hardened `index.json`: shape-validates on read (rejects valid-JSON-but-wrong-shape payloads instead of casting blind), atomic tmp+rename on write so a crashed write can't leave a half-file behind
@@ -26,6 +30,7 @@ Version format: `YYYY.MM.DD.revision` (e.g., `2026.02.18.1`)
 - Added config v2 with per-app profiles, xAI TTS polish, normalized `--rate` (#157)
 
 ### mail (macos)
+
 - Fixed authoritative date filter in FTS path — `getMessagesByRowids` now re-applies the full filter so out-of-range messages can no longer leak through
 - Fixed Czech / Unicode mailbox name resolution — Mail.app stores `mailboxes.url` as percent-encoded UTF-8 NFD; resolve in JS (`decodeURIComponent` + `.normalize("NFC")` + `.toLowerCase`), then filter via `m.mailbox IN (...)`
 - Added stale-chunk prune wired into Phase 4 of indexer sync via the new optional `IndexerSource.pruneStale` hook; deletes content rows whose Mail ROWID is hard-deleted, soft-deleted, or has a divergent `date_sent`
@@ -37,26 +42,31 @@ Version format: `YYYY.MM.DD.revision` (e.g., `2026.02.18.1`)
 - Centralized SQL helpers (`escapeLike`, `LIKE_ESCAPE_CLAUSE`, `MESSAGE_SELECT`, `buildFilters`) into `src/utils/macos/mail-sql.ts` — regression-guarded by `sqlite-escape.test.ts`
 
 ### clarity
+
 - Fixed silent ADO/Clarity/TimeLog auth failures — surfaced auth errors in CLI and UI instead of swallowing them
 - Suggest device-code `az login` flow that works for users without subscriptions
 
 ### indexer
+
 - Added `INDEXER_MIGRATIONS` list (source_id index, FTS5 `unicode61` `remove_diacritics 2`, `metadata_json` column) applied via the generic migration engine on read-write opens
 - `searchIndexReadonly` accepts `{filters, attach, metadataFilters}` — ATTACHes external read-only DBs via `file: ... mode=ro` URI for cross-DB pushdown, AND-merges typed and ad-hoc filters before BM25/cosine
 - Added per-source typed metadata columns — `applySourceMetadataSchema` diffs declared vs persisted columns and runs ALTER + CREATE INDEX; `backfillMetadataColumns` pages distinct source_ids; shared `coerceMetadataValue` (bool→0/1, Date→epoch ms)
 - `buildMetadataPredicate` emits `c.<col> {=|<=|>=|BETWEEN|IN|LIKE} ?` for filter pushdown
 
 ### db / migrations
+
 - Added generic SQLite migration engine at `src/utils/database/migrations.ts` (id + description + isApplied + apply contract, `_migrations` journal scoped per `(id, tableName)`, atomic BEGIN/COMMIT around each apply, `Migrator` adapter consumed by `MacDatabase` subclasses via `getMigrator()`)
 - Migrated raw `bun:sqlite` to Kysely across foundation + ask + automate + mail (#159)
 
 ### macos / infra
+
 - Added `tools macos swap` — per-process swap leaderboard (#160)
 - `MacDatabase`: `PRAGMA busy_timeout = 5000` + `onDbOpened` hook so readonly connections to live macOS DBs (Mail, Messages, …) don't throw `SQLITE_BUSY` when the owning app holds a write transaction
 - Fixed `tools macos mail index` reporting bogus `Embedded: 0/N` — new `countActiveEmbeddings(db, tableName)` picks the active embedding table (sqlite-vec `_vec` vs legacy `_embeddings`)
 - `UsageDatabase`: replaced deprecated Kysely `orderBy(array)` / `groupBy(array)` with chained calls (was spamming every `tools macos mail` invocation)
 
 ### tests / logging
+
 - `bunfig.toml` `[test].preload` runs `wipeAllTestIndexes()` once before any test file imports — covers every `gt_*` / `phase2-*` prefix tests own
 - Test prefixes renamed to `gt_*` (`gt_e2e_test_`, `gt_indexer_test_`, `gt_integration_test_`, `gt_bench_`) for collision resistance with real user index names
 - `isQuietOutput()` helper for non-table output formats (JSON/TOON), wired through `mail search` so `--format json` is pipeable

@@ -56,8 +56,19 @@ export function connectStream(sessionName: string, handlers: SseHandlers): () =>
             es = null;
             attempt++;
             handlers.onStatus(attempt > 4 ? "down" : "reconnecting");
+            // Defensive: cancel any pending reconnect before scheduling a new
+            // one. Some browsers can fire `error` more than once for the same
+            // dead socket; without this, two reconnect timers could race and
+            // open duplicate streams.
+            if (reconnectTimer) {
+                clearTimeout(reconnectTimer);
+                reconnectTimer = null;
+            }
             const delay = Math.min(MAX_RECONNECT_DELAY_MS, RECONNECT_DELAY_MS * 2 ** Math.min(attempt - 1, 4));
-            reconnectTimer = setTimeout(open, delay);
+            reconnectTimer = setTimeout(() => {
+                reconnectTimer = null;
+                open();
+            }, delay);
         });
     };
 

@@ -33,11 +33,26 @@ export function registerDashboardCommand(program: Command): void {
             console.log(renderQr(url, { small: true }));
 
             try {
-                await Bun.spawn(["open", url], { stdout: "ignore", stderr: "ignore" }).exited;
+                const cmd = openCommand(url);
+                await Bun.spawn(cmd, { stdout: "ignore", stderr: "ignore" }).exited;
             } catch {
                 // open command not available — silently skip
             }
         });
+}
+
+/** Browser-open command per platform. macOS: `open`, Linux: `xdg-open`, Windows: `cmd /c start ""`. */
+function openCommand(url: string): string[] {
+    switch (process.platform) {
+        case "darwin":
+            return ["open", url];
+        case "win32":
+            // Empty "" arg is the window title — required by `start` so the
+            // URL isn't misinterpreted as a title when it contains spaces.
+            return ["cmd", "/c", "start", "", url];
+        default:
+            return ["xdg-open", url];
+    }
 }
 
 export async function runBuild(): Promise<void> {

@@ -326,5 +326,14 @@ function render(value: unknown, depth: number, trailingComma: boolean): React.Re
 }
 
 function escapeStr(s: string): string {
-    return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n");
+    // Backslash first — must run before others so we don't double-escape the
+    // backslashes we're about to introduce. CR/tab matter for log payloads
+    // (Windows newlines, ANSI shell output) so they render as visible escape
+    // sequences instead of mangling layout.
+    return s
+        .replace(/\\/g, "\\\\")
+        .replace(/"/g, '\\"')
+        .replace(/\n/g, "\\n")
+        .replace(/\r/g, "\\r")
+        .replace(/\t/g, "\\t");
 }

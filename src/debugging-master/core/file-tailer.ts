@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readSync, statSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { LogEntry } from "@app/debugging-master/types";
 import { parseJsonlChunk } from "@app/utils/jsonl";
@@ -76,21 +76,39 @@ export class FileTailer {
         if (!existsSync(this.path)) {
             return { offset: 0, lineCount: 0 };
         }
+        // Chunked newline scan — long-running sessions can grow to many MBs;
+        // a single readFileSync would allocate the whole file at once.
+        let fd: number | null = null;
         try {
             const offset = statSync(this.path).size;
             if (offset === 0) {
                 return { offset: 0, lineCount: 0 };
             }
-            const buf = readFileSync(this.path);
+            fd = openSync(this.path, "r");
+            const buffer = Buffer.alloc(64 * 1024);
             let count = 0;
-            for (let i = 0; i < buf.length; i++) {
-                if (buf[i] === 0x0a) {
-                    count++;
+            while (true) {
+                const bytesRead = readSync(fd, buffer, 0, buffer.length, null);
+                if (bytesRead <= 0) {
+                    break;
+                }
+                for (let i = 0; i < bytesRead; i++) {
+                    if (buffer[i] === 0x0a) {
+                        count++;
+                    }
                 }
             }
             return { offset, lineCount: count };
         } catch {
             return { offset: 0, lineCount: 0 };
+        } finally {
+            if (fd !== null) {
+                try {
+                    closeSync(fd);
+                } catch {
+                    // already closed / partial open
+                }
+            }
         }
     }
 

@@ -16,7 +16,6 @@ const DOT_CLASS: Record<ConnectionStatus, string> = {
 
 interface Props {
     status: ConnectionStatus;
-    subscribers?: number;
 }
 
 export function StatusPill({ status }: Props): React.ReactElement {

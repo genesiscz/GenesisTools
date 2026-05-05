@@ -14,15 +14,19 @@ export interface QrOptions {
  */
 export function renderQr(input: string, opts: QrOptions = {}): string {
     let out = "";
-    qrcode.generate(
-        input,
-        {
-            small: opts.small ?? true,
-            ...(opts.level && { errorLevel: opts.level }),
-        },
-        (rendered: string) => {
-            out = rendered;
-        }
-    );
+    // `errorLevel` is honored by qrcode-terminal at runtime but is missing
+    // from the upstream type definitions. Widen via a local interface so
+    // we can pass it without an `any` cast.
+    interface GenerateOpts {
+        small?: boolean;
+        errorLevel?: "L" | "M" | "Q" | "H";
+    }
+    const generateOpts: GenerateOpts = {
+        small: opts.small ?? true,
+        errorLevel: opts.level ?? "L",
+    };
+    qrcode.generate(input, generateOpts as Parameters<typeof qrcode.generate>[1], (rendered: string) => {
+        out = rendered;
+    });
     return out;
 }

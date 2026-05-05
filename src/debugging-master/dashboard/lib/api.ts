@@ -1,4 +1,5 @@
 import type { IndexedLogEntry, SessionMeta } from "@app/debugging-master/types";
+import { SafeJSON } from "@app/utils/json";
 
 export interface SessionsResponse {
     sessions: SessionMeta[];
@@ -21,7 +22,12 @@ async function getJson<T>(path: string): Promise<T> {
     if (!res.ok) {
         throw new Error(`${res.status} ${res.statusText}`);
     }
-    return (await res.json()) as T;
+    // SafeJSON in strict mode for API boundaries — repo policy is "always
+    // SafeJSON, never JSON" (biome enforces it elsewhere). Strict mode rejects
+    // comments / trailing commas so a malformed server response surfaces here
+    // instead of being silently coerced.
+    const text = await res.text();
+    return SafeJSON.parse(text, { strict: true }) as T;
 }
 
 export const api = {

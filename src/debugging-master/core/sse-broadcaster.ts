@@ -1,6 +1,5 @@
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { FileTailer } from "@app/debugging-master/core/file-tailer";
+import { sessionFilePath } from "@app/debugging-master/core/paths";
 import type { LogEntry } from "@app/debugging-master/types";
 import { SafeJSON } from "@app/utils/json";
 
@@ -11,7 +10,6 @@ interface Subscriber {
 }
 
 const HEARTBEAT_INTERVAL_MS = 15_000;
-const SESSIONS_DIR = join(homedir(), ".genesis-tools", "debugging-master", "sessions");
 const encoder = new TextEncoder();
 
 /**
@@ -124,8 +122,7 @@ export class SSEBroadcaster {
         if (this.tailers.has(sessionName)) {
             return;
         }
-        const path = join(SESSIONS_DIR, `${sessionName}.jsonl`);
-        const tailer = new FileTailer(path, {
+        const tailer = new FileTailer(sessionFilePath(sessionName), {
             onEntry: (entry, index) => this.fanOut(sessionName, entry, index),
         });
         tailer.start();

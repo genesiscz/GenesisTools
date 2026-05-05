@@ -32,7 +32,14 @@ export function computeTimerStats(entries: IndexedLogEntry[], label: string, atI
 
     const sorted = [...durations].sort((a, b) => a - b);
     const total = durations.reduce((s, d) => s + d, 0);
-    const p = (q: number): number => sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * q))];
+    // Nearest-rank percentile on (n-1) scale — `floor(n*q)` skews toward the
+    // max for small n (e.g. n=2 q=0.5 returned the larger sample as the
+    // "median"). The (n-1) version maps q∈[0,1] linearly across indices
+    // 0..n-1, so p50 of two samples is the smaller one (close to the median).
+    const p = (q: number): number => {
+        const idx = Math.max(0, Math.min(sorted.length - 1, Math.floor((sorted.length - 1) * q)));
+        return sorted[idx];
+    };
 
     return {
         label,

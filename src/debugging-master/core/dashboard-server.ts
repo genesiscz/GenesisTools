@@ -1,6 +1,6 @@
 import { existsSync, statSync } from "node:fs";
-import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import { sessionFilePath } from "@app/debugging-master/core/paths";
 import { SessionManager } from "@app/debugging-master/core/session-manager";
 import { sseBroadcaster } from "@app/debugging-master/core/sse-broadcaster";
 import type { IndexedLogEntry, LogEntry, SessionMeta } from "@app/debugging-master/types";
@@ -99,11 +99,16 @@ async function handleApiRequest(req: Request, url: URL, cors: Record<string, str
     }
 
     if (method === "GET" && sub === "entries") {
-        const since = Number.parseInt(url.searchParams.get("since") ?? "0", 10);
-        const limit = Number.parseInt(url.searchParams.get("limit") ?? "5000", 10);
+        // Validate + clamp: NaN/negative inputs collapse to safe defaults,
+        // and `limit` is hard-capped at 5000 so a malicious or careless query
+        // can't force the server to slice and serialize a huge array.
+        const rawSince = Number.parseInt(url.searchParams.get("since") ?? "0", 10);
+        const rawLimit = Number.parseInt(url.searchParams.get("limit") ?? "5000", 10);
+        const since = Number.isFinite(rawSince) ? Math.max(0, rawSince) : 0;
+        const limit = Number.isFinite(rawLimit) ? Math.min(5000, Math.max(1, rawLimit)) : 5000;
         const all = await readEntries(sessionName);
         const indexed: IndexedLogEntry[] = all.map((e, i) => ({ ...e, index: i + 1 }));
-        const sliced = indexed.slice(Math.max(0, since)).slice(0, Math.max(1, limit));
+        const sliced = indexed.slice(since, since + limit);
         return jsonResponse({ entries: sliced, total: indexed.length }, cors);
     }
 
@@ -182,8 +187,7 @@ async function listSessions(): Promise<SessionMeta[]> {
 
 function enrichWithFileStat(meta: SessionMeta, name: string): SessionMeta {
     try {
-        const path = join(SESSIONS_DIR, `${name}.jsonl`);
-        const st = statSync(path);
+        const st = statSync(sessionFilePath(name));
         return {
             ...meta,
             createdAt: meta.createdAt > 0 ? meta.createdAt : st.birthtimeMs,
@@ -193,8 +197,6 @@ function enrichWithFileStat(meta: SessionMeta, name: string): SessionMeta {
         return meta;
     }
 }
-
-const SESSIONS_DIR = join(homedir(), ".genesis-tools", "debugging-master", "sessions");
 
 async function readEntries(sessionName: string): Promise<LogEntry[]> {
     return sessionManager.readEntries(sessionName);
