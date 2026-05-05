@@ -48,7 +48,7 @@ export function ExpandedView({ entry }: Props): React.ReactElement {
                 {refId ? (
                     <button
                         type="button"
-                        onClick={() => navigator.clipboard?.writeText(refId).catch(() => undefined)}
+                        onClick={() => navigator.clipboard?.writeText(refId)?.catch(() => undefined)}
                         className="text-purple-300 hover:text-purple-200 normal-case tracking-wider"
                         title="copy ref id"
                     >
@@ -222,7 +222,17 @@ function TimerStatsView({ stats }: { stats: TimerStats }): React.ReactElement {
 function JsonView({ value }: { value: unknown }): React.ReactElement {
     // `render()` emits <div> rows for object/array entries, so wrap in <div>
     // (with `whitespace-pre-wrap`) to avoid block-in-<pre> nesting.
-    return <div className="json-tree whitespace-pre-wrap break-words">{render(value, 0, false)}</div>;
+    return (
+        <div className="json-tree whitespace-pre-wrap break-words">
+            {render({ value, depth: 0, trailingComma: false })}
+        </div>
+    );
+}
+
+interface RenderArgs {
+    value: unknown;
+    depth: number;
+    trailingComma: boolean;
 }
 
 /**
@@ -230,8 +240,9 @@ function JsonView({ value }: { value: unknown }): React.ReactElement {
  * threaded through so the comma after a closing bracket lands on the SAME
  * line as the bracket, instead of dropping to its own line beneath it.
  */
-function render(value: unknown, depth: number, trailingComma: boolean): React.ReactNode {
+function render({ value, depth, trailingComma }: RenderArgs): React.ReactNode {
     const indent = "  ".repeat(depth);
+    const childIndent = "  ".repeat(depth + 1);
     const comma = trailingComma ? <span className="json-bracket">,</span> : null;
 
     if (value === null) {
@@ -280,7 +291,8 @@ function render(value: unknown, depth: number, trailingComma: boolean): React.Re
                 <span className="json-bracket">[</span>
                 {value.map((v, i) => (
                     <div key={i}>
-                        {indent} {render(v, depth + 1, i < value.length - 1)}
+                        {childIndent}
+                        {render({ value: v, depth: depth + 1, trailingComma: i < value.length - 1 })}
                     </div>
                 ))}
                 <div>
@@ -306,9 +318,10 @@ function render(value: unknown, depth: number, trailingComma: boolean): React.Re
                 <span className="json-bracket">{"{"}</span>
                 {entries.map(([k, v], i) => (
                     <div key={k}>
-                        {indent} <span className="json-key">"{k}"</span>
+                        {childIndent}
+                        <span className="json-key">"{escapeStr(k)}"</span>
                         <span className="json-bracket">: </span>
-                        {render(v, depth + 1, i < entries.length - 1)}
+                        {render({ value: v, depth: depth + 1, trailingComma: i < entries.length - 1 })}
                     </div>
                 ))}
                 <div>

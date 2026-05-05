@@ -107,7 +107,10 @@ export class FileTailer {
                 const toRead = Math.min(buffer.length, offset - position);
                 const bytesRead = readSync(fd, buffer, 0, toRead, position);
                 if (bytesRead <= 0) {
-                    break;
+                    // Mid-read truncation — return what we actually scanned so
+                    // the watcher's starting offset matches the file's real
+                    // size, instead of pinning to the stale fstat snapshot.
+                    return { offset: position, lineCount: count };
                 }
 
                 for (let i = 0; i < bytesRead; i++) {
@@ -119,8 +122,16 @@ export class FileTailer {
                 position += bytesRead;
             }
             return { offset, lineCount: count };
-        } catch {
-            return { offset: 0, lineCount: 0 };
+        } catch (err) {
+            // Only normalize "file is gone" to a zero baseline. Other errors
+            // (EACCES, EIO, EBADF) are real failures — let them propagate so
+            // start()'s rollback path can surface them instead of silently
+            // skipping replay state.
+            if (typeof err === "object" && err !== null && "code" in err && err.code === "ENOENT") {
+                return { offset: 0, lineCount: 0 };
+            }
+
+            throw err;
         } finally {
             if (fd !== null) {
                 try {

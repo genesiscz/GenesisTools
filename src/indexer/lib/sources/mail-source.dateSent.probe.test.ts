@@ -52,8 +52,7 @@ describe("date_sent prune predicate (probe — skipped if files missing)", () =>
         try {
             idx.run(`ATTACH DATABASE '${attachUri}' AS mailapp`);
 
-            const totalChunks = (idx.query("SELECT COUNT(*) AS n FROM macos_mail_content").get() as { n: number })
-                .n;
+            const totalChunks = (idx.query("SELECT COUNT(*) AS n FROM macos_mail_content").get() as { n: number }).n;
 
             const missingRowid = (
                 idx
@@ -108,7 +107,6 @@ describe("date_sent prune predicate (probe — skipped if files missing)", () =>
                 )
                 .all();
 
-            // biome-ignore lint: probe output is the deliverable
             console.log({
                 totalChunks,
                 missingRowid,

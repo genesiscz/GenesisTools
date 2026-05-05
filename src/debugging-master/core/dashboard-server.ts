@@ -9,7 +9,9 @@ import { SafeJSON } from "@app/utils/json";
 const sessionManager = new SessionManager();
 
 const SESSION_NAME = /^[a-zA-Z0-9_-]+$/;
-const REF_ID = /^([a-z])(\d+)$/;
+// Only "s" (vars/snapshot) and "e" (error) prefixes have defined semantics in
+// resolveRefData(); indexes are 1-based, so leading 0 / "x0" are rejected.
+const REF_ID = /^([se])([1-9]\d*)$/;
 
 const DASHBOARD_DIST = resolve(import.meta.dir, "..", "dashboard", "dist");
 
@@ -154,7 +156,10 @@ async function handleApiRequest(req: Request, url: URL, cors: Record<string, str
         return jsonResponse({ cleared: true }, cors);
     }
 
-    return jsonResponse({ error: "method not allowed" }, cors, { status: 405 });
+    // Unknown subpath under /api/sessions/<name>/ — treat as not-found rather
+    // than method-not-allowed (405 implies the resource exists at this URL but
+    // doesn't accept this verb, which isn't true for arbitrary subpaths).
+    return jsonResponse({ error: "not found" }, cors, { status: 404 });
 }
 
 function resolveRefData(entry: LogEntry, prefix: string): unknown {
