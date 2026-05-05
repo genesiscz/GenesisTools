@@ -120,13 +120,14 @@ export interface IndexerSource {
     populateMetadata?(opts: MetadataPopulateOpts): AsyncGenerator<MetadataResult[]>;
 
     /**
-     * Prune chunks whose backing source row no longer matches indexed state
-     * (e.g. Mail.app messages that were deleted or whose `date_sent` was
-     * server-corrected since indexing). Called on every sync. Returns the
-     * number of chunks deleted. Sources where stable IDs guarantee freshness
-     * should leave this unimplemented.
+     * Return chunk IDs (PK in `${tableName}_content`) whose backing source row
+     * no longer matches indexed state (e.g. Mail.app messages deleted or
+     * date_sent server-corrected). Called on every sync. The indexer hands
+     * the IDs to `store.removeChunks()` so vectors are cleaned in lockstep.
+     * Sources with stable IDs that guarantee freshness should leave this
+     * unimplemented.
      */
-    pruneStale?(indexDb: import("bun:sqlite").Database, tableName: string): Promise<number>;
+    pruneStale?(indexDb: import("bun:sqlite").Database, tableName: string): Promise<string[]>;
 
     /**
      * Compute MIN/MAX timestamps (unix seconds) covered by chunks of the given

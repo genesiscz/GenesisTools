@@ -958,7 +958,12 @@ export class Indexer extends IndexerEventEmitter {
 
             if (typeof this.source.pruneStale === "function" && !this.cancellationRequested) {
                 try {
-                    chunksPruned = await this.source.pruneStale(this.store.getDb(), tableName);
+                    const staleIds = await this.source.pruneStale(this.store.getDb(), tableName);
+
+                    if (staleIds.length > 0) {
+                        await this.store.removeChunks(staleIds);
+                        chunksPruned = staleIds.length;
+                    }
                 } catch (err) {
                     const msg = err instanceof Error ? err.message : String(err);
                     logger.warn(`[sync] source.pruneStale failed: ${msg}`);
