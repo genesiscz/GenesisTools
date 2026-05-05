@@ -1,4 +1,4 @@
-import { closeSync, existsSync, mkdirSync, openSync, readSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { LogEntry } from "@app/debugging-master/types";
 import { parseJsonlChunk } from "@app/utils/jsonl";
@@ -78,25 +78,35 @@ export class FileTailer {
         }
         // Chunked newline scan — long-running sessions can grow to many MBs;
         // a single readFileSync would allocate the whole file at once.
+        // Open first, then size via fstat to make offset+lineCount a single
+        // atomic snapshot — otherwise a writer appending between stat() and
+        // the read loop would inflate lineCount past offset, corrupting the
+        // tailer's entry index.
         let fd: number | null = null;
         try {
-            const offset = statSync(this.path).size;
+            fd = openSync(this.path, "r");
+            const offset = fstatSync(fd).size;
             if (offset === 0) {
                 return { offset: 0, lineCount: 0 };
             }
-            fd = openSync(this.path, "r");
+
             const buffer = Buffer.alloc(64 * 1024);
             let count = 0;
-            while (true) {
-                const bytesRead = readSync(fd, buffer, 0, buffer.length, null);
+            let position = 0;
+            while (position < offset) {
+                const toRead = Math.min(buffer.length, offset - position);
+                const bytesRead = readSync(fd, buffer, 0, toRead, position);
                 if (bytesRead <= 0) {
                     break;
                 }
+
                 for (let i = 0; i < bytesRead; i++) {
                     if (buffer[i] === 0x0a) {
                         count++;
                     }
                 }
+
+                position += bytesRead;
             }
             return { offset, lineCount: count };
         } catch {

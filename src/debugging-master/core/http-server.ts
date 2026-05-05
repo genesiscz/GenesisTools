@@ -110,12 +110,16 @@ export function startServer(port: number = 7243): { server: ReturnType<typeof Bu
                     return new Response("Invalid session name", { status: 400, headers: corsHeaders });
                 }
                 const path = sessionFilePath(sessionName);
+                if (!existsSync(path)) {
+                    return new Response("session not found", { status: 404, headers: corsHeaders });
+                }
+
                 try {
                     await Bun.write(path, "");
                     sseBroadcaster.publishCleared(sessionName);
                     return new Response("cleared", { status: 200, headers: corsHeaders });
                 } catch {
-                    return new Response("session not found", { status: 404, headers: corsHeaders });
+                    return new Response("failed to clear session", { status: 500, headers: corsHeaders });
                 }
             }
 

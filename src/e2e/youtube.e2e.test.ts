@@ -63,7 +63,7 @@ describe("tools youtube", () => {
         }, 30_000);
     });
 
-    describe("output to file", () => {
+    describe.skipIf(!process.env.RUN_NETWORK_TESTS)("output to file", () => {
         it("writes output to file", async () => {
             const r = await runTool(["youtube", "transcribe", "dQw4w9WgXcQ", "-o", OUTPUT_FILE]);
             expect(r.exitCode).toBe(0);
@@ -73,7 +73,7 @@ describe("tools youtube", () => {
         }, 30_000);
     });
 
-    describe("error handling", () => {
+    describe.skipIf(!process.env.RUN_NETWORK_TESTS)("error handling", () => {
         it("invalid video ID shows error", async () => {
             const r = await runTool(["youtube", "transcribe", "xxxxxxxxxxxxxxxxxxx"]);
             expect(r.exitCode).toBe(1);

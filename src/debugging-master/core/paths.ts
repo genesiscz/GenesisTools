@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { resolve, sep } from "node:path";
 
 /**
  * Single source of truth for where session JSONL files live on disk.
@@ -7,9 +7,18 @@ import { join } from "node:path";
  * resolve session paths via this constant — keep them in sync by importing
  * from here instead of re-deriving the path.
  */
-export const SESSIONS_DIR = join(homedir(), ".genesis-tools", "debugging-master", "sessions");
+export const SESSIONS_DIR = resolve(homedir(), ".genesis-tools", "debugging-master", "sessions");
 
-/** Resolve the JSONL file path for a session by name. */
+/**
+ * Resolve the JSONL file path for a session by name. Defense-in-depth:
+ * rejects any name that resolves outside `SESSIONS_DIR` so a future caller
+ * that forgets to validate `sessionName` can't escape the sessions tree.
+ */
 export function sessionFilePath(sessionName: string): string {
-    return join(SESSIONS_DIR, `${sessionName}.jsonl`);
+    const candidate = resolve(SESSIONS_DIR, `${sessionName}.jsonl`);
+    if (!candidate.startsWith(`${SESSIONS_DIR}${sep}`)) {
+        throw new Error(`Invalid session name: ${sessionName}`);
+    }
+
+    return candidate;
 }

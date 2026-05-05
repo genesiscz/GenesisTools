@@ -161,9 +161,15 @@ function resolveRefData(entry: LogEntry, prefix: string): unknown {
     if (prefix === "s") {
         return entry.vars ?? null;
     }
+
     if (prefix === "e" && entry.data && entry.stack) {
-        return { ...(entry.data as Record<string, unknown>), _stack: entry.stack };
+        if (typeof entry.data === "object" && !Array.isArray(entry.data)) {
+            return { ...(entry.data as Record<string, unknown>), _stack: entry.stack };
+        }
+
+        return { data: entry.data, _stack: entry.stack };
     }
+
     return entry.data ?? entry.stack ?? null;
 }
 

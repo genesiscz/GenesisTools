@@ -18,15 +18,25 @@ export interface TimerStats {
  */
 export function computeTimerStats(entries: IndexedLogEntry[], label: string, atIndex: number): TimerStats | null {
     const durations: number[] = [];
+    let lastMs: number | null = null;
+    let lastIndex = -1;
+    // `entries` may be passed newest-first by some callers, so skip rather
+    // than break on out-of-range indices, and track lastMs by the highest
+    // eligible `index` instead of traversal order.
     for (const e of entries) {
         if (e.index > atIndex) {
-            break;
+            continue;
         }
+
         if (e.level === "timer-end" && e.label === label && typeof e.durationMs === "number") {
             durations.push(e.durationMs);
+            if (e.index >= lastIndex) {
+                lastIndex = e.index;
+                lastMs = e.durationMs;
+            }
         }
     }
-    if (durations.length === 0) {
+    if (durations.length === 0 || lastMs === null) {
         return null;
     }
 
@@ -48,7 +58,7 @@ export function computeTimerStats(entries: IndexedLogEntry[], label: string, atI
         meanMs: total / durations.length,
         minMs: sorted[0],
         maxMs: sorted[sorted.length - 1],
-        lastMs: durations[durations.length - 1],
+        lastMs,
         p50Ms: p(0.5),
         p95Ms: p(0.95),
     };

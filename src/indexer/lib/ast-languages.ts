@@ -1,4 +1,5 @@
 import { createRequire } from "node:module";
+import { isInteractive } from "@app/utils/cli";
 import { ensurePackages, isPackageInstalled } from "@app/utils/packages";
 import { Lang, registerDynamicLanguage } from "@ast-grep/napi";
 
@@ -118,7 +119,7 @@ async function loadAndRegisterAllInstalled(only?: Set<string>): Promise<void> {
         if (missing.length > 0) {
             await ensurePackages(missing, {
                 label: `AST grammars (${missing.length} language${missing.length > 1 ? "s" : ""})`,
-                interactive: true,
+                interactive: isInteractive(),
                 reason: "Enables code parsing for syntax-aware indexing and search",
             });
         }

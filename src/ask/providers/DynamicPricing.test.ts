@@ -113,13 +113,12 @@ describe("DynamicPricingManager", () => {
             // biome-ignore lint/suspicious/noExplicitAny: spyOn requires cast for method name type mismatch
             spyOn(pricingManager, "getPricing" as any).mockResolvedValue(mockPricing);
 
-            const usage: LanguageModelUsage = {
+            const usage: LanguageModelUsage & { cachedInputTokens?: number } = {
                 inputTokens: 1000,
                 outputTokens: 500,
                 totalTokens: 1500,
+                cachedInputTokens: 200,
             };
-            // biome-ignore lint/suspicious/noExplicitAny: extending LanguageModelUsage with undocumented property
-            (usage as any).cachedInputTokens = 200;
 
             const cost = await pricingManager.calculateCost("openai", "gpt-4o", usage);
 

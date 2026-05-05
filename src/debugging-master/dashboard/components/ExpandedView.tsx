@@ -55,7 +55,7 @@ export function ExpandedView({ entry }: Props): React.ReactElement {
                         ref: {refId}
                     </button>
                 ) : null}
-                {entry.h ? (
+                {entry.h != null ? (
                     <span className="text-cyan-300">
                         h: <span className="normal-case">{entry.h}</span>
                     </span>

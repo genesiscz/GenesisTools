@@ -4,7 +4,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import logger from "@app/logger";
 import { Embedder } from "@app/utils/ai/tasks/Embedder";
-import { countActiveEmbeddings } from "@app/utils/database/embedding-stats";
+import { countActiveEmbeddings, countPairedEmbeddings } from "@app/utils/database/embedding-stats";
 import { getPendingMigrations, runMigrations } from "@app/utils/database/migrations";
 import { acquireLock, type LockHandle } from "@app/utils/fs/lock";
 import { SafeJSON } from "@app/utils/json";
@@ -843,6 +843,22 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
                 const ids = [...orphans];
                 cachedMeta = null;
 
+                // Flush external (e.g. Qdrant) vector store FIRST. If it
+                // throws, we leave the local `_vec`/`_embeddings` markers in
+                // place so the next sweep re-detects the same orphans and
+                // can retry — otherwise a transient external failure would
+                // permanently strand vectors on the remote side.
+                const vectorStoreForRemoval = fts.getVectorStore();
+                if (vectorStoreForRemoval) {
+                    if (vectorStoreForRemoval.removeMany) {
+                        vectorStoreForRemoval.removeMany(ids);
+                    } else {
+                        for (const id of ids) {
+                            vectorStoreForRemoval.remove(id);
+                        }
+                    }
+                }
+
                 const tx = db.transaction(() => {
                     runBatchedQuery({
                         ids,
@@ -866,20 +882,6 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
                     });
                 });
                 tx();
-
-                // Also flush through the SearchEngine vector store when present, in
-                // case it's an external (e.g. Qdrant) backend not covered by the SQL
-                // delete above.
-                const vectorStoreForRemoval = fts.getVectorStore();
-                if (vectorStoreForRemoval) {
-                    if (vectorStoreForRemoval.removeMany) {
-                        vectorStoreForRemoval.removeMany(ids);
-                    } else {
-                        for (const id of ids) {
-                            vectorStoreForRemoval.remove(id);
-                        }
-                    }
-                }
 
                 return { removed: ids.length };
             },
@@ -1024,7 +1026,12 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
                 const countRow = db.query(`SELECT COUNT(*) AS cnt FROM ${contentTable}`).get() as { cnt: number };
                 const chunkCount = countRow.cnt;
 
-                const embeddingCount = countActiveEmbeddings(db, tableName);
+                // Match readLiveStats() in storage.ts: `totalEmbeddings` is the
+                // paired-with-content count; the leftover `_vec` rows are
+                // surfaced as `orphanEmbeddings` so callers can warn / vacuum.
+                const paired = countPairedEmbeddings(db, tableName);
+                const total = countActiveEmbeddings(db, tableName);
+                const orphans = Math.max(0, total - paired);
 
                 const dbSizeBytes = getDbSizeBytes(dbPath);
 
@@ -1040,7 +1047,8 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
                 return {
                     totalFiles: meta.stats.totalFiles,
                     totalChunks: chunkCount,
-                    totalEmbeddings: embeddingCount,
+                    totalEmbeddings: paired,
+                    orphanEmbeddings: orphans,
                     embeddingDimensions: meta.stats.embeddingDimensions,
                     dbSizeBytes,
                     lastSyncDurationMs: meta.stats.lastSyncDurationMs,
