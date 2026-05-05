@@ -28,7 +28,7 @@ describe("tools youtube", () => {
         });
     });
 
-    describe("transcribe with captions", () => {
+    describe.skipIf(!process.env.RUN_NETWORK_TESTS)("transcribe with captions", () => {
         it("fetches captions as text", async () => {
             const r = await runTool(["youtube", "transcribe", "dQw4w9WgXcQ"]);
             expect(r.exitCode).toBe(0);

@@ -119,7 +119,7 @@ describe("DynamicPricingManager", () => {
                 totalTokens: 1500,
             };
             // biome-ignore lint/suspicious/noExplicitAny: extending LanguageModelUsage with undocumented property
-            (usage as any).cachedPromptTokens = 200;
+            (usage as any).cachedInputTokens = 200;
 
             const cost = await pricingManager.calculateCost("openai", "gpt-4o", usage);
 
@@ -250,7 +250,7 @@ describe("DynamicPricingManager", () => {
         });
     });
 
-    describe("LiteLLM Integration", () => {
+    describe.skipIf(!process.env.RUN_NETWORK_TESTS)("LiteLLM Integration", () => {
         it("should fetch real pricing from LiteLLM GitHub repository", async () => {
             // Real API call - fetches from LiteLLM's GitHub JSON
             const pricing = await liteLLMPricingFetcher.getModelPricing("openrouter/openai/gpt-4o");
@@ -315,7 +315,7 @@ describe("DynamicPricingManager", () => {
         });
     });
 
-    describe("OpenRouter Integration", () => {
+    describe.skipIf(!process.env.RUN_NETWORK_TESTS)("OpenRouter Integration", () => {
         it("should fetch real pricing from OpenRouter API", async () => {
             // Real API call to OpenRouter - tests actual integration
             // This will be used as fallback if LiteLLM doesn't have the model
@@ -349,7 +349,7 @@ describe("DynamicPricingManager", () => {
         });
     });
 
-    describe("Stress Tests - LiteLLM + OpenRouter", () => {
+    describe.skipIf(!process.env.RUN_NETWORK_TESTS)("Stress Tests - LiteLLM + OpenRouter", () => {
         it("should handle multiple concurrent real API requests", async () => {
             // Real concurrent API calls - tests caching and rate limiting
             const models = [
@@ -892,7 +892,7 @@ describe("DynamicPricingManager", () => {
         });
     });
 
-    describe("ProviderManager vs LiteLLM Pricing Comparison", () => {
+    describe.skipIf(!process.env.RUN_NETWORK_TESTS)("ProviderManager vs LiteLLM Pricing Comparison", () => {
         // Note: These tests may fail if cache is stale or if OpenRouter/LiteLLM pricing data differs
         // This is expected behavior - the tests verify that both sources return similar pricing
 

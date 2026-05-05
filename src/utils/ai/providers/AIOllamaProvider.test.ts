@@ -10,13 +10,13 @@ describe("AIOllamaProvider", () => {
         expect(provider.dimensions).toBe(768);
     });
 
-    test("supports embed task only", () => {
+    test("supports embed, summarize, and translate", () => {
         const provider = new AIOllamaProvider();
 
         expect(provider.supports("embed")).toBe(true);
+        expect(provider.supports("summarize")).toBe(true);
+        expect(provider.supports("translate")).toBe(true);
         expect(provider.supports("transcribe")).toBe(false);
-        expect(provider.supports("translate")).toBe(false);
-        expect(provider.supports("summarize")).toBe(false);
     });
 
     test("embedBatch returns empty array for empty input", async () => {

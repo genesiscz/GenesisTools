@@ -111,9 +111,9 @@ async function loadAndRegisterAllInstalled(only?: Set<string>): Promise<void> {
     // install everything implicitly — only the languages someone actually
     // asked for via `only` since the program started.
     if (only && only.size > 0) {
-        const missing = DYNAMIC_LANG_PACKAGES.filter(
-            ([name, pkg]) => only.has(name) && !isPackageInstalled(pkg)
-        ).map(([, pkg]) => pkg);
+        const missing = DYNAMIC_LANG_PACKAGES.filter(([name, pkg]) => only.has(name) && !isPackageInstalled(pkg)).map(
+            ([, pkg]) => pkg
+        );
 
         if (missing.length > 0) {
             await ensurePackages(missing, {

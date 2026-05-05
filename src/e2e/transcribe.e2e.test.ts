@@ -28,7 +28,7 @@ describe("tools transcribe", () => {
 
     describe("error handling", () => {
         it("nonexistent file exits 1", async () => {
-            const r = await runTool(["transcribe", "/nonexistent/path.mp3"]);
+            const r = await runTool(["transcribe", "/nonexistent/path.mp3", "--provider", "local-hf"]);
             expect(r.exitCode).toBe(1);
             expect(getOutput(r).toLowerCase()).toContain("not found");
         });
@@ -36,7 +36,7 @@ describe("tools transcribe", () => {
         it("unsupported extension exits 1", async () => {
             writeFileSync("/tmp/e2e-test.xyz", "fake");
             try {
-                const r = await runTool(["transcribe", "/tmp/e2e-test.xyz"]);
+                const r = await runTool(["transcribe", "/tmp/e2e-test.xyz", "--provider", "local-hf"]);
                 expect(r.exitCode).toBe(1);
                 expect(getOutput(r).toLowerCase()).toContain("unsupported");
             } finally {
@@ -46,7 +46,7 @@ describe("tools transcribe", () => {
 
         it("zero-byte mp3 exits 1", async () => {
             writeFileSync(ZERO_BYTE_MP3, "");
-            const r = await runTool(["transcribe", ZERO_BYTE_MP3]);
+            const r = await runTool(["transcribe", ZERO_BYTE_MP3, "--provider", "local-hf"]);
             expect(r.exitCode).toBe(1);
         });
     });
