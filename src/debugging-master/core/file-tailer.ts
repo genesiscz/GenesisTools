@@ -35,20 +35,30 @@ export class FileTailer {
         }
         this.started = true;
 
-        // FileWatcher.start() calls fs.watch() which throws ENOENT on missing
-        // files. Touch the file (and parent dir) so subscribers can connect to
-        // sessions before any log has been ingested. Mirrors what `start --serve`
-        // POST and DELETE handlers do implicitly.
-        this.ensureFileExists();
+        try {
+            // FileWatcher.start() calls fs.watch() which throws ENOENT on missing
+            // files. Touch the file (and parent dir) so subscribers can connect to
+            // sessions before any log has been ingested. Mirrors what `start --serve`
+            // POST and DELETE handlers do implicitly.
+            this.ensureFileExists();
 
-        const { offset, lineCount } = this.measureCurrent();
-        this.entryIndex = lineCount;
+            const { offset, lineCount } = this.measureCurrent();
+            this.entryIndex = lineCount;
 
-        this.watcher = new FileWatcher({
-            filePath: this.path,
-            onData: (newBytes) => this.handleNewData(newBytes),
-        });
-        this.watcher.start(offset);
+            this.watcher = new FileWatcher({
+                filePath: this.path,
+                onData: (newBytes) => this.handleNewData(newBytes),
+            });
+            this.watcher.start(offset);
+        } catch (err) {
+            // Roll back so a transient setup failure (FS race, permission glitch)
+            // doesn't leave the tailer permanently no-op'd on every later start().
+            this.started = false;
+            this.watcher = null;
+            this.remainder = Buffer.alloc(0);
+            this.entryIndex = 0;
+            throw err;
+        }
     }
 
     private ensureFileExists(): void {

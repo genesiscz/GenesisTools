@@ -797,6 +797,17 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
             },
 
             async removeOrphanVectors(): Promise<{ removed: number }> {
+                // The orphan-detection JOIN reads from `${contentTable}`. On a
+                // freshly initialized index the content table may not exist yet,
+                // in which case there are by definition no orphans to clean —
+                // bail out cleanly rather than letting the JOIN throw.
+                const contentExistsNow = !!db
+                    .query("SELECT name FROM sqlite_master WHERE type='table' AND name=?")
+                    .get(contentTable);
+                if (!contentExistsNow) {
+                    return { removed: 0 };
+                }
+
                 const vecExistsNow = !!db
                     .query("SELECT name FROM sqlite_master WHERE type='table' AND name=?")
                     .get(vecTable);

@@ -63,9 +63,9 @@ export function ExpandedView({ entry }: Props): React.ReactElement {
                 {entry.file ? (
                     <span
                         className="text-white/50 normal-case truncate-mono max-w-[24rem]"
-                        title={`${entry.file}:${entry.line ?? 0}`}
+                        title={entry.line != null ? `${entry.file}:${entry.line}` : entry.file}
                     >
-                        {entry.file}:{entry.line ?? 0}
+                        {entry.line != null ? `${entry.file}:${entry.line}` : entry.file}
                     </span>
                 ) : null}
                 {entry.durationMs !== undefined ? (
@@ -220,7 +220,9 @@ function TimerStatsView({ stats }: { stats: TimerStats }): React.ReactElement {
 }
 
 function JsonView({ value }: { value: unknown }): React.ReactElement {
-    return <pre className="json-tree whitespace-pre-wrap break-words">{render(value, 0, false)}</pre>;
+    // `render()` emits <div> rows for object/array entries, so wrap in <div>
+    // (with `whitespace-pre-wrap`) to avoid block-in-<pre> nesting.
+    return <div className="json-tree whitespace-pre-wrap break-words">{render(value, 0, false)}</div>;
 }
 
 /**
