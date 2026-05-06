@@ -1,4 +1,5 @@
 import { createRequire } from "node:module";
+import { isInteractive } from "@app/utils/cli";
 import { ensurePackages, isPackageInstalled } from "@app/utils/packages";
 import { Lang, registerDynamicLanguage } from "@ast-grep/napi";
 
@@ -98,27 +99,47 @@ export function getLanguageForExt(ext: string): string | null {
     return EXT_TO_LANGUAGE_NAME[ext.toLowerCase()] ?? null;
 }
 
-let dynamicLangsRegistered = false;
+// `registerDynamicLanguage` from @ast-grep/napi is documented as "should be
+// called exactly once in the program". A second call silently fails to add
+// new languages (the new ones aren't queryable). We therefore aggregate every
+// caller's request and run a single registration with the union of installed
+// packages. Subsequent calls become no-ops.
 let dynamicLangsInitPromise: Promise<void> | null = null;
+let dynamicLangsRegistered = false;
 
-async function loadAndRegisterLanguages(targetLangs: Array<[string, string]>): Promise<void> {
-    const missing = targetLangs.filter(([, pkg]) => !isPackageInstalled(pkg)).map(([, pkg]) => pkg);
+async function loadAndRegisterAllInstalled(only?: Set<string>): Promise<void> {
+    // Optionally prompt-install requested-but-missing packages. We never
+    // install everything implicitly — only the languages someone actually
+    // asked for via `only` since the program started.
+    if (only && only.size > 0) {
+        const missing = DYNAMIC_LANG_PACKAGES.filter(([name, pkg]) => only.has(name) && !isPackageInstalled(pkg)).map(
+            ([, pkg]) => pkg
+        );
 
-    if (missing.length > 0) {
-        await ensurePackages(missing, {
-            label: `AST grammars (${missing.length} language${missing.length > 1 ? "s" : ""})`,
-            interactive: true,
-            reason: "Enables code parsing for syntax-aware indexing and search",
-        });
+        if (missing.length > 0) {
+            await ensurePackages(missing, {
+                label: `AST grammars (${missing.length} language${missing.length > 1 ? "s" : ""})`,
+                interactive: isInteractive(),
+                reason: "Enables code parsing for syntax-aware indexing and search",
+            });
+        }
     }
 
+    // Register every installed package in one shot — including ones we've
+    // never been asked for. Loading every grammar costs a few MB of RSS and
+    // pays for itself by making subsequent ensureDynamicLanguages() calls
+    // free, regardless of which language asks next.
     const modules: Record<string, { libraryPath: string; extensions: string[]; languageSymbol?: string }> = {};
 
-    for (const [name, pkg] of targetLangs) {
+    for (const [name, pkg] of DYNAMIC_LANG_PACKAGES) {
+        if (!isPackageInstalled(pkg)) {
+            continue;
+        }
+
         try {
             modules[name] = esmRequire(pkg);
         } catch {
-            // Still missing after install attempt (user rejected or network error) — skip
+            // Skip — broken install
         }
     }
 
@@ -127,30 +148,26 @@ async function loadAndRegisterLanguages(targetLangs: Array<[string, string]>): P
     }
 }
 
-/** Register dynamic language grammars, installing missing ones on-demand. Safe to call multiple times. */
+/**
+ * Register dynamic language grammars, installing missing ones on-demand. Safe
+ * to call multiple times — only the FIRST call performs registration. If a
+ * later call asks for a language that wasn't installed at first-call time, we
+ * cannot add it (ast-grep's API is single-shot), so we no-op.
+ */
 export async function ensureDynamicLanguages(options?: {
     only?: string[]; // Only install these languages (e.g. ["python", "go"])
 }): Promise<void> {
-    // Selective install: bypass global registration flag, just load what's needed
-    if (options?.only) {
-        const targetLangs = DYNAMIC_LANG_PACKAGES.filter(([name]) => options.only!.includes(name));
-        await loadAndRegisterLanguages(targetLangs);
-        return;
-    }
-
-    // Full registration: already done
     if (dynamicLangsRegistered) {
         return;
     }
 
-    // Full registration: in progress — join the existing promise instead of starting a second install
     if (dynamicLangsInitPromise) {
         await dynamicLangsInitPromise;
         return;
     }
 
     dynamicLangsInitPromise = (async () => {
-        await loadAndRegisterLanguages(DYNAMIC_LANG_PACKAGES);
+        await loadAndRegisterAllInstalled(options?.only ? new Set(options.only) : undefined);
         dynamicLangsRegistered = true;
     })().finally(() => {
         dynamicLangsInitPromise = null;

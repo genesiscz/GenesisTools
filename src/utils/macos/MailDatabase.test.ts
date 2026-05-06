@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
-import { MailDatabase, pruneStaleMailChunks } from "./MailDatabase";
+import { MailDatabase, selectStaleMailChunkIds } from "./MailDatabase";
 
 function setupIndex(db: Database): void {
     db.exec(
@@ -23,48 +23,48 @@ function setupEnvelope(db: Database): void {
     );
 }
 
-describe("pruneStaleMailChunks", () => {
-    it("removes chunks whose ROWID no longer exists in the envelope", () => {
+describe("selectStaleMailChunkIds", () => {
+    it("selects chunks whose ROWID no longer exists in the envelope", () => {
         const idx = new Database(":memory:");
         const env = new Database(":memory:");
         setupIndex(idx);
         setupEnvelope(env);
 
         idx.exec(
-            `INSERT INTO macos_mail_content (source_id, metadata_json) VALUES
-                ('100', '{"dateSent":1700000000}'),
-                ('200', '{"dateSent":1700000100}')`
+            `INSERT INTO macos_mail_content (id, source_id, metadata_json) VALUES
+                (1001, '100', '{"dateSent":1700000000}'),
+                (1002, '200', '{"dateSent":1700000100}')`
         );
         // Only ROWID 200 lives; 100 has been deleted/compacted from the envelope.
         env.exec("INSERT INTO messages (ROWID, date_sent) VALUES (200, 1700000100)");
 
-        expect(pruneStaleMailChunks(idx, env, "macos_mail")).toBe(1);
-        const remaining = idx.query("SELECT source_id FROM macos_mail_content").all() as Array<{ source_id: string }>;
-        expect(remaining).toEqual([{ source_id: "200" }]);
+        expect(selectStaleMailChunkIds(idx, env, "macos_mail")).toEqual(["1001"]);
+        // Selector must NOT mutate the index.
+        expect((idx.query("SELECT COUNT(*) AS n FROM macos_mail_content").get() as { n: number }).n).toBe(2);
     });
 
-    it("removes chunks whose live row is soft-deleted", () => {
+    it("selects chunks whose live row is soft-deleted", () => {
         const idx = new Database(":memory:");
         const env = new Database(":memory:");
         setupIndex(idx);
         setupEnvelope(env);
 
         idx.exec(
-            "INSERT INTO macos_mail_content (source_id, metadata_json) VALUES ('100', '{\"dateSent\":1700000000}')"
+            "INSERT INTO macos_mail_content (id, source_id, metadata_json) VALUES (1001, '100', '{\"dateSent\":1700000000}')"
         );
         env.exec("INSERT INTO messages (ROWID, date_sent, deleted) VALUES (100, 1700000000, 1)");
 
-        expect(pruneStaleMailChunks(idx, env, "macos_mail")).toBe(1);
+        expect(selectStaleMailChunkIds(idx, env, "macos_mail")).toEqual(["1001"]);
     });
 
-    it("removes chunks whose live row's date_sent diverges from indexed value", () => {
+    it("selects chunks whose live row's date_sent diverges from indexed value", () => {
         const idx = new Database(":memory:");
         const env = new Database(":memory:");
         setupIndex(idx);
         setupEnvelope(env);
 
         idx.exec(
-            "INSERT INTO macos_mail_content (source_id, metadata_json) VALUES ('100', '{\"dateSent\":1700000000}')"
+            "INSERT INTO macos_mail_content (id, source_id, metadata_json) VALUES (1001, '100', '{\"dateSent\":1700000000}')"
         );
         // Same ROWID, different date_sent — covers rare server-side date
         // corrections (IMAP/Exchange resync). NOTE: Mail.app uses
@@ -72,7 +72,7 @@ describe("pruneStaleMailChunks", () => {
         // "old slot got a new message" case (that can't happen).
         env.exec("INSERT INTO messages (ROWID, date_sent) VALUES (100, 1800000000)");
 
-        expect(pruneStaleMailChunks(idx, env, "macos_mail")).toBe(1);
+        expect(selectStaleMailChunkIds(idx, env, "macos_mail")).toEqual(["1001"]);
     });
 
     it("keeps chunks whose ROWID + dateSent still match", () => {
@@ -82,12 +82,11 @@ describe("pruneStaleMailChunks", () => {
         setupEnvelope(env);
 
         idx.exec(
-            "INSERT INTO macos_mail_content (source_id, metadata_json) VALUES ('100', '{\"dateSent\":1700000000}')"
+            "INSERT INTO macos_mail_content (id, source_id, metadata_json) VALUES (1001, '100', '{\"dateSent\":1700000000}')"
         );
         env.exec("INSERT INTO messages (ROWID, date_sent) VALUES (100, 1700000000)");
 
-        expect(pruneStaleMailChunks(idx, env, "macos_mail")).toBe(0);
-        expect((idx.query("SELECT COUNT(*) AS n FROM macos_mail_content").get() as { n: number }).n).toBe(1);
+        expect(selectStaleMailChunkIds(idx, env, "macos_mail")).toEqual([]);
     });
 
     it("is a no-op on an empty content table", () => {
@@ -97,7 +96,7 @@ describe("pruneStaleMailChunks", () => {
         setupEnvelope(env);
         env.exec("INSERT INTO messages (ROWID, date_sent) VALUES (1, 1700000000)");
 
-        expect(pruneStaleMailChunks(idx, env, "macos_mail")).toBe(0);
+        expect(selectStaleMailChunkIds(idx, env, "macos_mail")).toEqual([]);
     });
 });
 

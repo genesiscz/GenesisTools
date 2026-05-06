@@ -17,35 +17,41 @@ import { MacDatabase } from "./MacDatabase";
 import { type MailFilterOptions, resolveMailboxRowids, SQL_BIND_BATCH } from "./mail-sql";
 
 /**
- * Delete chunks from `<tableName>_content` whose `source_id` (Mail.app ROWID)
- * is now stale relative to the live envelope DB:
+ * Return chunk IDs from `<tableName>_content` whose `source_id` (Mail.app
+ * ROWID) is now stale relative to the live envelope DB:
  *   - the message no longer exists in the envelope (hard-deleted), OR
  *   - the message is soft-deleted (`deleted = 1`), OR
  *   - the message's `date_sent` differs from what we stored at index time
  *     (rare — server-side date correction via IMAP/Exchange resync).
  *
- * Note on ROWID stability: Mail.app's `messages` table is `INTEGER PRIMARY
- * KEY AUTOINCREMENT`, so deleted ROWIDs are NEVER reused. Gaps in the
- * sequence stay permanently empty. We don't need to re-index "recycled"
- * IDs after a prune (issue #162) — the deleted ROWID slot is gone for good.
+ * Read-only — does NOT mutate the index. Callers should hand the returned
+ * IDs to `store.removeChunks()` so vectors and content rows are removed in
+ * the same transaction. The previous helper deleted directly from `_content`
+ * and leaked vectors in `_vec` / `_embeddings`.
  *
- * Exported as a free function for direct testing with two `:memory:`
- * databases. Production code should use `MailDatabase#pruneStaleChunks`.
+ * Note on ROWID stability: Mail.app's `messages` table is `INTEGER PRIMARY
+ * KEY AUTOINCREMENT`, so deleted ROWIDs are NEVER reused — recovered chunks
+ * never need re-indexing after a prune (issue #162).
  *
  * @param indexDb     The indexer's read-write DB (e.g. ~/.genesis-tools/indexer/macos-mail/index.db)
  * @param envelopeDb  Mail.app's Envelope Index (readonly, opened by caller)
  * @param tableName   Sanitized index name, e.g. "macos_mail"
- * @returns           Number of chunks deleted.
+ * @returns           Chunk IDs (PK in `<tableName>_content`) to delete.
  */
-export function pruneStaleMailChunks(indexDb: Database, envelopeDb: Database, tableName: string): number {
+export function selectStaleMailChunkIds(indexDb: Database, envelopeDb: Database, tableName: string): string[] {
     const contentTable = `${tableName}_content`;
     const envFilename = (envelopeDb as unknown as { filename?: string }).filename;
     const usingMemory = !envFilename || envFilename === ":memory:";
 
+    const buildSql = (envSource: string): string => `
+        SELECT CAST(c.id AS TEXT) AS id FROM ${contentTable} c
+        LEFT JOIN ${envSource} m ON m.ROWID = CAST(c.source_id AS INTEGER)
+        WHERE m.ROWID IS NULL
+           OR m.deleted = 1
+           OR m.date_sent != CAST(json_extract(c.metadata_json, '$.dateSent') AS INTEGER)
+    `;
+
     if (usingMemory) {
-        // ATTACH only supports file paths; for in-memory test databases we
-        // copy the envelope's `messages` columns into a TEMP table on the
-        // index DB and run the same join there.
         indexDb.exec("CREATE TEMP TABLE _env_msg (ROWID INTEGER PRIMARY KEY, date_sent INTEGER, deleted INTEGER)");
 
         try {
@@ -60,18 +66,8 @@ export function pruneStaleMailChunks(indexDb: Database, envelopeDb: Database, ta
                 ins.run(r.ROWID, r.date_sent, r.deleted ?? 0);
             }
 
-            const result = indexDb.run(`
-                DELETE FROM ${contentTable}
-                WHERE id IN (
-                    SELECT c.id FROM ${contentTable} c
-                    LEFT JOIN _env_msg m ON m.ROWID = CAST(c.source_id AS INTEGER)
-                    WHERE m.ROWID IS NULL
-                       OR m.deleted = 1
-                       OR m.date_sent != CAST(json_extract(c.metadata_json, '$.dateSent') AS INTEGER)
-                )
-            `);
-
-            return Number(result.changes);
+            const result = indexDb.query(buildSql("_env_msg")).all() as Array<{ id: string }>;
+            return result.map((r) => r.id);
         } finally {
             indexDb.exec("DROP TABLE _env_msg");
         }
@@ -81,28 +77,18 @@ export function pruneStaleMailChunks(indexDb: Database, envelopeDb: Database, ta
     indexDb.run(`ATTACH DATABASE '${uri.replace(/'/g, "''")}?mode=ro' AS mailapp`);
 
     try {
-        const result = indexDb.run(`
-            DELETE FROM ${contentTable}
-            WHERE id IN (
-                SELECT c.id FROM ${contentTable} c
-                LEFT JOIN mailapp.messages m ON m.ROWID = CAST(c.source_id AS INTEGER)
-                WHERE m.ROWID IS NULL
-                   OR m.deleted = 1
-                   OR m.date_sent != CAST(json_extract(c.metadata_json, '$.dateSent') AS INTEGER)
-            )
-        `);
-        const removed = Number(result.changes);
+        const result = indexDb.query(buildSql("mailapp.messages")).all() as Array<{ id: string }>;
 
-        if (removed > 0) {
-            logger.debug(`[mail/prune] removed ${removed} stale chunks from ${contentTable}`);
+        if (result.length > 0) {
+            logger.debug(`[mail/prune] selected ${result.length} stale chunks in ${contentTable}`);
         }
 
-        return removed;
+        return result.map((r) => r.id);
     } finally {
         try {
             indexDb.run("DETACH DATABASE mailapp");
         } catch {
-            // detach failures shouldn't mask the prune result
+            // detach failures shouldn't mask the result
         }
     }
 }
@@ -178,13 +164,13 @@ export class MailDatabase extends MacDatabase {
     }
 
     /**
-     * Remove chunks whose backing envelope row has changed since indexing
+     * Return chunk IDs whose backing envelope row has changed since indexing
      * (hard-deleted, soft-deleted, or date_sent mismatch). Wraps the
-     * exported `pruneStaleMailChunks` helper. See its docstring for the
+     * exported `selectStaleMailChunkIds` helper. See its docstring for the
      * rationale on why ROWIDs aren't ever recycled.
      */
-    async pruneStaleChunks(indexDb: Database, tableName: string): Promise<number> {
-        return pruneStaleMailChunks(indexDb, this.getDb(), tableName);
+    async selectStaleChunkIds(indexDb: Database, tableName: string): Promise<string[]> {
+        return selectStaleMailChunkIds(indexDb, this.getDb(), tableName);
     }
 
     /**

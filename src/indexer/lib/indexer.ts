@@ -958,10 +958,31 @@ export class Indexer extends IndexerEventEmitter {
 
             if (typeof this.source.pruneStale === "function" && !this.cancellationRequested) {
                 try {
-                    chunksPruned = await this.source.pruneStale(this.store.getDb(), tableName);
+                    const staleIds = await this.source.pruneStale(this.store.getDb(), tableName);
+
+                    if (staleIds.length > 0) {
+                        await this.store.removeChunks(staleIds);
+                        chunksPruned = staleIds.length;
+                    }
                 } catch (err) {
                     const msg = err instanceof Error ? err.message : String(err);
                     logger.warn(`[sync] source.pruneStale failed: ${msg}`);
+                }
+            }
+
+            // ── Phase 5: ORPHAN VECTOR HEAL ──────────────────────────
+            // Older releases had source.pruneStale delete from `_content` only,
+            // leaking vectors in `_vec` / `_embeddings`. Sweep any orphans on
+            // every sync so the index becomes self-healing.
+            let vectorsHealed = 0;
+
+            if (!this.cancellationRequested) {
+                try {
+                    const result = await this.store.removeOrphanVectors();
+                    vectorsHealed = result.removed;
+                } catch (err) {
+                    const msg = err instanceof Error ? err.message : String(err);
+                    logger.warn(`[sync] removeOrphanVectors failed: ${msg}`);
                 }
             }
 
@@ -982,6 +1003,7 @@ export class Indexer extends IndexerEventEmitter {
                 durationMs,
                 cancelled: wasCancelled || undefined,
                 chunksPruned,
+                vectorsHealed,
             };
 
             const embeddingModelId = this.config.embedding?.model ?? "darwinkit";
