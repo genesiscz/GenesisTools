@@ -1,11 +1,10 @@
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { handleDashboardRequest } from "@app/debugging-master/core/dashboard-server";
+import { SESSIONS_DIR, sessionFilePath } from "@app/debugging-master/core/paths";
+import { sseBroadcaster } from "@app/debugging-master/core/sse-broadcaster";
 import type { LogEntry } from "@app/debugging-master/types";
 
 import { SafeJSON } from "@app/utils/json";
-
-const SESSIONS_DIR = join(homedir(), ".genesis-tools", "debugging-master", "sessions");
 
 function ensureDir(): void {
     if (!existsSync(SESSIONS_DIR)) {
@@ -48,7 +47,10 @@ function normalizeEntry(body: string): LogEntry {
 }
 
 /**
- * Start the HTTP ingest server.
+ * Start the HTTP ingest server. Live SSE fan-out is driven by the
+ * `FileTailer` inside `SSEBroadcaster` (watches the JSONL on disk), so the
+ * ingest path doesn't need to broadcast — works whether writes come from
+ * this process or another.
  */
 export function startServer(port: number = 7243): { server: ReturnType<typeof Bun.serve>; port: number } {
     ensureDir();
@@ -64,6 +66,13 @@ export function startServer(port: number = 7243): { server: ReturnType<typeof Bu
     const server = Bun.serve({
         port,
         hostname: "0.0.0.0",
+        // Idle timeout 2 minutes. SSE heartbeats fire every 15s (well within
+        // this window) so streams stay open. The non-zero timeout is a safety
+        // net: if a connection genuinely goes silent (network glitch, sleeping
+        // laptop), the server reaps it instead of leaking forever. Bun's
+        // default 10s would kill SSE between heartbeats and trigger a
+        // reconnect storm.
+        idleTimeout: 120,
         async fetch(req) {
             const url = new URL(req.url);
 
@@ -88,7 +97,7 @@ export function startServer(port: number = 7243): { server: ReturnType<typeof Bu
 
                 return req.text().then((body) => {
                     const entry = normalizeEntry(body);
-                    const path = join(SESSIONS_DIR, `${sessionName}.jsonl`);
+                    const path = sessionFilePath(sessionName);
                     appendFileSync(path, `${SafeJSON.stringify(entry)}\n`);
                     return new Response("ok", { status: 200, headers: corsHeaders });
                 });
@@ -100,13 +109,24 @@ export function startServer(port: number = 7243): { server: ReturnType<typeof Bu
                 if (!sessionName || !SAFE_SESSION_NAME.test(sessionName)) {
                     return new Response("Invalid session name", { status: 400, headers: corsHeaders });
                 }
-                const path = join(SESSIONS_DIR, `${sessionName}.jsonl`);
-                try {
-                    await Bun.write(path, "");
-                    return new Response("cleared", { status: 200, headers: corsHeaders });
-                } catch {
+                const path = sessionFilePath(sessionName);
+                if (!existsSync(path)) {
                     return new Response("session not found", { status: 404, headers: corsHeaders });
                 }
+
+                try {
+                    await Bun.write(path, "");
+                    sseBroadcaster.publishCleared(sessionName);
+                    return new Response("cleared", { status: 200, headers: corsHeaders });
+                } catch {
+                    return new Response("failed to clear session", { status: 500, headers: corsHeaders });
+                }
+            }
+
+            // Dashboard routes (HTML + /api/*)
+            const dashboardResponse = await handleDashboardRequest(req, url, corsHeaders);
+            if (dashboardResponse) {
+                return dashboardResponse;
             }
 
             return new Response("not found", { status: 404, headers: corsHeaders });
