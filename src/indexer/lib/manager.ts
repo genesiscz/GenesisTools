@@ -182,6 +182,10 @@ export class IndexerManager {
                         meta.stats.totalEmbeddings = live.totalEmbeddings;
                     }
 
+                    if (live.orphanEmbeddings !== undefined) {
+                        meta.stats.orphanEmbeddings = live.orphanEmbeddings;
+                    }
+
                     if (live.dbSizeBytes !== undefined) {
                         meta.stats.dbSizeBytes = live.dbSizeBytes;
                     }

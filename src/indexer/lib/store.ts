@@ -4,7 +4,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import logger from "@app/logger";
 import { Embedder } from "@app/utils/ai/tasks/Embedder";
-import { countActiveEmbeddings } from "@app/utils/database/embedding-stats";
+import { countActiveEmbeddings, countPairedEmbeddings } from "@app/utils/database/embedding-stats";
 import { getPendingMigrations, runMigrations } from "@app/utils/database/migrations";
 import { acquireLock, type LockHandle } from "@app/utils/fs/lock";
 import { SafeJSON } from "@app/utils/json";
@@ -36,6 +36,12 @@ import {
 export interface IndexStore {
     insertChunks(chunks: ChunkRecord[], embeddings?: Map<string, Float32Array>): Promise<void>;
     removeChunks(chunkIds: string[]): Promise<void>;
+    /**
+     * Delete vectors whose `doc_id` no longer matches a row in `_content`.
+     * Heals leaks from older releases where chunk deletion bypassed the
+     * vector store. Returns the number of vectors removed.
+     */
+    removeOrphanVectors(): Promise<{ removed: number }>;
     /** Get chunk IDs that exist in content table but have no embedding */
     getUnembeddedChunkIds(): string[];
     /** Count chunks that have no embedding (without loading IDs into memory) */
@@ -790,6 +796,107 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
                 }
             },
 
+            async removeOrphanVectors(): Promise<{ removed: number }> {
+                // The orphan-detection JOIN reads from `${contentTable}`. On a
+                // freshly initialized index the content table may not exist yet,
+                // in which case there are by definition no orphans to clean —
+                // bail out cleanly rather than letting the JOIN throw.
+                const contentExistsNow = !!db
+                    .query("SELECT name FROM sqlite_master WHERE type='table' AND name=?")
+                    .get(contentTable);
+                if (!contentExistsNow) {
+                    return { removed: 0 };
+                }
+
+                const vecExistsNow = !!db
+                    .query("SELECT name FROM sqlite_master WHERE type='table' AND name=?")
+                    .get(vecTable);
+                const legacyExistsNow = !!db
+                    .query("SELECT name FROM sqlite_master WHERE type='table' AND name=?")
+                    .get(embTable);
+
+                const orphans = new Set<string>();
+
+                const collect = (table: string): void => {
+                    const rows = db
+                        .query(
+                            `SELECT v.doc_id AS id FROM ${table} v
+                             LEFT JOIN ${contentTable} c ON c.id = v.doc_id
+                             WHERE c.id IS NULL`
+                        )
+                        .all() as Array<{ id: string }>;
+                    for (const r of rows) {
+                        orphans.add(r.id);
+                    }
+                };
+
+                if (vecExistsNow) {
+                    try {
+                        collect(vecTable);
+                    } catch {
+                        // vec0 module not loaded on this connection — load and retry.
+                        if (loadSqliteVec(db)) {
+                            collect(vecTable);
+                        }
+                    }
+                }
+
+                // The legacy `_embeddings` table can coexist with `_vec` (e.g. partial
+                // migration). Diff it independently so both sources of orphans are caught.
+                if (legacyExistsNow) {
+                    collect(embTable);
+                }
+
+                if (orphans.size === 0) {
+                    return { removed: 0 };
+                }
+
+                const ids = [...orphans];
+                cachedMeta = null;
+
+                // Flush external (e.g. Qdrant) vector store FIRST. If it
+                // throws, we leave the local `_vec`/`_embeddings` markers in
+                // place so the next sweep re-detects the same orphans and
+                // can retry — otherwise a transient external failure would
+                // permanently strand vectors on the remote side.
+                const vectorStoreForRemoval = fts.getVectorStore();
+                if (vectorStoreForRemoval) {
+                    if (vectorStoreForRemoval.removeMany) {
+                        vectorStoreForRemoval.removeMany(ids);
+                    } else {
+                        for (const id of ids) {
+                            vectorStoreForRemoval.remove(id);
+                        }
+                    }
+                }
+
+                const tx = db.transaction(() => {
+                    runBatchedQuery({
+                        ids,
+                        queryFn: (placeholders, batch) => {
+                            if (legacyExistsNow) {
+                                db.run(`DELETE FROM ${embTable} WHERE doc_id IN (${placeholders})`, batch);
+                            }
+
+                            if (vecExistsNow) {
+                                try {
+                                    db.run(`DELETE FROM ${vecTable} WHERE doc_id IN (${placeholders})`, batch);
+                                } catch {
+                                    if (loadSqliteVec(db)) {
+                                        db.run(`DELETE FROM ${vecTable} WHERE doc_id IN (${placeholders})`, batch);
+                                    }
+                                }
+                            }
+
+                            return [];
+                        },
+                    });
+                });
+                tx();
+
+                return { removed: ids.length };
+            },
+
             getUnembeddedChunkIds(): string[] {
                 if (!embTableExists) {
                     const rows = db.query(`SELECT id FROM ${contentTable}`).all() as Array<{ id: string }>;
@@ -930,7 +1037,12 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
                 const countRow = db.query(`SELECT COUNT(*) AS cnt FROM ${contentTable}`).get() as { cnt: number };
                 const chunkCount = countRow.cnt;
 
-                const embeddingCount = countActiveEmbeddings(db, tableName);
+                // Match readLiveStats() in storage.ts: `totalEmbeddings` is the
+                // paired-with-content count; the leftover `_vec` rows are
+                // surfaced as `orphanEmbeddings` so callers can warn / vacuum.
+                const paired = countPairedEmbeddings(db, tableName);
+                const total = countActiveEmbeddings(db, tableName);
+                const orphans = Math.max(0, total - paired);
 
                 const dbSizeBytes = getDbSizeBytes(dbPath);
 
@@ -946,7 +1058,8 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
                 return {
                     totalFiles: meta.stats.totalFiles,
                     totalChunks: chunkCount,
-                    totalEmbeddings: embeddingCount,
+                    totalEmbeddings: paired,
+                    orphanEmbeddings: orphans,
                     embeddingDimensions: meta.stats.embeddingDimensions,
                     dbSizeBytes,
                     lastSyncDurationMs: meta.stats.lastSyncDurationMs,

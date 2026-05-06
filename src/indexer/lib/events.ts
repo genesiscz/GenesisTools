@@ -15,6 +15,8 @@ export interface SyncStats {
     cancelled?: boolean;
     /** Chunks pruned by source.pruneStale() (e.g. mail's deleted/changed-row cleanup). */
     chunksPruned?: number;
+    /** Orphan vectors swept during Phase 5 (no matching content row, healed in-place). */
+    vectorsHealed?: number;
 }
 
 // ─── Event map: single source of truth ──────────────────────────

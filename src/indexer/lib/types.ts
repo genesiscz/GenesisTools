@@ -134,6 +134,8 @@ export interface IndexStats {
     /** Min/max chunk timestamp (unix seconds) for date-aware sources. Absent or null for non-temporal indexes. */
     dateRangeMin?: number | null;
     dateRangeMax?: number | null;
+    /** Vectors with no matching content row — non-zero indicates leak from older releases. */
+    orphanEmbeddings?: number;
 }
 
 export interface ChunkRecord {
