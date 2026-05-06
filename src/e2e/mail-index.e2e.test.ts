@@ -30,16 +30,16 @@ describe.skipIf(!isDarwin)("tools macos mail search", () => {
             const result = await runTool(["macos", "mail", "search", "--help"]);
             const output = stripAnsi(result.stdout + result.stderr);
             expect(output).toContain("Search emails");
-            expect(output).toContain("--dumb");
+            expect(output).toContain("--jxa");
         },
         { timeout: 15_000 }
     );
 
     it.skipIf(!hasMailData)(
-        "searches with --dumb flag (legacy search)",
+        "searches with --jxa flag (legacy search)",
         async () => {
             const result = await runTool(
-                ["macos", "mail", "search", "test", "--dumb", "--without-body", "--no-semantic", "--limit", "5"],
+                ["macos", "mail", "search", "test", "--jxa", "--without-body", "--limit", "5"],
                 30_000
             );
             // Should not error
