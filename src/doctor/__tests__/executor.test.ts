@@ -75,7 +75,7 @@ describe("executor", () => {
             items: [{ finding: found, action: selected }],
         });
         expect(called).toBe(false);
-        expect(results[0]?.status).toBe("ok");
+        expect(results[0]?.status).toBe("skipped");
         expect(results[0]?.actualReclaimedBytes).toBe(100);
     });
 

@@ -81,13 +81,13 @@ describe("tools macos voice-memos", () => {
 
     describe("transcribe", () => {
         it("transcribe invalid ID exits 1", async () => {
-            const r = await runTool(["macos", "voice-memos", "transcribe", "999999"]);
+            const r = await runTool(["macos", "voice-memos", "transcribe", "999999", "--provider", "local-hf"]);
             expect(r.exitCode).toBe(1);
             expect(getOutput(r).toLowerCase()).toMatch(/no memo|not found/i);
         });
 
         it("transcribe --all exits 0", async () => {
-            const r = await runTool(["macos", "voice-memos", "transcribe", "--all"], 60_000);
+            const r = await runTool(["macos", "voice-memos", "transcribe", "--all", "--provider", "local-hf"], 60_000);
             expect(r.exitCode).toBe(0);
         }, 60_000);
     });

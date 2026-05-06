@@ -120,25 +120,35 @@ describe("youtube analyze command", () => {
     it("summarizes resolved video targets", async () => {
         const program = await makeProgram();
 
-        await program.parseAsync(["node", "test", "analyze", "abc123def45", "--summary"]);
+        await program.parseAsync(["node", "test", "analyze", "abc123def45", "--summary", "-y"]);
 
-        expect(calls.summarize).toEqual([{ videoId: "abc123def45", mode: "short" }]);
+        expect(calls.summarize).toMatchObject([{ videoId: "abc123def45", mode: "short" }]);
         expect(stdout).toContain("Short summary");
     });
 
     it("summarizes channel targets with timestamped output", async () => {
         const program = await makeProgram();
 
-        await program.parseAsync(["node", "test", "analyze", "@mkbhd", "--timestamped"]);
+        await program.parseAsync(["node", "test", "analyze", "@mkbhd", "--timestamped", "-y"]);
 
-        expect(calls.summarize).toEqual([{ videoId: "abc123def45", mode: "timestamped" }]);
+        expect(calls.summarize).toMatchObject([{ videoId: "abc123def45", mode: "timestamped" }]);
         expect(stdout).toContain("Timestamped summary");
     });
 
     it("indexes and asks across resolved targets", async () => {
         const program = await makeProgram();
 
-        await program.parseAsync(["node", "test", "analyze", "abc123def45", "--ask", "what changed?", "--top-k", "4"]);
+        await program.parseAsync([
+            "node",
+            "test",
+            "analyze",
+            "abc123def45",
+            "--ask",
+            "what changed?",
+            "--top-k",
+            "4",
+            "-y",
+        ]);
 
         expect(calls.index).toEqual([{ videoId: "abc123def45" }]);
         expect(calls.ask[0]).toMatchObject({ videoIds: ["abc123def45"], question: "what changed?", topK: 4 });
