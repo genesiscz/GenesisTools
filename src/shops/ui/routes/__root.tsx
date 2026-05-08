@@ -1,17 +1,8 @@
-import { createRootRoute, HeadContent, Outlet, Scripts, useRouter, useRouterState } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
-import { DashboardLayout } from "@app/utils/ui/layouts/DashboardLayout";
 import { Badge } from "@app/utils/ui/components/badge";
-import {
-    Bell,
-    GitMerge,
-    Heart,
-    LayoutGrid,
-    LayoutTemplate,
-    Radio,
-    Settings,
-    ShoppingBasket,
-} from "lucide-react";
+import { DashboardLayout } from "@app/utils/ui/layouts/DashboardLayout";
+import { useQuery } from "@tanstack/react-query";
+import { createRootRoute, HeadContent, Outlet, Scripts, useRouter, useRouterState } from "@tanstack/react-router";
+import { Bell, GitMerge, Heart, LayoutGrid, LayoutTemplate, Radio, Settings, ShoppingBasket } from "lucide-react";
 import { Toaster } from "sonner";
 import appCss from "../styles.css?url";
 

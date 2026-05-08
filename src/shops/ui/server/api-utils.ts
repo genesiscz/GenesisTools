@@ -1,7 +1,7 @@
 import { SafeJSON } from "@app/utils/json";
 
 export function apiHandler(
-    fn: (request: Request) => Promise<Response>,
+    fn: (request: Request) => Promise<Response>
 ): (ctx: { request: Request }) => Promise<Response> {
     return async ({ request }) => {
         try {
@@ -23,10 +23,7 @@ export async function jsonBody(request: Request): Promise<Record<string, unknown
     }
 }
 
-export function parseQuery<T>(
-    request: Request,
-    parser: (params: URLSearchParams) => T | Error,
-): T | Response {
+export function parseQuery<T>(request: Request, parser: (params: URLSearchParams) => T | Error): T | Response {
     const url = new URL(request.url);
     const result = parser(url.searchParams);
     if (result instanceof Error) {
@@ -40,7 +37,7 @@ export function intParam(
     params: URLSearchParams,
     key: string,
     fallback: number,
-    opts: { min?: number; max?: number } = {},
+    opts: { min?: number; max?: number } = {}
 ): number {
     const raw = params.get(key);
     if (raw === null) {
@@ -67,7 +64,7 @@ export function enumParam<T extends string>(
     params: URLSearchParams,
     key: string,
     allowed: readonly T[],
-    fallback: T,
+    fallback: T
 ): T {
     const raw = params.get(key);
     if (raw === null) {
