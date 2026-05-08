@@ -48,9 +48,7 @@ describe("MasterMerger.merge", () => {
 
         const linked = db
             .raw()
-            .query<{ n: number }, [number]>(
-                "SELECT COUNT(*) AS n FROM products WHERE master_product_id = ?"
-            )
+            .query<{ n: number }, [number]>("SELECT COUNT(*) AS n FROM products WHERE master_product_id = ?")
             .get(survivor)!.n;
         expect(linked).toBe(2);
         db.close();
