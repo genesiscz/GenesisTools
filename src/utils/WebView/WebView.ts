@@ -264,7 +264,7 @@ export class WebView {
 
     async screenshotToFile(filePath: string, options: ScreenshotOptions = {}): Promise<void> {
         this.assertOpen("screenshotToFile");
-        const result = await this.screenshot({ ...options, encoding: "binary" });
+        const result = await this.screenshot({ ...options, encoding: "buffer" });
         writeFileSync(filePath, result.data as Buffer);
         this.log.debug({ filePath }, "screenshot saved");
     }

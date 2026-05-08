@@ -1,4 +1,3 @@
-export { WebView } from "./WebView";
 // WebViewPool added in Task 7
 export {
     WebViewError,
@@ -17,3 +16,4 @@ export type {
     WebViewBackend,
     WebViewOptions,
 } from "./types";
+export { WebView } from "./WebView";

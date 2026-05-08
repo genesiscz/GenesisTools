@@ -11,7 +11,7 @@ import type { Logger } from "pino";
 export type WebViewBackend = "webkit" | "chrome";
 
 export type ScreenshotFormat = "png" | "jpeg" | "webp";
-export type ScreenshotEncoding = "base64" | "binary" | "shmem";
+export type ScreenshotEncoding = "base64" | "buffer" | "blob" | "shmem";
 
 export interface ScreenshotOptions {
     format?: ScreenshotFormat;

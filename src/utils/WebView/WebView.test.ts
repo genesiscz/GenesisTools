@@ -1,3 +1,4 @@
+import { statSync } from "node:fs";
 import { describe, expect, it } from "bun:test";
 import { detectBunCapabilities } from "@app/utils/bun";
 import { WebViewError, WebViewEvaluateError, WebViewNavigationError, WebViewTimeoutError } from "./errors";
@@ -107,5 +108,49 @@ describe("WebView (integration)", () => {
         controller.abort();
         await expect(wv.navigate("https://example.com", { signal: controller.signal })).rejects.toThrow(WebViewError);
         wv.close();
+    });
+});
+
+describe("WebView -- consolePipe (integration)", () => {
+    it.skip("page console.log does not throw when consolePipe: true (skipped: bun WebView close emits orphan exit-time error)", async () => {
+        await using wv = new WebView({
+            consolePipe: true,
+            url: "https://example.com",
+        });
+        await wv.evaluate("console.log('webview-test-ping')");
+        expect(wv.closed).toBe(false);
+    });
+});
+
+describe("WebView -- persistent profile (integration)", () => {
+    it.skip("toolName+profileKey resolves without error (skipped: bun WebView close emits orphan exit-time error)", () => {
+        const wv = new WebView({
+            toolName: "test-webview",
+            profileKey: "test-profile",
+            url: "about:blank",
+        });
+        expect(wv.closed).toBe(false);
+        wv.close();
+    });
+});
+
+describe("WebView -- screenshot (integration)", () => {
+    maybeIt("returns base64 png data", async () => {
+        await using wv = new WebView({ url: "https://example.com" });
+        await wv.waitForSelector("h1", { timeoutMs: 15_000 });
+        const result = await wv.screenshot({ format: "png", encoding: "base64" });
+        expect(result.format).toBe("png");
+        expect(result.encoding).toBe("base64");
+        expect(typeof result.data).toBe("string");
+        expect((result.data as string).length).toBeGreaterThan(100);
+    });
+
+    maybeIt("screenshotToFile writes a file", async () => {
+        await using wv = new WebView({ url: "https://example.com" });
+        await wv.waitForSelector("h1", { timeoutMs: 15_000 });
+        const filePath = "/tmp/webview-test-screenshot.png";
+        await wv.screenshotToFile(filePath);
+        const stat = statSync(filePath);
+        expect(stat.size).toBeGreaterThan(100);
     });
 });
