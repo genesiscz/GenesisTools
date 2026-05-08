@@ -1,0 +1,52 @@
+{
+    "total": 5,
+    "count": 3,
+    "page": 0,
+    "products": [
+        {
+            "sku": "00-1234567",
+            "name": "Veka 500g",
+            "slug": "veka-500g",
+            "parentCategories": [{ "name": "Pekárna" }, { "name": "Pečivo" }],
+            "images": ["https://shop.billa.cz/img/sku-1234567.jpg"],
+            "price": {
+                "regular": {
+                    "value": 2490,
+                    "perStandardizedQuantity": 4980
+                }
+            },
+            "baseUnitShort": "kg",
+            "weightPieceArticle": null
+        },
+        {
+            "sku": "00-2222222",
+            "name": "Toast bílý 500g",
+            "slug": "toast-bily-500g",
+            "parentCategories": [{ "name": "Pekárna" }],
+            "images": ["https://shop.billa.cz/img/sku-2222222.jpg"],
+            "price": {
+                "regular": {
+                    "value": 3990,
+                    "perStandardizedQuantity": 7980
+                }
+            },
+            "baseUnitShort": "kg",
+            "weightPieceArticle": null
+        },
+        {
+            "sku": "00-3333333",
+            "name": "Bagueta 250g",
+            "slug": "bagueta-250g",
+            "parentCategories": [{ "name": "Pekárna" }],
+            "images": ["https://shop.billa.cz/img/sku-3333333.jpg"],
+            "price": {
+                "regular": {
+                    "value": 1990,
+                    "perStandardizedQuantity": 7960
+                }
+            },
+            "baseUnitShort": "kg",
+            "weightPieceArticle": null
+        }
+    ]
+}

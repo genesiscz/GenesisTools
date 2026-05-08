@@ -2,6 +2,7 @@ import type { HttpRequestSink } from "../lib/http-sink";
 import { ShopRegistry } from "./ShopRegistry";
 import { AlzaClient } from "./shops/AlzaClient";
 import { BenuClient } from "./shops/BenuClient";
+import { BillaClient } from "./shops/BillaClient";
 import { DmClient } from "./shops/DmClient";
 import { DrmaxClient } from "./shops/DrmaxClient";
 import { HornbachClient } from "./shops/HornbachClient";
@@ -37,6 +38,7 @@ export function initShopRegistry(opts: { sink?: HttpRequestSink } = {}): void {
     registry.register(new KnihyDobrovskyClient({ sink: opts.sink }));
     registry.register(new HornbachClient({ sink: opts.sink }));
     registry.register(new DmClient({ sink: opts.sink }));
+    registry.register(new BillaClient({ sink: opts.sink }));
     initialized = true;
 }
 
