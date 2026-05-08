@@ -10,8 +10,7 @@ describe("detectBunCapabilities", () => {
     it("returns headlessBrowser true on Bun >= 1.3.12", () => {
         const caps = detectBunCapabilities();
         const { major, minor, patch } = caps.bunVersion;
-        const meetsMin =
-            major > 1 || (major === 1 && (minor > 3 || (minor === 3 && patch >= 12)));
+        const meetsMin = major > 1 || (major === 1 && (minor > 3 || (minor === 3 && patch >= 12)));
         expect(caps.headlessBrowser).toBe(meetsMin);
     });
 });

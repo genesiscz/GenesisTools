@@ -48,8 +48,6 @@ export function requireHeadlessBrowser(): void {
 
     if (!caps.headlessBrowser) {
         const { major, minor, patch } = caps.bunVersion;
-        throw new Error(
-            `Bun.WebView requires Bun >= 1.3.12 (current: ${major}.${minor}.${patch}). Run: bun upgrade`,
-        );
+        throw new Error(`Bun.WebView requires Bun >= 1.3.12 (current: ${major}.${minor}.${patch}). Run: bun upgrade`);
     }
 }
