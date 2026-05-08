@@ -1,5 +1,5 @@
-import { describe, expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
+import { describe, expect, it } from "bun:test";
 import { runMigrations } from "@app/utils/database/migrations";
 import { migration001 } from "./001-initial";
 
