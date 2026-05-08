@@ -2,6 +2,7 @@ import logger from "@app/logger";
 import type { Command } from "commander";
 import { initShopRegistry } from "../api/registry-init";
 import { ShopRegistry } from "../api/ShopRegistry";
+import { DrmaxCrawler } from "../crawlers/DrmaxCrawler";
 import { KauflandCrawler } from "../crawlers/KauflandCrawler";
 import { KosikRestCrawler } from "../crawlers/KosikRestCrawler";
 import { RohlikRestCrawler } from "../crawlers/RohlikRestCrawler";
@@ -37,6 +38,9 @@ export async function runCrawlCommand(input: RunCrawlInput): Promise<CrawlResult
             break;
         case "kaufland.cz":
             crawler = new KauflandCrawler(client, input.db);
+            break;
+        case "drmax.cz":
+            crawler = new DrmaxCrawler(client, input.db);
             break;
         default:
             throw new Error(`no crawler registered for ${client.shopOrigin}`);
