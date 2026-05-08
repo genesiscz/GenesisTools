@@ -1,0 +1,98 @@
+[
+  {
+    "description": "01 — Coca-Cola 1.5L (EAN-rich, layer 0 happy path)",
+    "expected_master_group": [
+      { "shop_origin": "rohlik.cz", "url": "https://www.rohlik.cz/1300167-coca-cola-pet-1-5-l", "name": "Coca-Cola PET 1,5 l", "brand": "Coca-Cola", "ean": "5449000000996" },
+      { "shop_origin": "kosik.cz", "url": "https://www.kosik.cz/produkt/coca-cola-1-5-l", "name": "Coca-Cola 1,5 l", "brand": "Coca-Cola", "ean": "5449000000996" },
+      { "shop_origin": "albert.cz", "url": "https://nakup.albert.cz/coca-cola-1-5l", "name": "Coca-Cola 1,5 L", "brand": "Coca-Cola", "ean": "5449000000996" },
+      { "shop_origin": "kaufland.cz", "url": "https://www.kaufland.cz/produkt/coca-cola-1-5-l", "name": "Coca-Cola Original 1,5 l", "brand": "Coca-Cola", "ean": "5449000000996" }
+    ],
+    "expected_separate_groups": []
+  },
+  {
+    "description": "02 — Ritter Sport mléčná 100g (size variant, must NOT merge with 250g)",
+    "expected_master_group": [
+      { "shop_origin": "rohlik.cz", "url": "https://www.rohlik.cz/123456-ritter-sport-mlecna-100g", "name": "Ritter Sport mléčná 100 g", "brand": "Ritter Sport", "ean": "4000417025005" },
+      { "shop_origin": "kosik.cz", "url": "https://www.kosik.cz/produkt/ritter-sport-mlecna-100g", "name": "Ritter Sport mléčná 100 g", "brand": "Ritter Sport", "ean": "4000417025005" }
+    ],
+    "expected_separate_groups": [
+      [
+        { "shop_origin": "rohlik.cz", "url": "https://www.rohlik.cz/789012-ritter-sport-mlecna-250g", "name": "Ritter Sport mléčná 250 g", "brand": "Ritter Sport", "ean": "4000417250003" }
+      ]
+    ]
+  },
+  {
+    "description": "03 — Lindt Lindor (3 flavors must NOT cross-merge)",
+    "expected_master_group": [],
+    "expected_separate_groups": [
+      [
+        { "shop_origin": "rohlik.cz", "url": "https://www.rohlik.cz/lindor-milk", "name": "Lindt Lindor mléčná 200g", "brand": "Lindt", "ean": null },
+        { "shop_origin": "kosik.cz", "url": "https://www.kosik.cz/lindor-milk", "name": "Lindt Lindor mléčná 200g", "brand": "Lindt", "ean": null }
+      ],
+      [
+        { "shop_origin": "rohlik.cz", "url": "https://www.rohlik.cz/lindor-dark", "name": "Lindt Lindor hořká 200g", "brand": "Lindt", "ean": null },
+        { "shop_origin": "kosik.cz", "url": "https://www.kosik.cz/lindor-dark", "name": "Lindt Lindor hořká 200g", "brand": "Lindt", "ean": null }
+      ],
+      [
+        { "shop_origin": "rohlik.cz", "url": "https://www.rohlik.cz/lindor-strawberry", "name": "Lindt Lindor jahodová 200g", "brand": "Lindt", "ean": null }
+      ]
+    ]
+  },
+  {
+    "description": "04 — Madeta plnotučné mléko 1L (czech-only brand, diakritika)",
+    "expected_master_group": [
+      { "shop_origin": "rohlik.cz", "url": "https://www.rohlik.cz/madeta-plnotucne-1l", "name": "Madeta Mléko plnotučné 1 l", "brand": "Madeta", "ean": null },
+      { "shop_origin": "kosik.cz", "url": "https://www.kosik.cz/madeta-plnotucne-1l", "name": "Madeta plnotučné mléko 1 l", "brand": "Madeta", "ean": null }
+    ],
+    "expected_separate_groups": []
+  },
+  {
+    "description": "05 — Dove deodorant 50ml (drogerie crossover, brand-name fuzzy)",
+    "expected_master_group": [
+      { "shop_origin": "dm.cz", "url": "https://www.dm.cz/dove-deo-50ml", "name": "Dove Original deodorant 50 ml", "brand": "Dove", "ean": null },
+      { "shop_origin": "tetadrogerie.cz", "url": "https://www.tetadrogerie.cz/dove-deo-50ml", "name": "Dove Original deodorant 50 ml", "brand": "Dove", "ean": null }
+    ],
+    "expected_separate_groups": []
+  },
+  {
+    "description": "06 — Paralen 500mg 24 tabs (pharmacy with EAN)",
+    "expected_master_group": [
+      { "shop_origin": "drmax.cz", "url": "https://www.drmax.cz/paralen-500mg-24tbl", "name": "Paralen 500 mg 24 tablet", "brand": "Paralen", "ean": "8594732400107" },
+      { "shop_origin": "benu.cz", "url": "https://www.benu.cz/paralen-500mg-24tbl", "name": "Paralen 500 mg tbl. 24", "brand": "Paralen", "ean": "8594732400107" }
+    ],
+    "expected_separate_groups": []
+  },
+  {
+    "description": "07 — Coca-Cola 1.5L × 6 multipack (must NOT merge with #01 due to multipack guard)",
+    "expected_master_group": [
+      { "shop_origin": "rohlik.cz", "url": "https://www.rohlik.cz/cola-6x15", "name": "Coca-Cola 6 × 1,5 l", "brand": "Coca-Cola", "ean": null },
+      { "shop_origin": "kosik.cz", "url": "https://www.kosik.cz/cola-6x15", "name": "Coca-Cola 6× 1,5 l balení", "brand": "Coca-Cola", "ean": null }
+    ],
+    "expected_separate_groups": []
+  },
+  {
+    "description": "08 — Nescafé Gold 200g (size phrasing variants)",
+    "expected_master_group": [
+      { "shop_origin": "rohlik.cz", "url": "https://www.rohlik.cz/nescafe-gold-200", "name": "Nescafé Gold 200 g", "brand": "Nescafé", "ean": "7613036754033" },
+      { "shop_origin": "kosik.cz", "url": "https://www.kosik.cz/nescafe-gold-200g-sklenice", "name": "Nescafé Gold 200 g sklenice", "brand": "Nescafé", "ean": "7613036754033" }
+    ],
+    "expected_separate_groups": []
+  },
+  {
+    "description": "09 — Private labels Albert/Pilos/K-Classic mléko (must NOT auto-merge)",
+    "expected_master_group": [],
+    "expected_separate_groups": [
+      [{ "shop_origin": "albert.cz", "url": "https://nakup.albert.cz/albert-mleko-1l", "name": "Albert Mléko plnotučné 1 l", "brand": "Albert", "ean": null }],
+      [{ "shop_origin": "billa.cz", "url": "https://shop.billa.cz/pilos-mleko-1l", "name": "Pilos Mléko plnotučné 1 l", "brand": "Pilos", "ean": null }],
+      [{ "shop_origin": "kaufland.cz", "url": "https://www.kaufland.cz/k-classic-mleko-1l", "name": "K-Classic Mléko plnotučné 1 l", "brand": "K-Classic", "ean": null }]
+    ]
+  },
+  {
+    "description": "10 — Lindor 200g (size missing one side; layer 2b)",
+    "expected_master_group": [
+      { "shop_origin": "rohlik.cz", "url": "https://www.rohlik.cz/lindor-classic-200g", "name": "Lindt Lindor classic 200 g", "brand": "Lindt", "ean": null },
+      { "shop_origin": "kosik.cz", "url": "https://www.kosik.cz/lindor-classic", "name": "Lindt Lindor classic", "brand": "Lindt", "ean": null }
+    ],
+    "expected_separate_groups": []
+  }
+]

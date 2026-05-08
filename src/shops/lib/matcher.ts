@@ -6,6 +6,32 @@ import { isLayer3GrayZone, MATCHER_CONFIG, type MatcherConfig } from "./matcher-
 import { compatPackCount } from "./multipack-guard";
 import type { Unit } from "./normalize";
 
+function tokenize(s: string): Set<string> {
+    return new Set(s.split(/\s+/).filter((t) => t.length > 0));
+}
+
+function containmentSimilarity(a: string, b: string): number {
+    const wa = tokenize(a);
+    const wb = tokenize(b);
+    if (wa.size === 0 || wb.size === 0) {
+        return 0;
+    }
+
+    const [small, big] = wa.size < wb.size ? [wa, wb] : [wb, wa];
+    let inter = 0;
+    for (const t of small) {
+        if (big.has(t)) {
+            inter += 1;
+        }
+    }
+
+    return inter / small.size;
+}
+
+function combinedNameSimilarity(a: string, b: string): number {
+    return Math.max(similarityScore(a, b), wordSimilarity(a, b), containmentSimilarity(a, b) * 0.95);
+}
+
 export interface MatcherInput {
     productId: number;
     shopOrigin: string;
@@ -214,7 +240,7 @@ export class Matcher {
 
         let best: { row: MasterRow; score: number } | null = null;
         for (const row of compat) {
-            const score = similarityScore(input.nameNormalized, row.canonical_name_normalized);
+            const score = combinedNameSimilarity(input.nameNormalized, row.canonical_name_normalized);
             if (best === null || score > best.score) {
                 best = { row, score };
             }
@@ -307,7 +333,7 @@ export class Matcher {
 
         let best: { row: MasterRow; score: number } | null = null;
         for (const row of compat) {
-            const score = similarityScore(input.nameNormalized, row.canonical_name_normalized);
+            const score = combinedNameSimilarity(input.nameNormalized, row.canonical_name_normalized);
             if (best === null || score > best.score) {
                 best = { row, score };
             }
