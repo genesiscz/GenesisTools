@@ -1,5 +1,6 @@
 import type { HttpRequestSink } from "../lib/http-sink";
 import { ShopRegistry } from "./ShopRegistry";
+import { AlbertClient } from "./shops/AlbertClient";
 import { AlzaClient } from "./shops/AlzaClient";
 import { BenuClient } from "./shops/BenuClient";
 import { BillaClient } from "./shops/BillaClient";
@@ -43,6 +44,7 @@ export function initShopRegistry(opts: { sink?: HttpRequestSink } = {}): void {
     registry.register(new BillaClient({ sink: opts.sink }));
     registry.register(new LidlClient({ sink: opts.sink }));
     registry.register(new TetaClient({ sink: opts.sink }));
+    registry.register(new AlbertClient({ sink: opts.sink }));
     initialized = true;
 }
 

@@ -1,0 +1,49 @@
+{
+    "data": {
+        "categoryProductSearch": {
+            "products": [
+                {
+                    "code": "AL00001",
+                    "url": "/online/produkty/pek01/AL00001",
+                    "name": "Albert Quality Veka 500g",
+                    "images": [{ "url": "https://www.albert.cz/img/AL00001.jpg" }],
+                    "price": {
+                        "value": 24.9,
+                        "discountedPriceFormatted": null,
+                        "unit": "ks"
+                    },
+                    "stock": { "inStock": true }
+                },
+                {
+                    "code": "AL00002",
+                    "url": "/online/produkty/pek01/AL00002",
+                    "name": "Albert Bio Toast 500g",
+                    "images": [{ "url": "https://www.albert.cz/img/AL00002.jpg" }],
+                    "price": {
+                        "value": 39.9,
+                        "discountedPriceFormatted": "29,90 Kč",
+                        "unit": "ks"
+                    },
+                    "stock": { "inStock": true }
+                },
+                {
+                    "code": "AL00003",
+                    "url": "/online/produkty/pek01/AL00003",
+                    "name": "Penam Houska 60g",
+                    "images": [{ "url": "https://www.albert.cz/img/AL00003.jpg" }],
+                    "price": {
+                        "value": 6.9,
+                        "discountedPriceFormatted": null,
+                        "unit": "ks"
+                    },
+                    "stock": { "inStock": false }
+                }
+            ],
+            "categoryBreadcrumbs": [
+                { "name": "Pekařství a cukrářství" },
+                { "name": "Pečivo" }
+            ],
+            "pagination": { "totalPages": 2, "currentPage": 0 }
+        }
+    }
+}
