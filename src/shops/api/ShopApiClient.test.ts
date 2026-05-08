@@ -46,9 +46,7 @@ describe("ShopApiClient", () => {
     it("rejects a URL belonging to another shop", () => {
         const sink = new TestSink();
         const c = new FakeRohlikClient({ baseUrl: "https://www.rohlik.cz", sink });
-        expect(() => c.parseUrl("https://www.kosik.cz/p116247-nescafe-gold")).toThrow(
-            /does not belong to rohlik.cz/
-        );
+        expect(() => c.parseUrl("https://www.kosik.cz/p116247-nescafe-gold")).toThrow(/does not belong to rohlik.cz/);
     });
 
     it("emits an http-request event through the sink on every request", async () => {

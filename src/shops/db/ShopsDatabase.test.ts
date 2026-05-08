@@ -14,9 +14,7 @@ describe("ShopsDatabase", () => {
         const db = tmpDb();
         const tables = db
             .raw()
-            .query<{ name: string }, []>(
-                `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'products'`
-            )
+            .query<{ name: string }, []>(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'products'`)
             .all();
         expect(tables).toHaveLength(1);
         db.close();
@@ -128,12 +126,7 @@ describe("ShopsDatabase", () => {
             match_method: "auto-seed",
         });
         expect(id1).toBe(id2);
-        const row = await db
-            .kysely()
-            .selectFrom("products")
-            .selectAll()
-            .where("id", "=", id1)
-            .executeTakeFirst();
+        const row = await db.kysely().selectFrom("products").selectAll().where("id", "=", id1).executeTakeFirst();
         expect(row?.url).toBe("u2");
         expect(row?.name).toBe("n2");
         db.close();

@@ -1,8 +1,8 @@
+import type { Database as BunDatabase } from "bun:sqlite";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { Database as BunDatabase } from "bun:sqlite";
 import logger from "@app/logger";
-import { type DatabaseClient, createKyselyClient } from "@app/utils/database/client";
+import { createKyselyClient, type DatabaseClient } from "@app/utils/database/client";
 import type { Insertable, Kysely } from "kysely";
 import { SHOPS_MIGRATIONS } from "./migrations";
 import type {
@@ -67,11 +67,7 @@ export class ShopsDatabase {
     }
 
     async getShopByOrigin(origin: string) {
-        return await this.client.kysely
-            .selectFrom("shops")
-            .selectAll()
-            .where("origin", "=", origin)
-            .executeTakeFirst();
+        return await this.client.kysely.selectFrom("shops").selectAll().where("origin", "=", origin).executeTakeFirst();
     }
 
     async upsertMasterProduct(input: NewMasterProduct): Promise<number> {
@@ -102,9 +98,7 @@ export class ShopsDatabase {
             .executeTakeFirst();
     }
 
-    async upsertProduct(
-        input: Omit<NewProduct, "match_at" | "first_seen_at" | "last_updated_at">
-    ): Promise<number> {
+    async upsertProduct(input: Omit<NewProduct, "match_at" | "first_seen_at" | "last_updated_at">): Promise<number> {
         const now = new Date().toISOString();
         const values: NewProduct = {
             ...input,
