@@ -7,8 +7,8 @@
  * Full implementation: see the shops PR that builds on this harness.
  */
 
-import { WebView } from "@app/utils/WebView";
 import type { WebViewOptions } from "@app/utils/WebView";
+import { WebView } from "@app/utils/WebView";
 
 const ALZA_WEBVIEW_OPTIONS: WebViewOptions = {
     toolName: "shops",

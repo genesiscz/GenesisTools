@@ -1,5 +1,5 @@
-import { statSync } from "node:fs";
 import { describe, expect, it } from "bun:test";
+import { statSync } from "node:fs";
 import { detectBunCapabilities } from "@app/utils/bun";
 import { WebViewError, WebViewEvaluateError, WebViewNavigationError, WebViewTimeoutError } from "./errors";
 import { WebView } from "./WebView";
@@ -200,7 +200,7 @@ describe("WebViewPool (unit -- mock factory)", () => {
         await expect(
             pool.withInstance(async () => {
                 throw new Error("fn error");
-            }),
+            })
         ).rejects.toThrow("fn error");
 
         expect(pool.idle).toBe(1);
@@ -219,8 +219,8 @@ describe("WebViewPool (integration)", () => {
                 pool.withInstance(async (wv) => {
                     await wv.navigate("https://example.com", { timeoutMs: 15_000 });
                     return wv.evaluate<number>(`${i} * 2`);
-                }),
-            ),
+                })
+            )
         );
         expect(results.sort((a, b) => a - b)).toEqual([0, 2, 4, 6, 8]);
         await pool.drain();

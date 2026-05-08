@@ -16,5 +16,5 @@ export type {
     WebViewOptions,
 } from "./types";
 export { WebView } from "./WebView";
-export { WebViewPool } from "./WebViewPool";
 export type { WebViewPoolOptions } from "./WebViewPool";
+export { WebViewPool } from "./WebViewPool";

@@ -1,5 +1,5 @@
-import type { Logger } from "pino";
 import { getLogger } from "@app/logger";
+import type { Logger } from "pino";
 import { WebViewError } from "./errors";
 import type { WebViewOptions } from "./types";
 import { WebView } from "./WebView";
@@ -35,9 +35,7 @@ export class WebViewPool {
 
     acquire(signal?: AbortSignal): Promise<WebView> {
         if (this.draining) {
-            return Promise.reject(
-                new WebViewError("WebViewPool is draining -- cannot acquire new instances", "pool"),
-            );
+            return Promise.reject(new WebViewError("WebViewPool is draining -- cannot acquire new instances", "pool"));
         }
 
         if (signal?.aborted) {
@@ -91,7 +89,7 @@ export class WebViewPool {
 
                         reject(new WebViewError("acquire() aborted while waiting", "pool"));
                     },
-                    { once: true },
+                    { once: true }
                 );
             }
         });

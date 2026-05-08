@@ -11,7 +11,7 @@
  * Full implementation: see the shops PR that builds on this harness.
  */
 
-import { WebView, WebViewPool } from "@app/utils/WebView";
+import { type WebView, WebViewPool } from "@app/utils/WebView";
 
 export interface NotinoProduct {
     url: string;
