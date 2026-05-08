@@ -1,0 +1,46 @@
+{
+    "data": {
+        "getCampaign": {
+            "productCollection": {
+                "itemsTotalCount": 2,
+                "items": [
+                    {
+                        "id": "p-12345",
+                        "title": "Lego Classic 11030",
+                        "mainCategoryUrlKey": "stavebnice/lego",
+                        "urlKey": "lego-classic-11030",
+                        "mainVariant": {
+                            "id": "v-12345",
+                            "title": "Lego Classic 11030 Velký box plný kostek",
+                            "price": 1299,
+                            "isAvailable": true,
+                            "hasSale": true,
+                            "inPromotion": true,
+                            "priceRrp": 1499,
+                            "originalSalePrice": 1499,
+                            "mediaIds": ["abc123"],
+                            "mainMenuPath": ["Hračky", "Stavebnice", "LEGO"],
+                            "pricePerUnit": null
+                        }
+                    },
+                    {
+                        "id": "p-67890",
+                        "title": "Hot Wheels Track",
+                        "mainCategoryUrlKey": "hracky/auta",
+                        "urlKey": "hot-wheels-track",
+                        "mainVariant": {
+                            "id": "v-67890",
+                            "title": "Hot Wheels závodní dráha",
+                            "price": 599,
+                            "isAvailable": true,
+                            "priceRrp": 799,
+                            "mediaIds": ["xyz789"],
+                            "mainMenuPath": ["Hračky", "Auta"],
+                            "pricePerUnit": null
+                        }
+                    }
+                ]
+            }
+        }
+    }
+}

@@ -6,6 +6,7 @@ import { BenuClient } from "./shops/BenuClient";
 import { DrmaxClient } from "./shops/DrmaxClient";
 import { KauflandClient } from "./shops/KauflandClient";
 import { KosikClient } from "./shops/KosikClient";
+import { MallClient } from "./shops/MallClient";
 import { NotinoClient } from "./shops/NotinoClient";
 import { RohlikClient } from "./shops/RohlikClient";
 
@@ -48,6 +49,11 @@ describe("registry-init", () => {
     it("registers BenuClient under benu.cz", () => {
         initShopRegistry();
         expect(ShopRegistry.get().forShop("benu.cz")).toBeInstanceOf(BenuClient);
+    });
+
+    it("registers MallClient under mall.cz", () => {
+        initShopRegistry();
+        expect(ShopRegistry.get().forShop("mall.cz")).toBeInstanceOf(MallClient);
     });
 
     it("calling twice is idempotent", () => {
