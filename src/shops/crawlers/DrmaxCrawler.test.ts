@@ -21,7 +21,7 @@ describe("DrmaxCrawler", () => {
         }
     });
 
-    it("crawls categories and writes products with master_product_id NULL + match_method='pending'", async () => {
+    it("crawls categories and resolves products via BulkMatcher (no row stays match_method='pending')", async () => {
         const db = buildTestDatabase();
         try {
             const xml = readFixture("sitemap-kategorie.xml");
@@ -59,8 +59,7 @@ describe("DrmaxCrawler", () => {
                 match_method: string;
             }>;
             expect(rows.length).toBeGreaterThan(0);
-            expect(rows.every((r) => r.master_product_id === null)).toBe(true);
-            expect(rows.every((r) => r.match_method === "pending")).toBe(true);
+            expect(rows.every((r) => r.match_method !== "pending")).toBe(true);
 
             const crawlRow = db
                 .raw()

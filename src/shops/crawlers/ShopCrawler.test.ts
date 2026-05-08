@@ -158,7 +158,7 @@ describe("ShopCrawler.run", () => {
         }
     });
 
-    it("writes products with master_product_id NULL and match_method='pending'", async () => {
+    it("after a successful crawl, BulkMatcher resolves every product (none stays match_method='pending')", async () => {
         const db = buildTestDatabase();
         try {
             const products = [buildRawProduct("a", 10), buildRawProduct("b", 20)];
@@ -174,8 +174,7 @@ describe("ShopCrawler.run", () => {
                 )
                 .all();
             expect(rows.length).toBe(2);
-            expect(rows.every((r) => r.master_product_id === null)).toBe(true);
-            expect(rows.every((r) => r.match_method === "pending")).toBe(true);
+            expect(rows.every((r) => r.match_method !== "pending")).toBe(true);
         } finally {
             db.close();
         }

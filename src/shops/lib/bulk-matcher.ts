@@ -1,8 +1,10 @@
 import logger from "@app/logger";
 import { similarityScore } from "@app/utils/fuzzy-match";
+import { BrandAliasesRepository } from "../db/BrandAliasesRepository";
 import type { ShopsDatabase } from "../db/ShopsDatabase";
-import type { MatchExecutor } from "./match-executor";
-import type { Matcher, MatcherInput } from "./matcher";
+import { BrandResolver } from "./brand-resolver";
+import { MatchExecutor } from "./match-executor";
+import { Matcher, type MatcherInput } from "./matcher";
 import { MATCHER_CONFIG } from "./matcher-config";
 import { compatPackCount } from "./multipack-guard";
 import type { Unit } from "./normalize";
@@ -11,6 +13,18 @@ export interface BulkMatcherArgs {
     matcher: Matcher;
     shopsDb: ShopsDatabase;
     executor: MatchExecutor;
+}
+
+/**
+ * Construct a BulkMatcher with default deps (BrandAliasesRepository -> BrandResolver -> Matcher -> MatchExecutor).
+ * Used by ShopCrawler.run() and any caller that wants the standard matching pipeline.
+ */
+export function createBulkMatcher(shopsDb: ShopsDatabase): BulkMatcher {
+    const repo = new BrandAliasesRepository(shopsDb);
+    const resolver = new BrandResolver(repo);
+    const matcher = new Matcher(shopsDb, resolver);
+    const executor = new MatchExecutor({ matcher, shopsDb });
+    return new BulkMatcher({ matcher, shopsDb, executor });
 }
 
 export interface BulkMatcherStats {

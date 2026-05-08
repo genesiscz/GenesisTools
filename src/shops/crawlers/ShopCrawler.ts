@@ -1,17 +1,18 @@
 import logger from "@app/logger";
 import type { ShopApiClient } from "../api/ShopApiClient";
 import type { ShopsDatabase } from "../db/ShopsDatabase";
+import { createBulkMatcher } from "../lib/bulk-matcher";
 import type { CrawlOptions, CrawlProgressEvent, CrawlResult, ShopCrawlerInterface } from "./ShopCrawler.types";
 
 const PROGRESS_EVERY_N_PRODUCTS = 25;
 
 /**
- * Bulk-crawl orchestrator. Walks the shop's catalog through the registered
- * client and persists each yielded RawProduct in 'pending' state — Plan 04's
- * BulkMatcher resolves master assignment after the crawl completes.
+ * Bulk-crawl orchestrator. Walks the shop's catalog, persists each yielded
+ * RawProduct in 'pending' state, then runs BulkMatcher.flush() at end-of-stream
+ * to resolve master assignment.
  *
- * Per Spec.md schema deltas, intermediate status before matching is "matching".
- * Until Plan 04 ships, we mark crawls completed without matching.
+ * Status flow: running -> matching (after crawl loop) -> completed (after flush).
+ * On failure / cancellation: 'failed' / 'cancelled', flush is skipped.
  */
 export abstract class ShopCrawler implements ShopCrawlerInterface {
     abstract readonly strategy: string;
@@ -154,7 +155,18 @@ export abstract class ShopCrawler implements ShopCrawlerInterface {
         pricesRecorded: number,
         status: "completed" | "cancelled"
     ): Promise<CrawlResult> {
-        await this.db.finishCrawlRun(crawlRunId, status);
-        return { crawlRunId, productsSeen, productsNew, pricesRecorded, status };
+        if (status === "cancelled") {
+            await this.db.finishCrawlRun(crawlRunId, "cancelled");
+            return { crawlRunId, productsSeen, productsNew, pricesRecorded, status: "cancelled" };
+        }
+
+        await this.db.finishCrawlRun(crawlRunId, "matching");
+
+        const log = this.classLog.child({ strategy: this.strategy, shop: this.client.shopOrigin, crawlRunId });
+        log.info("crawl loop complete; running BulkMatcher.flush");
+        const stats = await createBulkMatcher(this.db).flush(crawlRunId);
+        log.info(stats, "bulk match flush completed");
+
+        return { crawlRunId, productsSeen, productsNew, pricesRecorded, status: "completed" };
     }
 }

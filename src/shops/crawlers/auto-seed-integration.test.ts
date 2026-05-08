@@ -1,10 +1,9 @@
 /**
- * Per Spec.md schema deltas: bulk crawls write products in 'pending' state
- * and Plan 04's BulkMatcher resolves master assignment after the crawl.
- * The original Plan 03 'auto-seed' invariant ("every crawled product gets a
- * master immediately") was REPLACED — this test now guards the inverse.
- *
- * Single-product `tools shops get` uses `lib/ingest.ts` which still auto-seeds.
+ * Bulk crawl pipeline: products are written in 'pending' state during the crawl
+ * loop, then BulkMatcher.flush() (wired into ShopCrawler.run() finalize step)
+ * resolves master assignment. After a successful crawl, NO product should
+ * remain match_method='pending' — every row is either linked to a master,
+ * auto-seeded as its own master, or quarantined as 'gray-zone'.
  */
 
 import { describe, expect, it } from "bun:test";
@@ -19,8 +18,8 @@ function readFixture<T>(rel: string): T {
     return SafeJSON.parse(readFileSync(join(import.meta.dir, "../api/shops/__fixtures__/rohlik", rel), "utf8")) as T;
 }
 
-describe("bulk-crawl pending-state integration", () => {
-    it("after crawl every product row is master_product_id=NULL with match_method='pending'", async () => {
+describe("bulk-crawl pipeline: BulkMatcher.flush wired into ShopCrawler.run", () => {
+    it("after a successful crawl, no product remains match_method='pending'", async () => {
         const db = buildTestDatabase();
         try {
             const client = new RohlikClient({ rateLimitPerSecond: 1000 });
@@ -71,8 +70,15 @@ describe("bulk-crawl pending-state integration", () => {
                 )
                 .all();
             expect(rows.length).toBeGreaterThan(0);
-            expect(rows.every((r) => r.master_product_id === null)).toBe(true);
-            expect(rows.every((r) => r.match_method === "pending")).toBe(true);
+            expect(rows.every((r) => r.match_method !== "pending")).toBe(true);
+
+            const crawlRow = db
+                .raw()
+                .query<{ status: string }, []>(
+                    "SELECT status FROM crawl_runs ORDER BY id DESC LIMIT 1"
+                )
+                .get();
+            expect(crawlRow?.status).toBe("completed");
         } finally {
             db.close();
         }
