@@ -9,6 +9,7 @@ import { registerGetCommand } from "./commands/get";
 import { registerListCommand } from "./commands/list";
 import { registerNotifyCommand } from "./commands/notify";
 import { registerShopsCommand } from "./commands/shops";
+import { registerUiCommand } from "./commands/ui";
 import { registerWatchCommand } from "./commands/watch";
 
 handleReadmeFlag(import.meta.url);
@@ -29,5 +30,6 @@ registerDbPruneCommand(program);
 registerDaemonCommand(program);
 registerCrawlCommand(program);
 registerListCommand(program);
+registerUiCommand(program);
 
 await program.parseAsync(process.argv);
