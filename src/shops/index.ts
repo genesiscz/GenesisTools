@@ -1,10 +1,12 @@
 #!/usr/bin/env bun
 import { handleReadmeFlag } from "@app/utils/readme";
 import { Command } from "commander";
+import { registerCrawlCommand } from "./commands/crawl";
 import { registerDaemonCommand } from "./commands/daemon";
 import { registerDbCommand } from "./commands/db";
 import { registerDbPruneCommand } from "./commands/db-prune";
 import { registerGetCommand } from "./commands/get";
+import { registerListCommand } from "./commands/list";
 import { registerNotifyCommand } from "./commands/notify";
 import { registerShopsCommand } from "./commands/shops";
 import { registerWatchCommand } from "./commands/watch";
@@ -25,5 +27,7 @@ registerWatchCommand(program);
 registerNotifyCommand(program);
 registerDbPruneCommand(program);
 registerDaemonCommand(program);
+registerCrawlCommand(program);
+registerListCommand(program);
 
 await program.parseAsync(process.argv);
