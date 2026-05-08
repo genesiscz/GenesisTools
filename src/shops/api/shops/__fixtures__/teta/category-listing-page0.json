@@ -1,0 +1,48 @@
+{
+    "pagination": { "currentPage": 1, "lastPage": 2, "totalItems": 5 },
+    "products": [
+        {
+            "code": "0001234567",
+            "name": "Šampon proti lupům 250 ml",
+            "slug": "sampon-proti-lupum-250-ml",
+            "image": "products/sample-1.jpg",
+            "price": 12990,
+            "currentPrice": 12990,
+            "originalPrice": 14990,
+            "bbyPrices": { "acmd": 12990, "zcmd": 14990, "conditions": null },
+            "isStockAvailable": true,
+            "taxa": [
+                { "id": 1, "name": "Krása a zdraví", "parentId": null },
+                { "id": 5, "name": "Vlasy", "parentId": 1 }
+            ]
+        },
+        {
+            "code": "0002222222",
+            "name": "<strong>Sprchový gel</strong> 400 ml",
+            "slug": "sprchovy-gel",
+            "image": "products/sample-2.jpg",
+            "price": 8990,
+            "currentPrice": 8990,
+            "originalPrice": 8990,
+            "bbyPrices": { "acmd": 8990, "zcmd": 8990, "conditions": null },
+            "isStockAvailable": true,
+            "taxa": [{ "id": 1, "name": "Krása a zdraví", "parentId": null }]
+        },
+        {
+            "code": "0003333333",
+            "name": "Multipack pleny",
+            "slug": "multipack-pleny",
+            "image": "products/sample-3.jpg",
+            "price": 199900,
+            "currentPrice": 179900,
+            "originalPrice": 199900,
+            "bbyPrices": {
+                "acmd": 179900,
+                "zcmd": 199900,
+                "conditions": "za 2 ks při koupi 2 ks"
+            },
+            "isStockAvailable": false,
+            "taxa": [{ "id": 2, "name": "Děcka a mamičky", "parentId": null }]
+        }
+    ]
+}

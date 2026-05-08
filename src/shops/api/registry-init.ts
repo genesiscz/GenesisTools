@@ -16,6 +16,7 @@ import { MountfieldClient } from "./shops/MountfieldClient";
 import { NotinoClient } from "./shops/NotinoClient";
 import { PilulkaClient } from "./shops/PilulkaClient";
 import { RohlikClient } from "./shops/RohlikClient";
+import { TetaClient } from "./shops/TetaClient";
 
 let initialized = false;
 
@@ -41,6 +42,7 @@ export function initShopRegistry(opts: { sink?: HttpRequestSink } = {}): void {
     registry.register(new DmClient({ sink: opts.sink }));
     registry.register(new BillaClient({ sink: opts.sink }));
     registry.register(new LidlClient({ sink: opts.sink }));
+    registry.register(new TetaClient({ sink: opts.sink }));
     initialized = true;
 }
 

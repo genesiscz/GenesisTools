@@ -26,3 +26,36 @@ Personal grocery + drogerie + pharmacy price intelligence across Czech eshops.
 - Database: `~/.genesis-tools/shops/index.db`
 - Cache: `~/.genesis-tools/shops/cache/`
 - HTTP request log retention: 30 days (configurable in Plan 02 settings).
+
+## MCP server (Plan 08)
+
+`tools shops mcp` runs a stdio MCP server that exposes 8 read-only tools (always available) and 5 write tools (gated behind `--allow-write`):
+
+**Read tools:** `shops_get_product`, `shops_match_product`, `shops_search`, `shops_list_categories`, `shops_compare_prices`, `shops_coverage`, `shops_watch_list`, `shops_recent_notifications`.
+
+**Write tools (require `--allow-write`):** `shops_ingest`, `shops_accept_match`, `shops_watch_add`, `shops_watch_remove`, `shops_notify_ack`.
+
+**Resources:** `shops://product/<shop>/<slug>` and `shops://master/<id>` return JSON the corresponding tools would.
+
+**Stdout discipline:** the logger is auto-routed to stderr when running under MCP so JSON-RPC frames on stdout stay clean.
+
+### Claude Code MCP config
+
+Add the following to your `~/.config/claude-code/mcp.json` (or platform equivalent):
+
+```json
+{
+  "mcpServers": {
+    "shops": {
+      "command": "tools",
+      "args": ["shops", "mcp"]
+    },
+    "shops-write": {
+      "command": "tools",
+      "args": ["shops", "mcp", "--allow-write"]
+    }
+  }
+}
+```
+
+Use the read-only entry by default; switch to `shops-write` only when you need Claude to ingest, accept matches, or mutate the watchlist.

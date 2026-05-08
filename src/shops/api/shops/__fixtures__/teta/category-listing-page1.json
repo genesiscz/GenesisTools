@@ -1,0 +1,29 @@
+{
+    "pagination": { "currentPage": 2, "lastPage": 2, "totalItems": 5 },
+    "products": [
+        {
+            "code": "0004444444",
+            "name": "Tělové mléko 200 ml",
+            "slug": "telove-mleko",
+            "image": "products/sample-4.jpg",
+            "price": 14990,
+            "currentPrice": 14990,
+            "originalPrice": 14990,
+            "bbyPrices": { "acmd": 14990, "zcmd": 14990, "conditions": null },
+            "isStockAvailable": true,
+            "taxa": [{ "id": 1, "name": "Krása a zdraví", "parentId": null }]
+        },
+        {
+            "code": "0005555555",
+            "name": "Pleťový krém 50 ml",
+            "slug": "pletovy-krem",
+            "image": "products/sample-5.jpg",
+            "price": 24990,
+            "currentPrice": 19990,
+            "originalPrice": 24990,
+            "bbyPrices": { "acmd": 19990, "zcmd": 24990, "conditions": null },
+            "isStockAvailable": true,
+            "taxa": [{ "id": 1, "name": "Krása a zdraví", "parentId": null }]
+        }
+    ]
+}

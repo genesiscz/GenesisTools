@@ -9,6 +9,7 @@ import { registerDevCaptureFixtureCommand } from "./commands/dev-capture-fixture
 import { registerGetCommand } from "./commands/get";
 import { registerListCommand } from "./commands/list";
 import { registerMatchCommand } from "./commands/match";
+import { registerMcpCommand } from "./commands/mcp";
 import { registerNotifyCommand } from "./commands/notify";
 import { registerShopsCommand } from "./commands/shops";
 import { registerUiCommand } from "./commands/ui";
@@ -33,6 +34,7 @@ registerDaemonCommand(program);
 registerCrawlCommand(program);
 registerListCommand(program);
 registerMatchCommand(program);
+registerMcpCommand(program);
 registerUiCommand(program);
 registerDevCaptureFixtureCommand(program);
 
