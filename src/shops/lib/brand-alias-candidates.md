@@ -28,3 +28,66 @@ WebView-mediated capture, which Plan 09 covers.)
 - Each shop client preserves the raw `brand` field from upstream API/HTML.
   Plan 04 normalizes via `removeDiacritics + lowercase + trim` and seeds
   `brand_aliases` via the BrandAliasesRepository (already in `src/shops/db/`).
+
+## Plan 06 Phase 3 contributions (Drmax + Benu + Itesco)
+
+Brand strings observed in actor sources for Phase 3 shops. Plan 04's
+`seed-brand-aliases.ts` consumes these — INSERT-OR-IGNORE with `source='seed'`.
+
+### Drmax (drmax.cz)
+Drmax sells third-party medications + cosmetics under known brands plus a private label "Dr.Max":
+
+- `Dr.Max` => `drmax:dr-max` (private label)
+- `Paralen` => `paralen`
+- `Ibalgin` => `ibalgin`
+- `Panadol` => `panadol`
+- `Nurofen` => `nurofen`
+- `MaxiVita` => `maxivita`
+- `MaxiCold` => `maxicold`
+- `GS Vitamíny` => `gs-vitaminy`
+- `Pharmacia` => `pharmacia`
+- `Olynth` => `olynth`
+
+### Benu (benu.cz)
+Benu sells the same medication brands plus its own "Benu" line:
+
+- `Benu` => `benu:benu` (private label)
+- `Paralen` => `paralen` (canonical shared with Drmax — matcher merges them)
+- `Ibalgin` => `ibalgin`
+- `Aspirin` => `aspirin`
+- `Voltaren` => `voltaren`
+- `Strepsils` => `strepsils`
+- `Bepanthen` => `bepanthen`
+- `Vichy` => `vichy`
+- `La Roche-Posay` / `La Roche Posay` => `la-roche-posay`
+- `Bioderma` => `bioderma`
+- `Avène` / `Avene` => `avene`
+
+### Itesco (itesco.cz)
+Tesco's Czech storefront has a private label "Tesco" plus generic brands (groceries):
+
+- `Tesco` => `itesco:tesco` (private label, includes Finest, Value, Free From)
+- `Tesco Finest` => `itesco:tesco-finest`
+- `Tesco Value` => `itesco:tesco-value`
+- `Tesco Free From` => `itesco:tesco-free-from`
+- `Coca-Cola` => `coca-cola`
+- `Pepsi` => `pepsi`
+- `Nescafé` / `Nescafe` => `nescafe`
+- `Milka` => `milka`
+- `Lindt` => `lindt`
+- `Nutella` => `nutella`
+- `Kinder` => `kinder`
+- `Ferrero` => `ferrero`
+- `Heineken` => `heineken`
+- `Plzeň` / `Pilsner Urquell` => `pilsner-urquell`
+
+### Shared-canonical handling
+
+`paralen` and `ibalgin` appear in BOTH `drmax` and `benu` checklists — these are
+canonical CZ pharmacy brands sold by everyone. Plan 04's seed must NOT
+shop-namespace them; they get one canonical row each so the matcher merges
+Drmax's "Paralen Grip 12 tbl" with Benu's "Paralen 500mg 24 tbl" by brand.
+Shop-namespaced canonicals (`drmax:dr-max`, `benu:benu`, `itesco:tesco`) only
+apply to private labels — those products literally don't exist outside the
+issuing shop, so namespacing prevents cross-shop noise from "Tesco" string
+matches in third-party brand names.
