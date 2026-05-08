@@ -1,5 +1,5 @@
 import logger from "@app/logger";
-import type { FavoriteWithState, FavoritesRepository } from "../db/FavoritesRepository";
+import type { FavoritesRepository, FavoriteWithState } from "../db/FavoritesRepository";
 import type { NotificationReason, NotificationsRepository } from "../db/NotificationsRepository";
 import type { ShopsDatabase } from "../db/ShopsDatabase";
 import type { NotificationPayload } from "./channels/types";
@@ -46,7 +46,9 @@ function describeReason(hit: ResolvedHit, fav: FavoriteWithState): string {
         }
 
         case "drop-absolute":
-            lines.push(`Drop ${(ref - hit.curr).toFixed(2)} CZK from ${ref?.toFixed(2)} to ${hit.curr.toFixed(2)} CZK.`);
+            lines.push(
+                `Drop ${(ref - hit.curr).toFixed(2)} CZK from ${ref?.toFixed(2)} to ${hit.curr.toFixed(2)} CZK.`
+            );
             break;
         case "back-in-stock":
             lines.push(`Back in stock at ${hit.curr.toFixed(2)} CZK.`);

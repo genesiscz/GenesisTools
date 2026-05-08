@@ -187,9 +187,9 @@ describe("DrmaxClient.getProduct", () => {
     it("throws if no JSON-LD Product block is found", async () => {
         const html = `<!DOCTYPE html><html><body><h1>Página de error</h1></body></html>`;
         const { client } = buildClient([{ match: "/cz/missing", response: html }]);
-        await expect(
-            client.getProduct({ url: "https://www.drmax.cz/cz/missing" })
-        ).rejects.toThrow(/no JSON-LD Product/);
+        await expect(client.getProduct({ url: "https://www.drmax.cz/cz/missing" })).rejects.toThrow(
+            /no JSON-LD Product/
+        );
     });
 });
 

@@ -20,10 +20,7 @@ export class NotificationDispatcher {
 
     async dispatch(payload: NotificationPayload): Promise<DispatchResult[]> {
         const active = this.channels.filter((c) => c.available());
-        log.debug(
-            { id: payload.notification.id, channels: active.map((c) => c.name) },
-            "dispatching notification"
-        );
+        log.debug({ id: payload.notification.id, channels: active.map((c) => c.name) }, "dispatching notification");
 
         const settled = await Promise.allSettled(active.map((c) => c.dispatch(payload)));
         const results: DispatchResult[] = settled.map((s, i) => {

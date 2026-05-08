@@ -1,6 +1,6 @@
+import type { SearchResponse } from "@app/shops/types";
 import { Input } from "@app/utils/ui/components/input";
 import { Skeleton } from "@app/utils/ui/components/skeleton";
-import type { SearchResponse } from "@app/shops/types";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { ImageOff, Search } from "lucide-react";
@@ -98,9 +98,9 @@ export function ProductSearchPanel({ onSelect }: ProductSearchPanelProps) {
                                 hit.type === "master"
                                     ? { to: "/master/$id" as const, params: { id: String(hit.id) } }
                                     : {
-                                            to: "/product/$shop/$slug" as const,
-                                            params: { shop: hit.shop_origin ?? "", slug: hit.slug ?? "" },
-                                        };
+                                          to: "/product/$shop/$slug" as const,
+                                          params: { shop: hit.shop_origin ?? "", slug: hit.slug ?? "" },
+                                      };
 
                             return (
                                 <li key={`${hit.type}-${hit.id}`}>

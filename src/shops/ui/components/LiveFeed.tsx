@@ -36,7 +36,7 @@ export function LiveFeed() {
                 .reverse();
             setFrames((prev) => [...mapped, ...prev].slice(0, MAX_FRAMES));
         },
-        [],
+        []
     );
 
     useSseStream({
@@ -71,10 +71,7 @@ export function LiveFeed() {
             }
 
             if (f.event === "http-request") {
-                return (
-                    f.url.toLowerCase().includes(lower)
-                    || (f.shop_origin?.toLowerCase().includes(lower) ?? false)
-                );
+                return f.url.toLowerCase().includes(lower) || (f.shop_origin?.toLowerCase().includes(lower) ?? false);
             }
 
             if (f.event === "crawl-progress") {
@@ -110,7 +107,10 @@ export function LiveFeed() {
                         </div>
                     ) : (
                         filtered.map((f, i) => (
-                            <LiveEventRow key={`${f.event}-${"id" in f ? f.id : "ts" in f ? f.ts : i}-${i}`} frame={f} />
+                            <LiveEventRow
+                                key={`${f.event}-${"id" in f ? f.id : "ts" in f ? f.ts : i}-${i}`}
+                                frame={f}
+                            />
                         ))
                     )}
                 </div>

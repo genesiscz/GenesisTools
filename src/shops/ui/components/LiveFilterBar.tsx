@@ -1,7 +1,7 @@
+import type { LiveEventName } from "@app/shops/types";
 import { Badge } from "@app/utils/ui/components/badge";
 import { Button } from "@app/utils/ui/components/button";
 import { Input } from "@app/utils/ui/components/input";
-import type { LiveEventName } from "@app/shops/types";
 import { Pause, Play, Trash2 } from "lucide-react";
 import type { SseStatus } from "../hooks/useSseStream";
 
@@ -55,10 +55,7 @@ export function LiveFilterBar({
     return (
         <div className="flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between border-b border-zinc-800 pb-3">
             <div className="flex flex-wrap items-center gap-2">
-                <Badge
-                    variant="outline"
-                    className={`font-mono text-[10px] tracking-[0.2em] uppercase ${sb.className}`}
-                >
+                <Badge variant="outline" className={`font-mono text-[10px] tracking-[0.2em] uppercase ${sb.className}`}>
                     {sb.label}
                 </Badge>
                 <span className="font-mono text-[10px] text-muted-foreground">{queueSize} events</span>

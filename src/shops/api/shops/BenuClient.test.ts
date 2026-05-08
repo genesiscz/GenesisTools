@@ -78,9 +78,7 @@ describe("BenuClient.listCategories", () => {
 describe("BenuClient.listCategory", () => {
     it("yields RawProducts from category-listing tiles", async () => {
         const listing = readFixture("category-listing.html");
-        const { client } = buildClient([
-            { match: "leky-bez-receptu", method: "getText", response: listing },
-        ]);
+        const { client } = buildClient([{ match: "leky-bez-receptu", method: "getText", response: listing }]);
 
         const out = [];
         for await (const p of client.listCategory({
@@ -100,9 +98,7 @@ describe("BenuClient.listCategory", () => {
 
     it("captures originalPrice when product-box__price-old is present", async () => {
         const listing = readFixture("category-listing.html");
-        const { client } = buildClient([
-            { match: "leky-bez-receptu", method: "getText", response: listing },
-        ]);
+        const { client } = buildClient([{ match: "leky-bez-receptu", method: "getText", response: listing }]);
 
         const out = [];
         for await (const p of client.listCategory({ category: "/leky-bez-receptu", limit: 5 })) {

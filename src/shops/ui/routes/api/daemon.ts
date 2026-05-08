@@ -1,6 +1,6 @@
-import { createFileRoute } from "@tanstack/react-router";
 import logger from "@app/logger";
 import { getSettingsRepository } from "@app/shops/lib/settings";
+import { createFileRoute } from "@tanstack/react-router";
 import { apiHandler } from "../../server/api-utils";
 
 const log = logger.child({ component: "api:daemon" });
@@ -22,10 +22,7 @@ export const Route = createFileRoute("/api/daemon")({
                 const url = new URL(request.url);
                 const action = url.searchParams.get("action");
                 if (action !== "enable" && action !== "disable") {
-                    return Response.json(
-                        { error: "action must be enable|disable" },
-                        { status: 400 },
-                    );
+                    return Response.json({ error: "action must be enable|disable" }, { status: 400 });
                 }
 
                 const repo = getSettingsRepository();

@@ -1,19 +1,13 @@
-import { SafeJSON } from "@app/utils/json";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { SafeJSON } from "@app/utils/json";
 import { BrandAliasesRepository } from "../db/BrandAliasesRepository";
 import { ShopsDatabase } from "../db/ShopsDatabase";
 import { BrandResolver } from "./brand-resolver";
 import { MatchExecutor } from "./match-executor";
 import { Matcher, type MatcherInput } from "./matcher";
-import {
-    extractFlavorKey,
-    extractPackCount,
-    extractSize,
-    normalizeBrand,
-    normalizeName,
-} from "./normalize";
+import { extractFlavorKey, extractPackCount, extractSize, normalizeBrand, normalizeName } from "./normalize";
 
 interface FixtureProduct {
     shop_origin: string;
@@ -55,9 +49,7 @@ export interface GoldenHarnessOptions {
 }
 
 export async function runGoldenHarness(opts: GoldenHarnessOptions = {}): Promise<GoldenSummary> {
-    const fixturePath =
-        opts.fixturePath ??
-        join(process.cwd(), "tests", "fixtures", "matching", "golden-pairs.json");
+    const fixturePath = opts.fixturePath ?? join(process.cwd(), "tests", "fixtures", "matching", "golden-pairs.json");
     const fixtures = SafeJSON.parse(readFileSync(fixturePath, "utf8")) as FixtureEntry[];
 
     const db = new ShopsDatabase(join(mkdtempSync(join(tmpdir(), "shops-golden-")), "test.db"));
@@ -219,9 +211,7 @@ async function ingestOne(
 
     const final = db
         .raw()
-        .query<{ master_product_id: number | null }, [number]>(
-            "SELECT master_product_id FROM products WHERE id = ?"
-        )
+        .query<{ master_product_id: number | null }, [number]>("SELECT master_product_id FROM products WHERE id = ?")
         .get(productId);
     return {
         productId,
@@ -303,8 +293,12 @@ export function formatSummary(s: GoldenSummary): string {
             lines.push(
                 `  [${label}] expected ${m.expectedSame ? "same" : "different"}, got ${m.actualSame ? "same" : "different"}`
             );
-            lines.push(`        A: ${m.a.shop_origin} | ${m.a.name} | brand=${m.a.brand} ean=${m.a.ean} master=${m.aMaster}`);
-            lines.push(`        B: ${m.b.shop_origin} | ${m.b.name} | brand=${m.b.brand} ean=${m.b.ean} master=${m.bMaster}`);
+            lines.push(
+                `        A: ${m.a.shop_origin} | ${m.a.name} | brand=${m.a.brand} ean=${m.a.ean} master=${m.aMaster}`
+            );
+            lines.push(
+                `        B: ${m.b.shop_origin} | ${m.b.name} | brand=${m.b.brand} ean=${m.b.ean} master=${m.bMaster}`
+            );
         }
     }
 

@@ -30,7 +30,7 @@ describe("enumParam", () => {
 
     it("throws when not in allow-list", () => {
         expect(() =>
-            enumParam(new URLSearchParams("status=bogus"), "status", ["pending", "accepted"] as const, "pending"),
+            enumParam(new URLSearchParams("status=bogus"), "status", ["pending", "accepted"] as const, "pending")
         ).toThrow("must be one of");
     });
 });

@@ -1,6 +1,6 @@
+import type { PriceHistoryResponse } from "@app/shops/types";
 import { Card, CardContent, CardHeader, CardTitle } from "@app/utils/ui/components/card";
 import { chartColors, chartSeriesPalette } from "@app/utils/ui/graphs/colors";
-import type { PriceHistoryResponse } from "@app/shops/types";
 import { Area, AreaChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 interface PriceHistoryChartProps {
@@ -33,14 +33,7 @@ export function PriceHistoryChart({ history, isLoading }: PriceHistoryChartProps
                                     {history.shops.map((shop, i) => {
                                         const color = chartSeriesPalette[i % chartSeriesPalette.length];
                                         return (
-                                            <linearGradient
-                                                key={shop}
-                                                id={`grad-${shop}`}
-                                                x1="0"
-                                                y1="0"
-                                                x2="0"
-                                                y2="1"
-                                            >
+                                            <linearGradient key={shop} id={`grad-${shop}`} x1="0" y1="0" x2="0" y2="1">
                                                 <stop offset="0%" stopColor={color} stopOpacity={0.45} />
                                                 <stop offset="100%" stopColor={color} stopOpacity={0.04} />
                                             </linearGradient>

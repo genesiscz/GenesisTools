@@ -46,10 +46,7 @@ describe("rejectCandidatePair", () => {
     it("flips status to rejected", async () => {
         const { db, ids } = setup();
         await rejectCandidatePair({ shopsDb: db, productIdA: ids[0], productIdB: ids[1] });
-        const status = db
-            .raw()
-            .query<{ status: string }, []>("SELECT status FROM match_candidates")
-            .get()?.status;
+        const status = db.raw().query<{ status: string }, []>("SELECT status FROM match_candidates").get()?.status;
         expect(status).toBe("rejected");
         db.close();
     });
@@ -64,19 +61,13 @@ describe("acceptCandidatePair", () => {
              VALUES ('A', 'a', 'a', 2, ?, ?, 'auto'), ('B', 'b', 'b', 1, ?, ?, 'auto')`,
             [now, now, now, now]
         );
-        const masters = db
-            .raw()
-            .query<{ id: number }, []>("SELECT id FROM master_products ORDER BY id")
-            .all();
+        const masters = db.raw().query<{ id: number }, []>("SELECT id FROM master_products ORDER BY id").all();
         db.raw().run("UPDATE products SET master_product_id = ? WHERE id = ?", [masters[0].id, ids[0]]);
         db.raw().run("UPDATE products SET master_product_id = ? WHERE id = ?", [masters[1].id, ids[1]]);
 
         await acceptCandidatePair({ shopsDb: db, productIdA: ids[0], productIdB: ids[1] });
 
-        const masterCount = db
-            .raw()
-            .query<{ n: number }, []>("SELECT COUNT(*) AS n FROM master_products")
-            .get()?.n;
+        const masterCount = db.raw().query<{ n: number }, []>("SELECT COUNT(*) AS n FROM master_products").get()?.n;
         expect(masterCount).toBe(1);
         db.close();
     });

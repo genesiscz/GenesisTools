@@ -191,9 +191,8 @@ export class MallClient extends ShopApiClient {
     private toRawProduct(p: MallProduct): RawProduct {
         const v: MallProductMainVariant = p.mainVariant;
         const url = `https://www.mall.${this.tld}/${p.mainCategoryUrlKey}/${p.urlKey}`;
-        const imageUrl = v.mediaIds?.[0] !== undefined
-            ? `https://www.mall.${this.tld}/i/${v.mediaIds[0]}/550/550`
-            : undefined;
+        const imageUrl =
+            v.mediaIds?.[0] !== undefined ? `https://www.mall.${this.tld}/i/${v.mediaIds[0]}/550/550` : undefined;
 
         return {
             shopOrigin: this.shopOrigin,

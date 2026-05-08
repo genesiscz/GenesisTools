@@ -20,8 +20,7 @@ export const Route = createFileRoute("/api/watchlist/add")({
                     target_price: typeof body.target_price === "number" ? body.target_price : null,
                     drop_percent: typeof body.drop_percent === "number" ? body.drop_percent : null,
                     drop_absolute: typeof body.drop_absolute === "number" ? body.drop_absolute : null,
-                    restricted_to_shop:
-                        typeof body.restricted_to_shop === "string" ? body.restricted_to_shop : null,
+                    restricted_to_shop: typeof body.restricted_to_shop === "string" ? body.restricted_to_shop : null,
                     label: typeof body.label === "string" ? body.label : null,
                     cooldown_hours: typeof body.cooldown_hours === "number" ? body.cooldown_hours : 24,
                     notify_back_in_stock: body.notify_back_in_stock === true,

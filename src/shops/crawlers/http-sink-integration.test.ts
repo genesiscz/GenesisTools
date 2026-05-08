@@ -1,16 +1,14 @@
+import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@app/utils/json";
-import { describe, expect, it } from "bun:test";
 import { RohlikClient } from "../api/shops/RohlikClient";
 import { MemoryHttpRequestSink } from "../lib/http-sink";
 import { buildTestDatabase } from "../test-utils/buildTestDatabase";
 import { RohlikRestCrawler } from "./RohlikRestCrawler";
 
 function readFixture<T>(rel: string): T {
-    return SafeJSON.parse(
-        readFileSync(join(import.meta.dir, "../api/shops/__fixtures__/rohlik", rel), "utf8")
-    ) as T;
+    return SafeJSON.parse(readFileSync(join(import.meta.dir, "../api/shops/__fixtures__/rohlik", rel), "utf8")) as T;
 }
 
 describe("HttpRequestSink integration", () => {
@@ -30,7 +28,7 @@ describe("HttpRequestSink integration", () => {
             // and return fixtures based on URL patterns. Once Plan 01's requestRaw hook is
             // verified end-to-end against fixtures, this manual sink.record() can drop.
             Object.defineProperty(client, "get", {
-                value: async function (path: string): Promise<unknown> {
+                value: async (path: string): Promise<unknown> => {
                     const start = performance.now();
                     const url = path.startsWith("http") ? path : `https://www.rohlik.cz${path}`;
                     let response: unknown;
@@ -67,9 +65,7 @@ describe("HttpRequestSink integration", () => {
             });
 
             const crawler = new RohlikRestCrawler(client, db);
-            const firstCatId = Object.keys(
-                (flat as { navigation: Record<string, unknown> }).navigation
-            )[0];
+            const firstCatId = Object.keys((flat as { navigation: Record<string, unknown> }).navigation)[0];
             await crawler.run({ categoryId: firstCatId, limit: 5 });
 
             expect(sink.events.length).toBeGreaterThan(0);

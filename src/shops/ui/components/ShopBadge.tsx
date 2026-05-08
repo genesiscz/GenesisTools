@@ -1,6 +1,6 @@
+import type { ShopOrigin } from "@app/shops/api/ShopApiClient.types";
 import { Badge } from "@app/utils/ui/components/badge";
 import { cn } from "@app/utils/ui/lib/utils";
-import type { ShopOrigin } from "@app/shops/api/ShopApiClient.types";
 
 const PALETTE = [
     "border-cyan-400/40 text-cyan-300",
@@ -43,7 +43,7 @@ export function ShopBadge({ origin, label, className }: ShopBadgeProps) {
             className={cn(
                 "font-mono text-[10px] tracking-[0.15em] uppercase px-1.5 py-0.5",
                 shopColorClass(origin),
-                className,
+                className
             )}
         >
             {label ?? origin.replace(/\.cz$/, "")}

@@ -6,18 +6,17 @@
  *
  * Single-product `tools shops get` uses `lib/ingest.ts` which still auto-seeds.
  */
+
+import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@app/utils/json";
-import { describe, expect, it } from "bun:test";
 import { RohlikClient } from "../api/shops/RohlikClient";
 import { buildTestDatabase } from "../test-utils/buildTestDatabase";
 import { RohlikRestCrawler } from "./RohlikRestCrawler";
 
 function readFixture<T>(rel: string): T {
-    return SafeJSON.parse(
-        readFileSync(join(import.meta.dir, "../api/shops/__fixtures__/rohlik", rel), "utf8")
-    ) as T;
+    return SafeJSON.parse(readFileSync(join(import.meta.dir, "../api/shops/__fixtures__/rohlik", rel), "utf8")) as T;
 }
 
 describe("bulk-crawl pending-state integration", () => {
@@ -26,10 +25,7 @@ describe("bulk-crawl pending-state integration", () => {
         try {
             const client = new RohlikClient({ rateLimitPerSecond: 1000 });
             const flat = readFixture<{
-                navigation: Record<
-                    string,
-                    { id: number; name: string; parentId: number; children: number[] }
-                >;
+                navigation: Record<string, { id: number; name: string; parentId: number; children: number[] }>;
             }>("flat-navigation.json");
             const count = readFixture("category-count.json");
             const productsPage = readFixture("category-products-page0.json");

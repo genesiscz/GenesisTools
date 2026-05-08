@@ -1,7 +1,7 @@
+import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@app/utils/json";
-import { describe, expect, it } from "bun:test";
 import { MemoryHttpRequestSink } from "../../lib/http-sink";
 import { KosikClient } from "./KosikClient";
 

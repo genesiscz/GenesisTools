@@ -1,7 +1,7 @@
+import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@app/utils/json";
-import { describe, expect, it } from "bun:test";
 import { MemoryHttpRequestSink } from "../../lib/http-sink";
 import { RohlikClient } from "./RohlikClient";
 
@@ -21,7 +21,9 @@ function buildClient(routes: Array<{ match: string; response: unknown }>): Mocke
     const calls: MockedClient["calls"] = [];
     Object.defineProperty(client, "get", {
         value: async (path: string, options?: { params?: Record<string, unknown> }) => {
-            const params = options?.params ? `?${new URLSearchParams(options.params as Record<string, string>).toString()}` : "";
+            const params = options?.params
+                ? `?${new URLSearchParams(options.params as Record<string, string>).toString()}`
+                : "";
             const fullPath = `${path}${params}`;
             calls.push({ url: fullPath });
             for (const r of routes) {

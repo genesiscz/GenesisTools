@@ -21,9 +21,7 @@ export function NotificationCard({ notification, onAck, onOpen }: Props) {
                             {notification.shop_origin} · {notification.curr_price?.toFixed(2)} CZK
                         </span>
                     </div>
-                    <span className="text-[10px] uppercase tracking-wider text-zinc-500">
-                        {notification.fired_at}
-                    </span>
+                    <span className="text-[10px] uppercase tracking-wider text-zinc-500">{notification.fired_at}</span>
                 </div>
                 <div className="flex gap-1.5">
                     <Button size="sm" variant="ghost" onClick={() => onOpen(notification.master_product_id)}>

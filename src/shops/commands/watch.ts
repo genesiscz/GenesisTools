@@ -26,7 +26,10 @@ export function parsePercent(input: string): number {
 }
 
 export function parseCooldown(input: string): number {
-    const m = input.trim().toLowerCase().match(/^(\d+)\s*([hd]?)$/);
+    const m = input
+        .trim()
+        .toLowerCase()
+        .match(/^(\d+)\s*([hd]?)$/);
     if (!m) {
         throw new Error(`Invalid cooldown: ${input}. Use "24", "24h", or "2d".`);
     }
@@ -64,13 +67,7 @@ export function registerWatchCommand(program: Command): void {
                 notify_back_in_stock: opts.notifyBackInStock === true,
             });
             const table = formatTable(
-                [
-                    [
-                        String(result.favorite_id),
-                        String(result.master_product_id),
-                        result.auto_ingested ? "yes" : "no",
-                    ],
-                ],
+                [[String(result.favorite_id), String(result.master_product_id), result.auto_ingested ? "yes" : "no"]],
                 ["favorite_id", "master_product_id", "auto-ingested"]
             );
             console.log(table);

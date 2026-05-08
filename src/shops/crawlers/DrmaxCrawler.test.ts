@@ -6,10 +6,7 @@ import { buildTestDatabase } from "../test-utils/buildTestDatabase";
 import { DrmaxCrawler } from "./DrmaxCrawler";
 
 function readFixture(rel: string): string {
-    return readFileSync(
-        join(import.meta.dir, "..", "api", "shops", "__fixtures__", "drmax", rel),
-        "utf8"
-    );
+    return readFileSync(join(import.meta.dir, "..", "api", "shops", "__fixtures__", "drmax", rel), "utf8");
 }
 
 describe("DrmaxCrawler", () => {

@@ -254,12 +254,7 @@ function parseCzPrice(raw: string | null | undefined): number | null {
         return null;
     }
 
-    const cleaned = raw
-        .replace(/ /g, " ")
-        .replace(/\s+/g, "")
-        .replace(/Kč/gi, "")
-        .replace(/,/g, ".")
-        .trim();
+    const cleaned = raw.replace(/ /g, " ").replace(/\s+/g, "").replace(/Kč/gi, "").replace(/,/g, ".").trim();
     if (!cleaned) {
         return null;
     }

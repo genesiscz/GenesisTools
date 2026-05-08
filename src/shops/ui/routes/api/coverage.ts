@@ -1,7 +1,7 @@
-import { createFileRoute } from "@tanstack/react-router";
 import logger from "@app/logger";
 import { getShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import type { CoverageResponse, CoverageRow } from "@app/shops/types";
+import { createFileRoute } from "@tanstack/react-router";
 import { apiHandler } from "../../server/api-utils";
 
 const log = logger.child({ component: "api:coverage" });
@@ -43,7 +43,7 @@ export const Route = createFileRoute("/api/coverage")({
                             (SELECT COUNT(*) FROM products p WHERE p.shop_origin = s.origin AND p.is_active = 1) AS product_count,
                             (SELECT MAX(finished_at) FROM crawl_runs cr WHERE cr.shop_origin = s.origin) AS last_crawl_at
                          FROM shops s
-                         ORDER BY s.display_name`,
+                         ORDER BY s.display_name`
                     )
                     .all();
 
@@ -52,7 +52,7 @@ export const Route = createFileRoute("/api/coverage")({
                         `SELECT id, shop_origin, started_at, finished_at, status, products_seen, products_new
                          FROM crawl_runs
                          ORDER BY started_at DESC
-                         LIMIT 200`,
+                         LIMIT 200`
                     )
                     .all();
 
@@ -94,7 +94,7 @@ export const Route = createFileRoute("/api/coverage")({
 
                 const todayOffersRow = db
                     .query<{ total: number }, []>(
-                        `SELECT COUNT(*) AS total FROM prices WHERE substr(observed_at, 1, 10) = date('now')`,
+                        `SELECT COUNT(*) AS total FROM prices WHERE substr(observed_at, 1, 10) = date('now')`
                     )
                     .get();
                 const totalOffersToday = todayOffersRow?.total ?? 0;

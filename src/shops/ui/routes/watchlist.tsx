@@ -1,6 +1,6 @@
+import { SafeJSON } from "@app/utils/json";
 import { Card, CardContent, CardHeader, CardTitle } from "@app/utils/ui/components/card";
 import { Input } from "@app/utils/ui/components/input";
-import { SafeJSON } from "@app/utils/json";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
@@ -38,8 +38,7 @@ function WatchlistPage() {
     });
     const notifications = useQuery({
         queryKey: ["notifications", "unacked"],
-        queryFn: async () =>
-            (await fetch("/api/notifications?only_unacked=1")).json() as Promise<Notification[]>,
+        queryFn: async () => (await fetch("/api/notifications?only_unacked=1")).json() as Promise<Notification[]>,
     });
 
     useSseStream({

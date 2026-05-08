@@ -1,16 +1,10 @@
+import type { SettingsPayload } from "@app/shops/types";
+import { SafeJSON } from "@app/utils/json";
 import { Button } from "@app/utils/ui/components/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@app/utils/ui/components/card";
 import { Input } from "@app/utils/ui/components/input";
-import {
-    Select,
-    SelectContent,
-    SelectItem,
-    SelectTrigger,
-    SelectValue,
-} from "@app/utils/ui/components/select";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@app/utils/ui/components/select";
 import { Switch } from "@app/utils/ui/components/switch";
-import { SafeJSON } from "@app/utils/json";
-import type { SettingsPayload } from "@app/shops/types";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -36,7 +30,7 @@ export function SettingsForm({ initial }: SettingsFormProps) {
 
     const updateChannel = <K extends keyof SettingsPayload["notification_channels"]>(
         key: K,
-        value: SettingsPayload["notification_channels"][K],
+        value: SettingsPayload["notification_channels"][K]
     ) => {
         setDraft((prev) => ({
             ...prev,

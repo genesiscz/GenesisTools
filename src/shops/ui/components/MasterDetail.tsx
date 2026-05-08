@@ -1,5 +1,5 @@
-import { Skeleton } from "@app/utils/ui/components/skeleton";
 import type { MasterDetail as MasterDetailType, PriceHistoryResponse } from "@app/shops/types";
+import { Skeleton } from "@app/utils/ui/components/skeleton";
 import { ImageOff } from "lucide-react";
 import { CrossShopOffersTable } from "./CrossShopOffersTable";
 import { PriceHistoryChart } from "./PriceHistoryChart";
@@ -44,9 +44,7 @@ export function MasterDetail({ detail, history, isLoading, isHistoryLoading }: M
                             <div className="font-mono text-[10px] tracking-[0.25em] text-muted-foreground uppercase mb-1">
                                 {detail.brand ?? "no brand"} · {detail.master_category_name ?? "uncategorized"}
                             </div>
-                            <h1 className="font-mono text-xl text-foreground leading-tight">
-                                {detail.canonical_name}
-                            </h1>
+                            <h1 className="font-mono text-xl text-foreground leading-tight">{detail.canonical_name}</h1>
                         </div>
                         <StarWatchButton masterProductId={detail.id} />
                     </div>

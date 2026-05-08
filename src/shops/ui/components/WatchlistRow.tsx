@@ -16,19 +16,9 @@ interface Props {
     onOpen: (masterId: number) => void;
 }
 
-export function WatchlistRow({
-    row,
-    pendingNotifications,
-    sparklinePoints,
-    onAck,
-    onSnooze,
-    onRemove,
-    onOpen,
-}: Props) {
+export function WatchlistRow({ row, pendingNotifications, sparklinePoints, onAck, onSnooze, onRemove, onOpen }: Props) {
     const alerting = pendingNotifications.length > 0;
-    const buyUrl = pendingNotifications[0]?.shop_origin
-        ? `https://www.${pendingNotifications[0].shop_origin}`
-        : null;
+    const buyUrl = pendingNotifications[0]?.shop_origin ? `https://www.${pendingNotifications[0].shop_origin}` : null;
     return (
         <TableRow
             className={cn(
@@ -45,9 +35,7 @@ export function WatchlistRow({
             </TableCell>
             <TableCell>
                 <div className="flex flex-col">
-                    <span className="text-zinc-100 font-medium">
-                        {row.label ?? `master#${row.master_product_id}`}
-                    </span>
+                    <span className="text-zinc-100 font-medium">{row.label ?? `master#${row.master_product_id}`}</span>
                     <span className="text-[10px] uppercase tracking-wider text-zinc-500">
                         {row.restricted_to_shop ? `[${row.restricted_to_shop} only]` : "[any shop]"}
                     </span>

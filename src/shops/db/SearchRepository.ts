@@ -58,11 +58,12 @@ export class SearchRepository {
                ORDER BY rank
                LIMIT ?`;
 
-        const params: (string | number)[] = opts.shopOrigin
-            ? [ftsQuery, opts.shopOrigin, limit]
-            : [ftsQuery, limit];
+        const params: (string | number)[] = opts.shopOrigin ? [ftsQuery, opts.shopOrigin, limit] : [ftsQuery, limit];
 
-        const rows = this.db.raw().query<FtsRow, (string | number)[]>(sql).all(...params);
+        const rows = this.db
+            .raw()
+            .query<FtsRow, (string | number)[]>(sql)
+            .all(...params);
         return rows as Product[];
     }
 }

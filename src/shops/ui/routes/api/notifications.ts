@@ -3,12 +3,7 @@ import type { NotificationReason } from "../../../db/NotificationsRepository";
 import { getRecentNotifications } from "../../../lib/watchlist-api";
 import { apiHandler } from "../../server/api-utils";
 
-const VALID_REASONS = new Set<NotificationReason>([
-    "target-price",
-    "drop-percent",
-    "drop-absolute",
-    "back-in-stock",
-]);
+const VALID_REASONS = new Set<NotificationReason>(["target-price", "drop-percent", "drop-absolute", "back-in-stock"]);
 
 export const Route = createFileRoute("/api/notifications")({
     server: {

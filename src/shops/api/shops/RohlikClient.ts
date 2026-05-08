@@ -1,12 +1,7 @@
 // Adapted from topmonks/hlidac-shopu (EUPL-1.2) — actors/rohlik-daily/main.js
 
 import { ShopApiClient, type ShopApiClientConstructorConfig } from "../ShopApiClient";
-import type {
-    Category,
-    ListingOptions,
-    RawProduct,
-    ShopCapabilities,
-} from "../ShopApiClient.types";
+import type { Category, ListingOptions, RawProduct, ShopCapabilities } from "../ShopApiClient.types";
 import type {
     RohlikCategoryCountResponse,
     RohlikCategoryProductsResponse,
@@ -80,9 +75,7 @@ export class RohlikClient extends ShopApiClient {
         );
         const totalPages = Math.ceil(count.results / PRODUCTS_PER_PAGE);
         const maxPages =
-            opts.limit !== undefined
-                ? Math.min(totalPages, Math.ceil(opts.limit / PRODUCTS_PER_PAGE))
-                : totalPages;
+            opts.limit !== undefined ? Math.min(totalPages, Math.ceil(opts.limit / PRODUCTS_PER_PAGE)) : totalPages;
 
         let yielded = 0;
         for (let page = 0; page < maxPages; page++) {

@@ -55,11 +55,19 @@ export class SettingsRepository {
             return mergeWithDefaults(parsed);
         } catch (err) {
             if (isFileNotFound(err)) {
-                return { ...DEFAULTS, notification_channels: { ...DEFAULTS.notification_channels }, shops: { ...DEFAULTS.shops } };
+                return {
+                    ...DEFAULTS,
+                    notification_channels: { ...DEFAULTS.notification_channels },
+                    shops: { ...DEFAULTS.shops },
+                };
             }
 
             log.warn({ err, path: this.path }, "settings: failed to read; falling back to defaults");
-            return { ...DEFAULTS, notification_channels: { ...DEFAULTS.notification_channels }, shops: { ...DEFAULTS.shops } };
+            return {
+                ...DEFAULTS,
+                notification_channels: { ...DEFAULTS.notification_channels },
+                shops: { ...DEFAULTS.shops },
+            };
         }
     }
 
@@ -68,7 +76,7 @@ export class SettingsRepository {
         const result = this.writeChain.then(() => this.applyPatch(patch));
         this.writeChain = result.then(
             () => undefined,
-            () => undefined,
+            () => undefined
         );
         return result;
     }
@@ -92,7 +100,7 @@ export class SettingsRepository {
                 changed: Object.keys(patch),
                 redacted: this.toLogString(next),
             },
-            "settings: persisted patch",
+            "settings: persisted patch"
         );
         return next;
     }
@@ -121,7 +129,7 @@ function mergeWithDefaults(parsed: Partial<SettingsPayload>): SettingsPayload {
 function validatePatch(patch: SettingsPatch): void {
     if (patch.default_landing_view !== undefined && !ALLOWED_LANDINGS.includes(patch.default_landing_view)) {
         throw new Error(
-            `default_landing_view must be one of ${ALLOWED_LANDINGS.join(", ")}; got ${patch.default_landing_view}`,
+            `default_landing_view must be one of ${ALLOWED_LANDINGS.join(", ")}; got ${patch.default_landing_view}`
         );
     }
 
@@ -137,28 +145,24 @@ function validatePatch(patch: SettingsPatch): void {
 
     if (patch.http_requests_retention_days !== undefined) {
         if (!Number.isFinite(patch.http_requests_retention_days) || patch.http_requests_retention_days < 1) {
-            throw new Error(
-                `http_requests_retention_days must be ≥ 1; got ${patch.http_requests_retention_days}`,
-            );
+            throw new Error(`http_requests_retention_days must be ≥ 1; got ${patch.http_requests_retention_days}`);
         }
     }
 
     if (patch.default_rate_limit_per_second !== undefined) {
         if (!Number.isFinite(patch.default_rate_limit_per_second) || patch.default_rate_limit_per_second <= 0) {
-            throw new Error(
-                `default_rate_limit_per_second must be > 0; got ${patch.default_rate_limit_per_second}`,
-            );
+            throw new Error(`default_rate_limit_per_second must be > 0; got ${patch.default_rate_limit_per_second}`);
         }
     }
 
     if (patch.shops) {
         for (const [origin, cfg] of Object.entries(patch.shops)) {
             if (
-                cfg.rate_limit_per_second !== null
-                && (!Number.isFinite(cfg.rate_limit_per_second) || cfg.rate_limit_per_second <= 0)
+                cfg.rate_limit_per_second !== null &&
+                (!Number.isFinite(cfg.rate_limit_per_second) || cfg.rate_limit_per_second <= 0)
             ) {
                 throw new Error(
-                    `shops['${origin}'].rate_limit_per_second must be > 0 or null; got ${cfg.rate_limit_per_second}`,
+                    `shops['${origin}'].rate_limit_per_second must be > 0 or null; got ${cfg.rate_limit_per_second}`
                 );
             }
         }

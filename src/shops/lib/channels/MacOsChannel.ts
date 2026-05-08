@@ -1,5 +1,5 @@
-import logger from "@app/logger";
 import { existsSync } from "node:fs";
+import logger from "@app/logger";
 import type { DispatchResult, NotificationChannel, NotificationPayload } from "./types";
 
 const log = logger.child({ component: "MacOsChannel" });

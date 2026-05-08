@@ -1,5 +1,5 @@
-import { Skeleton } from "@app/utils/ui/components/skeleton";
 import type { CoverageResponse } from "@app/shops/types";
+import { Skeleton } from "@app/utils/ui/components/skeleton";
 import { ShoppingBasket } from "lucide-react";
 import { CoverageShopCard } from "./CoverageShopCard";
 import { EmptyState } from "./EmptyState";

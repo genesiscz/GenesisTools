@@ -1,6 +1,6 @@
+import type { CoverageRow } from "@app/shops/types";
 import { Badge } from "@app/utils/ui/components/badge";
 import { Card, CardContent } from "@app/utils/ui/components/card";
-import type { CoverageRow } from "@app/shops/types";
 import { ShopBadge } from "./ShopBadge";
 
 interface CoverageShopCardProps {
@@ -62,12 +62,8 @@ export function CoverageShopCard({ row }: CoverageShopCardProps) {
                     )}
                 </div>
 
-                <div className="font-mono text-2xl text-foreground">
-                    {row.product_count.toLocaleString()}
-                </div>
-                <div className="font-mono text-[10px] tracking-[0.15em] text-muted-foreground uppercase">
-                    products
-                </div>
+                <div className="font-mono text-2xl text-foreground">{row.product_count.toLocaleString()}</div>
+                <div className="font-mono text-[10px] tracking-[0.15em] text-muted-foreground uppercase">products</div>
 
                 <div className="flex flex-wrap gap-1">
                     {CAPABILITY_FIELDS.map(({ key, label }) =>
@@ -79,7 +75,7 @@ export function CoverageShopCard({ row }: CoverageShopCardProps) {
                             >
                                 {label}
                             </Badge>
-                        ) : null,
+                        ) : null
                     )}
                 </div>
 

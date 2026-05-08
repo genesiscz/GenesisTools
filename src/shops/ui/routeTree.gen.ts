@@ -9,27 +9,661 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as WorkspaceRouteImport } from './routes/workspace'
+import { Route as WatchlistRouteImport } from './routes/watchlist'
+import { Route as SettingsRouteImport } from './routes/settings'
+import { Route as NotificationsRouteImport } from './routes/notifications'
+import { Route as LiveRouteImport } from './routes/live'
+import { Route as CoverageRouteImport } from './routes/coverage'
+import { Route as CompareRouteImport } from './routes/compare'
+import { Route as BrowseRouteImport } from './routes/browse'
+import { Route as IndexRouteImport } from './routes/index'
+import { Route as MasterIdRouteImport } from './routes/master.$id'
+import { Route as ApiWatchlistRouteImport } from './routes/api/watchlist'
+import { Route as ApiSettingsRouteImport } from './routes/api/settings'
+import { Route as ApiSearchRouteImport } from './routes/api/search'
+import { Route as ApiNotificationsRouteImport } from './routes/api/notifications'
+import { Route as ApiMasterRouteImport } from './routes/api/master'
+import { Route as ApiEventsRouteImport } from './routes/api/events'
+import { Route as ApiDaemonRouteImport } from './routes/api/daemon'
+import { Route as ApiCoverageRouteImport } from './routes/api/coverage'
+import { Route as ApiCompareRouteImport } from './routes/api/compare'
+import { Route as ProductShopSlugRouteImport } from './routes/product.$shop.$slug'
+import { Route as ApiWatchlistAddRouteImport } from './routes/api/watchlist.add'
+import { Route as ApiMasterIdRouteImport } from './routes/api/master.$id'
+import { Route as ApiLiveEventsRouteImport } from './routes/api/live.events'
+import { Route as ApiWatchlistIdEditRouteImport } from './routes/api/watchlist.$id.edit'
+import { Route as ApiWatchlistIdDeleteRouteImport } from './routes/api/watchlist.$id.delete'
+import { Route as ApiProductShopSlugRouteImport } from './routes/api/product.$shop.$slug'
+import { Route as ApiNotificationsIdAckRouteImport } from './routes/api/notifications.$id.ack'
+import { Route as ApiMasterIdHistoryRouteImport } from './routes/api/master.$id.history'
 
-export interface FileRoutesByFullPath {}
-export interface FileRoutesByTo {}
+const WorkspaceRoute = WorkspaceRouteImport.update({
+  id: '/workspace',
+  path: '/workspace',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const WatchlistRoute = WatchlistRouteImport.update({
+  id: '/watchlist',
+  path: '/watchlist',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SettingsRoute = SettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const NotificationsRoute = NotificationsRouteImport.update({
+  id: '/notifications',
+  path: '/notifications',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LiveRoute = LiveRouteImport.update({
+  id: '/live',
+  path: '/live',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CoverageRoute = CoverageRouteImport.update({
+  id: '/coverage',
+  path: '/coverage',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CompareRoute = CompareRouteImport.update({
+  id: '/compare',
+  path: '/compare',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const BrowseRoute = BrowseRouteImport.update({
+  id: '/browse',
+  path: '/browse',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const IndexRoute = IndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MasterIdRoute = MasterIdRouteImport.update({
+  id: '/master/$id',
+  path: '/master/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiWatchlistRoute = ApiWatchlistRouteImport.update({
+  id: '/api/watchlist',
+  path: '/api/watchlist',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiSettingsRoute = ApiSettingsRouteImport.update({
+  id: '/api/settings',
+  path: '/api/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiSearchRoute = ApiSearchRouteImport.update({
+  id: '/api/search',
+  path: '/api/search',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiNotificationsRoute = ApiNotificationsRouteImport.update({
+  id: '/api/notifications',
+  path: '/api/notifications',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiMasterRoute = ApiMasterRouteImport.update({
+  id: '/api/master',
+  path: '/api/master',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiEventsRoute = ApiEventsRouteImport.update({
+  id: '/api/events',
+  path: '/api/events',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiDaemonRoute = ApiDaemonRouteImport.update({
+  id: '/api/daemon',
+  path: '/api/daemon',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiCoverageRoute = ApiCoverageRouteImport.update({
+  id: '/api/coverage',
+  path: '/api/coverage',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiCompareRoute = ApiCompareRouteImport.update({
+  id: '/api/compare',
+  path: '/api/compare',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ProductShopSlugRoute = ProductShopSlugRouteImport.update({
+  id: '/product/$shop/$slug',
+  path: '/product/$shop/$slug',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiWatchlistAddRoute = ApiWatchlistAddRouteImport.update({
+  id: '/add',
+  path: '/add',
+  getParentRoute: () => ApiWatchlistRoute,
+} as any)
+const ApiMasterIdRoute = ApiMasterIdRouteImport.update({
+  id: '/$id',
+  path: '/$id',
+  getParentRoute: () => ApiMasterRoute,
+} as any)
+const ApiLiveEventsRoute = ApiLiveEventsRouteImport.update({
+  id: '/api/live/events',
+  path: '/api/live/events',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiWatchlistIdEditRoute = ApiWatchlistIdEditRouteImport.update({
+  id: '/$id/edit',
+  path: '/$id/edit',
+  getParentRoute: () => ApiWatchlistRoute,
+} as any)
+const ApiWatchlistIdDeleteRoute = ApiWatchlistIdDeleteRouteImport.update({
+  id: '/$id/delete',
+  path: '/$id/delete',
+  getParentRoute: () => ApiWatchlistRoute,
+} as any)
+const ApiProductShopSlugRoute = ApiProductShopSlugRouteImport.update({
+  id: '/api/product/$shop/$slug',
+  path: '/api/product/$shop/$slug',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiNotificationsIdAckRoute = ApiNotificationsIdAckRouteImport.update({
+  id: '/$id/ack',
+  path: '/$id/ack',
+  getParentRoute: () => ApiNotificationsRoute,
+} as any)
+const ApiMasterIdHistoryRoute = ApiMasterIdHistoryRouteImport.update({
+  id: '/history',
+  path: '/history',
+  getParentRoute: () => ApiMasterIdRoute,
+} as any)
+
+export interface FileRoutesByFullPath {
+  '/': typeof IndexRoute
+  '/browse': typeof BrowseRoute
+  '/compare': typeof CompareRoute
+  '/coverage': typeof CoverageRoute
+  '/live': typeof LiveRoute
+  '/notifications': typeof NotificationsRoute
+  '/settings': typeof SettingsRoute
+  '/watchlist': typeof WatchlistRoute
+  '/workspace': typeof WorkspaceRoute
+  '/api/compare': typeof ApiCompareRoute
+  '/api/coverage': typeof ApiCoverageRoute
+  '/api/daemon': typeof ApiDaemonRoute
+  '/api/events': typeof ApiEventsRoute
+  '/api/master': typeof ApiMasterRouteWithChildren
+  '/api/notifications': typeof ApiNotificationsRouteWithChildren
+  '/api/search': typeof ApiSearchRoute
+  '/api/settings': typeof ApiSettingsRoute
+  '/api/watchlist': typeof ApiWatchlistRouteWithChildren
+  '/master/$id': typeof MasterIdRoute
+  '/api/live/events': typeof ApiLiveEventsRoute
+  '/api/master/$id': typeof ApiMasterIdRouteWithChildren
+  '/api/watchlist/add': typeof ApiWatchlistAddRoute
+  '/product/$shop/$slug': typeof ProductShopSlugRoute
+  '/api/master/$id/history': typeof ApiMasterIdHistoryRoute
+  '/api/notifications/$id/ack': typeof ApiNotificationsIdAckRoute
+  '/api/product/$shop/$slug': typeof ApiProductShopSlugRoute
+  '/api/watchlist/$id/delete': typeof ApiWatchlistIdDeleteRoute
+  '/api/watchlist/$id/edit': typeof ApiWatchlistIdEditRoute
+}
+export interface FileRoutesByTo {
+  '/': typeof IndexRoute
+  '/browse': typeof BrowseRoute
+  '/compare': typeof CompareRoute
+  '/coverage': typeof CoverageRoute
+  '/live': typeof LiveRoute
+  '/notifications': typeof NotificationsRoute
+  '/settings': typeof SettingsRoute
+  '/watchlist': typeof WatchlistRoute
+  '/workspace': typeof WorkspaceRoute
+  '/api/compare': typeof ApiCompareRoute
+  '/api/coverage': typeof ApiCoverageRoute
+  '/api/daemon': typeof ApiDaemonRoute
+  '/api/events': typeof ApiEventsRoute
+  '/api/master': typeof ApiMasterRouteWithChildren
+  '/api/notifications': typeof ApiNotificationsRouteWithChildren
+  '/api/search': typeof ApiSearchRoute
+  '/api/settings': typeof ApiSettingsRoute
+  '/api/watchlist': typeof ApiWatchlistRouteWithChildren
+  '/master/$id': typeof MasterIdRoute
+  '/api/live/events': typeof ApiLiveEventsRoute
+  '/api/master/$id': typeof ApiMasterIdRouteWithChildren
+  '/api/watchlist/add': typeof ApiWatchlistAddRoute
+  '/product/$shop/$slug': typeof ProductShopSlugRoute
+  '/api/master/$id/history': typeof ApiMasterIdHistoryRoute
+  '/api/notifications/$id/ack': typeof ApiNotificationsIdAckRoute
+  '/api/product/$shop/$slug': typeof ApiProductShopSlugRoute
+  '/api/watchlist/$id/delete': typeof ApiWatchlistIdDeleteRoute
+  '/api/watchlist/$id/edit': typeof ApiWatchlistIdEditRoute
+}
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
+  '/': typeof IndexRoute
+  '/browse': typeof BrowseRoute
+  '/compare': typeof CompareRoute
+  '/coverage': typeof CoverageRoute
+  '/live': typeof LiveRoute
+  '/notifications': typeof NotificationsRoute
+  '/settings': typeof SettingsRoute
+  '/watchlist': typeof WatchlistRoute
+  '/workspace': typeof WorkspaceRoute
+  '/api/compare': typeof ApiCompareRoute
+  '/api/coverage': typeof ApiCoverageRoute
+  '/api/daemon': typeof ApiDaemonRoute
+  '/api/events': typeof ApiEventsRoute
+  '/api/master': typeof ApiMasterRouteWithChildren
+  '/api/notifications': typeof ApiNotificationsRouteWithChildren
+  '/api/search': typeof ApiSearchRoute
+  '/api/settings': typeof ApiSettingsRoute
+  '/api/watchlist': typeof ApiWatchlistRouteWithChildren
+  '/master/$id': typeof MasterIdRoute
+  '/api/live/events': typeof ApiLiveEventsRoute
+  '/api/master/$id': typeof ApiMasterIdRouteWithChildren
+  '/api/watchlist/add': typeof ApiWatchlistAddRoute
+  '/product/$shop/$slug': typeof ProductShopSlugRoute
+  '/api/master/$id/history': typeof ApiMasterIdHistoryRoute
+  '/api/notifications/$id/ack': typeof ApiNotificationsIdAckRoute
+  '/api/product/$shop/$slug': typeof ApiProductShopSlugRoute
+  '/api/watchlist/$id/delete': typeof ApiWatchlistIdDeleteRoute
+  '/api/watchlist/$id/edit': typeof ApiWatchlistIdEditRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: never
+  fullPaths:
+    | '/'
+    | '/browse'
+    | '/compare'
+    | '/coverage'
+    | '/live'
+    | '/notifications'
+    | '/settings'
+    | '/watchlist'
+    | '/workspace'
+    | '/api/compare'
+    | '/api/coverage'
+    | '/api/daemon'
+    | '/api/events'
+    | '/api/master'
+    | '/api/notifications'
+    | '/api/search'
+    | '/api/settings'
+    | '/api/watchlist'
+    | '/master/$id'
+    | '/api/live/events'
+    | '/api/master/$id'
+    | '/api/watchlist/add'
+    | '/product/$shop/$slug'
+    | '/api/master/$id/history'
+    | '/api/notifications/$id/ack'
+    | '/api/product/$shop/$slug'
+    | '/api/watchlist/$id/delete'
+    | '/api/watchlist/$id/edit'
   fileRoutesByTo: FileRoutesByTo
-  to: never
-  id: '__root__'
+  to:
+    | '/'
+    | '/browse'
+    | '/compare'
+    | '/coverage'
+    | '/live'
+    | '/notifications'
+    | '/settings'
+    | '/watchlist'
+    | '/workspace'
+    | '/api/compare'
+    | '/api/coverage'
+    | '/api/daemon'
+    | '/api/events'
+    | '/api/master'
+    | '/api/notifications'
+    | '/api/search'
+    | '/api/settings'
+    | '/api/watchlist'
+    | '/master/$id'
+    | '/api/live/events'
+    | '/api/master/$id'
+    | '/api/watchlist/add'
+    | '/product/$shop/$slug'
+    | '/api/master/$id/history'
+    | '/api/notifications/$id/ack'
+    | '/api/product/$shop/$slug'
+    | '/api/watchlist/$id/delete'
+    | '/api/watchlist/$id/edit'
+  id:
+    | '__root__'
+    | '/'
+    | '/browse'
+    | '/compare'
+    | '/coverage'
+    | '/live'
+    | '/notifications'
+    | '/settings'
+    | '/watchlist'
+    | '/workspace'
+    | '/api/compare'
+    | '/api/coverage'
+    | '/api/daemon'
+    | '/api/events'
+    | '/api/master'
+    | '/api/notifications'
+    | '/api/search'
+    | '/api/settings'
+    | '/api/watchlist'
+    | '/master/$id'
+    | '/api/live/events'
+    | '/api/master/$id'
+    | '/api/watchlist/add'
+    | '/product/$shop/$slug'
+    | '/api/master/$id/history'
+    | '/api/notifications/$id/ack'
+    | '/api/product/$shop/$slug'
+    | '/api/watchlist/$id/delete'
+    | '/api/watchlist/$id/edit'
   fileRoutesById: FileRoutesById
 }
-export interface RootRouteChildren {}
-
-declare module '@tanstack/react-router' {
-  interface FileRoutesByPath {}
+export interface RootRouteChildren {
+  IndexRoute: typeof IndexRoute
+  BrowseRoute: typeof BrowseRoute
+  CompareRoute: typeof CompareRoute
+  CoverageRoute: typeof CoverageRoute
+  LiveRoute: typeof LiveRoute
+  NotificationsRoute: typeof NotificationsRoute
+  SettingsRoute: typeof SettingsRoute
+  WatchlistRoute: typeof WatchlistRoute
+  WorkspaceRoute: typeof WorkspaceRoute
+  ApiCompareRoute: typeof ApiCompareRoute
+  ApiCoverageRoute: typeof ApiCoverageRoute
+  ApiDaemonRoute: typeof ApiDaemonRoute
+  ApiEventsRoute: typeof ApiEventsRoute
+  ApiMasterRoute: typeof ApiMasterRouteWithChildren
+  ApiNotificationsRoute: typeof ApiNotificationsRouteWithChildren
+  ApiSearchRoute: typeof ApiSearchRoute
+  ApiSettingsRoute: typeof ApiSettingsRoute
+  ApiWatchlistRoute: typeof ApiWatchlistRouteWithChildren
+  MasterIdRoute: typeof MasterIdRoute
+  ApiLiveEventsRoute: typeof ApiLiveEventsRoute
+  ProductShopSlugRoute: typeof ProductShopSlugRoute
+  ApiProductShopSlugRoute: typeof ApiProductShopSlugRoute
 }
 
-const rootRouteChildren: RootRouteChildren = {}
+declare module '@tanstack/react-router' {
+  interface FileRoutesByPath {
+    '/workspace': {
+      id: '/workspace'
+      path: '/workspace'
+      fullPath: '/workspace'
+      preLoaderRoute: typeof WorkspaceRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/watchlist': {
+      id: '/watchlist'
+      path: '/watchlist'
+      fullPath: '/watchlist'
+      preLoaderRoute: typeof WatchlistRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/settings': {
+      id: '/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof SettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/notifications': {
+      id: '/notifications'
+      path: '/notifications'
+      fullPath: '/notifications'
+      preLoaderRoute: typeof NotificationsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/live': {
+      id: '/live'
+      path: '/live'
+      fullPath: '/live'
+      preLoaderRoute: typeof LiveRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/coverage': {
+      id: '/coverage'
+      path: '/coverage'
+      fullPath: '/coverage'
+      preLoaderRoute: typeof CoverageRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/compare': {
+      id: '/compare'
+      path: '/compare'
+      fullPath: '/compare'
+      preLoaderRoute: typeof CompareRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/browse': {
+      id: '/browse'
+      path: '/browse'
+      fullPath: '/browse'
+      preLoaderRoute: typeof BrowseRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/': {
+      id: '/'
+      path: '/'
+      fullPath: '/'
+      preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/master/$id': {
+      id: '/master/$id'
+      path: '/master/$id'
+      fullPath: '/master/$id'
+      preLoaderRoute: typeof MasterIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/watchlist': {
+      id: '/api/watchlist'
+      path: '/api/watchlist'
+      fullPath: '/api/watchlist'
+      preLoaderRoute: typeof ApiWatchlistRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/settings': {
+      id: '/api/settings'
+      path: '/api/settings'
+      fullPath: '/api/settings'
+      preLoaderRoute: typeof ApiSettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/search': {
+      id: '/api/search'
+      path: '/api/search'
+      fullPath: '/api/search'
+      preLoaderRoute: typeof ApiSearchRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/notifications': {
+      id: '/api/notifications'
+      path: '/api/notifications'
+      fullPath: '/api/notifications'
+      preLoaderRoute: typeof ApiNotificationsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/master': {
+      id: '/api/master'
+      path: '/api/master'
+      fullPath: '/api/master'
+      preLoaderRoute: typeof ApiMasterRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/events': {
+      id: '/api/events'
+      path: '/api/events'
+      fullPath: '/api/events'
+      preLoaderRoute: typeof ApiEventsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/daemon': {
+      id: '/api/daemon'
+      path: '/api/daemon'
+      fullPath: '/api/daemon'
+      preLoaderRoute: typeof ApiDaemonRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/coverage': {
+      id: '/api/coverage'
+      path: '/api/coverage'
+      fullPath: '/api/coverage'
+      preLoaderRoute: typeof ApiCoverageRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/compare': {
+      id: '/api/compare'
+      path: '/api/compare'
+      fullPath: '/api/compare'
+      preLoaderRoute: typeof ApiCompareRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/product/$shop/$slug': {
+      id: '/product/$shop/$slug'
+      path: '/product/$shop/$slug'
+      fullPath: '/product/$shop/$slug'
+      preLoaderRoute: typeof ProductShopSlugRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/watchlist/add': {
+      id: '/api/watchlist/add'
+      path: '/add'
+      fullPath: '/api/watchlist/add'
+      preLoaderRoute: typeof ApiWatchlistAddRouteImport
+      parentRoute: typeof ApiWatchlistRoute
+    }
+    '/api/master/$id': {
+      id: '/api/master/$id'
+      path: '/$id'
+      fullPath: '/api/master/$id'
+      preLoaderRoute: typeof ApiMasterIdRouteImport
+      parentRoute: typeof ApiMasterRoute
+    }
+    '/api/live/events': {
+      id: '/api/live/events'
+      path: '/api/live/events'
+      fullPath: '/api/live/events'
+      preLoaderRoute: typeof ApiLiveEventsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/watchlist/$id/edit': {
+      id: '/api/watchlist/$id/edit'
+      path: '/$id/edit'
+      fullPath: '/api/watchlist/$id/edit'
+      preLoaderRoute: typeof ApiWatchlistIdEditRouteImport
+      parentRoute: typeof ApiWatchlistRoute
+    }
+    '/api/watchlist/$id/delete': {
+      id: '/api/watchlist/$id/delete'
+      path: '/$id/delete'
+      fullPath: '/api/watchlist/$id/delete'
+      preLoaderRoute: typeof ApiWatchlistIdDeleteRouteImport
+      parentRoute: typeof ApiWatchlistRoute
+    }
+    '/api/product/$shop/$slug': {
+      id: '/api/product/$shop/$slug'
+      path: '/api/product/$shop/$slug'
+      fullPath: '/api/product/$shop/$slug'
+      preLoaderRoute: typeof ApiProductShopSlugRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/notifications/$id/ack': {
+      id: '/api/notifications/$id/ack'
+      path: '/$id/ack'
+      fullPath: '/api/notifications/$id/ack'
+      preLoaderRoute: typeof ApiNotificationsIdAckRouteImport
+      parentRoute: typeof ApiNotificationsRoute
+    }
+    '/api/master/$id/history': {
+      id: '/api/master/$id/history'
+      path: '/history'
+      fullPath: '/api/master/$id/history'
+      preLoaderRoute: typeof ApiMasterIdHistoryRouteImport
+      parentRoute: typeof ApiMasterIdRoute
+    }
+  }
+}
+
+interface ApiMasterIdRouteChildren {
+  ApiMasterIdHistoryRoute: typeof ApiMasterIdHistoryRoute
+}
+
+const ApiMasterIdRouteChildren: ApiMasterIdRouteChildren = {
+  ApiMasterIdHistoryRoute: ApiMasterIdHistoryRoute,
+}
+
+const ApiMasterIdRouteWithChildren = ApiMasterIdRoute._addFileChildren(
+  ApiMasterIdRouteChildren,
+)
+
+interface ApiMasterRouteChildren {
+  ApiMasterIdRoute: typeof ApiMasterIdRouteWithChildren
+}
+
+const ApiMasterRouteChildren: ApiMasterRouteChildren = {
+  ApiMasterIdRoute: ApiMasterIdRouteWithChildren,
+}
+
+const ApiMasterRouteWithChildren = ApiMasterRoute._addFileChildren(
+  ApiMasterRouteChildren,
+)
+
+interface ApiNotificationsRouteChildren {
+  ApiNotificationsIdAckRoute: typeof ApiNotificationsIdAckRoute
+}
+
+const ApiNotificationsRouteChildren: ApiNotificationsRouteChildren = {
+  ApiNotificationsIdAckRoute: ApiNotificationsIdAckRoute,
+}
+
+const ApiNotificationsRouteWithChildren =
+  ApiNotificationsRoute._addFileChildren(ApiNotificationsRouteChildren)
+
+interface ApiWatchlistRouteChildren {
+  ApiWatchlistAddRoute: typeof ApiWatchlistAddRoute
+  ApiWatchlistIdDeleteRoute: typeof ApiWatchlistIdDeleteRoute
+  ApiWatchlistIdEditRoute: typeof ApiWatchlistIdEditRoute
+}
+
+const ApiWatchlistRouteChildren: ApiWatchlistRouteChildren = {
+  ApiWatchlistAddRoute: ApiWatchlistAddRoute,
+  ApiWatchlistIdDeleteRoute: ApiWatchlistIdDeleteRoute,
+  ApiWatchlistIdEditRoute: ApiWatchlistIdEditRoute,
+}
+
+const ApiWatchlistRouteWithChildren = ApiWatchlistRoute._addFileChildren(
+  ApiWatchlistRouteChildren,
+)
+
+const rootRouteChildren: RootRouteChildren = {
+  IndexRoute: IndexRoute,
+  BrowseRoute: BrowseRoute,
+  CompareRoute: CompareRoute,
+  CoverageRoute: CoverageRoute,
+  LiveRoute: LiveRoute,
+  NotificationsRoute: NotificationsRoute,
+  SettingsRoute: SettingsRoute,
+  WatchlistRoute: WatchlistRoute,
+  WorkspaceRoute: WorkspaceRoute,
+  ApiCompareRoute: ApiCompareRoute,
+  ApiCoverageRoute: ApiCoverageRoute,
+  ApiDaemonRoute: ApiDaemonRoute,
+  ApiEventsRoute: ApiEventsRoute,
+  ApiMasterRoute: ApiMasterRouteWithChildren,
+  ApiNotificationsRoute: ApiNotificationsRouteWithChildren,
+  ApiSearchRoute: ApiSearchRoute,
+  ApiSettingsRoute: ApiSettingsRoute,
+  ApiWatchlistRoute: ApiWatchlistRouteWithChildren,
+  MasterIdRoute: MasterIdRoute,
+  ApiLiveEventsRoute: ApiLiveEventsRoute,
+  ProductShopSlugRoute: ProductShopSlugRoute,
+  ApiProductShopSlugRoute: ApiProductShopSlugRoute,
+}
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()

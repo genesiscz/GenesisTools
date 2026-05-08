@@ -1,6 +1,6 @@
+import type { MasterOfferRow } from "@app/shops/types";
 import { Badge } from "@app/utils/ui/components/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@app/utils/ui/components/table";
-import type { MasterOfferRow } from "@app/shops/types";
 import { ExternalLink } from "lucide-react";
 import { ShopBadge } from "./ShopBadge";
 
@@ -17,9 +17,7 @@ export function CrossShopOffersTable({ offers }: CrossShopOffersTableProps) {
         );
     }
 
-    const bestPrice = Math.min(
-        ...offers.filter((o) => o.current_price !== null).map((o) => o.current_price as number),
-    );
+    const bestPrice = Math.min(...offers.filter((o) => o.current_price !== null).map((o) => o.current_price as number));
 
     return (
         <div className="border border-zinc-800 rounded-md overflow-hidden">

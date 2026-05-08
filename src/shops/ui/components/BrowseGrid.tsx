@@ -1,3 +1,4 @@
+import type { MasterListResponse } from "@app/shops/types";
 import {
     Pagination,
     PaginationContent,
@@ -6,7 +7,6 @@ import {
     PaginationPrevious,
 } from "@app/utils/ui/components/pagination";
 import { Skeleton } from "@app/utils/ui/components/skeleton";
-import type { MasterListResponse } from "@app/shops/types";
 import { LayoutGrid } from "lucide-react";
 import { BrowseCard } from "./BrowseCard";
 import { EmptyState } from "./EmptyState";

@@ -3,8 +3,8 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BrandAliasesRepository } from "./BrandAliasesRepository";
-import { extractBrandsFromActor, seedBrandAliases } from "./seed-brand-aliases";
 import { ShopsDatabase } from "./ShopsDatabase";
+import { extractBrandsFromActor, seedBrandAliases } from "./seed-brand-aliases";
 
 function tmpDb(): ShopsDatabase {
     return new ShopsDatabase(join(mkdtempSync(join(tmpdir(), "shops-seed-")), "test.db"));

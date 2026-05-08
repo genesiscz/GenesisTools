@@ -1,5 +1,5 @@
-import { Card, CardContent, CardHeader, CardTitle } from "@app/utils/ui/components/card";
 import type { CompareResponse } from "@app/shops/types";
+import { Card, CardContent, CardHeader, CardTitle } from "@app/utils/ui/components/card";
 import { ImageOff } from "lucide-react";
 import { CrossShopOffersTable } from "./CrossShopOffersTable";
 import { ShopBadge } from "./ShopBadge";
@@ -11,9 +11,7 @@ interface CompareGridProps {
 
 export function CompareGrid({ data, isLoading }: CompareGridProps) {
     if (isLoading || !data) {
-        return (
-            <div className="font-mono text-xs text-muted-foreground tracking-[0.15em] uppercase">loading…</div>
-        );
+        return <div className="font-mono text-xs text-muted-foreground tracking-[0.15em] uppercase">loading…</div>;
     }
 
     if (data.items.length === 0) {
@@ -44,9 +42,7 @@ export function CompareGrid({ data, isLoading }: CompareGridProps) {
                             <div className="font-mono text-[10px] tracking-[0.2em] text-muted-foreground uppercase mb-1">
                                 {item.brand ?? "no brand"}
                             </div>
-                            <CardTitle className="font-mono text-sm leading-tight">
-                                {item.canonical_name}
-                            </CardTitle>
+                            <CardTitle className="font-mono text-sm leading-tight">{item.canonical_name}</CardTitle>
                             <div className="flex items-end gap-2 mt-2">
                                 <span className="font-mono text-2xl text-[var(--color-neon-cyan)]">
                                     {item.best_price !== null ? `${item.best_price.toFixed(2)} Kč` : "—"}

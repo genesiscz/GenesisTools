@@ -147,9 +147,7 @@ function parseDetail(html: string, url: string): RawProduct | undefined {
     const giftPriceText = document.querySelector(".giftEvents__price__price")?.textContent ?? "";
     const giftElement = document.querySelector(".giftEvents__item");
     const hasCouponPrice =
-        Boolean(giftPriceText) &&
-        giftElement !== null &&
-        !/pro\s+členy\s+Pilulka/i.test(giftElement.textContent ?? "");
+        Boolean(giftPriceText) && giftElement !== null && !/pro\s+členy\s+Pilulka/i.test(giftElement.textContent ?? "");
 
     let currentPrice: number = product.offers.price;
     let originalPrice: number | undefined;

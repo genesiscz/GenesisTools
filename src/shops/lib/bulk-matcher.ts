@@ -1,9 +1,9 @@
 import logger from "@app/logger";
 import { similarityScore } from "@app/utils/fuzzy-match";
 import type { ShopsDatabase } from "../db/ShopsDatabase";
-import { MATCHER_CONFIG } from "./matcher-config";
 import type { MatchExecutor } from "./match-executor";
 import type { Matcher, MatcherInput } from "./matcher";
+import { MATCHER_CONFIG } from "./matcher-config";
 import { compatPackCount } from "./multipack-guard";
 import type { Unit } from "./normalize";
 
@@ -56,10 +56,10 @@ export class BulkMatcher {
         stats.candidatesAdded = candidatesAfter - candidatesBefore;
 
         const db = this.args.shopsDb.raw();
-        db.run(
-            `UPDATE crawl_runs SET candidates_added = candidates_added + ?, status = 'completed' WHERE id = ?`,
-            [stats.candidatesAdded, crawlRunId]
-        );
+        db.run(`UPDATE crawl_runs SET candidates_added = candidates_added + ?, status = 'completed' WHERE id = ?`, [
+            stats.candidatesAdded,
+            crawlRunId,
+        ]);
 
         log.info(stats, "bulk match completed");
         return stats;
@@ -68,10 +68,7 @@ export class BulkMatcher {
     private passEanJoin(stats: BulkMatcherStats): void {
         const db = this.args.shopsDb.raw();
         const rows = db
-            .query<
-                { productId: number; masterId: number; pPack: number | null; mPack: number | null },
-                []
-            >(
+            .query<{ productId: number; masterId: number; pPack: number | null; mPack: number | null }, []>(
                 `SELECT p.id AS productId, m.id AS masterId, p.pack_count AS pPack, m.pack_count AS mPack
                  FROM products p
                  JOIN master_products m ON m.ean = p.ean

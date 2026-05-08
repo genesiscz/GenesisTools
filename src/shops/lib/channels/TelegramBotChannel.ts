@@ -19,7 +19,7 @@ export interface TelegramBotChannelConfig {
 }
 
 function escapeMd(s: string): string {
-    return s.replace(/[*_`\[\]]/g, "\\$&");
+    return s.replace(/[*_`[\]]/g, "\\$&");
 }
 
 export class TelegramBotChannel implements NotificationChannel {

@@ -1,6 +1,6 @@
-import logger from "@app/logger";
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import logger from "@app/logger";
 import { normalizeBrand } from "../lib/normalize";
 import type { BrandAliasesRepository } from "./BrandAliasesRepository";
 
@@ -113,8 +113,7 @@ function collectFromPlayground(playgroundDir: string): string[] {
 }
 
 export async function seedBrandAliases(args: SeedBrandAliasesArgs): Promise<SeedBrandAliasesResult> {
-    const brands =
-        args.brands ?? (args.playgroundDir ? collectFromPlayground(args.playgroundDir) : []);
+    const brands = args.brands ?? (args.playgroundDir ? collectFromPlayground(args.playgroundDir) : []);
     let inserted = 0;
     let skipped = 0;
 

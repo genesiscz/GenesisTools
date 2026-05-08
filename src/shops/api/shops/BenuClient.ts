@@ -78,9 +78,7 @@ export class BenuClient extends ShopApiClient {
         }
 
         const limit = opts.limit ?? Number.POSITIVE_INFINITY;
-        const baseCategoryUrl = opts.category.startsWith("http")
-            ? opts.category
-            : `${BENU_BASE_URL}${opts.category}`;
+        const baseCategoryUrl = opts.category.startsWith("http") ? opts.category : `${BENU_BASE_URL}${opts.category}`;
 
         opts.signal?.throwIfAborted();
         await this.waitTurn();
@@ -213,8 +211,7 @@ function extractListingTiles(document: Document, baseUrl: string): BenuListingTi
             continue;
         }
 
-        const itemId =
-            card.getAttribute("data-id") ?? card.querySelector("[data-id]")?.getAttribute("data-id") ?? null;
+        const itemId = card.getAttribute("data-id") ?? card.querySelector("[data-id]")?.getAttribute("data-id") ?? null;
         const imageEl = card.querySelector(".product-box__image img, img") as Element | null;
         const imageSrc = imageEl?.getAttribute("src") ?? imageEl?.getAttribute("data-src") ?? null;
         const imageUrl = imageSrc ? new URL(imageSrc, baseUrl).href : null;

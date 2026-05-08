@@ -1,5 +1,5 @@
-import { createFileRoute, redirect } from "@tanstack/react-router";
 import { getSettingsRepository } from "@app/shops/lib/settings";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/")({
     beforeLoad: async () => {
@@ -24,11 +24,12 @@ function IndexPage() {
             <h1 className="font-mono text-2xl text-foreground tracking-[0.2em] mb-3">SHOPS :: HOME</h1>
             <p className="text-muted-foreground text-sm">
                 Open <span className="text-[var(--color-neon-cyan)]">/watchlist</span> for your tracked products,
-                <span className="text-[var(--color-neon-amber)]"> /browse</span> to explore the catalog,
-                or change your default landing view in
+                <span className="text-[var(--color-neon-amber)]"> /browse</span> to explore the catalog, or change your
+                default landing view in
                 <a className="ml-1 underline text-[var(--color-neon-cyan)]" href="/settings">
                     settings
-                </a>.
+                </a>
+                .
             </p>
         </div>
     );

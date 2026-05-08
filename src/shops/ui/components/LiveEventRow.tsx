@@ -1,5 +1,5 @@
-import { Badge } from "@app/utils/ui/components/badge";
 import type { LiveEvent } from "@app/shops/types";
+import { Badge } from "@app/utils/ui/components/badge";
 import { ShopBadge } from "./ShopBadge";
 
 interface LiveEventRowProps {
@@ -53,9 +53,7 @@ export function LiveEventRow({ frame }: LiveEventRowProps) {
                     <span className="text-muted-foreground mr-1.5">{frame.method}</span>
                     {frame.url}
                 </span>
-                <span className="text-muted-foreground truncate text-[10px]">
-                    {frame.operation ?? frame.source}
-                </span>
+                <span className="text-muted-foreground truncate text-[10px]">{frame.operation ?? frame.source}</span>
             </div>
         );
     }
@@ -74,10 +72,10 @@ export function LiveEventRow({ frame }: LiveEventRowProps) {
                         frame.status === "completed"
                             ? "border-emerald-400/40 text-emerald-300"
                             : frame.status === "running"
-                                ? "border-cyan-400/40 text-cyan-300"
-                                : frame.status === "failed"
-                                    ? "border-rose-400/40 text-rose-300"
-                                    : "border-amber-400/40 text-amber-300"
+                              ? "border-cyan-400/40 text-cyan-300"
+                              : frame.status === "failed"
+                                ? "border-rose-400/40 text-rose-300"
+                                : "border-amber-400/40 text-amber-300"
                     }`}
                 >
                     {frame.status}

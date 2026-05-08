@@ -1,6 +1,6 @@
-import { createFileRoute } from "@tanstack/react-router";
 import logger from "@app/logger";
 import { getShopsDatabase } from "@app/shops/db/ShopsDatabase";
+import { createFileRoute } from "@tanstack/react-router";
 import { apiHandler } from "../../server/api-utils";
 
 const log = logger.child({ component: "api:product:$shop:$slug" });
@@ -26,7 +26,7 @@ export const Route = createFileRoute("/api/product/$shop/$slug")({
                 const db = getShopsDatabase().raw();
                 const product = db
                     .query<ProductRow, [string, string]>(
-                        `SELECT master_product_id, name, url FROM products WHERE shop_origin = ? AND slug = ?`,
+                        `SELECT master_product_id, name, url FROM products WHERE shop_origin = ? AND slug = ?`
                     )
                     .get(shop, slug);
 

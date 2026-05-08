@@ -6,14 +6,10 @@ import {
     type AddFavoriteArgs,
     type EditFavoriteArgs,
     type Favorite,
-    type FavoriteWithState,
     FavoritesRepository,
+    type FavoriteWithState,
 } from "../db/FavoritesRepository";
-import {
-    type Notification,
-    type NotificationReason,
-    NotificationsRepository,
-} from "../db/NotificationsRepository";
+import { type Notification, type NotificationReason, NotificationsRepository } from "../db/NotificationsRepository";
 import { getShopsDatabase } from "../db/ShopsDatabase";
 import { ingestFromHlidacResult } from "./ingest";
 
@@ -120,10 +116,7 @@ export async function addFavorite(input: WatchInput): Promise<AddFavoriteResult>
         notify_back_in_stock: input.notify_back_in_stock,
     };
     const id = await favorites.addFavorite(args);
-    log.info(
-        { favoriteId: id, masterId: resolved.masterId, autoIngested: resolved.autoIngested },
-        "favorite added"
-    );
+    log.info({ favoriteId: id, masterId: resolved.masterId, autoIngested: resolved.autoIngested }, "favorite added");
     return { favorite_id: id, master_product_id: resolved.masterId, auto_ingested: resolved.autoIngested };
 }
 

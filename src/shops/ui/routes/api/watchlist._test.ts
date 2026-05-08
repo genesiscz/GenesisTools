@@ -3,8 +3,8 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ShopsDatabase, setShopsDatabaseSingletonForTest } from "../../../db/ShopsDatabase";
-import * as watchlistAddRoute from "./watchlist.add";
 import * as watchlistRoute from "./watchlist";
+import * as watchlistAddRoute from "./watchlist.add";
 
 function tmpDb(): ShopsDatabase {
     const db = new ShopsDatabase(join(mkdtempSync(join(tmpdir(), "shops-api-")), "test.db"));

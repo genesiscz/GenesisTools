@@ -66,7 +66,7 @@ describe("SettingsRepository", () => {
     it("rejects an unknown default_landing_view", async () => {
         const repo = new SettingsRepository(join(dir, "config.json"));
         await expect(
-            repo.patch({ default_landing_view: "/bogus" } as unknown as Parameters<typeof repo.patch>[0]),
+            repo.patch({ default_landing_view: "/bogus" } as unknown as Parameters<typeof repo.patch>[0])
         ).rejects.toThrow("default_landing_view");
     });
 

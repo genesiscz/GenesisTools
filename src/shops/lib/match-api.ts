@@ -138,24 +138,20 @@ export async function acceptCandidatePair(args: PairIdsArgs): Promise<void> {
     }
 
     if (masters.a === null) {
-        shopsDb
-            .raw()
-            .run(
-                `UPDATE products SET master_product_id = ?, match_method = 'user', match_at = ?, last_updated_at = ?
+        shopsDb.raw().run(
+            `UPDATE products SET master_product_id = ?, match_method = 'user', match_at = ?, last_updated_at = ?
                  WHERE id = ?`,
-                [masters.b, now, now, lo]
-            );
+            [masters.b, now, now, lo]
+        );
         return;
     }
 
     if (masters.b === null) {
-        shopsDb
-            .raw()
-            .run(
-                `UPDATE products SET master_product_id = ?, match_method = 'user', match_at = ?, last_updated_at = ?
+        shopsDb.raw().run(
+            `UPDATE products SET master_product_id = ?, match_method = 'user', match_at = ?, last_updated_at = ?
                  WHERE id = ?`,
-                [masters.a, now, now, hi]
-            );
+            [masters.a, now, now, hi]
+        );
         return;
     }
 

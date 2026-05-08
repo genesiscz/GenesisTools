@@ -32,10 +32,7 @@ interface SendCall {
     parseMode?: string;
 }
 
-function makeChannel(args: {
-    chatId?: string;
-    sendImpl?: (a: SendCall) => Promise<{ ok: true; message_id: number }>;
-}) {
+function makeChannel(args: { chatId?: string; sendImpl?: (a: SendCall) => Promise<{ ok: true; message_id: number }> }) {
     const calls: SendCall[] = [];
     const channel = new TelegramBotChannel({
         chatId: args.chatId ?? "123",

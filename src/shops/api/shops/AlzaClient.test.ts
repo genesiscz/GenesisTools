@@ -1,8 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { type WebView, WebViewPool } from "@app/utils/WebView";
 import { SafeJSON } from "@app/utils/json";
+import { type WebView, WebViewPool } from "@app/utils/WebView";
 import { MemoryHttpRequestSink } from "../../lib/http-sink";
 import { AlzaClient } from "./AlzaClient";
 import type { AlzaCategoryListing, AlzaPageData } from "./AlzaClient.types";

@@ -1,8 +1,8 @@
-import { createFileRoute } from "@tanstack/react-router";
 import logger from "@app/logger";
-import { SafeJSON } from "@app/utils/json";
 import { getShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import type { MasterDetail, MasterOfferRow } from "@app/shops/types";
+import { SafeJSON } from "@app/utils/json";
+import { createFileRoute } from "@tanstack/react-router";
 import { apiHandler } from "../../server/api-utils";
 
 const log = logger.child({ component: "api:master:$id" });
@@ -49,7 +49,7 @@ export const Route = createFileRoute("/api/master/$id")({
                                 mp.unit, mp.unit_amount, mp.pack_count, mp.flavor_key, mp.attributes_json
                          FROM master_products mp
                          LEFT JOIN master_categories mc ON mc.id = mp.master_category_id
-                         WHERE mp.id = ?`,
+                         WHERE mp.id = ?`
                     )
                     .get(id);
 
@@ -77,7 +77,7 @@ export const Route = createFileRoute("/api/master/$id")({
                          FROM current_offers co
                          JOIN shops s ON s.origin = co.shop_origin
                          WHERE co.master_product_id = ?
-                         ORDER BY CASE WHEN co.current_price IS NULL THEN 1 ELSE 0 END, co.current_price ASC`,
+                         ORDER BY CASE WHEN co.current_price IS NULL THEN 1 ELSE 0 END, co.current_price ASC`
                     )
                     .all(id);
 

@@ -28,10 +28,7 @@ export class BrandResolver {
 
         const fromNormalized = await this.repo.lookup(normalized);
         if (fromNormalized !== null) {
-            this.log.debug(
-                { rawBrand, canonical: fromNormalized, hit: "normalized" },
-                "brand resolved"
-            );
+            this.log.debug({ rawBrand, canonical: fromNormalized, hit: "normalized" }, "brand resolved");
             return fromNormalized;
         }
 

@@ -41,11 +41,7 @@ export class BrandAliasesRepository {
         return await this.db.kysely().selectFrom("brand_aliases").selectAll().execute();
     }
 
-    upsertIfAbsent(args: {
-        alias: string;
-        canonical: string;
-        source: BrandAlias["source"];
-    }): "inserted" | "skipped" {
+    upsertIfAbsent(args: { alias: string; canonical: string; source: BrandAlias["source"] }): "inserted" | "skipped" {
         const aliasLower = args.alias.toLowerCase();
         const existing = this.db
             .raw()

@@ -10,7 +10,5 @@ export const MATCHER_CONFIG = {
 export type MatcherConfig = typeof MATCHER_CONFIG;
 
 export function isLayer3GrayZone(score: number): boolean {
-    return (
-        score >= MATCHER_CONFIG.LAYER3_GRAYZONE_MIN && score < MATCHER_CONFIG.LAYER3_AUTOLINK_MIN
-    );
+    return score >= MATCHER_CONFIG.LAYER3_GRAYZONE_MIN && score < MATCHER_CONFIG.LAYER3_AUTOLINK_MIN;
 }
