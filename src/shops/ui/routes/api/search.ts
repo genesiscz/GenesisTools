@@ -1,7 +1,7 @@
-import { createFileRoute } from "@tanstack/react-router";
 import logger from "@app/logger";
 import { getShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import type { SearchHit, SearchResponse } from "@app/shops/types";
+import { createFileRoute } from "@tanstack/react-router";
 import { apiHandler, intParam, parseQuery } from "../../server/api-utils";
 
 const log = logger.child({ component: "api:search" });
@@ -75,7 +75,7 @@ export const Route = createFileRoute("/api/search")({
                          LEFT JOIN master_products m ON m.id = p.master_product_id
                          WHERE products_fts MATCH ?
                          ORDER BY products_fts.rank
-                         LIMIT ?`,
+                         LIMIT ?`
                     )
                     .all(ftsQuery, parsed.limit);
 

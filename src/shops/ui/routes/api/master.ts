@@ -1,7 +1,7 @@
-import { createFileRoute } from "@tanstack/react-router";
 import logger from "@app/logger";
 import { getShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import type { MasterListItem, MasterListResponse } from "@app/shops/types";
+import { createFileRoute } from "@tanstack/react-router";
 import { apiHandler, intParam, parseQuery } from "../../server/api-utils";
 
 const log = logger.child({ component: "api:master" });
@@ -70,12 +70,12 @@ export const Route = createFileRoute("/api/master")({
                     parsed.sort === "best_price"
                         ? "COALESCE(best_price, 9.999e15)"
                         : parsed.sort === "total_offers"
-                            ? "total_offers"
-                            : "canonical_name COLLATE NOCASE";
+                          ? "total_offers"
+                          : "canonical_name COLLATE NOCASE";
 
                 const totalRow = db
                     .query<{ total: number }, typeof params>(
-                        `SELECT COUNT(*) AS total FROM master_products ${whereClause}`,
+                        `SELECT COUNT(*) AS total FROM master_products ${whereClause}`
                     )
                     .get(...params);
                 const total = totalRow?.total ?? 0;
@@ -87,7 +87,7 @@ export const Route = createFileRoute("/api/master")({
                          FROM master_products
                          ${whereClause}
                          ORDER BY ${sortColumn} ${parsed.order.toUpperCase()}
-                         LIMIT ? OFFSET ?`,
+                         LIMIT ? OFFSET ?`
                     )
                     .all(...params, parsed.limit, parsed.offset);
 
