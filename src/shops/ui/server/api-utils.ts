@@ -81,7 +81,7 @@ export function enumParam<T extends string>(
 export async function safeJsonBody(request: Request): Promise<Record<string, unknown> | Response> {
     try {
         const text = await request.text();
-        return SafeJSON.parse(text, { strict: true }) as Record<string, unknown>;
+        return SafeJSON.parse(text) as Record<string, unknown>;
     } catch (err) {
         const message = err instanceof Error ? err.message : "Invalid JSON body";
         return Response.json({ error: `Failed to parse request body: ${message}` }, { status: 400 });
