@@ -43,4 +43,22 @@ describe("renderShopsTable (with full registry)", () => {
         expect(drmaxLine).toBeDefined();
         expect(benuLine).toBeDefined();
     });
+
+    it("includes Phase 9 later shops (alza, notino, mall, mountfield, pilulka, knihydobrovsky, hornbach)", () => {
+        const out = renderShopsTable(ShopRegistry.get());
+        expect(out).toContain("alza.cz");
+        expect(out).toContain("notino.cz");
+        expect(out).toContain("mall.cz");
+        expect(out).toContain("mountfield.cz");
+        expect(out).toContain("pilulka.cz");
+        expect(out).toContain("knihydobrovsky.cz");
+        expect(out).toContain("hornbach.cz");
+    });
+
+    it("alza.cz row shows bot-protection 'akamai' (WebView-driven SPA)", () => {
+        const out = renderShopsTable(ShopRegistry.get());
+        const alzaLine = out.split("\n").find((l) => l.startsWith("alza.cz"));
+        expect(alzaLine).toBeDefined();
+        expect(alzaLine).toContain("akamai");
+    });
 });
