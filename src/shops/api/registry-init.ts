@@ -13,6 +13,7 @@ import { KnihyDobrovskyClient } from "./shops/KnihyDobrovskyClient";
 import { KosikClient } from "./shops/KosikClient";
 import { LidlClient } from "./shops/LidlClient";
 import { MallClient } from "./shops/MallClient";
+import { MojaDmClient } from "./shops/MojaDmClient";
 import { MountfieldClient } from "./shops/MountfieldClient";
 import { NotinoClient } from "./shops/NotinoClient";
 import { PilulkaClient } from "./shops/PilulkaClient";
@@ -45,6 +46,7 @@ export function initShopRegistry(opts: { sink?: HttpRequestSink } = {}): void {
     registry.register(new LidlClient({ sink: opts.sink }));
     registry.register(new TetaClient({ sink: opts.sink }));
     registry.register(new AlbertClient({ sink: opts.sink }));
+    registry.register(new MojaDmClient({ sink: opts.sink }));
     initialized = true;
 }
 

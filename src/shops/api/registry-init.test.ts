@@ -10,6 +10,7 @@ import { KauflandClient } from "./shops/KauflandClient";
 import { KnihyDobrovskyClient } from "./shops/KnihyDobrovskyClient";
 import { KosikClient } from "./shops/KosikClient";
 import { MallClient } from "./shops/MallClient";
+import { MojaDmClient } from "./shops/MojaDmClient";
 import { MountfieldClient } from "./shops/MountfieldClient";
 import { NotinoClient } from "./shops/NotinoClient";
 import { PilulkaClient } from "./shops/PilulkaClient";
@@ -90,6 +91,11 @@ describe("registry-init", () => {
     it("registers HornbachClient under hornbach.cz", () => {
         initShopRegistry();
         expect(ShopRegistry.get().forShop("hornbach.cz")).toBeInstanceOf(HornbachClient);
+    });
+
+    it("registers MojaDmClient under mojadm.sk", () => {
+        initShopRegistry();
+        expect(ShopRegistry.get().forShop("mojadm.sk")).toBeInstanceOf(MojaDmClient);
     });
 
     it("calling twice is idempotent", () => {
