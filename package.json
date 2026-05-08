@@ -149,6 +149,7 @@
         "jsdom": "^26.1.0",
         "jsonpath": "^1.1.1",
         "kysely": "^0.28.16",
+        "linkedom": "^0.18.12",
         "loglevel": "^1.9.2",
         "mailparser": "^3.9.4",
         "markdown-it": "^14.1.0",
