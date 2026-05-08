@@ -4,6 +4,7 @@ import { ShopRegistry } from "./ShopRegistry";
 import { AlzaClient } from "./shops/AlzaClient";
 import { BenuClient } from "./shops/BenuClient";
 import { DrmaxClient } from "./shops/DrmaxClient";
+import { HornbachClient } from "./shops/HornbachClient";
 import { ItescoClient } from "./shops/ItescoClient";
 import { KauflandClient } from "./shops/KauflandClient";
 import { KnihyDobrovskyClient } from "./shops/KnihyDobrovskyClient";
@@ -84,6 +85,11 @@ describe("registry-init", () => {
     it("registers KnihyDobrovskyClient under knihydobrovsky.cz", () => {
         initShopRegistry();
         expect(ShopRegistry.get().forShop("knihydobrovsky.cz")).toBeInstanceOf(KnihyDobrovskyClient);
+    });
+
+    it("registers HornbachClient under hornbach.cz", () => {
+        initShopRegistry();
+        expect(ShopRegistry.get().forShop("hornbach.cz")).toBeInstanceOf(HornbachClient);
     });
 
     it("calling twice is idempotent", () => {
