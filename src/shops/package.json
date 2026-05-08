@@ -1,0 +1,10 @@
+{
+    "name": "@app/shops",
+    "private": true,
+    "description": "Documentary stub — real deps live in the root package.json. See ../package.json.",
+    "dependencies": {
+        "@hlidac-shopu/lib": "*",
+        "@hlidac-shopu/actors-common": "*",
+        "kysely": "*"
+    }
+}
