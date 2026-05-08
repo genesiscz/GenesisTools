@@ -2,12 +2,17 @@ import logger from "@app/logger";
 import type { Command } from "commander";
 import { initShopRegistry } from "../api/registry-init";
 import { ShopRegistry } from "../api/ShopRegistry";
+import { AlbertCrawler } from "../crawlers/AlbertCrawler";
 import { BenuCrawler } from "../crawlers/BenuCrawler";
+import { BillaCrawler } from "../crawlers/BillaCrawler";
+import { DmCrawler } from "../crawlers/DmCrawler";
 import { DrmaxCrawler } from "../crawlers/DrmaxCrawler";
 import { ItescoCrawler } from "../crawlers/ItescoCrawler";
 import { KauflandCrawler } from "../crawlers/KauflandCrawler";
 import { KosikRestCrawler } from "../crawlers/KosikRestCrawler";
+import { LidlCrawler } from "../crawlers/LidlCrawler";
 import { RohlikRestCrawler } from "../crawlers/RohlikRestCrawler";
+import { TetaCrawler } from "../crawlers/TetaCrawler";
 import type { ShopCrawler } from "../crawlers/ShopCrawler";
 import type { CrawlResult } from "../crawlers/ShopCrawler.types";
 import { ShopsDatabase } from "../db/ShopsDatabase";
@@ -49,6 +54,21 @@ export async function runCrawlCommand(input: RunCrawlInput): Promise<CrawlResult
             break;
         case "itesco.cz":
             crawler = new ItescoCrawler(client, input.db);
+            break;
+        case "dm.cz":
+            crawler = new DmCrawler(client, input.db);
+            break;
+        case "billa.cz":
+            crawler = new BillaCrawler(client, input.db);
+            break;
+        case "lidl.cz":
+            crawler = new LidlCrawler(client, input.db);
+            break;
+        case "tetadrogerie.cz":
+            crawler = new TetaCrawler(client, input.db);
+            break;
+        case "albert.cz":
+            crawler = new AlbertCrawler(client, input.db);
             break;
         default:
             throw new Error(`no crawler registered for ${client.shopOrigin}`);
