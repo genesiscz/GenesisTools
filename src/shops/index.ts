@@ -2,7 +2,9 @@
 import { handleReadmeFlag } from "@app/utils/readme";
 import { Command } from "commander";
 import { registerDbCommand } from "./commands/db";
+import { registerDbPruneCommand } from "./commands/db-prune";
 import { registerGetCommand } from "./commands/get";
+import { registerNotifyCommand } from "./commands/notify";
 import { registerShopsCommand } from "./commands/shops";
 import { registerWatchCommand } from "./commands/watch";
 
@@ -19,5 +21,7 @@ registerGetCommand(program);
 registerDbCommand(program);
 registerShopsCommand(program);
 registerWatchCommand(program);
+registerNotifyCommand(program);
+registerDbPruneCommand(program);
 
 await program.parseAsync(process.argv);
