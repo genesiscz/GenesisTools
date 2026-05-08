@@ -10,16 +10,49 @@ import type {
     DmRawProduct,
 } from "./DmClient.types";
 
-const DM_ORIGIN = "dm.cz";
-const STORE_ROOT = "https://www.dm.cz";
-const CONTENT_BASE = "https://content.services.dmtech.com/rootpage-dm-shop-cs-cz";
-const SEARCH_BASE = "https://product-search.services.dmtech.com/cz/search/static";
+export type DmCountry = "CZ" | "SK";
+
+interface DmCountryConfig {
+    shopOrigin: string;
+    displayName: string;
+    currency: string;
+    storeRoot: string;
+    contentBase: string;
+    searchBase: string;
+    loggerProvider: string;
+}
+
+const DM_COUNTRY_CONFIGS: Record<DmCountry, DmCountryConfig> = {
+    CZ: {
+        shopOrigin: "dm.cz",
+        displayName: "dm.cz",
+        currency: "CZK",
+        storeRoot: "https://www.dm.cz",
+        contentBase: "https://content.services.dmtech.com/rootpage-dm-shop-cs-cz",
+        searchBase: "https://product-search.services.dmtech.com/cz/search/static",
+        loggerProvider: "dm",
+    },
+    SK: {
+        shopOrigin: "mojadm.sk",
+        displayName: "Moja DM",
+        currency: "EUR",
+        storeRoot: "https://www.mojadm.sk",
+        contentBase: "https://content.services.dmtech.com/rootpage-dm-shop-sk-sk",
+        searchBase: "https://product-search.services.dmtech.com/sk/search/static",
+        loggerProvider: "mojadm",
+    },
+};
+
 const PAGE_SIZE = 60;
 
+export interface DmClientConfig extends ShopApiClientConstructorConfig {
+    country?: DmCountry;
+}
+
 export class DmClient extends ShopApiClient {
-    readonly shopOrigin = DM_ORIGIN;
-    readonly displayName = "dm.cz";
-    readonly currency = "CZK";
+    readonly shopOrigin: string;
+    readonly displayName: string;
+    readonly currency: string;
     readonly capabilities: ShopCapabilities = {
         live: true,
         history: true,
@@ -29,13 +62,25 @@ export class DmClient extends ShopApiClient {
         botProtection: "none",
     };
 
-    constructor(config: ShopApiClientConstructorConfig = {}) {
+    protected readonly storeRoot: string;
+    protected readonly contentBase: string;
+    protected readonly searchBase: string;
+
+    constructor(config: DmClientConfig = {}) {
+        const { country = "CZ", ...rest } = config;
+        const countryConfig = DM_COUNTRY_CONFIGS[country];
         super({
-            baseUrl: STORE_ROOT,
-            loggerContext: { provider: "dm" },
-            rateLimitPerSecond: config.rateLimitPerSecond ?? 2,
-            ...config,
+            baseUrl: countryConfig.storeRoot,
+            loggerContext: { provider: countryConfig.loggerProvider },
+            rateLimitPerSecond: rest.rateLimitPerSecond ?? 2,
+            ...rest,
         });
+        this.shopOrigin = countryConfig.shopOrigin;
+        this.displayName = countryConfig.displayName;
+        this.currency = countryConfig.currency;
+        this.storeRoot = countryConfig.storeRoot;
+        this.contentBase = countryConfig.contentBase;
+        this.searchBase = countryConfig.searchBase;
     }
 
     async getProduct(input: { url?: string; slug?: string }): Promise<RawProduct> {
@@ -46,11 +91,13 @@ export class DmClient extends ShopApiClient {
 
     async *listCategory(opts: ListingOptions): AsyncIterable<RawProduct> {
         if (!opts.category) {
-            throw new Error("DmClient.listCategory requires opts.category (slug like 'dekorativni-kosmetika/oci/rasenky')");
+            throw new Error(
+                "DmClient.listCategory requires opts.category (slug like 'dekorativni-kosmetika/oci/rasenky')"
+            );
         }
 
         await this.waitTurn();
-        const meta = await this.get<DmCategoryResponse>(`${CONTENT_BASE}/${opts.category}/`, {
+        const meta = await this.get<DmCategoryResponse>(`${this.contentBase}/${opts.category}/`, {
             signal: opts.signal,
         });
         const productQuery = extractProductQuery(meta);
@@ -64,7 +111,7 @@ export class DmClient extends ShopApiClient {
         while (page < totalPages) {
             opts.signal?.throwIfAborted();
             await this.waitTurn();
-            const listing = await this.get<DmProductListingResponse>(SEARCH_BASE, {
+            const listing = await this.get<DmProductListingResponse>(this.searchBase, {
                 params: {
                     ...productQuery,
                     pageSize: PAGE_SIZE,
@@ -90,11 +137,11 @@ export class DmClient extends ShopApiClient {
 
     async listCategories(): Promise<Category[]> {
         await this.waitTurn();
-        const tree = await this.get<DmNavigationResponse>(`${CONTENT_BASE}/`, {
+        const tree = await this.get<DmNavigationResponse>(`${this.contentBase}/`, {
             params: { view: "navigation" },
         });
         const out: Category[] = [];
-        flattenNavigation(tree.navigation, undefined, out);
+        flattenNavigation(tree.navigation, undefined, out, this.storeRoot);
         return out;
     }
 
@@ -111,12 +158,12 @@ export class DmClient extends ShopApiClient {
 
         const name = titlePieces.join(" ").trim() || td.title?.tileHeadlineLong || String(p.gtin ?? p.dan ?? "");
         const slug = (td.self ?? "").replace(/^\//, "") || String(p.gtin ?? p.dan ?? "");
-        const url = td.self ? new URL(td.self, STORE_ROOT).href : STORE_ROOT;
+        const url = td.self ? new URL(td.self, this.storeRoot).href : this.storeRoot;
         const itemId = String(p.dan ?? p.gtin ?? "");
         const ean = p.gtin !== undefined ? String(p.gtin) : undefined;
 
         return {
-            shopOrigin: DM_ORIGIN,
+            shopOrigin: this.shopOrigin,
             slug,
             itemId,
             url,
@@ -148,7 +195,7 @@ function extractProductQuery(meta: DmCategoryResponse): Record<string, string | 
     return undefined;
 }
 
-function flattenNavigation(node: DmNavigationNode, parent: string | undefined, out: Category[]): void {
+function flattenNavigation(node: DmNavigationNode, parent: string | undefined, out: Category[], storeRoot: string): void {
     if (node.link && node.title) {
         const id = node.link.replace(/^\//, "");
         out.push({
@@ -156,17 +203,17 @@ function flattenNavigation(node: DmNavigationNode, parent: string | undefined, o
             name: node.title,
             parentId: parent,
             slug: id,
-            url: `${STORE_ROOT}${node.link.startsWith("/") ? "" : "/"}${node.link}`,
+            url: `${storeRoot}${node.link.startsWith("/") ? "" : "/"}${node.link}`,
         });
         for (const child of node.children ?? []) {
-            flattenNavigation(child, id, out);
+            flattenNavigation(child, id, out, storeRoot);
         }
 
         return;
     }
 
     for (const child of node.children ?? []) {
-        flattenNavigation(child, parent, out);
+        flattenNavigation(child, parent, out, storeRoot);
     }
 }
 
@@ -176,8 +223,8 @@ function parsePrice(value: string | undefined): number | undefined {
     }
 
     const normalized = value
-        .replace(/[^\d,.\s ]/g, "")
-        .replace(/[\s ]+/g, "")
+        .replace(/[^\d,.\s ]/g, "")
+        .replace(/[\s ]+/g, "")
         .replace(/,/g, ".");
     const n = Number.parseFloat(normalized);
     return Number.isFinite(n) ? n : undefined;
