@@ -2,21 +2,14 @@ import logger from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import type { Command } from "commander";
 import { getShopsDatabase, type ShopsDatabase } from "../db/ShopsDatabase";
-import {
-    acceptCandidatePair,
-    listPendingCandidates,
-    rejectCandidatePair,
-} from "../lib/match-api";
+import { acceptCandidatePair, listPendingCandidates, rejectCandidatePair } from "../lib/match-api";
 
 const log = logger.child({ component: "tools-shops-match" });
 
 function resolveProductId(shopsDb: ShopsDatabase, input: string): number {
     if (/^\d+$/.test(input)) {
         const id = Number(input);
-        const row = shopsDb
-            .raw()
-            .query<{ id: number }, [number]>("SELECT id FROM products WHERE id = ?")
-            .get(id);
+        const row = shopsDb.raw().query<{ id: number }, [number]>("SELECT id FROM products WHERE id = ?").get(id);
         if (!row) {
             throw new Error(`No product with id ${id}`);
         }
@@ -24,10 +17,7 @@ function resolveProductId(shopsDb: ShopsDatabase, input: string): number {
         return id;
     }
 
-    const row = shopsDb
-        .raw()
-        .query<{ id: number }, [string]>("SELECT id FROM products WHERE url = ?")
-        .get(input);
+    const row = shopsDb.raw().query<{ id: number }, [string]>("SELECT id FROM products WHERE url = ?").get(input);
     if (!row) {
         throw new Error(`No product with url ${input}`);
     }
@@ -59,13 +49,11 @@ export async function rejectPair(args: PairArgs): Promise<void> {
 
 export async function rematchProduct(args: { shopsDb: ShopsDatabase; productId: number }): Promise<void> {
     const now = new Date().toISOString();
-    args.shopsDb
-        .raw()
-        .run(
-            `UPDATE products SET master_product_id = NULL, match_method = 'pending', match_at = ?, last_updated_at = ?
+    args.shopsDb.raw().run(
+        `UPDATE products SET master_product_id = NULL, match_method = 'pending', match_at = ?, last_updated_at = ?
              WHERE id = ?`,
-            [now, now, args.productId]
-        );
+        [now, now, args.productId]
+    );
     log.info({ productId: args.productId }, "product reset to pending; run a crawl flush to re-match");
 }
 
