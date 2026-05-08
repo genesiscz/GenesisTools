@@ -8,23 +8,23 @@ import { RohlikRestCrawler } from "../crawlers/RohlikRestCrawler";
 import type { ShopCrawler } from "../crawlers/ShopCrawler";
 import type { CrawlResult } from "../crawlers/ShopCrawler.types";
 import { ShopsDatabase } from "../db/ShopsDatabase";
+import { DbHttpRequestSink, type HttpRequestSink } from "../lib/http-sink";
 
 export interface RunCrawlInput {
     shop: string;
     category?: string;
     limit?: number;
     db: ShopsDatabase;
+    sink?: HttpRequestSink;
     signal?: AbortSignal;
     onProgress?: (line: string) => void;
 }
 
 export async function runCrawlCommand(input: RunCrawlInput): Promise<CrawlResult> {
-    initShopRegistry();
+    initShopRegistry({ sink: input.sink });
     const client = ShopRegistry.get().forShop(input.shop);
     if (!client) {
-        throw new Error(
-            `unknown shop "${input.shop}". Try one of: rohlik.cz, kosik.cz, kaufland.cz`
-        );
+        throw new Error(`unknown shop "${input.shop}". Try one of: rohlik.cz, kosik.cz, kaufland.cz`);
     }
 
     let crawler: ShopCrawler;
@@ -42,15 +42,12 @@ export async function runCrawlCommand(input: RunCrawlInput): Promise<CrawlResult
             throw new Error(`no crawler registered for ${client.shopOrigin}`);
     }
 
-    return crawler.run(
-        { categoryId: input.category, limit: input.limit, signal: input.signal },
-        (e) => {
-            input.onProgress?.(
-                `[${client.shopOrigin}] seen=${e.productsSeen} new=${e.productsNew} prices=${e.pricesRecorded}` +
-                    (e.category ? ` cat=${e.category}` : "")
-            );
-        }
-    );
+    return crawler.run({ categoryId: input.category, limit: input.limit, signal: input.signal }, (e) => {
+        input.onProgress?.(
+            `[${client.shopOrigin}] seen=${e.productsSeen} new=${e.productsNew} prices=${e.pricesRecorded}` +
+                (e.category ? ` cat=${e.category}` : "")
+        );
+    });
 }
 
 export function registerCrawlCommand(program: Command): void {
@@ -63,6 +60,7 @@ export function registerCrawlCommand(program: Command): void {
         .action(async (raw: { shop: string; category?: string; limit?: number }) => {
             const log = logger.child({ component: "shops:crawl" });
             const db = new ShopsDatabase();
+            const sink = new DbHttpRequestSink(db);
             const ctrl = new AbortController();
             const onSig = (): void => {
                 log.warn("SIGINT received, cancelling crawl");
@@ -75,6 +73,7 @@ export function registerCrawlCommand(program: Command): void {
                     category: raw.category,
                     limit: raw.limit,
                     db,
+                    sink,
                     signal: ctrl.signal,
                     onProgress: (line) => process.stdout.write(`${line}\n`),
                 });
