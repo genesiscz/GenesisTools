@@ -1,4 +1,3 @@
-// WebViewPool added in Task 7
 export {
     WebViewError,
     WebViewEvaluateError,
@@ -17,3 +16,5 @@ export type {
     WebViewOptions,
 } from "./types";
 export { WebView } from "./WebView";
+export { WebViewPool } from "./WebViewPool";
+export type { WebViewPoolOptions } from "./WebViewPool";

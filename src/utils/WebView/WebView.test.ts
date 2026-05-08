@@ -3,6 +3,7 @@ import { describe, expect, it } from "bun:test";
 import { detectBunCapabilities } from "@app/utils/bun";
 import { WebViewError, WebViewEvaluateError, WebViewNavigationError, WebViewTimeoutError } from "./errors";
 import { WebView } from "./WebView";
+import { WebViewPool } from "./WebViewPool";
 
 const caps = detectBunCapabilities();
 const maybeIt = caps.headlessBrowser ? it : it.skip;
@@ -152,5 +153,76 @@ describe("WebView -- screenshot (integration)", () => {
         await wv.screenshotToFile(filePath);
         const stat = statSync(filePath);
         expect(stat.size).toBeGreaterThan(100);
+    });
+});
+
+describe("WebViewPool (unit -- mock factory)", () => {
+    it("acquire/release cycles through idle instances", async () => {
+        let createCount = 0;
+        const pool = new WebViewPool({
+            size: 2,
+            factory: () => {
+                createCount++;
+                return { instanceId: `stub-${createCount}`, closed: false, close() {} } as unknown as WebView;
+            },
+        });
+
+        const a = await pool.acquire();
+        const b = await pool.acquire();
+        expect(pool.inUse).toBe(2);
+        pool.release(a);
+        expect(pool.idle).toBe(1);
+        pool.release(b);
+        await pool.drain();
+        expect(createCount).toBe(2);
+    });
+
+    it("withInstance returns instance to pool after fn resolves", async () => {
+        const pool = new WebViewPool({
+            size: 1,
+            factory: () => ({ instanceId: "stub", closed: false, close() {} }) as unknown as WebView,
+        });
+
+        await pool.withInstance(async () => {
+            expect(pool.inUse).toBe(1);
+        });
+
+        expect(pool.idle).toBe(1);
+        await pool.drain();
+    });
+
+    it("withInstance returns instance to pool even when fn throws", async () => {
+        const pool = new WebViewPool({
+            size: 1,
+            factory: () => ({ instanceId: "stub", closed: false, close() {} }) as unknown as WebView,
+        });
+
+        await expect(
+            pool.withInstance(async () => {
+                throw new Error("fn error");
+            }),
+        ).rejects.toThrow("fn error");
+
+        expect(pool.idle).toBe(1);
+        await pool.drain();
+    });
+});
+
+// Pool integration test creates multiple real WebViews + drains them; same Bun
+// orphan-close emission applies. Skip until Bun fixes the deferred-error
+// behaviour; the unit tests above cover the pool's semaphore/release/drain logic.
+describe("WebViewPool (integration)", () => {
+    it.skip("runs 5 tasks with pool of size 2 (skipped: bun WebView close emits orphan exit-time error)", async () => {
+        const pool = new WebViewPool({ size: 2 });
+        const results = await Promise.all(
+            Array.from({ length: 5 }, (_, i) =>
+                pool.withInstance(async (wv) => {
+                    await wv.navigate("https://example.com", { timeoutMs: 15_000 });
+                    return wv.evaluate<number>(`${i} * 2`);
+                }),
+            ),
+        );
+        expect(results.sort((a, b) => a - b)).toEqual([0, 2, 4, 6, 8]);
+        await pool.drain();
     });
 });
