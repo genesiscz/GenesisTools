@@ -4,6 +4,7 @@ import { Command } from "commander";
 import { registerDbCommand } from "./commands/db";
 import { registerGetCommand } from "./commands/get";
 import { registerShopsCommand } from "./commands/shops";
+import { registerWatchCommand } from "./commands/watch";
 
 handleReadmeFlag(import.meta.url);
 
@@ -17,5 +18,6 @@ program
 registerGetCommand(program);
 registerDbCommand(program);
 registerShopsCommand(program);
+registerWatchCommand(program);
 
 await program.parseAsync(process.argv);
