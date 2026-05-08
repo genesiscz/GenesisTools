@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { handleReadmeFlag } from "@app/utils/readme";
 import { Command } from "commander";
+import { registerDaemonCommand } from "./commands/daemon";
 import { registerDbCommand } from "./commands/db";
 import { registerDbPruneCommand } from "./commands/db-prune";
 import { registerGetCommand } from "./commands/get";
@@ -23,5 +24,6 @@ registerShopsCommand(program);
 registerWatchCommand(program);
 registerNotifyCommand(program);
 registerDbPruneCommand(program);
+registerDaemonCommand(program);
 
 await program.parseAsync(process.argv);
