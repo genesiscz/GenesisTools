@@ -3,11 +3,13 @@ import { ShopRegistry } from "./ShopRegistry";
 import { AlzaClient } from "./shops/AlzaClient";
 import { BenuClient } from "./shops/BenuClient";
 import { DrmaxClient } from "./shops/DrmaxClient";
+import { ItescoClient } from "./shops/ItescoClient";
 import { KauflandClient } from "./shops/KauflandClient";
 import { KosikClient } from "./shops/KosikClient";
 import { MallClient } from "./shops/MallClient";
 import { MountfieldClient } from "./shops/MountfieldClient";
 import { NotinoClient } from "./shops/NotinoClient";
+import { PilulkaClient } from "./shops/PilulkaClient";
 import { RohlikClient } from "./shops/RohlikClient";
 
 let initialized = false;
@@ -27,6 +29,8 @@ export function initShopRegistry(opts: { sink?: HttpRequestSink } = {}): void {
     registry.register(new BenuClient({ sink: opts.sink }));
     registry.register(new MallClient({ sink: opts.sink }));
     registry.register(new MountfieldClient({ sink: opts.sink }));
+    registry.register(new ItescoClient({ sink: opts.sink }));
+    registry.register(new PilulkaClient({ sink: opts.sink }));
     initialized = true;
 }
 

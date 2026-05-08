@@ -4,6 +4,7 @@ import { initShopRegistry } from "../api/registry-init";
 import { ShopRegistry } from "../api/ShopRegistry";
 import { BenuCrawler } from "../crawlers/BenuCrawler";
 import { DrmaxCrawler } from "../crawlers/DrmaxCrawler";
+import { ItescoCrawler } from "../crawlers/ItescoCrawler";
 import { KauflandCrawler } from "../crawlers/KauflandCrawler";
 import { KosikRestCrawler } from "../crawlers/KosikRestCrawler";
 import { RohlikRestCrawler } from "../crawlers/RohlikRestCrawler";
@@ -45,6 +46,9 @@ export async function runCrawlCommand(input: RunCrawlInput): Promise<CrawlResult
             break;
         case "benu.cz":
             crawler = new BenuCrawler(client, input.db);
+            break;
+        case "itesco.cz":
+            crawler = new ItescoCrawler(client, input.db);
             break;
         default:
             throw new Error(`no crawler registered for ${client.shopOrigin}`);

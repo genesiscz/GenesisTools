@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+<title>Pekárna - strana 2 | Tesco</title>
+</head>
+<body>
+<main>
+<div data-plp-breadcrumb='[{"text":"Online nákupy","current":false,"children":[{"text":"Pekárna","current":true}]}]'>
+</div>
+
+<h1>Pekárna</h1>
+
+<script type="application/discover+json">
+{
+  "mfe-orchestrator": {
+    "props": {
+      "apolloCache": {
+        "ROOT_QUERY": {
+          "category({\"page\":2,\"superDepartment\":\"pekarna\"})": {
+            "info": {
+              "total": 48,
+              "count": 24
+            }
+          }
+        },
+        "ProductType:200100": {
+          "id": "200100",
+          "title": "Vekýtek pšenično-žitný",
+          "defaultImageUrl": "https://img.tesco.com/200100.jpg",
+          "status": "AvailableForSale",
+          "displayType": "ProductTile",
+          "productType": "Standard",
+          "price": { "actual": 24.90 },
+          "promotions": []
+        },
+        "ProductType:200200": {
+          "id": "200200",
+          "title": "Croissant máslový",
+          "defaultImageUrl": "https://img.tesco.com/200200.jpg",
+          "status": "AvailableForSale",
+          "displayType": "ProductTile",
+          "productType": "Standard",
+          "price": { "actual": 19.90 },
+          "promotions": []
+        }
+      }
+    }
+  }
+}
+</script>
+
+</main>
+</body>
+</html>

@@ -7,6 +7,7 @@ import { registerDbCommand } from "./commands/db";
 import { registerDbPruneCommand } from "./commands/db-prune";
 import { registerGetCommand } from "./commands/get";
 import { registerListCommand } from "./commands/list";
+import { registerMatchCommand } from "./commands/match";
 import { registerNotifyCommand } from "./commands/notify";
 import { registerShopsCommand } from "./commands/shops";
 import { registerUiCommand } from "./commands/ui";
@@ -30,6 +31,7 @@ registerDbPruneCommand(program);
 registerDaemonCommand(program);
 registerCrawlCommand(program);
 registerListCommand(program);
+registerMatchCommand(program);
 registerUiCommand(program);
 
 await program.parseAsync(process.argv);
