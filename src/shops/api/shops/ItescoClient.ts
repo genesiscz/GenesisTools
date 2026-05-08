@@ -49,7 +49,6 @@ export class ItescoClient extends ShopApiClient {
 
     private readonly clientLog = logger.child({ component: "ItescoClient", shop: ITESCO_ORIGIN });
     private readonly backoffMs: readonly number[];
-    private akamaiAttempts = 0;
 
     constructor(config: ItescoClientConfig = {}) {
         super({
@@ -187,7 +186,6 @@ export class ItescoClient extends ShopApiClient {
                     throw new Error(`Akamai bot challenge body for ${url}`);
                 }
 
-                this.akamaiAttempts = 0;
                 return html;
             } catch (err) {
                 lastErr = err;
@@ -204,7 +202,6 @@ export class ItescoClient extends ShopApiClient {
                     break;
                 }
 
-                this.akamaiAttempts++;
                 const waitMs = this.backoffMs[attempt] ?? 0;
                 this.clientLog.warn(
                     { attempt: attempt + 1, waitMs, url, error: e.message ?? String(e) },
