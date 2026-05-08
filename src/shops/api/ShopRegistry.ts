@@ -23,6 +23,11 @@ export class ShopRegistry {
         return new ShopRegistry();
     }
 
+    /** Test-only: clear the singleton so the next `get()` returns a fresh instance. */
+    static reset(): void {
+        ShopRegistry.instance = null;
+    }
+
     register(client: ShopApiClient): void {
         this.clients.set(client.shopOrigin, client);
     }

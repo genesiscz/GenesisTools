@@ -440,9 +440,7 @@ export class ShopsDatabase {
               AND p.is_active = 1
             ORDER BY rank
             LIMIT ? OFFSET ?`;
-        const rows = this.client.raw
-            .prepare(sql)
-            .all(ftsQuery, shopOrigin, limit, offset) as Array<{
+        const rows = this.client.raw.prepare(sql).all(ftsQuery, shopOrigin, limit, offset) as Array<{
             id: number;
             name: string;
             brand: string | null;
