@@ -65,8 +65,7 @@ export class KauflandClient extends ShopApiClient {
         while (true) {
             opts.signal?.throwIfAborted();
             await this.waitTurn();
-            const url =
-                pageNumber === 1 ? firstUrl : `${ROOT}/category/${opts.category}/p${pageNumber}/`;
+            const url = pageNumber === 1 ? firstUrl : `${ROOT}/category/${opts.category}/p${pageNumber}/`;
             const html = await this.getText(url, { signal: opts.signal });
             const parsed = extractProductsFromCategoryHtml(html);
             if (parsed.products.length === 0) {
@@ -123,9 +122,7 @@ interface ExtractedProducts {
 
 function extractProductsFromCategoryHtml(html: string): ExtractedProducts {
     const { document } = parseHTML(html);
-    const articles = Array.from(
-        document.querySelectorAll("article.product:not(:has(.product__sponsored-ad-label))")
-    );
+    const articles = Array.from(document.querySelectorAll("article.product:not(:has(.product__sponsored-ad-label))"));
     if (articles.length === 0) {
         return { products: [] };
     }
@@ -226,12 +223,7 @@ function parsedToRawProduct(p: KauflandParsedProduct): RawProduct {
     };
 }
 
-function ldToRawProduct(
-    ld: KauflandJsonLdProduct,
-    slug: string,
-    url: string,
-    categoryPath: string[]
-): RawProduct {
+function ldToRawProduct(ld: KauflandJsonLdProduct, slug: string, url: string, categoryPath: string[]): RawProduct {
     const img = Array.isArray(ld.image) ? ld.image[0] : ld.image;
     return {
         shopOrigin: KAUFLAND_ORIGIN,
