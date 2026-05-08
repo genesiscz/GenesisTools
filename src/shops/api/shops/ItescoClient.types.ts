@@ -47,7 +47,6 @@ export const ITESCO_HOME_URL = "https://nakup.itesco.cz/groceries/cs-CZ/";
 export const ITESCO_LOCALE = "cs-CZ";
 export const ITESCO_BROWSER_UA =
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36";
-export const ITESCO_SUPERDEPT_REGEX =
-    /^(?:https?:\/\/[^/]+)?(\/groceries\/cs-CZ\/shop\/[^/?#]+\/all)(?:[?#]|$)/;
+export const ITESCO_SUPERDEPT_REGEX = /^(?:https?:\/\/[^/]+)?(\/groceries\/cs-CZ\/shop\/[^/?#]+\/all)(?:[?#]|$)/;
 export const ITESCO_CZ_SALE_REGEX = /předtím\s+([\d,.]+)\s*Kč/;
 export const ITESCO_DEFAULT_PAGE_SIZE = 24;

@@ -146,8 +146,7 @@ export class ItescoClient extends ShopApiClient {
 
     async getProduct(input: { url?: string; slug?: string }): Promise<RawProduct> {
         const url =
-            input.url ??
-            (input.slug ? `${ITESCO_BASE_URL}/groceries/${ITESCO_LOCALE}/products/${input.slug}` : null);
+            input.url ?? (input.slug ? `${ITESCO_BASE_URL}/groceries/${ITESCO_LOCALE}/products/${input.slug}` : null);
         if (!url) {
             throw new Error("ItescoClient.getProduct requires url or slug");
         }
