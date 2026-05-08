@@ -1,0 +1,12 @@
+{
+  "data": {
+    "id": "123456",
+    "type": "products",
+    "attributes": {
+      "price": {
+        "rrpPrice": 1490.00,
+        "currentPrice": 1290.00
+      }
+    }
+  }
+}
