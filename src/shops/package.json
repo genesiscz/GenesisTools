@@ -1,6 +1,7 @@
 {
     "name": "@app/shops",
     "private": true,
+    "type": "module",
     "description": "Documentary stub — real deps live in the root package.json. See ../package.json.",
     "dependencies": {
         "@hlidac-shopu/lib": "*",
