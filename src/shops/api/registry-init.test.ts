@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "bun:test";
 import { __resetInitState, initShopRegistry } from "./registry-init";
 import { ShopRegistry } from "./ShopRegistry";
+import { AlzaClient } from "./shops/AlzaClient";
 import { KauflandClient } from "./shops/KauflandClient";
 import { KosikClient } from "./shops/KosikClient";
 import { RohlikClient } from "./shops/RohlikClient";
@@ -24,6 +25,11 @@ describe("registry-init", () => {
     it("registers KauflandClient under kaufland.cz", () => {
         initShopRegistry();
         expect(ShopRegistry.get().forShop("kaufland.cz")).toBeInstanceOf(KauflandClient);
+    });
+
+    it("registers AlzaClient under alza.cz", () => {
+        initShopRegistry();
+        expect(ShopRegistry.get().forShop("alza.cz")).toBeInstanceOf(AlzaClient);
     });
 
     it("calling twice is idempotent", () => {
