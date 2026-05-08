@@ -3,7 +3,10 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import logger from "@app/logger";
 import { createKyselyClient, type DatabaseClient } from "@app/utils/database/client";
+import { SafeJSON } from "@app/utils/json";
 import type { Insertable, Kysely } from "kysely";
+import type { RawProduct } from "../api/ShopApiClient.types";
+import { normalizeText } from "../lib/normalize";
 import { SHOPS_MIGRATIONS } from "./migrations";
 import type {
     CurrentOffersView,
@@ -14,6 +17,47 @@ import type {
     ShopsDB,
     ShopsTable,
 } from "./types";
+
+export interface StartCrawlRunInput {
+    shopOrigin: string;
+    strategy: string;
+    options: {
+        categoryId?: string;
+        limit?: number;
+        since?: string;
+    } & Record<string, unknown>;
+}
+
+export interface CrawlCounterDelta {
+    productsSeen?: number;
+    productsNew?: number;
+    pricesRecorded?: number;
+    candidatesAdded?: number;
+}
+
+export type CrawlRunStatus = "running" | "matching" | "completed" | "failed" | "cancelled";
+
+export interface UpsertProductPendingResult {
+    id: number;
+    isNew: boolean;
+}
+
+export interface ListProductsInput {
+    shopOrigin: string;
+    categoryId?: string;
+    limit: number;
+    offset?: number;
+    search?: string;
+}
+
+export interface ListedProduct {
+    id: number;
+    name: string;
+    brand?: string;
+    currentPrice?: number;
+    url: string;
+    imageUrl?: string;
+}
 
 const DEFAULT_DB_PATH = join(homedir(), ".genesis-tools", "shops", "index.db");
 
@@ -187,6 +231,235 @@ export class ShopsDatabase {
     async insertHttpRequest(row: NewHttpRequest): Promise<void> {
         await this.client.kysely.insertInto("http_requests").values(row).execute();
     }
+
+    /**
+     * Bulk-crawl variant of upsertProduct. Writes the product with
+     * `master_product_id = NULL` and `match_method = 'pending'` so Plan 04's
+     * BulkMatcher can resolve master assignment after the crawl finishes in
+     * a single transaction. Auto-seed semantics live in `lib/ingest.ts` and
+     * are reserved for the single-product `tools shops get` path.
+     */
+    async upsertProductPending(raw: RawProduct): Promise<UpsertProductPendingResult> {
+        const now = new Date().toISOString();
+        await this.ensureShopRegistered(raw.shopOrigin);
+
+        const existing = await this.client.kysely
+            .selectFrom("products")
+            .select(["id"])
+            .where("shop_origin", "=", raw.shopOrigin)
+            .where("slug", "=", raw.slug)
+            .executeTakeFirst();
+
+        const values: NewProduct = {
+            shop_origin: raw.shopOrigin,
+            slug: raw.slug,
+            url: raw.url,
+            name: raw.name,
+            name_normalized: normalizeText(raw.name),
+            brand: raw.brand ?? null,
+            brand_normalized: raw.brand ? normalizeText(raw.brand) : null,
+            ean: raw.ean ?? null,
+            image_url: raw.imageUrl ?? null,
+            unit: null,
+            unit_amount: raw.unitAmount ?? null,
+            pack_count: null,
+            flavor_key: null,
+            master_product_id: null,
+            match_method: "pending",
+            match_similarity: null,
+            match_at: now,
+            first_seen_at: now,
+            last_updated_at: now,
+        };
+
+        const row = await this.client.kysely
+            .insertInto("products")
+            .values(values)
+            .onConflict((oc) =>
+                oc.columns(["shop_origin", "slug"]).doUpdateSet({
+                    url: values.url,
+                    name: values.name,
+                    name_normalized: values.name_normalized,
+                    brand: values.brand,
+                    brand_normalized: values.brand_normalized,
+                    ean: values.ean,
+                    image_url: values.image_url,
+                    unit_amount: values.unit_amount,
+                    last_updated_at: now,
+                    is_active: 1,
+                })
+            )
+            .returning("id")
+            .executeTakeFirstOrThrow();
+
+        return { id: row.id, isNew: !existing };
+    }
+
+    private async ensureShopRegistered(origin: string): Promise<void> {
+        const existing = await this.getShopByOrigin(origin);
+        if (existing) {
+            return;
+        }
+
+        await this.upsertShop({
+            origin,
+            display_name: origin,
+            currency: "CZK",
+            cap_live: 1,
+            cap_history: 1,
+            cap_listing: 1,
+            cap_ean: 0,
+            cap_search: 0,
+            bot_protection: "none",
+        });
+    }
+
+    async startCrawlRun(input: StartCrawlRunInput): Promise<number> {
+        await this.ensureShopRegistered(input.shopOrigin);
+        const now = new Date().toISOString();
+        const row = await this.client.kysely
+            .insertInto("crawl_runs")
+            .values({
+                shop_origin: input.shopOrigin,
+                strategy: input.strategy,
+                started_at: now,
+                option_category_id: input.options.categoryId ?? null,
+                option_limit: input.options.limit ?? null,
+                option_since: input.options.since ?? null,
+                options_json: SafeJSON.stringify(input.options),
+            })
+            .returning("id")
+            .executeTakeFirstOrThrow();
+        return row.id;
+    }
+
+    async incrementCrawlCounters(crawlRunId: number, delta: CrawlCounterDelta): Promise<void> {
+        const sets: string[] = [];
+        const params: number[] = [];
+        if (delta.productsSeen) {
+            sets.push("products_seen = products_seen + ?");
+            params.push(delta.productsSeen);
+        }
+
+        if (delta.productsNew) {
+            sets.push("products_new = products_new + ?");
+            params.push(delta.productsNew);
+        }
+
+        if (delta.pricesRecorded) {
+            sets.push("prices_recorded = prices_recorded + ?");
+            params.push(delta.pricesRecorded);
+        }
+
+        if (delta.candidatesAdded) {
+            sets.push("candidates_added = candidates_added + ?");
+            params.push(delta.candidatesAdded);
+        }
+
+        if (sets.length === 0) {
+            return;
+        }
+
+        const sql = `UPDATE crawl_runs SET ${sets.join(", ")} WHERE id = ?`;
+        params.push(crawlRunId);
+        this.client.raw.prepare(sql).run(...params);
+    }
+
+    async finishCrawlRun(crawlRunId: number, status: CrawlRunStatus, error?: string): Promise<void> {
+        await this.client.kysely
+            .updateTable("crawl_runs")
+            .set({
+                status,
+                finished_at: new Date().toISOString(),
+                error: error ?? null,
+            })
+            .where("id", "=", crawlRunId)
+            .execute();
+    }
+
+    async listProducts(input: ListProductsInput): Promise<ListedProduct[]> {
+        const limit = input.limit;
+        const offset = input.offset ?? 0;
+
+        if (input.search && input.search.trim().length > 0) {
+            return this.searchProducts(input.shopOrigin, input.search.trim(), limit, offset);
+        }
+
+        let query = this.client.kysely
+            .selectFrom("current_offers")
+            .innerJoin("products", "products.id", "current_offers.product_id")
+            .select([
+                "current_offers.product_id as id",
+                "current_offers.name",
+                "products.brand",
+                "current_offers.current_price as currentPrice",
+                "current_offers.url",
+                "current_offers.image_url as imageUrl",
+            ])
+            .where("current_offers.shop_origin", "=", input.shopOrigin)
+            .orderBy("current_offers.product_id");
+
+        if (input.categoryId) {
+            query = query
+                .innerJoin("product_categories", "product_categories.product_id", "current_offers.product_id")
+                .where("product_categories.category_id", "=", input.categoryId)
+                .where("product_categories.shop_origin", "=", input.shopOrigin);
+        }
+
+        const rows = await query.limit(limit).offset(offset).execute();
+        return rows.map((r) => ({
+            id: r.id,
+            name: r.name,
+            brand: r.brand ?? undefined,
+            currentPrice: r.currentPrice ?? undefined,
+            url: r.url,
+            imageUrl: r.imageUrl ?? undefined,
+        }));
+    }
+
+    private async searchProducts(
+        shopOrigin: string,
+        searchText: string,
+        limit: number,
+        offset: number
+    ): Promise<ListedProduct[]> {
+        const ftsQuery = `${normalizeText(searchText)}*`;
+        const sql = `
+            SELECT
+                p.id              AS id,
+                p.name            AS name,
+                p.brand           AS brand,
+                co.current_price  AS current_price,
+                p.url             AS url,
+                p.image_url       AS image_url
+            FROM products_fts
+            JOIN products p ON p.id = products_fts.rowid
+            LEFT JOIN current_offers co ON co.product_id = p.id
+            WHERE products_fts MATCH ?
+              AND p.shop_origin = ?
+              AND p.is_active = 1
+            ORDER BY rank
+            LIMIT ? OFFSET ?`;
+        const rows = this.client.raw
+            .prepare(sql)
+            .all(ftsQuery, shopOrigin, limit, offset) as Array<{
+            id: number;
+            name: string;
+            brand: string | null;
+            current_price: number | null;
+            url: string;
+            image_url: string | null;
+        }>;
+
+        return rows.map((r) => ({
+            id: r.id,
+            name: r.name,
+            brand: r.brand ?? undefined,
+            currentPrice: r.current_price ?? undefined,
+            url: r.url,
+            imageUrl: r.image_url ?? undefined,
+        }));
+    }
 }
 
 let singleton: ShopsDatabase | null = null;
@@ -202,4 +475,8 @@ export function getShopsDatabase(): ShopsDatabase {
 export function resetShopsDatabaseSingleton(): void {
     singleton?.close();
     singleton = null;
+}
+
+export function setShopsDatabaseSingletonForTest(db: ShopsDatabase | null): void {
+    singleton = db;
 }
