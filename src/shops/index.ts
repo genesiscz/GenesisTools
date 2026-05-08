@@ -5,6 +5,7 @@ import { registerCrawlCommand } from "./commands/crawl";
 import { registerDaemonCommand } from "./commands/daemon";
 import { registerDbCommand } from "./commands/db";
 import { registerDbPruneCommand } from "./commands/db-prune";
+import { registerDevCaptureFixtureCommand } from "./commands/dev-capture-fixture";
 import { registerGetCommand } from "./commands/get";
 import { registerListCommand } from "./commands/list";
 import { registerMatchCommand } from "./commands/match";
@@ -33,5 +34,6 @@ registerCrawlCommand(program);
 registerListCommand(program);
 registerMatchCommand(program);
 registerUiCommand(program);
+registerDevCaptureFixtureCommand(program);
 
 await program.parseAsync(process.argv);
