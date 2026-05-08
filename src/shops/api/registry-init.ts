@@ -4,6 +4,7 @@ import { AlzaClient } from "./shops/AlzaClient";
 import { DrmaxClient } from "./shops/DrmaxClient";
 import { KauflandClient } from "./shops/KauflandClient";
 import { KosikClient } from "./shops/KosikClient";
+import { NotinoClient } from "./shops/NotinoClient";
 import { RohlikClient } from "./shops/RohlikClient";
 
 let initialized = false;
@@ -19,6 +20,7 @@ export function initShopRegistry(opts: { sink?: HttpRequestSink } = {}): void {
     registry.register(new KauflandClient({ sink: opts.sink }));
     registry.register(new AlzaClient({ sink: opts.sink }));
     registry.register(new DrmaxClient({ sink: opts.sink }));
+    registry.register(new NotinoClient({ sink: opts.sink }));
     initialized = true;
 }
 

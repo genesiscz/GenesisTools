@@ -5,6 +5,7 @@ import { AlzaClient } from "./shops/AlzaClient";
 import { DrmaxClient } from "./shops/DrmaxClient";
 import { KauflandClient } from "./shops/KauflandClient";
 import { KosikClient } from "./shops/KosikClient";
+import { NotinoClient } from "./shops/NotinoClient";
 import { RohlikClient } from "./shops/RohlikClient";
 
 describe("registry-init", () => {
@@ -36,6 +37,11 @@ describe("registry-init", () => {
     it("registers DrmaxClient under drmax.cz", () => {
         initShopRegistry();
         expect(ShopRegistry.get().forShop("drmax.cz")).toBeInstanceOf(DrmaxClient);
+    });
+
+    it("registers NotinoClient under notino.cz", () => {
+        initShopRegistry();
+        expect(ShopRegistry.get().forShop("notino.cz")).toBeInstanceOf(NotinoClient);
     });
 
     it("calling twice is idempotent", () => {
