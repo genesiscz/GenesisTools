@@ -1,6 +1,6 @@
+import type { Selectable } from "kysely";
 import type { ShopsDatabase } from "./ShopsDatabase";
 import type { BrandAliasesTable } from "./types";
-import type { Selectable } from "kysely";
 
 export type BrandAlias = Selectable<BrandAliasesTable>;
 
@@ -39,5 +39,26 @@ export class BrandAliasesRepository {
 
     async listAll(): Promise<BrandAlias[]> {
         return await this.db.kysely().selectFrom("brand_aliases").selectAll().execute();
+    }
+
+    upsertIfAbsent(args: {
+        alias: string;
+        canonical: string;
+        source: BrandAlias["source"];
+    }): "inserted" | "skipped" {
+        const aliasLower = args.alias.toLowerCase();
+        const existing = this.db
+            .raw()
+            .query<{ alias: string }, [string]>("SELECT alias FROM brand_aliases WHERE alias = ?")
+            .get(aliasLower);
+        if (existing) {
+            return "skipped";
+        }
+
+        this.db
+            .raw()
+            .query("INSERT INTO brand_aliases (alias, canonical, source, created_at) VALUES (?, ?, ?, ?)")
+            .run(aliasLower, args.canonical, args.source, new Date().toISOString());
+        return "inserted";
     }
 }
