@@ -55,6 +55,108 @@ Kaufland until a real `brand` selector is found.
 
 ---
 
+## Plan 05 — Phase 2 contributions (Lidl + Albert + Billa + dm + Teta)
+
+Brand strings observed in actor sources for Phase 2 shops, mined during
+Plan 05 implementation. Plan 04's `seed-brand-aliases.ts` consumes these
+the same way as Phase 1 / Phase 3 contributions.
+
+### Lidl (lidl.cz)
+
+Lidl is heavy on private labels — these are sold ONLY at Lidl, namespace
+them as `lidl:<slug>`:
+
+- `Pilos` => `lidl:pilos` (mléčné výrobky private label)
+- `Cien` => `lidl:cien` (kosmetika private label)
+- `Crivit` => `lidl:crivit` (sportovní oblečení)
+- `Esmara` => `lidl:esmara` (dámská móda)
+- `Livarno` => `lidl:livarno` (domácnost / nábytek)
+- `Milbona` => `lidl:milbona` (mléčné výrobky)
+- `Combino` => `lidl:combino` (těstoviny / italské)
+- `Parkside` => `lidl:parkside` (nářadí)
+- `Florabest` => `lidl:florabest` (zahrada)
+- `Silvercrest` => `lidl:silvercrest` (elektronika)
+
+Lidl's API does NOT expose a separate brand field — it must be parsed from
+the `fullTitle` prefix. Plan 04's matcher should attempt name-prefix parse
+for Lidl products with shop_origin='lidl.cz'.
+
+### Albert (albert.cz)
+
+Albert mixes third-party brands with two private labels ("Albert Quality"
+and "Albert Bio"). Hand-offs:
+
+- `Albert Quality` => `albert:albert-quality` (private label)
+- `Albert Bio` => `albert:albert-bio` (organic private label)
+- `Penam` => `penam` (third-party bakery — sold across CZ)
+- `Madeta` => `madeta` (mléčné výrobky)
+- `Hamé` => `hame`
+- `Vodňany` => `vodnany`
+- `Tatra` => `tatra` (also at Kaufland / Billa)
+
+Albert exposes brand inside `result.name`, not a separate field. Like
+Lidl, brand parsing happens at name-prefix.
+
+### Billa (billa.cz)
+
+Billa has a private "Clever" line plus shared brands. Halves-of-cents
+prices are decoded by client (`/100`).
+
+- `Clever` => `billa:clever` (private label)
+- `Vocelka` => `billa:vocelka` (one-store private label, optional)
+- `Pilos` => `billa:pilos` (Billa's "Pilos" is a different product than
+  Lidl's — namespace per-shop to avoid false merges. Plan 04 should NOT
+  collapse `lidl:pilos` and `billa:pilos`.)
+
+### dm (dm.cz)
+
+dm is unique in Phase 2 — exposes a structured `brandName` field per
+product AND real EAN (`gtin`). Brand alias seeding can be auto-generated
+by reading distinct `brand` from products after a crawl. Notable
+observed brands:
+
+- `alverde` => `dm:alverde` (private label — natural cosmetics)
+- `Balea` => `dm:balea` (private label — drogerie)
+- `Babylove` => `dm:babylove` (private label — dětské)
+- `dmBio` => `dm:dmbio` (private label — bio potraviny)
+- `ebelin` => `dm:ebelin` (private label — kosmetické pomůcky)
+- `Profissimo` => `dm:profissimo` (private label — domácnost)
+- `S-quito Free` => `dm:s-quito-free` (private label — repelenty)
+- `trend !t up` => `dm:trend-it-up` (private label — kosmetika)
+- `Nivea` => `nivea` (third-party — also at Albert / Billa / Lidl)
+- `L'Oréal Paris` / `Loreal Paris` => `loreal-paris`
+- `Maybelline` => `maybelline`
+- `miss sporty` => `miss-sporty`
+- `Garnier` => `garnier`
+
+### Teta Drogerie (tetadrogerie.cz)
+
+Teta's private label is "Teta Drogerie". Otherwise sells the same drogerie
+brands as dm.
+
+- `Teta Drogerie` => `teta:teta-drogerie` (private label)
+- `Nivea` => `nivea` (shared canonical with dm)
+- `Garnier` => `garnier` (shared)
+- `Schwarzkopf` => `schwarzkopf`
+- `Pantene` => `pantene`
+- `Head & Shoulders` => `head-and-shoulders`
+- `Vichy` => `vichy` (also at pharmacy shops — Drmax / Benu)
+- `Bioderma` => `bioderma` (shared)
+
+Brand strings come from `name` text (no separate field); name-prefix
+parse needed.
+
+### Phase-2 shared canonicals
+
+- `nivea` appears in Albert, Billa, dm, Teta (most likely also Lidl) — one
+  canonical row, matcher merges by brand+EAN.
+- `pilos` appears at BOTH Lidl AND Billa as different products — namespace
+  per-shop (`lidl:pilos`, `billa:pilos`); do NOT collapse.
+- `vichy`, `bioderma` appear in Phase 2 (Teta) AND Phase 3 (Drmax, Benu) —
+  one canonical row per brand.
+
+---
+
 ## Plan 06 — Phase 3 contributions (Drmax + Benu + Itesco)
 
 These come from impl-1's actor-source mining (rolled into this file by
