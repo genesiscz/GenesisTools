@@ -2,6 +2,7 @@ import logger from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import type { Command } from "commander";
 import { getShopsDatabase, type ShopsDatabase } from "../db/ShopsDatabase";
+import { formatSummary, runGoldenHarness } from "../lib/golden-harness";
 import { acceptCandidatePair, listPendingCandidates, rejectCandidatePair } from "../lib/match-api";
 
 const log = logger.child({ component: "tools-shops-match" });
@@ -95,5 +96,21 @@ export function registerMatchCommand(program: Command): void {
             const id = resolveProductId(shopsDb, input);
             await rematchProduct({ shopsDb, productId: id });
             console.log(`reset product ${id} to pending`);
+        });
+
+    cmd.command("verify")
+        .description("Run the golden-pair harness and print F1/precision/recall summary")
+        .option("--json", "Output JSON instead of human summary")
+        .action(async (opts: { json?: boolean }) => {
+            const summary = await runGoldenHarness();
+            if (opts.json) {
+                console.log(SafeJSON.stringify(summary, null, 2));
+                return;
+            }
+
+            console.log(formatSummary(summary));
+            if (summary.f1 < 0.95) {
+                process.exitCode = 1;
+            }
         });
 }
