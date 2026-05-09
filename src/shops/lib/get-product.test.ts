@@ -3,9 +3,9 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ShopsDatabase } from "../db/ShopsDatabase";
-import { ingestFromHlidacResult } from "../lib/ingest";
+import { ingestFromHlidacResult } from "./ingest";
 
-describe("tools shops get (flow)", () => {
+describe("get-product flow", () => {
     it("end-to-end with a synthetic Hlidac payload writes everything to the DB", async () => {
         const db = new ShopsDatabase(join(mkdtempSync(join(tmpdir(), "shops-cmd-")), "test.db"));
         const result = await ingestFromHlidacResult({

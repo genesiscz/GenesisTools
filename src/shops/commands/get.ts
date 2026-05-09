@@ -3,10 +3,7 @@ import { SafeJSON } from "@app/utils/json";
 import { formatTable } from "@app/utils/table";
 import clipboardy from "clipboardy";
 import type { Command } from "commander";
-import { HlidacShopuClient } from "../api/HlidacShopuClient";
-import { getShopsDatabase } from "../db/ShopsDatabase";
-import { getDefaultSink } from "../lib/http-sink";
-import { ingestFromHlidacResult } from "../lib/ingest";
+import { runGetProduct } from "../lib/get-product";
 
 interface GetOptions {
     json?: boolean;
@@ -41,12 +38,7 @@ async function runGet(url: string, opts: GetOptions): Promise<void> {
         log.debug("--full-history: S3 returns full series by default; affects /v2/detail fallback only");
     }
 
-    const db = getShopsDatabase();
-    const sink = getDefaultSink();
-    const client = new HlidacShopuClient({ sink });
-
-    const data = await client.getByUrl(url);
-    const ingested = await ingestFromHlidacResult({ db, url, data });
+    const { ingested, source } = await runGetProduct({ url });
 
     if (opts.match) {
         process.stdout.write("Matching: see Plan 04 — not yet implemented\n");
@@ -55,7 +47,7 @@ async function runGet(url: string, opts: GetOptions): Promise<void> {
     if (opts.json) {
         const text = SafeJSON.stringify(
             {
-                source: data.source,
+                source,
                 product: ingested.product,
                 masterProductId: ingested.product.master_product_id,
                 pricesRecorded: ingested.pricesRecorded,
@@ -81,7 +73,7 @@ async function runGet(url: string, opts: GetOptions): Promise<void> {
             ["master_product_id", String(ingested.product.master_product_id ?? "(none)")],
             ["match_method", ingested.product.match_method],
             ["prices_recorded", String(ingested.pricesRecorded)],
-            ["source", data.source],
+            ["source", source],
         ],
         ["field", "value"]
     );
