@@ -99,7 +99,31 @@ export class HlidacShopuClient {
             };
         }
 
-        const slug = itemSlug(productUrl) as string;
+        // @hlidac-shopu/lib's parser is incomplete for some shops (dm.cz, mojadm.sk,
+        // hornbach.cz post-URL-redesign). When itemSlug returns undefined, Hlídač's
+        // S3 bucket has no key for this URL — going to S3 anyway would build
+        // `/items/<origin>/undefined/...` and 404. Skip to /v2/detail instead.
+        const slug = itemSlug(productUrl) as string | undefined;
+        if (!slug) {
+            log.debug({ productUrl, origin }, "no slug from @hlidac-shopu/lib — skipping S3, falling back to /v2/detail");
+            try {
+                const detail = await this.detail(productUrl);
+                return {
+                    source: "api",
+                    parsed: { origin, itemId: parsedDetails.itemId ?? null, itemUrl: parsedDetails.itemUrl },
+                    history: null,
+                    detail,
+                };
+            } catch (err) {
+                log.debug({ err, productUrl }, "Hlídač /v2/detail also failed — shop URL not tracked");
+                return {
+                    source: "api",
+                    parsed: { origin, itemId: parsedDetails.itemId ?? null, itemUrl: parsedDetails.itemUrl },
+                    history: null,
+                    detail: undefined,
+                };
+            }
+        }
         try {
             const [history, meta] = await Promise.all([
                 this.priceHistoryS3(origin, slug),

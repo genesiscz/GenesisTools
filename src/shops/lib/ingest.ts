@@ -40,7 +40,10 @@ export async function ingestFromHlidacResult(args: IngestArgs): Promise<IngestRe
         });
     }
 
-    const slug = data.parsed.itemId ?? data.parsed.itemUrl;
+    // Hlídač's lib doesn't provide itemId/itemUrl for some shops (dm.cz, mojadm.sk,
+    // hornbach.cz post-URL-redesign). Derive a stable slug from the URL pathname so
+    // the product gets a unique (shop_origin, slug) row instead of crashing.
+    const slug = data.parsed.itemId ?? data.parsed.itemUrl ?? deriveSlugFromUrl(url);
     const name = data.meta?.itemName ?? data.detail?.metadata.name ?? slug;
     const imageUrl = data.meta?.itemImage ?? data.detail?.metadata.imageUrl ?? null;
 
@@ -110,6 +113,15 @@ export async function ingestFromHlidacResult(args: IngestArgs): Promise<IngestRe
 
 function normalizeText(s: string): string {
     return removeDiacritics(s).toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function deriveSlugFromUrl(url: string): string {
+    try {
+        const path = new URL(url).pathname.replace(/^\/+|\/+$/g, "");
+        return path || url;
+    } catch {
+        return url;
+    }
 }
 
 function computeCanonicalSlug(name: string, origin: string, slug: string): string {
