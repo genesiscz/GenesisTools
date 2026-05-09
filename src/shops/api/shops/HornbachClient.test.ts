@@ -52,7 +52,7 @@ describe("HornbachClient.listCategories", () => {
 });
 
 describe("HornbachClient.listCategory", () => {
-    it("yields RawProducts from a category page", async () => {
+    it("yields RawProducts from a category page (extracted from window.__APOLLO_STATE__)", async () => {
         const html = readHtml("category-page1.html");
         const { client } = buildClient([{ match: "/c/zahrada", html }]);
         const out: import("../ShopApiClient.types").RawProduct[] = [];
@@ -62,23 +62,24 @@ describe("HornbachClient.listCategory", () => {
 
         expect(out.length).toBe(2);
         expect(out[0].shopOrigin).toBe("hornbach.cz");
-        expect(out[0].itemId).toBe("SH00012345");
+        expect(out[0].itemId).toBe("12345");
+        expect(out[0].name).toBe("Lopata na sníh");
         expect(out[0].currentPrice).toBe(399);
-        expect(out[0].originalPrice).toBe(499);
+        expect(out[0].imageUrl).toContain("lopata.jpg");
+        expect(out[0].categoryPath).toEqual(["Zahrada"]);
     });
 });
 
 describe("HornbachClient.getProduct", () => {
-    it("parses a product detail page", async () => {
+    it("parses a product detail page from Apollo state when present", async () => {
         const html = readHtml("product-detail.html");
         const { client } = buildClient([{ match: "/p/lopata-na-snih", html }]);
         const raw = await client.getProduct({
-            url: "https://www.hornbach.cz/p/lopata-na-snih/SH00012345/",
+            url: "https://www.hornbach.cz/p/lopata-na-snih/12345/",
         });
         expect(raw.shopOrigin).toBe("hornbach.cz");
-        expect(raw.itemId).toBe("SH00012345");
+        expect(raw.itemId).toBe("12345");
         expect(raw.name).toBe("Lopata na sníh");
         expect(raw.currentPrice).toBe(399);
-        expect(raw.originalPrice).toBe(499);
     });
 });

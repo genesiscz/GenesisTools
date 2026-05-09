@@ -1,22 +1,22 @@
 // Adapted from topmonks/hlidac-shopu (EUPL-1.2) — actors/hornbach-daily/main.js
+// Hornbach renders product listings into a window.__APOLLO_STATE__ object
+// keyed by ROOT_QUERY.categoryListing(...). HTML data-testid attributes were
+// renamed product-* → article-* in 2026 and prices moved off the DOM, so the
+// reliable extraction path is the inlined Apollo state (matches the actor).
 
 import { parseHTML } from "linkedom";
+import { SafeJSON } from "@app/utils/json";
 import { ShopApiClient, type ShopApiClientConstructorConfig } from "../ShopApiClient";
 import type { Category, ListingOptions, RawProduct, ShopCapabilities } from "../ShopApiClient.types";
-import { HORNBACH_SELECTORS } from "./HornbachClient.types";
+import {
+    HORNBACH_SELECTORS,
+    type HornbachApolloCategoryListing,
+    type HornbachApolloProduct,
+    type HornbachApolloState,
+} from "./HornbachClient.types";
 
 const HORNBACH_ORIGIN = "hornbach.cz";
 const ROOT = "https://www.hornbach.cz";
-
-function parsePrice(text: string | null | undefined): number | undefined {
-    if (!text) {
-        return undefined;
-    }
-
-    const cleaned = text.replace(/\s/g, "").replace("Kč", "").replace("€", "").replace(",", ".");
-    const n = Number.parseFloat(cleaned);
-    return Number.isNaN(n) ? undefined : n;
-}
 
 export class HornbachClient extends ShopApiClient {
     readonly shopOrigin = HORNBACH_ORIGIN;
@@ -47,7 +47,13 @@ export class HornbachClient extends ShopApiClient {
 
         await this.waitTurn();
         const html = await this.getText(input.url, { signal: input.signal });
-        return parseDetail(html, input.url);
+        const apollo = extractApolloState(html);
+        const detail = apollo ? findDetailProduct(apollo, input.url) : undefined;
+        if (detail) {
+            return toRawProduct(detail);
+        }
+
+        return parseDetailFallback(html, input.url);
     }
 
     async *listCategory(opts: ListingOptions): AsyncIterable<RawProduct> {
@@ -57,7 +63,6 @@ export class HornbachClient extends ShopApiClient {
 
         let page = 1;
         let yielded = 0;
-
         while (true) {
             opts.signal?.throwIfAborted();
             await this.waitTurn();
@@ -86,80 +91,167 @@ export class HornbachClient extends ShopApiClient {
         const html = await this.getText(`${ROOT}/`);
         const { document } = parseHTML(html);
         const out: Category[] = [];
+        const seen = new Set<string>();
         for (const a of Array.from(document.querySelectorAll(HORNBACH_SELECTORS.TOP_CATEGORIES))) {
             const href = a.getAttribute("href");
             const name = a.getAttribute("title") ?? a.textContent?.trim();
-            if (href !== null && name) {
-                const url = new URL(href, ROOT).href;
-                const slug = new URL(url).pathname.replace(/^\//, "").replace(/\/$/, "");
-                out.push({ id: slug, name, url });
+            if (!href || !name) {
+                continue;
             }
+
+            if (!/^\/c\//.test(href)) {
+                continue;
+            }
+
+            const url = new URL(href, ROOT).href;
+            const slug = new URL(url).pathname.replace(/^\//, "").replace(/\/$/, "");
+            if (seen.has(slug)) {
+                continue;
+            }
+
+            seen.add(slug);
+            out.push({ id: slug, name, url });
         }
 
         return out;
     }
 }
 
+function extractApolloState(html: string): HornbachApolloState | undefined {
+    const start = html.indexOf("window.__APOLLO_STATE__");
+    if (start < 0) {
+        return undefined;
+    }
+
+    const eqIdx = html.indexOf("=", start);
+    const braceStart = html.indexOf("{", eqIdx);
+    if (eqIdx < 0 || braceStart < 0) {
+        return undefined;
+    }
+
+    const next = html.indexOf("window.__", braceStart + 1);
+    const slice = next > 0 ? html.slice(braceStart, next) : html.slice(braceStart);
+    const lastBrace = slice.lastIndexOf("}") + 1;
+    if (lastBrace <= 0) {
+        return undefined;
+    }
+
+    try {
+        const parsed: unknown = SafeJSON.parse(slice.slice(0, lastBrace));
+        if (typeof parsed === "object" && parsed !== null) {
+            return parsed as HornbachApolloState;
+        }
+
+        return undefined;
+    } catch {
+        return undefined;
+    }
+}
+
+function findCategoryListing(apollo: HornbachApolloState): HornbachApolloCategoryListing | undefined {
+    const root = apollo.ROOT_QUERY;
+    if (!root) {
+        return undefined;
+    }
+
+    for (const key of Object.keys(root)) {
+        if (!key.includes("categoryListing")) {
+            continue;
+        }
+
+        const value = root[key] as HornbachApolloCategoryListing;
+        if (Array.isArray(value?.itemList)) {
+            return value;
+        }
+    }
+
+    return undefined;
+}
+
+function findDetailProduct(apollo: HornbachApolloState, url: string): HornbachApolloProduct | undefined {
+    const idMatch = url.match(/\/(\d+)\/?(?:\?|$)/);
+    const productId = idMatch?.[1];
+    const root = apollo.ROOT_QUERY;
+    if (!root) {
+        return undefined;
+    }
+
+    for (const key of Object.keys(root)) {
+        const value = root[key];
+        if (!value || typeof value !== "object") {
+            continue;
+        }
+
+        const product = value as HornbachApolloProduct;
+        if (product.abstractProductId && (productId === undefined || product.abstractProductId === productId)) {
+            return product;
+        }
+    }
+
+    return undefined;
+}
+
 function parseListing(html: string): RawProduct[] {
-    const { document } = parseHTML(html);
+    const apollo = extractApolloState(html);
+    if (!apollo) {
+        return [];
+    }
+
+    const listing = findCategoryListing(apollo);
+    if (!listing?.itemList) {
+        return [];
+    }
+
+    const breadcrumbs = listing.category?.name ? [listing.category.name] : undefined;
     const out: RawProduct[] = [];
-
-    for (const card of Array.from(document.querySelectorAll(HORNBACH_SELECTORS.PRODUCT_CARD))) {
-        const link = card.querySelector("a");
-        const href = link?.getAttribute("href");
-        if (!href) {
+    for (const item of listing.itemList) {
+        if (!item.abstractProductId) {
             continue;
         }
 
-        const itemUrl = new URL(href, ROOT).href;
-        const idMatch = href.match(/SH(\d+)/);
-        const itemId = idMatch ? `SH${idMatch[1]}` : undefined;
-        if (!itemId) {
-            continue;
+        const raw = toRawProduct(item);
+        if (breadcrumbs && raw.categoryPath === undefined) {
+            raw.categoryPath = breadcrumbs;
         }
 
-        const name = card.querySelector(HORNBACH_SELECTORS.PRODUCT_TITLE)?.textContent?.trim() ?? "";
-        const currentPrice = parsePrice(card.querySelector(HORNBACH_SELECTORS.PRODUCT_PRICE)?.textContent);
-        const originalPrice = parsePrice(card.querySelector(HORNBACH_SELECTORS.PRODUCT_OLD_PRICE)?.textContent);
-        const img = card.querySelector("img");
-        const imageUrl = img?.getAttribute("data-src") ?? img?.getAttribute("src") ?? undefined;
-
-        out.push({
-            shopOrigin: HORNBACH_ORIGIN,
-            slug: itemId,
-            itemId,
-            url: itemUrl,
-            name,
-            currentPrice,
-            originalPrice,
-            imageUrl,
-            inStock: true,
-            observedAt: new Date(),
-            raw: { source: "hornbach-html" },
-        });
+        out.push(raw);
     }
 
     return out;
 }
 
-function parseDetail(html: string, url: string): RawProduct {
-    const { document } = parseHTML(html);
-    const idMatch = url.match(/SH(\d+)/);
-    const itemId = idMatch ? `SH${idMatch[1]}` : url;
-    const name = document.querySelector("h1")?.textContent?.trim() ?? "";
-    const currentPrice = parsePrice(document.querySelector(HORNBACH_SELECTORS.PRODUCT_PRICE)?.textContent);
-    const originalPrice = parsePrice(document.querySelector(HORNBACH_SELECTORS.PRODUCT_OLD_PRICE)?.textContent);
+function toRawProduct(item: HornbachApolloProduct): RawProduct {
+    const itemId = item.abstractProductId ?? "";
+    const url = item.url ? new URL(item.url, ROOT).href : ROOT;
+    const imageUrl = item.mainImage?.url ?? item.mainImage?.thumbnailUrl;
+    const currentPrice = item.defaultPrice?.price;
+    return {
+        shopOrigin: HORNBACH_ORIGIN,
+        slug: itemId,
+        itemId,
+        url,
+        name: item.title ?? "",
+        currentPrice,
+        imageUrl,
+        inStock: true,
+        observedAt: new Date(),
+        raw: item,
+    };
+}
 
+function parseDetailFallback(html: string, url: string): RawProduct {
+    const { document } = parseHTML(html);
+    const idMatch = url.match(/\/(\d+)\/?(?:\?|$)/);
+    const itemId = idMatch ? idMatch[1] : url;
+    const name = document.querySelector("h1")?.textContent?.trim() ?? "";
     return {
         shopOrigin: HORNBACH_ORIGIN,
         slug: itemId,
         itemId,
         url,
         name,
-        currentPrice,
-        originalPrice,
         inStock: true,
         observedAt: new Date(),
-        raw: { source: "hornbach-html-detail" },
+        raw: { source: "hornbach-html-detail-fallback" },
     };
 }
