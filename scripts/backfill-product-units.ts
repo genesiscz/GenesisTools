@@ -49,7 +49,12 @@ function deriveFromMetadata(shopOrigin: string, metaJson: string): { unit?: stri
         return {};
     }
 
-    const meta = SafeJSON.parse(metaJson) as Record<string, unknown>;
+    let meta: Record<string, unknown>;
+    try {
+        meta = SafeJSON.parse(metaJson) as Record<string, unknown>;
+    } catch {
+        return {};
+    }
 
     if (shopOrigin === "kosik.cz") {
         const pq = meta.productQuantity as { value?: number; unit?: string } | undefined;
@@ -76,10 +81,16 @@ function deriveSignature(row: Row): {
     packCount: number | null;
     flavorKey: string | null;
 } {
+    // Treat (unit, amount) as a coupled tuple — see ShopsDatabase fix.
+    // An unrecognised metadata unit (e.g. "praní" from rohlik) must NOT
+    // strand the amount on top of a different source.
     const fromMeta = deriveFromMetadata(row.shop_origin, row.metadata_json);
+    const metaUnit = fromMeta.unit ? parseUnit(fromMeta.unit) : null;
+    const metaSize = metaUnit ? { unit: metaUnit, unitAmount: fromMeta.unitAmount ?? null } : null;
     const fromName = extractSize(row.name);
-    const unit: Unit | null = (fromMeta.unit ? parseUnit(fromMeta.unit) : null) ?? fromName?.unit ?? null;
-    const unitAmount = fromMeta.unitAmount ?? fromName?.unitAmount ?? null;
+    const size = metaSize ?? fromName ?? null;
+    const unit: Unit | null = size?.unit ?? null;
+    const unitAmount = size?.unitAmount ?? null;
     return {
         unit,
         unitAmount,

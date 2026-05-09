@@ -259,9 +259,17 @@ export class ShopsDatabase {
         // (brand+unit+amount) bail at the null-check, so cross-shop matching
         // collapses to fuzzy-only — see Verification2.handoff "matcher unit
         // gap" entry for the impact analysis.
+        // Treat (unit, unitAmount) as a coupled tuple — never let an
+        // unrecognised raw.unit (e.g. Rohlik's "33 praní" pseudo-unit)
+        // strand the amount on top of a different source. Either both
+        // come from the shop's parsed payload, or both fall back to
+        // name extraction.
         const sizeFromName = extractSize(raw.name);
-        const unit: Unit | null = (raw.unit ? parseUnit(raw.unit) : null) ?? sizeFromName?.unit ?? null;
-        const unitAmount = raw.unitAmount ?? sizeFromName?.unitAmount ?? null;
+        const rawUnit = raw.unit ? parseUnit(raw.unit) : null;
+        const rawSize = rawUnit ? { unit: rawUnit, unitAmount: raw.unitAmount } : null;
+        const size = rawSize ?? sizeFromName ?? null;
+        const unit: Unit | null = size?.unit ?? null;
+        const unitAmount = size?.unitAmount ?? null;
         const packCount = extractPackCount(raw.name);
         const flavorKey = extractFlavorKey(raw.name);
 
