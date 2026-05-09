@@ -1,5 +1,5 @@
 import { statSync } from "node:fs";
-import { type ShopsDatabase, getShopsDatabase } from "../db/ShopsDatabase";
+import { getShopsDatabase, type ShopsDatabase } from "../db/ShopsDatabase";
 
 export interface MigrationRow {
     id: string;
@@ -8,10 +8,7 @@ export interface MigrationRow {
 }
 
 export function listMigrations(db: ShopsDatabase = getShopsDatabase()): MigrationRow[] {
-    return db
-        .raw()
-        .query<MigrationRow, []>(`SELECT id, applied_at, ms FROM _migrations ORDER BY applied_at`)
-        .all();
+    return db.raw().query<MigrationRow, []>(`SELECT id, applied_at, ms FROM _migrations ORDER BY applied_at`).all();
 }
 
 export interface DbTableInfo {

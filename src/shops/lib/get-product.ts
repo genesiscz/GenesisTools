@@ -1,5 +1,5 @@
 import { HlidacShopuClient } from "../api/HlidacShopuClient";
-import { type ShopsDatabase, getShopsDatabase } from "../db/ShopsDatabase";
+import { getShopsDatabase, type ShopsDatabase } from "../db/ShopsDatabase";
 import { getDefaultSink, type HttpRequestSink } from "./http-sink";
 import { type IngestResult, ingestFromHlidacResult } from "./ingest";
 
