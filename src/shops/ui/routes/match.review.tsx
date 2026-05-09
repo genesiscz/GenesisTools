@@ -3,8 +3,10 @@ import { Button } from "@app/utils/ui/components/button";
 import { Card, CardContent, CardFooter, CardHeader } from "@app/utils/ui/components/card";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
+import { GitMerge } from "lucide-react";
 import { toast } from "sonner";
 import type { PairDTO, ProductSummary } from "../../lib/match-api";
+import { EmptyState } from "../components/EmptyState";
 
 export const Route = createFileRoute("/match/review")({
     component: MatchReviewPage,
@@ -34,32 +36,30 @@ function MatchReviewPage() {
     });
 
     const pairs = data.data ?? [];
-    if (pairs.length === 0) {
-        return (
-            <div className="px-6 py-12 text-center font-mono">
-                <h2 className="text-xl text-zinc-200">No pending candidates</h2>
-                <p className="text-zinc-500 mt-1">All caught up.</p>
-            </div>
-        );
-    }
 
     return (
-        <div className="px-6 py-4 space-y-4">
-            <div className="flex items-center justify-between">
-                <h2 className="font-display text-lg text-zinc-200">
-                    Match review · <span className="text-cyan-300">{pairs.length}</span> pending
-                </h2>
-            </div>
-            <div className="grid gap-3">
-                {pairs.map((pair) => (
-                    <PairCard
-                        key={`${pair.productIdA}-${pair.productIdB}`}
-                        pair={pair}
-                        onAccept={() => accept.mutate(pair)}
-                        onReject={() => reject.mutate(pair)}
-                    />
-                ))}
-            </div>
+        <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6 space-y-5">
+            <h1 className="font-mono tracking-[0.3em] text-sm text-muted-foreground uppercase">
+                Match :: <span className="text-foreground">{pairs.length} pending</span>
+            </h1>
+            {pairs.length === 0 ? (
+                <EmptyState
+                    icon={<GitMerge />}
+                    title="All caught up"
+                    body="No pending merge candidates. New gray-zone pairs surface here when the auto-matcher isn't sure whether two products are the same SKU."
+                />
+            ) : (
+                <div className="grid gap-3">
+                    {pairs.map((pair) => (
+                        <PairCard
+                            key={`${pair.productIdA}-${pair.productIdB}`}
+                            pair={pair}
+                            onAccept={() => accept.mutate(pair)}
+                            onReject={() => reject.mutate(pair)}
+                        />
+                    ))}
+                </div>
+            )}
         </div>
     );
 }
