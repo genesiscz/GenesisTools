@@ -55,6 +55,34 @@ export class KosikClient extends ShopApiClient {
         return this.toRawProduct(item, breadcrumbs);
     }
 
+    /**
+     * Stream RawProducts for a list of product ids. Kosik has no native
+     * bulk-by-id endpoint, so we fan out concurrent /api/front/product/<id>
+     * calls (waitTurn() inside getProduct keeps us under the rate cap).
+     * Yields products as each call resolves; tolerates per-id failures.
+     */
+    async *listByIds(
+        ids: string[],
+        opts: { signal?: AbortSignal; concurrency?: number } = {}
+    ): AsyncIterable<RawProduct> {
+        const concurrency = Math.max(1, opts.concurrency ?? 4);
+        for (let i = 0; i < ids.length; i += concurrency) {
+            opts.signal?.throwIfAborted();
+            const slice = ids.slice(i, i + concurrency);
+            const settled = await Promise.allSettled(
+                slice.map((id) => this.getProduct({ slug: `p${id}` }))
+            );
+            for (let j = 0; j < settled.length; j++) {
+                const r = settled[j];
+                if (r.status === "fulfilled") {
+                    yield r.value;
+                }
+                // Per-id 404s and transient errors are dropped — caller can
+                // diff seen-vs-discovered to find them later.
+            }
+        }
+    }
+
     async *listCategory(opts: ListingOptions): AsyncIterable<RawProduct> {
         if (!opts.category) {
             throw new Error("KosikClient.listCategory requires opts.category");

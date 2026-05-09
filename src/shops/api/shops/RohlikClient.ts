@@ -63,6 +63,35 @@ export class RohlikClient extends ShopApiClient {
         return this.toRawProduct(target, targetId !== undefined ? priceMap.get(targetId) : undefined);
     }
 
+    /**
+     * Bulk-fetch products by id. Used by sitemap-crawl to ingest the full
+     * catalog in O(N/15) calls instead of one-per-URL. Yields RawProduct as
+     * each batch resolves so the caller can stream into the DB.
+     */
+    async *listByIds(ids: string[], opts: { signal?: AbortSignal } = {}): AsyncIterable<RawProduct> {
+        for (let i = 0; i < ids.length; i += PRODUCTS_PER_BATCH) {
+            opts.signal?.throwIfAborted();
+            const batchIds = ids.slice(i, i + PRODUCTS_PER_BATCH);
+            await this.waitTurn();
+            const [productsResp, pricesResp] = await Promise.all([
+                this.get<RohlikProductsBatchResponse>("/api/v1/products", {
+                    params: { products: batchIds.map(String) },
+                    signal: opts.signal,
+                }),
+                this.get<RohlikProductsPricesBatchResponse>("/api/v1/products/prices", {
+                    params: { products: batchIds.map(String) },
+                    signal: opts.signal,
+                }),
+            ]);
+            const products = unwrapProducts(productsResp);
+            const priceMap = indexPrices(pricesResp);
+            for (const product of products) {
+                const id = product.productId ?? product.id;
+                yield this.toRawProduct(product, id !== undefined ? priceMap.get(id) : undefined);
+            }
+        }
+    }
+
     async *listCategory(opts: ListingOptions): AsyncIterable<RawProduct> {
         if (!opts.category) {
             throw new Error("RohlikClient.listCategory requires opts.category");

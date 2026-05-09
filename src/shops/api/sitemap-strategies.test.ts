@@ -53,9 +53,7 @@ describe("lidl strategy", () => {
     });
 
     it("extracts numeric slug (LidlClient persists item.code without `p` prefix)", () => {
-        expect(
-            l.productSlug("https://www.lidl.cz/p/livarno-elektricky-davkovac-mydla/p100396182")
-        ).toBe("100396182");
+        expect(l.productSlug("https://www.lidl.cz/p/livarno-elektricky-davkovac-mydla/p100396182")).toBe("100396182");
         expect(l.productSlug("https://www.lidl.cz/p/livarno-elektricky-davkovac-mydla/p100396182?ref=x")).toBe(
             "100396182"
         );
