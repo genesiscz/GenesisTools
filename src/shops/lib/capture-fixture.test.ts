@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { SafeJSON } from "@app/utils/json";
 import { __resetInitState, initShopRegistry } from "../api/registry-init";
 import { ShopRegistry } from "../api/ShopRegistry";
-import { runCaptureFixture } from "./dev-capture-fixture";
+import { runCaptureFixture } from "./capture-fixture";
 
 describe("runCaptureFixture", () => {
     let tmpRoot: string;
