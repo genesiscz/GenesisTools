@@ -160,7 +160,10 @@ export class KosikClient extends ShopApiClient {
             brand: brandName,
             imageUrl: normalizeKosikImage(item.image),
             categoryPath: categoryPath ? categoryPath.split(" > ") : undefined,
-            unit: undefined,
+            // Kosik exposes pack size as `productQuantity: {value, unit}`;
+            // pass both through so the matcher's signature step (Layer 2a)
+            // can fire on cross-shop comparisons.
+            unit: item.productQuantity?.unit,
             unitAmount: item.productQuantity?.value,
             currentPrice: item.price,
             originalPrice,

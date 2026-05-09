@@ -6,7 +6,7 @@ import { createKyselyClient, type DatabaseClient } from "@app/utils/database/cli
 import { SafeJSON } from "@app/utils/json";
 import type { Insertable, Kysely } from "kysely";
 import type { RawProduct } from "../api/ShopApiClient.types";
-import { normalizeText } from "../lib/normalize";
+import { extractFlavorKey, extractPackCount, extractSize, normalizeText, parseUnit, type Unit } from "../lib/normalize";
 import { SHOPS_MIGRATIONS } from "./migrations";
 import type {
     CurrentOffersView,
@@ -250,9 +250,20 @@ export class ShopsDatabase {
             .where("slug", "=", raw.slug)
             .executeTakeFirst();
 
-        const categoryPath =
-            raw.categoryPath && raw.categoryPath.length > 0 ? raw.categoryPath.join(" > ") : null;
+        const categoryPath = raw.categoryPath && raw.categoryPath.length > 0 ? raw.categoryPath.join(" > ") : null;
         const metadataJson = SafeJSON.stringify(raw.raw ?? {});
+
+        // Derive unit/unitAmount/packCount/flavor from the product name when
+        // the shop client doesn't supply them directly. Without these the
+        // matcher's Layer 1 (brand+unit+amount+flavor) and Layer 2a
+        // (brand+unit+amount) bail at the null-check, so cross-shop matching
+        // collapses to fuzzy-only — see Verification2.handoff "matcher unit
+        // gap" entry for the impact analysis.
+        const sizeFromName = extractSize(raw.name);
+        const unit: Unit | null = (raw.unit ? parseUnit(raw.unit) : null) ?? sizeFromName?.unit ?? null;
+        const unitAmount = raw.unitAmount ?? sizeFromName?.unitAmount ?? null;
+        const packCount = extractPackCount(raw.name);
+        const flavorKey = extractFlavorKey(raw.name);
 
         const values: NewProduct = {
             shop_origin: raw.shopOrigin,
@@ -264,10 +275,10 @@ export class ShopsDatabase {
             brand_normalized: raw.brand ? normalizeText(raw.brand) : null,
             ean: raw.ean ?? null,
             image_url: raw.imageUrl ?? null,
-            unit: null,
-            unit_amount: raw.unitAmount ?? null,
-            pack_count: null,
-            flavor_key: null,
+            unit,
+            unit_amount: unitAmount,
+            pack_count: packCount,
+            flavor_key: flavorKey,
             master_product_id: null,
             match_method: "pending",
             match_similarity: null,
@@ -291,7 +302,10 @@ export class ShopsDatabase {
                     brand_normalized: values.brand_normalized,
                     ean: values.ean,
                     image_url: values.image_url,
+                    unit: values.unit,
                     unit_amount: values.unit_amount,
+                    pack_count: values.pack_count,
+                    flavor_key: values.flavor_key,
                     last_updated_at: now,
                     is_active: 1,
                     description: values.description,

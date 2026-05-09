@@ -152,6 +152,11 @@ export class RohlikClient extends ShopApiClient {
             }
         }
 
+        // Rohlik exposes the canonical pack size as `textualAmount` ("1,2 kg",
+        // "500 g", "6 ks"). Parsing this in the matcher's signature step
+        // unlocks Layer 2a cross-shop matching against kosik/lidl/etc.
+        const textualSize = product.textualAmount ? parseTextualAmount(product.textualAmount) : undefined;
+
         return {
             shopOrigin: ROHLIK_ORIGIN,
             slug,
@@ -161,6 +166,8 @@ export class RohlikClient extends ShopApiClient {
             brand: product.brand,
             ean: product.ean,
             imageUrl: product.images?.[0],
+            unit: textualSize?.unit ?? product.unit,
+            unitAmount: textualSize?.amount,
             currentPrice,
             originalPrice,
             inStock: product.inStock,
@@ -168,6 +175,22 @@ export class RohlikClient extends ShopApiClient {
             raw: { product, price: priceEntry },
         };
     }
+}
+
+function parseTextualAmount(text: string): { unit: string; amount: number } | undefined {
+    // "1,2 kg" / "500 g" / "6 ks" / "12x100 g" → take last digit-unit pair.
+    const matches = [...text.matchAll(/(\d+(?:[.,]\d+)?)\s*([a-zA-Zě]+)/g)];
+    const last = matches.at(-1);
+    if (!last) {
+        return undefined;
+    }
+
+    const amount = Number.parseFloat(last[1].replace(",", "."));
+    if (Number.isNaN(amount)) {
+        return undefined;
+    }
+
+    return { unit: last[2].toLowerCase(), amount };
 }
 
 function unwrapProducts(resp: RohlikProductsBatchResponse): RohlikRawProduct[] {
