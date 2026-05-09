@@ -104,6 +104,17 @@ export async function addFavorite(input: WatchInput): Promise<AddFavoriteResult>
         referencePrice = lastPrice.current_price;
     }
 
+    let label = input.label ?? null;
+    if (label === null) {
+        const master = await db
+            .kysely()
+            .selectFrom("master_products")
+            .select("canonical_name")
+            .where("id", "=", resolved.masterId)
+            .executeTakeFirst();
+        label = master?.canonical_name ?? null;
+    }
+
     const args: AddFavoriteArgs = {
         master_product_id: resolved.masterId,
         restricted_to_shop: input.restricted_to_shop ?? null,
@@ -111,7 +122,7 @@ export async function addFavorite(input: WatchInput): Promise<AddFavoriteResult>
         drop_percent: input.drop_percent ?? null,
         drop_absolute: input.drop_absolute ?? null,
         reference_price: referencePrice,
-        label: input.label ?? null,
+        label,
         cooldown_hours: input.cooldown_hours ?? 24,
         notify_back_in_stock: input.notify_back_in_stock,
     };
