@@ -1,6 +1,7 @@
 import logger from "@app/logger";
 import { slugify } from "@app/utils/string";
 import type { ShopsDatabase } from "../db/ShopsDatabase";
+import { refreshMasterDenorm } from "./master-denorm";
 import type { Matcher, MatcherInput, MatchResult } from "./matcher";
 
 export type { MatchResult };
@@ -128,25 +129,6 @@ export class MatchExecutor {
     }
 
     private refreshMasterDenorm(masterId: number): void {
-        const db = this.args.shopsDb.raw();
-        const now = new Date().toISOString();
-        // Inherit a representative image from any linked product when the master
-        // doesn't have one yet. Fixes the /browse "no images" issue without
-        // demoting curated images that were already set.
-        db.run(
-            `UPDATE master_products SET
-                total_offers = (
-                    SELECT COUNT(*) FROM products WHERE master_product_id = ? AND is_active = 1
-                ),
-                representative_image_url = COALESCE(
-                    representative_image_url,
-                    (SELECT image_url FROM products
-                       WHERE master_product_id = ? AND is_active = 1 AND image_url IS NOT NULL
-                       ORDER BY id LIMIT 1)
-                ),
-                updated_at = ?
-             WHERE id = ?`,
-            [masterId, masterId, now, masterId]
-        );
+        refreshMasterDenorm(this.args.shopsDb.raw(), masterId);
     }
 }

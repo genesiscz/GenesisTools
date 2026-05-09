@@ -55,10 +55,7 @@ export function LiveEventRow({ frame }: LiveEventRowProps) {
     if (frame.event === "http-request") {
         const failed = isFailedHttp(frame);
         const hasDetail =
-            failed ||
-            Boolean(frame.error) ||
-            Boolean(frame.request_excerpt) ||
-            Boolean(frame.response_excerpt);
+            failed || Boolean(frame.error) || Boolean(frame.request_excerpt) || Boolean(frame.response_excerpt);
         return (
             <div className="border-b border-zinc-900/50 hover:bg-white/5 transition-colors">
                 <button

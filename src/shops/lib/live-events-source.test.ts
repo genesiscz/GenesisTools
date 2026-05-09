@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { ShopsDatabase } from "../db/ShopsDatabase";
+import type { ShopsDatabase } from "../db/ShopsDatabase";
 import { buildTestDatabase } from "../test-utils/buildTestDatabase";
 import { getInitialLiveEvents, resetLiveEventsSourceForTest } from "./live-events-source";
 

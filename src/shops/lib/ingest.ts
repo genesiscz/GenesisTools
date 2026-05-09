@@ -3,6 +3,7 @@ import { removeDiacritics } from "@app/utils/string";
 import type { HlidacGetByUrlResult } from "../api/HlidacShopuClient.types";
 import type { ShopsDatabase } from "../db/ShopsDatabase";
 import type { Product } from "../db/types";
+import { refreshMasterDenorm } from "./master-denorm";
 
 export interface IngestArgs {
     db: ShopsDatabase;
@@ -54,8 +55,7 @@ export async function ingestFromHlidacResult(args: IngestArgs): Promise<IngestRe
 
     const hlidacName = data.meta?.itemName ?? data.detail?.metadata.name;
     const name = hlidacName ?? existingProduct?.name ?? deriveNameFromUrl(url, slug);
-    const imageUrl =
-        data.meta?.itemImage ?? data.detail?.metadata.imageUrl ?? existingProduct?.image_url ?? null;
+    const imageUrl = data.meta?.itemImage ?? data.detail?.metadata.imageUrl ?? existingProduct?.image_url ?? null;
 
     let masterId = existingProduct?.master_product_id ?? null;
     if (!masterId) {
@@ -108,6 +108,10 @@ export async function ingestFromHlidacResult(args: IngestArgs): Promise<IngestRe
             raw_json: null,
         }));
     const recorded = priceRows.length > 0 ? await db.recordPrices(priceRows) : 0;
+
+    if (masterId !== null) {
+        refreshMasterDenorm(db.raw(), masterId);
+    }
 
     log.debug(
         { url, productId, masterId, pricesRecorded: recorded, source: data.source },
