@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { ShopsDatabase } from "../db/ShopsDatabase";
 import type { RawProduct } from "../api/ShopApiClient.types";
+import { ShopsDatabase } from "../db/ShopsDatabase";
 import { syncShopSitemap } from "./sitemap-sync";
 
 const realFetch = globalThis.fetch;

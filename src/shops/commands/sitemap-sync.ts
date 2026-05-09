@@ -1,7 +1,7 @@
 import logger from "@app/logger";
 import type { Command } from "commander";
 import { ShopsDatabase } from "../db/ShopsDatabase";
-import { listSitemapShops, syncShopSitemap, type SitemapSyncResult } from "../lib/sitemap-sync";
+import { listSitemapShops, type SitemapSyncResult, syncShopSitemap } from "../lib/sitemap-sync";
 
 interface SitemapSyncCliOpts {
     shop?: string;
@@ -26,9 +26,7 @@ export function registerSitemapSyncCommand(program: Command): void {
 
             const targets = resolveTargets(raw, supported);
             if (targets.length === 0) {
-                process.stderr.write(
-                    `error: pass --shop <shop> or --all (supported: ${supported.join(", ")})\n`
-                );
+                process.stderr.write(`error: pass --shop <shop> or --all (supported: ${supported.join(", ")})\n`);
                 process.exitCode = 1;
                 return;
             }

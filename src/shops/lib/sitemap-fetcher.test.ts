@@ -30,11 +30,9 @@ function withMockedFetch(): MockedFetchScope {
                 // Bun's Response accepts Buffer/Uint8Array directly but the
                 // @types/node Response signature is stricter — cast through
                 // unknown for this test mock only.
-                const responseBody = (
-                    route.body instanceof Buffer
-                        ? new Uint8Array(route.body.buffer, route.body.byteOffset, route.body.byteLength)
-                        : route.body
-                ) as unknown as BodyInit;
+                const responseBody = (route.body instanceof Buffer
+                    ? new Uint8Array(route.body.buffer, route.body.byteOffset, route.body.byteLength)
+                    : route.body) as unknown as BodyInit;
                 return new Response(responseBody, {
                     status: route.status ?? 200,
                     headers: route.headers ?? { "content-type": "application/xml" },
@@ -108,11 +106,7 @@ describe("walkSitemap", () => {
             out.push(u);
         }
 
-        expect(out.sort()).toEqual([
-            "https://example.com/pA",
-            "https://example.com/pB",
-            "https://example.com/pC",
-        ]);
+        expect(out.sort()).toEqual(["https://example.com/pA", "https://example.com/pB", "https://example.com/pC"]);
     });
 
     it("decompresses .xml.gz children transparently", async () => {

@@ -146,7 +146,11 @@ function extractChildSitemapLocs(xml: string): string[] {
     return out;
 }
 
-async function fetchSitemapBody(url: string, userAgent: string, signal: AbortSignal | undefined): Promise<string | null> {
+async function fetchSitemapBody(
+    url: string,
+    userAgent: string,
+    signal: AbortSignal | undefined
+): Promise<string | null> {
     try {
         const res = await fetch(url, {
             headers: { "user-agent": userAgent, accept: "application/xml,text/xml,*/*" },
