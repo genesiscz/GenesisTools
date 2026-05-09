@@ -31,10 +31,7 @@ export interface IngestUrlResult {
     auto_seeded_master: boolean;
 }
 
-export async function ingestUrl(
-    input: IngestUrlInput,
-    ctx?: IngestApiContext
-): Promise<IngestUrlResult> {
+export async function ingestUrl(input: IngestUrlInput, ctx?: IngestApiContext): Promise<IngestUrlResult> {
     const shopsDb = ctx?.shopsDb ?? getShopsDatabase();
     const hlidac: HlidacFetcher = ctx?.hlidac ?? new HlidacShopuClient();
 

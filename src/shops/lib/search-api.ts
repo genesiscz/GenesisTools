@@ -70,10 +70,7 @@ function buildFtsQuery(input: string): string {
     return tokens.map((t) => `"${t}"*`).join(" ");
 }
 
-export async function searchProducts(
-    input: SearchProductsInput,
-    ctx?: SearchApiContext
-): Promise<ProductDTO[]> {
+export async function searchProducts(input: SearchProductsInput, ctx?: SearchApiContext): Promise<ProductDTO[]> {
     const shopsDb = ctx?.shopsDb ?? getShopsDatabase();
     const ftsQuery = buildFtsQuery(input.query);
     const limit = Math.min(Math.max(input.limit ?? 25, 1), 200);
@@ -86,9 +83,7 @@ export async function searchProducts(
     }
 
     if (input.category) {
-        where.push(
-            "EXISTS (SELECT 1 FROM product_categories pc WHERE pc.product_id = p.id AND pc.category_id = ?)"
-        );
+        where.push("EXISTS (SELECT 1 FROM product_categories pc WHERE pc.product_id = p.id AND pc.category_id = ?)");
         params.push(input.category);
     }
 
@@ -105,7 +100,10 @@ export async function searchProducts(
         LIMIT ?
     `;
 
-    const rows = shopsDb.raw().query<ProductRow, typeof params>(sql).all(...params);
+    const rows = shopsDb
+        .raw()
+        .query<ProductRow, typeof params>(sql)
+        .all(...params);
     log.debug({ query: input.query, count: rows.length }, "searchProducts done");
     return rows.map(rowToDto);
 }

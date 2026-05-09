@@ -53,21 +53,17 @@ async function runInitializeAndListTools(): Promise<{ initialize: JsonRpcRespons
 }
 
 describe("MCP stdio smoke", () => {
-    it(
-        "boots the server, returns valid JSON-RPC frames, no stdout pollution",
-        async () => {
-            const { initialize, listTools } = await runInitializeAndListTools();
-            expect(initialize.jsonrpc).toBe("2.0");
-            expect(initialize.id).toBe(1);
-            expect(initialize.result).toBeDefined();
-            expect(initialize.result?.protocolVersion).toBeDefined();
+    it("boots the server, returns valid JSON-RPC frames, no stdout pollution", async () => {
+        const { initialize, listTools } = await runInitializeAndListTools();
+        expect(initialize.jsonrpc).toBe("2.0");
+        expect(initialize.id).toBe(1);
+        expect(initialize.result).toBeDefined();
+        expect(initialize.result?.protocolVersion).toBeDefined();
 
-            expect(listTools.jsonrpc).toBe("2.0");
-            expect(listTools.id).toBe(2);
-            const tools = (listTools.result as unknown as { tools: Array<{ name: string }> }).tools;
-            expect(tools.length).toBe(8);
-            expect(tools.every((t) => !t.name.startsWith("shops_ingest"))).toBe(true);
-        },
-        15_000
-    );
+        expect(listTools.jsonrpc).toBe("2.0");
+        expect(listTools.id).toBe(2);
+        const tools = (listTools.result as unknown as { tools: Array<{ name: string }> }).tools;
+        expect(tools.length).toBe(8);
+        expect(tools.every((t) => !t.name.startsWith("shops_ingest"))).toBe(true);
+    }, 15_000);
 });

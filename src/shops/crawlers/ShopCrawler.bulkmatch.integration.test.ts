@@ -90,10 +90,7 @@ describe("ShopCrawler ← BulkMatcher wiring (integration)", () => {
                  VALUES (?, ?, ?, ?, 0, ?, ?, 'auto')`,
                 [firstProduct.name, firstProduct.name.toLowerCase(), `seed-${firstProduct.id}`, seededEan, now, now]
             );
-            const seededMaster = db
-                .raw()
-                .query<{ id: number }, []>("SELECT last_insert_rowid() AS id")
-                .get();
+            const seededMaster = db.raw().query<{ id: number }, []>("SELECT last_insert_rowid() AS id").get();
             if (!seededMaster) {
                 throw new Error("seeded master insert failed");
             }
@@ -107,10 +104,9 @@ describe("ShopCrawler ← BulkMatcher wiring (integration)", () => {
 
             const rows = db
                 .raw()
-                .query<
-                    { id: number; ean: string | null; master_product_id: number | null; match_method: string },
-                    []
-                >("SELECT id, ean, master_product_id, match_method FROM products WHERE shop_origin='rohlik.cz'")
+                .query<{ id: number; ean: string | null; master_product_id: number | null; match_method: string }, []>(
+                    "SELECT id, ean, master_product_id, match_method FROM products WHERE shop_origin='rohlik.cz'"
+                )
                 .all();
 
             expect(rows.length).toBeGreaterThan(0);

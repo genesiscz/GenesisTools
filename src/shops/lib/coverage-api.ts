@@ -52,9 +52,7 @@ interface CrawlRow {
 function crawlRunsTableExists(shopsDb: ShopsDatabase): boolean {
     const row = shopsDb
         .raw()
-        .query<{ name: string }, []>(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='crawl_runs'"
-        )
+        .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type='table' AND name='crawl_runs'")
         .get();
     return row !== null;
 }

@@ -65,10 +65,7 @@ function loadHashes(): Readonly<Record<string, string>> {
     return ALBERT_PERSISTED_QUERY_HASHES;
 }
 
-function buildPersistedQueryParams(
-    operationName: string,
-    variables: Record<string, unknown>
-): Record<string, string> {
+function buildPersistedQueryParams(operationName: string, variables: Record<string, unknown>): Record<string, string> {
     const hashes = loadHashes();
     const sha256Hash = hashes[operationName];
     if (!sha256Hash) {
@@ -108,9 +105,7 @@ export class AlbertClient extends ShopApiClient {
     }
 
     async getProduct(input: { url?: string; slug?: string }): Promise<RawProduct> {
-        throw new Error(
-            `AlbertClient.getProduct: not implemented in Phase 2 (input=${input.url ?? input.slug})`
-        );
+        throw new Error(`AlbertClient.getProduct: not implemented in Phase 2 (input=${input.url ?? input.slug})`);
     }
 
     async *listCategory(opts: ListingOptions): AsyncIterable<RawProduct> {
@@ -203,9 +198,7 @@ export class AlbertClient extends ShopApiClient {
         const url = new URL(p.url, STORE_ROOT).href;
         const currentPrice = parseDiscountedPrice(p.price?.discountedPriceFormatted) ?? p.price?.value;
         const originalPrice =
-            p.price?.discountedPriceFormatted && p.price?.value !== undefined
-                ? p.price.value
-                : undefined;
+            p.price?.discountedPriceFormatted && p.price?.value !== undefined ? p.price.value : undefined;
         return {
             shopOrigin: ALBERT_ORIGIN,
             slug,
@@ -246,9 +239,7 @@ function ensureNoErrors(
 
     const first = errors[0];
     if (first.reasonCode === "PERSISTED_QUERY_NOT_FOUND" || first.message.includes("PersistedQueryNotFound")) {
-        throw new Error(
-            `Albert ${operationName}: PersistedQueryNotFound — refresh hashes per AlbertClient.ts runbook`
-        );
+        throw new Error(`Albert ${operationName}: PersistedQueryNotFound — refresh hashes per AlbertClient.ts runbook`);
     }
 
     throw new Error(`Albert ${operationName} returned errors: ${SafeJSON.stringify(errors)}`);

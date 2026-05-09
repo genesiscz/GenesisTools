@@ -74,9 +74,7 @@ describe("bulk-crawl pipeline: BulkMatcher.flush wired into ShopCrawler.run", ()
 
             const crawlRow = db
                 .raw()
-                .query<{ status: string }, []>(
-                    "SELECT status FROM crawl_runs ORDER BY id DESC LIMIT 1"
-                )
+                .query<{ status: string }, []>("SELECT status FROM crawl_runs ORDER BY id DESC LIMIT 1")
                 .get();
             expect(crawlRow?.status).toBe("completed");
         } finally {

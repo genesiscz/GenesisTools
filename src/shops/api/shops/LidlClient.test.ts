@@ -1,7 +1,7 @@
+import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@app/utils/json";
-import { describe, expect, it } from "bun:test";
 import { MemoryHttpRequestSink } from "../../lib/http-sink";
 import { LidlClient } from "./LidlClient";
 
@@ -18,9 +18,7 @@ interface MockedClient {
     calls: Array<{ method: "get" | "getText"; url: string }>;
 }
 
-function buildClient(
-    routes: Array<{ method: "get" | "getText"; match: string; response: unknown }>
-): MockedClient {
+function buildClient(routes: Array<{ method: "get" | "getText"; match: string; response: unknown }>): MockedClient {
     const sink = new MemoryHttpRequestSink();
     const client = new LidlClient({ sink, rateLimitPerSecond: 1000 });
     const calls: MockedClient["calls"] = [];

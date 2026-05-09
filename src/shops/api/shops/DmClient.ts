@@ -195,7 +195,12 @@ function extractProductQuery(meta: DmCategoryResponse): Record<string, string | 
     return undefined;
 }
 
-function flattenNavigation(node: DmNavigationNode, parent: string | undefined, out: Category[], storeRoot: string): void {
+function flattenNavigation(
+    node: DmNavigationNode,
+    parent: string | undefined,
+    out: Category[],
+    storeRoot: string
+): void {
     if (node.link && node.title) {
         const id = node.link.replace(/^\//, "");
         out.push({

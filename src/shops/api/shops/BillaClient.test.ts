@@ -1,7 +1,7 @@
+import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@app/utils/json";
-import { describe, expect, it } from "bun:test";
 import { MemoryHttpRequestSink } from "../../lib/http-sink";
 import { BillaClient } from "./BillaClient";
 
@@ -49,7 +49,9 @@ describe("BillaClient.listCategories", () => {
 describe("BillaClient.listCategory", () => {
     it("yields products with toCZK conversion (halves of cents → CZK)", async () => {
         const page0 = readFixture("category-page0.json");
-        const { client } = buildClient([{ match: "/api/product-discovery/categories/pekarna/products", response: page0 }]);
+        const { client } = buildClient([
+            { match: "/api/product-discovery/categories/pekarna/products", response: page0 },
+        ]);
 
         const out: Awaited<ReturnType<typeof client.getProduct>>[] = [];
         for await (const p of client.listCategory({ category: "pekarna", limit: 10 })) {

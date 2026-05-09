@@ -43,41 +43,25 @@ function setup(): { shopsDb: ShopsDatabase; hlidac: FakeHlidac } {
 describe("ingestUrl", () => {
     it("ingests a brand-new URL: writes product, prices, marks auto-seeded", async () => {
         const { shopsDb, hlidac } = setup();
-        const result = await ingestUrl(
-            { url: "https://www.rohlik.cz/1419780-ritter-sport" },
-            { shopsDb, hlidac }
-        );
+        const result = await ingestUrl({ url: "https://www.rohlik.cz/1419780-ritter-sport" }, { shopsDb, hlidac });
         expect(result.shop_origin).toBe("rohlik.cz");
         expect(result.slug).toBe("1419780");
         expect(result.prices_recorded).toBe(2);
         expect(result.auto_seeded_master).toBe(true);
         expect(result.master_product_id).toBeGreaterThan(0);
-        const product = shopsDb
-            .raw()
-            .query<{ id: number }, []>("SELECT id FROM products WHERE slug='1419780'")
-            .get();
+        const product = shopsDb.raw().query<{ id: number }, []>("SELECT id FROM products WHERE slug='1419780'").get();
         expect(product).not.toBeNull();
         shopsDb.close();
     });
 
     it("is idempotent: second call updates existing rows, does not re-seed", async () => {
         const { shopsDb, hlidac } = setup();
-        const first = await ingestUrl(
-            { url: "https://www.rohlik.cz/1419780-ritter-sport" },
-            { shopsDb, hlidac }
-        );
-        const second = await ingestUrl(
-            { url: "https://www.rohlik.cz/1419780-ritter-sport" },
-            { shopsDb, hlidac }
-        );
+        const first = await ingestUrl({ url: "https://www.rohlik.cz/1419780-ritter-sport" }, { shopsDb, hlidac });
+        const second = await ingestUrl({ url: "https://www.rohlik.cz/1419780-ritter-sport" }, { shopsDb, hlidac });
         expect(second.product_id).toBe(first.product_id);
         expect(second.master_product_id).toBe(first.master_product_id);
         expect(second.auto_seeded_master).toBe(false);
-        const productCount =
-            shopsDb
-                .raw()
-                .query<{ n: number }, []>("SELECT COUNT(*) AS n FROM products")
-                .get()?.n ?? 0;
+        const productCount = shopsDb.raw().query<{ n: number }, []>("SELECT COUNT(*) AS n FROM products").get()?.n ?? 0;
         expect(productCount).toBe(1);
         shopsDb.close();
     });

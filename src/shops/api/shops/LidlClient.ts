@@ -3,12 +3,7 @@
 import { parseHTML } from "linkedom";
 import { ShopApiClient, type ShopApiClientConstructorConfig } from "../ShopApiClient";
 import type { Category, ListingOptions, RawProduct, ShopCapabilities } from "../ShopApiClient.types";
-import type {
-    LidlApiCategoryResponse,
-    LidlApiItem,
-    LidlCategoryNode,
-    LidlCategoryType,
-} from "./LidlClient.types";
+import type { LidlApiCategoryResponse, LidlApiItem, LidlCategoryNode, LidlCategoryType } from "./LidlClient.types";
 
 const LIDL_ORIGIN = "lidl.cz";
 const STORE_ROOT = "https://www.lidl.cz";
@@ -39,9 +34,7 @@ export class LidlClient extends ShopApiClient {
     }
 
     async getProduct(input: { url?: string; slug?: string }): Promise<RawProduct> {
-        throw new Error(
-            `LidlClient.getProduct: not implemented in Phase 2 (input=${input.url ?? input.slug})`
-        );
+        throw new Error(`LidlClient.getProduct: not implemented in Phase 2 (input=${input.url ?? input.slug})`);
     }
 
     async *listCategory(opts: ListingOptions): AsyncIterable<RawProduct> {
@@ -61,19 +54,16 @@ export class LidlClient extends ShopApiClient {
         while (true) {
             opts.signal?.throwIfAborted();
             await this.waitTurn();
-            const listing = await this.get<LidlApiCategoryResponse>(
-                `/q/api/category/${node.path}/${node.id}`,
-                {
-                    params: {
-                        offset,
-                        fetchsize: FETCH_SIZE,
-                        locale: "cs_CZ",
-                        assortment: "CZ",
-                        version: "2.1.0",
-                    },
-                    signal: opts.signal,
-                }
-            );
+            const listing = await this.get<LidlApiCategoryResponse>(`/q/api/category/${node.path}/${node.id}`, {
+                params: {
+                    offset,
+                    fetchsize: FETCH_SIZE,
+                    locale: "cs_CZ",
+                    assortment: "CZ",
+                    version: "2.1.0",
+                },
+                signal: opts.signal,
+            });
             const items = listing.items ?? [];
             if (items.length === 0) {
                 return;
@@ -132,11 +122,7 @@ export class LidlClient extends ShopApiClient {
 
         const url = new URL(data.canonicalPath, STORE_ROOT).href;
         const slug = item.code;
-        const breadcrumbs = data.category
-            ? data.category
-                  .split("/")
-                  .filter((s) => s.length > 0)
-            : undefined;
+        const breadcrumbs = data.category ? data.category.split("/").filter((s) => s.length > 0) : undefined;
         const currentPrice = data.price?.price;
         const originalPrice = data.price?.discount?.deletedPrice;
         return {

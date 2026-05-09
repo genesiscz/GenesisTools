@@ -1,7 +1,7 @@
+import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@app/utils/json";
-import { describe, expect, it } from "bun:test";
 import { MemoryHttpRequestSink } from "../../lib/http-sink";
 import { TetaClient } from "./TetaClient";
 
@@ -18,9 +18,7 @@ interface MockedClient {
     calls: Array<{ method: "get" | "getText"; url: string }>;
 }
 
-function buildClient(
-    routes: Array<{ method: "get" | "getText"; match: string; response: unknown }>
-): MockedClient {
+function buildClient(routes: Array<{ method: "get" | "getText"; match: string; response: unknown }>): MockedClient {
     const sink = new MemoryHttpRequestSink();
     const client = new TetaClient({ sink, rateLimitPerSecond: 1000 });
     const calls: MockedClient["calls"] = [];
@@ -70,7 +68,9 @@ describe("TetaClient.listCategories", () => {
 describe("TetaClient.listCategory", () => {
     it("yields products with halves->CZK price decoding and HTML-tag stripping", async () => {
         const page0 = readFixture("category-listing-page0.json");
-        const { client } = buildClient([{ method: "get", match: "/api/v2/shop/search/products-variants", response: page0 }]);
+        const { client } = buildClient([
+            { method: "get", match: "/api/v2/shop/search/products-variants", response: page0 },
+        ]);
 
         const out: Awaited<ReturnType<typeof client.getProduct>>[] = [];
         for await (const p of client.listCategory({ category: "krasa-a-zdravi", limit: 3 })) {

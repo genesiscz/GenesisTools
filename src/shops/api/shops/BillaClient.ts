@@ -40,9 +40,7 @@ export class BillaClient extends ShopApiClient {
     }
 
     async getProduct(input: { url?: string; slug?: string }): Promise<RawProduct> {
-        throw new Error(
-            `BillaClient.getProduct: not implemented in Phase 2 (input=${input.url ?? input.slug})`
-        );
+        throw new Error(`BillaClient.getProduct: not implemented in Phase 2 (input=${input.url ?? input.slug})`);
     }
 
     async *listCategory(opts: ListingOptions): AsyncIterable<RawProduct> {

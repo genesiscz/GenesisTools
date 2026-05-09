@@ -108,16 +108,11 @@ function db(ctx: ProductApiContext | undefined): ShopsDatabase {
     return ctx?.shopsDb ?? getShopsDatabase();
 }
 
-function findProductBy(
-    shopsDb: ShopsDatabase,
-    where: { shop?: string; slug?: string }
-): ProductRow | null {
+function findProductBy(shopsDb: ShopsDatabase, where: { shop?: string; slug?: string }): ProductRow | null {
     if (where.shop !== undefined && where.slug !== undefined) {
         const row = shopsDb
             .raw()
-            .query<ProductRow, [string, string]>(
-                `${PRODUCT_SELECT} WHERE p.shop_origin = ? AND p.slug = ?`
-            )
+            .query<ProductRow, [string, string]>(`${PRODUCT_SELECT} WHERE p.shop_origin = ? AND p.slug = ?`)
             .get(where.shop, where.slug);
         return row ?? null;
     }
@@ -125,10 +120,7 @@ function findProductBy(
     return null;
 }
 
-export async function getProduct(
-    input: GetProductInput,
-    ctx?: ProductApiContext
-): Promise<GetProductResult> {
+export async function getProduct(input: GetProductInput, ctx?: ProductApiContext): Promise<GetProductResult> {
     const shopsDb = db(ctx);
     let row: ProductRow | null = null;
     if (input.url) {
@@ -192,10 +184,7 @@ export async function getProduct(
     };
 }
 
-export async function matchProduct(
-    input: { url: string },
-    ctx?: ProductApiContext
-): Promise<CrossShopMatch[]> {
+export async function matchProduct(input: { url: string }, ctx?: ProductApiContext): Promise<CrossShopMatch[]> {
     const result = await getProduct({ url: input.url }, ctx);
     return result.cross_shop_matches;
 }
@@ -207,10 +196,9 @@ export async function listCategories(
     const shopsDb = db(ctx);
     return shopsDb
         .raw()
-        .query<
-            { id: string; name: string; parent_id: string | null },
-            [string]
-        >("SELECT id, name, parent_id FROM categories WHERE shop_origin = ? ORDER BY id")
+        .query<{ id: string; name: string; parent_id: string | null }, [string]>(
+            "SELECT id, name, parent_id FROM categories WHERE shop_origin = ? ORDER BY id"
+        )
         .all(input.shop);
 }
 
@@ -223,9 +211,7 @@ export async function comparePrices(
     for (const masterId of input.masterIds) {
         const offers = shopsDb
             .raw()
-            .query<ProductRow, [number]>(
-                `${PRODUCT_SELECT} WHERE p.master_product_id = ? ORDER BY p.shop_origin`
-            )
+            .query<ProductRow, [number]>(`${PRODUCT_SELECT} WHERE p.master_product_id = ? ORDER BY p.shop_origin`)
             .all(masterId);
         const counts =
             shopsDb
@@ -261,9 +247,7 @@ export async function getMaster(
 
     const offers = shopsDb
         .raw()
-        .query<ProductRow, [number]>(
-            `${PRODUCT_SELECT} WHERE p.master_product_id = ? ORDER BY p.shop_origin`
-        )
+        .query<ProductRow, [number]>(`${PRODUCT_SELECT} WHERE p.master_product_id = ? ORDER BY p.shop_origin`)
         .all(input.id);
     return {
         master_id: master.id,

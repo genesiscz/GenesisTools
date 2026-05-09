@@ -36,9 +36,7 @@ export class TetaClient extends ShopApiClient {
     }
 
     async getProduct(input: { url?: string; slug?: string }): Promise<RawProduct> {
-        throw new Error(
-            `TetaClient.getProduct: not implemented in Phase 2 (input=${input.url ?? input.slug})`
-        );
+        throw new Error(`TetaClient.getProduct: not implemented in Phase 2 (input=${input.url ?? input.slug})`);
     }
 
     async *listCategory(opts: ListingOptions): AsyncIterable<RawProduct> {
@@ -88,9 +86,7 @@ export class TetaClient extends ShopApiClient {
         await this.waitTurn();
         const html = await this.getText(`${STORE_ROOT}/eshop/`);
         const { document } = parseHTML(html);
-        const links = Array.from(
-            document.querySelectorAll(".c-main-menu .c-menu-item__link-wrapper > a")
-        );
+        const links = Array.from(document.querySelectorAll(".c-main-menu .c-menu-item__link-wrapper > a"));
         const out: Category[] = [];
         for (const a of links) {
             const href = a.getAttribute("href") ?? "";

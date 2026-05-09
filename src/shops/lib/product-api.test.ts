@@ -3,13 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ShopsDatabase } from "../db/ShopsDatabase";
-import {
-    comparePrices,
-    getMaster,
-    getProduct,
-    listCategories,
-    matchProduct,
-} from "./product-api";
+import { comparePrices, getMaster, getProduct, listCategories, matchProduct } from "./product-api";
 
 interface SetupIds {
     masterA: number;
@@ -70,19 +64,16 @@ describe("getProduct", () => {
 
     it("resolves a URL via parseItemDetails when {url} is given", async () => {
         const { shopsDb } = setup();
-        const result = await getProduct(
-            { url: "https://www.rohlik.cz/1419780-ritter-sport" },
-            { shopsDb }
-        );
+        const result = await getProduct({ url: "https://www.rohlik.cz/1419780-ritter-sport" }, { shopsDb });
         expect(result.product.shop_origin).toBe("rohlik.cz");
         shopsDb.close();
     });
 
     it("throws when {shop, slug} resolves nothing", async () => {
         const { shopsDb } = setup();
-        await expect(
-            getProduct({ shop: "rohlik.cz", slug: "doesnotexist" }, { shopsDb })
-        ).rejects.toThrow(/not found/i);
+        await expect(getProduct({ shop: "rohlik.cz", slug: "doesnotexist" }, { shopsDb })).rejects.toThrow(
+            /not found/i
+        );
         shopsDb.close();
     });
 
@@ -96,10 +87,7 @@ describe("getProduct", () => {
 describe("matchProduct", () => {
     it("returns cross-shop matches for the master of the URL's product", async () => {
         const { shopsDb } = setup();
-        const matches = await matchProduct(
-            { url: "https://www.rohlik.cz/1419780-ritter-sport" },
-            { shopsDb }
-        );
+        const matches = await matchProduct({ url: "https://www.rohlik.cz/1419780-ritter-sport" }, { shopsDb });
         expect(matches).toHaveLength(1);
         expect(matches[0].product.shop_origin).toBe("kosik.cz");
         shopsDb.close();
@@ -109,13 +97,11 @@ describe("matchProduct", () => {
 describe("listCategories", () => {
     it("returns rows from the categories table for the given shop", async () => {
         const { shopsDb } = setup();
-        shopsDb
-            .raw()
-            .exec(
-                `INSERT INTO categories (id, shop_origin, name, parent_id) VALUES
+        shopsDb.raw().exec(
+            `INSERT INTO categories (id, shop_origin, name, parent_id) VALUES
                  ('300101', 'rohlik.cz', 'Drinks', NULL),
                  ('300101001', 'rohlik.cz', 'Coffee', '300101')`
-            );
+        );
         const cats = await listCategories({ shop: "rohlik.cz" }, { shopsDb });
         expect(cats).toHaveLength(2);
         expect(cats.find((c) => c.id === "300101001")?.parent_id).toBe("300101");
