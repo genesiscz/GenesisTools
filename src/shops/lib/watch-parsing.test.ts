@@ -1,36 +1,38 @@
 import { describe, expect, it } from "bun:test";
-import { parseCooldown, parsePercent } from "./watch";
+import { parseCooldown, parsePercent } from "./watch-parsing";
 
-describe("watch flag parsing", () => {
-    it("parsePercent('15') = 0.15", () => {
+describe("parsePercent", () => {
+    it("'15' = 0.15", () => {
         expect(parsePercent("15")).toBe(0.15);
     });
 
-    it("parsePercent('0.2') = 0.2 (already a fraction)", () => {
+    it("'0.2' = 0.2 (already a fraction)", () => {
         expect(parsePercent("0.2")).toBe(0.2);
     });
 
-    it("parsePercent('15%') = 0.15", () => {
+    it("'15%' = 0.15", () => {
         expect(parsePercent("15%")).toBe(0.15);
     });
 
-    it("parsePercent invalid throws", () => {
+    it("invalid throws", () => {
         expect(() => parsePercent("nope")).toThrow();
     });
+});
 
-    it("parseCooldown('24h') = 24", () => {
+describe("parseCooldown", () => {
+    it("'24h' = 24", () => {
         expect(parseCooldown("24h")).toBe(24);
     });
 
-    it("parseCooldown('48') = 48", () => {
+    it("'48' = 48", () => {
         expect(parseCooldown("48")).toBe(48);
     });
 
-    it("parseCooldown('2d') = 48", () => {
+    it("'2d' = 48", () => {
         expect(parseCooldown("2d")).toBe(48);
     });
 
-    it("parseCooldown invalid throws", () => {
+    it("invalid throws", () => {
         expect(() => parseCooldown("forever")).toThrow();
     });
 });

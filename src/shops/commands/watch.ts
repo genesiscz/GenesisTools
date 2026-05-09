@@ -2,41 +2,11 @@ import logger from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import { formatTable } from "@app/utils/table";
 import type { Command } from "commander";
-import { FavoritesRepository } from "../db/FavoritesRepository";
-import { NotificationsRepository } from "../db/NotificationsRepository";
-import { getShopsDatabase } from "../db/ShopsDatabase";
-import { MacOsChannel } from "../lib/channels/MacOsChannel";
-import { TelegramBotChannel } from "../lib/channels/TelegramBotChannel";
-import type { NotificationChannel } from "../lib/channels/types";
-import { WebSseChannel } from "../lib/channels/WebSseChannel";
-import { NotificationDispatcher } from "../lib/notification-dispatcher";
+import { parseCooldown, parsePercent } from "../lib/watch-parsing";
 import { addFavorite, editFavorite, getWatchlist, removeFavorite } from "../lib/watchlist-api";
-import { WatchlistEvaluator } from "../lib/watchlist-evaluator";
+import { runWatchlistTick } from "../lib/watchlist-tick";
 
 const log = logger.child({ component: "shops:watch-cmd" });
-
-export function parsePercent(input: string): number {
-    const cleaned = input.replace("%", "").trim();
-    const n = Number(cleaned);
-    if (Number.isNaN(n) || n < 0) {
-        throw new Error(`Invalid percent: ${input}. Use "15", "15%", or "0.15".`);
-    }
-
-    return n > 1 ? n / 100 : n;
-}
-
-export function parseCooldown(input: string): number {
-    const m = input
-        .trim()
-        .toLowerCase()
-        .match(/^(\d+)\s*([hd]?)$/);
-    if (!m) {
-        throw new Error(`Invalid cooldown: ${input}. Use "24", "24h", or "2d".`);
-    }
-
-    const n = Number(m[1]);
-    return m[2] === "d" ? n * 24 : n;
-}
 
 export function registerWatchCommand(program: Command): void {
     const watch = program.command("watch").description("Manage the watchlist (favorites with discount alerts)");
@@ -163,21 +133,7 @@ export function registerWatchCommand(program: Command): void {
         .description("Internal: run a single watchlist evaluation pass (used by daemon)")
         .option("--json", "Output the TickReport as JSON", true)
         .action(async () => {
-            const db = getShopsDatabase();
-            const channels: NotificationChannel[] = [new WebSseChannel(), new MacOsChannel()];
-            const tg = TelegramBotChannel.fromEnv();
-            if (tg) {
-                channels.push(tg);
-            }
-
-            const notifRepo = new NotificationsRepository(db);
-            const evaluator = new WatchlistEvaluator({
-                db,
-                favorites: new FavoritesRepository(db),
-                notifications: notifRepo,
-                dispatcher: new NotificationDispatcher({ repo: notifRepo, channels }),
-            });
-            const report = await evaluator.tick();
+            const report = await runWatchlistTick();
             console.log(SafeJSON.stringify(report));
             log.info(report, "tick complete");
         });
