@@ -332,6 +332,34 @@ export class Matcher {
             };
         }
 
+        // Relaxed cross-shop gray-zone: same brand + strong one-way containment
+        // (one name's tokens are mostly a subset of the other's). Catches the
+        // "long Czech canonical name" vs "short English variant name" pattern
+        // where a product's two listings on different shops genuinely look
+        // very different to fuzzy similarity (e.g. "Zott Hungry? Drink This!
+        // Nápoj s čokoládovou příchutí" vs "Zott Hungry Drink Choco" scores
+        // 0.71 overall but containment is 0.75). Gray-zone only — never
+        // auto-link, since false-positive risk is real.
+        if (
+            best.score >= this.config.LAYER3_CROSS_SHOP_CONTAINMENT_MIN &&
+            containmentSimilarity(input.nameNormalized, best.row.canonical_name_normalized) >=
+                this.config.LAYER3_CROSS_SHOP_CONTAINMENT_MIN
+        ) {
+            const candidate = this.findCandidateProductForMaster(best.row.id, input.productId);
+            if (candidate === null) {
+                return null;
+            }
+
+            return {
+                kind: "gray-zone",
+                candidateProductId: candidate,
+                candidateMasterProductId: best.row.id,
+                method: "fuzzy-brand-name",
+                similarity: best.score,
+                layer: 3,
+            };
+        }
+
         return null;
     }
 
