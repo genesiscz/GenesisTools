@@ -39,6 +39,8 @@ interface SearchResponseHit {
     brand: string | null;
     image_url: string | null;
     best_price: number | null;
+    total_offers: number | null;
+    best_price_shop: string | null;
 }
 
 function BrowsePage() {
@@ -84,9 +86,9 @@ function BrowsePage() {
                             canonical_slug: "",
                             brand: h.brand,
                             representative_image_url: h.image_url,
-                            total_offers: 0,
+                            total_offers: h.total_offers ?? 0,
                             best_price: h.best_price,
-                            best_price_shop: null,
+                            best_price_shop: h.best_price_shop,
                             master_category_id: null,
                         })),
                     total: hits.length,

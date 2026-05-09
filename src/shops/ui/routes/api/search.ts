@@ -21,6 +21,8 @@ interface SearchRow {
     slug: string | null;
     rank: number;
     best_price: number | null;
+    total_offers: number | null;
+    best_price_shop: string | null;
 }
 
 export const Route = createFileRoute("/api/search")({
@@ -69,7 +71,9 @@ export const Route = createFileRoute("/api/search")({
                             CASE WHEN p.master_product_id IS NULL THEN p.shop_origin ELSE NULL END AS shop_origin,
                             CASE WHEN p.master_product_id IS NULL THEN p.slug ELSE NULL END AS slug,
                             products_fts.rank AS rank,
-                            m.best_price AS best_price
+                            m.best_price AS best_price,
+                            CASE WHEN p.master_product_id IS NOT NULL THEN m.total_offers ELSE NULL END AS total_offers,
+                            CASE WHEN p.master_product_id IS NOT NULL THEN m.best_price_shop ELSE NULL END AS best_price_shop
                          FROM products_fts
                          JOIN products p ON p.id = products_fts.rowid
                          LEFT JOIN master_products m ON m.id = p.master_product_id

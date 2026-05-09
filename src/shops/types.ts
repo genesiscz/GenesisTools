@@ -269,6 +269,10 @@ export interface SearchHit {
     slug?: string | null;
     rank: number;
     best_price: number | null;
+    /** Master-only: number of distinct shops carrying this master. Null for product hits. */
+    total_offers: number | null;
+    /** Master-only: shop with the current best price. */
+    best_price_shop: ShopOrigin | null;
 }
 
 export interface SearchResponse {
