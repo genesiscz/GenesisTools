@@ -1,5 +1,6 @@
 // Adapted from topmonks/hlidac-shopu (EUPL-1.2) — actors/lidl-daily/main.js
 
+import { SafeJSON } from "@app/utils/json";
 import { parseHTML } from "linkedom";
 import { ShopApiClient, type ShopApiClientConstructorConfig } from "../ShopApiClient";
 import type { Category, ListingOptions, RawProduct, ShopCapabilities } from "../ShopApiClient.types";
@@ -33,8 +34,45 @@ export class LidlClient extends ShopApiClient {
         });
     }
 
-    async getProduct(input: { url?: string; slug?: string }): Promise<RawProduct> {
-        throw new Error(`LidlClient.getProduct: not implemented in Phase 2 (input=${input.url ?? input.slug})`);
+    async getProduct(input: { url?: string; slug?: string; signal?: AbortSignal }): Promise<RawProduct> {
+        const url = input.url ?? (input.slug ? buildProductUrl(input.slug) : null);
+        if (!url) {
+            throw new Error("LidlClient.getProduct requires url or slug");
+        }
+
+        await this.waitTurn();
+        const html = await this.getText(url, { signal: input.signal });
+        const data = extractDatalayerProduct(html);
+        if (!data) {
+            throw new Error(`Lidl product page ${url}: unified_datalayer_product missing`);
+        }
+
+        return toRawProductFromDatalayer(data, url);
+    }
+
+    /**
+     * Stream RawProducts for a list of product ids by scraping each
+     * product's HTML page and parsing the embedded `unified_datalayer_product`
+     * JSON blob — Lidl has no public per-product JSON endpoint.
+     * Per-id failures are dropped (404s, rendering quirks).
+     */
+    async *listByIds(
+        ids: string[],
+        opts: { signal?: AbortSignal; concurrency?: number } = {}
+    ): AsyncIterable<RawProduct> {
+        const concurrency = Math.max(1, opts.concurrency ?? 4);
+        for (let i = 0; i < ids.length; i += concurrency) {
+            opts.signal?.throwIfAborted();
+            const slice = ids.slice(i, i + concurrency);
+            const settled = await Promise.allSettled(
+                slice.map((id) => this.getProduct({ slug: id, signal: opts.signal }))
+            );
+            for (const r of settled) {
+                if (r.status === "fulfilled") {
+                    yield r.value;
+                }
+            }
+        }
     }
 
     async *listCategory(opts: ListingOptions): AsyncIterable<RawProduct> {
@@ -140,6 +178,62 @@ export class LidlClient extends ShopApiClient {
             raw: item,
         };
     }
+}
+
+interface LidlDatalayerProduct {
+    id: string | number;
+    name?: string;
+    brand?: string;
+    price?: number;
+    netPrice?: number | null;
+    currency?: string;
+    availability?: string;
+    categoryPrimary?: string;
+    type?: string;
+    sapId?: string | null;
+    parentId?: string | null;
+    variantId?: string | null;
+    variantGroupId?: string | null;
+}
+
+const DATALAYER_RE = /var\s+unified_datalayer_product\s*=\s*(\{[\s\S]*?\})\s*;?\s*<\/script>/;
+
+function extractDatalayerProduct(html: string): LidlDatalayerProduct | null {
+    const m = html.match(DATALAYER_RE);
+    if (!m) {
+        return null;
+    }
+
+    try {
+        return SafeJSON.parse(m[1]) as LidlDatalayerProduct;
+    } catch {
+        return null;
+    }
+}
+
+function buildProductUrl(slug: string): string {
+    // The slug we feed in is just the numeric id (e.g. "100396182"). Lidl
+    // accepts `/p/_/p<id>` as a shorter canonical URL that 301s to the
+    // marketing-slug variant.
+    return `${STORE_ROOT}/p/_/p${slug}`;
+}
+
+function toRawProductFromDatalayer(data: LidlDatalayerProduct, url: string): RawProduct {
+    const slug = String(data.id);
+    const breadcrumbs = data.categoryPrimary?.split("/").filter((s) => s.length > 0);
+    return {
+        shopOrigin: LIDL_ORIGIN,
+        slug,
+        itemId: slug,
+        url,
+        name: data.name ?? slug,
+        brand: data.brand ?? undefined,
+        currentPrice: typeof data.price === "number" ? data.price : undefined,
+        categoryPath: breadcrumbs && breadcrumbs.length > 0 ? breadcrumbs : undefined,
+        inStock: data.availability === "available",
+        observedAt: new Date(),
+        raw: data,
+    };
 }
 
 function parseCategorySpec(spec: string): LidlCategoryNode {
