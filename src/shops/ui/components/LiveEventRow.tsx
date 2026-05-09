@@ -61,14 +61,16 @@ export function LiveEventRow({ frame }: LiveEventRowProps) {
                 <button
                     type="button"
                     onClick={() => setExpanded((v) => !v)}
-                    className="w-full grid grid-cols-[80px_60px_70px_60px_1fr_120px] gap-2 py-1 px-3 font-mono text-[11px] text-left cursor-pointer"
+                    className="w-full grid grid-cols-[88px_minmax(110px,140px)_44px_56px_minmax(0,1fr)_minmax(110px,160px)] gap-2 py-1 px-3 font-mono text-[11px] text-left cursor-pointer items-center"
                     aria-expanded={expanded}
                 >
                     <span className="text-muted-foreground">{time}</span>
-                    <ShopBadge origin={frame.shop_origin} />
+                    <span className="min-w-0 overflow-hidden">
+                        <ShopBadge origin={frame.shop_origin} className="max-w-full truncate" />
+                    </span>
                     <span className={statusColor(frame.status)}>{frame.status ?? "—"}</span>
                     <span className={durationColor(frame.duration_ms)}>{frame.duration_ms.toFixed(0)}ms</span>
-                    <span className="truncate" title={frame.url}>
+                    <span className="truncate min-w-0" title={frame.url}>
                         <span className="text-muted-foreground mr-1.5">{frame.method}</span>
                         {frame.url}
                     </span>
@@ -90,10 +92,12 @@ export function LiveEventRow({ frame }: LiveEventRowProps) {
 
     if (frame.event === "crawl-progress") {
         return (
-            <div className="grid grid-cols-[80px_60px_1fr_140px] gap-2 py-1 px-3 font-mono text-[11px] hover:bg-white/5 transition-colors border-b border-zinc-900/50">
+            <div className="grid grid-cols-[88px_minmax(110px,140px)_minmax(0,1fr)_140px] gap-2 py-1 px-3 font-mono text-[11px] hover:bg-white/5 transition-colors border-b border-zinc-900/50 items-center">
                 <span className="text-muted-foreground">{time}</span>
-                <ShopBadge origin={frame.shop_origin} />
-                <span className="truncate text-[var(--color-neon-cyan)]">
+                <span className="min-w-0 overflow-hidden">
+                    <ShopBadge origin={frame.shop_origin} className="max-w-full truncate" />
+                </span>
+                <span className="truncate min-w-0 text-[var(--color-neon-cyan)]">
                     {frame.strategy} :: {frame.products_seen}/{frame.products_new}/{frame.prices_recorded}
                 </span>
                 <Badge
@@ -116,10 +120,12 @@ export function LiveEventRow({ frame }: LiveEventRowProps) {
 
     if (frame.event === "notification-fired") {
         return (
-            <div className="grid grid-cols-[80px_60px_1fr_140px] gap-2 py-1 px-3 font-mono text-[11px] hover:bg-white/5 transition-colors border-b border-zinc-900/50">
+            <div className="grid grid-cols-[88px_minmax(110px,140px)_minmax(0,1fr)_140px] gap-2 py-1 px-3 font-mono text-[11px] hover:bg-white/5 transition-colors border-b border-zinc-900/50 items-center">
                 <span className="text-muted-foreground">{time}</span>
-                <ShopBadge origin={frame.shop_origin} />
-                <span className="truncate text-[var(--color-neon-amber)]">
+                <span className="min-w-0 overflow-hidden">
+                    <ShopBadge origin={frame.shop_origin} className="max-w-full truncate" />
+                </span>
+                <span className="truncate min-w-0 text-[var(--color-neon-amber)]">
                     {frame.title} — {frame.body}
                 </span>
                 <Badge

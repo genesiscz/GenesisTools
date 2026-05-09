@@ -4,6 +4,8 @@ export interface NavLink {
     label: string;
     href: string;
     icon?: ReactNode;
+    /** Optional decoration rendered to the right of the label (e.g. a count badge) */
+    badge?: ReactNode;
 }
 
 export interface DashboardLayoutProps {
@@ -77,7 +79,7 @@ export function DashboardLayout({
                         {/* Navigation */}
                         {navLinks && navLinks.length > 0 && (
                             <nav className="flex items-center gap-0.5 sm:gap-1">
-                                {navLinks.map(({ label, href, icon: linkIcon }) => {
+                                {navLinks.map(({ label, href, icon: linkIcon, badge }) => {
                                     const isActive = activePath === href;
                                     return (
                                         <a
@@ -98,6 +100,7 @@ export function DashboardLayout({
                                         >
                                             {linkIcon}
                                             <span className="hidden sm:inline">{label}</span>
+                                            {badge}
                                         </a>
                                     );
                                 })}

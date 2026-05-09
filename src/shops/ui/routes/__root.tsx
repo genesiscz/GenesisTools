@@ -85,16 +85,13 @@ function ShopsLayout({ children }: { children: React.ReactNode }) {
 
         return {
             ...l,
-            icon: (
-                <span className="relative inline-flex">
-                    {l.icon}
-                    <Badge
-                        variant="destructive"
-                        className="absolute -top-1.5 -right-2 h-3.5 min-w-3.5 px-0.5 text-[9px] font-mono leading-none"
-                    >
-                        {matchBadgeCount}
-                    </Badge>
-                </span>
+            badge: (
+                <Badge
+                    variant="destructive"
+                    className="ml-1 h-4 min-w-4 px-1 text-[9px] font-mono leading-none rounded-full"
+                >
+                    {matchBadgeCount}
+                </Badge>
             ),
         };
     });
