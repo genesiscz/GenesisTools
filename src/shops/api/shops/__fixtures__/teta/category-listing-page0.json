@@ -1,6 +1,6 @@
 {
-    "pagination": { "currentPage": 1, "lastPage": 2, "totalItems": 5 },
-    "products": [
+    "pagination": { "currentPage": 1, "itemsPerPage": 3, "totalItems": 5 },
+    "items": [
         {
             "code": "0001234567",
             "name": "Šampon proti lupům 250 ml",
@@ -12,8 +12,8 @@
             "bbyPrices": { "acmd": 12990, "zcmd": 14990, "conditions": null },
             "isStockAvailable": true,
             "taxa": [
-                { "id": 1, "name": "Krása a zdraví", "parentId": null },
-                { "id": 5, "name": "Vlasy", "parentId": 1 }
+                { "code": "KRASA-A-ZDRAVI", "name": "Krása a zdraví", "parent": { "code": "menu_category", "name": "Teta" } },
+                { "code": "VLASY", "name": "Vlasy", "parent": { "code": "KRASA-A-ZDRAVI", "name": "Krása a zdraví" } }
             ]
         },
         {
@@ -26,7 +26,9 @@
             "originalPrice": 8990,
             "bbyPrices": { "acmd": 8990, "zcmd": 8990, "conditions": null },
             "isStockAvailable": true,
-            "taxa": [{ "id": 1, "name": "Krása a zdraví", "parentId": null }]
+            "taxa": [
+                { "code": "KRASA-A-ZDRAVI", "name": "Krása a zdraví", "parent": { "code": "menu_category", "name": "Teta" } }
+            ]
         },
         {
             "code": "0003333333",
@@ -42,7 +44,9 @@
                 "conditions": "za 2 ks při koupi 2 ks"
             },
             "isStockAvailable": false,
-            "taxa": [{ "id": 2, "name": "Děcka a mamičky", "parentId": null }]
+            "taxa": [
+                { "code": "DECKA", "name": "Děcka a mamičky", "parent": { "code": "menu_category", "name": "Teta" } }
+            ]
         }
     ]
 }

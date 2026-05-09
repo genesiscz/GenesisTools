@@ -64,20 +64,22 @@ export class TetaClient extends ShopApiClient {
                     signal: opts.signal,
                 }
             );
-            const products = listing.products ?? [];
-            if (products.length === 0) {
+            const items = listing.items ?? [];
+            if (items.length === 0) {
                 return;
             }
 
-            for (const product of products) {
-                yield this.toRawProduct(product);
+            for (const item of items) {
+                yield this.toRawProduct(item);
                 yielded++;
                 if (opts.limit !== undefined && yielded >= opts.limit) {
                     return;
                 }
             }
 
-            lastPage = listing.pagination?.lastPage ?? page;
+            const totalItems = listing.pagination?.totalItems;
+            const itemsPerPage = listing.pagination?.itemsPerPage ?? PAGE_SIZE;
+            lastPage = totalItems !== undefined ? Math.ceil(totalItems / itemsPerPage) : page;
             page++;
         }
     }
@@ -159,49 +161,26 @@ function halvesToCZK(value: number | undefined): number | undefined {
 }
 
 function buildBreadcrumb(taxa: TetaTaxon[]): string[] {
-    if (taxa.length === 0) {
+    const categoryTaxa = taxa.filter((t) => t.parent.code !== "article_brands");
+    if (categoryTaxa.length === 0) {
         return [];
     }
 
-    const byId = new Map<number, TetaTaxon>();
-    for (const t of taxa) {
-        byId.set(t.id, t);
+    const byCode = new Map<string, TetaTaxon>();
+    for (const t of categoryTaxa) {
+        byCode.set(t.code, t);
     }
 
-    const leaf = taxa.reduce<TetaTaxon | null>((deepest, t) => {
-        if (!deepest) {
-            return t;
-        }
-
-        const dDepth = depth(deepest, byId);
-        const tDepth = depth(t, byId);
-        return tDepth > dDepth ? t : deepest;
-    }, null);
-    if (!leaf) {
-        return [];
-    }
-
+    const root = categoryTaxa.find((t) => !byCode.has(t.parent.code)) ?? categoryTaxa[0];
     const path: string[] = [];
-    let cursor: TetaTaxon | undefined = leaf;
-    while (cursor) {
-        path.unshift(cursor.name);
-        const next: TetaTaxon | undefined = cursor.parentId !== null ? byId.get(cursor.parentId) : undefined;
-        cursor = next;
+    let cursor: TetaTaxon | undefined = root;
+    let guard = 0;
+    while (cursor && guard < 100) {
+        path.push(cursor.name);
+        const child: TetaTaxon | undefined = categoryTaxa.find((t) => t.parent.code === cursor!.code);
+        cursor = child;
+        guard++;
     }
 
     return path;
-}
-
-function depth(node: TetaTaxon, byId: Map<number, TetaTaxon>): number {
-    let d = 0;
-    let cursor: TetaTaxon | undefined = node;
-    while (cursor && cursor.parentId !== null) {
-        d++;
-        cursor = byId.get(cursor.parentId);
-        if (d > 100) {
-            return d;
-        }
-    }
-
-    return d;
 }

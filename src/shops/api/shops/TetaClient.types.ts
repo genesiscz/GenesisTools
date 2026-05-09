@@ -1,9 +1,14 @@
 // Adapted from topmonks/hlidac-shopu (EUPL-1.2) — actors/tetadrogerie-daily/main.js
 
+export interface TetaTaxonParent {
+    code: string;
+    name?: string;
+}
+
 export interface TetaTaxon {
-    id: number;
+    code: string;
     name: string;
-    parentId: number | null;
+    parent: TetaTaxonParent;
 }
 
 export interface TetaBbyPrices {
@@ -30,11 +35,11 @@ export interface TetaRawProduct {
 
 export interface TetaPagination {
     currentPage?: number;
-    lastPage?: number;
+    itemsPerPage?: number;
     totalItems?: number;
 }
 
 export interface TetaCategoryListingResponse {
     pagination?: TetaPagination;
-    products?: TetaRawProduct[];
+    items?: TetaRawProduct[];
 }

@@ -1,6 +1,6 @@
 {
-    "pagination": { "currentPage": 2, "lastPage": 2, "totalItems": 5 },
-    "products": [
+    "pagination": { "currentPage": 2, "itemsPerPage": 3, "totalItems": 5 },
+    "items": [
         {
             "code": "0004444444",
             "name": "Tělové mléko 200 ml",
@@ -11,7 +11,9 @@
             "originalPrice": 14990,
             "bbyPrices": { "acmd": 14990, "zcmd": 14990, "conditions": null },
             "isStockAvailable": true,
-            "taxa": [{ "id": 1, "name": "Krása a zdraví", "parentId": null }]
+            "taxa": [
+                { "code": "KRASA-A-ZDRAVI", "name": "Krása a zdraví", "parent": { "code": "menu_category", "name": "Teta" } }
+            ]
         },
         {
             "code": "0005555555",
@@ -23,7 +25,9 @@
             "originalPrice": 24990,
             "bbyPrices": { "acmd": 19990, "zcmd": 24990, "conditions": null },
             "isStockAvailable": true,
-            "taxa": [{ "id": 1, "name": "Krása a zdraví", "parentId": null }]
+            "taxa": [
+                { "code": "KRASA-A-ZDRAVI", "name": "Krása a zdraví", "parent": { "code": "menu_category", "name": "Teta" } }
+            ]
         }
     ]
 }
