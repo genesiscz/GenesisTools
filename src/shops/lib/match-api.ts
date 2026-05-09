@@ -164,6 +164,41 @@ export async function acceptCandidatePair(args: PairIdsArgs): Promise<void> {
     await merger.merge(decision);
 }
 
+export function resolveProductId(shopsDb: ShopsDatabase, input: string): number {
+    if (/^\d+$/.test(input)) {
+        const id = Number(input);
+        const row = shopsDb.raw().query<{ id: number }, [number]>("SELECT id FROM products WHERE id = ?").get(id);
+        if (!row) {
+            throw new Error(`No product with id ${id}`);
+        }
+
+        return id;
+    }
+
+    const row = shopsDb.raw().query<{ id: number }, [string]>("SELECT id FROM products WHERE url = ?").get(input);
+    if (!row) {
+        throw new Error(`No product with url ${input}`);
+    }
+
+    return row.id;
+}
+
+export interface RematchProductArgs {
+    shopsDb?: ShopsDatabase;
+    productId: number;
+}
+
+export async function rematchProduct(args: RematchProductArgs): Promise<void> {
+    const shopsDb = args.shopsDb ?? getShopsDatabase();
+    const now = new Date().toISOString();
+    shopsDb.raw().run(
+        `UPDATE products SET master_product_id = NULL, match_method = 'pending', match_at = ?, last_updated_at = ?
+             WHERE id = ?`,
+        [now, now, args.productId]
+    );
+    log.info({ productId: args.productId }, "product reset to pending; run a crawl flush to re-match");
+}
+
 export async function rejectCandidatePair(args: PairIdsArgs): Promise<void> {
     const shopsDb = args.shopsDb ?? getShopsDatabase();
     const lo = Math.min(args.productIdA, args.productIdB);

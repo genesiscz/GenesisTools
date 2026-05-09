@@ -3,7 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ShopsDatabase } from "../db/ShopsDatabase";
-import { acceptCandidatePair, listPendingCandidates, rejectCandidatePair } from "./match-api";
+import { acceptCandidatePair, listPendingCandidates, rejectCandidatePair, rematchProduct, resolveProductId } from "./match-api";
 
 function setup() {
     const db = new ShopsDatabase(join(mkdtempSync(join(tmpdir(), "shops-mapi-")), "test.db"));
@@ -69,6 +69,61 @@ describe("acceptCandidatePair", () => {
 
         const masterCount = db.raw().query<{ n: number }, []>("SELECT COUNT(*) AS n FROM master_products").get()?.n;
         expect(masterCount).toBe(1);
+        db.close();
+    });
+});
+
+describe("resolveProductId", () => {
+    it("resolves numeric id when product exists", () => {
+        const { db, ids } = setup();
+        expect(resolveProductId(db, String(ids[0]))).toBe(ids[0]);
+        db.close();
+    });
+
+    it("resolves URL when product exists", () => {
+        const { db, ids } = setup();
+        expect(resolveProductId(db, "http://1")).toBe(ids[0]);
+        db.close();
+    });
+
+    it("throws for unknown numeric id", () => {
+        const { db } = setup();
+        expect(() => resolveProductId(db, "999999")).toThrow(/No product with id/);
+        db.close();
+    });
+
+    it("throws for unknown URL", () => {
+        const { db } = setup();
+        expect(() => resolveProductId(db, "http://nope")).toThrow(/No product with url/);
+        db.close();
+    });
+});
+
+describe("rematchProduct", () => {
+    it("resets master_product_id and bumps match_at", async () => {
+        const { db, ids } = setup();
+        const now = new Date().toISOString();
+        db.raw().run(
+            `INSERT INTO master_products (canonical_name, canonical_name_normalized, canonical_slug, total_offers, created_at, updated_at, verified_by)
+             VALUES ('A', 'a', 'a', 1, ?, ?, 'auto')`,
+            [now, now]
+        );
+        const masterId = db.raw().query<{ id: number }, []>("SELECT last_insert_rowid() AS id").get()!.id;
+        db.raw().run(`UPDATE products SET master_product_id = ?, match_at = '2020-01-01T00:00:00Z' WHERE id = ?`, [
+            masterId,
+            ids[0],
+        ]);
+
+        await rematchProduct({ shopsDb: db, productId: ids[0] });
+
+        const after = db
+            .raw()
+            .query<{ master_product_id: number | null; match_at: string }, [number]>(
+                "SELECT master_product_id, match_at FROM products WHERE id = ?"
+            )
+            .get(ids[0]);
+        expect(after?.master_product_id).toBeNull();
+        expect(new Date(after!.match_at).getTime()).toBeGreaterThan(new Date("2020-01-01T00:00:00Z").getTime());
         db.close();
     });
 });
