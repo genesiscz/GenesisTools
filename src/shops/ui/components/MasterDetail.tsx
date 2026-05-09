@@ -2,6 +2,7 @@ import type { MasterDetail as MasterDetailType, PriceHistoryResponse } from "@ap
 import { Skeleton } from "@app/utils/ui/components/skeleton";
 import { ImageOff } from "lucide-react";
 import { CrossShopOffersTable } from "./CrossShopOffersTable";
+import { OfferDetailTabs } from "./OfferDetailTabs";
 import { PriceHistoryChart } from "./PriceHistoryChart";
 import { ShopBadge } from "./ShopBadge";
 import { StarWatchButton } from "./StarWatchButton";
@@ -78,6 +79,15 @@ export function MasterDetail({ detail, history, isLoading, isHistoryLoading }: M
                 </h2>
                 <CrossShopOffersTable offers={detail.offers} />
             </div>
+
+            {detail.offers.length > 0 ? (
+                <div>
+                    <h2 className="font-mono text-xs tracking-[0.25em] text-muted-foreground uppercase mb-3">
+                        Per-shop detail
+                    </h2>
+                    <OfferDetailTabs offers={detail.offers} />
+                </div>
+            ) : null}
         </div>
     );
 }
