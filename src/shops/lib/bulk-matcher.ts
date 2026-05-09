@@ -27,6 +27,18 @@ export function createBulkMatcher(shopsDb: ShopsDatabase): BulkMatcher {
     return new BulkMatcher({ matcher, shopsDb, executor });
 }
 
+/**
+ * Construct just the per-product MatchExecutor (with all default deps wired) for callers that
+ * want to apply the matcher to a single new product — e.g. `tools shops get` ingestion. Avoids
+ * the BulkMatcher.flush() machinery (which scans the entire `pending` queue across the DB).
+ */
+export function createMatchExecutor(shopsDb: ShopsDatabase): MatchExecutor {
+    const repo = new BrandAliasesRepository(shopsDb);
+    const resolver = new BrandResolver(repo);
+    const matcher = new Matcher(shopsDb, resolver);
+    return new MatchExecutor({ matcher, shopsDb });
+}
+
 export interface BulkMatcherStats {
     linked: number;
     seeded: number;
@@ -138,9 +150,11 @@ export class BulkMatcher {
                 continue;
             }
 
-            // Same-shop guard: only allow merge when names are identical
-            // (true duplicate listing; not different SKUs sharing a fingerprint).
-            if (this.masterAlreadyHasShop(row.masterId, row.pShop, row.productId) && row.pName !== row.mName) {
+            // Same-shop guard: never link via signature when the master
+            // already hosts another active product from this shop. The shop's
+            // own slug already separates SKUs (sizes, variants, listings) and
+            // we have no EAN here to override that judgment.
+            if (this.masterAlreadyHasShop(row.masterId, row.pShop, row.productId)) {
                 continue;
             }
 

@@ -7,7 +7,15 @@ import { compatPackCount } from "./multipack-guard";
 import type { Unit } from "./normalize";
 
 function tokenize(s: string): Set<string> {
-    return new Set(s.split(/\s+/).filter((t) => t.length > 0));
+    // Strip Unicode punctuation/symbols per token so trivial differences
+    // (e.g. "Zott Hungry?" vs "Zott Hungry") don't drop the intersection
+    // count and tank fuzzy similarity for cross-shop matching.
+    return new Set(
+        s
+            .split(/\s+/)
+            .map((t) => t.replace(/[^\p{L}\p{N}]+/gu, ""))
+            .filter((t) => t.length > 0)
+    );
 }
 
 function containmentSimilarity(a: string, b: string): number {
@@ -136,19 +144,27 @@ export class Matcher {
 
     /**
      * Drop masters that already host an *active* product from the same shop as
-     * the input — fuzzy matches across different SKUs in the same shop are
-     * always wrong (the shop already gave the SKUs different slugs/ids, so they
-     * are distinct products by construction). Without this guard the matcher
-     * merges "Mini" / multipack / "5 × 37g" variants under one master because
-     * they share brand + name tokens, producing the broken "3× rohlik in
-     * Cross-Shop Offers" cards.
+     * the input. Two products from the same shop with different slugs are
+     * different SKUs by construction, even when their names look identical —
+     * shops use the slug to differentiate sizes/variants and we have no
+     * ground-truth to merge them without an EAN.
      *
-     * Exception: when the input's name is *identical* to the master's
-     * canonical_name_normalized (or matched by EAN), allow it. Same-shop
-     * duplicate listings (rare but real) should still collapse.
+     * Real cases this catches:
+     * - "7Days Croissant s kakaovou náplní" vs "Mini" vs "5×37g multipack"
+     *   (different names, same brand, fuzzy-linked at 0.95 → all rohlik).
+     * - "Medovník originál classic" listed 4× under one master from the same
+     *   shop at 43.90 / 134.90 / 269.90 / 519.90 Kč (different sizes, identical
+     *   normalized name).
+     *
+     * EAN matches (Layer 0) bypass the guard via `bypassSameShopBlock=true`
+     * because EAN is ground-truth — same EAN + same shop = real duplicate.
      */
-    private filterSameShopMasters(rows: MasterRow[], input: MatcherInput): MasterRow[] {
-        if (rows.length === 0) {
+    private filterSameShopMasters(
+        rows: MasterRow[],
+        input: MatcherInput,
+        bypassSameShopBlock = false
+    ): MasterRow[] {
+        if (rows.length === 0 || bypassSameShopBlock) {
             return rows;
         }
 
@@ -157,15 +173,7 @@ export class Matcher {
             return rows;
         }
 
-        return rows.filter((m) => {
-            if (!taken.has(m.id)) {
-                return true;
-            }
-
-            // Same-shop master: allow only if names are identical
-            // (true duplicate listing, not a variant).
-            return m.canonical_name_normalized === input.nameNormalized;
-        });
+        return rows.filter((m) => !taken.has(m.id));
     }
 
     private collectSameShopMasterIds(input: MatcherInput): Set<number> {
@@ -202,7 +210,9 @@ export class Matcher {
             .query<MasterRow, [string]>(`SELECT ${MASTER_COLS} FROM master_products WHERE ean = ?`)
             .all(input.ean);
 
-        const allowed = this.filterSameShopMasters(rows, input);
+        // EAN match is ground-truth across shops AND same-shop duplicates,
+        // so bypass the same-shop guard at this layer.
+        const allowed = this.filterSameShopMasters(rows, input, true);
         const compat = allowed.filter((m) => compatPackCount(input.packCount, m.pack_count));
         if (compat.length === 0) {
             return null;
@@ -268,9 +278,7 @@ export class Matcher {
                  WHERE brand_normalized = ? AND flavor_key = ?`
             )
             .all(input.brandNormalized, input.flavorKey);
-        const eligible = this.filterSameShopMasters(rows, input).filter(
-            (m) => m.unit === null || input.unit === null
-        );
+        const eligible = this.filterSameShopMasters(rows, input).filter((m) => m.unit === null || input.unit === null);
         return this.bestFuzzy(input, eligible, this.config.LAYER2B_FUZZY_MIN, "sig:no-size", 2);
     }
 

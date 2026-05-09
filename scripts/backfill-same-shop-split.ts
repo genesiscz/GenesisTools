@@ -75,10 +75,6 @@ for (const group of groups) {
     const [, ...extras] = products;
 
     for (const p of extras) {
-        if (p.name_normalized === master.canonical_name_normalized) {
-            continue;
-        }
-
         const now = new Date().toISOString();
         const newSlug = `${master.canonical_slug}--split-${p.id}`.slice(0, 240);
         raw.run(

@@ -314,7 +314,10 @@ describe("Matcher same-shop guard", () => {
         db.close();
     });
 
-    it("does NOT link via EAN to a master that already has same-shop product", async () => {
+    it("DOES link via EAN even when master has same-shop product (EAN is ground truth)", async () => {
+        // EAN is the only signal that overrides the same-shop guard. Two products
+        // in the same shop with the same EAN are real duplicates (same SKU listed
+        // twice, e.g. via different category routes).
         const { db, matcher } = setup();
         const masterId = seedMaster(db, { ean: "1234567890123" });
         seedProduct(db, {
@@ -330,9 +333,44 @@ describe("Matcher same-shop guard", () => {
         });
 
         const result = await matcher.match(input);
+        expect(result.kind).toBe("linked");
+        if (result.kind === "linked") {
+            expect(result.method).toBe("ean");
+            expect(result.masterProductId).toBe(masterId);
+        }
+
+        db.close();
+    });
+
+    it("does NOT link a same-shop product to a master with identical canonical name (no EAN)", async () => {
+        // Reproduces the "Medovník originál classic" bug: same shop listed 4
+        // size variants under one master because the normalized name was
+        // identical. With no EAN to back the merge, they must stay distinct.
+        const { db, matcher } = setup();
+        const masterId = seedMaster(db, {
+            canonical_name_normalized: "medovnik original classic",
+            brand_normalized: "medovnik",
+        });
+        seedProduct(db, {
+            masterId,
+            shopOrigin: "rohlik.cz",
+            nameNormalized: "medovnik original classic",
+        });
+
+        const input = makeInput({
+            productId: 999,
+            shopOrigin: "rohlik.cz",
+            nameNormalized: "medovnik original classic",
+            brandNormalized: "medovnik",
+        });
+
+        const result = await matcher.match(input);
         if (result.kind === "linked") {
             expect(result.masterProductId).not.toBe(masterId);
+        } else {
+            expect(["seed", "gray-zone"]).toContain(result.kind);
         }
+
         db.close();
     });
 });

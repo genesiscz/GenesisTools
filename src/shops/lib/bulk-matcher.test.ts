@@ -86,7 +86,11 @@ describe("BulkMatcher.flush", () => {
         db.close();
     });
 
-    it("collapses two same-batch pending products into one master", async () => {
+    it("does NOT collapse same-shop same-batch pending products without EAN", async () => {
+        // With no EAN ground truth, two products from the same shop with
+        // identical names are different SKUs by construction (different
+        // sizes / variants / listing routes). The shop's own slug already
+        // separates them, so we must not blindly collapse them.
         const { db, bulk, crawlRunId } = setup();
         insertPending(db, {
             nameNormalized: "samebatch widget",
@@ -95,6 +99,27 @@ describe("BulkMatcher.flush", () => {
         insertPending(db, {
             nameNormalized: "samebatch widget",
             brandNormalized: "batchbrand",
+        });
+        await bulk.flush(crawlRunId);
+        const masters = db
+            .raw()
+            .query<{ n: number }, []>("SELECT COUNT(*) AS n FROM master_products WHERE brand_normalized = 'batchbrand'")
+            .get();
+        expect(masters?.n).toBe(2);
+        db.close();
+    });
+
+    it("DOES collapse same-shop same-batch products that share an EAN", async () => {
+        const { db, bulk, crawlRunId } = setup();
+        insertPending(db, {
+            nameNormalized: "samebatch widget",
+            brandNormalized: "batchbrand",
+            ean: "1111111111111",
+        });
+        insertPending(db, {
+            nameNormalized: "samebatch widget",
+            brandNormalized: "batchbrand",
+            ean: "1111111111111",
         });
         await bulk.flush(crawlRunId);
         const masters = db
