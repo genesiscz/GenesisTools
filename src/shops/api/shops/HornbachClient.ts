@@ -4,8 +4,8 @@
 // renamed product-* → article-* in 2026 and prices moved off the DOM, so the
 // reliable extraction path is the inlined Apollo state (matches the actor).
 
-import { parseHTML } from "linkedom";
 import { SafeJSON } from "@app/utils/json";
+import { parseHTML } from "linkedom";
 import { ShopApiClient, type ShopApiClientConstructorConfig } from "../ShopApiClient";
 import type { Category, ListingOptions, RawProduct, ShopCapabilities } from "../ShopApiClient.types";
 import {
