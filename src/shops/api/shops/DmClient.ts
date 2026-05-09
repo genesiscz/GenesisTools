@@ -1,5 +1,7 @@
 // Adapted from topmonks/hlidac-shopu (EUPL-1.2) — actors/dm-daily/main.js
 
+import logger from "@app/logger";
+import { ApiClientError } from "@app/utils/api/ApiClient";
 import { ShopApiClient, type ShopApiClientConstructorConfig } from "../ShopApiClient";
 import type { Category, ListingOptions, RawProduct, ShopCapabilities } from "../ShopApiClient.types";
 import type {
@@ -45,8 +47,18 @@ const DM_COUNTRY_CONFIGS: Record<DmCountry, DmCountryConfig> = {
 
 const PAGE_SIZE = 60;
 
+// dm's product-search API returns HTTP 429 + `{"message":"Too many requests!..."}`
+// after a short burst. Empirically the sliding window recovers in ~60s. Wait
+// times escalate so a longer cooldown isn't immediately retried at the same
+// pace; cap at 3 attempts before surfacing the error to the caller.
+const SEARCH_429_BACKOFF_MS = [10_000, 30_000, 60_000];
+
+const dmRetryLog = logger.child({ component: "DmClient" });
+
 export interface DmClientConfig extends ShopApiClientConstructorConfig {
     country?: DmCountry;
+    /** Backoff schedule (ms) when search-api returns 429. Test-only override. */
+    searchBackoffMs?: number[];
 }
 
 export class DmClient extends ShopApiClient {
@@ -65,9 +77,10 @@ export class DmClient extends ShopApiClient {
     protected readonly storeRoot: string;
     protected readonly contentBase: string;
     protected readonly searchBase: string;
+    protected readonly searchBackoffMs: number[];
 
     constructor(config: DmClientConfig = {}) {
-        const { country = "CZ", ...rest } = config;
+        const { country = "CZ", searchBackoffMs, ...rest } = config;
         const countryConfig = DM_COUNTRY_CONFIGS[country];
         super({
             baseUrl: countryConfig.storeRoot,
@@ -84,6 +97,7 @@ export class DmClient extends ShopApiClient {
         this.storeRoot = countryConfig.storeRoot;
         this.contentBase = countryConfig.contentBase;
         this.searchBase = countryConfig.searchBase;
+        this.searchBackoffMs = searchBackoffMs ?? SEARCH_429_BACKOFF_MS;
     }
 
     async getProduct(input: { url?: string; slug?: string }): Promise<RawProduct> {
@@ -114,16 +128,16 @@ export class DmClient extends ShopApiClient {
         while (page < totalPages) {
             opts.signal?.throwIfAborted();
             await this.waitTurn();
-            const listing = await this.get<DmProductListingResponse>(this.searchBase, {
-                params: {
+            const listing = await this.fetchSearchPage(
+                {
                     ...productQuery,
                     pageSize: PAGE_SIZE,
                     currentPage: page,
                     sort: "price_asc",
                     type: "search-static",
                 },
-                signal: opts.signal,
-            });
+                opts.signal
+            );
 
             for (const product of listing.products ?? []) {
                 yield this.toRawProduct(product, opts.category);
@@ -146,6 +160,47 @@ export class DmClient extends ShopApiClient {
         const out: Category[] = [];
         flattenNavigation(tree.navigation, undefined, out, this.storeRoot);
         return out;
+    }
+
+    protected async fetchSearchPage(
+        params: Record<string, string | number>,
+        signal: AbortSignal | undefined
+    ): Promise<DmProductListingResponse> {
+        // Disable ofetch's built-in retry on this call so we can pace the
+        // backoff ourselves; ofetch retries 429 immediately, which fails
+        // every time against dm's sliding-window limiter.
+        let lastError: unknown;
+        for (let attempt = 0; attempt <= this.searchBackoffMs.length; attempt++) {
+            signal?.throwIfAborted();
+            try {
+                return await this.get<DmProductListingResponse>(this.searchBase, {
+                    params,
+                    signal,
+                    retry: 0,
+                });
+            } catch (err) {
+                lastError = err;
+                const isRateLimited = err instanceof ApiClientError && err.status === 429;
+                if (!isRateLimited || attempt === this.searchBackoffMs.length) {
+                    throw err;
+                }
+
+                const waitMs = this.searchBackoffMs[attempt];
+                dmRetryLog.warn(
+                    {
+                        shop: this.shopOrigin,
+                        attempt: attempt + 1,
+                        maxAttempts: this.searchBackoffMs.length + 1,
+                        waitMs,
+                        currentPage: params.currentPage,
+                    },
+                    "dm search-api 429 — backing off"
+                );
+                await Bun.sleep(waitMs);
+            }
+        }
+
+        throw lastError;
     }
 
     private toRawProduct(p: DmRawProduct, categoryPath: string): RawProduct {

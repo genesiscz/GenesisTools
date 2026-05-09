@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { ApiClientError } from "@app/utils/api/ApiClient";
 import { SafeJSON } from "@app/utils/json";
 import { MemoryHttpRequestSink } from "../../lib/http-sink";
 import { DmClient } from "./DmClient";
@@ -119,6 +120,99 @@ describe("DmClient.listCategory", () => {
         expect(out[0].brand).toBe("TestBrand");
         expect(out[0].currentPrice).toBe(12.9);
         expect(out[0].url).toContain("dm.cz");
+    });
+
+    it("retries with backoff when search-api returns 429", async () => {
+        const meta = {
+            mainData: [{ type: "products", query: { filters: "allCategories.id:010101" } }],
+        };
+        const listing = {
+            products: [
+                {
+                    gtin: 999,
+                    dan: 99,
+                    brandName: "T",
+                    tileData: { title: { tileHeadline: "X" }, self: "/p/x" },
+                },
+            ],
+            currentPage: 0,
+            totalPages: 1,
+        };
+        const sink = new MemoryHttpRequestSink();
+        const client = new DmClient({ sink, rateLimitPerSecond: 1000, searchBackoffMs: [1, 1, 1] });
+        const calls: string[] = [];
+        let searchHits = 0;
+        Object.defineProperty(client, "get", {
+            value: async (path: string): Promise<unknown> => {
+                calls.push(path);
+                if (path.includes("/cz/search/")) {
+                    searchHits++;
+                    if (searchHits <= 2) {
+                        throw new ApiClientError("Too many requests", {
+                            method: "GET",
+                            url: path,
+                            status: 429,
+                            statusText: "Too Many Requests",
+                            responseData: { message: "Too many requests!" },
+                        });
+                    }
+
+                    return listing;
+                }
+
+                if (path.includes("/test-cat/")) {
+                    return meta;
+                }
+
+                throw new Error(`No fixture for ${path}`);
+            },
+        });
+
+        const out: Awaited<ReturnType<typeof client.getProduct>>[] = [];
+        for await (const p of client.listCategory({ category: "test-cat", limit: 1 })) {
+            out.push(p);
+        }
+
+        expect(out.length).toBe(1);
+        expect(searchHits).toBe(3);
+    });
+
+    it("surfaces 429 to caller after exhausting backoff schedule", async () => {
+        const meta = {
+            mainData: [{ type: "products", query: { filters: "allCategories.id:010101" } }],
+        };
+        const sink = new MemoryHttpRequestSink();
+        const client = new DmClient({ sink, rateLimitPerSecond: 1000, searchBackoffMs: [1, 1] });
+        let searchHits = 0;
+        Object.defineProperty(client, "get", {
+            value: async (path: string): Promise<unknown> => {
+                if (path.includes("/cz/search/")) {
+                    searchHits++;
+                    throw new ApiClientError("Too many requests", {
+                        method: "GET",
+                        url: path,
+                        status: 429,
+                        statusText: "Too Many Requests",
+                    });
+                }
+
+                if (path.includes("/test-cat/")) {
+                    return meta;
+                }
+
+                throw new Error(`No fixture for ${path}`);
+            },
+        });
+
+        const consume = async (): Promise<void> => {
+            for await (const _ of client.listCategory({ category: "test-cat", limit: 1 })) {
+                // noop
+            }
+        };
+
+        await expect(consume).toThrow(/Too many requests/);
+        // Initial attempt + 2 backoff retries = 3 total.
+        expect(searchHits).toBe(3);
     });
 
     it("respects opts.limit", async () => {
