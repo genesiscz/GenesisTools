@@ -3,6 +3,7 @@ import { removeDiacritics } from "@app/utils/string";
 import type { HlidacGetByUrlResult } from "../api/HlidacShopuClient.types";
 import type { ShopsDatabase } from "../db/ShopsDatabase";
 import type { Product } from "../db/types";
+import { createMatchExecutor } from "./bulk-matcher";
 import { refreshMasterDenorm } from "./master-denorm";
 
 export interface IngestArgs {
@@ -57,44 +58,64 @@ export async function ingestFromHlidacResult(args: IngestArgs): Promise<IngestRe
     const name = hlidacName ?? existingProduct?.name ?? deriveNameFromUrl(url, slug);
     const imageUrl = data.meta?.itemImage ?? data.detail?.metadata.imageUrl ?? existingProduct?.image_url ?? null;
 
-    let masterId = existingProduct?.master_product_id ?? null;
-    if (!masterId) {
-        const canonicalSlug = computeCanonicalSlug(name, data.parsed.origin, slug);
-        masterId = await db.upsertMasterProduct({
-            canonical_name: name,
-            canonical_name_normalized: normalizeText(name),
-            canonical_slug: canonicalSlug,
-            brand: null,
-            brand_normalized: null,
-            ean: null,
-            unit: null,
-            unit_amount: null,
-            pack_count: null,
-            flavor_key: null,
-            representative_image_url: imageUrl,
-            attributes_json: "{}",
-            verified_by: "auto",
-        });
-    }
+    const enrichment = data.enrichment;
+    const brand = enrichment?.brand ?? existingProduct?.brand ?? null;
+    const ean = enrichment?.ean ?? existingProduct?.ean ?? null;
+    const unit = enrichment?.unit ?? existingProduct?.unit ?? null;
+    const unitAmount = enrichment?.unitAmount ?? existingProduct?.unit_amount ?? null;
+    const packCount = enrichment?.packCount ?? existingProduct?.pack_count ?? null;
+    const brandNormalized = brand !== null ? normalizeText(brand) : null;
 
+    // Insert the product as 'pending' first; the matcher decides whether to
+    // link to an existing master (EAN, signature, fuzzy-brand-name) or seed
+    // a new one. Previously this path always auto-seeded, which created
+    // separate masters for the same product across shops whenever Hlídač's
+    // metadata was thin (no EAN, no brand) — even if the per-shop ShopClient
+    // could have provided that metadata via `enrichment`.
     const productId = await db.upsertProduct({
         shop_origin: data.parsed.origin,
         slug,
         url,
         name,
         name_normalized: normalizeText(name),
-        brand: null,
-        brand_normalized: null,
-        ean: null,
+        brand,
+        brand_normalized: brandNormalized,
+        ean,
         image_url: imageUrl,
-        unit: null,
-        unit_amount: null,
-        pack_count: null,
+        unit,
+        unit_amount: unitAmount,
+        pack_count: packCount,
         flavor_key: null,
-        master_product_id: masterId,
-        match_method: "auto-seed",
+        master_product_id: existingProduct?.master_product_id ?? null,
+        match_method: existingProduct?.master_product_id ? (existingProduct.match_method ?? "auto-seed") : "pending",
         match_similarity: null,
     });
+
+    let masterId = existingProduct?.master_product_id ?? null;
+    if (!masterId) {
+        const result = await createMatchExecutor(db).apply({
+            productId,
+            shopOrigin: data.parsed.origin,
+            name,
+            nameNormalized: normalizeText(name),
+            brandRaw: brand,
+            brandNormalized,
+            ean,
+            unit,
+            unitAmount,
+            packCount,
+            flavorKey: null,
+        });
+        if (result.kind === "linked" || result.kind === "seed") {
+            const row = db
+                .raw()
+                .query<{ master_product_id: number | null }, [number]>(
+                    "SELECT master_product_id FROM products WHERE id = ?"
+                )
+                .get(productId);
+            masterId = row?.master_product_id ?? null;
+        }
+    }
 
     const priceRows = (data.history?.entries ?? [])
         .filter((e) => e.c !== null)
@@ -185,11 +206,3 @@ function deriveNameFromUrl(url: string, slugFallback: string): string {
     return humanized.charAt(0).toUpperCase() + humanized.slice(1);
 }
 
-function computeCanonicalSlug(name: string, origin: string, slug: string): string {
-    const norm = normalizeText(name)
-        .replace(/[^a-z0-9]+/g, "-")
-        .replace(/^-+|-+$/g, "");
-    const safeOrigin = origin.replace(/\./g, "-");
-    const safeSlug = slug.replace(/[^a-z0-9-]+/gi, "-").toLowerCase();
-    return `${safeOrigin}--${safeSlug}--${norm}`.slice(0, 240);
-}

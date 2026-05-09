@@ -55,3 +55,12 @@ export interface KosikListingResponse {
     totalCount?: number;
     showProductsCount?: boolean | number;
 }
+
+/**
+ * `/api/front/product/{numericId}` returns a product wrapped in `product` and
+ * a parallel `breadcrumbs` array — distinct shape from the listing endpoint.
+ */
+export interface KosikProductDetailResponse {
+    breadcrumbs?: Array<{ id?: number; name: string; url?: string }>;
+    product?: KosikRawProductItem;
+}

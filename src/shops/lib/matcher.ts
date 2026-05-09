@@ -159,11 +159,7 @@ export class Matcher {
      * EAN matches (Layer 0) bypass the guard via `bypassSameShopBlock=true`
      * because EAN is ground-truth — same EAN + same shop = real duplicate.
      */
-    private filterSameShopMasters(
-        rows: MasterRow[],
-        input: MatcherInput,
-        bypassSameShopBlock = false
-    ): MasterRow[] {
+    private filterSameShopMasters(rows: MasterRow[], input: MatcherInput, bypassSameShopBlock = false): MasterRow[] {
         if (rows.length === 0 || bypassSameShopBlock) {
             return rows;
         }

@@ -5,6 +5,7 @@ import type { Category, ListingOptions, RawProduct, ShopCapabilities } from "../
 import type {
     KosikListingResponse,
     KosikMenuMainResponse,
+    KosikProductDetailResponse,
     KosikRawCategory,
     KosikRawProductItem,
 } from "./KosikClient.types";
@@ -36,17 +37,22 @@ export class KosikClient extends ShopApiClient {
     }
 
     async getProduct(input: { url?: string; slug?: string }): Promise<RawProduct> {
-        const slug = input.slug ?? this.parseUrl(input.url ?? "").slug;
-        await this.waitTurn();
-        const listing = await this.get<KosikListingResponse>("/api/front/page/products", {
-            params: { slug, limit: 1 },
-        });
-        const item = listing.products?.items?.[0];
-        if (!item) {
-            throw new Error(`Kosik product ${slug} not found in listing`);
+        const numericId = extractNumericId(input.url, input.slug);
+        if (numericId === null) {
+            throw new Error(
+                `KosikClient.getProduct: cannot extract numeric id from url=${input.url ?? "?"} slug=${input.slug ?? "?"}`
+            );
         }
 
-        return this.toRawProduct(item, breadcrumbsString(listing));
+        await this.waitTurn();
+        const detail = await this.get<KosikProductDetailResponse>(`/api/front/product/${numericId}`);
+        const item = detail.product;
+        if (!item) {
+            throw new Error(`Kosik product ${numericId} returned no product field`);
+        }
+
+        const breadcrumbs = (detail.breadcrumbs ?? []).map((b) => b.name).join(" > ");
+        return this.toRawProduct(item, breadcrumbs);
     }
 
     async *listCategory(opts: ListingOptions): AsyncIterable<RawProduct> {
@@ -190,6 +196,17 @@ function urlToSlug(url: string): string {
 function buildListingPath(slug: string): string {
     const params = new URLSearchParams({ slug, limit: String(DEFAULT_LIMIT) });
     return `/api/front/page/products?${params.toString()}`;
+}
+
+function extractNumericId(url: string | undefined, slug: string | undefined): number | null {
+    const candidate = slug ?? url ?? "";
+    const match = candidate.match(/p(\d+)(?:-|$)/);
+    if (!match) {
+        return null;
+    }
+
+    const n = Number.parseInt(match[1], 10);
+    return Number.isFinite(n) ? n : null;
 }
 
 function breadcrumbsString(listing: KosikListingResponse): string {

@@ -1,8 +1,8 @@
 import { HlidacShopuClient } from "../api/HlidacShopuClient";
 import type { HlidacGetByUrlResult } from "../api/HlidacShopuClient.types";
 import { initShopRegistry } from "../api/registry-init";
-import { ShopRegistry } from "../api/ShopRegistry";
 import type { RawProduct } from "../api/ShopApiClient.types";
+import { ShopRegistry } from "../api/ShopRegistry";
 import { getShopsDatabase, type ShopsDatabase } from "../db/ShopsDatabase";
 import { getDefaultSink, type HttpRequestSink } from "./http-sink";
 import { type IngestResult, ingestFromHlidacResult } from "./ingest";
@@ -29,7 +29,7 @@ export async function runGetProduct(opts: RunGetProductOptions): Promise<RunGetP
     const resolveFromShopClient = opts.resolveFromShopClient ?? defaultResolveFromShopClient(sink);
 
     let data = await client.getByUrl(opts.url);
-    if (shouldFallbackToShopClient(data) && data.parsed.origin) {
+    if (shouldEnrichFromShopClient(data) && data.parsed.origin) {
         const raw = await resolveFromShopClient(data.parsed.origin, opts.url);
         if (raw) {
             data = mergeWithRawProduct(data, raw);
@@ -41,14 +41,25 @@ export async function runGetProduct(opts: RunGetProductOptions): Promise<RunGetP
 }
 
 /**
- * Hlídač gave us nothing usable — no S3 history, no /v2/detail, no meta —
- * so the master would otherwise be auto-seeded with a URL-pathname-derived
- * name. Better: ask the shop's own client to scrape the product page (it
- * already mirrors the topmonks/hlidac-shopu actor for that shop).
+ * Trigger ShopClient enrichment when Hlídač's payload is missing data the
+ * matcher relies on for cross-shop linking. Hlídač's S3 metadata never
+ * carries `brand` or `ean` — without these, two records of the same product
+ * across shops auto-seed as separate masters because fuzzy-name + empty
+ * brand falls below the link threshold. ShopClients (per-shop API/scrape)
+ * already harvest brand+ean for their own crawler path, so we reuse that.
+ *
+ * Also fires when name is missing (the original GET-FALLBACK case so
+ * `tools shops get` doesn't bottom out on a URL-derived placeholder).
  */
-function shouldFallbackToShopClient(data: HlidacGetByUrlResult): boolean {
+function shouldEnrichFromShopClient(data: HlidacGetByUrlResult): boolean {
     const hasName = Boolean(data.meta?.itemName ?? data.detail?.metadata.name);
-    return !hasName;
+    if (!hasName) {
+        return true;
+    }
+
+    const brand = data.enrichment?.brand;
+    const ean = data.enrichment?.ean;
+    return !brand || !ean;
 }
 
 function mergeWithRawProduct(data: HlidacGetByUrlResult, raw: RawProduct): HlidacGetByUrlResult {
@@ -62,20 +73,46 @@ function mergeWithRawProduct(data: HlidacGetByUrlResult, raw: RawProduct): Hlida
               }
             : null;
 
+    const hadHlidacName = Boolean(data.meta?.itemName ?? data.detail?.metadata.name);
     return {
         ...data,
-        source: "scrape",
+        // Preserve "s3" source when Hlídač already had history; the ShopClient
+        // call only enriched metadata, the price history is still S3-sourced.
+        source: hadHlidacName ? data.source : "scrape",
         parsed: {
             ...data.parsed,
-            itemId: raw.itemId ?? raw.slug ?? data.parsed.itemId,
+            itemId: data.parsed.itemId ?? raw.itemId ?? raw.slug,
         },
         meta: {
-            itemId: raw.itemId ?? raw.slug ?? data.parsed.itemId ?? "",
-            itemName: raw.name,
-            itemImage: raw.imageUrl,
+            itemId: data.meta?.itemId ?? raw.itemId ?? raw.slug ?? data.parsed.itemId ?? "",
+            itemName: data.meta?.itemName ?? raw.name,
+            itemImage: data.meta?.itemImage ?? raw.imageUrl,
         },
         history: data.history ?? synthesizedHistory,
+        enrichment: {
+            ...data.enrichment,
+            brand: data.enrichment?.brand ?? raw.brand,
+            ean: data.enrichment?.ean ?? raw.ean,
+            unit: data.enrichment?.unit ?? coerceUnit(raw.unit),
+            unitAmount: data.enrichment?.unitAmount ?? raw.unitAmount,
+            categoryPath: data.enrichment?.categoryPath ?? raw.categoryPath,
+        },
     };
+}
+
+const RAW_UNITS = new Set(["g", "kg", "ml", "l", "ks", "m", "m2"]);
+
+function coerceUnit(raw: string | undefined): "g" | "kg" | "ml" | "l" | "ks" | "m" | "m2" | undefined {
+    if (raw === undefined) {
+        return undefined;
+    }
+
+    const normalized = raw.toLowerCase().trim();
+    if (RAW_UNITS.has(normalized)) {
+        return normalized as "g" | "kg" | "ml" | "l" | "ks" | "m" | "m2";
+    }
+
+    return undefined;
 }
 
 function defaultResolveFromShopClient(sink: HttpRequestSink): ResolveFromShopClient {

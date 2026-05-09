@@ -33,10 +33,22 @@ export interface HsDetailResponse {
     };
 }
 
+/** Optional enrichment from the per-shop ShopClient, merged when Hlídač's data lacks brand/EAN/etc. */
+export interface HlidacEnrichment {
+    brand?: string;
+    ean?: string;
+    unit?: "g" | "kg" | "ml" | "l" | "ks" | "m" | "m2";
+    unitAmount?: number;
+    packCount?: number;
+    categoryPath?: string[];
+}
+
 export interface HlidacGetByUrlResult {
     source: "s3" | "api" | "scrape";
     parsed: { origin: string; itemId: string | null; itemUrl: string };
     history: HsPriceHistoryS3 | null;
     detail?: HsDetailResponse;
     meta?: HsMetaS3;
+    /** Populated when get-product.ts merged a ShopClient.getProduct result for richer metadata. */
+    enrichment?: HlidacEnrichment;
 }
