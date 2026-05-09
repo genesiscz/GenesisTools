@@ -158,7 +158,7 @@ export class KosikClient extends ShopApiClient {
             url,
             name: item.name,
             brand: brandName,
-            imageUrl: item.image,
+            imageUrl: normalizeKosikImage(item.image),
             categoryPath: categoryPath ? categoryPath.split(" > ") : undefined,
             unit: undefined,
             unitAmount: item.productQuantity?.value,
@@ -191,6 +191,16 @@ function* flattenCategories(nodes: KosikRawCategory[], parent?: string): Generat
 
 function urlToSlug(url: string): string {
     return url.startsWith("/") ? url.slice(1) : url;
+}
+
+const KOSIK_THUMB_SIZE = "200x200";
+
+export function normalizeKosikImage(image: string | null | undefined): string | undefined {
+    if (!image) {
+        return undefined;
+    }
+
+    return image.replace("WIDTHxHEIGHT", KOSIK_THUMB_SIZE);
 }
 
 function buildListingPath(slug: string): string {

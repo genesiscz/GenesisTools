@@ -131,6 +131,31 @@ describe("KosikClient mapping rules", () => {
         expect(out[0].unitAmount).toBe(500);
     });
 
+    it("substitutes WIDTHxHEIGHT placeholder in image URLs", async () => {
+        const listing = {
+            title: "Test",
+            products: {
+                items: [
+                    {
+                        id: 99,
+                        name: "Bagetka",
+                        url: "/p99-bagetka",
+                        price: 12,
+                        image: "https://static-new.kosik.cz/images/thumbs/dw/WIDTHxHEIGHTx1_dw0pt9sinm99.jpg",
+                    },
+                ],
+            },
+        };
+        const { client } = buildClient([{ match: "/api/front/page/products", response: listing }]);
+
+        const out: Awaited<ReturnType<typeof client.getProduct>>[] = [];
+        for await (const p of client.listCategory({ category: "x", limit: 1 })) {
+            out.push(p);
+        }
+
+        expect(out[0].imageUrl).toBe("https://static-new.kosik.cz/images/thumbs/dw/200x200x1_dw0pt9sinm99.jpg");
+    });
+
     it("maps inStock to false when firstOrderDay is set", async () => {
         const listing = {
             title: "Test",
