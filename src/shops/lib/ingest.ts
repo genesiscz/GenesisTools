@@ -104,7 +104,7 @@ export async function ingestFromHlidacResult(args: IngestArgs): Promise<IngestRe
             current_price: e.c,
             original_price: e.o,
             in_stock: null,
-            source: data.source === "s3" ? "hlidac-s3" : "hlidac-detail",
+            source: priceSourceLabel(data.source),
             raw_json: null,
         }));
     const recorded = priceRows.length > 0 ? await db.recordPrices(priceRows) : 0;
@@ -130,6 +130,18 @@ export async function ingestFromHlidacResult(args: IngestArgs): Promise<IngestRe
 
 function normalizeText(s: string): string {
     return removeDiacritics(s).toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function priceSourceLabel(source: HlidacGetByUrlResult["source"]): string {
+    if (source === "s3") {
+        return "hlidac-s3";
+    }
+
+    if (source === "scrape") {
+        return "shop-scrape";
+    }
+
+    return "hlidac-detail";
 }
 
 function deriveSlugFromUrl(url: string): string {

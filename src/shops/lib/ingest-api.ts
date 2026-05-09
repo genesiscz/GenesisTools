@@ -27,7 +27,7 @@ export interface IngestUrlResult {
     shop_origin: string;
     slug: string;
     prices_recorded: number;
-    source: "s3" | "api";
+    source: "s3" | "api" | "scrape";
     auto_seeded_master: boolean;
 }
 

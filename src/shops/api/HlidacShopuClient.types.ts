@@ -34,7 +34,7 @@ export interface HsDetailResponse {
 }
 
 export interface HlidacGetByUrlResult {
-    source: "s3" | "api";
+    source: "s3" | "api" | "scrape";
     parsed: { origin: string; itemId: string | null; itemUrl: string };
     history: HsPriceHistoryS3 | null;
     detail?: HsDetailResponse;
