@@ -250,6 +250,10 @@ export class ShopsDatabase {
             .where("slug", "=", raw.slug)
             .executeTakeFirst();
 
+        const categoryPath =
+            raw.categoryPath && raw.categoryPath.length > 0 ? raw.categoryPath.join(" > ") : null;
+        const metadataJson = SafeJSON.stringify(raw.raw ?? {});
+
         const values: NewProduct = {
             shop_origin: raw.shopOrigin,
             slug: raw.slug,
@@ -270,6 +274,9 @@ export class ShopsDatabase {
             match_at: now,
             first_seen_at: now,
             last_updated_at: now,
+            description: raw.description ?? null,
+            category_path: categoryPath,
+            metadata_json: metadataJson,
         };
 
         const row = await this.client.kysely
@@ -287,6 +294,9 @@ export class ShopsDatabase {
                     unit_amount: values.unit_amount,
                     last_updated_at: now,
                     is_active: 1,
+                    description: values.description,
+                    category_path: values.category_path,
+                    metadata_json: values.metadata_json,
                 })
             )
             .returning("id")

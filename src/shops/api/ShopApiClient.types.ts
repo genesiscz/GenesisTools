@@ -26,6 +26,7 @@ export interface RawProduct {
     currentPrice?: number;
     originalPrice?: number;
     inStock?: boolean;
+    description?: string;
     observedAt: Date;
     raw: unknown;
 }

@@ -73,9 +73,20 @@ export const Route = createFileRoute("/api/master/$id")({
                             CASE WHEN co.original_price IS NOT NULL AND co.original_price > 0 AND co.current_price IS NOT NULL
                                  THEN ROUND((1.0 - co.current_price / co.original_price) * 100, 1)
                                  ELSE NULL END AS claimed_discount_percent,
-                            NULL AS real_discount_percent
+                            NULL AS real_discount_percent,
+                            p.brand,
+                            p.ean,
+                            p.unit,
+                            p.unit_amount,
+                            p.pack_count,
+                            p.description,
+                            p.category_path,
+                            p.metadata_json,
+                            p.first_seen_at,
+                            p.last_updated_at
                          FROM current_offers co
                          JOIN shops s ON s.origin = co.shop_origin
+                         JOIN products p ON p.id = co.product_id
                          WHERE co.master_product_id = ?
                          ORDER BY CASE WHEN co.current_price IS NULL THEN 1 ELSE 0 END, co.current_price ASC`
                     )

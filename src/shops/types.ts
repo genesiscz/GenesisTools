@@ -96,6 +96,16 @@ export interface MasterOfferRow {
     price_observed_at: string | null;
     claimed_discount_percent: number | null;
     real_discount_percent: number | null;
+    brand: string | null;
+    ean: string | null;
+    unit: string | null;
+    unit_amount: number | null;
+    pack_count: number | null;
+    description: string | null;
+    category_path: string | null;
+    metadata_json: string | null;
+    first_seen_at: string | null;
+    last_updated_at: string | null;
 }
 
 export interface MasterDetail {

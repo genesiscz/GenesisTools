@@ -58,6 +58,7 @@ export interface MasterProductsTable {
     created_at: Generated<string>;
     updated_at: Generated<string>;
     verified_by: "auto" | "user" | null;
+    description: string | null;
 }
 
 export interface ProductsTable {
@@ -93,6 +94,8 @@ export interface ProductsTable {
     last_updated_at: string;
     is_active: Generated<number>;
     metadata_json: Generated<string>;
+    description: string | null;
+    category_path: string | null;
 }
 
 export interface ProductCategoriesTable {
