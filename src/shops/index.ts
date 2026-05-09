@@ -12,6 +12,7 @@ import { registerMatchCommand } from "./commands/match";
 import { registerMcpCommand } from "./commands/mcp";
 import { registerNotifyCommand } from "./commands/notify";
 import { registerShopsCommand } from "./commands/shops";
+import { registerSitemapSyncCommand } from "./commands/sitemap-sync";
 import { registerUiCommand } from "./commands/ui";
 import { registerWatchCommand } from "./commands/watch";
 
@@ -32,6 +33,7 @@ registerNotifyCommand(program);
 registerDbPruneCommand(program);
 registerDaemonCommand(program);
 registerCrawlCommand(program);
+registerSitemapSyncCommand(program);
 registerListCommand(program);
 registerMatchCommand(program);
 registerMcpCommand(program);
