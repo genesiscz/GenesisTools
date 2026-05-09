@@ -18,6 +18,7 @@ import { Route as CoverageRouteImport } from './routes/coverage'
 import { Route as CompareRouteImport } from './routes/compare'
 import { Route as BrowseRouteImport } from './routes/browse'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as MatchReviewRouteImport } from './routes/match.review'
 import { Route as MasterIdRouteImport } from './routes/master.$id'
 import { Route as ApiWatchlistRouteImport } from './routes/api/watchlist'
 import { Route as ApiSettingsRouteImport } from './routes/api/settings'
@@ -30,12 +31,15 @@ import { Route as ApiCoverageRouteImport } from './routes/api/coverage'
 import { Route as ApiCompareRouteImport } from './routes/api/compare'
 import { Route as ProductShopSlugRouteImport } from './routes/product.$shop.$slug'
 import { Route as ApiWatchlistAddRouteImport } from './routes/api/watchlist.add'
+import { Route as ApiMatchCandidatesRouteImport } from './routes/api/match.candidates'
 import { Route as ApiMasterIdRouteImport } from './routes/api/master.$id'
 import { Route as ApiLiveEventsRouteImport } from './routes/api/live.events'
 import { Route as ApiWatchlistIdEditRouteImport } from './routes/api/watchlist.$id.edit'
 import { Route as ApiWatchlistIdDeleteRouteImport } from './routes/api/watchlist.$id.delete'
 import { Route as ApiProductShopSlugRouteImport } from './routes/api/product.$shop.$slug'
 import { Route as ApiNotificationsIdAckRouteImport } from './routes/api/notifications.$id.ack'
+import { Route as ApiMatchCandidateRejectRouteImport } from './routes/api/match.$candidate.reject'
+import { Route as ApiMatchCandidateAcceptRouteImport } from './routes/api/match.$candidate.accept'
 import { Route as ApiMasterIdHistoryRouteImport } from './routes/api/master.$id.history'
 
 const WorkspaceRoute = WorkspaceRouteImport.update({
@@ -81,6 +85,11 @@ const BrowseRoute = BrowseRouteImport.update({
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MatchReviewRoute = MatchReviewRouteImport.update({
+  id: '/match/review',
+  path: '/match/review',
   getParentRoute: () => rootRouteImport,
 } as any)
 const MasterIdRoute = MasterIdRouteImport.update({
@@ -143,6 +152,11 @@ const ApiWatchlistAddRoute = ApiWatchlistAddRouteImport.update({
   path: '/add',
   getParentRoute: () => ApiWatchlistRoute,
 } as any)
+const ApiMatchCandidatesRoute = ApiMatchCandidatesRouteImport.update({
+  id: '/api/match/candidates',
+  path: '/api/match/candidates',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiMasterIdRoute = ApiMasterIdRouteImport.update({
   id: '/$id',
   path: '/$id',
@@ -173,6 +187,16 @@ const ApiNotificationsIdAckRoute = ApiNotificationsIdAckRouteImport.update({
   path: '/$id/ack',
   getParentRoute: () => ApiNotificationsRoute,
 } as any)
+const ApiMatchCandidateRejectRoute = ApiMatchCandidateRejectRouteImport.update({
+  id: '/api/match/$candidate/reject',
+  path: '/api/match/$candidate/reject',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiMatchCandidateAcceptRoute = ApiMatchCandidateAcceptRouteImport.update({
+  id: '/api/match/$candidate/accept',
+  path: '/api/match/$candidate/accept',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiMasterIdHistoryRoute = ApiMasterIdHistoryRouteImport.update({
   id: '/history',
   path: '/history',
@@ -199,11 +223,15 @@ export interface FileRoutesByFullPath {
   '/api/settings': typeof ApiSettingsRoute
   '/api/watchlist': typeof ApiWatchlistRouteWithChildren
   '/master/$id': typeof MasterIdRoute
+  '/match/review': typeof MatchReviewRoute
   '/api/live/events': typeof ApiLiveEventsRoute
   '/api/master/$id': typeof ApiMasterIdRouteWithChildren
+  '/api/match/candidates': typeof ApiMatchCandidatesRoute
   '/api/watchlist/add': typeof ApiWatchlistAddRoute
   '/product/$shop/$slug': typeof ProductShopSlugRoute
   '/api/master/$id/history': typeof ApiMasterIdHistoryRoute
+  '/api/match/$candidate/accept': typeof ApiMatchCandidateAcceptRoute
+  '/api/match/$candidate/reject': typeof ApiMatchCandidateRejectRoute
   '/api/notifications/$id/ack': typeof ApiNotificationsIdAckRoute
   '/api/product/$shop/$slug': typeof ApiProductShopSlugRoute
   '/api/watchlist/$id/delete': typeof ApiWatchlistIdDeleteRoute
@@ -229,11 +257,15 @@ export interface FileRoutesByTo {
   '/api/settings': typeof ApiSettingsRoute
   '/api/watchlist': typeof ApiWatchlistRouteWithChildren
   '/master/$id': typeof MasterIdRoute
+  '/match/review': typeof MatchReviewRoute
   '/api/live/events': typeof ApiLiveEventsRoute
   '/api/master/$id': typeof ApiMasterIdRouteWithChildren
+  '/api/match/candidates': typeof ApiMatchCandidatesRoute
   '/api/watchlist/add': typeof ApiWatchlistAddRoute
   '/product/$shop/$slug': typeof ProductShopSlugRoute
   '/api/master/$id/history': typeof ApiMasterIdHistoryRoute
+  '/api/match/$candidate/accept': typeof ApiMatchCandidateAcceptRoute
+  '/api/match/$candidate/reject': typeof ApiMatchCandidateRejectRoute
   '/api/notifications/$id/ack': typeof ApiNotificationsIdAckRoute
   '/api/product/$shop/$slug': typeof ApiProductShopSlugRoute
   '/api/watchlist/$id/delete': typeof ApiWatchlistIdDeleteRoute
@@ -260,11 +292,15 @@ export interface FileRoutesById {
   '/api/settings': typeof ApiSettingsRoute
   '/api/watchlist': typeof ApiWatchlistRouteWithChildren
   '/master/$id': typeof MasterIdRoute
+  '/match/review': typeof MatchReviewRoute
   '/api/live/events': typeof ApiLiveEventsRoute
   '/api/master/$id': typeof ApiMasterIdRouteWithChildren
+  '/api/match/candidates': typeof ApiMatchCandidatesRoute
   '/api/watchlist/add': typeof ApiWatchlistAddRoute
   '/product/$shop/$slug': typeof ProductShopSlugRoute
   '/api/master/$id/history': typeof ApiMasterIdHistoryRoute
+  '/api/match/$candidate/accept': typeof ApiMatchCandidateAcceptRoute
+  '/api/match/$candidate/reject': typeof ApiMatchCandidateRejectRoute
   '/api/notifications/$id/ack': typeof ApiNotificationsIdAckRoute
   '/api/product/$shop/$slug': typeof ApiProductShopSlugRoute
   '/api/watchlist/$id/delete': typeof ApiWatchlistIdDeleteRoute
@@ -292,11 +328,15 @@ export interface FileRouteTypes {
     | '/api/settings'
     | '/api/watchlist'
     | '/master/$id'
+    | '/match/review'
     | '/api/live/events'
     | '/api/master/$id'
+    | '/api/match/candidates'
     | '/api/watchlist/add'
     | '/product/$shop/$slug'
     | '/api/master/$id/history'
+    | '/api/match/$candidate/accept'
+    | '/api/match/$candidate/reject'
     | '/api/notifications/$id/ack'
     | '/api/product/$shop/$slug'
     | '/api/watchlist/$id/delete'
@@ -322,11 +362,15 @@ export interface FileRouteTypes {
     | '/api/settings'
     | '/api/watchlist'
     | '/master/$id'
+    | '/match/review'
     | '/api/live/events'
     | '/api/master/$id'
+    | '/api/match/candidates'
     | '/api/watchlist/add'
     | '/product/$shop/$slug'
     | '/api/master/$id/history'
+    | '/api/match/$candidate/accept'
+    | '/api/match/$candidate/reject'
     | '/api/notifications/$id/ack'
     | '/api/product/$shop/$slug'
     | '/api/watchlist/$id/delete'
@@ -352,11 +396,15 @@ export interface FileRouteTypes {
     | '/api/settings'
     | '/api/watchlist'
     | '/master/$id'
+    | '/match/review'
     | '/api/live/events'
     | '/api/master/$id'
+    | '/api/match/candidates'
     | '/api/watchlist/add'
     | '/product/$shop/$slug'
     | '/api/master/$id/history'
+    | '/api/match/$candidate/accept'
+    | '/api/match/$candidate/reject'
     | '/api/notifications/$id/ack'
     | '/api/product/$shop/$slug'
     | '/api/watchlist/$id/delete'
@@ -383,8 +431,12 @@ export interface RootRouteChildren {
   ApiSettingsRoute: typeof ApiSettingsRoute
   ApiWatchlistRoute: typeof ApiWatchlistRouteWithChildren
   MasterIdRoute: typeof MasterIdRoute
+  MatchReviewRoute: typeof MatchReviewRoute
   ApiLiveEventsRoute: typeof ApiLiveEventsRoute
+  ApiMatchCandidatesRoute: typeof ApiMatchCandidatesRoute
   ProductShopSlugRoute: typeof ProductShopSlugRoute
+  ApiMatchCandidateAcceptRoute: typeof ApiMatchCandidateAcceptRoute
+  ApiMatchCandidateRejectRoute: typeof ApiMatchCandidateRejectRoute
   ApiProductShopSlugRoute: typeof ApiProductShopSlugRoute
 }
 
@@ -451,6 +503,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/match/review': {
+      id: '/match/review'
+      path: '/match/review'
+      fullPath: '/match/review'
+      preLoaderRoute: typeof MatchReviewRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/master/$id': {
@@ -537,6 +596,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiWatchlistAddRouteImport
       parentRoute: typeof ApiWatchlistRoute
     }
+    '/api/match/candidates': {
+      id: '/api/match/candidates'
+      path: '/api/match/candidates'
+      fullPath: '/api/match/candidates'
+      preLoaderRoute: typeof ApiMatchCandidatesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/master/$id': {
       id: '/api/master/$id'
       path: '/$id'
@@ -578,6 +644,20 @@ declare module '@tanstack/react-router' {
       fullPath: '/api/notifications/$id/ack'
       preLoaderRoute: typeof ApiNotificationsIdAckRouteImport
       parentRoute: typeof ApiNotificationsRoute
+    }
+    '/api/match/$candidate/reject': {
+      id: '/api/match/$candidate/reject'
+      path: '/api/match/$candidate/reject'
+      fullPath: '/api/match/$candidate/reject'
+      preLoaderRoute: typeof ApiMatchCandidateRejectRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/match/$candidate/accept': {
+      id: '/api/match/$candidate/accept'
+      path: '/api/match/$candidate/accept'
+      fullPath: '/api/match/$candidate/accept'
+      preLoaderRoute: typeof ApiMatchCandidateAcceptRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/api/master/$id/history': {
       id: '/api/master/$id/history'
@@ -660,8 +740,12 @@ const rootRouteChildren: RootRouteChildren = {
   ApiSettingsRoute: ApiSettingsRoute,
   ApiWatchlistRoute: ApiWatchlistRouteWithChildren,
   MasterIdRoute: MasterIdRoute,
+  MatchReviewRoute: MatchReviewRoute,
   ApiLiveEventsRoute: ApiLiveEventsRoute,
+  ApiMatchCandidatesRoute: ApiMatchCandidatesRoute,
   ProductShopSlugRoute: ProductShopSlugRoute,
+  ApiMatchCandidateAcceptRoute: ApiMatchCandidateAcceptRoute,
+  ApiMatchCandidateRejectRoute: ApiMatchCandidateRejectRoute,
   ApiProductShopSlugRoute: ApiProductShopSlugRoute,
 }
 export const routeTree = rootRouteImport

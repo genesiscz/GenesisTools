@@ -112,13 +112,15 @@ export class KosikClient extends ShopApiClient {
             item.recommendedPrice !== undefined && item.recommendedPrice !== item.price
                 ? item.recommendedPrice
                 : undefined;
+        const brandName =
+            item.brand && typeof item.brand === "object" ? item.brand.name : (item.brand ?? undefined);
         return {
             shopOrigin: KOSIK_ORIGIN,
             slug,
             itemId: String(item.id),
             url,
             name: item.name,
-            brand: item.brand,
+            brand: brandName,
             imageUrl: item.image,
             categoryPath: categoryPath ? categoryPath.split(" > ") : undefined,
             unit: undefined,

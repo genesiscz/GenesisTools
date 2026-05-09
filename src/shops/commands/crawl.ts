@@ -3,18 +3,26 @@ import type { Command } from "commander";
 import { initShopRegistry } from "../api/registry-init";
 import { ShopRegistry } from "../api/ShopRegistry";
 import { AlbertCrawler } from "../crawlers/AlbertCrawler";
+import { AlzaCrawler } from "../crawlers/AlzaCrawler";
 import { BenuCrawler } from "../crawlers/BenuCrawler";
 import { BillaCrawler } from "../crawlers/BillaCrawler";
 import { DmCrawler } from "../crawlers/DmCrawler";
 import { DrmaxCrawler } from "../crawlers/DrmaxCrawler";
+import { HornbachCrawler } from "../crawlers/HornbachCrawler";
 import { ItescoCrawler } from "../crawlers/ItescoCrawler";
 import { KauflandCrawler } from "../crawlers/KauflandCrawler";
+import { KnihyDobrovskyCrawler } from "../crawlers/KnihyDobrovskyCrawler";
 import { KosikRestCrawler } from "../crawlers/KosikRestCrawler";
 import { LidlCrawler } from "../crawlers/LidlCrawler";
+import { MallCrawler } from "../crawlers/MallCrawler";
+import { MojaDmCrawler } from "../crawlers/MojaDmCrawler";
+import { MountfieldCrawler } from "../crawlers/MountfieldCrawler";
+import { NotinoCrawler } from "../crawlers/NotinoCrawler";
+import { PilulkaCrawler } from "../crawlers/PilulkaCrawler";
 import { RohlikRestCrawler } from "../crawlers/RohlikRestCrawler";
-import { TetaCrawler } from "../crawlers/TetaCrawler";
 import type { ShopCrawler } from "../crawlers/ShopCrawler";
 import type { CrawlResult } from "../crawlers/ShopCrawler.types";
+import { TetaCrawler } from "../crawlers/TetaCrawler";
 import { ShopsDatabase } from "../db/ShopsDatabase";
 import { DbHttpRequestSink, type HttpRequestSink } from "../lib/http-sink";
 
@@ -69,6 +77,30 @@ export async function runCrawlCommand(input: RunCrawlInput): Promise<CrawlResult
             break;
         case "albert.cz":
             crawler = new AlbertCrawler(client, input.db);
+            break;
+        case "alza.cz":
+            crawler = new AlzaCrawler(client, input.db);
+            break;
+        case "notino.cz":
+            crawler = new NotinoCrawler(client, input.db);
+            break;
+        case "mall.cz":
+            crawler = new MallCrawler(client, input.db);
+            break;
+        case "mountfield.cz":
+            crawler = new MountfieldCrawler(client, input.db);
+            break;
+        case "pilulka.cz":
+            crawler = new PilulkaCrawler(client, input.db);
+            break;
+        case "knihydobrovsky.cz":
+            crawler = new KnihyDobrovskyCrawler(client, input.db);
+            break;
+        case "hornbach.cz":
+            crawler = new HornbachCrawler(client, input.db);
+            break;
+        case "mojadm.sk":
+            crawler = new MojaDmCrawler(client, input.db);
             break;
         default:
             throw new Error(`no crawler registered for ${client.shopOrigin}`);

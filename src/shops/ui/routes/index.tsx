@@ -1,15 +1,19 @@
 import { getSettingsRepository } from "@app/shops/lib/settings";
 import { createFileRoute, redirect } from "@tanstack/react-router";
+import { createServerFn } from "@tanstack/react-start";
+
+const getDefaultLanding = createServerFn({ method: "GET" }).handler(async () => {
+    try {
+        const settings = await getSettingsRepository().read();
+        return settings.default_landing_view;
+    } catch {
+        return "/watchlist";
+    }
+});
 
 export const Route = createFileRoute("/")({
     beforeLoad: async () => {
-        let target = "/watchlist";
-        try {
-            const settings = await getSettingsRepository().read();
-            target = settings.default_landing_view;
-        } catch {
-            // Fresh install or unreadable file — fall back to spec default.
-        }
+        const target = await getDefaultLanding();
 
         if (target !== "/") {
             throw redirect({ to: target });

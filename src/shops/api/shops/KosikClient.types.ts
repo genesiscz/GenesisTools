@@ -15,11 +15,17 @@ export interface KosikMenuMainResponse {
     children?: KosikRawCategory[];
 }
 
+export interface KosikBrand {
+    id: number;
+    name: string;
+    url?: string;
+}
+
 export interface KosikRawProductItem {
     id: number;
     name: string;
     cleanName?: string;
-    brand?: string;
+    brand?: KosikBrand | string | null;
     url: string;
     price: number;
     recommendedPrice?: number;
