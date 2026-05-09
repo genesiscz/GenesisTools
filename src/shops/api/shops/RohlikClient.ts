@@ -30,6 +30,13 @@ export class RohlikClient extends ShopApiClient {
         botProtection: "none",
     };
 
+    // Lazy navigation cache: the bulk product endpoint returns only
+    // `mainCategoryId` (single int), so to materialise a breadcrumb path
+    // we resolve via the flat-navigation tree and walk parentId upward.
+    // One fetch per process lifetime (~5KB payload, rarely changes).
+    private navigationPromise: Promise<Map<number, RohlikRawCategory>> | null = null;
+    private categoryPathCache = new Map<number, string[]>();
+
     constructor(config: ShopApiClientConstructorConfig = {}) {
         super({
             baseUrl: "https://www.rohlik.cz",
@@ -60,7 +67,7 @@ export class RohlikClient extends ShopApiClient {
         const priceMap = indexPrices(pricesResp);
         const target = products[0];
         const targetId = target.productId ?? target.id;
-        return this.toRawProduct(target, targetId !== undefined ? priceMap.get(targetId) : undefined);
+        return await this.toRawProduct(target, targetId !== undefined ? priceMap.get(targetId) : undefined);
     }
 
     /**
@@ -87,7 +94,7 @@ export class RohlikClient extends ShopApiClient {
             const priceMap = indexPrices(pricesResp);
             for (const product of products) {
                 const id = product.productId ?? product.id;
-                yield this.toRawProduct(product, id !== undefined ? priceMap.get(id) : undefined);
+                yield await this.toRawProduct(product, id !== undefined ? priceMap.get(id) : undefined);
             }
         }
     }
@@ -134,7 +141,7 @@ export class RohlikClient extends ShopApiClient {
 
                 for (const product of products) {
                     const id = product.productId ?? product.id;
-                    yield this.toRawProduct(product, id !== undefined ? priceMap.get(id) : undefined);
+                    yield await this.toRawProduct(product, id !== undefined ? priceMap.get(id) : undefined);
                     yielded++;
                     if (opts.limit !== undefined && yielded >= opts.limit) {
                         return;
@@ -157,7 +164,63 @@ export class RohlikClient extends ShopApiClient {
         return out;
     }
 
-    private toRawProduct(product: RohlikRawProduct, priceEntry?: RohlikProductPriceEntry): RawProduct {
+    /**
+     * Resolve a `mainCategoryId` to the human-readable breadcrumb path
+     * (e.g. [3, 47, 109, 124002]). Walks upward via `parentId` against
+     * the flat-navigation tree, cached per process. Returns `undefined`
+     * when the id is missing or the chain breaks.
+     */
+    async getCategoryPath(mainCategoryId: number): Promise<string[] | undefined> {
+        const cached = this.categoryPathCache.get(mainCategoryId);
+        if (cached) {
+            return cached;
+        }
+
+        const tree = await this.loadNavigationTree();
+        const path: string[] = [];
+        let cursor: number | undefined = mainCategoryId;
+        const seen = new Set<number>();
+        while (cursor !== undefined && cursor !== 0 && !seen.has(cursor)) {
+            seen.add(cursor);
+            const node = tree.get(cursor);
+            if (!node) {
+                return undefined;
+            }
+
+            path.unshift(node.name);
+            cursor = node.parentId;
+        }
+
+        if (path.length > 0) {
+            this.categoryPathCache.set(mainCategoryId, path);
+        }
+
+        return path.length > 0 ? path : undefined;
+    }
+
+    private async loadNavigationTree(): Promise<Map<number, RohlikRawCategory>> {
+        if (!this.navigationPromise) {
+            this.navigationPromise = (async () => {
+                await this.waitTurn();
+                const tree = await this.get<RohlikFlatNavigationResponse>(
+                    "/services/frontend-service/renderer/navigation/flat.json"
+                );
+                const map = new Map<number, RohlikRawCategory>();
+                for (const [id, raw] of Object.entries(tree.navigation)) {
+                    map.set(Number(id), raw);
+                }
+
+                return map;
+            })();
+        }
+
+        return this.navigationPromise;
+    }
+
+    private async toRawProduct(
+        product: RohlikRawProduct,
+        priceEntry?: RohlikProductPriceEntry
+    ): Promise<RawProduct> {
         const id = product.productId ?? product.id;
         if (id === undefined) {
             throw new Error("Rohlik product has no id/productId");
@@ -185,6 +248,8 @@ export class RohlikClient extends ShopApiClient {
         // "500 g", "6 ks"). Parsing this in the matcher's signature step
         // unlocks Layer 2a cross-shop matching against kosik/lidl/etc.
         const textualSize = product.textualAmount ? parseTextualAmount(product.textualAmount) : undefined;
+        const categoryPath =
+            product.mainCategoryId !== undefined ? await this.getCategoryPath(product.mainCategoryId) : undefined;
 
         return {
             shopOrigin: ROHLIK_ORIGIN,
@@ -195,6 +260,7 @@ export class RohlikClient extends ShopApiClient {
             brand: product.brand,
             ean: product.ean,
             imageUrl: product.images?.[0],
+            categoryPath,
             unit: textualSize?.unit ?? product.unit,
             unitAmount: textualSize?.amount,
             currentPrice,
