@@ -43,7 +43,10 @@ export abstract class ShopApiClient extends ApiClient implements ShopApiClientIn
 
     constructor(config: ShopApiClientConstructorConfig = {}) {
         super({
-            timeoutMs: 30_000,
+            // Tight per-request budget: a slow Czech CDN edge node can hang
+            // a fetch indefinitely (observed >7min on Lidl) which stalls
+            // sitemap crawls. 5s + 2 retries caps wall-time at ~15s/url.
+            timeoutMs: 5_000,
             retry: 2,
             ...config,
             loggerContext: { component: "ShopApiClient", ...config.loggerContext },
