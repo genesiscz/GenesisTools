@@ -15,7 +15,9 @@ export class SseBroadcaster {
     private nextId = 1;
     private heartbeat: ReturnType<typeof setInterval> | null = null;
 
-    subscribe(): { stream: ReadableStream<Uint8Array>; unsubscribe: () => void } {
+    subscribe(opts?: {
+        initialEvents?: ReadonlyArray<{ event: string; data: unknown }>;
+    }): { stream: ReadableStream<Uint8Array>; unsubscribe: () => void } {
         const id = this.nextId++;
         let sub!: Subscriber;
         const stream = new ReadableStream<Uint8Array>({
@@ -23,6 +25,18 @@ export class SseBroadcaster {
                 sub = { id, controller };
                 this.subscribers.add(sub);
                 controller.enqueue(encoder.encode(`event: hello\ndata: {"sub":${id}}\n\n`));
+
+                if (opts?.initialEvents) {
+                    for (const ev of opts.initialEvents) {
+                        const payload = SafeJSON.stringify(ev.data);
+                        try {
+                            controller.enqueue(encoder.encode(`event: ${ev.event}\ndata: ${payload}\n\n`));
+                        } catch {
+                            // controller closed mid-backfill; bail out, removeSubscriber handles cleanup
+                            break;
+                        }
+                    }
+                }
                 this.ensureHeartbeat();
             },
             cancel: () => {

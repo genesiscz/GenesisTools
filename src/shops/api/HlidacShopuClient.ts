@@ -105,7 +105,10 @@ export class HlidacShopuClient {
         // `/items/<origin>/undefined/...` and 404. Skip to /v2/detail instead.
         const slug = itemSlug(productUrl) as string | undefined;
         if (!slug) {
-            log.debug({ productUrl, origin }, "no slug from @hlidac-shopu/lib — skipping S3, falling back to /v2/detail");
+            log.debug(
+                { productUrl, origin },
+                "no slug from @hlidac-shopu/lib — skipping S3, falling back to /v2/detail"
+            );
             try {
                 const detail = await this.detail(productUrl);
                 return {
