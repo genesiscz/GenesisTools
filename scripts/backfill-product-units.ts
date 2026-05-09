@@ -13,6 +13,7 @@ import { Database } from "bun:sqlite";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@app/utils/json";
+import { refreshMasterDenorm } from "../src/shops/lib/master-denorm";
 import { extractFlavorKey, extractPackCount, extractSize, parseUnit, type Unit } from "../src/shops/lib/normalize";
 
 const DRY_RUN = process.argv.includes("--dry-run");
@@ -27,6 +28,7 @@ interface Row {
     pack_count: number | null;
     flavor_key: string | null;
     metadata_json: string;
+    master_product_id: number | null;
 }
 
 function parseTextualAmount(text: string): { unit: string; amount: number } | undefined {
@@ -103,7 +105,7 @@ function main(): void {
     const db = new Database(DB_PATH);
     const rows = db
         .query<Row, []>(
-            `SELECT id, shop_origin, name, unit, unit_amount, pack_count, flavor_key, metadata_json
+            `SELECT id, shop_origin, name, unit, unit_amount, pack_count, flavor_key, metadata_json, master_product_id
              FROM products
              WHERE is_active = 1
              ORDER BY id`
@@ -115,6 +117,7 @@ function main(): void {
     let amountChanged = 0;
     let packChanged = 0;
     let flavorChanged = 0;
+    const dirtyMasters = new Set<number>();
 
     const update = db.prepare(
         `UPDATE products SET unit = ?, unit_amount = ?, pack_count = ?, flavor_key = ? WHERE id = ?`
@@ -125,25 +128,40 @@ function main(): void {
         for (const row of rows) {
             scanned++;
             const sig = deriveSignature(row);
+            let changed = false;
 
             if (sig.unit !== row.unit) {
                 unitChanged++;
+                changed = true;
             }
 
             if (sig.unitAmount !== row.unit_amount) {
                 amountChanged++;
+                changed = true;
             }
 
             if (sig.packCount !== row.pack_count) {
                 packChanged++;
+                changed = true;
             }
 
             if (sig.flavorKey !== row.flavor_key) {
                 flavorChanged++;
+                changed = true;
+            }
+
+            if (changed && row.master_product_id !== null) {
+                dirtyMasters.add(row.master_product_id);
             }
 
             if (!DRY_RUN) {
                 update.run(sig.unit, sig.unitAmount, sig.packCount, sig.flavorKey, row.id);
+            }
+        }
+
+        if (!DRY_RUN) {
+            for (const masterId of dirtyMasters) {
+                refreshMasterDenorm(db, masterId);
             }
         }
 
@@ -163,6 +181,7 @@ function main(): void {
     console.log(`  amount changed: ${amountChanged}`);
     console.log(`  pack changed:   ${packChanged}`);
     console.log(`  flavor changed: ${flavorChanged}`);
+    console.log(`  masters refreshed: ${DRY_RUN ? `${dirtyMasters.size} (would be)` : dirtyMasters.size}`);
 }
 
 main();
