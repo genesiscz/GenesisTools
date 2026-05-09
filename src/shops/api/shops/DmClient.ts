@@ -72,7 +72,10 @@ export class DmClient extends ShopApiClient {
         super({
             baseUrl: countryConfig.storeRoot,
             loggerContext: { provider: countryConfig.loggerProvider },
-            rateLimitPerSecond: rest.rateLimitPerSecond ?? 2,
+            // The dm `product-search.services.dmtech.com` search API
+            // returns "Too many requests! ...searchapi-support@dm.de" at
+            // ~2 req/s sustained. 1/s clears 1000-item runs reliably.
+            rateLimitPerSecond: rest.rateLimitPerSecond ?? 1,
             ...rest,
         });
         this.shopOrigin = countryConfig.shopOrigin;
