@@ -1,11 +1,18 @@
 // Adapted from topmonks/hlidac-shopu (EUPL-1.2) — actors/mountfield-daily/main.js
 
+import logger from "@app/logger";
 import { parseHTML } from "linkedom";
 import { ShopApiClient, type ShopApiClientConstructorConfig } from "../ShopApiClient";
 import type { Category, ListingOptions, RawProduct, ShopCapabilities } from "../ShopApiClient.types";
 
 const MOUNTFIELD_ORIGIN = "mountfield.cz";
 const ROOT = "https://www.mountfield.cz";
+
+const SUBCATEGORY_SELECTOR = ".list-categories__item__block, .list-categories-with-article__box";
+const PRODUCT_ITEM_SELECTOR = ".list-products__item__in";
+const NEXT_PAGE_SELECTOR = "a.in-paging__control__item--arrow-next";
+
+const mountfieldLog = logger.child({ component: "MountfieldClient" });
 
 function parsePrice(text: string | null | undefined): number | undefined {
     if (!text) {
@@ -15,6 +22,17 @@ function parsePrice(text: string | null | undefined): number | undefined {
     const cleaned = text.replace(/\s/g, "").replace("Kč", "").replace("€", "").replace(",", ".").trim();
     const n = Number.parseFloat(cleaned);
     return Number.isNaN(n) ? undefined : n;
+}
+
+function normalizeUrl(raw: string): string {
+    try {
+        const u = new URL(raw, ROOT);
+        u.hash = "";
+        const pathname = u.pathname.replace(/\/+$/, "");
+        return `${u.origin}${pathname}${u.search}`;
+    } catch {
+        return raw;
+    }
 }
 
 export class MountfieldClient extends ShopApiClient {
@@ -59,17 +77,63 @@ export class MountfieldClient extends ShopApiClient {
             throw new Error("MountfieldClient.listCategory requires opts.category (path slug)");
         }
 
-        await this.waitTurn();
-        const url = `${ROOT}/${opts.category}`;
-        const html = await this.getText(url, { signal: opts.signal });
-        const products = parseListing(html);
-
+        const startUrl = `${ROOT}/${opts.category.replace(/^\//, "")}`;
+        const seen = new Set<string>();
+        const queue: string[] = [startUrl];
         let yielded = 0;
-        for (const p of products) {
-            yield p;
-            yielded++;
-            if (opts.limit !== undefined && yielded >= opts.limit) {
-                return;
+
+        while (queue.length > 0) {
+            opts.signal?.throwIfAborted();
+            const url = queue.shift();
+            if (url === undefined) {
+                break;
+            }
+
+            const normalized = normalizeUrl(url);
+            if (seen.has(normalized)) {
+                continue;
+            }
+
+            seen.add(normalized);
+
+            await this.waitTurn();
+            let html: string;
+            try {
+                html = await this.getText(url, { signal: opts.signal });
+            } catch (err) {
+                mountfieldLog.warn({ url, err }, "mountfield: page fetch failed, skipping");
+                continue;
+            }
+
+            const { document } = parseHTML(html);
+
+            for (const cat of Array.from(document.querySelectorAll(SUBCATEGORY_SELECTOR))) {
+                const href = cat.getAttribute("href");
+                if (href === null) {
+                    continue;
+                }
+
+                const next = new URL(href, url).href;
+                if (!seen.has(normalizeUrl(next))) {
+                    queue.push(next);
+                }
+            }
+
+            const products = parseListing(html);
+            for (const p of products) {
+                yield p;
+                yielded++;
+                if (opts.limit !== undefined && yielded >= opts.limit) {
+                    return;
+                }
+            }
+
+            const nextHref = document.querySelector(NEXT_PAGE_SELECTOR)?.getAttribute("href");
+            if (nextHref) {
+                const nextUrl = new URL(nextHref, url).href;
+                if (!seen.has(normalizeUrl(nextUrl))) {
+                    queue.push(nextUrl);
+                }
             }
         }
     }
@@ -99,7 +163,7 @@ function parseListing(html: string): RawProduct[] {
     );
     const out: RawProduct[] = [];
 
-    for (const item of Array.from(document.querySelectorAll(".list-products__item__in"))) {
+    for (const item of Array.from(document.querySelectorAll(PRODUCT_ITEM_SELECTOR))) {
         const link = item.querySelector("a.list-products__item__block");
         const itemUrl = link?.getAttribute("href");
         if (!itemUrl) {
