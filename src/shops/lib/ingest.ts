@@ -44,25 +44,38 @@ export async function ingestFromHlidacResult(args: IngestArgs): Promise<IngestRe
     // hornbach.cz post-URL-redesign). Derive a stable slug from the URL pathname so
     // the product gets a unique (shop_origin, slug) row instead of crashing.
     const slug = data.parsed.itemId ?? data.parsed.itemUrl ?? deriveSlugFromUrl(url);
-    const name = data.meta?.itemName ?? data.detail?.metadata.name ?? slug;
-    const imageUrl = data.meta?.itemImage ?? data.detail?.metadata.imageUrl ?? null;
 
-    const canonicalSlug = computeCanonicalSlug(name, data.parsed.origin, slug);
-    const masterId = await db.upsertMasterProduct({
-        canonical_name: name,
-        canonical_name_normalized: normalizeText(name),
-        canonical_slug: canonicalSlug,
-        brand: null,
-        brand_normalized: null,
-        ean: null,
-        unit: null,
-        unit_amount: null,
-        pack_count: null,
-        flavor_key: null,
-        representative_image_url: imageUrl,
-        attributes_json: "{}",
-        verified_by: "auto",
-    });
+    // Reuse existing product+master when the URL is already known. Crawlers often
+    // ingest a product before `tools shops get` runs against the same URL — without
+    // this lookup we'd seed a *second* master with Hlídač's (often empty) metadata,
+    // producing the duplicate-master + slug-as-name UI bugs (see Verification.handoff
+    // UI-1, UI-2).
+    const existingProduct = await db.getProductByShopAndSlug(data.parsed.origin, slug);
+
+    const hlidacName = data.meta?.itemName ?? data.detail?.metadata.name;
+    const name = hlidacName ?? existingProduct?.name ?? deriveNameFromUrl(url, slug);
+    const imageUrl =
+        data.meta?.itemImage ?? data.detail?.metadata.imageUrl ?? existingProduct?.image_url ?? null;
+
+    let masterId = existingProduct?.master_product_id ?? null;
+    if (!masterId) {
+        const canonicalSlug = computeCanonicalSlug(name, data.parsed.origin, slug);
+        masterId = await db.upsertMasterProduct({
+            canonical_name: name,
+            canonical_name_normalized: normalizeText(name),
+            canonical_slug: canonicalSlug,
+            brand: null,
+            brand_normalized: null,
+            ean: null,
+            unit: null,
+            unit_amount: null,
+            pack_count: null,
+            flavor_key: null,
+            representative_image_url: imageUrl,
+            attributes_json: "{}",
+            verified_by: "auto",
+        });
+    }
 
     const productId = await db.upsertProduct({
         shop_origin: data.parsed.origin,
@@ -122,6 +135,38 @@ function deriveSlugFromUrl(url: string): string {
     } catch {
         return url;
     }
+}
+
+/**
+ * Last-resort name derivation when neither Hlídač metadata nor a previously-crawled
+ * product row gives us a real name. Strips numeric ID prefixes and dashes from the
+ * URL's last path segment so `1419780-ritter-sport-mlecna-cokolada` becomes
+ * `Ritter sport mlecna cokolada` rather than auto-seeding a master named `1419780`.
+ */
+function deriveNameFromUrl(url: string, slugFallback: string): string {
+    let segment: string;
+    try {
+        const path = new URL(url).pathname.replace(/^\/+|\/+$/g, "");
+        segment = path.split("/").pop() ?? slugFallback;
+    } catch {
+        return slugFallback;
+    }
+
+    segment = segment.replace(/\.html?$/i, "");
+
+    // Strip a leading numeric id ("1419780-ritter-sport...") or "p<id>-" prefix.
+    const stripped = segment.replace(/^p?\d+[-_]/, "");
+
+    if (stripped.length === 0 || /^\d+$/.test(stripped)) {
+        return slugFallback;
+    }
+
+    const humanized = stripped.replace(/[-_]+/g, " ").trim();
+    if (humanized.length === 0) {
+        return slugFallback;
+    }
+
+    return humanized.charAt(0).toUpperCase() + humanized.slice(1);
 }
 
 function computeCanonicalSlug(name: string, origin: string, slug: string): string {
