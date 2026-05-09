@@ -50,21 +50,40 @@ describe("PilulkaClient.getProduct", () => {
 });
 
 describe("PilulkaClient.listCategory", () => {
-    it("yields RawProducts from a category page", async () => {
+    it("yields RawProducts using the .product-list__item selector", async () => {
         const cat = readHtml("category-page1.html");
         const detail = readHtml("product-detail.html");
-        const { client } = buildClient([
-            { match: "/vitaminy-a-mineralni-latky", html: cat },
+        const { client, calls } = buildClient([
+            { match: "/akce-a-slevy", html: cat },
             { match: "jamieson", html: detail },
             { match: "/another-product", html: detail },
         ]);
         const out: import("../ShopApiClient.types").RawProduct[] = [];
-        for await (const p of client.listCategory({ category: "vitaminy-a-mineralni-latky", limit: 1 })) {
+        for await (const p of client.listCategory({ category: "akce-a-slevy", limit: 5 })) {
             out.push(p);
         }
 
-        expect(out.length).toBeGreaterThan(0);
+        // Fixture has 3 .product-list__item nodes but two share a slug — expect 2 unique products.
+        expect(out.length).toBe(2);
         expect(out[0].shopOrigin).toBe("pilulka.cz");
+        // First detail fetch should be the deduplicated jamieson URL, not the bare brand link.
+        expect(calls.some((c) => c.url.endsWith("/jamieson-vitamin-c-1000-mg-100-tablet"))).toBe(true);
+    });
+
+    it("respects opts.limit before walking pagination", async () => {
+        const cat = readHtml("category-page1.html");
+        const detail = readHtml("product-detail.html");
+        const { client } = buildClient([
+            { match: "/akce-a-slevy", html: cat },
+            { match: "jamieson", html: detail },
+            { match: "/another-product", html: detail },
+        ]);
+        const out: import("../ShopApiClient.types").RawProduct[] = [];
+        for await (const p of client.listCategory({ category: "akce-a-slevy", limit: 1 })) {
+            out.push(p);
+        }
+
+        expect(out.length).toBe(1);
     });
 });
 

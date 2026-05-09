@@ -73,10 +73,7 @@ export class PilulkaClient extends ShopApiClient {
             const html: string = await this.getText(url, { signal: opts.signal });
             const { document } = parseHTML(html);
 
-            const productLinks = Array.from(document.querySelectorAll(".product-list .product__name"))
-                .map((el) => el.getAttribute("href"))
-                .filter((h): h is string => h !== null)
-                .map((h) => new URL(h, ROOT).href);
+            const productLinks = extractProductLinks(document);
 
             for (const link of productLinks) {
                 opts.signal?.throwIfAborted();
@@ -177,4 +174,25 @@ function parseDetail(html: string, url: string): RawProduct | undefined {
         observedAt: new Date(),
         raw: { source: "pilulka-jsonld", ld: product },
     };
+}
+
+function extractProductLinks(document: ReturnType<typeof parseHTML>["document"]): string[] {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const item of Array.from(document.querySelectorAll(".product-list__item"))) {
+        const href = item.querySelector("a")?.getAttribute("href");
+        if (!href || !href.startsWith("/")) {
+            continue;
+        }
+
+        const absolute = new URL(href, ROOT).href;
+        if (seen.has(absolute)) {
+            continue;
+        }
+
+        seen.add(absolute);
+        out.push(absolute);
+    }
+
+    return out;
 }
