@@ -38,11 +38,20 @@ export interface KosikRawProductItem {
     ean?: string;
 }
 
+export interface KosikListingProducts {
+    items: KosikRawProductItem[];
+    totalCount?: number;
+    cursor?: string | null;
+}
+
 export interface KosikListingResponse {
     title?: string;
     breadcrumbs?: Array<{ name: string }>;
-    products?: { items: KosikRawProductItem[] };
+    products?: KosikListingProducts;
+    /** Legacy field used by older actor builds; current API omits it. */
     more?: string | null;
+    /** Subcategories of the current category — used by the actor's recursive traversal. */
+    subCategories?: KosikRawCategory[];
     totalCount?: number;
-    showProductsCount?: number;
+    showProductsCount?: boolean | number;
 }

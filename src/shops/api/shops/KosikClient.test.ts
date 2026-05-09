@@ -53,21 +53,25 @@ describe("KosikClient.listCategory", () => {
         expect(out.every((p) => typeof p.url === "string" && p.url.includes("kosik.cz"))).toBe(true);
     });
 
-    it("paginates via offset using totalCount", async () => {
-        const page1 = readFixture<{ totalCount?: number; products?: { items: unknown[] } }>("listing-pekarna.json");
-        const page2 = readFixture("listing-page2.json");
+    it("recursively walks subCategories to load more products", async () => {
+        const parent = readFixture<{ products?: { items: unknown[] }; subCategories?: unknown[] }>(
+            "listing-pekarna.json"
+        );
+        const child = readFixture("listing-page2.json");
+        const empty = { products: { items: [] }, subCategories: [] };
         const { client, calls } = buildClient([
-            { match: "offset=30", response: page2 },
-            { match: "/api/front/page/products", response: page1 },
+            { match: "slug=c1028-slane-pecivo", response: child },
+            { match: "slug=c1026-pekarna-a-cukrarna", response: parent },
+            { match: "/api/front/page/products", response: empty },
         ]);
 
         const out: Awaited<ReturnType<typeof client.getProduct>>[] = [];
-        for await (const item of client.listCategory({ category: "c1026-pekarna-a-cukrarna", limit: 60 })) {
+        for await (const item of client.listCategory({ category: "c1026-pekarna-a-cukrarna", limit: 200 })) {
             out.push(item);
         }
 
-        expect(calls.some((c) => c.url.includes("offset=30"))).toBe(true);
-        expect(out.length).toBeGreaterThan(30);
+        expect(calls.some((c) => c.url.includes("slug=c1028-slane-pecivo"))).toBe(true);
+        expect(out.length).toBeGreaterThan(0);
     });
 
     it("respects opts.limit even with more pages available", async () => {

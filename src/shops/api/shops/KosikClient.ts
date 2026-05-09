@@ -54,47 +54,79 @@ export class KosikClient extends ShopApiClient {
             throw new Error("KosikClient.listCategory requires opts.category");
         }
 
+        const seenSlugs = new Set<string>();
+        const seenItemIds = new Set<number>();
+        const queue: string[] = [opts.category];
         let yielded = 0;
-        let offset = 0;
-        let totalCount: number | undefined;
-
-        while (true) {
+        while (queue.length > 0) {
             opts.signal?.throwIfAborted();
-            await this.waitTurn();
-            const params: Record<string, string | number> = {
-                slug: opts.category,
-                limit: DEFAULT_LIMIT,
-            };
-            if (offset > 0) {
-                params.offset = offset;
+            const slug = queue.shift();
+            if (slug === undefined || seenSlugs.has(slug)) {
+                continue;
             }
 
-            const page = await this.get<KosikListingResponse>("/api/front/page/products", {
-                params,
-                signal: opts.signal,
-            });
-            const breadcrumbs = breadcrumbsString(page);
-            const items = page.products?.items ?? [];
-            if (items.length === 0) {
-                return;
-            }
+            seenSlugs.add(slug);
 
-            for (const item of items) {
-                yield this.toRawProduct(item, breadcrumbs);
+            for await (const result of this.fetchSlugItems(slug, opts.signal)) {
+                if (result.kind === "subcategory") {
+                    if (!seenSlugs.has(result.slug)) {
+                        queue.push(result.slug);
+                    }
+
+                    continue;
+                }
+
+                if (seenItemIds.has(result.item.id)) {
+                    continue;
+                }
+
+                seenItemIds.add(result.item.id);
+                yield this.toRawProduct(result.item, result.breadcrumbs);
                 yielded++;
                 if (opts.limit !== undefined && yielded >= opts.limit) {
                     return;
                 }
             }
+        }
+    }
 
-            if (totalCount === undefined) {
-                totalCount = page.totalCount;
-            }
-
-            offset += items.length;
-            if (totalCount === undefined || offset >= totalCount) {
+    private async *fetchSlugItems(
+        slug: string,
+        signal: AbortSignal | undefined
+    ): AsyncIterable<
+        { kind: "item"; item: KosikRawProductItem; breadcrumbs: string } | { kind: "subcategory"; slug: string }
+    > {
+        let nextUrl: string | null = buildListingPath(slug);
+        const seenUrls = new Set<string>();
+        let emittedSubs = false;
+        while (nextUrl !== null) {
+            signal?.throwIfAborted();
+            if (seenUrls.has(nextUrl)) {
                 return;
             }
+
+            seenUrls.add(nextUrl);
+            await this.waitTurn();
+            const page: KosikListingResponse = await this.get<KosikListingResponse>(nextUrl, { signal });
+            const breadcrumbs = breadcrumbsString(page);
+            if (!emittedSubs) {
+                emittedSubs = true;
+                for (const sub of page.subCategories ?? []) {
+                    yield { kind: "subcategory", slug: urlToSlug(sub.url) };
+                }
+            }
+
+            const items = page.products?.items ?? [];
+            for (const item of items) {
+                yield { kind: "item", item, breadcrumbs };
+            }
+
+            if (typeof page.more === "string" && page.more.length > 0) {
+                nextUrl = page.more;
+                continue;
+            }
+
+            return;
         }
     }
 
@@ -153,6 +185,11 @@ function* flattenCategories(nodes: KosikRawCategory[], parent?: string): Generat
 
 function urlToSlug(url: string): string {
     return url.startsWith("/") ? url.slice(1) : url;
+}
+
+function buildListingPath(slug: string): string {
+    const params = new URLSearchParams({ slug, limit: String(DEFAULT_LIMIT) });
+    return `/api/front/page/products?${params.toString()}`;
 }
 
 function breadcrumbsString(listing: KosikListingResponse): string {
