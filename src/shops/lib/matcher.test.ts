@@ -228,3 +228,111 @@ describe("Matcher fallthrough → seed", () => {
         db.close();
     });
 });
+
+function seedProduct(
+    db: ShopsDatabase,
+    opts: { masterId: number; shopOrigin: string; nameNormalized: string }
+): number {
+    const now = new Date().toISOString();
+    db.raw().run(
+        `INSERT INTO products (shop_origin, slug, url, name, name_normalized, master_product_id,
+                               match_method, first_seen_at, last_updated_at, is_active)
+         VALUES (?, ?, ?, ?, ?, ?, 'auto-seed', ?, ?, 1)`,
+        [
+            opts.shopOrigin,
+            `slug-${Math.random().toString(36).slice(2)}`,
+            `https://${opts.shopOrigin}/x`,
+            opts.nameNormalized,
+            opts.nameNormalized,
+            opts.masterId,
+            now,
+            now,
+        ]
+    );
+    return db.raw().query<{ id: number }, []>("SELECT last_insert_rowid() AS id").get()?.id ?? 0;
+}
+
+describe("Matcher same-shop guard", () => {
+    it("does NOT link a rohlik product to a master that already has a rohlik product (Layer 3)", async () => {
+        const { db, matcher } = setup();
+        const masterId = seedMaster(db, {
+            canonical_name_normalized: "7days croissant s kakaovou naplni",
+            brand_normalized: "7days",
+        });
+        seedProduct(db, {
+            masterId,
+            shopOrigin: "rohlik.cz",
+            nameNormalized: "7days croissant s kakaovou naplni",
+        });
+
+        const input = makeInput({
+            productId: 999,
+            shopOrigin: "rohlik.cz",
+            nameNormalized: "7days croissant mini s kakaovou naplni",
+            brandNormalized: "7days",
+        });
+
+        const result = await matcher.match(input);
+        // Same-shop products should NOT auto-link to the same master.
+        // They're already distinguishable by slug in the source shop.
+        if (result.kind === "linked") {
+            expect(result.masterProductId).not.toBe(masterId);
+        } else {
+            expect(["seed", "gray-zone"]).toContain(result.kind);
+        }
+        db.close();
+    });
+
+    it("DOES link a rohlik product to a master with only a kosik product (cross-shop)", async () => {
+        const { db, matcher } = setup();
+        db.raw().exec(
+            `INSERT INTO shops (origin, display_name, currency, cap_live, cap_history, cap_listing, cap_ean, cap_search, bot_protection)
+             VALUES ('kosik.cz','Košík','CZK',1,1,1,1,1,'none')`
+        );
+        const masterId = seedMaster(db, {
+            canonical_name_normalized: "ritter sport mlecna",
+            brand_normalized: "ritter sport",
+        });
+        seedProduct(db, {
+            masterId,
+            shopOrigin: "kosik.cz",
+            nameNormalized: "ritter sport mlecna",
+        });
+
+        const input = makeInput({
+            productId: 999,
+            shopOrigin: "rohlik.cz",
+            nameNormalized: "ritter sport mlecna",
+            brandNormalized: "ritter sport",
+        });
+
+        const result = await matcher.match(input);
+        expect(result.kind).toBe("linked");
+        if (result.kind === "linked") {
+            expect(result.masterProductId).toBe(masterId);
+        }
+        db.close();
+    });
+
+    it("does NOT link via EAN to a master that already has same-shop product", async () => {
+        const { db, matcher } = setup();
+        const masterId = seedMaster(db, { ean: "1234567890123" });
+        seedProduct(db, {
+            masterId,
+            shopOrigin: "rohlik.cz",
+            nameNormalized: "existing rohlik product",
+        });
+
+        const input = makeInput({
+            productId: 999,
+            shopOrigin: "rohlik.cz",
+            ean: "1234567890123",
+        });
+
+        const result = await matcher.match(input);
+        if (result.kind === "linked") {
+            expect(result.masterProductId).not.toBe(masterId);
+        }
+        db.close();
+    });
+});

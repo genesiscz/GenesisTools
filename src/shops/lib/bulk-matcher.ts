@@ -106,6 +106,7 @@ export class BulkMatcher {
             .query<
                 {
                     productId: number;
+                    pShop: string;
                     pName: string;
                     pPack: number | null;
                     masterId: number;
@@ -114,7 +115,7 @@ export class BulkMatcher {
                 },
                 []
             >(
-                `SELECT p.id AS productId, p.name_normalized AS pName, p.pack_count AS pPack,
+                `SELECT p.id AS productId, p.shop_origin AS pShop, p.name_normalized AS pName, p.pack_count AS pPack,
                         m.id AS masterId, m.canonical_name_normalized AS mName, m.pack_count AS mPack
                  FROM products p
                  JOIN master_products m
@@ -137,9 +138,27 @@ export class BulkMatcher {
                 continue;
             }
 
+            // Same-shop guard: only allow merge when names are identical
+            // (true duplicate listing; not different SKUs sharing a fingerprint).
+            if (this.masterAlreadyHasShop(row.masterId, row.pShop, row.productId) && row.pName !== row.mName) {
+                continue;
+            }
+
             this.writeLinkedDirect(row.productId, row.masterId, "fuzzy", score);
             stats.linked += 1;
         }
+    }
+
+    private masterAlreadyHasShop(masterId: number, shopOrigin: string, excludeProductId: number): boolean {
+        const row = this.args.shopsDb
+            .raw()
+            .query<{ id: number }, [number, string, number]>(
+                `SELECT id FROM products
+                 WHERE master_product_id = ? AND shop_origin = ? AND id != ? AND is_active = 1
+                 LIMIT 1`
+            )
+            .get(masterId, shopOrigin, excludeProductId);
+        return row !== null;
     }
 
     private async passPerProduct(stats: BulkMatcherStats): Promise<void> {

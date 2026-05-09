@@ -134,6 +134,52 @@ export class Matcher {
         return { kind: "seed", reason: "no-candidate" };
     }
 
+    /**
+     * Drop masters that already host an *active* product from the same shop as
+     * the input — fuzzy matches across different SKUs in the same shop are
+     * always wrong (the shop already gave the SKUs different slugs/ids, so they
+     * are distinct products by construction). Without this guard the matcher
+     * merges "Mini" / multipack / "5 × 37g" variants under one master because
+     * they share brand + name tokens, producing the broken "3× rohlik in
+     * Cross-Shop Offers" cards.
+     *
+     * Exception: when the input's name is *identical* to the master's
+     * canonical_name_normalized (or matched by EAN), allow it. Same-shop
+     * duplicate listings (rare but real) should still collapse.
+     */
+    private filterSameShopMasters(rows: MasterRow[], input: MatcherInput): MasterRow[] {
+        if (rows.length === 0) {
+            return rows;
+        }
+
+        const taken = this.collectSameShopMasterIds(input);
+        if (taken.size === 0) {
+            return rows;
+        }
+
+        return rows.filter((m) => {
+            if (!taken.has(m.id)) {
+                return true;
+            }
+
+            // Same-shop master: allow only if names are identical
+            // (true duplicate listing, not a variant).
+            return m.canonical_name_normalized === input.nameNormalized;
+        });
+    }
+
+    private collectSameShopMasterIds(input: MatcherInput): Set<number> {
+        const taken = this.shopsDb
+            .raw()
+            .query<{ master_product_id: number }, [string, number]>(
+                `SELECT DISTINCT master_product_id FROM products
+                 WHERE shop_origin = ? AND id != ? AND is_active = 1
+                   AND master_product_id IS NOT NULL`
+            )
+            .all(input.shopOrigin, input.productId);
+        return new Set(taken.map((t) => t.master_product_id));
+    }
+
     private isRejectedPair(productIdA: number, productIdB: number): boolean {
         const lo = Math.min(productIdA, productIdB);
         const hi = Math.max(productIdA, productIdB);
@@ -156,7 +202,8 @@ export class Matcher {
             .query<MasterRow, [string]>(`SELECT ${MASTER_COLS} FROM master_products WHERE ean = ?`)
             .all(input.ean);
 
-        const compat = rows.filter((m) => compatPackCount(input.packCount, m.pack_count));
+        const allowed = this.filterSameShopMasters(rows, input);
+        const compat = allowed.filter((m) => compatPackCount(input.packCount, m.pack_count));
         if (compat.length === 0) {
             return null;
         }
@@ -188,7 +235,7 @@ export class Matcher {
                  WHERE brand_normalized = ? AND unit = ? AND unit_amount = ? AND flavor_key = ?`
             )
             .all(input.brandNormalized, input.unit, input.unitAmount, input.flavorKey);
-        return this.bestFuzzy(input, rows, this.config.LAYER1_FUZZY_MIN, "fuzzy", 1);
+        return this.bestFuzzy(input, this.filterSameShopMasters(rows, input), this.config.LAYER1_FUZZY_MIN, "fuzzy", 1);
     }
 
     private layer2a(input: MatcherInput): MatchResult | null {
@@ -203,7 +250,9 @@ export class Matcher {
                  WHERE brand_normalized = ? AND unit = ? AND unit_amount = ?`
             )
             .all(input.brandNormalized, input.unit, input.unitAmount);
-        const eligible = rows.filter((m) => m.flavor_key === null || input.flavorKey === null);
+        const eligible = this.filterSameShopMasters(rows, input).filter(
+            (m) => m.flavor_key === null || input.flavorKey === null
+        );
         return this.bestFuzzy(input, eligible, this.config.LAYER2A_FUZZY_MIN, "sig:no-flavor", 2);
     }
 
@@ -219,7 +268,9 @@ export class Matcher {
                  WHERE brand_normalized = ? AND flavor_key = ?`
             )
             .all(input.brandNormalized, input.flavorKey);
-        const eligible = rows.filter((m) => m.unit === null || input.unit === null);
+        const eligible = this.filterSameShopMasters(rows, input).filter(
+            (m) => m.unit === null || input.unit === null
+        );
         return this.bestFuzzy(input, eligible, this.config.LAYER2B_FUZZY_MIN, "sig:no-size", 2);
     }
 
@@ -233,7 +284,8 @@ export class Matcher {
             .query<MasterRow, [string]>(`SELECT ${MASTER_COLS} FROM master_products WHERE brand_normalized = ?`)
             .all(input.brandNormalized);
 
-        const compat = rows.filter((m) => compatPackCount(input.packCount, m.pack_count));
+        const allowed = this.filterSameShopMasters(rows, input);
+        const compat = allowed.filter((m) => compatPackCount(input.packCount, m.pack_count));
         if (compat.length === 0) {
             return null;
         }
@@ -284,7 +336,10 @@ export class Matcher {
             return null;
         }
 
-        const candidates = this.shopsDb.raw().query<MasterRow, []>(`SELECT ${MASTER_COLS} FROM master_products`).all();
+        const candidates = this.filterSameShopMasters(
+            this.shopsDb.raw().query<MasterRow, []>(`SELECT ${MASTER_COLS} FROM master_products`).all(),
+            input
+        );
 
         let best: { row: MasterRow; score: number } | null = null;
         for (const row of candidates) {
