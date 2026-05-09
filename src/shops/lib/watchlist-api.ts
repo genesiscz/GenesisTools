@@ -136,6 +136,27 @@ export async function getWatchlist(): Promise<FavoriteWithState[]> {
     return favorites.listWithCurrentState();
 }
 
+export const VALID_NOTIFICATION_REASONS: ReadonlySet<NotificationReason> = new Set<NotificationReason>([
+    "target-price",
+    "drop-percent",
+    "drop-absolute",
+    "back-in-stock",
+]);
+
+export function assertValidReason(reason: string | undefined): NotificationReason | undefined {
+    if (reason === undefined) {
+        return undefined;
+    }
+
+    if (!VALID_NOTIFICATION_REASONS.has(reason as NotificationReason)) {
+        throw new Error(
+            `Invalid reason "${reason}". Use one of: target-price, drop-percent, drop-absolute, back-in-stock.`
+        );
+    }
+
+    return reason as NotificationReason;
+}
+
 export interface RecentNotificationsArgs {
     limit?: number;
     reason?: NotificationReason;

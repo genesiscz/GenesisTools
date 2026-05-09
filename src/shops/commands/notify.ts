@@ -1,15 +1,13 @@
 import { SafeJSON } from "@app/utils/json";
 import { formatTable } from "@app/utils/table";
 import type { Command } from "commander";
-import type { NotificationReason } from "../db/NotificationsRepository";
 import {
     ackAllNotifications,
     ackNotification,
+    assertValidReason,
     getRecentNotifications,
     type RecentNotificationsArgs,
 } from "../lib/watchlist-api";
-
-const VALID_REASONS = new Set<NotificationReason>(["target-price", "drop-percent", "drop-absolute", "back-in-stock"]);
 
 export function registerNotifyCommand(program: Command): void {
     const notify = program.command("notify").description("Inspect and acknowledge notifications");
@@ -23,15 +21,9 @@ export function registerNotifyCommand(program: Command): void {
         .option("--limit <n>", "Max rows", "100")
         .option("--json", "Output JSON")
         .action(async (opts: { all?: boolean; reason?: string; shop?: string; limit?: string; json?: boolean }) => {
-            if (opts.reason && !VALID_REASONS.has(opts.reason as NotificationReason)) {
-                throw new Error(
-                    `Invalid --reason "${opts.reason}". Use one of: target-price, drop-percent, drop-absolute, back-in-stock.`
-                );
-            }
-
             const args: RecentNotificationsArgs = {
                 onlyUnacked: !opts.all,
-                reason: opts.reason as NotificationReason | undefined,
+                reason: assertValidReason(opts.reason),
                 shop_origin: opts.shop,
                 limit: opts.limit ? Number(opts.limit) : 100,
             };

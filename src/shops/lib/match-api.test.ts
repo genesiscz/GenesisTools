@@ -3,7 +3,13 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ShopsDatabase } from "../db/ShopsDatabase";
-import { acceptCandidatePair, listPendingCandidates, rejectCandidatePair, rematchProduct, resolveProductId } from "./match-api";
+import {
+    acceptCandidatePair,
+    listPendingCandidates,
+    rejectCandidatePair,
+    rematchProduct,
+    resolveProductId,
+} from "./match-api";
 
 function setup() {
     const db = new ShopsDatabase(join(mkdtempSync(join(tmpdir(), "shops-mapi-")), "test.db"));
