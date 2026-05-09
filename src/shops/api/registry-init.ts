@@ -1,4 +1,6 @@
+import logger from "@app/logger";
 import type { HttpRequestSink } from "../lib/http-sink";
+import { syncShopsFromRegistry } from "../lib/sync-shops-from-registry";
 import { ShopRegistry } from "./ShopRegistry";
 import { AlbertClient } from "./shops/AlbertClient";
 import { AlzaClient } from "./shops/AlzaClient";
@@ -48,6 +50,15 @@ export function initShopRegistry(opts: { sink?: HttpRequestSink } = {}): void {
     registry.register(new AlbertClient({ sink: opts.sink }));
     registry.register(new MojaDmClient({ sink: opts.sink }));
     initialized = true;
+
+    // Sync the shops table from registered clients so /coverage capability
+    // badges and bot_protection labels match the source of truth (the
+    // ShopApiClient.capabilities). Fire-and-forget — keeps initShopRegistry
+    // synchronous (it's called from many CLI commands) and any DB write
+    // failure shouldn't block the registry.
+    void syncShopsFromRegistry().catch((err) =>
+        logger.warn({ err, component: "registry-init" }, "syncShopsFromRegistry failed")
+    );
 }
 
 /** Test-only — re-runs initialization after a registry reset. */
