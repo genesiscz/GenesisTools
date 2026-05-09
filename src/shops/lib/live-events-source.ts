@@ -1,7 +1,7 @@
 import logger from "@app/logger";
-import type { LiveCrawlProgressEvent, LiveHttpRequestEvent } from "../types";
 import type { ShopsDatabase } from "../db/ShopsDatabase";
 import { getShopsDatabase } from "../db/ShopsDatabase";
+import type { LiveCrawlProgressEvent, LiveHttpRequestEvent } from "../types";
 import { sseBroadcaster } from "./sse-broadcaster";
 
 const POLL_INTERVAL_MS = 2_000;
@@ -31,7 +31,29 @@ interface HttpRow {
     master_product_id: number | null;
     category_id: string | null;
     error: string | null;
+    request_excerpt: string | null;
+    response_excerpt: string | null;
 }
+
+const HTTP_COLUMNS = [
+    "id",
+    "ts",
+    "method",
+    "url",
+    "shop_origin",
+    "source",
+    "operation",
+    "status",
+    "duration_ms",
+    "request_id",
+    "crawl_run_id",
+    "product_slug",
+    "master_product_id",
+    "category_id",
+    "error",
+    "request_excerpt",
+    "response_excerpt",
+] as const;
 
 interface CrawlRunRow {
     id: number;
@@ -63,6 +85,8 @@ function rowToHttpEvent(row: HttpRow): LiveHttpRequestEvent {
         master_product_id: row.master_product_id,
         category_id: row.category_id,
         error: row.error,
+        request_excerpt: row.request_excerpt,
+        response_excerpt: row.response_excerpt,
     };
 }
 
@@ -91,23 +115,7 @@ export async function getInitialLiveEvents(
     const httpRows = (await db
         .kysely()
         .selectFrom("http_requests")
-        .select([
-            "id",
-            "ts",
-            "method",
-            "url",
-            "shop_origin",
-            "source",
-            "operation",
-            "status",
-            "duration_ms",
-            "request_id",
-            "crawl_run_id",
-            "product_slug",
-            "master_product_id",
-            "category_id",
-            "error",
-        ])
+        .select([...HTTP_COLUMNS])
         .orderBy("id", "desc")
         .limit(HTTP_BACKFILL_LIMIT)
         .execute()) as HttpRow[];
@@ -151,23 +159,7 @@ async function pollOnce(db: ShopsDatabase): Promise<void> {
     const httpRows = (await db
         .kysely()
         .selectFrom("http_requests")
-        .select([
-            "id",
-            "ts",
-            "method",
-            "url",
-            "shop_origin",
-            "source",
-            "operation",
-            "status",
-            "duration_ms",
-            "request_id",
-            "crawl_run_id",
-            "product_slug",
-            "master_product_id",
-            "category_id",
-            "error",
-        ])
+        .select([...HTTP_COLUMNS])
         .where("id", ">", lastSeenHttpId)
         .orderBy("id", "asc")
         .limit(HTTP_POLL_LIMIT)
