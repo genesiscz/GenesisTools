@@ -26,7 +26,7 @@ function MasterPage() {
     const historyQuery = useQuery({
         queryKey: ["master-history", id],
         queryFn: async (): Promise<PriceHistoryResponse> => {
-            const res = await fetch(`/api/master/${id}/history?days=90`);
+            const res = await fetch(`/api/master/${id}/history?days=1825`);
             if (!res.ok) {
                 throw new Error(`history fetch failed: ${res.status}`);
             }
