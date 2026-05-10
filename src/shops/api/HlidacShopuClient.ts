@@ -1,12 +1,17 @@
 import logger from "@app/logger";
+import type {
+    HlidacGetByUrlResult,
+    HsDetailResponse,
+    HsMetaS3,
+    HsPriceHistoryS3,
+} from "@app/shops/api/HlidacShopuClient.types";
+import type { HttpRequestEvent, HttpRequestSink } from "@app/shops/lib/http-sink";
 import { ApiClient, type ApiClientResponse } from "@app/utils/api/ApiClient";
 import { SafeJSON } from "@app/utils/json";
 // @ts-expect-error -- @hlidac-shopu/lib ships ESM with no .d.ts coverage
 import { fetchDataSet, fetchShopsStats } from "@hlidac-shopu/lib/remoting.mjs";
 // @ts-expect-error -- @hlidac-shopu/lib ships ESM with no .d.ts coverage
 import { shopOrigin as deriveShopOrigin, itemSlug, parseItemDetails } from "@hlidac-shopu/lib/shops.mjs";
-import type { HttpRequestEvent, HttpRequestSink } from "@app/shops/lib/http-sink";
-import type { HlidacGetByUrlResult, HsDetailResponse, HsMetaS3, HsPriceHistoryS3 } from "@app/shops/api/HlidacShopuClient.types";
 
 export interface HlidacShopuClientConfig {
     sink?: HttpRequestSink;

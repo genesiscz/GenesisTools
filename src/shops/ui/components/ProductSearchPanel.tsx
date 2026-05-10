@@ -1,12 +1,12 @@
 import type { SearchResponse } from "@app/shops/types";
+import { ShopBadge } from "@app/shops/ui/components/ShopBadge";
+import { useDebouncedValue } from "@app/shops/ui/hooks/useDebouncedValue";
 import { Input } from "@app/utils/ui/components/input";
 import { Skeleton } from "@app/utils/ui/components/skeleton";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { ImageOff, Search } from "lucide-react";
 import { useState } from "react";
-import { useDebouncedValue } from "@app/shops/ui/hooks/useDebouncedValue";
-import { ShopBadge } from "@app/shops/ui/components/ShopBadge";
 
 interface ProductSearchPanelProps {
     onSelect?: (id: number, type: "master" | "product") => void;

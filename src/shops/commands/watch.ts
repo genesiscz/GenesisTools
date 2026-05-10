@@ -1,10 +1,10 @@
 import logger from "@app/logger";
-import { SafeJSON } from "@app/utils/json";
-import { formatTable } from "@app/utils/table";
-import type { Command } from "commander";
 import { parseCooldown, parsePercent } from "@app/shops/lib/watch-parsing";
 import { addFavorite, editFavorite, getWatchlist, removeFavorite } from "@app/shops/lib/watchlist-api";
 import { runWatchlistTick } from "@app/shops/lib/watchlist-tick";
+import { SafeJSON } from "@app/utils/json";
+import { formatTable } from "@app/utils/table";
+import type { Command } from "commander";
 
 const log = logger.child({ component: "shops:watch-cmd" });
 

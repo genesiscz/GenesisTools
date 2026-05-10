@@ -1,8 +1,13 @@
 import logger from "@app/logger";
 import type { ShopApiClient } from "@app/shops/api/ShopApiClient";
+import type {
+    CrawlOptions,
+    CrawlProgressEvent,
+    CrawlResult,
+    ShopCrawlerInterface,
+} from "@app/shops/crawlers/ShopCrawler.types";
 import type { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import { createBulkMatcher } from "@app/shops/lib/bulk-matcher";
-import type { CrawlOptions, CrawlProgressEvent, CrawlResult, ShopCrawlerInterface } from "@app/shops/crawlers/ShopCrawler.types";
 
 const PROGRESS_EVERY_N_PRODUCTS = 25;
 

@@ -1,6 +1,6 @@
-import type { Command } from "commander";
 import { getShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import { runDbPruneHttp } from "@app/shops/lib/db-prune";
+import type { Command } from "commander";
 
 export function registerDbPruneCommand(program: Command): void {
     const dbCmd =

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
-import type { HttpRequestEvent, HttpRequestSink } from "@app/shops/lib/http-sink";
 import { ShopApiClient } from "@app/shops/api/ShopApiClient";
 import type { Category, ListingOptions, RawProduct, ShopCapabilities } from "@app/shops/api/ShopApiClient.types";
+import type { HttpRequestEvent, HttpRequestSink } from "@app/shops/lib/http-sink";
 
 class TestSink implements HttpRequestSink {
     public readonly events: HttpRequestEvent[] = [];

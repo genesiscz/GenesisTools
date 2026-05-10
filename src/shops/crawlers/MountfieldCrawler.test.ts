@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { MountfieldClient } from "@app/shops/api/shops/MountfieldClient";
-import { buildTestDatabase } from "@app/shops/test-utils/buildTestDatabase";
 import { MountfieldCrawler } from "@app/shops/crawlers/MountfieldCrawler";
+import { buildTestDatabase } from "@app/shops/test-utils/buildTestDatabase";
 
 describe("MountfieldCrawler", () => {
     it("strategy is mountfield-html", () => {

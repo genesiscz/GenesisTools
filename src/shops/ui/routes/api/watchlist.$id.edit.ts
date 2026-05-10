@@ -1,6 +1,6 @@
-import { createFileRoute } from "@tanstack/react-router";
 import { editFavorite } from "@app/shops/lib/watchlist-api";
 import { apiHandler, jsonBody } from "@app/shops/ui/server/api-utils";
+import { createFileRoute } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/api/watchlist/$id/edit")({
     server: {

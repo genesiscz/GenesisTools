@@ -1,8 +1,8 @@
 import type { CompareResponse } from "@app/shops/types";
-import { Card, CardContent, CardHeader, CardTitle } from "@app/utils/ui/components/card";
-import { ImageOff } from "lucide-react";
 import { CrossShopOffersTable } from "@app/shops/ui/components/CrossShopOffersTable";
 import { ShopBadge } from "@app/shops/ui/components/ShopBadge";
+import { Card, CardContent, CardHeader, CardTitle } from "@app/utils/ui/components/card";
+import { ImageOff } from "lucide-react";
 
 interface CompareGridProps {
     data: CompareResponse | undefined;

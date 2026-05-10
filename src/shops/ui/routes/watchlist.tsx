@@ -1,3 +1,9 @@
+import type { FavoriteWithState } from "@app/shops/db/FavoritesRepository";
+import type { Notification } from "@app/shops/db/NotificationsRepository";
+import { FilterPills, type WatchlistFilter } from "@app/shops/ui/components/FilterPills";
+import { PasteUrlQuickAdd } from "@app/shops/ui/components/PasteUrlQuickAdd";
+import { WatchlistTable } from "@app/shops/ui/components/WatchlistTable";
+import { useSseStream } from "@app/shops/ui/hooks/useSseStream";
 import { SafeJSON } from "@app/utils/json";
 import { Card, CardContent, CardHeader, CardTitle } from "@app/utils/ui/components/card";
 import { Input } from "@app/utils/ui/components/input";
@@ -5,12 +11,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
-import type { FavoriteWithState } from "@app/shops/db/FavoritesRepository";
-import type { Notification } from "@app/shops/db/NotificationsRepository";
-import { FilterPills, type WatchlistFilter } from "@app/shops/ui/components/FilterPills";
-import { PasteUrlQuickAdd } from "@app/shops/ui/components/PasteUrlQuickAdd";
-import { WatchlistTable } from "@app/shops/ui/components/WatchlistTable";
-import { useSseStream } from "@app/shops/ui/hooks/useSseStream";
 
 export const Route = createFileRoute("/watchlist")({
     component: WatchlistPage,

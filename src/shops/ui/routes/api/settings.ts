@@ -1,7 +1,7 @@
 import logger from "@app/logger";
 import { getSettingsRepository, type SettingsPatch } from "@app/shops/lib/settings";
-import { createFileRoute } from "@tanstack/react-router";
 import { apiHandler, safeJsonBody } from "@app/shops/ui/server/api-utils";
+import { createFileRoute } from "@tanstack/react-router";
 
 const log = logger.child({ component: "api:settings" });
 

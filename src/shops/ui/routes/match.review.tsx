@@ -1,3 +1,5 @@
+import type { PairDTO, ProductSummary } from "@app/shops/lib/match-api";
+import { EmptyState } from "@app/shops/ui/components/EmptyState";
 import { Badge } from "@app/utils/ui/components/badge";
 import { Button } from "@app/utils/ui/components/button";
 import { Card, CardContent, CardFooter, CardHeader } from "@app/utils/ui/components/card";
@@ -5,8 +7,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { GitMerge } from "lucide-react";
 import { toast } from "sonner";
-import type { PairDTO, ProductSummary } from "@app/shops/lib/match-api";
-import { EmptyState } from "@app/shops/ui/components/EmptyState";
 
 export const Route = createFileRoute("/match/review")({
     component: MatchReviewPage,

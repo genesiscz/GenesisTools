@@ -1,8 +1,8 @@
 import logger from "@app/logger";
 import { getShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import type { SearchHit, SearchResponse } from "@app/shops/types";
-import { createFileRoute } from "@tanstack/react-router";
 import { apiHandler, intParam, parseQuery } from "@app/shops/ui/server/api-utils";
+import { createFileRoute } from "@tanstack/react-router";
 
 const log = logger.child({ component: "api:search" });
 

@@ -1,6 +1,6 @@
-import type { Command } from "commander";
 import { initShopRegistry } from "@app/shops/api/registry-init";
 import { runCaptureFixture } from "@app/shops/lib/capture-fixture";
+import type { Command } from "commander";
 
 interface DevCaptureFixtureRawOpts {
     shop: string;

@@ -1,4 +1,7 @@
 import logger from "@app/logger";
+import { getShopsDatabase, type ShopsDatabase } from "@app/shops/db/ShopsDatabase";
+import { buildRegistry, getAdvertisedTools, getHandler, type ToolEntry } from "@app/shops/mcp/registry";
+import { listResources, readResource } from "@app/shops/mcp/resources";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
@@ -7,9 +10,6 @@ import {
     ListToolsRequestSchema,
     ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { getShopsDatabase, type ShopsDatabase } from "@app/shops/db/ShopsDatabase";
-import { buildRegistry, getAdvertisedTools, getHandler, type ToolEntry } from "@app/shops/mcp/registry";
-import { listResources, readResource } from "@app/shops/mcp/resources";
 
 const log = logger.child({ component: "shops:mcp-server" });
 

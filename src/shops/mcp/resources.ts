@@ -1,6 +1,6 @@
-import { SafeJSON } from "@app/utils/json";
 import type { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import { getMaster, getProduct } from "@app/shops/lib/product-api";
+import { SafeJSON } from "@app/utils/json";
 
 export interface ResourceDescriptor {
     uri: string;

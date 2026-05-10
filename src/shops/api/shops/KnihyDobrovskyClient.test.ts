@@ -1,8 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { MemoryHttpRequestSink } from "@app/shops/lib/http-sink";
 import { KnihyDobrovskyClient } from "@app/shops/api/shops/KnihyDobrovskyClient";
+import { MemoryHttpRequestSink } from "@app/shops/lib/http-sink";
 
 function readHtml(rel: string): string {
     return readFileSync(join(import.meta.dir, "__fixtures__/knihydobrovsky", rel), "utf8");

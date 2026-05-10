@@ -1,8 +1,8 @@
 import logger from "@app/logger";
 import { getShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import type { PriceHistoryPoint, PriceHistoryResponse } from "@app/shops/types";
-import { createFileRoute } from "@tanstack/react-router";
 import { apiHandler, intParam } from "@app/shops/ui/server/api-utils";
+import { createFileRoute } from "@tanstack/react-router";
 
 const log = logger.child({ component: "api:master:$id:history" });
 

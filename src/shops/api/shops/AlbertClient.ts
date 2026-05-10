@@ -21,7 +21,6 @@
  * — the client throws a clear error pointing at this runbook.
  */
 
-import { SafeJSON } from "@app/utils/json";
 import { ShopApiClient, type ShopApiClientConstructorConfig } from "@app/shops/api/ShopApiClient";
 import type { Category, ListingOptions, RawProduct, ShopCapabilities } from "@app/shops/api/ShopApiClient.types";
 import type {
@@ -29,6 +28,7 @@ import type {
     AlbertNavigationResponse,
     AlbertRawProduct,
 } from "@app/shops/api/shops/AlbertClient.types";
+import { SafeJSON } from "@app/utils/json";
 
 const ALBERT_ORIGIN = "albert.cz";
 const STORE_ROOT = "https://www.albert.cz";

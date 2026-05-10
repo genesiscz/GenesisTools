@@ -1,7 +1,7 @@
 import type { CoverageResponse } from "@app/shops/types";
+import { CoverageGrid } from "@app/shops/ui/components/CoverageGrid";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { CoverageGrid } from "@app/shops/ui/components/CoverageGrid";
 
 export const Route = createFileRoute("/coverage")({
     component: CoveragePage,

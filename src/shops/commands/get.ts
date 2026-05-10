@@ -1,9 +1,9 @@
 import logger from "@app/logger";
+import { runGetProduct } from "@app/shops/lib/get-product";
 import { SafeJSON } from "@app/utils/json";
 import { formatTable } from "@app/utils/table";
 import clipboardy from "clipboardy";
 import type { Command } from "commander";
-import { runGetProduct } from "@app/shops/lib/get-product";
 
 interface GetOptions {
     json?: boolean;

@@ -1,8 +1,8 @@
 import type { SettingsPayload } from "@app/shops/types";
+import { SettingsForm } from "@app/shops/ui/components/SettingsForm";
 import { Skeleton } from "@app/utils/ui/components/skeleton";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { SettingsForm } from "@app/shops/ui/components/SettingsForm";
 
 export const Route = createFileRoute("/settings")({
     component: SettingsPage,

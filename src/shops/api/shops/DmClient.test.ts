@@ -1,10 +1,10 @@
 import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { DmClient } from "@app/shops/api/shops/DmClient";
+import { MemoryHttpRequestSink } from "@app/shops/lib/http-sink";
 import { ApiClientError } from "@app/utils/api/ApiClient";
 import { SafeJSON } from "@app/utils/json";
-import { MemoryHttpRequestSink } from "@app/shops/lib/http-sink";
-import { DmClient } from "@app/shops/api/shops/DmClient";
 
 function readFixture<T>(rel: string): T {
     const full = join(import.meta.dir, "__fixtures__/dm", rel);

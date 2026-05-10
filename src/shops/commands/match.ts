@@ -1,5 +1,3 @@
-import { SafeJSON } from "@app/utils/json";
-import type { Command } from "commander";
 import { getShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import { formatSummary, runGoldenHarness } from "@app/shops/lib/golden-harness";
 import {
@@ -9,6 +7,8 @@ import {
     rematchProduct,
     resolveProductId,
 } from "@app/shops/lib/match-api";
+import { SafeJSON } from "@app/utils/json";
+import type { Command } from "commander";
 
 export function registerMatchCommand(program: Command): void {
     const cmd = program.command("match").description("Re-match products and triage candidate pairs");

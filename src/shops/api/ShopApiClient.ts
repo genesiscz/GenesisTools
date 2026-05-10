@@ -1,9 +1,4 @@
 import logger from "@app/logger";
-import { ApiClient, type ApiClientResponse } from "@app/utils/api/ApiClient";
-import { SafeJSON } from "@app/utils/json";
-// @ts-expect-error -- @hlidac-shopu/lib ships ESM with no .d.ts coverage
-import { parseItemDetails } from "@hlidac-shopu/lib/shops.mjs";
-import type { HttpRequestSink } from "@app/shops/lib/http-sink";
 import type {
     Category,
     ListingOptions,
@@ -14,6 +9,11 @@ import type {
     ShopCapabilities,
     ShopOrigin,
 } from "@app/shops/api/ShopApiClient.types";
+import type { HttpRequestSink } from "@app/shops/lib/http-sink";
+import { ApiClient, type ApiClientResponse } from "@app/utils/api/ApiClient";
+import { SafeJSON } from "@app/utils/json";
+// @ts-expect-error -- @hlidac-shopu/lib ships ESM with no .d.ts coverage
+import { parseItemDetails } from "@hlidac-shopu/lib/shops.mjs";
 
 type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 

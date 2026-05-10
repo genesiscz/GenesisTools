@@ -1,10 +1,10 @@
 import logger from "@app/logger";
-import { similarityScore, wordSimilarity } from "@app/utils/fuzzy-match";
 import type { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import type { BrandResolver } from "@app/shops/lib/brand-resolver";
 import { isLayer3GrayZone, MATCHER_CONFIG, type MatcherConfig } from "@app/shops/lib/matcher-config";
 import { compatPackCount } from "@app/shops/lib/multipack-guard";
 import type { Unit } from "@app/shops/lib/normalize";
+import { similarityScore, wordSimilarity } from "@app/utils/fuzzy-match";
 
 function tokenize(s: string): Set<string> {
     // Strip Unicode punctuation/symbols per token so trivial differences

@@ -1,6 +1,6 @@
-import { createFileRoute } from "@tanstack/react-router";
 import { ackAllNotifications, ackNotification } from "@app/shops/lib/watchlist-api";
 import { apiHandler } from "@app/shops/ui/server/api-utils";
+import { createFileRoute } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/api/notifications/$id/ack")({
     server: {

@@ -1,6 +1,6 @@
 import logger from "@app/logger";
-import { type SseBroadcaster, sseBroadcaster } from "@app/shops/lib/sse-broadcaster";
 import type { DispatchResult, NotificationChannel, NotificationPayload } from "@app/shops/lib/channels/types";
+import { type SseBroadcaster, sseBroadcaster } from "@app/shops/lib/sse-broadcaster";
 
 const log = logger.child({ component: "WebSseChannel" });
 

@@ -1,10 +1,10 @@
 import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { SafeJSON } from "@app/utils/json";
-import { MemoryHttpRequestSink } from "@app/shops/lib/http-sink";
 import { BenuClient } from "@app/shops/api/shops/BenuClient";
 import type { BenuApiProduct } from "@app/shops/api/shops/BenuClient.types";
+import { MemoryHttpRequestSink } from "@app/shops/lib/http-sink";
+import { SafeJSON } from "@app/utils/json";
 
 function readFixture(rel: string): string {
     return readFileSync(join(import.meta.dir, "__fixtures__/benu", rel), "utf8");

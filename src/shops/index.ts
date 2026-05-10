@@ -1,6 +1,4 @@
 #!/usr/bin/env bun
-import { handleReadmeFlag } from "@app/utils/readme";
-import { Command } from "commander";
 import { registerCrawlCommand } from "@app/shops/commands/crawl";
 import { registerDaemonCommand } from "@app/shops/commands/daemon";
 import { registerDbCommand } from "@app/shops/commands/db";
@@ -16,6 +14,8 @@ import { registerSitemapCrawlCommand } from "@app/shops/commands/sitemap-crawl";
 import { registerSitemapSyncCommand } from "@app/shops/commands/sitemap-sync";
 import { registerUiCommand } from "@app/shops/commands/ui";
 import { registerWatchCommand } from "@app/shops/commands/watch";
+import { handleReadmeFlag } from "@app/utils/readme";
+import { Command } from "commander";
 
 handleReadmeFlag(import.meta.url);
 

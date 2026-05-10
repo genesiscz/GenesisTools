@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
-import { runMigrations } from "@app/utils/database/migrations";
 import { migration001 } from "@app/shops/db/migrations/001-initial";
+import { runMigrations } from "@app/utils/database/migrations";
 
 const EXPECTED_TABLES = [
     "shops",

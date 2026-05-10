@@ -1,6 +1,6 @@
 import logger from "@app/logger";
-import { SafeJSON } from "@app/utils/json";
 import { getShopsDatabase, type ShopsDatabase } from "@app/shops/db/ShopsDatabase";
+import { SafeJSON } from "@app/utils/json";
 
 const RESPONSE_EXCERPT_MAX = 2048;
 const REQUEST_EXCERPT_MAX = 1024;

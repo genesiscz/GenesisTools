@@ -2,8 +2,8 @@ import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { ItescoClient } from "@app/shops/api/shops/ItescoClient";
-import { buildTestDatabase } from "@app/shops/test-utils/buildTestDatabase";
 import { ItescoCrawler } from "@app/shops/crawlers/ItescoCrawler";
+import { buildTestDatabase } from "@app/shops/test-utils/buildTestDatabase";
 
 function readFixture(rel: string): string {
     return readFileSync(join(import.meta.dir, "..", "api", "shops", "__fixtures__", "itesco", rel), "utf8");

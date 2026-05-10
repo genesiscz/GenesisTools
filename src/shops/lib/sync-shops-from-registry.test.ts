@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { __resetInitState, initShopRegistry } from "@app/shops/api/registry-init";
 import { ShopRegistry } from "@app/shops/api/ShopRegistry";
 import type { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
-import { buildTestDatabase } from "@app/shops/test-utils/buildTestDatabase";
 import { syncShopsFromRegistry } from "@app/shops/lib/sync-shops-from-registry";
+import { buildTestDatabase } from "@app/shops/test-utils/buildTestDatabase";
 
 let db: ShopsDatabase;
 

@@ -1,11 +1,11 @@
 import logger from "@app/logger";
-import type { Command } from "commander";
 import { initShopRegistry } from "@app/shops/api/registry-init";
 import { ShopRegistry } from "@app/shops/api/ShopRegistry";
 import type { CrawlResult } from "@app/shops/crawlers/ShopCrawler.types";
 import { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import { createCrawlerForShop } from "@app/shops/lib/crawler-factory";
 import { DbHttpRequestSink, type HttpRequestSink } from "@app/shops/lib/http-sink";
+import type { Command } from "commander";
 
 export interface RunCrawlInput {
     shop: string;

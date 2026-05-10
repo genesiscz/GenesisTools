@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { RawProduct } from "@app/shops/api/ShopApiClient.types";
-import { buildTestDatabase } from "@app/shops/test-utils/buildTestDatabase";
 import { runListCommand } from "@app/shops/commands/list";
+import { buildTestDatabase } from "@app/shops/test-utils/buildTestDatabase";
 
 async function seed(): Promise<{ db: ReturnType<typeof buildTestDatabase> }> {
     const db = buildTestDatabase();

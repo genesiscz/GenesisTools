@@ -1,7 +1,7 @@
-import { formatTable } from "@app/utils/table";
-import type { Command } from "commander";
 import { initShopRegistry } from "@app/shops/api/registry-init";
 import { ShopRegistry } from "@app/shops/api/ShopRegistry";
+import { formatTable } from "@app/utils/table";
+import type { Command } from "commander";
 
 export function registerShopsCommand(program: Command): void {
     program

@@ -1,6 +1,6 @@
-import { createFileRoute } from "@tanstack/react-router";
 import { listPendingCandidates } from "@app/shops/lib/match-api";
 import { apiHandler } from "@app/shops/ui/server/api-utils";
+import { createFileRoute } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/api/match/candidates")({
     server: {

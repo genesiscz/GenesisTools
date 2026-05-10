@@ -1,10 +1,10 @@
+import type { FavoriteWithState } from "@app/shops/db/FavoritesRepository";
+import type { Notification } from "@app/shops/db/NotificationsRepository";
+import { PriceSparkline } from "@app/shops/ui/components/PriceSparkline";
 import { Badge } from "@app/utils/ui/components/badge";
 import { Button } from "@app/utils/ui/components/button";
 import { TableCell, TableRow } from "@app/utils/ui/components/table";
 import { cn } from "@app/utils/ui/lib/utils";
-import type { FavoriteWithState } from "@app/shops/db/FavoritesRepository";
-import type { Notification } from "@app/shops/db/NotificationsRepository";
-import { PriceSparkline } from "@app/shops/ui/components/PriceSparkline";
 
 interface Props {
     row: FavoriteWithState;

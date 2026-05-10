@@ -1,7 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import logger from "@app/logger";
-import { SafeJSON } from "@app/utils/json";
 import type {
     DefaultLandingView,
     NotificationChannelsConfig,
@@ -9,6 +8,7 @@ import type {
     ShopConfig,
     ThemeChoice,
 } from "@app/shops/types";
+import { SafeJSON } from "@app/utils/json";
 
 const log = logger.child({ component: "SettingsRepository" });
 

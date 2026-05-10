@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
-import { buildTestDatabase } from "@app/shops/test-utils/buildTestDatabase";
 import { getInitialLiveEvents, resetLiveEventsSourceForTest } from "@app/shops/lib/live-events-source";
+import { buildTestDatabase } from "@app/shops/test-utils/buildTestDatabase";
 
 let db: ShopsDatabase;
 

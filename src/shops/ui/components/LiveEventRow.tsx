@@ -1,7 +1,7 @@
 import type { LiveEvent, LiveHttpRequestEvent } from "@app/shops/types";
+import { ShopBadge } from "@app/shops/ui/components/ShopBadge";
 import { Badge } from "@app/utils/ui/components/badge";
 import { useState } from "react";
-import { ShopBadge } from "@app/shops/ui/components/ShopBadge";
 
 interface LiveEventRowProps {
     frame: LiveEvent;

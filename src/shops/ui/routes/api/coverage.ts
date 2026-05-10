@@ -1,8 +1,8 @@
 import logger from "@app/logger";
 import { getShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import type { CoverageResponse, CoverageRow } from "@app/shops/types";
-import { createFileRoute } from "@tanstack/react-router";
 import { apiHandler } from "@app/shops/ui/server/api-utils";
+import { createFileRoute } from "@tanstack/react-router";
 
 const log = logger.child({ component: "api:coverage" });
 

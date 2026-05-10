@@ -2,8 +2,8 @@ import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { DrmaxClient } from "@app/shops/api/shops/DrmaxClient";
-import { buildTestDatabase } from "@app/shops/test-utils/buildTestDatabase";
 import { DrmaxCrawler } from "@app/shops/crawlers/DrmaxCrawler";
+import { buildTestDatabase } from "@app/shops/test-utils/buildTestDatabase";
 
 function readFixture(rel: string): string {
     return readFileSync(join(import.meta.dir, "..", "api", "shops", "__fixtures__", "drmax", rel), "utf8");

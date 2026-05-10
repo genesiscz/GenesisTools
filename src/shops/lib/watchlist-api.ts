@@ -1,6 +1,4 @@
 import logger from "@app/logger";
-// @ts-expect-error -- @hlidac-shopu/lib ships ESM with no .d.ts coverage
-import { shopOrigin as deriveShopOrigin } from "@hlidac-shopu/lib/shops.mjs";
 import { HlidacShopuClient } from "@app/shops/api/HlidacShopuClient";
 import {
     type AddFavoriteArgs,
@@ -9,9 +7,15 @@ import {
     FavoritesRepository,
     type FavoriteWithState,
 } from "@app/shops/db/FavoritesRepository";
-import { type Notification, type NotificationReason, NotificationsRepository } from "@app/shops/db/NotificationsRepository";
+import {
+    type Notification,
+    type NotificationReason,
+    NotificationsRepository,
+} from "@app/shops/db/NotificationsRepository";
 import { getShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import { ingestFromHlidacResult } from "@app/shops/lib/ingest";
+// @ts-expect-error -- @hlidac-shopu/lib ships ESM with no .d.ts coverage
+import { shopOrigin as deriveShopOrigin } from "@hlidac-shopu/lib/shops.mjs";
 
 const log = logger.child({ component: "shops:watchlist-api" });
 

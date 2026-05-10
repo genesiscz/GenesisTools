@@ -1,9 +1,9 @@
 import type { LiveEventName } from "@app/shops/types";
+import type { SseStatus } from "@app/shops/ui/hooks/useSseStream";
 import { Badge } from "@app/utils/ui/components/badge";
 import { Button } from "@app/utils/ui/components/button";
 import { Input } from "@app/utils/ui/components/input";
 import { Pause, Play, Trash2 } from "lucide-react";
-import type { SseStatus } from "@app/shops/ui/hooks/useSseStream";
 
 interface LiveFilterBarProps {
     enabledEvents: Set<LiveEventName>;

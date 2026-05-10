@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { KnihyDobrovskyClient } from "@app/shops/api/shops/KnihyDobrovskyClient";
-import { buildTestDatabase } from "@app/shops/test-utils/buildTestDatabase";
 import { KnihyDobrovskyCrawler } from "@app/shops/crawlers/KnihyDobrovskyCrawler";
+import { buildTestDatabase } from "@app/shops/test-utils/buildTestDatabase";
 
 describe("KnihyDobrovskyCrawler", () => {
     it("strategy is knihydobrovsky-html", () => {

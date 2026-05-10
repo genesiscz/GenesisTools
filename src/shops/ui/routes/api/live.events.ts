@@ -1,6 +1,6 @@
-import { createFileRoute } from "@tanstack/react-router";
 import { ensureLiveEventPoller, getInitialLiveEvents } from "@app/shops/lib/live-events-source";
 import { sseBroadcaster } from "@app/shops/lib/sse-broadcaster";
+import { createFileRoute } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/api/live/events")({
     server: {

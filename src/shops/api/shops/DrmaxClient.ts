@@ -1,7 +1,5 @@
 // Adapted from topmonks/hlidac-shopu (EUPL-1.2) — actors/drmax-daily/main.js
 
-import { SafeJSON } from "@app/utils/json";
-import { parseHTML } from "linkedom";
 import { ShopApiClient, type ShopApiClientConstructorConfig } from "@app/shops/api/ShopApiClient";
 import type { Category, ListingOptions, RawProduct, ShopCapabilities } from "@app/shops/api/ShopApiClient.types";
 import {
@@ -11,6 +9,8 @@ import {
     type DrmaxJsonLdProduct,
     type DrmaxParsedTile,
 } from "@app/shops/api/shops/DrmaxClient.types";
+import { SafeJSON } from "@app/utils/json";
+import { parseHTML } from "linkedom";
 
 const DRMAX_ORIGIN = "drmax.cz";
 

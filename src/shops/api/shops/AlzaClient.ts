@@ -6,10 +6,10 @@
 // exposes the same product JSON via window.__ALZA_PRODUCT_DATA__ /
 // window.__ALZA_CATEGORY__ globals.
 
-import { type WebView, type WebViewOptions, WebViewPool } from "@app/utils/WebView";
 import { ShopApiClient, type ShopApiClientConstructorConfig } from "@app/shops/api/ShopApiClient";
 import type { Category, ListingOptions, RawProduct, ShopCapabilities } from "@app/shops/api/ShopApiClient.types";
 import type { AlzaCategoryListing, AlzaListingEntry, AlzaPageData } from "@app/shops/api/shops/AlzaClient.types";
+import { type WebView, type WebViewOptions, WebViewPool } from "@app/utils/WebView";
 
 const ALZA_ORIGIN = "alza.cz";
 const ROOT = "https://www.alza.cz";

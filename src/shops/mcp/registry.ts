@@ -1,4 +1,3 @@
-import { SafeJSON } from "@app/utils/json";
 import type { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import { getCoverage } from "@app/shops/lib/coverage-api";
 import { ingestUrl } from "@app/shops/lib/ingest-api";
@@ -41,6 +40,7 @@ import {
     ShopsWatchRemoveInput,
     ShopsWatchRemoveInputJsonSchema,
 } from "@app/shops/mcp/types";
+import { SafeJSON } from "@app/utils/json";
 
 export interface HandlerContext {
     shopsDb: ShopsDatabase;

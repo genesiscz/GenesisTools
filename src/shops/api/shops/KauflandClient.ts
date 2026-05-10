@@ -1,10 +1,10 @@
 // Adapted from topmonks/hlidac-shopu (EUPL-1.2) — actors/kaufland-daily/main.js
 
-import { SafeJSON } from "@app/utils/json";
-import { parseHTML } from "linkedom";
 import { ShopApiClient, type ShopApiClientConstructorConfig } from "@app/shops/api/ShopApiClient";
 import type { Category, ListingOptions, RawProduct, ShopCapabilities } from "@app/shops/api/ShopApiClient.types";
 import type { KauflandJsonLdProduct, KauflandParsedProduct } from "@app/shops/api/shops/KauflandClient.types";
+import { SafeJSON } from "@app/utils/json";
+import { parseHTML } from "linkedom";
 
 const KAUFLAND_ORIGIN = "kaufland.cz";
 const ROOT = "https://www.kaufland.cz";

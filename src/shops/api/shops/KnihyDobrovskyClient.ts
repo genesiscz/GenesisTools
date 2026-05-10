@@ -1,8 +1,8 @@
 // Adapted from topmonks/hlidac-shopu (EUPL-1.2) — actors/knihydobrovsky-daily/main.js
 
-import { parseHTML } from "linkedom";
 import { ShopApiClient, type ShopApiClientConstructorConfig } from "@app/shops/api/ShopApiClient";
 import type { Category, ListingOptions, RawProduct, ShopCapabilities } from "@app/shops/api/ShopApiClient.types";
+import { parseHTML } from "linkedom";
 
 const ORIGIN = "knihydobrovsky.cz";
 const ROOT = "https://www.knihydobrovsky.cz";

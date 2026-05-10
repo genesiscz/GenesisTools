@@ -1,7 +1,7 @@
 import type { CompareResponse } from "@app/shops/types";
+import { CompareGrid } from "@app/shops/ui/components/CompareGrid";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { CompareGrid } from "@app/shops/ui/components/CompareGrid";
 
 interface CompareSearch {
     ids?: string;

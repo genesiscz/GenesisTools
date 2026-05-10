@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "bun:test";
-import { sseBroadcaster } from "@app/shops/lib/sse-broadcaster";
 import type { NotificationPayload } from "@app/shops/lib/channels/types";
 import { WebSseChannel } from "@app/shops/lib/channels/WebSseChannel";
+import { sseBroadcaster } from "@app/shops/lib/sse-broadcaster";
 
 const PAYLOAD: NotificationPayload = {
     notification: {

@@ -1,10 +1,10 @@
+import type { Notification } from "@app/shops/db/NotificationsRepository";
+import { EmptyState } from "@app/shops/ui/components/EmptyState";
+import { NotificationCard } from "@app/shops/ui/components/NotificationCard";
 import { Button } from "@app/utils/ui/components/button";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { BellOff } from "lucide-react";
-import type { Notification } from "@app/shops/db/NotificationsRepository";
-import { EmptyState } from "@app/shops/ui/components/EmptyState";
-import { NotificationCard } from "@app/shops/ui/components/NotificationCard";
 
 export const Route = createFileRoute("/notifications")({
     component: NotificationsPage,

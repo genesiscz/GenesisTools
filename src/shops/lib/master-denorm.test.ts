@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
-import { buildTestDatabase } from "@app/shops/test-utils/buildTestDatabase";
 import { refreshMasterDenorm } from "@app/shops/lib/master-denorm";
+import { buildTestDatabase } from "@app/shops/test-utils/buildTestDatabase";
 
 let db: ShopsDatabase;
 

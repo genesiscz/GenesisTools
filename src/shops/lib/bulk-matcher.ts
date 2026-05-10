@@ -1,5 +1,4 @@
 import logger from "@app/logger";
-import { similarityScore } from "@app/utils/fuzzy-match";
 import { BrandAliasesRepository } from "@app/shops/db/BrandAliasesRepository";
 import type { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import { BrandResolver } from "@app/shops/lib/brand-resolver";
@@ -8,6 +7,7 @@ import { Matcher, type MatcherInput } from "@app/shops/lib/matcher";
 import { MATCHER_CONFIG } from "@app/shops/lib/matcher-config";
 import { compatPackCount } from "@app/shops/lib/multipack-guard";
 import type { Unit } from "@app/shops/lib/normalize";
+import { similarityScore } from "@app/utils/fuzzy-match";
 
 export interface BulkMatcherArgs {
     matcher: Matcher;

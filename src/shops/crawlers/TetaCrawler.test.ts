@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { TetaClient } from "@app/shops/api/shops/TetaClient";
-import { buildTestDatabase } from "@app/shops/test-utils/buildTestDatabase";
 import { TetaCrawler } from "@app/shops/crawlers/TetaCrawler";
+import { buildTestDatabase } from "@app/shops/test-utils/buildTestDatabase";
 
 describe("TetaCrawler", () => {
     it("strategy is teta-rest", () => {

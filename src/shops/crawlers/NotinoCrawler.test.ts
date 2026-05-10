@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { NotinoClient } from "@app/shops/api/shops/NotinoClient";
-import { buildTestDatabase } from "@app/shops/test-utils/buildTestDatabase";
 import { NotinoCrawler } from "@app/shops/crawlers/NotinoCrawler";
+import { buildTestDatabase } from "@app/shops/test-utils/buildTestDatabase";
 
 describe("NotinoCrawler", () => {
     it("strategy is notino-html", () => {

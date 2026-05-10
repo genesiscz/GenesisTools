@@ -4,8 +4,6 @@
 // renamed product-* → article-* in 2026 and prices moved off the DOM, so the
 // reliable extraction path is the inlined Apollo state (matches the actor).
 
-import { SafeJSON } from "@app/utils/json";
-import { parseHTML } from "linkedom";
 import { ShopApiClient, type ShopApiClientConstructorConfig } from "@app/shops/api/ShopApiClient";
 import type { Category, ListingOptions, RawProduct, ShopCapabilities } from "@app/shops/api/ShopApiClient.types";
 import {
@@ -14,6 +12,8 @@ import {
     type HornbachApolloProduct,
     type HornbachApolloState,
 } from "@app/shops/api/shops/HornbachClient.types";
+import { SafeJSON } from "@app/utils/json";
+import { parseHTML } from "linkedom";
 
 const HORNBACH_ORIGIN = "hornbach.cz";
 const ROOT = "https://www.hornbach.cz";

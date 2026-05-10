@@ -1,9 +1,9 @@
 import type { MasterListItem } from "@app/shops/types";
+import { ShopBadge } from "@app/shops/ui/components/ShopBadge";
 import { Card } from "@app/utils/ui/components/card";
 import { chartSeriesPalette } from "@app/utils/ui/graphs/colors";
 import { Link } from "@tanstack/react-router";
 import { ImageOff } from "lucide-react";
-import { ShopBadge } from "@app/shops/ui/components/ShopBadge";
 
 interface BrowseCardProps {
     item: MasterListItem;

@@ -1,11 +1,11 @@
 import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { SafeJSON } from "@app/utils/json";
 import { RohlikClient } from "@app/shops/api/shops/RohlikClient";
+import { RohlikRestCrawler } from "@app/shops/crawlers/RohlikRestCrawler";
 import { MemoryHttpRequestSink } from "@app/shops/lib/http-sink";
 import { buildTestDatabase } from "@app/shops/test-utils/buildTestDatabase";
-import { RohlikRestCrawler } from "@app/shops/crawlers/RohlikRestCrawler";
+import { SafeJSON } from "@app/utils/json";
 
 function readFixture<T>(rel: string): T {
     return SafeJSON.parse(readFileSync(join(import.meta.dir, "../api/shops/__fixtures__/rohlik", rel), "utf8")) as T;

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { AlbertClient } from "@app/shops/api/shops/AlbertClient";
-import { buildTestDatabase } from "@app/shops/test-utils/buildTestDatabase";
 import { AlbertCrawler } from "@app/shops/crawlers/AlbertCrawler";
+import { buildTestDatabase } from "@app/shops/test-utils/buildTestDatabase";
 
 describe("AlbertCrawler", () => {
     it("strategy is albert-graphql", () => {

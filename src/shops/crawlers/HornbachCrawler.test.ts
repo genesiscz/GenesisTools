@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { HornbachClient } from "@app/shops/api/shops/HornbachClient";
-import { buildTestDatabase } from "@app/shops/test-utils/buildTestDatabase";
 import { HornbachCrawler } from "@app/shops/crawlers/HornbachCrawler";
+import { buildTestDatabase } from "@app/shops/test-utils/buildTestDatabase";
 
 describe("HornbachCrawler", () => {
     it("strategy is hornbach-html", () => {

@@ -1,7 +1,7 @@
+import { getDbInfo, listMigrations, vacuumDb } from "@app/shops/lib/db-admin";
 import { formatBytes } from "@app/utils/format";
 import { formatTable } from "@app/utils/table";
 import type { Command } from "commander";
-import { getDbInfo, listMigrations, vacuumDb } from "@app/shops/lib/db-admin";
 
 export function registerDbCommand(program: Command): void {
     const db = program.command("db").description("Database administration");

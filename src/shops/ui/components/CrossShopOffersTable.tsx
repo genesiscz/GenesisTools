@@ -1,8 +1,8 @@
 import type { MasterOfferRow } from "@app/shops/types";
+import { ShopBadge } from "@app/shops/ui/components/ShopBadge";
 import { Badge } from "@app/utils/ui/components/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@app/utils/ui/components/table";
 import { ExternalLink } from "lucide-react";
-import { ShopBadge } from "@app/shops/ui/components/ShopBadge";
 
 interface CrossShopOffersTableProps {
     offers: MasterOfferRow[];

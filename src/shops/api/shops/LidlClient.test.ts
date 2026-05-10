@@ -1,9 +1,9 @@
 import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { SafeJSON } from "@app/utils/json";
-import { MemoryHttpRequestSink } from "@app/shops/lib/http-sink";
 import { LidlClient } from "@app/shops/api/shops/LidlClient";
+import { MemoryHttpRequestSink } from "@app/shops/lib/http-sink";
+import { SafeJSON } from "@app/utils/json";
 
 function readFixture<T>(rel: string): T {
     return SafeJSON.parse(readFileSync(join(import.meta.dir, "__fixtures__/lidl", rel), "utf8")) as T;

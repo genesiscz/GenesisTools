@@ -1,5 +1,5 @@
-import { createFileRoute } from "@tanstack/react-router";
 import { sseBroadcaster } from "@app/shops/lib/sse-broadcaster";
+import { createFileRoute } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/api/events")({
     server: {

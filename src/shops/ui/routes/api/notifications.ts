@@ -1,7 +1,7 @@
-import { createFileRoute } from "@tanstack/react-router";
 import type { NotificationReason } from "@app/shops/db/NotificationsRepository";
 import { getRecentNotifications } from "@app/shops/lib/watchlist-api";
 import { apiHandler } from "@app/shops/ui/server/api-utils";
+import { createFileRoute } from "@tanstack/react-router";
 
 const VALID_REASONS = new Set<NotificationReason>(["target-price", "drop-percent", "drop-absolute", "back-in-stock"]);
 

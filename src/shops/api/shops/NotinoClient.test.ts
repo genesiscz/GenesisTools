@@ -1,8 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { MemoryHttpRequestSink } from "@app/shops/lib/http-sink";
 import { NotinoClient } from "@app/shops/api/shops/NotinoClient";
+import { MemoryHttpRequestSink } from "@app/shops/lib/http-sink";
 
 function readHtml(rel: string): string {
     return readFileSync(join(import.meta.dir, "__fixtures__/notino", rel), "utf8");

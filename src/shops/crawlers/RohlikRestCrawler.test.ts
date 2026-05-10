@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { RohlikClient } from "@app/shops/api/shops/RohlikClient";
-import { buildTestDatabase } from "@app/shops/test-utils/buildTestDatabase";
 import { RohlikRestCrawler } from "@app/shops/crawlers/RohlikRestCrawler";
+import { buildTestDatabase } from "@app/shops/test-utils/buildTestDatabase";
 
 describe("RohlikRestCrawler", () => {
     it("strategy is rohlik-rest", () => {

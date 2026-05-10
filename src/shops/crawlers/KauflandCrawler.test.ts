@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { KauflandClient } from "@app/shops/api/shops/KauflandClient";
-import { buildTestDatabase } from "@app/shops/test-utils/buildTestDatabase";
 import { KauflandCrawler } from "@app/shops/crawlers/KauflandCrawler";
+import { buildTestDatabase } from "@app/shops/test-utils/buildTestDatabase";
 
 describe("KauflandCrawler", () => {
     it("strategy is kaufland-html", () => {

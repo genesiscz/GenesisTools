@@ -1,8 +1,8 @@
 import type { CoverageResponse } from "@app/shops/types";
-import { Skeleton } from "@app/utils/ui/components/skeleton";
-import { ShoppingBasket } from "lucide-react";
 import { CoverageShopCard } from "@app/shops/ui/components/CoverageShopCard";
 import { EmptyState } from "@app/shops/ui/components/EmptyState";
+import { Skeleton } from "@app/utils/ui/components/skeleton";
+import { ShoppingBasket } from "lucide-react";
 
 interface CoverageGridProps {
     data: CoverageResponse | undefined;

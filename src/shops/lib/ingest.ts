@@ -1,10 +1,10 @@
 import logger from "@app/logger";
-import { removeDiacritics } from "@app/utils/string";
 import type { HlidacGetByUrlResult } from "@app/shops/api/HlidacShopuClient.types";
 import type { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import type { Product } from "@app/shops/db/types";
 import { createMatchExecutor } from "@app/shops/lib/bulk-matcher";
 import { refreshMasterDenorm } from "@app/shops/lib/master-denorm";
+import { removeDiacritics } from "@app/utils/string";
 
 export interface IngestArgs {
     db: ShopsDatabase;

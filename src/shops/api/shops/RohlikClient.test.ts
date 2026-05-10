@@ -1,9 +1,9 @@
 import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { SafeJSON } from "@app/utils/json";
-import { MemoryHttpRequestSink } from "@app/shops/lib/http-sink";
 import { RohlikClient } from "@app/shops/api/shops/RohlikClient";
+import { MemoryHttpRequestSink } from "@app/shops/lib/http-sink";
+import { SafeJSON } from "@app/utils/json";
 
 function readFixture<T>(relPath: string): T {
     const full = join(import.meta.dir, "__fixtures__/rohlik", relPath);

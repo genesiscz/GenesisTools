@@ -1,8 +1,8 @@
 import logger from "@app/logger";
 import type { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import { getShopsDatabase } from "@app/shops/db/ShopsDatabase";
-import type { LiveCrawlProgressEvent, LiveHttpRequestEvent } from "@app/shops/types";
 import { sseBroadcaster } from "@app/shops/lib/sse-broadcaster";
+import type { LiveCrawlProgressEvent, LiveHttpRequestEvent } from "@app/shops/types";
 
 const POLL_INTERVAL_MS = 2_000;
 const HTTP_BACKFILL_LIMIT = 100;

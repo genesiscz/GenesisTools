@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { KosikClient } from "@app/shops/api/shops/KosikClient";
-import { buildTestDatabase } from "@app/shops/test-utils/buildTestDatabase";
 import { KosikRestCrawler } from "@app/shops/crawlers/KosikRestCrawler";
+import { buildTestDatabase } from "@app/shops/test-utils/buildTestDatabase";
 
 describe("KosikRestCrawler", () => {
     it("strategy is kosik-rest", () => {

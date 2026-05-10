@@ -1,6 +1,3 @@
-import { SafeJSON } from "@app/utils/json";
-import { formatTable } from "@app/utils/table";
-import type { Command } from "commander";
 import {
     ackAllNotifications,
     ackNotification,
@@ -8,6 +5,9 @@ import {
     getRecentNotifications,
     type RecentNotificationsArgs,
 } from "@app/shops/lib/watchlist-api";
+import { SafeJSON } from "@app/utils/json";
+import { formatTable } from "@app/utils/table";
+import type { Command } from "commander";
 
 export function registerNotifyCommand(program: Command): void {
     const notify = program.command("notify").description("Inspect and acknowledge notifications");

@@ -2,11 +2,7 @@ import type { Database as BunDatabase } from "bun:sqlite";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import logger from "@app/logger";
-import { createKyselyClient, type DatabaseClient } from "@app/utils/database/client";
-import { SafeJSON } from "@app/utils/json";
-import type { Insertable, Kysely } from "kysely";
 import type { RawProduct } from "@app/shops/api/ShopApiClient.types";
-import { extractFlavorKey, extractPackCount, extractSize, normalizeText, parseUnit, type Unit } from "@app/shops/lib/normalize";
 import { SHOPS_MIGRATIONS } from "@app/shops/db/migrations";
 import type {
     CurrentOffersView,
@@ -17,6 +13,17 @@ import type {
     ShopsDB,
     ShopsTable,
 } from "@app/shops/db/types";
+import {
+    extractFlavorKey,
+    extractPackCount,
+    extractSize,
+    normalizeText,
+    parseUnit,
+    type Unit,
+} from "@app/shops/lib/normalize";
+import { createKyselyClient, type DatabaseClient } from "@app/utils/database/client";
+import { SafeJSON } from "@app/utils/json";
+import type { Insertable, Kysely } from "kysely";
 
 export interface StartCrawlRunInput {
     shopOrigin: string;
