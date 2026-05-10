@@ -56,14 +56,10 @@ export function AuthForm({ title, submitLabel, onSubmit, bottomSlot }: AuthFormP
                         onChange={(e) => setPassword(e.target.value)}
                         onKeyDown={handleKey}
                         autoComplete={
-                            submitLabel.toLowerCase().includes("register")
-                                ? "new-password"
-                                : "current-password"
+                            submitLabel.toLowerCase().includes("register") ? "new-password" : "current-password"
                         }
                     />
-                    {error ? (
-                        <div className="text-xs text-[var(--color-neon-coral,#ff5577)]">{error}</div>
-                    ) : null}
+                    {error ? <div className="text-xs text-[var(--color-neon-coral,#ff5577)]">{error}</div> : null}
                     <Button onClick={handle} disabled={submitting || !email || !password} className="w-full">
                         {submitting ? "..." : submitLabel}
                     </Button>

@@ -1,5 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
-import { redirect } from "@tanstack/react-router";
+import { redirect, useNavigate } from "@tanstack/react-router";
+import type { ReactNode } from "react";
+import { useEffect } from "react";
 
 export interface AuthUser {
     id: number;
@@ -27,10 +29,40 @@ export function useAuthMe() {
     });
 }
 
-/** TanStack Router beforeLoad gate — throws redirect to /login when unauth'd. */
+/**
+ * TanStack Router beforeLoad gate — throws redirect to /login when unauth'd.
+ * Skips the check during SSR (no usable cookies on the server fetch); the
+ * client-side `<RequireAuth>` boundary handles the unauth case after hydration.
+ */
 export async function requireAuthBeforeLoad(): Promise<void> {
+    if (typeof window === "undefined") {
+        return;
+    }
+
     const res = await fetch("/api/auth/me");
     if (res.status === 401) {
         throw redirect({ to: "/login" });
     }
+}
+
+/**
+ * Wrap a protected page's content. Renders nothing while auth loads, sends
+ * the user to /login if unauth'd, otherwise renders the children. Pair with
+ * `beforeLoad: requireAuthBeforeLoad` for the (faster) client-side gate.
+ */
+export function RequireAuth({ children }: { children: ReactNode }) {
+    const me = useAuthMe();
+    const navigate = useNavigate();
+    const unauthed = !me.isLoading && !me.data;
+    useEffect(() => {
+        if (unauthed) {
+            navigate({ to: "/login" });
+        }
+    }, [unauthed, navigate]);
+
+    if (me.isLoading || unauthed) {
+        return null;
+    }
+
+    return children;
 }

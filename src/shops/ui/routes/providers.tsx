@@ -1,7 +1,7 @@
 import { ConnectKosikDialog } from "@app/shops/ui/components/ConnectKosikDialog";
 import { ConnectRohlikDialog } from "@app/shops/ui/components/ConnectRohlikDialog";
 import { ProviderCard, type ProviderCardData } from "@app/shops/ui/components/ProviderCard";
-import { requireAuthBeforeLoad } from "@app/shops/ui/lib/useAuthMe";
+import { RequireAuth, requireAuthBeforeLoad } from "@app/shops/ui/lib/useAuthMe";
 import { SafeJSON } from "@app/utils/json";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
@@ -9,7 +9,11 @@ import { useState } from "react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/providers")({
-    component: ProvidersPage,
+    component: () => (
+        <RequireAuth>
+            <ProvidersPage />
+        </RequireAuth>
+    ),
     beforeLoad: requireAuthBeforeLoad,
 });
 

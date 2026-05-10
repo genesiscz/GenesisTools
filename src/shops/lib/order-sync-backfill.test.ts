@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { setShopsDatabaseSingletonForTest, ShopsDatabase } from "@app/shops/db/ShopsDatabase";
+import { ShopsDatabase, setShopsDatabaseSingletonForTest } from "@app/shops/db/ShopsDatabase";
 import { backfillWatchlist } from "@app/shops/lib/order-sync-backfill";
 import { nowUtcIso } from "@app/utils/sql-time";
 
@@ -84,9 +84,7 @@ describe("backfillWatchlist", () => {
 
     it("rejects when provider doesn't belong to the user", async () => {
         const { db, userProviderId } = fixture();
-        await expect(
-            backfillWatchlist({ userId: 999, userProviderId })
-        ).rejects.toThrow(/provider not found/);
+        await expect(backfillWatchlist({ userId: 999, userProviderId })).rejects.toThrow(/provider not found/);
         db.close();
     });
 });
