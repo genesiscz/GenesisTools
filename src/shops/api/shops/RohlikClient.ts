@@ -217,10 +217,7 @@ export class RohlikClient extends ShopApiClient {
         return this.navigationPromise;
     }
 
-    private async toRawProduct(
-        product: RohlikRawProduct,
-        priceEntry?: RohlikProductPriceEntry
-    ): Promise<RawProduct> {
+    private async toRawProduct(product: RohlikRawProduct, priceEntry?: RohlikProductPriceEntry): Promise<RawProduct> {
         const id = product.productId ?? product.id;
         if (id === undefined) {
             throw new Error("Rohlik product has no id/productId");

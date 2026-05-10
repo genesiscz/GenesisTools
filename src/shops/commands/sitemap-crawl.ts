@@ -10,6 +10,9 @@ interface SitemapCrawlCliOpts {
     limit?: number;
     concurrency?: number;
     refresh?: boolean;
+    noHlidac?: boolean;
+    hlidacForce?: boolean;
+    hlidacConcurrency?: number;
 }
 
 export function registerSitemapCrawlCommand(program: Command): void {
@@ -24,9 +27,11 @@ export function registerSitemapCrawlCommand(program: Command): void {
         .option("--concurrency <n>", "Per-id fan-out for clients without bulk endpoints (kosik)", (v) =>
             Number.parseInt(v, 10)
         )
-        .option(
-            "--refresh",
-            "Re-fetch products already in the DB (default: skip them and only ingest new ids)"
+        .option("--refresh", "Re-fetch products already in the DB (default: skip them and only ingest new ids)")
+        .option("--no-hlidac", "Skip the post-ingest hlidacshopu.cz price-history backfill")
+        .option("--hlidac-force", "Re-fetch hlidac history even for products that already have it stored")
+        .option("--hlidac-concurrency <n>", "Parallel hlidac S3 fetches (default 10)", (v) =>
+            Number.parseInt(v, 10)
         )
         .action(async (raw: SitemapCrawlCliOpts) => {
             const log = logger.child({ component: "shops:sitemap-crawl" });
@@ -46,17 +51,25 @@ export function registerSitemapCrawlCommand(program: Command): void {
                     limit: raw.limit,
                     concurrency: raw.concurrency,
                     onlyNew: raw.refresh !== true,
+                    noHlidac: raw.noHlidac === true,
+                    hlidacForce: raw.hlidacForce === true,
+                    hlidacConcurrency: raw.hlidacConcurrency,
                     signal: ctrl.signal,
                     onProgress: (p) => {
-                        const line =
-                            p.phase === "discovery"
-                                ? `[${raw.shop}] discovery: scanned=${p.discovered} queued=${p.enqueued}\n`
-                                : `[${raw.shop}] ingest: fetched=${p.fetched} persisted=${p.persisted} prices=${p.pricesRecorded} (of ${p.enqueued})\n`;
+                        let line: string;
+                        if (p.phase === "discovery") {
+                            line = `[${raw.shop}] discovery: scanned=${p.discovered} queued=${p.enqueued}\n`;
+                        } else if (p.phase === "hlidac") {
+                            line = `[${raw.shop}] hlidac: backfilled=${p.hlidacBackfilled ?? 0} points=${p.hlidacPointsAdded ?? 0}\n`;
+                        } else {
+                            line = `[${raw.shop}] ingest: fetched=${p.fetched} persisted=${p.persisted} prices=${p.pricesRecorded} (of ${p.enqueued})\n`;
+                        }
+
                         process.stdout.write(line);
                     },
                 });
                 process.stdout.write(
-                    `✓ ${result.shopOrigin}: discovered=${result.discovered} fetched=${result.fetched} persisted=${result.persisted} prices=${result.pricesRecorded} (${(result.durationMs / 1000).toFixed(1)}s)\n`
+                    `✓ ${result.shopOrigin}: discovered=${result.discovered} fetched=${result.fetched} persisted=${result.persisted} prices=${result.pricesRecorded} hlidac=${result.hlidacBackfilled}(${result.hlidacPointsAdded}pts) (${(result.durationMs / 1000).toFixed(1)}s)\n`
                 );
             } catch (err) {
                 process.stderr.write(`× sitemap-crawl failed: ${(err as Error).message}\n`);

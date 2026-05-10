@@ -1,8 +1,9 @@
 import logger from "@app/logger";
+import { HlidacShopuClient } from "../api/HlidacShopuClient";
+import { initShopRegistry } from "../api/registry-init";
 import type { ShopApiClient } from "../api/ShopApiClient";
 import type { RawProduct } from "../api/ShopApiClient.types";
 import { ShopRegistry } from "../api/ShopRegistry";
-import { initShopRegistry } from "../api/registry-init";
 import { SITEMAP_STRATEGIES, type SitemapStrategy } from "../api/sitemap-strategies";
 import type { ShopsDatabase } from "../db/ShopsDatabase";
 import { createBulkMatcher } from "./bulk-matcher";
@@ -12,10 +13,7 @@ import { walkSitemap } from "./sitemap-fetcher";
 const log = logger.child({ component: "sitemap-crawl" });
 
 interface ListByIdsClient extends ShopApiClient {
-    listByIds(
-        ids: string[],
-        opts: { signal?: AbortSignal; concurrency?: number }
-    ): AsyncIterable<RawProduct>;
+    listByIds(ids: string[], opts: { signal?: AbortSignal; concurrency?: number }): AsyncIterable<RawProduct>;
 }
 
 function hasListByIds(client: ShopApiClient): client is ListByIdsClient {
@@ -31,18 +29,26 @@ export interface SitemapCrawlOptions {
     onlyNew?: boolean;
     /** Concurrency hint for clients that fan out per-id calls (kosik). */
     concurrency?: number;
+    /** Disable the post-ingest hlidacshopu price-history backfill (default: enabled). */
+    noHlidac?: boolean;
+    /** Re-fetch hlidac history even for products that already have a 'hlidac:s3' row. */
+    hlidacForce?: boolean;
+    /** Concurrency for hlidac S3 fetches (default 10). */
+    hlidacConcurrency?: number;
     sink?: HttpRequestSink;
     signal?: AbortSignal;
     onProgress?: (event: SitemapCrawlProgress) => void;
 }
 
 export interface SitemapCrawlProgress {
-    phase: "discovery" | "ingest";
+    phase: "discovery" | "ingest" | "hlidac";
     discovered: number;
     enqueued: number;
     fetched: number;
     persisted: number;
     pricesRecorded: number;
+    hlidacBackfilled?: number;
+    hlidacPointsAdded?: number;
 }
 
 export interface SitemapCrawlResult {
@@ -53,6 +59,8 @@ export interface SitemapCrawlResult {
     fetched: number;
     persisted: number;
     pricesRecorded: number;
+    hlidacBackfilled: number;
+    hlidacPointsAdded: number;
     durationMs: number;
 }
 
@@ -94,15 +102,20 @@ export async function crawlFromSitemap(opts: SitemapCrawlOptions): Promise<Sitem
     let fetched = 0;
     let persisted = 0;
     let pricesRecorded = 0;
+    let hlidacBackfilled = 0;
+    let hlidacPointsAdded = 0;
+    const hlidacQueue: Array<{ productId: number; url: string }> = [];
 
-    const emit = (): void => {
+    const emit = (phase: SitemapCrawlProgress["phase"] = "ingest"): void => {
         opts.onProgress?.({
-            phase: "ingest",
+            phase,
             discovered: enqueued,
             enqueued,
             fetched,
             persisted,
             pricesRecorded,
+            hlidacBackfilled,
+            hlidacPointsAdded,
         });
     };
 
@@ -136,6 +149,10 @@ export async function crawlFromSitemap(opts: SitemapCrawlOptions): Promise<Sitem
                 pricesRecorded: raw.currentPrice !== undefined ? 1 : 0,
             });
 
+            if (!opts.noHlidac) {
+                hlidacQueue.push({ productId: upsert.id, url: raw.url });
+            }
+
             if (fetched % 50 === 0) {
                 emit();
             }
@@ -150,6 +167,25 @@ export async function crawlFromSitemap(opts: SitemapCrawlOptions): Promise<Sitem
         log.info({ crawlRunId, fetched, persisted }, "ingest done; running BulkMatcher.flush");
         await createBulkMatcher(opts.db).flush(crawlRunId);
 
+        if (!opts.noHlidac && hlidacQueue.length > 0) {
+            const drained = await drainHlidacQueue(opts.db, hlidacQueue, {
+                concurrency: opts.hlidacConcurrency ?? 10,
+                force: opts.hlidacForce ?? false,
+                signal: opts.signal,
+                onProgress: (n, points) => {
+                    hlidacBackfilled = n;
+                    hlidacPointsAdded = points;
+                    emit("hlidac");
+                },
+            });
+            hlidacBackfilled = drained.fetched;
+            hlidacPointsAdded = drained.pointsAdded;
+            log.info(
+                { crawlRunId, hlidacBackfilled, hlidacPointsAdded, hlidacSkipped: drained.skipped },
+                "hlidac price-history backfill complete"
+            );
+        }
+
         return {
             crawlRunId,
             shopOrigin: strategy.shopOrigin,
@@ -158,6 +194,8 @@ export async function crawlFromSitemap(opts: SitemapCrawlOptions): Promise<Sitem
             fetched,
             persisted,
             pricesRecorded,
+            hlidacBackfilled,
+            hlidacPointsAdded,
             durationMs: Date.now() - start,
         };
     } catch (err) {
@@ -228,4 +266,108 @@ async function loadKnownSlugs(db: ShopsDatabase, shopOrigin: string): Promise<Se
         .query<{ slug: string }, [string]>("SELECT slug FROM products WHERE shop_origin = ?")
         .all(shopOrigin);
     return new Set(rows.map((r) => r.slug));
+}
+
+interface DrainResult {
+    fetched: number;
+    pointsAdded: number;
+    skipped: number;
+    errors: number;
+}
+
+interface DrainOpts {
+    concurrency: number;
+    force: boolean;
+    signal?: AbortSignal;
+    onProgress?: (fetched: number, points: number) => void;
+}
+
+/**
+ * Drain a queue of {productId, url} through the hlidacshopu.cz S3 mirror,
+ * inserting historical price points into the local `prices` table.
+ *
+ * Skips a product when at least one `source='hlidac:s3'` row is already
+ * present, unless `force=true`. The `prices` PK on (product_id,
+ * observed_at) makes the per-row INSERT idempotent.
+ */
+async function drainHlidacQueue(
+    db: ShopsDatabase,
+    queue: Array<{ productId: number; url: string }>,
+    drainOpts: DrainOpts
+): Promise<DrainResult> {
+    const raw = db.raw();
+    const hl = new HlidacShopuClient();
+    const hasHistory = raw.query<{ n: number }, [number]>(
+        "SELECT COUNT(*) AS n FROM prices WHERE product_id = ? AND source = 'hlidac:s3'"
+    );
+    const insert = raw.prepare(
+        "INSERT OR IGNORE INTO prices (product_id, observed_at, current_price, original_price, in_stock, source, raw_json) VALUES (?, ?, ?, ?, NULL, 'hlidac:s3', NULL)"
+    );
+
+    let fetched = 0;
+    let pointsAdded = 0;
+    let skipped = 0;
+    let errors = 0;
+
+    const work = [...queue];
+    const workers = Array.from({ length: Math.max(1, drainOpts.concurrency) }, async () => {
+        while (work.length > 0) {
+            drainOpts.signal?.throwIfAborted();
+            const item = work.shift();
+            if (!item) {
+                break;
+            }
+
+            if (!drainOpts.force) {
+                const existing = hasHistory.get(item.productId);
+                if (existing && existing.n > 0) {
+                    skipped++;
+                    continue;
+                }
+            }
+
+            try {
+                const r = await hl.getByUrl(item.url);
+                const entries = r.history?.entries;
+                if (!entries || entries.length === 0) {
+                    fetched++;
+                    continue;
+                }
+
+                fetched++;
+                const tx = raw.transaction((rows: Array<{ d: string; c: number | null; o: number | null }>) => {
+                    let added = 0;
+                    for (const e of rows) {
+                        if (!e.d) {
+                            continue;
+                        }
+
+                        const observedAt = `${e.d}T00:00:00Z`;
+                        const result = insert.run(item.productId, observedAt, e.c, e.o);
+                        if (result.changes > 0) {
+                            added++;
+                        }
+                    }
+
+                    return added;
+                });
+                pointsAdded += tx(entries);
+            } catch (err) {
+                errors++;
+                if (errors <= 5) {
+                    log.warn(
+                        { err, productId: item.productId, url: item.url },
+                        "hlidac history fetch failed"
+                    );
+                }
+            }
+
+            if ((fetched + skipped) % 100 === 0) {
+                drainOpts.onProgress?.(fetched, pointsAdded);
+            }
+        }
+    });
+    await Promise.all(workers);
+    drainOpts.onProgress?.(fetched, pointsAdded);
+    return { fetched, pointsAdded, skipped, errors };
 }
