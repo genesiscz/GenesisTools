@@ -12,8 +12,10 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as WorkspaceRouteImport } from './routes/workspace'
 import { Route as WatchlistRouteImport } from './routes/watchlist'
 import { Route as SettingsRouteImport } from './routes/settings'
+import { Route as RegisterRouteImport } from './routes/register'
 import { Route as ProvidersRouteImport } from './routes/providers'
 import { Route as NotificationsRouteImport } from './routes/notifications'
+import { Route as LoginRouteImport } from './routes/login'
 import { Route as LiveRouteImport } from './routes/live'
 import { Route as CoverageRouteImport } from './routes/coverage'
 import { Route as CompareRouteImport } from './routes/compare'
@@ -37,6 +39,7 @@ import { Route as ApiProvidersSyncRouteImport } from './routes/api/providers.syn
 import { Route as ApiProvidersListRouteImport } from './routes/api/providers.list'
 import { Route as ApiProvidersDisconnectRouteImport } from './routes/api/providers.disconnect'
 import { Route as ApiProvidersConnectRouteImport } from './routes/api/providers.connect'
+import { Route as ApiProvidersBackfillRouteImport } from './routes/api/providers.backfill'
 import { Route as ApiOrdersListRouteImport } from './routes/api/orders.list'
 import { Route as ApiMatchCandidatesRouteImport } from './routes/api/match.candidates'
 import { Route as ApiMasterIdRouteImport } from './routes/api/master.$id'
@@ -68,6 +71,11 @@ const SettingsRoute = SettingsRouteImport.update({
   path: '/settings',
   getParentRoute: () => rootRouteImport,
 } as any)
+const RegisterRoute = RegisterRouteImport.update({
+  id: '/register',
+  path: '/register',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ProvidersRoute = ProvidersRouteImport.update({
   id: '/providers',
   path: '/providers',
@@ -76,6 +84,11 @@ const ProvidersRoute = ProvidersRouteImport.update({
 const NotificationsRoute = NotificationsRouteImport.update({
   id: '/notifications',
   path: '/notifications',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LoginRoute = LoginRouteImport.update({
+  id: '/login',
+  path: '/login',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LiveRoute = LiveRouteImport.update({
@@ -193,6 +206,11 @@ const ApiProvidersConnectRoute = ApiProvidersConnectRouteImport.update({
   path: '/api/providers/connect',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiProvidersBackfillRoute = ApiProvidersBackfillRouteImport.update({
+  id: '/api/providers/backfill',
+  path: '/api/providers/backfill',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiOrdersListRoute = ApiOrdersListRouteImport.update({
   id: '/api/orders/list',
   path: '/api/orders/list',
@@ -275,8 +293,10 @@ export interface FileRoutesByFullPath {
   '/compare': typeof CompareRoute
   '/coverage': typeof CoverageRoute
   '/live': typeof LiveRoute
+  '/login': typeof LoginRoute
   '/notifications': typeof NotificationsRoute
   '/providers': typeof ProvidersRoute
+  '/register': typeof RegisterRoute
   '/settings': typeof SettingsRoute
   '/watchlist': typeof WatchlistRoute
   '/workspace': typeof WorkspaceRoute
@@ -299,6 +319,7 @@ export interface FileRoutesByFullPath {
   '/api/master/$id': typeof ApiMasterIdRouteWithChildren
   '/api/match/candidates': typeof ApiMatchCandidatesRoute
   '/api/orders/list': typeof ApiOrdersListRoute
+  '/api/providers/backfill': typeof ApiProvidersBackfillRoute
   '/api/providers/connect': typeof ApiProvidersConnectRoute
   '/api/providers/disconnect': typeof ApiProvidersDisconnectRoute
   '/api/providers/list': typeof ApiProvidersListRoute
@@ -320,8 +341,10 @@ export interface FileRoutesByTo {
   '/compare': typeof CompareRoute
   '/coverage': typeof CoverageRoute
   '/live': typeof LiveRoute
+  '/login': typeof LoginRoute
   '/notifications': typeof NotificationsRoute
   '/providers': typeof ProvidersRoute
+  '/register': typeof RegisterRoute
   '/settings': typeof SettingsRoute
   '/watchlist': typeof WatchlistRoute
   '/workspace': typeof WorkspaceRoute
@@ -344,6 +367,7 @@ export interface FileRoutesByTo {
   '/api/master/$id': typeof ApiMasterIdRouteWithChildren
   '/api/match/candidates': typeof ApiMatchCandidatesRoute
   '/api/orders/list': typeof ApiOrdersListRoute
+  '/api/providers/backfill': typeof ApiProvidersBackfillRoute
   '/api/providers/connect': typeof ApiProvidersConnectRoute
   '/api/providers/disconnect': typeof ApiProvidersDisconnectRoute
   '/api/providers/list': typeof ApiProvidersListRoute
@@ -366,8 +390,10 @@ export interface FileRoutesById {
   '/compare': typeof CompareRoute
   '/coverage': typeof CoverageRoute
   '/live': typeof LiveRoute
+  '/login': typeof LoginRoute
   '/notifications': typeof NotificationsRoute
   '/providers': typeof ProvidersRoute
+  '/register': typeof RegisterRoute
   '/settings': typeof SettingsRoute
   '/watchlist': typeof WatchlistRoute
   '/workspace': typeof WorkspaceRoute
@@ -390,6 +416,7 @@ export interface FileRoutesById {
   '/api/master/$id': typeof ApiMasterIdRouteWithChildren
   '/api/match/candidates': typeof ApiMatchCandidatesRoute
   '/api/orders/list': typeof ApiOrdersListRoute
+  '/api/providers/backfill': typeof ApiProvidersBackfillRoute
   '/api/providers/connect': typeof ApiProvidersConnectRoute
   '/api/providers/disconnect': typeof ApiProvidersDisconnectRoute
   '/api/providers/list': typeof ApiProvidersListRoute
@@ -413,8 +440,10 @@ export interface FileRouteTypes {
     | '/compare'
     | '/coverage'
     | '/live'
+    | '/login'
     | '/notifications'
     | '/providers'
+    | '/register'
     | '/settings'
     | '/watchlist'
     | '/workspace'
@@ -437,6 +466,7 @@ export interface FileRouteTypes {
     | '/api/master/$id'
     | '/api/match/candidates'
     | '/api/orders/list'
+    | '/api/providers/backfill'
     | '/api/providers/connect'
     | '/api/providers/disconnect'
     | '/api/providers/list'
@@ -458,8 +488,10 @@ export interface FileRouteTypes {
     | '/compare'
     | '/coverage'
     | '/live'
+    | '/login'
     | '/notifications'
     | '/providers'
+    | '/register'
     | '/settings'
     | '/watchlist'
     | '/workspace'
@@ -482,6 +514,7 @@ export interface FileRouteTypes {
     | '/api/master/$id'
     | '/api/match/candidates'
     | '/api/orders/list'
+    | '/api/providers/backfill'
     | '/api/providers/connect'
     | '/api/providers/disconnect'
     | '/api/providers/list'
@@ -503,8 +536,10 @@ export interface FileRouteTypes {
     | '/compare'
     | '/coverage'
     | '/live'
+    | '/login'
     | '/notifications'
     | '/providers'
+    | '/register'
     | '/settings'
     | '/watchlist'
     | '/workspace'
@@ -527,6 +562,7 @@ export interface FileRouteTypes {
     | '/api/master/$id'
     | '/api/match/candidates'
     | '/api/orders/list'
+    | '/api/providers/backfill'
     | '/api/providers/connect'
     | '/api/providers/disconnect'
     | '/api/providers/list'
@@ -549,8 +585,10 @@ export interface RootRouteChildren {
   CompareRoute: typeof CompareRoute
   CoverageRoute: typeof CoverageRoute
   LiveRoute: typeof LiveRoute
+  LoginRoute: typeof LoginRoute
   NotificationsRoute: typeof NotificationsRoute
   ProvidersRoute: typeof ProvidersRoute
+  RegisterRoute: typeof RegisterRoute
   SettingsRoute: typeof SettingsRoute
   WatchlistRoute: typeof WatchlistRoute
   WorkspaceRoute: typeof WorkspaceRoute
@@ -572,6 +610,7 @@ export interface RootRouteChildren {
   ApiLiveEventsRoute: typeof ApiLiveEventsRoute
   ApiMatchCandidatesRoute: typeof ApiMatchCandidatesRoute
   ApiOrdersListRoute: typeof ApiOrdersListRoute
+  ApiProvidersBackfillRoute: typeof ApiProvidersBackfillRoute
   ApiProvidersConnectRoute: typeof ApiProvidersConnectRoute
   ApiProvidersDisconnectRoute: typeof ApiProvidersDisconnectRoute
   ApiProvidersListRoute: typeof ApiProvidersListRoute
@@ -606,6 +645,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/register': {
+      id: '/register'
+      path: '/register'
+      fullPath: '/register'
+      preLoaderRoute: typeof RegisterRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/providers': {
       id: '/providers'
       path: '/providers'
@@ -618,6 +664,13 @@ declare module '@tanstack/react-router' {
       path: '/notifications'
       fullPath: '/notifications'
       preLoaderRoute: typeof NotificationsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/login': {
+      id: '/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof LoginRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/live': {
@@ -779,6 +832,13 @@ declare module '@tanstack/react-router' {
       path: '/api/providers/connect'
       fullPath: '/api/providers/connect'
       preLoaderRoute: typeof ApiProvidersConnectRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/providers/backfill': {
+      id: '/api/providers/backfill'
+      path: '/api/providers/backfill'
+      fullPath: '/api/providers/backfill'
+      preLoaderRoute: typeof ApiProvidersBackfillRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/orders/list': {
@@ -946,8 +1006,10 @@ const rootRouteChildren: RootRouteChildren = {
   CompareRoute: CompareRoute,
   CoverageRoute: CoverageRoute,
   LiveRoute: LiveRoute,
+  LoginRoute: LoginRoute,
   NotificationsRoute: NotificationsRoute,
   ProvidersRoute: ProvidersRoute,
+  RegisterRoute: RegisterRoute,
   SettingsRoute: SettingsRoute,
   WatchlistRoute: WatchlistRoute,
   WorkspaceRoute: WorkspaceRoute,
@@ -969,6 +1031,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiLiveEventsRoute: ApiLiveEventsRoute,
   ApiMatchCandidatesRoute: ApiMatchCandidatesRoute,
   ApiOrdersListRoute: ApiOrdersListRoute,
+  ApiProvidersBackfillRoute: ApiProvidersBackfillRoute,
   ApiProvidersConnectRoute: ApiProvidersConnectRoute,
   ApiProvidersDisconnectRoute: ApiProvidersDisconnectRoute,
   ApiProvidersListRoute: ApiProvidersListRoute,

@@ -1,8 +1,10 @@
+import { useAuthMe } from "@app/shops/ui/lib/useAuthMe";
 import appCss from "@app/shops/ui/styles.css?url";
 import { Badge } from "@app/utils/ui/components/badge";
+import { Button } from "@app/utils/ui/components/button";
 import { DashboardLayout } from "@app/utils/ui/layouts/DashboardLayout";
-import { useQuery } from "@tanstack/react-query";
-import { createRootRoute, HeadContent, Outlet, Scripts, useRouter, useRouterState } from "@tanstack/react-router";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { createRootRoute, HeadContent, Link, Outlet, Scripts, useRouter, useRouterState } from "@tanstack/react-router";
 import { Bell, GitMerge, Heart, LayoutGrid, LayoutTemplate, Plug, Radio, Settings, ShoppingBasket } from "lucide-react";
 import { Toaster } from "sonner";
 
@@ -104,9 +106,48 @@ function ShopsLayout({ children }: { children: React.ReactNode }) {
             navLinks={decoratedLinks}
             activePath={currentPath}
             onNavigate={(href: string) => router.navigate({ to: href })}
+            rightSlot={<HeaderUser />}
         >
             {children}
         </DashboardLayout>
+    );
+}
+
+function HeaderUser() {
+    const me = useAuthMe();
+    const qc = useQueryClient();
+    const logout = useMutation({
+        mutationFn: async () => {
+            await fetch("/api/auth/logout", { method: "POST" });
+        },
+        onSuccess: () => {
+            qc.invalidateQueries({ queryKey: ["auth", "me"] });
+            window.location.assign("/login");
+        },
+    });
+
+    if (me.isLoading) {
+        return null;
+    }
+
+    if (!me.data) {
+        return (
+            <Link
+                to="/login"
+                className="text-xs font-mono uppercase tracking-widest text-muted-foreground hover:text-foreground"
+            >
+                Login
+            </Link>
+        );
+    }
+
+    return (
+        <div className="flex items-center gap-2 text-xs font-mono">
+            <span className="text-muted-foreground hidden sm:inline">{me.data.email}</span>
+            <Button size="sm" variant="outline" onClick={() => logout.mutate()}>
+                Logout
+            </Button>
+        </div>
     );
 }
 

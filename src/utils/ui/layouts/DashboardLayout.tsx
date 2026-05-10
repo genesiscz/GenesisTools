@@ -21,6 +21,8 @@ export interface DashboardLayoutProps {
     activePath?: string;
     /** Callback when a nav link is clicked (for SPA routing) */
     onNavigate?: (href: string) => void;
+    /** Optional element rendered to the right of the nav (e.g. user chip + logout) */
+    rightSlot?: ReactNode;
     /** Main content */
     children: ReactNode;
 }
@@ -32,6 +34,7 @@ export function DashboardLayout({
     navLinks,
     activePath,
     onNavigate,
+    rightSlot,
     children,
 }: DashboardLayoutProps) {
     const displayTitle = titleAccent ? (
@@ -106,6 +109,8 @@ export function DashboardLayout({
                                 })}
                             </nav>
                         )}
+
+                        {rightSlot}
                     </div>
                 </div>
             </header>

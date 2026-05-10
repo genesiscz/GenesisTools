@@ -21,6 +21,7 @@ interface Props {
     onDisconnect: () => void;
     onSync: () => void;
     onToggleAutoWatchlist: (next: boolean) => void;
+    onBackfillWatchlist: () => void;
 }
 
 const statusVariant: Record<ProviderCardData["status"], "default" | "secondary" | "destructive" | "outline"> = {
@@ -30,7 +31,14 @@ const statusVariant: Record<ProviderCardData["status"], "default" | "secondary" 
     error: "destructive",
 };
 
-export function ProviderCard({ data, onConnect, onDisconnect, onSync, onToggleAutoWatchlist }: Props): ReactNode {
+export function ProviderCard({
+    data,
+    onConnect,
+    onDisconnect,
+    onSync,
+    onToggleAutoWatchlist,
+    onBackfillWatchlist,
+}: Props): ReactNode {
     const isConnected = data.status === "connected";
     return (
         <Card className="border-zinc-800 bg-zinc-950">
@@ -65,9 +73,12 @@ export function ProviderCard({ data, onConnect, onDisconnect, onSync, onToggleAu
                                 Auto-add purchased items to watchlist
                             </label>
                         </div>
-                        <div className="flex gap-2 pt-2">
+                        <div className="flex flex-wrap gap-2 pt-2">
                             <Button size="sm" onClick={onSync}>
                                 Sync now
+                            </Button>
+                            <Button size="sm" variant="outline" onClick={onBackfillWatchlist}>
+                                Sync existing → watchlist
                             </Button>
                             <Button size="sm" variant="outline" onClick={onDisconnect}>
                                 Disconnect

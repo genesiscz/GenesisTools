@@ -1,6 +1,7 @@
 import { ConnectKosikDialog } from "@app/shops/ui/components/ConnectKosikDialog";
 import { ConnectRohlikDialog } from "@app/shops/ui/components/ConnectRohlikDialog";
 import { ProviderCard, type ProviderCardData } from "@app/shops/ui/components/ProviderCard";
+import { requireAuthBeforeLoad } from "@app/shops/ui/lib/useAuthMe";
 import { SafeJSON } from "@app/utils/json";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
@@ -9,6 +10,7 @@ import { toast } from "sonner";
 
 export const Route = createFileRoute("/providers")({
     component: ProvidersPage,
+    beforeLoad: requireAuthBeforeLoad,
 });
 
 interface SyncResponse {
@@ -23,6 +25,17 @@ interface ConnectResponse {
     ok: boolean;
     user_provider_id: number;
     external_user_email: string;
+}
+
+interface BackfillResult {
+    candidates: number;
+    added: number;
+    already_present: number;
+}
+
+interface UpdateResponse {
+    ok: boolean;
+    backfill: BackfillResult | null;
 }
 
 function ProvidersPage() {
@@ -89,15 +102,45 @@ function ProvidersPage() {
         },
     });
 
-    const toggleAuto = useMutation({
-        mutationFn: async (args: { shop_origin: string; auto_watchlist: boolean }) => {
-            await fetch("/api/providers/update", {
+    const toggleAuto = useMutation<UpdateResponse, Error, { shop_origin: string; auto_watchlist: boolean }>({
+        mutationFn: async (args) => {
+            const res = await fetch("/api/providers/update", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: SafeJSON.stringify(args),
             });
+            return (await res.json()) as UpdateResponse;
         },
-        onSuccess: () => qc.invalidateQueries({ queryKey: ["providers"] }),
+        onSuccess: (body, vars) => {
+            if (body.backfill) {
+                toast.success(
+                    `${vars.shop_origin}: ${body.backfill.added} added to watchlist (${body.backfill.already_present} already present, ${body.backfill.candidates} matched items)`
+                );
+            }
+
+            qc.invalidateQueries({ queryKey: ["providers"] });
+        },
+    });
+
+    const backfill = useMutation<BackfillResult, Error, string>({
+        mutationFn: async (shop_origin) => {
+            const res = await fetch("/api/providers/backfill", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: SafeJSON.stringify({ shop_origin }),
+            });
+            const body = (await res.json()) as BackfillResult | { error?: string };
+            if (!res.ok) {
+                throw new Error(("error" in body && body.error) || `backfill failed (${res.status})`);
+            }
+
+            return body as BackfillResult;
+        },
+        onSuccess: (r, shop_origin) =>
+            toast.success(
+                `${shop_origin}: ${r.added} added (${r.already_present} already present, ${r.candidates} matched items)`
+            ),
+        onError: (err) => toast.error(err.message),
     });
 
     return (
@@ -116,6 +159,7 @@ function ProvidersPage() {
                         onToggleAutoWatchlist={(next) =>
                             toggleAuto.mutate({ shop_origin: p.shop_origin, auto_watchlist: next })
                         }
+                        onBackfillWatchlist={() => backfill.mutate(p.shop_origin)}
                     />
                 ))}
             </div>

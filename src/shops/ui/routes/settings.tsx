@@ -1,11 +1,13 @@
 import type { SettingsPayload } from "@app/shops/types";
 import { SettingsForm } from "@app/shops/ui/components/SettingsForm";
+import { requireAuthBeforeLoad } from "@app/shops/ui/lib/useAuthMe";
 import { Skeleton } from "@app/utils/ui/components/skeleton";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/settings")({
     component: SettingsPage,
+    beforeLoad: requireAuthBeforeLoad,
 });
 
 function SettingsPage() {

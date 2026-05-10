@@ -4,6 +4,7 @@ import { FilterPills, type WatchlistFilter } from "@app/shops/ui/components/Filt
 import { PasteUrlQuickAdd } from "@app/shops/ui/components/PasteUrlQuickAdd";
 import { WatchlistTable } from "@app/shops/ui/components/WatchlistTable";
 import { useSseStream } from "@app/shops/ui/hooks/useSseStream";
+import { requireAuthBeforeLoad } from "@app/shops/ui/lib/useAuthMe";
 import { SafeJSON } from "@app/utils/json";
 import { Card, CardContent, CardHeader, CardTitle } from "@app/utils/ui/components/card";
 import { Input } from "@app/utils/ui/components/input";
@@ -14,6 +15,7 @@ import { toast } from "sonner";
 
 export const Route = createFileRoute("/watchlist")({
     component: WatchlistPage,
+    beforeLoad: requireAuthBeforeLoad,
 });
 
 interface NotificationFiredPayload {
