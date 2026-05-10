@@ -3,11 +3,22 @@ import { Badge } from "@app/utils/ui/components/badge";
 import { DashboardLayout } from "@app/utils/ui/layouts/DashboardLayout";
 import { useQuery } from "@tanstack/react-query";
 import { createRootRoute, HeadContent, Outlet, Scripts, useRouter, useRouterState } from "@tanstack/react-router";
-import { Bell, GitMerge, Heart, LayoutGrid, LayoutTemplate, Radio, Settings, ShoppingBasket } from "lucide-react";
+import {
+    Bell,
+    GitMerge,
+    Heart,
+    LayoutGrid,
+    LayoutTemplate,
+    Plug,
+    Radio,
+    Settings,
+    ShoppingBasket,
+} from "lucide-react";
 import { Toaster } from "sonner";
 
 const navLinks = [
     { label: "Watchlist", href: "/watchlist", icon: <Heart className="w-3.5 h-3.5" /> },
+    { label: "Providers", href: "/providers", icon: <Plug className="w-3.5 h-3.5" /> },
     { label: "Browse", href: "/browse", icon: <LayoutGrid className="w-3.5 h-3.5" /> },
     { label: "Live", href: "/live", icon: <Radio className="w-3.5 h-3.5" /> },
     { label: "Workspace", href: "/workspace", icon: <LayoutTemplate className="w-3.5 h-3.5" /> },
