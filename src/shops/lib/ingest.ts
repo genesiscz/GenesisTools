@@ -107,12 +107,12 @@ export async function ingestFromHlidacResult(args: IngestArgs): Promise<IngestRe
             flavorKey: null,
         });
         if (result.kind === "linked" || result.kind === "seed") {
-            const row = db
-                .raw()
-                .query<{ master_product_id: number | null }, [number]>(
-                    "SELECT master_product_id FROM products WHERE id = ?"
-                )
-                .get(productId);
+            const row = await db
+                .kysely()
+                .selectFrom("products")
+                .select("master_product_id")
+                .where("id", "=", productId)
+                .executeTakeFirst();
             masterId = row?.master_product_id ?? null;
         }
     }
