@@ -14,6 +14,7 @@ interface MasterDetailProps {
     isHistoryLoading: boolean;
     targetPrice?: number | null;
     bestTime?: { weekday_name: string; avg_price: number; sample_size: number } | null;
+    isFavorite?: boolean;
 }
 
 export function MasterDetail({
@@ -23,6 +24,7 @@ export function MasterDetail({
     isHistoryLoading,
     targetPrice,
     bestTime,
+    isFavorite,
 }: MasterDetailProps) {
     if (isLoading || !detail) {
         return (
@@ -56,7 +58,7 @@ export function MasterDetail({
                             </div>
                             <h1 className="font-mono text-xl text-foreground leading-tight">{detail.canonical_name}</h1>
                         </div>
-                        <StarWatchButton masterProductId={detail.id} />
+                        <StarWatchButton masterProductId={detail.id} isFavorite={isFavorite ?? false} />
                     </div>
                     <div className="flex flex-wrap items-end gap-4">
                         <div>

@@ -40,30 +40,44 @@ export function AuthForm({ title, submitLabel, onSubmit, bottomSlot }: AuthFormP
                 <CardHeader>
                     <CardTitle className="font-mono text-sm tracking-[0.25em] uppercase">{title}</CardTitle>
                 </CardHeader>
-                <CardContent className="space-y-3">
-                    <Input
-                        type="email"
-                        placeholder="Email"
-                        value={email}
-                        onChange={(e) => setEmail(e.target.value)}
-                        onKeyDown={handleKey}
-                        autoComplete="email"
-                    />
-                    <Input
-                        type="password"
-                        placeholder="Password"
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        onKeyDown={handleKey}
-                        autoComplete={
-                            submitLabel.toLowerCase().includes("register") ? "new-password" : "current-password"
-                        }
-                    />
-                    {error ? <div className="text-xs text-[var(--color-neon-coral,#ff5577)]">{error}</div> : null}
-                    <Button onClick={handle} disabled={submitting || !email || !password} className="w-full">
-                        {submitting ? "..." : submitLabel}
-                    </Button>
-                    {bottomSlot}
+                <CardContent>
+                    <form
+                        className="space-y-3"
+                        onSubmit={(e) => {
+                            e.preventDefault();
+                            if (email && password && !submitting) {
+                                handle();
+                            }
+                        }}
+                    >
+                        <Input
+                            type="email"
+                            placeholder="Email"
+                            value={email}
+                            onChange={(e) => setEmail(e.target.value)}
+                            onKeyDown={handleKey}
+                            autoComplete="email"
+                        />
+                        <Input
+                            type="password"
+                            placeholder="Password"
+                            value={password}
+                            onChange={(e) => setPassword(e.target.value)}
+                            onKeyDown={handleKey}
+                            autoComplete={
+                                submitLabel.toLowerCase().includes("register") ? "new-password" : "current-password"
+                            }
+                        />
+                        {error ? <div className="text-xs text-[var(--color-neon-coral,#ff5577)]">{error}</div> : null}
+                        <Button
+                            type="submit"
+                            disabled={submitting || !email || !password}
+                            className="w-full"
+                        >
+                            {submitting ? "..." : submitLabel}
+                        </Button>
+                        {bottomSlot}
+                    </form>
                 </CardContent>
             </Card>
         </div>

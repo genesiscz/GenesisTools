@@ -61,7 +61,9 @@ function MasterPage() {
         },
     });
 
-    const targetPrice = watchlistQuery.data?.find((w) => w.master_product_id === Number(id))?.target_price ?? null;
+    const watchEntry = watchlistQuery.data?.find((w) => w.master_product_id === Number(id));
+    const targetPrice = watchEntry?.target_price ?? null;
+    const isFavorite = watchEntry !== undefined;
 
     return (
         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6">
@@ -72,6 +74,7 @@ function MasterPage() {
                 isHistoryLoading={historyQuery.isLoading}
                 targetPrice={targetPrice}
                 bestTime={bestTimeQuery.data?.best_weekday ?? null}
+                isFavorite={isFavorite}
             />
         </div>
     );
