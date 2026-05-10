@@ -29,47 +29,41 @@ export interface MatchApiContext {
     shopsDb?: ShopsDatabase;
 }
 
-interface CandidateRow {
-    product_id_a: number;
-    product_id_b: number;
-    similarity: number;
-    match_method: string;
-    aid: number;
-    ashop: string;
-    aname: string;
-    abrand: string | null;
-    aimg: string | null;
-    aunit: string | null;
-    aamt: number | null;
-    aflv: string | null;
-    aean: string | null;
-    bid: number;
-    bshop: string;
-    bname: string;
-    bbrand: string | null;
-    bimg: string | null;
-    bunit: string | null;
-    bamt: number | null;
-    bflv: string | null;
-    bean: string | null;
-}
-
 export async function listPendingCandidates(ctx: MatchApiContext = {}): Promise<PairDTO[]> {
     const shopsDb = ctx.shopsDb ?? getShopsDatabase();
-    const rows = shopsDb
-        .raw()
-        .query<CandidateRow, []>(
-            `SELECT mc.product_id_a, mc.product_id_b, mc.similarity, mc.match_method,
-                    pa.id AS aid, pa.shop_origin AS ashop, pa.name AS aname, pa.brand AS abrand, pa.image_url AS aimg, pa.unit AS aunit, pa.unit_amount AS aamt, pa.flavor_key AS aflv, pa.ean AS aean,
-                    pb.id AS bid, pb.shop_origin AS bshop, pb.name AS bname, pb.brand AS bbrand, pb.image_url AS bimg, pb.unit AS bunit, pb.unit_amount AS bamt, pb.flavor_key AS bflv, pb.ean AS bean
-             FROM match_candidates mc
-             JOIN products pa ON pa.id = mc.product_id_a
-             JOIN products pb ON pb.id = mc.product_id_b
-             WHERE mc.status = 'pending'
-             ORDER BY mc.created_at ASC
-             LIMIT 200`
-        )
-        .all();
+    const rows = await shopsDb
+        .kysely()
+        .selectFrom("match_candidates as mc")
+        .innerJoin("products as pa", "pa.id", "mc.product_id_a")
+        .innerJoin("products as pb", "pb.id", "mc.product_id_b")
+        .select([
+            "mc.product_id_a",
+            "mc.product_id_b",
+            "mc.similarity",
+            "mc.match_method",
+            "pa.id as aid",
+            "pa.shop_origin as ashop",
+            "pa.name as aname",
+            "pa.brand as abrand",
+            "pa.image_url as aimg",
+            "pa.unit as aunit",
+            "pa.unit_amount as aamt",
+            "pa.flavor_key as aflv",
+            "pa.ean as aean",
+            "pb.id as bid",
+            "pb.shop_origin as bshop",
+            "pb.name as bname",
+            "pb.brand as bbrand",
+            "pb.image_url as bimg",
+            "pb.unit as bunit",
+            "pb.unit_amount as bamt",
+            "pb.flavor_key as bflv",
+            "pb.ean as bean",
+        ])
+        .where("mc.status", "=", "pending")
+        .orderBy("mc.created_at", "asc")
+        .limit(200)
+        .execute();
 
     return rows.map((r) => ({
         productIdA: r.product_id_a,
@@ -113,61 +107,57 @@ export async function acceptCandidatePair(args: PairIdsArgs): Promise<void> {
     const hi = Math.max(args.productIdA, args.productIdB);
     const now = new Date().toISOString();
 
-    shopsDb.raw().run(
-        `UPDATE match_candidates SET status = 'accepted', reviewed_at = ?, reviewed_by = 'user'
-         WHERE product_id_a = ? AND product_id_b = ?`,
-        [now, lo, hi]
-    );
+    const k = shopsDb.kysely();
 
-    const masters = shopsDb
-        .raw()
-        .query<{ a: number | null; b: number | null }, [number, number]>(
-            `SELECT
-               (SELECT master_product_id FROM products WHERE id = ?) AS a,
-               (SELECT master_product_id FROM products WHERE id = ?) AS b`
-        )
-        .get(lo, hi);
-    if (!masters) {
-        log.warn({ lo, hi }, "could not look up master ids for accept");
-        return;
-    }
+    await k
+        .updateTable("match_candidates")
+        .set({ status: "accepted", reviewed_at: now, reviewed_by: "user" })
+        .where("product_id_a", "=", lo)
+        .where("product_id_b", "=", hi)
+        .execute();
 
-    if (masters.a === null && masters.b === null) {
+    const aRow = await k.selectFrom("products").select("master_product_id").where("id", "=", lo).executeTakeFirst();
+    const bRow = await k.selectFrom("products").select("master_product_id").where("id", "=", hi).executeTakeFirst();
+    const a = aRow?.master_product_id ?? null;
+    const b = bRow?.master_product_id ?? null;
+
+    if (a === null && b === null) {
         log.warn({ lo, hi }, "neither product has a master; skipping merge");
         return;
     }
 
-    if (masters.a === null) {
-        shopsDb.raw().run(
-            `UPDATE products SET master_product_id = ?, match_method = 'user', match_at = ?, last_updated_at = ?
-                 WHERE id = ?`,
-            [masters.b, now, now, lo]
-        );
+    if (a === null) {
+        await k
+            .updateTable("products")
+            .set({ master_product_id: b, match_method: "user", match_at: now, last_updated_at: now })
+            .where("id", "=", lo)
+            .execute();
         return;
     }
 
-    if (masters.b === null) {
-        shopsDb.raw().run(
-            `UPDATE products SET master_product_id = ?, match_method = 'user', match_at = ?, last_updated_at = ?
-                 WHERE id = ?`,
-            [masters.a, now, now, hi]
-        );
+    if (b === null) {
+        await k
+            .updateTable("products")
+            .set({ master_product_id: a, match_method: "user", match_at: now, last_updated_at: now })
+            .where("id", "=", hi)
+            .execute();
         return;
     }
 
-    if (masters.a === masters.b) {
+    if (a === b) {
         return;
     }
 
     const merger = new MasterMerger(shopsDb);
-    const decision = await merger.pickSurvivor(masters.a, masters.b);
+    const decision = await merger.pickSurvivor(a, b);
     await merger.merge(decision);
 }
 
-export function resolveProductId(shopsDb: ShopsDatabase, input: string): number {
+export async function resolveProductId(shopsDb: ShopsDatabase, input: string): Promise<number> {
+    const k = shopsDb.kysely();
     if (/^\d+$/.test(input)) {
         const id = Number(input);
-        const row = shopsDb.raw().query<{ id: number }, [number]>("SELECT id FROM products WHERE id = ?").get(id);
+        const row = await k.selectFrom("products").select("id").where("id", "=", id).executeTakeFirst();
         if (!row) {
             throw new Error(`No product with id ${id}`);
         }
@@ -175,7 +165,7 @@ export function resolveProductId(shopsDb: ShopsDatabase, input: string): number 
         return id;
     }
 
-    const row = shopsDb.raw().query<{ id: number }, [string]>("SELECT id FROM products WHERE url = ?").get(input);
+    const row = await k.selectFrom("products").select("id").where("url", "=", input).executeTakeFirst();
     if (!row) {
         throw new Error(`No product with url ${input}`);
     }
@@ -191,11 +181,12 @@ export interface RematchProductArgs {
 export async function rematchProduct(args: RematchProductArgs): Promise<void> {
     const shopsDb = args.shopsDb ?? getShopsDatabase();
     const now = new Date().toISOString();
-    shopsDb.raw().run(
-        `UPDATE products SET master_product_id = NULL, match_method = 'pending', match_at = ?, last_updated_at = ?
-             WHERE id = ?`,
-        [now, now, args.productId]
-    );
+    await shopsDb
+        .kysely()
+        .updateTable("products")
+        .set({ master_product_id: null, match_method: "pending", match_at: now, last_updated_at: now })
+        .where("id", "=", args.productId)
+        .execute();
     log.info({ productId: args.productId }, "product reset to pending; run a crawl flush to re-match");
 }
 
@@ -204,16 +195,28 @@ export async function rejectCandidatePair(args: PairIdsArgs): Promise<void> {
     const lo = Math.min(args.productIdA, args.productIdB);
     const hi = Math.max(args.productIdA, args.productIdB);
     const now = new Date().toISOString();
-    const result = shopsDb.raw().run(
-        `UPDATE match_candidates SET status = 'rejected', reviewed_at = ?, reviewed_by = 'user'
-         WHERE product_id_a = ? AND product_id_b = ?`,
-        [now, lo, hi]
-    );
-    if (result.changes === 0) {
-        shopsDb.raw().run(
-            `INSERT INTO match_candidates (product_id_a, product_id_b, similarity, match_method, status, created_at, reviewed_at, reviewed_by)
-             VALUES (?, ?, 0, 'fuzzy', 'rejected', ?, ?, 'user')`,
-            [lo, hi, now, now]
-        );
+    const k = shopsDb.kysely();
+
+    const result = await k
+        .updateTable("match_candidates")
+        .set({ status: "rejected", reviewed_at: now, reviewed_by: "user" })
+        .where("product_id_a", "=", lo)
+        .where("product_id_b", "=", hi)
+        .executeTakeFirst();
+
+    if (Number(result.numUpdatedRows ?? 0) === 0) {
+        await k
+            .insertInto("match_candidates")
+            .values({
+                product_id_a: lo,
+                product_id_b: hi,
+                similarity: 0,
+                match_method: "fuzzy",
+                status: "rejected",
+                created_at: now,
+                reviewed_at: now,
+                reviewed_by: "user",
+            })
+            .execute();
     }
 }

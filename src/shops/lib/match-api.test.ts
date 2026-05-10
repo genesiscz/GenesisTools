@@ -80,27 +80,27 @@ describe("acceptCandidatePair", () => {
 });
 
 describe("resolveProductId", () => {
-    it("resolves numeric id when product exists", () => {
+    it("resolves numeric id when product exists", async () => {
         const { db, ids } = setup();
-        expect(resolveProductId(db, String(ids[0]))).toBe(ids[0]);
+        expect(await resolveProductId(db, String(ids[0]))).toBe(ids[0]);
         db.close();
     });
 
-    it("resolves URL when product exists", () => {
+    it("resolves URL when product exists", async () => {
         const { db, ids } = setup();
-        expect(resolveProductId(db, "http://1")).toBe(ids[0]);
+        expect(await resolveProductId(db, "http://1")).toBe(ids[0]);
         db.close();
     });
 
-    it("throws for unknown numeric id", () => {
+    it("throws for unknown numeric id", async () => {
         const { db } = setup();
-        expect(() => resolveProductId(db, "999999")).toThrow(/No product with id/);
+        await expect(resolveProductId(db, "999999")).rejects.toThrow(/No product with id/);
         db.close();
     });
 
-    it("throws for unknown URL", () => {
+    it("throws for unknown URL", async () => {
         const { db } = setup();
-        expect(() => resolveProductId(db, "http://nope")).toThrow(/No product with url/);
+        await expect(resolveProductId(db, "http://nope")).rejects.toThrow(/No product with url/);
         db.close();
     });
 });

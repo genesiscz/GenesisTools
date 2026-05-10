@@ -25,8 +25,8 @@ export function registerMatchCommand(program: Command): void {
         .description("Accept a pair (merges masters); a/b are product URLs or ids")
         .action(async (a: string, b: string) => {
             const shopsDb = getShopsDatabase();
-            const pa = resolveProductId(shopsDb, a);
-            const pb = resolveProductId(shopsDb, b);
+            const pa = await resolveProductId(shopsDb, a);
+            const pb = await resolveProductId(shopsDb, b);
             await acceptCandidatePair({ shopsDb, productIdA: pa, productIdB: pb });
             console.log(`accepted pair ${pa}-${pb}`);
         });
@@ -35,8 +35,8 @@ export function registerMatchCommand(program: Command): void {
         .description("Reject a pair forever; a/b are product URLs or ids")
         .action(async (a: string, b: string) => {
             const shopsDb = getShopsDatabase();
-            const pa = resolveProductId(shopsDb, a);
-            const pb = resolveProductId(shopsDb, b);
+            const pa = await resolveProductId(shopsDb, a);
+            const pb = await resolveProductId(shopsDb, b);
             await rejectCandidatePair({ shopsDb, productIdA: pa, productIdB: pb });
             console.log(`rejected pair ${pa}-${pb}`);
         });
@@ -45,7 +45,7 @@ export function registerMatchCommand(program: Command): void {
         .description("Reset a product to pending (will re-match on next crawl flush)")
         .action(async (input: string) => {
             const shopsDb = getShopsDatabase();
-            const id = resolveProductId(shopsDb, input);
+            const id = await resolveProductId(shopsDb, input);
             await rematchProduct({ shopsDb, productId: id });
             console.log(`reset product ${id} to pending`);
         });
