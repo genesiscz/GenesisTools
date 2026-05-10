@@ -135,6 +135,63 @@ export async function addFavorite(input: WatchInput): Promise<AddFavoriteResult>
     return { favorite_id: id, master_product_id: resolved.masterId, auto_ingested: resolved.autoIngested };
 }
 
+export interface AddFavoriteByMasterInput {
+    master_product_id: number;
+    target_price?: number | null;
+    drop_percent?: number | null;
+    drop_absolute?: number | null;
+    restricted_to_shop?: string | null;
+    label?: string | null;
+    cooldown_hours?: number;
+    notify_back_in_stock?: boolean;
+}
+
+export async function addFavoriteByMaster(input: AddFavoriteByMasterInput): Promise<AddFavoriteResult> {
+    const { favorites, db } = repos();
+
+    let referencePrice: number | null = null;
+    let priceQuery = db
+        .kysely()
+        .selectFrom("current_offers")
+        .select(["current_price"])
+        .where("master_product_id", "=", input.master_product_id)
+        .orderBy("current_price", "asc")
+        .limit(1);
+    if (input.restricted_to_shop) {
+        priceQuery = priceQuery.where("shop_origin", "=", input.restricted_to_shop);
+    }
+
+    const lastPrice = await priceQuery.executeTakeFirst();
+    if (lastPrice?.current_price !== undefined && lastPrice.current_price !== null) {
+        referencePrice = lastPrice.current_price;
+    }
+
+    let label = input.label ?? null;
+    if (label === null) {
+        const master = await db
+            .kysely()
+            .selectFrom("master_products")
+            .select("canonical_name")
+            .where("id", "=", input.master_product_id)
+            .executeTakeFirst();
+        label = master?.canonical_name ?? null;
+    }
+
+    const id = await favorites.addFavorite({
+        master_product_id: input.master_product_id,
+        restricted_to_shop: input.restricted_to_shop ?? null,
+        target_price: input.target_price ?? null,
+        drop_percent: input.drop_percent ?? null,
+        drop_absolute: input.drop_absolute ?? null,
+        reference_price: referencePrice,
+        label,
+        cooldown_hours: input.cooldown_hours ?? 24,
+        notify_back_in_stock: input.notify_back_in_stock,
+    });
+    log.info({ favoriteId: id, masterId: input.master_product_id }, "favorite added by master");
+    return { favorite_id: id, master_product_id: input.master_product_id, auto_ingested: false };
+}
+
 export async function removeFavorite(id: number): Promise<void> {
     const { favorites } = repos();
     await favorites.removeFavorite(id);
