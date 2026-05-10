@@ -39,6 +39,12 @@ export interface RohlikProfile {
     surname?: string;
 }
 
+interface RohlikProfileEnvelope {
+    status: number;
+    messages: unknown[];
+    data: RohlikProfile;
+}
+
 export interface RohlikAuthClientConfig {
     sessionCookie?: string;
 }
@@ -96,8 +102,8 @@ export class RohlikAuthClient extends RohlikClient {
     }
 
     async getProfile(): Promise<RohlikProfile> {
-        const res = await this.requestRaw<RohlikProfile>("GET", "/services/frontend-service/v2/user-profile");
-        return res.data;
+        const res = await this.requestRaw<RohlikProfileEnvelope>("GET", "/services/frontend-service/v2/user-profile");
+        return res.data.data;
     }
 
     async listOrders(opts: { limit: number; offset: number }): Promise<RohlikOrderListEntry[]> {

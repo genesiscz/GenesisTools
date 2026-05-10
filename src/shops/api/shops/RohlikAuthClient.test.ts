@@ -39,15 +39,16 @@ describe("RohlikAuthClient", () => {
         globalThis.fetch = mock(async (_url: string | URL | Request, init?: RequestInit) => {
             const headers = new Headers(init?.headers as HeadersInit);
             captured.cookie = headers.get("Cookie");
-            return new Response('{"id":1,"email":"a@b"}', {
+            return new Response('{"status":200,"messages":[],"data":{"id":1,"email":"a@b"}}', {
                 status: 200,
                 headers: { "content-type": "application/json" },
             });
         }) as unknown as typeof fetch;
 
         const client = new RohlikAuthClient({ sessionCookie: "JSESSIONID=XYZ" });
-        await client.getProfile();
+        const profile = await client.getProfile();
         expect(captured.cookie).toBe("JSESSIONID=XYZ");
+        expect(profile.email).toBe("a@b");
     });
 
     it("listOrders returns parsed array; getOrderDetail returns items[]", async () => {
