@@ -95,24 +95,45 @@ export function SpendSummary({ data, onProductClick }: Props): ReactNode {
                         </CardTitle>
                     </CardHeader>
                     <CardContent>
-                        <div className="h-44 flex items-center">
-                            <ResponsiveContainer width="100%" height="100%">
-                                <PieChart>
-                                    <Pie data={data.byShop} dataKey="total" nameKey="shop_origin" outerRadius={60}>
-                                        {data.byShop.map((_, i) => (
-                                            <Cell key={i} fill={chartSeriesPalette[i % chartSeriesPalette.length]} />
-                                        ))}
-                                    </Pie>
-                                    <Tooltip
-                                        contentStyle={{
-                                            background: chartColors.tooltipBg,
-                                            border: `1px solid ${chartColors.tooltipBorder}`,
-                                            fontFamily: "monospace",
-                                            fontSize: 11,
-                                        }}
-                                    />
-                                </PieChart>
-                            </ResponsiveContainer>
+                        <div className="h-44 flex items-center justify-center">
+                            {data.byShop.length === 0 ? (
+                                <div className="text-xs text-muted-foreground font-mono">no orders yet</div>
+                            ) : data.byShop.length === 1 ? (
+                                <div className="flex flex-col items-center gap-1 font-mono">
+                                    <div className="text-3xl tabular-nums text-[var(--color-neon-cyan)]">100%</div>
+                                    <div className="text-[10px] tracking-[0.25em] uppercase text-muted-foreground">
+                                        {data.byShop[0].shop_origin}
+                                    </div>
+                                </div>
+                            ) : (
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <PieChart>
+                                        <Pie
+                                            data={data.byShop}
+                                            dataKey="total"
+                                            nameKey="shop_origin"
+                                            outerRadius={60}
+                                            label={renderShopPieLabel}
+                                            labelLine={false}
+                                        >
+                                            {data.byShop.map((_, i) => (
+                                                <Cell
+                                                    key={i}
+                                                    fill={chartSeriesPalette[i % chartSeriesPalette.length]}
+                                                />
+                                            ))}
+                                        </Pie>
+                                        <Tooltip
+                                            contentStyle={{
+                                                background: chartColors.tooltipBg,
+                                                border: `1px solid ${chartColors.tooltipBorder}`,
+                                                fontFamily: "monospace",
+                                                fontSize: 11,
+                                            }}
+                                        />
+                                    </PieChart>
+                                </ResponsiveContainer>
+                            )}
                         </div>
                     </CardContent>
                 </Card>
@@ -146,6 +167,19 @@ export function SpendSummary({ data, onProductClick }: Props): ReactNode {
             </Card>
         </div>
     );
+}
+
+interface PieLabelProps {
+    percent?: number;
+    name?: string;
+}
+
+function renderShopPieLabel({ percent, name }: PieLabelProps): string {
+    if (typeof percent !== "number" || !name) {
+        return "";
+    }
+
+    return `${name} · ${(percent * 100).toFixed(0)}%`;
 }
 
 function StatCard({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
