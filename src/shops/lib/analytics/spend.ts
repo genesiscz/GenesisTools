@@ -42,7 +42,7 @@ export async function monthlySpend(
         .innerJoin("user_providers as up", "up.id", "uo.user_provider_id")
         .where("up.user_id", "=", userId)
         .select([
-            sql<string>`strftime('%Y-%m', uo.ordered_at)`.as("month"),
+            sql<string>`substr(uo.ordered_at, 1, 7)`.as("month"),
             sql<string>`uo.currency`.as("currency"),
             sql<number>`SUM(uo.total_amount)`.as("total"),
             sql<number>`COUNT(uo.id)`.as("orders"),
