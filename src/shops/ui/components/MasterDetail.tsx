@@ -84,9 +84,8 @@ export function MasterDetail({
 
             {bestTime ? (
                 <div className="font-mono text-xs text-muted-foreground px-1">
-                    Usually cheapest on{" "}
-                    <span className="text-[var(--color-neon-cyan)]">{bestTime.weekday_name}s</span> — avg{" "}
-                    {bestTime.avg_price.toFixed(2)} CZK over {bestTime.sample_size} observations.
+                    Usually cheapest on <span className="text-[var(--color-neon-cyan)]">{bestTime.weekday_name}s</span>{" "}
+                    — avg {bestTime.avg_price.toFixed(2)} CZK over {bestTime.sample_size} observations.
                 </div>
             ) : null}
 

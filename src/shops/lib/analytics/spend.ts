@@ -36,7 +36,7 @@ export async function monthlySpend(
     userId: number,
     opts: { months?: number } = {}
 ): Promise<MonthlySpend[]> {
-    let q = db
+    const q = db
         .kysely()
         .selectFrom("user_orders as uo")
         .innerJoin("user_providers as up", "up.id", "uo.user_provider_id")
@@ -231,9 +231,7 @@ export async function counterfactualSavings(
             .where("pr.master_product_id", "=", r.master_id)
             .where("p.observed_at", ">=", sql<string>`datetime('now', ${`-${sinceDays} days`})`)
             .where("p.current_price", "is not", null)
-            .select([
-                sql<number | null>`MIN(p.current_price)`.as("min_price"),
-            ])
+            .select([sql<number | null>`MIN(p.current_price)`.as("min_price")])
             .executeTakeFirst();
         const minPrice = minRow?.min_price ?? null;
         let minAt: string | null = null;

@@ -1,5 +1,5 @@
 import { BulkAddOrdersTable, type ProviderOrders } from "@app/shops/ui/components/BulkAddOrdersTable";
-import { SpendSummary, type SpendInsights } from "@app/shops/ui/components/SpendSummary";
+import { type SpendInsights, SpendSummary } from "@app/shops/ui/components/SpendSummary";
 import { RequireAuth, requireAuthBeforeLoad } from "@app/shops/ui/lib/useAuthMe";
 import { SafeJSON } from "@app/utils/json";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -62,7 +62,10 @@ function OrdersPage() {
                 <div className="font-mono text-xs text-muted-foreground">loading insights…</div>
             )}
             {orders.data ? (
-                <BulkAddOrdersTable providers={orders.data} onBulkAdd={(items) => bulkAdd.mutateAsync(items).then(() => undefined)} />
+                <BulkAddOrdersTable
+                    providers={orders.data}
+                    onBulkAdd={(items) => bulkAdd.mutateAsync(items).then(() => undefined)}
+                />
             ) : (
                 <div className="font-mono text-xs text-muted-foreground">loading orders…</div>
             )}

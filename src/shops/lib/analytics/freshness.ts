@@ -6,10 +6,7 @@ export interface FreshnessRow {
     shops_covered: number;
 }
 
-export async function freshnessFor(
-    db: ShopsDatabase,
-    masterIds: number[]
-): Promise<Map<number, FreshnessRow>> {
+export async function freshnessFor(db: ShopsDatabase, masterIds: number[]): Promise<Map<number, FreshnessRow>> {
     const out = new Map<number, FreshnessRow>();
     if (masterIds.length === 0) {
         return out;

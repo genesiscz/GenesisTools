@@ -1,8 +1,8 @@
+import { SafeJSON } from "@app/utils/json";
 import { Button } from "@app/utils/ui/components/button";
 import { Input } from "@app/utils/ui/components/input";
-import { SafeJSON } from "@app/utils/json";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState, type ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 import { toast } from "sonner";
 
 export interface UnmatchedItem {
@@ -85,7 +85,7 @@ function UnmatchedRow({ item, onAttach }: { item: UnmatchedItem; onAttach: (mast
                 return [];
             }
 
-            const body = await res.json() as { results?: SearchResult[] } | SearchResult[];
+            const body = (await res.json()) as { results?: SearchResult[] } | SearchResult[];
             return Array.isArray(body) ? body : (body.results ?? []);
         },
         enabled: query.length >= 2,
@@ -96,8 +96,8 @@ function UnmatchedRow({ item, onAttach }: { item: UnmatchedItem; onAttach: (mast
             <div className="flex-1 min-w-0">
                 <div className="text-xs font-mono text-foreground truncate">{item.name}</div>
                 <div className="text-[10px] font-mono text-muted-foreground">
-                    {item.shop_origin} · {new Date(item.ordered_at).toLocaleDateString("cs-CZ")} · {item.quantity ?? "?"}{" "}
-                    {item.unit ?? ""}
+                    {item.shop_origin} · {new Date(item.ordered_at).toLocaleDateString("cs-CZ")} ·{" "}
+                    {item.quantity ?? "?"} {item.unit ?? ""}
                 </div>
             </div>
             <Input

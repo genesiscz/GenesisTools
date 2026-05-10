@@ -16,10 +16,7 @@ export const Route = createFileRoute("/api/match/my-unmatched/attach")({
                 const lineNo = typeof body.line_no === "number" ? body.line_no : null;
                 const masterId = typeof body.master_product_id === "number" ? body.master_product_id : null;
                 if (orderId === null || lineNo === null || masterId === null) {
-                    return Response.json(
-                        { error: "order_id, line_no, master_product_id required" },
-                        { status: 400 }
-                    );
+                    return Response.json({ error: "order_id, line_no, master_product_id required" }, { status: 400 });
                 }
 
                 const db = getShopsDatabase();

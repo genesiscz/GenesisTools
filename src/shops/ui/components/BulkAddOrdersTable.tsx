@@ -1,7 +1,7 @@
 import { Button } from "@app/utils/ui/components/button";
-import { Checkbox } from "@app/utils/ui/components/checkbox";
 import { Card, CardContent, CardHeader, CardTitle } from "@app/utils/ui/components/card";
-import { useState, type ReactNode } from "react";
+import { Checkbox } from "@app/utils/ui/components/checkbox";
+import { type ReactNode, useState } from "react";
 
 export interface OrderRow {
     id: number;

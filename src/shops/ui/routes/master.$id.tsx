@@ -61,8 +61,7 @@ function MasterPage() {
         },
     });
 
-    const targetPrice =
-        watchlistQuery.data?.find((w) => w.master_product_id === Number(id))?.target_price ?? null;
+    const targetPrice = watchlistQuery.data?.find((w) => w.master_product_id === Number(id))?.target_price ?? null;
 
     return (
         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6">

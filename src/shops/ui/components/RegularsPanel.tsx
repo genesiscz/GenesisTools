@@ -33,8 +33,7 @@ export function RegularsPanel({ items, onOpen }: Props): ReactNode {
             <CardContent className="space-y-1">
                 {items.slice(0, 8).map((it) => {
                     const d = daysUntil(it.next_likely_at);
-                    const dueLabel =
-                        d <= 0 ? `due now` : d === 1 ? `buy in ~1 day` : `buy in ~${d} days`;
+                    const dueLabel = d <= 0 ? `due now` : d === 1 ? `buy in ~1 day` : `buy in ~${d} days`;
                     return (
                         <button
                             key={it.master_product_id}
@@ -45,7 +44,10 @@ export function RegularsPanel({ items, onOpen }: Props): ReactNode {
                             <span className="truncate text-foreground">{it.name}</span>
                             <span className="flex items-center gap-2 shrink-0">
                                 <span className="text-muted-foreground tabular-nums">{dueLabel}</span>
-                                <Badge variant={CONFIDENCE_VARIANT[it.confidence]} className="text-[9px] tracking-widest">
+                                <Badge
+                                    variant={CONFIDENCE_VARIANT[it.confidence]}
+                                    className="text-[9px] tracking-widest"
+                                >
                                     {it.confidence}
                                 </Badge>
                                 <span className="text-muted-foreground/70 tabular-nums">~{it.avg_interval_days}d</span>
