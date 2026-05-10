@@ -11,6 +11,9 @@ interface SearchQuery {
     limit: number;
 }
 
+// Hand-built DTO — the SELECT mixes products / master_products columns via CASE.
+// FTS5 MATCH and the products_fts.rank pseudo-column are unmodeled by Kysely;
+// see ProductsFtsTable in src/shops/db/types.ts.
 interface SearchRow {
     type: "master" | "product";
     id: number;
