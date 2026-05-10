@@ -34,6 +34,8 @@ export interface AddFavoriteResult {
     favorite_id: number;
     master_product_id: number;
     auto_ingested: boolean;
+    /** True when the helper returned an existing favorite instead of inserting a new row. */
+    already_exists?: boolean;
 }
 
 function repos() {
@@ -90,6 +92,20 @@ async function resolveProductByUrl(url: string): Promise<{
 export async function addFavorite(userId: number, input: WatchInput): Promise<AddFavoriteResult> {
     const { favorites, db } = repos();
     const resolved = await resolveProductByUrl(input.url);
+
+    const existing = await favorites.findFavoriteByMaster(userId, resolved.masterId, input.restricted_to_shop ?? null);
+    if (existing) {
+        log.info(
+            { favoriteId: existing.id, userId, masterId: resolved.masterId },
+            "favorite already exists — skipping insert"
+        );
+        return {
+            favorite_id: existing.id,
+            master_product_id: resolved.masterId,
+            auto_ingested: resolved.autoIngested,
+            already_exists: true,
+        };
+    }
 
     let referencePrice: number | null = null;
     let priceQuery = db
@@ -151,6 +167,24 @@ export interface AddFavoriteByMasterInput {
 
 export async function addFavoriteByMaster(userId: number, input: AddFavoriteByMasterInput): Promise<AddFavoriteResult> {
     const { favorites, db } = repos();
+
+    const existing = await favorites.findFavoriteByMaster(
+        userId,
+        input.master_product_id,
+        input.restricted_to_shop ?? null
+    );
+    if (existing) {
+        log.info(
+            { favoriteId: existing.id, userId, masterId: input.master_product_id },
+            "favorite already exists — skipping insert"
+        );
+        return {
+            favorite_id: existing.id,
+            master_product_id: input.master_product_id,
+            auto_ingested: false,
+            already_exists: true,
+        };
+    }
 
     let referencePrice: number | null = null;
     let priceQuery = db

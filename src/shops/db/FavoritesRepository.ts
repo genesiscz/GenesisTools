@@ -131,6 +131,29 @@ export class FavoritesRepository {
             .executeTakeFirst();
     }
 
+    /**
+     * Look up an existing favorite by (userId, master_product_id, restricted_to_shop).
+     * `restricted_to_shop = null` is treated as "any shop" — the watchlist UI shows
+     * one row per (master, shop-restriction) tuple, so this is the natural unique key.
+     */
+    async findFavoriteByMaster(
+        userId: number,
+        masterProductId: number,
+        restrictedToShop: string | null
+    ): Promise<Favorite | undefined> {
+        let q = this.db
+            .kysely()
+            .selectFrom("favorites")
+            .selectAll()
+            .where("user_id", "=", userId)
+            .where("master_product_id", "=", masterProductId);
+        q =
+            restrictedToShop === null
+                ? q.where("restricted_to_shop", "is", null)
+                : q.where("restricted_to_shop", "=", restrictedToShop);
+        return q.executeTakeFirst();
+    }
+
     async listActive(userId: number): Promise<Favorite[]> {
         return this.db
             .kysely()

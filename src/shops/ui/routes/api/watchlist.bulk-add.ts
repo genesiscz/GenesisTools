@@ -27,14 +27,26 @@ export const Route = createFileRoute("/api/watchlist/bulk-add")({
                 for (const item of items) {
                     try {
                         if (typeof item.master_product_id === "number") {
-                            await addFavoriteByMaster(userId, { master_product_id: item.master_product_id });
-                            result.added++;
+                            const r = await addFavoriteByMaster(userId, {
+                                master_product_id: item.master_product_id,
+                            });
+                            if (r.already_exists) {
+                                result.skipped_existing++;
+                            } else {
+                                result.added++;
+                            }
+
                             continue;
                         }
 
                         if (typeof item.url === "string" && item.url.length > 0) {
-                            await addFavorite(userId, { url: item.url });
-                            result.added++;
+                            const r = await addFavorite(userId, { url: item.url });
+                            if (r.already_exists) {
+                                result.skipped_existing++;
+                            } else {
+                                result.added++;
+                            }
+
                             continue;
                         }
 
