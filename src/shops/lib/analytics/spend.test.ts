@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import {
+    counterfactualSavings,
     monthlySpend,
     spendByCategory,
     spendByShop,
@@ -87,6 +88,34 @@ describe("topProducts", () => {
         expect(rows[0].units_total).toBe(13);
         expect(rows[0].spend_total).toBe(370);
         expect(rows[1].master_product_id).toBe(11);
+        db.close();
+    });
+});
+
+describe("counterfactualSavings", () => {
+    it("computes (paid - min observed in window) * quantity per item", async () => {
+        const { db, userId } = fixture();
+        // For master 10 (Cola), seed price observations: best price 20 (paid 25/30)
+        const r = db.raw();
+        r.exec(`INSERT INTO products (id, shop_origin, slug, url, name, name_normalized, master_product_id, match_method, first_seen_at, last_updated_at)
+                VALUES (1000, 'rohlik.cz', 'cola', 'https://r/cola', 'Cola 0.5l', 'cola 0 5l', 10, 'auto-seed', datetime('now'), datetime('now'))`);
+        r.exec(`INSERT INTO prices (product_id, observed_at, current_price, source)
+                VALUES (1000, datetime('now','-30 days'), 20, 'test'),
+                       (1000, datetime('now','-1 day'),   28, 'test')`);
+        const result = await counterfactualSavings(db, userId, { sinceDays: 90 });
+        // Cola: paid 25 on 4 units, 30 on 6 units, 30 on 3 units; min=20
+        //   (25-20)*4 + (30-20)*6 + (30-20)*3 = 20 + 60 + 30 = 110
+        expect(result.would_have_saved_at_best).toBe(110);
+        expect(result.missed_drops.length).toBeGreaterThan(0);
+        expect(result.missed_drops[0].master_id).toBe(10);
+        db.close();
+    });
+
+    it("returns 0 when no master has matching price history", async () => {
+        const { db, userId } = fixture();
+        const result = await counterfactualSavings(db, userId);
+        expect(result.would_have_saved_at_best).toBe(0);
+        expect(result.missed_drops).toEqual([]);
         db.close();
     });
 });
