@@ -1,6 +1,8 @@
 import logger from "@app/logger";
 import { getShopsDatabase, type ShopsDatabase } from "@app/shops/db/ShopsDatabase";
+import type { CurrentOffersView, ProductsTable } from "@app/shops/db/types";
 import type { ProductDTO } from "@app/shops/lib/product-api";
+import type { Selectable } from "kysely";
 
 const log = logger.child({ component: "shops:search-api" });
 
@@ -15,23 +17,27 @@ export interface SearchProductsInput {
     limit?: number;
 }
 
-interface ProductRow {
-    id: number;
-    shop_origin: string;
-    slug: string;
-    url: string;
-    name: string;
-    brand: string | null;
-    ean: string | null;
-    image_url: string | null;
-    unit: string | null;
-    unit_amount: number | null;
-    master_product_id: number | null;
-    current_price: number | null;
-    original_price: number | null;
-    in_stock: number | null;
-    price_observed_at: string | null;
-}
+// FTS5 MATCH is unmodeled by Kysely — query stays raw. Row shape is anchored on
+// ProductsTable + CurrentOffersView so the projection list and the row type
+// share a single source of truth.
+type ProductRow = Pick<
+    Selectable<ProductsTable>,
+    | "id"
+    | "shop_origin"
+    | "slug"
+    | "url"
+    | "name"
+    | "brand"
+    | "ean"
+    | "image_url"
+    | "unit"
+    | "unit_amount"
+    | "master_product_id"
+> &
+    Pick<CurrentOffersView, "current_price" | "original_price" | "in_stock"> & {
+        // LEFT JOIN can produce NULL even though current_offers.price_observed_at is NOT NULL in the view.
+        price_observed_at: string | null;
+    };
 
 function rowToDto(row: ProductRow): ProductDTO {
     return {
