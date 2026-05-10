@@ -207,6 +207,20 @@ export interface BrandAliasesTable {
     created_at: string;
 }
 
+// FTS5 virtual table mirrors a subset of products columns. Queried via raw SQL
+// (Kysely doesn't model MATCH); kept here so SearchRepository / searchProducts
+// can replace inline interfaces with a single source of truth.
+// Intentionally NOT added to ShopsDB — FTS5 has no rowid-typed Kysely access.
+export interface ProductsFtsTable {
+    rowid: number;
+    name: string;
+    name_normalized: string;
+    brand: string | null;
+    brand_normalized: string | null;
+    category_path: string | null;
+    rank: number; // FTS5 pseudo-column exposed in SELECT but not stored
+}
+
 export interface CurrentOffersView {
     product_id: number;
     shop_origin: string;
