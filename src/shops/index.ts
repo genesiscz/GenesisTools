@@ -9,6 +9,7 @@ import { registerListCommand } from "@app/shops/commands/list";
 import { registerMatchCommand } from "@app/shops/commands/match";
 import { registerMcpCommand } from "@app/shops/commands/mcp";
 import { registerNotifyCommand } from "@app/shops/commands/notify";
+import { registerProviderConnectCommand } from "@app/shops/commands/provider-connect";
 import { registerShopsCommand } from "@app/shops/commands/shops";
 import { registerSitemapCrawlCommand } from "@app/shops/commands/sitemap-crawl";
 import { registerSitemapSyncCommand } from "@app/shops/commands/sitemap-sync";
@@ -41,5 +42,6 @@ registerMatchCommand(program);
 registerMcpCommand(program);
 registerUiCommand(program);
 registerDevCaptureFixtureCommand(program);
+registerProviderConnectCommand(program);
 
 await program.parseAsync(process.argv);
