@@ -1,3 +1,4 @@
+import { sql } from "kysely";
 import logger from "@app/logger";
 import { BrandAliasesRepository } from "@app/shops/db/BrandAliasesRepository";
 import type { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
@@ -6,7 +7,6 @@ import { MatchExecutor } from "@app/shops/lib/match-executor";
 import { Matcher, type MatcherInput } from "@app/shops/lib/matcher";
 import { MATCHER_CONFIG } from "@app/shops/lib/matcher-config";
 import { compatPackCount } from "@app/shops/lib/multipack-guard";
-import type { Unit } from "@app/shops/lib/normalize";
 import { similarityScore } from "@app/utils/fuzzy-match";
 
 export interface BulkMatcherArgs {
@@ -46,20 +46,6 @@ export interface BulkMatcherStats {
     candidatesAdded: number;
 }
 
-interface PendingRow {
-    id: number;
-    shop_origin: string;
-    name: string;
-    name_normalized: string;
-    brand: string | null;
-    brand_normalized: string | null;
-    ean: string | null;
-    unit: Unit | null;
-    unit_amount: number | null;
-    pack_count: number | null;
-    flavor_key: string | null;
-}
-
 export class BulkMatcher {
     private readonly log;
     constructor(private readonly args: BulkMatcherArgs) {
@@ -72,74 +58,82 @@ export class BulkMatcher {
     async flush(crawlRunId: number): Promise<BulkMatcherStats> {
         const log = this.log.child({ crawlRunId });
         const stats: BulkMatcherStats = { linked: 0, seeded: 0, grayZone: 0, candidatesAdded: 0 };
-        const candidatesBefore = this.countCandidates();
+        const candidatesBefore = await this.countCandidates();
 
-        this.passEanJoin(stats);
-        this.passSignatureJoin(stats);
+        await this.passEanJoin(stats);
+        await this.passSignatureJoin(stats);
         await this.passPerProduct(stats);
 
-        const candidatesAfter = this.countCandidates();
+        const candidatesAfter = await this.countCandidates();
         stats.candidatesAdded = candidatesAfter - candidatesBefore;
 
-        const db = this.args.shopsDb.raw();
-        db.run(`UPDATE crawl_runs SET candidates_added = candidates_added + ?, status = 'completed' WHERE id = ?`, [
-            stats.candidatesAdded,
-            crawlRunId,
-        ]);
+        await this.args.shopsDb
+            .kysely()
+            .updateTable("crawl_runs")
+            .set({
+                candidates_added: sql`candidates_added + ${stats.candidatesAdded}`,
+                status: "completed" as const,
+            })
+            .where("id", "=", crawlRunId)
+            .execute();
 
         log.info(stats, "bulk match completed");
         return stats;
     }
 
-    private passEanJoin(stats: BulkMatcherStats): void {
-        const db = this.args.shopsDb.raw();
-        const rows = db
-            .query<{ productId: number; masterId: number; pPack: number | null; mPack: number | null }, []>(
-                `SELECT p.id AS productId, m.id AS masterId, p.pack_count AS pPack, m.pack_count AS mPack
-                 FROM products p
-                 JOIN master_products m ON m.ean = p.ean
-                 WHERE p.master_product_id IS NULL AND p.match_method = 'pending' AND p.ean IS NOT NULL
-                 ORDER BY p.id ASC`
-            )
-            .all();
+    private async passEanJoin(stats: BulkMatcherStats): Promise<void> {
+        const rows = await this.args.shopsDb
+            .kysely()
+            .selectFrom("products as p")
+            .innerJoin("master_products as m", "m.ean", "p.ean")
+            .select([
+                "p.id as productId",
+                "m.id as masterId",
+                "p.pack_count as pPack",
+                "m.pack_count as mPack",
+            ])
+            .where("p.master_product_id", "is", null)
+            .where("p.match_method", "=", "pending")
+            .where("p.ean", "is not", null)
+            .orderBy("p.id", "asc")
+            .execute();
         for (const row of rows) {
             if (!compatPackCount(row.pPack, row.mPack)) {
                 continue;
             }
 
-            this.writeLinkedDirect(row.productId, row.masterId, "ean", null);
+            await this.writeLinkedDirect(row.productId, row.masterId, "ean", null);
             stats.linked += 1;
         }
     }
 
-    private passSignatureJoin(stats: BulkMatcherStats): void {
-        const db = this.args.shopsDb.raw();
-        const rows = db
-            .query<
-                {
-                    productId: number;
-                    pShop: string;
-                    pName: string;
-                    pPack: number | null;
-                    masterId: number;
-                    mName: string;
-                    mPack: number | null;
-                },
-                []
-            >(
-                `SELECT p.id AS productId, p.shop_origin AS pShop, p.name_normalized AS pName, p.pack_count AS pPack,
-                        m.id AS masterId, m.canonical_name_normalized AS mName, m.pack_count AS mPack
-                 FROM products p
-                 JOIN master_products m
-                   ON m.brand_normalized = p.brand_normalized
-                  AND m.unit = p.unit
-                  AND m.unit_amount = p.unit_amount
-                  AND IFNULL(m.flavor_key, '') = IFNULL(p.flavor_key, '')
-                 WHERE p.master_product_id IS NULL AND p.match_method = 'pending'
-                   AND p.brand_normalized IS NOT NULL AND p.unit IS NOT NULL AND p.unit_amount IS NOT NULL
-                 ORDER BY p.id ASC`
+    private async passSignatureJoin(stats: BulkMatcherStats): Promise<void> {
+        const rows = await this.args.shopsDb
+            .kysely()
+            .selectFrom("products as p")
+            .innerJoin("master_products as m", (join) =>
+                join
+                    .onRef("m.brand_normalized", "=", "p.brand_normalized")
+                    .onRef("m.unit", "=", "p.unit")
+                    .onRef("m.unit_amount", "=", "p.unit_amount")
+                    .on(sql`IFNULL(m.flavor_key, '') = IFNULL(p.flavor_key, '')`)
             )
-            .all();
+            .select([
+                "p.id as productId",
+                "p.shop_origin as pShop",
+                "p.name_normalized as pName",
+                "p.pack_count as pPack",
+                "m.id as masterId",
+                "m.canonical_name_normalized as mName",
+                "m.pack_count as mPack",
+            ])
+            .where("p.master_product_id", "is", null)
+            .where("p.match_method", "=", "pending")
+            .where("p.brand_normalized", "is not", null)
+            .where("p.unit", "is not", null)
+            .where("p.unit_amount", "is not", null)
+            .orderBy("p.id", "asc")
+            .execute();
         for (const row of rows) {
             if (!compatPackCount(row.pPack, row.mPack)) {
                 continue;
@@ -154,38 +148,54 @@ export class BulkMatcher {
             // already hosts another active product from this shop. The shop's
             // own slug already separates SKUs (sizes, variants, listings) and
             // we have no EAN here to override that judgment.
-            if (this.masterAlreadyHasShop(row.masterId, row.pShop, row.productId)) {
+            if (await this.masterAlreadyHasShop(row.masterId, row.pShop, row.productId)) {
                 continue;
             }
 
-            this.writeLinkedDirect(row.productId, row.masterId, "fuzzy", score);
+            await this.writeLinkedDirect(row.productId, row.masterId, "fuzzy", score);
             stats.linked += 1;
         }
     }
 
-    private masterAlreadyHasShop(masterId: number, shopOrigin: string, excludeProductId: number): boolean {
-        const row = this.args.shopsDb
-            .raw()
-            .query<{ id: number }, [number, string, number]>(
-                `SELECT id FROM products
-                 WHERE master_product_id = ? AND shop_origin = ? AND id != ? AND is_active = 1
-                 LIMIT 1`
-            )
-            .get(masterId, shopOrigin, excludeProductId);
-        return row !== null;
+    private async masterAlreadyHasShop(
+        masterId: number,
+        shopOrigin: string,
+        excludeProductId: number
+    ): Promise<boolean> {
+        const row = await this.args.shopsDb
+            .kysely()
+            .selectFrom("products")
+            .select("id")
+            .where("master_product_id", "=", masterId)
+            .where("shop_origin", "=", shopOrigin)
+            .where("id", "!=", excludeProductId)
+            .where("is_active", "=", 1)
+            .limit(1)
+            .executeTakeFirst();
+        return row !== undefined;
     }
 
     private async passPerProduct(stats: BulkMatcherStats): Promise<void> {
-        const db = this.args.shopsDb.raw();
-        const rows = db
-            .query<PendingRow, []>(
-                `SELECT id, shop_origin, name, name_normalized, brand, brand_normalized, ean,
-                        unit, unit_amount, pack_count, flavor_key
-                 FROM products
-                 WHERE master_product_id IS NULL AND match_method = 'pending'
-                 ORDER BY id ASC`
-            )
-            .all();
+        const rows = await this.args.shopsDb
+            .kysely()
+            .selectFrom("products")
+            .select([
+                "id",
+                "shop_origin",
+                "name",
+                "name_normalized",
+                "brand",
+                "brand_normalized",
+                "ean",
+                "unit",
+                "unit_amount",
+                "pack_count",
+                "flavor_key",
+            ])
+            .where("master_product_id", "is", null)
+            .where("match_method", "=", "pending")
+            .orderBy("id", "asc")
+            .execute();
 
         for (const row of rows) {
             const input: MatcherInput = {
@@ -212,32 +222,46 @@ export class BulkMatcher {
         }
     }
 
-    private writeLinkedDirect(
+    private async writeLinkedDirect(
         productId: number,
         masterProductId: number,
         method: "ean" | "fuzzy",
         similarity: number | null
-    ): void {
-        const db = this.args.shopsDb.raw();
+    ): Promise<void> {
+        const k = this.args.shopsDb.kysely();
         const now = new Date().toISOString();
-        db.run(
-            `UPDATE products SET master_product_id = ?, match_method = ?, match_similarity = ?, match_at = ?, last_updated_at = ?
-             WHERE id = ?`,
-            [masterProductId, method, similarity, now, now, productId]
-        );
-        db.run(
-            `UPDATE master_products SET total_offers = (
-                SELECT COUNT(*) FROM products WHERE master_product_id = ? AND is_active = 1
-             ), updated_at = ? WHERE id = ?`,
-            [masterProductId, now, masterProductId]
-        );
+        await k
+            .updateTable("products")
+            .set({
+                master_product_id: masterProductId,
+                match_method: method,
+                match_similarity: similarity,
+                match_at: now,
+                last_updated_at: now,
+            })
+            .where("id", "=", productId)
+            .execute();
+        // Inline denorm update — duplicated from master-denorm.ts by design (out of scope to consolidate).
+        await k
+            .updateTable("master_products")
+            .set((eb) => ({
+                total_offers: eb
+                    .selectFrom("products")
+                    .select((eb2) => eb2.fn.countAll<number>().as("c"))
+                    .where("master_product_id", "=", masterProductId)
+                    .where("is_active", "=", 1),
+                updated_at: now,
+            }))
+            .where("id", "=", masterProductId)
+            .execute();
     }
 
-    private countCandidates(): number {
-        const row = this.args.shopsDb
-            .raw()
-            .query<{ n: number }, []>("SELECT COUNT(*) AS n FROM match_candidates")
-            .get();
+    private async countCandidates(): Promise<number> {
+        const row = await this.args.shopsDb
+            .kysely()
+            .selectFrom("match_candidates")
+            .select((eb) => eb.fn.countAll<number>().as("n"))
+            .executeTakeFirst();
         return row?.n ?? 0;
     }
 }
