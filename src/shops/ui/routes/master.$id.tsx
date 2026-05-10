@@ -65,6 +65,19 @@ function MasterPage() {
     const targetPrice = watchEntry?.target_price ?? null;
     const isFavorite = watchEntry !== undefined;
 
+    if (detailQuery.isError) {
+        return (
+            <div className="max-w-3xl mx-auto px-4 sm:px-6 py-12 text-center space-y-3">
+                <div className="font-mono text-2xl text-[var(--color-neon-coral,#ff5577)] tracking-[0.3em]">
+                    404 :: NOT FOUND
+                </div>
+                <div className="font-mono text-sm text-muted-foreground">
+                    No master product with id <code>{id}</code>.
+                </div>
+            </div>
+        );
+    }
+
     return (
         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6">
             <MasterDetail

@@ -140,15 +140,15 @@ function WatchlistPage() {
     };
 
     return (
-        <div className="px-6 py-4 space-y-4">
-            <div className="sticky top-14 z-20 backdrop-blur bg-zinc-950/80 border-b border-zinc-800/60 py-3 flex items-center gap-4">
+        <div className="px-4 md:px-6 py-4 space-y-4">
+            <div className="sticky top-14 z-20 backdrop-blur bg-zinc-950/80 border-b border-zinc-800/60 py-3 flex flex-wrap items-center gap-3">
                 <PasteUrlQuickAdd />
                 <FilterPills value={filter} onChange={setFilter} counts={counts} />
                 <Input
                     placeholder="Search label / id..."
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
-                    className="w-56 font-mono bg-zinc-950/60 border-zinc-700"
+                    className="w-full md:w-56 font-mono bg-zinc-950/60 border-zinc-700"
                 />
             </div>
             {recurring.data && recurring.data.length > 0 ? (

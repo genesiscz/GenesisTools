@@ -81,7 +81,7 @@ export function DashboardLayout({
 
                         {/* Navigation */}
                         {navLinks && navLinks.length > 0 && (
-                            <nav className="flex items-center gap-0.5 sm:gap-1">
+                            <nav className="flex items-center gap-0.5 sm:gap-1 overflow-x-auto flex-nowrap min-w-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                                 {navLinks.map(({ label, href, icon: linkIcon, badge }) => {
                                     const isActive = activePath === href;
                                     return (
@@ -94,7 +94,7 @@ export function DashboardLayout({
                                                     onNavigate(href);
                                                 }
                                             }}
-                                            className={`flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1.5 rounded text-xs font-mono tracking-wider transition-all no-underline ${
+                                            className={`flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1.5 rounded text-xs font-mono tracking-wider transition-all no-underline shrink-0 ${
                                                 isActive
                                                     ? "bg-primary/10 text-primary border border-primary/30"
                                                     : "text-muted-foreground hover:text-foreground hover:bg-white/5"

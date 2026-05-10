@@ -32,7 +32,7 @@ export function PasteUrlQuickAdd() {
     });
     return (
         <form
-            className="flex items-center gap-2"
+            className="flex items-center gap-2 w-full md:w-auto"
             onSubmit={(e) => {
                 e.preventDefault();
                 if (url) {
@@ -44,7 +44,7 @@ export function PasteUrlQuickAdd() {
                 placeholder="Paste a product URL..."
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
-                className="font-mono w-96 bg-zinc-950/60 border-zinc-700"
+                className="font-mono flex-1 md:w-96 md:flex-none bg-zinc-950/60 border-zinc-700"
             />
             <Button type="submit" disabled={!url || mutation.isPending} className="font-mono">
                 <Plus className="w-3.5 h-3.5 mr-1" />

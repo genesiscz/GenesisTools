@@ -1,4 +1,4 @@
-import { copyFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import logger from "@app/logger";
 import type {
@@ -136,7 +136,7 @@ export class SettingsRepository {
         await ensureDir(filePath);
         const tmp = `${filePath}.tmp`;
         await writeFile(tmp, SafeJSON.stringify(next, null, 2), "utf8");
-        await Bun.write(filePath, await Bun.file(tmp).bytes());
+        await rename(tmp, filePath);
         log.info(
             {
                 userId,
