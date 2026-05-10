@@ -40,12 +40,12 @@ export async function ingestUrl(input: IngestUrlInput, ctx?: IngestApiContext): 
         throw new Error(`Cannot derive shop origin from url: ${input.url}`);
     }
 
-    const existing = shopsDb
-        .raw()
-        .query<{ id: number; master_product_id: number | null }, [string]>(
-            "SELECT id, master_product_id FROM products WHERE url = ?"
-        )
-        .get(input.url);
+    const existing = await shopsDb
+        .kysely()
+        .selectFrom("products")
+        .select(["id", "master_product_id"])
+        .where("url", "=", input.url)
+        .executeTakeFirst();
 
     const data = await hlidac.getByUrl(input.url);
     const result = await ingestFromHlidacResult({ db: shopsDb, url: input.url, data });
@@ -57,7 +57,7 @@ export async function ingestUrl(input: IngestUrlInput, ctx?: IngestApiContext): 
             slug: result.product.slug,
             pricesRecorded: result.pricesRecorded,
             source: data.source,
-            autoSeeded: existing === null,
+            autoSeeded: !existing,
         },
         "ingestUrl done"
     );
@@ -69,6 +69,6 @@ export async function ingestUrl(input: IngestUrlInput, ctx?: IngestApiContext): 
         slug: result.product.slug,
         prices_recorded: result.pricesRecorded,
         source: data.source,
-        auto_seeded_master: existing === null,
+        auto_seeded_master: !existing,
     };
 }
