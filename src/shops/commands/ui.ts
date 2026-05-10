@@ -8,12 +8,12 @@ export function registerUiCommand(program: Command): void {
     program
         .command("ui")
         .alias("dashboard")
-        .description("Launch the Shops dashboard web UI on http://localhost:3072")
+        .description("Launch the Shops dashboard web UI on http://localhost:3073")
         .action(async () => {
             const uiDir = resolve(import.meta.dirname, "..", "ui");
             const configPath = resolve(uiDir, "vite.config.ts");
             const viteEntry = resolve(PROJECT_ROOT, "node_modules", "vite", "bin", "vite.js");
-            const url = "http://localhost:3072";
+            const url = "http://localhost:3073";
 
             if (!existsSync(viteEntry)) {
                 console.error(`✗ Could not find vite at ${viteEntry}`);

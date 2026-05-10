@@ -71,7 +71,7 @@ export class MacOsChannel implements NotificationChannel {
             return { channel: "macos", delivered: false };
         }
 
-        const url = payload.buyUrl ?? `http://localhost:3072${payload.detailUrl}`;
+        const url = payload.buyUrl ?? `http://localhost:3073${payload.detailUrl}`;
         const cmd = this.terminalNotifierPath
             ? [
                   this.terminalNotifierPath,

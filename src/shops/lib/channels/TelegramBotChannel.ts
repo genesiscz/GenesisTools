@@ -47,7 +47,7 @@ export class TelegramBotChannel implements NotificationChannel {
     }
 
     async dispatch(payload: NotificationPayload): Promise<DispatchResult> {
-        const url = payload.buyUrl ?? `http://localhost:3072${payload.detailUrl}`;
+        const url = payload.buyUrl ?? `http://localhost:3073${payload.detailUrl}`;
         const text = [`*${escapeMd(payload.title)}*`, "", payload.body, "", url].join("\n");
         try {
             await this.client.sendMessage({

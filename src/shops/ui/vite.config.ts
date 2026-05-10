@@ -3,7 +3,7 @@ import { createDashboardViteConfig } from "@app/utils/ui/vite.base";
 
 export default createDashboardViteConfig({
     root: __dirname,
-    port: 3072,
+    port: 3073,
     aliases: {
         "@app": resolve(__dirname, "../.."),
     },
