@@ -85,9 +85,11 @@ export async function syncShopSitemap(opts: SitemapSyncOptions): Promise<Sitemap
 
 async function loadKnownSlugs(db: ShopsDatabase, shopOrigin: string): Promise<Set<string>> {
     const rows = await db
-        .raw()
-        .query<{ slug: string }, [string]>("SELECT slug FROM products WHERE shop_origin = ?")
-        .all(shopOrigin);
+        .kysely()
+        .selectFrom("products")
+        .select("slug")
+        .where("shop_origin", "=", shopOrigin)
+        .execute();
     return new Set(rows.map((r) => r.slug));
 }
 

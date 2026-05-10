@@ -273,13 +273,21 @@ async function collectIds(
 
 async function crawlHlidacOnly(opts: SitemapCrawlOptions): Promise<SitemapCrawlResult> {
     const start = Date.now();
-    const products = opts.db
-        .raw()
-        .query<{ id: number; url: string }, [string]>(
-            "SELECT id, url FROM products WHERE shop_origin = ? AND is_active = 1 AND url IS NOT NULL ORDER BY id" +
-                (opts.limit ? ` LIMIT ${Math.max(1, opts.limit)}` : "")
-        )
-        .all(opts.shopOrigin);
+    let productsQuery = opts.db
+        .kysely()
+        .selectFrom("products")
+        .select(["id", "url"])
+        .where("shop_origin", "=", opts.shopOrigin)
+        .where("is_active", "=", 1)
+        .where("url", "is not", null)
+        .orderBy("id");
+    if (opts.limit) {
+        productsQuery = productsQuery.limit(Math.max(1, opts.limit));
+    }
+
+    const productRows = await productsQuery.execute();
+    // `url is not null` is filtered above but the DB column type is nullable; narrow once here.
+    const products = productRows.flatMap((p) => (p.url === null ? [] : [{ id: p.id, url: p.url }]));
     log.info(
         { shop: opts.shopOrigin, products: products.length, force: opts.hlidacForce ?? false },
         "hlidac-only mode: skipping shop API, draining hlidac S3 only"
@@ -346,9 +354,11 @@ async function crawlHlidacOnly(opts: SitemapCrawlOptions): Promise<SitemapCrawlR
 
 async function loadKnownSlugs(db: ShopsDatabase, shopOrigin: string): Promise<Set<string>> {
     const rows = await db
-        .raw()
-        .query<{ slug: string }, [string]>("SELECT slug FROM products WHERE shop_origin = ?")
-        .all(shopOrigin);
+        .kysely()
+        .selectFrom("products")
+        .select("slug")
+        .where("shop_origin", "=", shopOrigin)
+        .execute();
     return new Set(rows.map((r) => r.slug));
 }
 
@@ -379,14 +389,18 @@ async function drainHlidacQueue(
     queue: Array<{ productId: number; url: string }>,
     drainOpts: DrainOpts
 ): Promise<DrainResult> {
-    const raw = db.raw();
     const hl = new HlidacShopuClient();
-    const hasHistory = raw.query<{ n: number }, [number]>(
-        "SELECT COUNT(*) AS n FROM prices WHERE product_id = ? AND source = 'hlidac:s3'"
-    );
-    const insert = raw.prepare(
-        "INSERT OR IGNORE INTO prices (product_id, observed_at, current_price, original_price, in_stock, source, raw_json) VALUES (?, ?, ?, ?, NULL, 'hlidac:s3', NULL)"
-    );
+
+    const hasHistory = async (productId: number): Promise<boolean> => {
+        const r = await db
+            .kysely()
+            .selectFrom("prices")
+            .select((eb) => eb.fn.countAll<number>().as("n"))
+            .where("product_id", "=", productId)
+            .where("source", "=", "hlidac:s3")
+            .executeTakeFirst();
+        return (r?.n ?? 0) > 0;
+    };
 
     let fetched = 0;
     let pointsAdded = 0;
@@ -403,8 +417,7 @@ async function drainHlidacQueue(
             }
 
             if (!drainOpts.force) {
-                const existing = hasHistory.get(item.productId);
-                if (existing && existing.n > 0) {
+                if (await hasHistory(item.productId)) {
                     skipped++;
                     continue;
                 }
@@ -419,23 +432,38 @@ async function drainHlidacQueue(
                 }
 
                 fetched++;
-                const tx = raw.transaction((rows: Array<{ d: string; c: number | null; o: number | null }>) => {
-                    let added = 0;
-                    for (const e of rows) {
-                        if (!e.d) {
-                            continue;
+                const added = await db
+                    .kysely()
+                    .transaction()
+                    .execute(async (trx) => {
+                        let n = 0;
+                        for (const e of entries) {
+                            if (!e.d) {
+                                continue;
+                            }
+
+                            const observedAt = `${e.d}T00:00:00Z`;
+                            const result = await trx
+                                .insertInto("prices")
+                                .values({
+                                    product_id: item.productId,
+                                    observed_at: observedAt,
+                                    current_price: e.c,
+                                    original_price: e.o,
+                                    in_stock: null,
+                                    source: "hlidac:s3",
+                                    raw_json: null,
+                                })
+                                .onConflict((oc) => oc.columns(["product_id", "observed_at"]).doNothing())
+                                .executeTakeFirst();
+                            if ((result?.numInsertedOrUpdatedRows ?? 0n) > 0n) {
+                                n++;
+                            }
                         }
 
-                        const observedAt = `${e.d}T00:00:00Z`;
-                        const result = insert.run(item.productId, observedAt, e.c, e.o);
-                        if (result.changes > 0) {
-                            added++;
-                        }
-                    }
-
-                    return added;
-                });
-                pointsAdded += tx(entries);
+                        return n;
+                    });
+                pointsAdded += added;
             } catch (err) {
                 errors++;
                 if (errors <= 5) {
