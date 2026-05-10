@@ -1,7 +1,7 @@
 import { Table, TableBody, TableHead, TableHeader, TableRow } from "@app/utils/ui/components/table";
-import type { FavoriteWithState } from "../../db/FavoritesRepository";
-import type { Notification } from "../../db/NotificationsRepository";
-import { WatchlistRow } from "./WatchlistRow";
+import type { FavoriteWithState } from "@app/shops/db/FavoritesRepository";
+import type { Notification } from "@app/shops/db/NotificationsRepository";
+import { WatchlistRow } from "@app/shops/ui/components/WatchlistRow";
 
 interface Props {
     rows: FavoriteWithState[];

@@ -1,10 +1,10 @@
 import type { MasterOfferRow } from "@app/shops/types";
+import { SafeJSON } from "@app/utils/json";
 import { Badge } from "@app/utils/ui/components/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@app/utils/ui/components/tabs";
-import { SafeJSON } from "@app/utils/json";
 import { ChevronDown, ExternalLink, ImageOff } from "lucide-react";
 import { useMemo, useState } from "react";
-import { ShopBadge } from "./ShopBadge";
+import { ShopBadge } from "@app/shops/ui/components/ShopBadge";
 
 interface OfferDetailTabsProps {
     offers: MasterOfferRow[];
@@ -32,11 +32,7 @@ export function OfferDetailTabs({ offers }: OfferDetailTabsProps) {
         <Tabs defaultValue={cheapestId} className="gap-3">
             <TabsList className="!justify-start">
                 {offers.map((o) => (
-                    <TabsTrigger
-                        key={o.product_id}
-                        value={String(o.product_id)}
-                        className="gap-2 font-mono text-xs"
-                    >
+                    <TabsTrigger key={o.product_id} value={String(o.product_id)} className="gap-2 font-mono text-xs">
                         <ShopBadge origin={o.shop_origin} label={o.shop_display_name} />
                         <span className="text-[var(--color-neon-cyan)]">
                             {o.current_price !== null ? `${o.current_price.toFixed(2)} Kč` : "—"}
@@ -212,9 +208,7 @@ function RawPayload({ meta }: { meta: Record<string, unknown> }) {
                 aria-expanded={open}
                 className="w-full px-4 py-2 flex items-center gap-2 font-mono text-[10px] tracking-[0.25em] text-muted-foreground uppercase hover:bg-white/5 transition-colors cursor-pointer"
             >
-                <ChevronDown
-                    className={`w-3 h-3 transition-transform ${open ? "rotate-0" : "-rotate-90"}`}
-                />
+                <ChevronDown className={`w-3 h-3 transition-transform ${open ? "rotate-0" : "-rotate-90"}`} />
                 Raw shop payload {open ? "" : `· ${Object.keys(meta).length} keys`}
             </button>
             {open ? (

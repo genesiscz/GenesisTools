@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
-import { BenuClient } from "./BenuClient";
-import { DrmaxClient } from "./DrmaxClient";
-import { ItescoClient } from "./ItescoClient";
+import { BenuClient } from "@app/shops/api/shops/BenuClient";
+import { DrmaxClient } from "@app/shops/api/shops/DrmaxClient";
+import { ItescoClient } from "@app/shops/api/shops/ItescoClient";
 
 const RUN_BASE = process.env.SHOPS_LIVE_SMOKE === "1";
 const RUN_ITESCO = process.env.SHOPS_LIVE_ITESCO === "1";

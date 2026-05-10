@@ -1,8 +1,8 @@
 // Adapted from topmonks/hlidac-shopu (EUPL-1.2) — actors/billa/main.js
 
-import { ShopApiClient, type ShopApiClientConstructorConfig } from "../ShopApiClient";
-import type { Category, ListingOptions, RawProduct, ShopCapabilities } from "../ShopApiClient.types";
-import type { BillaCategoryListingResponse, BillaRawProduct } from "./BillaClient.types";
+import { ShopApiClient, type ShopApiClientConstructorConfig } from "@app/shops/api/ShopApiClient";
+import type { Category, ListingOptions, RawProduct, ShopCapabilities } from "@app/shops/api/ShopApiClient.types";
+import type { BillaCategoryListingResponse, BillaRawProduct } from "@app/shops/api/shops/BillaClient.types";
 
 const BILLA_ORIGIN = "billa.cz";
 const STORE_ROOT = "https://shop.billa.cz";

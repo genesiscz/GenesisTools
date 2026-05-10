@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
-import { PilulkaClient } from "../api/shops/PilulkaClient";
-import { buildTestDatabase } from "../test-utils/buildTestDatabase";
-import { PilulkaCrawler } from "./PilulkaCrawler";
+import { PilulkaClient } from "@app/shops/api/shops/PilulkaClient";
+import { buildTestDatabase } from "@app/shops/test-utils/buildTestDatabase";
+import { PilulkaCrawler } from "@app/shops/crawlers/PilulkaCrawler";
 
 describe("PilulkaCrawler", () => {
     it("strategy is pilulka-html", () => {

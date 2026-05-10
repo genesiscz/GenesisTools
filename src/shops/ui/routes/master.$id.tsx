@@ -1,7 +1,7 @@
 import type { MasterDetail as MasterDetailType, PriceHistoryResponse } from "@app/shops/types";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { MasterDetail } from "../components/MasterDetail";
+import { MasterDetail } from "@app/shops/ui/components/MasterDetail";
 
 export const Route = createFileRoute("/master/$id")({
     component: MasterPage,

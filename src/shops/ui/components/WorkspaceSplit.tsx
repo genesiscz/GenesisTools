@@ -1,8 +1,8 @@
 import type { MasterDetail as MasterDetailType, PriceHistoryResponse } from "@app/shops/types";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import { MasterDetail } from "./MasterDetail";
-import { ProductSearchPanel } from "./ProductSearchPanel";
+import { MasterDetail } from "@app/shops/ui/components/MasterDetail";
+import { ProductSearchPanel } from "@app/shops/ui/components/ProductSearchPanel";
 
 export function WorkspaceSplit() {
     const [selectedId, setSelectedId] = useState<number | null>(null);

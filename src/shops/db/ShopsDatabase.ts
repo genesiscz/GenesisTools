@@ -5,9 +5,9 @@ import logger from "@app/logger";
 import { createKyselyClient, type DatabaseClient } from "@app/utils/database/client";
 import { SafeJSON } from "@app/utils/json";
 import type { Insertable, Kysely } from "kysely";
-import type { RawProduct } from "../api/ShopApiClient.types";
-import { extractFlavorKey, extractPackCount, extractSize, normalizeText, parseUnit, type Unit } from "../lib/normalize";
-import { SHOPS_MIGRATIONS } from "./migrations";
+import type { RawProduct } from "@app/shops/api/ShopApiClient.types";
+import { extractFlavorKey, extractPackCount, extractSize, normalizeText, parseUnit, type Unit } from "@app/shops/lib/normalize";
+import { SHOPS_MIGRATIONS } from "@app/shops/db/migrations";
 import type {
     CurrentOffersView,
     NewHttpRequest,
@@ -16,7 +16,7 @@ import type {
     NewProduct,
     ShopsDB,
     ShopsTable,
-} from "./types";
+} from "@app/shops/db/types";
 
 export interface StartCrawlRunInput {
     shopOrigin: string;

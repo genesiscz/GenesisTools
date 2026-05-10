@@ -1,7 +1,7 @@
 import logger from "@app/logger";
 import type { Command } from "commander";
-import { ShopsDatabase } from "../db/ShopsDatabase";
-import { listSitemapShops, type SitemapSyncResult, syncShopSitemap } from "../lib/sitemap-sync";
+import { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
+import { listSitemapShops, type SitemapSyncResult, syncShopSitemap } from "@app/shops/lib/sitemap-sync";
 
 interface SitemapSyncCliOpts {
     shop?: string;

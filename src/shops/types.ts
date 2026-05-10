@@ -1,4 +1,4 @@
-import type { ShopOrigin } from "./api/ShopApiClient.types";
+import type { ShopOrigin } from "@app/shops/api/ShopApiClient.types";
 
 export type MatchMethod =
     | "ean"

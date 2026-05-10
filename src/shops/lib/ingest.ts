@@ -1,10 +1,10 @@
 import logger from "@app/logger";
 import { removeDiacritics } from "@app/utils/string";
-import type { HlidacGetByUrlResult } from "../api/HlidacShopuClient.types";
-import type { ShopsDatabase } from "../db/ShopsDatabase";
-import type { Product } from "../db/types";
-import { createMatchExecutor } from "./bulk-matcher";
-import { refreshMasterDenorm } from "./master-denorm";
+import type { HlidacGetByUrlResult } from "@app/shops/api/HlidacShopuClient.types";
+import type { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
+import type { Product } from "@app/shops/db/types";
+import { createMatchExecutor } from "@app/shops/lib/bulk-matcher";
+import { refreshMasterDenorm } from "@app/shops/lib/master-denorm";
 
 export interface IngestArgs {
     db: ShopsDatabase;
@@ -205,4 +205,3 @@ function deriveNameFromUrl(url: string, slugFallback: string): string {
 
     return humanized.charAt(0).toUpperCase() + humanized.slice(1);
 }
-

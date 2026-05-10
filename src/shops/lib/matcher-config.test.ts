@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { isLayer3GrayZone, MATCHER_CONFIG } from "./matcher-config";
+import { isLayer3GrayZone, MATCHER_CONFIG } from "@app/shops/lib/matcher-config";
 
 describe("MATCHER_CONFIG", () => {
     it("L1 < L2A < L2B (stricter when more signal missing)", () => {

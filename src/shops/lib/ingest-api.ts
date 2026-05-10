@@ -1,10 +1,10 @@
 import logger from "@app/logger";
 // @ts-expect-error -- @hlidac-shopu/lib ships ESM with no .d.ts coverage
 import { shopOrigin as deriveShopOrigin } from "@hlidac-shopu/lib/shops.mjs";
-import { HlidacShopuClient } from "../api/HlidacShopuClient";
-import type { HlidacGetByUrlResult } from "../api/HlidacShopuClient.types";
-import { getShopsDatabase, type ShopsDatabase } from "../db/ShopsDatabase";
-import { ingestFromHlidacResult } from "./ingest";
+import { HlidacShopuClient } from "@app/shops/api/HlidacShopuClient";
+import type { HlidacGetByUrlResult } from "@app/shops/api/HlidacShopuClient.types";
+import { getShopsDatabase, type ShopsDatabase } from "@app/shops/db/ShopsDatabase";
+import { ingestFromHlidacResult } from "@app/shops/lib/ingest";
 
 const log = logger.child({ component: "shops:ingest-api" });
 

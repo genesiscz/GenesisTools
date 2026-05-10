@@ -2,8 +2,8 @@ import { describe, expect, it } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ShopsDatabase } from "../db/ShopsDatabase";
-import { DbHttpRequestSink, type HttpRequestEvent, MemoryHttpRequestSink } from "./http-sink";
+import { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
+import { DbHttpRequestSink, type HttpRequestEvent, MemoryHttpRequestSink } from "@app/shops/lib/http-sink";
 
 async function tmpDb(): Promise<ShopsDatabase> {
     const db = new ShopsDatabase(join(mkdtempSync(join(tmpdir(), "shops-sink-")), "test.db"));

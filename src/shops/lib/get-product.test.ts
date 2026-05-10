@@ -2,11 +2,11 @@ import { describe, expect, it } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { RawProduct } from "../api/ShopApiClient.types";
-import { ShopsDatabase } from "../db/ShopsDatabase";
-import type { HlidacGetByUrlResult } from "../api/HlidacShopuClient.types";
-import { runGetProduct } from "./get-product";
-import { ingestFromHlidacResult } from "./ingest";
+import type { HlidacGetByUrlResult } from "@app/shops/api/HlidacShopuClient.types";
+import type { RawProduct } from "@app/shops/api/ShopApiClient.types";
+import { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
+import { runGetProduct } from "@app/shops/lib/get-product";
+import { ingestFromHlidacResult } from "@app/shops/lib/ingest";
 
 describe("get-product flow", () => {
     it("end-to-end with a synthetic Hlidac payload writes everything to the DB", async () => {
@@ -117,7 +117,7 @@ describe("runGetProduct ShopClient fallback", () => {
         db.close();
     });
 
-    it("does NOT call ShopClient when Hlídač already returned a name", async () => {
+    it("does NOT call ShopClient when Hlídač returned name + brand + EAN", async () => {
         const db = setup();
         const url = "https://www.rohlik.cz/1419780-ritter-sport";
         const data: HlidacGetByUrlResult = {
@@ -125,6 +125,7 @@ describe("runGetProduct ShopClient fallback", () => {
             parsed: { origin: "rohlik.cz", itemId: "1419780", itemUrl: "1419780-ritter-sport" },
             history: { commonPrice: null, minPrice: null, entries: [] },
             meta: { itemId: "1419780", itemName: "Ritter Sport 100g", itemImage: undefined },
+            enrichment: { brand: "Ritter Sport", ean: "4000417025005" },
         };
         const stubClient = {
             async getByUrl() {
@@ -146,6 +147,49 @@ describe("runGetProduct ShopClient fallback", () => {
 
         expect(calls).toBe(0);
         expect(result.ingested.product.name).toBe("Ritter Sport 100g");
+        db.close();
+    });
+
+    it("CALLS ShopClient even when Hlídač returned a name, if brand/EAN missing", async () => {
+        const db = setup();
+        const url = "https://www.rohlik.cz/1419780-ritter-sport";
+        const data: HlidacGetByUrlResult = {
+            source: "s3",
+            parsed: { origin: "rohlik.cz", itemId: "1419780", itemUrl: "1419780-ritter-sport" },
+            history: { commonPrice: null, minPrice: null, entries: [] },
+            meta: { itemId: "1419780", itemName: "Ritter Sport 100g", itemImage: undefined },
+        };
+        const stubClient = {
+            async getByUrl() {
+                return data;
+            },
+        };
+        let calls = 0;
+        const stubResolver = async (): Promise<RawProduct | null> => {
+            calls++;
+            return {
+                shopOrigin: "rohlik.cz",
+                slug: "1419780",
+                url,
+                name: "Ritter Sport 100g",
+                brand: "Ritter Sport",
+                ean: "4000417025005",
+                observedAt: new Date(),
+                raw: {},
+            };
+        };
+
+        const result = await runGetProduct({
+            url,
+            db,
+            client: stubClient as unknown as Parameters<typeof runGetProduct>[0]["client"],
+            resolveFromShopClient: stubResolver,
+        });
+
+        expect(calls).toBe(1);
+        expect(result.ingested.product.name).toBe("Ritter Sport 100g");
+        expect(result.ingested.product.brand).toBe("Ritter Sport");
+        expect(result.ingested.product.ean).toBe("4000417025005");
         db.close();
     });
 });

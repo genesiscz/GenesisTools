@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { compatPackCount } from "./multipack-guard";
+import { compatPackCount } from "@app/shops/lib/multipack-guard";
 
 describe("compatPackCount", () => {
     it("both null → compatible", () => {

@@ -2,9 +2,9 @@
 
 import { SafeJSON } from "@app/utils/json";
 import { parseHTML } from "linkedom";
-import { ShopApiClient, type ShopApiClientConstructorConfig } from "../ShopApiClient";
-import type { Category, ListingOptions, RawProduct, ShopCapabilities } from "../ShopApiClient.types";
-import type { KauflandJsonLdProduct, KauflandParsedProduct } from "./KauflandClient.types";
+import { ShopApiClient, type ShopApiClientConstructorConfig } from "@app/shops/api/ShopApiClient";
+import type { Category, ListingOptions, RawProduct, ShopCapabilities } from "@app/shops/api/ShopApiClient.types";
+import type { KauflandJsonLdProduct, KauflandParsedProduct } from "@app/shops/api/shops/KauflandClient.types";
 
 const KAUFLAND_ORIGIN = "kaufland.cz";
 const ROOT = "https://www.kaufland.cz";

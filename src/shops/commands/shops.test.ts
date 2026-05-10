@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "bun:test";
-import { __resetInitState, initShopRegistry } from "../api/registry-init";
-import { ShopRegistry } from "../api/ShopRegistry";
-import { renderShopsTable } from "./shops";
+import { __resetInitState, initShopRegistry } from "@app/shops/api/registry-init";
+import { ShopRegistry } from "@app/shops/api/ShopRegistry";
+import { renderShopsTable } from "@app/shops/commands/shops";
 
 describe("renderShopsTable", () => {
     it("renders just the header + 'no shops' note when registry is empty", () => {

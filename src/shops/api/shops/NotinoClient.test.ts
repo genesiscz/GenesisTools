@@ -1,8 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { MemoryHttpRequestSink } from "../../lib/http-sink";
-import { NotinoClient } from "./NotinoClient";
+import { MemoryHttpRequestSink } from "@app/shops/lib/http-sink";
+import { NotinoClient } from "@app/shops/api/shops/NotinoClient";
 
 function readHtml(rel: string): string {
     return readFileSync(join(import.meta.dir, "__fixtures__/notino", rel), "utf8");
@@ -66,7 +66,7 @@ describe("NotinoClient.listCategory", () => {
             { match: "/dior/jadore", html: detail },
         ]);
 
-        const out: import("../ShopApiClient.types").RawProduct[] = [];
+        const out: import("@app/shops/api/ShopApiClient.types").RawProduct[] = [];
         for await (const p of client.listCategory({ category: "damske-parfemy", limit: 1 })) {
             out.push(p);
         }

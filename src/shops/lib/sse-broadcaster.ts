@@ -15,9 +15,10 @@ export class SseBroadcaster {
     private nextId = 1;
     private heartbeat: ReturnType<typeof setInterval> | null = null;
 
-    subscribe(opts?: {
-        initialEvents?: ReadonlyArray<{ event: string; data: unknown }>;
-    }): { stream: ReadableStream<Uint8Array>; unsubscribe: () => void } {
+    subscribe(opts?: { initialEvents?: ReadonlyArray<{ event: string; data: unknown }> }): {
+        stream: ReadableStream<Uint8Array>;
+        unsubscribe: () => void;
+    } {
         const id = this.nextId++;
         let sub!: Subscriber;
         const stream = new ReadableStream<Uint8Array>({

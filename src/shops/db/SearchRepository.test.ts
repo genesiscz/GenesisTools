@@ -2,8 +2,8 @@ import { describe, expect, it } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SearchRepository } from "./SearchRepository";
-import { ShopsDatabase } from "./ShopsDatabase";
+import { SearchRepository } from "@app/shops/db/SearchRepository";
+import { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
 
 async function tmpDb(): Promise<ShopsDatabase> {
     const db = new ShopsDatabase(join(mkdtempSync(join(tmpdir(), "shops-search-")), "test.db"));

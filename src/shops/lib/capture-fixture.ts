@@ -3,7 +3,7 @@ import { join } from "node:path";
 import logger from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import { WebView } from "@app/utils/WebView";
-import { ShopRegistry } from "../api/ShopRegistry";
+import { ShopRegistry } from "@app/shops/api/ShopRegistry";
 
 const log = logger.child({ component: "shops:capture-fixture" });
 

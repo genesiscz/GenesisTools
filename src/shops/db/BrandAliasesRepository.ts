@@ -1,6 +1,6 @@
 import type { Selectable } from "kysely";
-import type { ShopsDatabase } from "./ShopsDatabase";
-import type { BrandAliasesTable } from "./types";
+import type { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
+import type { BrandAliasesTable } from "@app/shops/db/types";
 
 export type BrandAlias = Selectable<BrandAliasesTable>;
 

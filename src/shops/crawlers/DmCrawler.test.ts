@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
-import { DmClient } from "../api/shops/DmClient";
-import { buildTestDatabase } from "../test-utils/buildTestDatabase";
-import { DmCrawler } from "./DmCrawler";
+import { DmClient } from "@app/shops/api/shops/DmClient";
+import { buildTestDatabase } from "@app/shops/test-utils/buildTestDatabase";
+import { DmCrawler } from "@app/shops/crawlers/DmCrawler";
 
 describe("DmCrawler", () => {
     it("strategy is dm-rest", () => {

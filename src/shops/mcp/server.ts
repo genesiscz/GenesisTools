@@ -7,9 +7,9 @@ import {
     ListToolsRequestSchema,
     ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { getShopsDatabase, type ShopsDatabase } from "../db/ShopsDatabase";
-import { buildRegistry, getAdvertisedTools, getHandler, type ToolEntry } from "./registry";
-import { listResources, readResource } from "./resources";
+import { getShopsDatabase, type ShopsDatabase } from "@app/shops/db/ShopsDatabase";
+import { buildRegistry, getAdvertisedTools, getHandler, type ToolEntry } from "@app/shops/mcp/registry";
+import { listResources, readResource } from "@app/shops/mcp/resources";
 
 const log = logger.child({ component: "shops:mcp-server" });
 

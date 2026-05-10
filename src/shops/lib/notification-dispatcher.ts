@@ -1,6 +1,6 @@
 import logger from "@app/logger";
-import type { NotificationsRepository } from "../db/NotificationsRepository";
-import type { DispatchResult, NotificationChannel, NotificationPayload } from "./channels/types";
+import type { NotificationsRepository } from "@app/shops/db/NotificationsRepository";
+import type { DispatchResult, NotificationChannel, NotificationPayload } from "@app/shops/lib/channels/types";
 
 const log = logger.child({ component: "NotificationDispatcher" });
 

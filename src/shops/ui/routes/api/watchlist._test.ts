@@ -2,9 +2,9 @@ import { describe, expect, it } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ShopsDatabase, setShopsDatabaseSingletonForTest } from "../../../db/ShopsDatabase";
-import * as watchlistRoute from "./watchlist";
-import * as watchlistAddRoute from "./watchlist.add";
+import { ShopsDatabase, setShopsDatabaseSingletonForTest } from "@app/shops/db/ShopsDatabase";
+import * as watchlistRoute from "@app/shops/ui/routes/api/watchlist";
+import * as watchlistAddRoute from "@app/shops/ui/routes/api/watchlist.add";
 
 function tmpDb(): ShopsDatabase {
     const db = new ShopsDatabase(join(mkdtempSync(join(tmpdir(), "shops-api-")), "test.db"));

@@ -3,9 +3,9 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@app/utils/json";
 import { type WebView, WebViewPool } from "@app/utils/WebView";
-import { MemoryHttpRequestSink } from "../../lib/http-sink";
-import { AlzaClient } from "./AlzaClient";
-import type { AlzaCategoryListing, AlzaPageData } from "./AlzaClient.types";
+import { MemoryHttpRequestSink } from "@app/shops/lib/http-sink";
+import { AlzaClient } from "@app/shops/api/shops/AlzaClient";
+import type { AlzaCategoryListing, AlzaPageData } from "@app/shops/api/shops/AlzaClient.types";
 
 function readFixture<T>(rel: string): T {
     return SafeJSON.parse(readFileSync(join(import.meta.dir, "__fixtures__/alza", rel), "utf8")) as T;
@@ -128,7 +128,7 @@ describe("AlzaClient.listCategory", () => {
             webviewPool: pool,
         });
 
-        const out: import("../ShopApiClient.types").RawProduct[] = [];
+        const out: import("@app/shops/api/ShopApiClient.types").RawProduct[] = [];
         for await (const item of client.listCategory({ category: "18842782", limit: 10 })) {
             out.push(item);
         }
@@ -154,7 +154,7 @@ describe("AlzaClient.listCategory", () => {
             webviewPool: pool,
         });
 
-        const out: import("../ShopApiClient.types").RawProduct[] = [];
+        const out: import("@app/shops/api/ShopApiClient.types").RawProduct[] = [];
         for await (const item of client.listCategory({ category: "18842782", limit: 1 })) {
             out.push(item);
         }

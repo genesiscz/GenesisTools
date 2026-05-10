@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
-import { LidlClient } from "../api/shops/LidlClient";
-import { buildTestDatabase } from "../test-utils/buildTestDatabase";
-import { LidlCrawler } from "./LidlCrawler";
+import { LidlClient } from "@app/shops/api/shops/LidlClient";
+import { buildTestDatabase } from "@app/shops/test-utils/buildTestDatabase";
+import { LidlCrawler } from "@app/shops/crawlers/LidlCrawler";
 
 describe("LidlCrawler", () => {
     it("strategy is lidl-rest", () => {

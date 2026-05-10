@@ -1,17 +1,17 @@
 import logger from "@app/logger";
 // @ts-expect-error -- @hlidac-shopu/lib ships ESM with no .d.ts coverage
 import { shopOrigin as deriveShopOrigin } from "@hlidac-shopu/lib/shops.mjs";
-import { HlidacShopuClient } from "../api/HlidacShopuClient";
+import { HlidacShopuClient } from "@app/shops/api/HlidacShopuClient";
 import {
     type AddFavoriteArgs,
     type EditFavoriteArgs,
     type Favorite,
     FavoritesRepository,
     type FavoriteWithState,
-} from "../db/FavoritesRepository";
-import { type Notification, type NotificationReason, NotificationsRepository } from "../db/NotificationsRepository";
-import { getShopsDatabase } from "../db/ShopsDatabase";
-import { ingestFromHlidacResult } from "./ingest";
+} from "@app/shops/db/FavoritesRepository";
+import { type Notification, type NotificationReason, NotificationsRepository } from "@app/shops/db/NotificationsRepository";
+import { getShopsDatabase } from "@app/shops/db/ShopsDatabase";
+import { ingestFromHlidacResult } from "@app/shops/lib/ingest";
 
 const log = logger.child({ component: "shops:watchlist-api" });
 

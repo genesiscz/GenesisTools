@@ -2,8 +2,8 @@ import { describe, expect, it } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ShopsDatabase } from "../db/ShopsDatabase";
-import { assertSchemaCompatible } from "./schema-preflight";
+import { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
+import { assertSchemaCompatible } from "@app/shops/lib/schema-preflight";
 
 function tmpDb(): ShopsDatabase {
     return new ShopsDatabase(join(mkdtempSync(join(tmpdir(), "shops-preflight-")), "test.db"));

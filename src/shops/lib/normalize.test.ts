@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { extractFlavorKey, extractPackCount, extractSize, normalizeBrand, normalizeName, parseUnit } from "./normalize";
+import { extractFlavorKey, extractPackCount, extractSize, normalizeBrand, normalizeName, parseUnit } from "@app/shops/lib/normalize";
 
 describe("normalizeBrand", () => {
     it("strips diacritics and lowercases", () => {

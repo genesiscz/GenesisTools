@@ -1,5 +1,5 @@
 import logger from "@app/logger";
-import type { ShopsDatabase } from "../db/ShopsDatabase";
+import type { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
 
 const log = logger.child({
     component: "MasterMerger",

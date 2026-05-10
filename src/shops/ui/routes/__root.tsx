@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { createRootRoute, HeadContent, Outlet, Scripts, useRouter, useRouterState } from "@tanstack/react-router";
 import { Bell, GitMerge, Heart, LayoutGrid, LayoutTemplate, Radio, Settings, ShoppingBasket } from "lucide-react";
 import { Toaster } from "sonner";
-import appCss from "../styles.css?url";
+import appCss from "@app/shops/ui/styles.css?url";
 
 const navLinks = [
     { label: "Watchlist", href: "/watchlist", icon: <Heart className="w-3.5 h-3.5" /> },

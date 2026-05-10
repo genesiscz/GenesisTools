@@ -2,8 +2,8 @@ import { describe, expect, it } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ShopsDatabase } from "../db/ShopsDatabase";
-import { ingestFromHlidacResult } from "./ingest";
+import { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
+import { ingestFromHlidacResult } from "@app/shops/lib/ingest";
 
 function tmpDb(): ShopsDatabase {
     return new ShopsDatabase(join(mkdtempSync(join(tmpdir(), "shops-ingest-")), "test.db"));

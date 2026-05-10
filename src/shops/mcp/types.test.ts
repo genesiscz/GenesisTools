@@ -15,7 +15,7 @@ import {
     ShopsWatchAddInput,
     ShopsWatchListInput,
     ShopsWatchRemoveInput,
-} from "./types";
+} from "@app/shops/mcp/types";
 
 describe("ShopsGetProductInput", () => {
     it("accepts {url}", () => {

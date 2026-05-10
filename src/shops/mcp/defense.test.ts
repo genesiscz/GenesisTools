@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { buildRegistry, getAdvertisedTools, getHandler } from "./registry";
+import { buildRegistry, getAdvertisedTools, getHandler } from "@app/shops/mcp/registry";
 
 const WRITE_TOOLS = [
     "shops_ingest",

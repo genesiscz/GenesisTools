@@ -2,9 +2,9 @@ import { beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { BrandAliasesRepository } from "../db/BrandAliasesRepository";
-import { ShopsDatabase } from "../db/ShopsDatabase";
-import { BrandResolver } from "./brand-resolver";
+import { BrandAliasesRepository } from "@app/shops/db/BrandAliasesRepository";
+import { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
+import { BrandResolver } from "@app/shops/lib/brand-resolver";
 
 describe("BrandResolver", () => {
     let db: ShopsDatabase;

@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ShopsDatabase } from "./ShopsDatabase";
+import { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
 
 function tmpDb(): ShopsDatabase {
     const dir = mkdtempSync(join(tmpdir(), "shops-db-"));

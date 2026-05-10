@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { formatSummary, runGoldenHarness } from "./golden-harness";
+import { formatSummary, runGoldenHarness } from "@app/shops/lib/golden-harness";
 
 describe("matcher golden pairs", () => {
     it("achieves F1 >= 0.95 on the durable product set", async () => {

@@ -1,6 +1,6 @@
 import logger from "@app/logger";
-import { getShopsDatabase, type ShopsDatabase } from "../db/ShopsDatabase";
-import type { ProductDTO } from "./product-api";
+import { getShopsDatabase, type ShopsDatabase } from "@app/shops/db/ShopsDatabase";
+import type { ProductDTO } from "@app/shops/lib/product-api";
 
 const log = logger.child({ component: "shops:search-api" });
 

@@ -1,8 +1,8 @@
 import { describe, expect, it } from "bun:test";
-import { ShopApiClient } from "../api/ShopApiClient";
-import type { Category, ListingOptions, RawProduct, ShopCapabilities } from "../api/ShopApiClient.types";
-import { buildTestDatabase } from "../test-utils/buildTestDatabase";
-import { createCrawlerForShop } from "./crawler-factory";
+import { ShopApiClient } from "@app/shops/api/ShopApiClient";
+import type { Category, ListingOptions, RawProduct, ShopCapabilities } from "@app/shops/api/ShopApiClient.types";
+import { buildTestDatabase } from "@app/shops/test-utils/buildTestDatabase";
+import { createCrawlerForShop } from "@app/shops/lib/crawler-factory";
 
 class FakeClient extends ShopApiClient {
     readonly shopOrigin: string;

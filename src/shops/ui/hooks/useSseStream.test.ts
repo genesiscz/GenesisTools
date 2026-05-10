@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { SafeJSON } from "@app/utils/json";
-import { createSseSubscription, type SseFrame, type SseStatus } from "./useSseStream";
+import { createSseSubscription, type SseFrame, type SseStatus } from "@app/shops/ui/hooks/useSseStream";
 
 class MockEventSource {
     static instances: MockEventSource[] = [];

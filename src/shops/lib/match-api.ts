@@ -1,6 +1,6 @@
 import logger from "@app/logger";
-import { getShopsDatabase, type ShopsDatabase } from "../db/ShopsDatabase";
-import { MasterMerger } from "./master-merger";
+import { getShopsDatabase, type ShopsDatabase } from "@app/shops/db/ShopsDatabase";
+import { MasterMerger } from "@app/shops/lib/master-merger";
 
 const log = logger.child({ component: "match-api" });
 

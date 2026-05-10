@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it } from "bun:test";
-import { __resetInitState, initShopRegistry } from "../api/registry-init";
-import { ShopApiClient } from "../api/ShopApiClient";
-import type { Category, ListingOptions, RawProduct, ShopCapabilities } from "../api/ShopApiClient.types";
-import { ShopRegistry } from "../api/ShopRegistry";
-import { buildTestDatabase } from "../test-utils/buildTestDatabase";
-import { runCrawlCommand } from "./crawl";
+import { __resetInitState, initShopRegistry } from "@app/shops/api/registry-init";
+import { ShopApiClient } from "@app/shops/api/ShopApiClient";
+import type { Category, ListingOptions, RawProduct, ShopCapabilities } from "@app/shops/api/ShopApiClient.types";
+import { ShopRegistry } from "@app/shops/api/ShopRegistry";
+import { buildTestDatabase } from "@app/shops/test-utils/buildTestDatabase";
+import { runCrawlCommand } from "@app/shops/commands/crawl";
 
 class FakeRohlikClient extends ShopApiClient {
     readonly shopOrigin = "rohlik.cz";

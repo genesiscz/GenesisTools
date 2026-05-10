@@ -1,8 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { MemoryHttpRequestSink } from "../../lib/http-sink";
-import { KnihyDobrovskyClient } from "./KnihyDobrovskyClient";
+import { MemoryHttpRequestSink } from "@app/shops/lib/http-sink";
+import { KnihyDobrovskyClient } from "@app/shops/api/shops/KnihyDobrovskyClient";
 
 function readHtml(rel: string): string {
     return readFileSync(join(import.meta.dir, "__fixtures__/knihydobrovsky", rel), "utf8");
@@ -36,7 +36,7 @@ describe("KnihyDobrovskyClient.listCategory", () => {
     it("yields RawProducts from a category page (data-productinfo cards)", async () => {
         const html = readHtml("category-page1.html");
         const { client } = buildClient([{ match: "/detska-literatura", html }]);
-        const out: import("../ShopApiClient.types").RawProduct[] = [];
+        const out: import("@app/shops/api/ShopApiClient.types").RawProduct[] = [];
         for await (const p of client.listCategory({ category: "detska-literatura", limit: 5 })) {
             out.push(p);
         }

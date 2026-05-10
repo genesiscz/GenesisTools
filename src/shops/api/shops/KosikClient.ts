@@ -1,14 +1,14 @@
 // Adapted from topmonks/hlidac-shopu (EUPL-1.2) — actors/kosik-daily/main.js
 
-import { ShopApiClient, type ShopApiClientConstructorConfig } from "../ShopApiClient";
-import type { Category, ListingOptions, RawProduct, ShopCapabilities } from "../ShopApiClient.types";
+import { ShopApiClient, type ShopApiClientConstructorConfig } from "@app/shops/api/ShopApiClient";
+import type { Category, ListingOptions, RawProduct, ShopCapabilities } from "@app/shops/api/ShopApiClient.types";
 import type {
     KosikListingResponse,
     KosikMenuMainResponse,
     KosikProductDetailResponse,
     KosikRawCategory,
     KosikRawProductItem,
-} from "./KosikClient.types";
+} from "@app/shops/api/shops/KosikClient.types";
 
 const KOSIK_ORIGIN = "kosik.cz";
 const ROOT = "https://www.kosik.cz";
@@ -69,9 +69,7 @@ export class KosikClient extends ShopApiClient {
         for (let i = 0; i < ids.length; i += concurrency) {
             opts.signal?.throwIfAborted();
             const slice = ids.slice(i, i + concurrency);
-            const settled = await Promise.allSettled(
-                slice.map((id) => this.getProduct({ slug: `p${id}` }))
-            );
+            const settled = await Promise.allSettled(slice.map((id) => this.getProduct({ slug: `p${id}` })));
             for (let j = 0; j < settled.length; j++) {
                 const r = settled[j];
                 if (r.status === "fulfilled") {

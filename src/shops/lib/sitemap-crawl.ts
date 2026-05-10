@@ -1,14 +1,14 @@
 import logger from "@app/logger";
-import { HlidacShopuClient } from "../api/HlidacShopuClient";
-import { initShopRegistry } from "../api/registry-init";
-import type { ShopApiClient } from "../api/ShopApiClient";
-import type { RawProduct } from "../api/ShopApiClient.types";
-import { ShopRegistry } from "../api/ShopRegistry";
-import { SITEMAP_STRATEGIES, type SitemapStrategy } from "../api/sitemap-strategies";
-import type { ShopsDatabase } from "../db/ShopsDatabase";
-import { createBulkMatcher } from "./bulk-matcher";
-import type { HttpRequestSink } from "./http-sink";
-import { walkSitemap } from "./sitemap-fetcher";
+import { HlidacShopuClient } from "@app/shops/api/HlidacShopuClient";
+import { initShopRegistry } from "@app/shops/api/registry-init";
+import type { ShopApiClient } from "@app/shops/api/ShopApiClient";
+import type { RawProduct } from "@app/shops/api/ShopApiClient.types";
+import { ShopRegistry } from "@app/shops/api/ShopRegistry";
+import { SITEMAP_STRATEGIES, type SitemapStrategy } from "@app/shops/api/sitemap-strategies";
+import type { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
+import { createBulkMatcher } from "@app/shops/lib/bulk-matcher";
+import type { HttpRequestSink } from "@app/shops/lib/http-sink";
+import { walkSitemap } from "@app/shops/lib/sitemap-fetcher";
 
 const log = logger.child({ component: "sitemap-crawl" });
 
@@ -355,10 +355,7 @@ async function drainHlidacQueue(
             } catch (err) {
                 errors++;
                 if (errors <= 5) {
-                    log.warn(
-                        { err, productId: item.productId, url: item.url },
-                        "hlidac history fetch failed"
-                    );
+                    log.warn({ err, productId: item.productId, url: item.url }, "hlidac history fetch failed");
                 }
             }
 

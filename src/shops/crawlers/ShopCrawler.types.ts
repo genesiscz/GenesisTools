@@ -1,5 +1,5 @@
-import type { ShopApiClient } from "../api/ShopApiClient";
-import type { ShopsDatabase } from "../db/ShopsDatabase";
+import type { ShopApiClient } from "@app/shops/api/ShopApiClient";
+import type { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
 
 export interface CrawlOptions {
     /** Limit to one shop-side category id. Crawls all categories when undefined. */

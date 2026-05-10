@@ -1,9 +1,9 @@
 import type { LiveEvent, LiveEventName } from "@app/shops/types";
 import { useMemo, useRef, useState } from "react";
-import type { SseStatus } from "../hooks/useSseStream";
-import { useSseStream } from "../hooks/useSseStream";
-import { LiveEventRow } from "./LiveEventRow";
-import { LiveFilterBar } from "./LiveFilterBar";
+import type { SseStatus } from "@app/shops/ui/hooks/useSseStream";
+import { useSseStream } from "@app/shops/ui/hooks/useSseStream";
+import { LiveEventRow } from "@app/shops/ui/components/LiveEventRow";
+import { LiveFilterBar } from "@app/shops/ui/components/LiveFilterBar";
 
 const MAX_FRAMES = 1000;
 const ALL_EVENTS = ["http-request", "crawl-progress", "notification-fired"] as const;

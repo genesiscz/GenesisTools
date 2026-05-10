@@ -1,8 +1,8 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import logger from "@app/logger";
-import { normalizeBrand } from "../lib/normalize";
-import type { BrandAliasesRepository } from "./BrandAliasesRepository";
+import { normalizeBrand } from "@app/shops/lib/normalize";
+import type { BrandAliasesRepository } from "@app/shops/db/BrandAliasesRepository";
 
 const log = logger.child({ component: "seed-brand-aliases" });
 

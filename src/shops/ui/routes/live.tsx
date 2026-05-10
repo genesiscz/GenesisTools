@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { LiveFeed } from "../components/LiveFeed";
+import { LiveFeed } from "@app/shops/ui/components/LiveFeed";
 
 export const Route = createFileRoute("/live")({
     component: LivePage,

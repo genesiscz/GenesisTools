@@ -1,7 +1,7 @@
 import { formatTable } from "@app/utils/table";
 import type { Command } from "commander";
-import type { ListedProduct, ShopsDatabase } from "../db/ShopsDatabase";
-import { ShopsDatabase as ShopsDatabaseClass } from "../db/ShopsDatabase";
+import type { ListedProduct, ShopsDatabase } from "@app/shops/db/ShopsDatabase";
+import { ShopsDatabase as ShopsDatabaseClass } from "@app/shops/db/ShopsDatabase";
 
 export interface RunListInput {
     shop: string;

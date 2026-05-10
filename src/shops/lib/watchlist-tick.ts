@@ -1,12 +1,12 @@
-import { FavoritesRepository } from "../db/FavoritesRepository";
-import { NotificationsRepository } from "../db/NotificationsRepository";
-import { getShopsDatabase, type ShopsDatabase } from "../db/ShopsDatabase";
-import { MacOsChannel } from "./channels/MacOsChannel";
-import { TelegramBotChannel } from "./channels/TelegramBotChannel";
-import type { NotificationChannel } from "./channels/types";
-import { WebSseChannel } from "./channels/WebSseChannel";
-import { NotificationDispatcher } from "./notification-dispatcher";
-import { type TickReport, WatchlistEvaluator } from "./watchlist-evaluator";
+import { FavoritesRepository } from "@app/shops/db/FavoritesRepository";
+import { NotificationsRepository } from "@app/shops/db/NotificationsRepository";
+import { getShopsDatabase, type ShopsDatabase } from "@app/shops/db/ShopsDatabase";
+import { MacOsChannel } from "@app/shops/lib/channels/MacOsChannel";
+import { TelegramBotChannel } from "@app/shops/lib/channels/TelegramBotChannel";
+import type { NotificationChannel } from "@app/shops/lib/channels/types";
+import { WebSseChannel } from "@app/shops/lib/channels/WebSseChannel";
+import { NotificationDispatcher } from "@app/shops/lib/notification-dispatcher";
+import { type TickReport, WatchlistEvaluator } from "@app/shops/lib/watchlist-evaluator";
 
 export interface RunWatchlistTickOptions {
     db?: ShopsDatabase;

@@ -59,8 +59,7 @@ export function refreshMasterDenorm(db: Database, masterId: number): void {
         return;
     }
 
-    db.run(
-        "UPDATE master_products SET best_price = NULL, best_price_shop = NULL, best_price_at = NULL WHERE id = ?",
-        [masterId]
-    );
+    db.run("UPDATE master_products SET best_price = NULL, best_price_shop = NULL, best_price_at = NULL WHERE id = ?", [
+        masterId,
+    ]);
 }

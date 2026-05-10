@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { ShopRegistry } from "./ShopRegistry";
+import { ShopRegistry } from "@app/shops/api/ShopRegistry";
 
 describe("ShopRegistry", () => {
     it("starts empty (Plan 01: no per-shop clients yet)", () => {

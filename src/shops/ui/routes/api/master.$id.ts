@@ -3,7 +3,7 @@ import { getShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import type { MasterDetail, MasterOfferRow } from "@app/shops/types";
 import { SafeJSON } from "@app/utils/json";
 import { createFileRoute } from "@tanstack/react-router";
-import { apiHandler } from "../../server/api-utils";
+import { apiHandler } from "@app/shops/ui/server/api-utils";
 
 const log = logger.child({ component: "api:master:$id" });
 

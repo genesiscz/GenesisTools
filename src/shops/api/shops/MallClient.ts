@@ -1,6 +1,6 @@
-import { ShopApiClient, type ShopApiClientConstructorConfig } from "../ShopApiClient";
-import type { Category, ListingOptions, RawProduct, ShopCapabilities } from "../ShopApiClient.types";
-import type { MallCountryConfig } from "./MallClient.types";
+import { ShopApiClient, type ShopApiClientConstructorConfig } from "@app/shops/api/ShopApiClient";
+import type { Category, ListingOptions, RawProduct, ShopCapabilities } from "@app/shops/api/ShopApiClient.types";
+import type { MallCountryConfig } from "@app/shops/api/shops/MallClient.types";
 
 const COUNTRY_CZ: MallCountryConfig = { tld: "cz", currency: "CZK" };
 

@@ -1,9 +1,9 @@
 import logger from "@app/logger";
 import type { Command } from "commander";
-import { ShopsDatabase } from "../db/ShopsDatabase";
-import { DbHttpRequestSink } from "../lib/http-sink";
-import { crawlFromSitemap } from "../lib/sitemap-crawl";
-import { listSitemapShops } from "../lib/sitemap-sync";
+import { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
+import { DbHttpRequestSink } from "@app/shops/lib/http-sink";
+import { crawlFromSitemap } from "@app/shops/lib/sitemap-crawl";
+import { listSitemapShops } from "@app/shops/lib/sitemap-sync";
 
 interface SitemapCrawlCliOpts {
     shop: string;
@@ -30,9 +30,7 @@ export function registerSitemapCrawlCommand(program: Command): void {
         .option("--refresh", "Re-fetch products already in the DB (default: skip them and only ingest new ids)")
         .option("--no-hlidac", "Skip the post-ingest hlidacshopu.cz price-history backfill")
         .option("--hlidac-force", "Re-fetch hlidac history even for products that already have it stored")
-        .option("--hlidac-concurrency <n>", "Parallel hlidac S3 fetches (default 10)", (v) =>
-            Number.parseInt(v, 10)
-        )
+        .option("--hlidac-concurrency <n>", "Parallel hlidac S3 fetches (default 10)", (v) => Number.parseInt(v, 10))
         .action(async (raw: SitemapCrawlCliOpts) => {
             const log = logger.child({ component: "shops:sitemap-crawl" });
             const db = new ShopsDatabase();

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { parseCooldown, parsePercent } from "./watch-parsing";
+import { parseCooldown, parsePercent } from "@app/shops/lib/watch-parsing";
 
 describe("parsePercent", () => {
     it("'15' = 0.15", () => {

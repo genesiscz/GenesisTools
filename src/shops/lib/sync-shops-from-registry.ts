@@ -1,7 +1,7 @@
 import logger from "@app/logger";
-import type { ShopApiClient } from "../api/ShopApiClient";
-import { ShopRegistry } from "../api/ShopRegistry";
-import { getShopsDatabase, type ShopsDatabase } from "../db/ShopsDatabase";
+import type { ShopApiClient } from "@app/shops/api/ShopApiClient";
+import { ShopRegistry } from "@app/shops/api/ShopRegistry";
+import { getShopsDatabase, type ShopsDatabase } from "@app/shops/db/ShopsDatabase";
 
 const log = logger.child({ component: "sync-shops-from-registry" });
 

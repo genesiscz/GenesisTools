@@ -1,4 +1,4 @@
-import type { Notification } from "../../db/NotificationsRepository";
+import type { Notification } from "@app/shops/db/NotificationsRepository";
 
 export type NotificationChannelName = "macos" | "web" | "telegram";
 

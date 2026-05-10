@@ -1,9 +1,9 @@
 import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { BenuClient } from "../api/shops/BenuClient";
-import { buildTestDatabase } from "../test-utils/buildTestDatabase";
-import { BenuCrawler } from "./BenuCrawler";
+import { BenuClient } from "@app/shops/api/shops/BenuClient";
+import { buildTestDatabase } from "@app/shops/test-utils/buildTestDatabase";
+import { BenuCrawler } from "@app/shops/crawlers/BenuCrawler";
 
 function readFixture(rel: string): string {
     return readFileSync(join(import.meta.dir, "..", "api", "shops", "__fixtures__", "benu", rel), "utf8");

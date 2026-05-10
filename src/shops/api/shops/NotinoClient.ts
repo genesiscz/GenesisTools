@@ -3,14 +3,14 @@
 import logger from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import { parseHTML } from "linkedom";
-import { ShopApiClient, type ShopApiClientConstructorConfig } from "../ShopApiClient";
-import type { Category, ListingOptions, RawProduct, ShopCapabilities } from "../ShopApiClient.types";
+import { ShopApiClient, type ShopApiClientConstructorConfig } from "@app/shops/api/ShopApiClient";
+import type { Category, ListingOptions, RawProduct, ShopCapabilities } from "@app/shops/api/ShopApiClient.types";
 import type {
     NotinoApolloCache,
     NotinoCatalogVariant,
     NotinoMainMenuState,
     NotinoPricePair,
-} from "./NotinoClient.types";
+} from "@app/shops/api/shops/NotinoClient.types";
 
 const NOTINO_ORIGIN = "notino.cz";
 const ROOT = "https://www.notino.cz";

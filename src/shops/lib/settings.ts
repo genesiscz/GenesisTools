@@ -8,7 +8,7 @@ import type {
     SettingsPayload,
     ShopConfig,
     ThemeChoice,
-} from "../types";
+} from "@app/shops/types";
 
 const log = logger.child({ component: "SettingsRepository" });
 

@@ -2,10 +2,10 @@ import { describe, expect, it } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { NotificationsRepository } from "../db/NotificationsRepository";
-import { ShopsDatabase } from "../db/ShopsDatabase";
-import type { DispatchResult, NotificationChannel, NotificationPayload } from "./channels/types";
-import { NotificationDispatcher } from "./notification-dispatcher";
+import { NotificationsRepository } from "@app/shops/db/NotificationsRepository";
+import { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
+import type { DispatchResult, NotificationChannel, NotificationPayload } from "@app/shops/lib/channels/types";
+import { NotificationDispatcher } from "@app/shops/lib/notification-dispatcher";
 
 function tmpDb(): { db: ShopsDatabase; repo: NotificationsRepository; favId: number; masterId: number } {
     const db = new ShopsDatabase(join(mkdtempSync(join(tmpdir(), "shops-disp-")), "test.db"));

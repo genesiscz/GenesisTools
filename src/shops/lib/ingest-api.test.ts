@@ -2,9 +2,9 @@ import { describe, expect, it } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { HlidacGetByUrlResult } from "../api/HlidacShopuClient.types";
-import { ShopsDatabase } from "../db/ShopsDatabase";
-import { ingestUrl } from "./ingest-api";
+import type { HlidacGetByUrlResult } from "@app/shops/api/HlidacShopuClient.types";
+import { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
+import { ingestUrl } from "@app/shops/lib/ingest-api";
 
 class FakeHlidac {
     constructor(private fixture: HlidacGetByUrlResult) {}

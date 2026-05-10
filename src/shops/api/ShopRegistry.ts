@@ -1,7 +1,7 @@
+import type { ShopApiClient } from "@app/shops/api/ShopApiClient";
+import type { ShopOrigin } from "@app/shops/api/ShopApiClient.types";
 // @ts-expect-error -- @hlidac-shopu/lib ships ESM with no .d.ts coverage
 import { shopOrigin as deriveShopOrigin } from "@hlidac-shopu/lib/shops.mjs";
-import type { ShopApiClient } from "./ShopApiClient";
-import type { ShopOrigin } from "./ShopApiClient.types";
 
 export class ShopRegistry {
     private static instance: ShopRegistry | null = null;

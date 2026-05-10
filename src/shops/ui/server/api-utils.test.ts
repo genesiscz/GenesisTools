@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { enumParam, intParam, parseQuery, safeJsonBody } from "./api-utils";
+import { enumParam, intParam, parseQuery, safeJsonBody } from "@app/shops/ui/server/api-utils";
 
 describe("intParam", () => {
     it("returns fallback when missing", () => {

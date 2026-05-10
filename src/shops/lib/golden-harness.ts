@@ -2,12 +2,12 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@app/utils/json";
-import { BrandAliasesRepository } from "../db/BrandAliasesRepository";
-import { ShopsDatabase } from "../db/ShopsDatabase";
-import { BrandResolver } from "./brand-resolver";
-import { MatchExecutor } from "./match-executor";
-import { Matcher, type MatcherInput } from "./matcher";
-import { extractFlavorKey, extractPackCount, extractSize, normalizeBrand, normalizeName } from "./normalize";
+import { BrandAliasesRepository } from "@app/shops/db/BrandAliasesRepository";
+import { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
+import { BrandResolver } from "@app/shops/lib/brand-resolver";
+import { MatchExecutor } from "@app/shops/lib/match-executor";
+import { Matcher, type MatcherInput } from "@app/shops/lib/matcher";
+import { extractFlavorKey, extractPackCount, extractSize, normalizeBrand, normalizeName } from "@app/shops/lib/normalize";
 
 interface FixtureProduct {
     shop_origin: string;

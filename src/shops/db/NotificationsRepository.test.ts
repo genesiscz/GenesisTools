@@ -2,8 +2,8 @@ import { describe, expect, it } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { NotificationsRepository } from "./NotificationsRepository";
-import { ShopsDatabase } from "./ShopsDatabase";
+import { NotificationsRepository } from "@app/shops/db/NotificationsRepository";
+import { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
 
 function fixture() {
     const db = new ShopsDatabase(join(mkdtempSync(join(tmpdir(), "shops-notif-")), "test.db"));

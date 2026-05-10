@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { TelegramBotChannel } from "./TelegramBotChannel";
-import type { NotificationPayload } from "./types";
+import { TelegramBotChannel } from "@app/shops/lib/channels/TelegramBotChannel";
+import type { NotificationPayload } from "@app/shops/lib/channels/types";
 
 const PAYLOAD: NotificationPayload = {
     notification: {

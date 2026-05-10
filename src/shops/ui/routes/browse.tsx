@@ -6,8 +6,8 @@ import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Search, X } from "lucide-react";
 import { useState } from "react";
-import { BrowseGrid } from "../components/BrowseGrid";
-import { useDebouncedValue } from "../hooks/useDebouncedValue";
+import { BrowseGrid } from "@app/shops/ui/components/BrowseGrid";
+import { useDebouncedValue } from "@app/shops/ui/hooks/useDebouncedValue";
 
 interface BrowseSearch {
     q?: string;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { MemoryHttpRequestSink } from "../../lib/http-sink";
-import { MallClient } from "./MallClient";
+import { MemoryHttpRequestSink } from "@app/shops/lib/http-sink";
+import { MallClient } from "@app/shops/api/shops/MallClient";
 
 function buildClient(): MallClient {
     return new MallClient({ sink: new MemoryHttpRequestSink(), rateLimitPerSecond: 1000 });

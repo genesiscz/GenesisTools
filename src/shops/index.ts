@@ -1,21 +1,21 @@
 #!/usr/bin/env bun
 import { handleReadmeFlag } from "@app/utils/readme";
 import { Command } from "commander";
-import { registerCrawlCommand } from "./commands/crawl";
-import { registerDaemonCommand } from "./commands/daemon";
-import { registerDbCommand } from "./commands/db";
-import { registerDbPruneCommand } from "./commands/db-prune";
-import { registerDevCaptureFixtureCommand } from "./commands/dev-capture-fixture";
-import { registerGetCommand } from "./commands/get";
-import { registerListCommand } from "./commands/list";
-import { registerMatchCommand } from "./commands/match";
-import { registerMcpCommand } from "./commands/mcp";
-import { registerNotifyCommand } from "./commands/notify";
-import { registerShopsCommand } from "./commands/shops";
-import { registerSitemapCrawlCommand } from "./commands/sitemap-crawl";
-import { registerSitemapSyncCommand } from "./commands/sitemap-sync";
-import { registerUiCommand } from "./commands/ui";
-import { registerWatchCommand } from "./commands/watch";
+import { registerCrawlCommand } from "@app/shops/commands/crawl";
+import { registerDaemonCommand } from "@app/shops/commands/daemon";
+import { registerDbCommand } from "@app/shops/commands/db";
+import { registerDbPruneCommand } from "@app/shops/commands/db-prune";
+import { registerDevCaptureFixtureCommand } from "@app/shops/commands/dev-capture-fixture";
+import { registerGetCommand } from "@app/shops/commands/get";
+import { registerListCommand } from "@app/shops/commands/list";
+import { registerMatchCommand } from "@app/shops/commands/match";
+import { registerMcpCommand } from "@app/shops/commands/mcp";
+import { registerNotifyCommand } from "@app/shops/commands/notify";
+import { registerShopsCommand } from "@app/shops/commands/shops";
+import { registerSitemapCrawlCommand } from "@app/shops/commands/sitemap-crawl";
+import { registerSitemapSyncCommand } from "@app/shops/commands/sitemap-sync";
+import { registerUiCommand } from "@app/shops/commands/ui";
+import { registerWatchCommand } from "@app/shops/commands/watch";
 
 handleReadmeFlag(import.meta.url);
 

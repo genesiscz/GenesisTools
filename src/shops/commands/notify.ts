@@ -7,7 +7,7 @@ import {
     assertValidReason,
     getRecentNotifications,
     type RecentNotificationsArgs,
-} from "../lib/watchlist-api";
+} from "@app/shops/lib/watchlist-api";
 
 export function registerNotifyCommand(program: Command): void {
     const notify = program.command("notify").description("Inspect and acknowledge notifications");

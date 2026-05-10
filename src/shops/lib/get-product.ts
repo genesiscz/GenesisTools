@@ -1,11 +1,11 @@
-import { HlidacShopuClient } from "../api/HlidacShopuClient";
-import type { HlidacGetByUrlResult } from "../api/HlidacShopuClient.types";
-import { initShopRegistry } from "../api/registry-init";
-import type { RawProduct } from "../api/ShopApiClient.types";
-import { ShopRegistry } from "../api/ShopRegistry";
-import { getShopsDatabase, type ShopsDatabase } from "../db/ShopsDatabase";
-import { getDefaultSink, type HttpRequestSink } from "./http-sink";
-import { type IngestResult, ingestFromHlidacResult } from "./ingest";
+import { HlidacShopuClient } from "@app/shops/api/HlidacShopuClient";
+import type { HlidacGetByUrlResult } from "@app/shops/api/HlidacShopuClient.types";
+import { initShopRegistry } from "@app/shops/api/registry-init";
+import type { RawProduct } from "@app/shops/api/ShopApiClient.types";
+import { ShopRegistry } from "@app/shops/api/ShopRegistry";
+import { getShopsDatabase, type ShopsDatabase } from "@app/shops/db/ShopsDatabase";
+import { getDefaultSink, type HttpRequestSink } from "@app/shops/lib/http-sink";
+import { type IngestResult, ingestFromHlidacResult } from "@app/shops/lib/ingest";
 
 export type ResolveFromShopClient = (origin: string, url: string) => Promise<RawProduct | null>;
 

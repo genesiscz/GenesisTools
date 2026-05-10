@@ -3,9 +3,9 @@
 import logger from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import { parseHTML } from "linkedom";
-import { isAkamaiBlock } from "../../lib/akamai-detect";
-import { ShopApiClient, type ShopApiClientConstructorConfig } from "../ShopApiClient";
-import type { Category, ListingOptions, RawProduct, ShopCapabilities } from "../ShopApiClient.types";
+import { isAkamaiBlock } from "@app/shops/lib/akamai-detect";
+import { ShopApiClient, type ShopApiClientConstructorConfig } from "@app/shops/api/ShopApiClient";
+import type { Category, ListingOptions, RawProduct, ShopCapabilities } from "@app/shops/api/ShopApiClient.types";
 import {
     ITESCO_BASE_URL,
     ITESCO_BROWSER_UA,
@@ -19,7 +19,7 @@ import {
     type ItescoBreadcrumbNode,
     type ItescoDiscoverJson,
     type ItescoPageInfo,
-} from "./ItescoClient.types";
+} from "@app/shops/api/shops/ItescoClient.types";
 
 const ITESCO_ORIGIN = "itesco.cz";
 

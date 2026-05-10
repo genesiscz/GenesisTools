@@ -1,4 +1,4 @@
-import { ShopsDatabase } from "../db/ShopsDatabase";
+import { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
 
 /**
  * Open an in-memory ShopsDatabase with all migrations applied.

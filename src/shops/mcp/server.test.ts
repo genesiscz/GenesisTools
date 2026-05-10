@@ -2,8 +2,8 @@ import { describe, expect, it } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ShopsDatabase } from "../db/ShopsDatabase";
-import { buildRegistry, getAdvertisedTools } from "./registry";
+import { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
+import { buildRegistry, getAdvertisedTools } from "@app/shops/mcp/registry";
 
 describe("MCP server tool registration shape", () => {
     it("read-only mode advertises 8 tools", () => {

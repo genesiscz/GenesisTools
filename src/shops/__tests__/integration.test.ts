@@ -2,9 +2,9 @@ import { describe, expect, it } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ShopsDatabase } from "../db/ShopsDatabase";
-import { MemoryHttpRequestSink } from "../lib/http-sink";
-import { ingestFromHlidacResult } from "../lib/ingest";
+import { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
+import { MemoryHttpRequestSink } from "@app/shops/lib/http-sink";
+import { ingestFromHlidacResult } from "@app/shops/lib/ingest";
 
 describe("Plan 01 integration smoke", () => {
     it("ingest → DB → current_offers view round-trips end-to-end with no per-shop client", async () => {

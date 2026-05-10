@@ -2,15 +2,15 @@
 
 import logger from "@app/logger";
 import { ApiClientError } from "@app/utils/api/ApiClient";
-import { ShopApiClient, type ShopApiClientConstructorConfig } from "../ShopApiClient";
-import type { Category, ListingOptions, RawProduct, ShopCapabilities } from "../ShopApiClient.types";
+import { ShopApiClient, type ShopApiClientConstructorConfig } from "@app/shops/api/ShopApiClient";
+import type { Category, ListingOptions, RawProduct, ShopCapabilities } from "@app/shops/api/ShopApiClient.types";
 import type {
     DmCategoryResponse,
     DmNavigationNode,
     DmNavigationResponse,
     DmProductListingResponse,
     DmRawProduct,
-} from "./DmClient.types";
+} from "@app/shops/api/shops/DmClient.types";
 
 export type DmCountry = "CZ" | "SK";
 

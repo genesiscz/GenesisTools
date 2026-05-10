@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
-import { KauflandClient } from "../api/shops/KauflandClient";
-import { buildTestDatabase } from "../test-utils/buildTestDatabase";
-import { KauflandCrawler } from "./KauflandCrawler";
+import { KauflandClient } from "@app/shops/api/shops/KauflandClient";
+import { buildTestDatabase } from "@app/shops/test-utils/buildTestDatabase";
+import { KauflandCrawler } from "@app/shops/crawlers/KauflandCrawler";
 
 describe("KauflandCrawler", () => {
     it("strategy is kaufland-html", () => {

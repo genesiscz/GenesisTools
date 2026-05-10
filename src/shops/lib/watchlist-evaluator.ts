@@ -1,10 +1,10 @@
 import logger from "@app/logger";
-import type { FavoritesRepository, FavoriteWithState } from "../db/FavoritesRepository";
-import type { NotificationReason, NotificationsRepository } from "../db/NotificationsRepository";
-import type { ShopsDatabase } from "../db/ShopsDatabase";
-import type { NotificationPayload } from "./channels/types";
-import type { NotificationDispatcher } from "./notification-dispatcher";
-import { assertSchemaCompatible } from "./schema-preflight";
+import type { FavoritesRepository, FavoriteWithState } from "@app/shops/db/FavoritesRepository";
+import type { NotificationReason, NotificationsRepository } from "@app/shops/db/NotificationsRepository";
+import type { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
+import type { NotificationPayload } from "@app/shops/lib/channels/types";
+import type { NotificationDispatcher } from "@app/shops/lib/notification-dispatcher";
+import { assertSchemaCompatible } from "@app/shops/lib/schema-preflight";
 
 const log = logger.child({ component: "WatchlistEvaluator" });
 

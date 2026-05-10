@@ -1,8 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { MemoryHttpRequestSink } from "../../lib/http-sink";
-import { DrmaxClient } from "./DrmaxClient";
+import { MemoryHttpRequestSink } from "@app/shops/lib/http-sink";
+import { DrmaxClient } from "@app/shops/api/shops/DrmaxClient";
 
 function readFixture(rel: string): string {
     return readFileSync(join(import.meta.dir, "__fixtures__/drmax", rel), "utf8");

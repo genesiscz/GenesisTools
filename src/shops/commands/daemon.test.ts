@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { parseInterval } from "@app/daemon/lib/interval";
-import { SHOPS_DAEMON_TASKS } from "./daemon";
+import { SHOPS_DAEMON_TASKS } from "@app/shops/commands/daemon";
 
 describe("SHOPS_DAEMON_TASKS", () => {
     it("registers exactly two tasks", () => {

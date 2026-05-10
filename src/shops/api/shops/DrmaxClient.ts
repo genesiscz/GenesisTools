@@ -2,15 +2,15 @@
 
 import { SafeJSON } from "@app/utils/json";
 import { parseHTML } from "linkedom";
-import { ShopApiClient, type ShopApiClientConstructorConfig } from "../ShopApiClient";
-import type { Category, ListingOptions, RawProduct, ShopCapabilities } from "../ShopApiClient.types";
+import { ShopApiClient, type ShopApiClientConstructorConfig } from "@app/shops/api/ShopApiClient";
+import type { Category, ListingOptions, RawProduct, ShopCapabilities } from "@app/shops/api/ShopApiClient.types";
 import {
     DRMAX_BASE_URL,
     DRMAX_BROWSER_UA,
     DRMAX_SITEMAP_URL,
     type DrmaxJsonLdProduct,
     type DrmaxParsedTile,
-} from "./DrmaxClient.types";
+} from "@app/shops/api/shops/DrmaxClient.types";
 
 const DRMAX_ORIGIN = "drmax.cz";
 

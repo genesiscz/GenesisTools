@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
-import { MallClient } from "../api/shops/MallClient";
-import { buildTestDatabase } from "../test-utils/buildTestDatabase";
-import { MallCrawler } from "./MallCrawler";
+import { MallClient } from "@app/shops/api/shops/MallClient";
+import { buildTestDatabase } from "@app/shops/test-utils/buildTestDatabase";
+import { MallCrawler } from "@app/shops/crawlers/MallCrawler";
 
 describe("MallCrawler", () => {
     it("strategy is mall-graphql", () => {

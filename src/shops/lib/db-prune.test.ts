@@ -2,8 +2,8 @@ import { describe, expect, it } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ShopsDatabase } from "../db/ShopsDatabase";
-import { runDbPruneHttp } from "./db-prune";
+import { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
+import { runDbPruneHttp } from "@app/shops/lib/db-prune";
 
 function tmpDb() {
     const db = new ShopsDatabase(join(mkdtempSync(join(tmpdir(), "shops-prune-")), "test.db"));

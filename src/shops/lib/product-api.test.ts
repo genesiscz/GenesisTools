@@ -2,8 +2,8 @@ import { describe, expect, it } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ShopsDatabase } from "../db/ShopsDatabase";
-import { comparePrices, getMaster, getProduct, listCategories, matchProduct } from "./product-api";
+import { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
+import { comparePrices, getMaster, getProduct, listCategories, matchProduct } from "@app/shops/lib/product-api";
 
 interface SetupIds {
     masterA: number;

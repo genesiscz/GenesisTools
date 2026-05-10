@@ -1,6 +1,6 @@
 import logger from "@app/logger";
 import type { Command } from "commander";
-import { startMcpServer } from "../mcp/server";
+import { startMcpServer } from "@app/shops/mcp/server";
 
 const log = logger.child({ component: "shops:mcp-cmd" });
 

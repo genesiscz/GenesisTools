@@ -1,8 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { MemoryHttpRequestSink } from "../../lib/http-sink";
-import { PilulkaClient } from "./PilulkaClient";
+import { MemoryHttpRequestSink } from "@app/shops/lib/http-sink";
+import { PilulkaClient } from "@app/shops/api/shops/PilulkaClient";
 
 function readHtml(rel: string): string {
     return readFileSync(join(import.meta.dir, "__fixtures__/pilulka", rel), "utf8");
@@ -58,7 +58,7 @@ describe("PilulkaClient.listCategory", () => {
             { match: "jamieson", html: detail },
             { match: "/another-product", html: detail },
         ]);
-        const out: import("../ShopApiClient.types").RawProduct[] = [];
+        const out: import("@app/shops/api/ShopApiClient.types").RawProduct[] = [];
         for await (const p of client.listCategory({ category: "akce-a-slevy", limit: 5 })) {
             out.push(p);
         }
@@ -78,7 +78,7 @@ describe("PilulkaClient.listCategory", () => {
             { match: "jamieson", html: detail },
             { match: "/another-product", html: detail },
         ]);
-        const out: import("../ShopApiClient.types").RawProduct[] = [];
+        const out: import("@app/shops/api/ShopApiClient.types").RawProduct[] = [];
         for await (const p of client.listCategory({ category: "akce-a-slevy", limit: 1 })) {
             out.push(p);
         }

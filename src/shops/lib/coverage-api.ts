@@ -1,5 +1,5 @@
 import logger from "@app/logger";
-import { getShopsDatabase, type ShopsDatabase } from "../db/ShopsDatabase";
+import { getShopsDatabase, type ShopsDatabase } from "@app/shops/db/ShopsDatabase";
 
 const log = logger.child({ component: "shops:coverage-api" });
 

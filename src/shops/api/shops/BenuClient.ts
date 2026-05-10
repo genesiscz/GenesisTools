@@ -3,8 +3,8 @@
 import logger from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import { parseHTML } from "linkedom";
-import { ShopApiClient, type ShopApiClientConstructorConfig } from "../ShopApiClient";
-import type { Category, ListingOptions, RawProduct, ShopCapabilities } from "../ShopApiClient.types";
+import { ShopApiClient, type ShopApiClientConstructorConfig } from "@app/shops/api/ShopApiClient";
+import type { Category, ListingOptions, RawProduct, ShopCapabilities } from "@app/shops/api/ShopApiClient.types";
 import {
     BENU_API_PRODUCT_REGEX,
     BENU_BASE_URL,
@@ -12,7 +12,7 @@ import {
     type BenuApiProduct,
     type BenuListingTile,
     type BenuRichSnippet,
-} from "./BenuClient.types";
+} from "@app/shops/api/shops/BenuClient.types";
 
 const BENU_ORIGIN = "benu.cz";
 

@@ -1,11 +1,11 @@
 import type { MasterDetail as MasterDetailType, PriceHistoryResponse } from "@app/shops/types";
 import { Skeleton } from "@app/utils/ui/components/skeleton";
 import { ImageOff } from "lucide-react";
-import { CrossShopOffersTable } from "./CrossShopOffersTable";
-import { OfferDetailTabs } from "./OfferDetailTabs";
-import { PriceHistoryChart } from "./PriceHistoryChart";
-import { ShopBadge } from "./ShopBadge";
-import { StarWatchButton } from "./StarWatchButton";
+import { CrossShopOffersTable } from "@app/shops/ui/components/CrossShopOffersTable";
+import { OfferDetailTabs } from "@app/shops/ui/components/OfferDetailTabs";
+import { PriceHistoryChart } from "@app/shops/ui/components/PriceHistoryChart";
+import { ShopBadge } from "@app/shops/ui/components/ShopBadge";
+import { StarWatchButton } from "@app/shops/ui/components/StarWatchButton";
 
 interface MasterDetailProps {
     detail: MasterDetailType | undefined;

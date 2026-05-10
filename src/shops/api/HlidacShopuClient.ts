@@ -5,8 +5,8 @@ import { SafeJSON } from "@app/utils/json";
 import { fetchDataSet, fetchShopsStats } from "@hlidac-shopu/lib/remoting.mjs";
 // @ts-expect-error -- @hlidac-shopu/lib ships ESM with no .d.ts coverage
 import { shopOrigin as deriveShopOrigin, itemSlug, parseItemDetails } from "@hlidac-shopu/lib/shops.mjs";
-import type { HttpRequestEvent, HttpRequestSink } from "../lib/http-sink";
-import type { HlidacGetByUrlResult, HsDetailResponse, HsMetaS3, HsPriceHistoryS3 } from "./HlidacShopuClient.types";
+import type { HttpRequestEvent, HttpRequestSink } from "@app/shops/lib/http-sink";
+import type { HlidacGetByUrlResult, HsDetailResponse, HsMetaS3, HsPriceHistoryS3 } from "@app/shops/api/HlidacShopuClient.types";
 
 export interface HlidacShopuClientConfig {
     sink?: HttpRequestSink;

@@ -1,5 +1,5 @@
 import { statSync } from "node:fs";
-import { getShopsDatabase, type ShopsDatabase } from "../db/ShopsDatabase";
+import { getShopsDatabase, type ShopsDatabase } from "@app/shops/db/ShopsDatabase";
 
 export interface MigrationRow {
     id: string;

@@ -2,8 +2,8 @@ import { describe, expect, it } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ShopsDatabase } from "../db/ShopsDatabase";
-import { getCoverage } from "./coverage-api";
+import { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
+import { getCoverage } from "@app/shops/lib/coverage-api";
 
 function setup(): ShopsDatabase {
     const db = new ShopsDatabase(join(mkdtempSync(join(tmpdir(), "shops-cov-api-")), "test.db"));

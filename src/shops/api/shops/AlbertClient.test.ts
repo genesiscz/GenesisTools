@@ -2,8 +2,8 @@ import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@app/utils/json";
-import { MemoryHttpRequestSink } from "../../lib/http-sink";
-import { AlbertClient } from "./AlbertClient";
+import { MemoryHttpRequestSink } from "@app/shops/lib/http-sink";
+import { AlbertClient } from "@app/shops/api/shops/AlbertClient";
 
 function readFixture<T>(rel: string): T {
     return SafeJSON.parse(readFileSync(join(import.meta.dir, "__fixtures__/albert", rel), "utf8")) as T;

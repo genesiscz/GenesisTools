@@ -1,17 +1,17 @@
 import { SafeJSON } from "@app/utils/json";
-import type { ShopsDatabase } from "../db/ShopsDatabase";
-import { getCoverage } from "../lib/coverage-api";
-import { ingestUrl } from "../lib/ingest-api";
-import { acceptCandidatePair } from "../lib/match-api";
-import { comparePrices, getProduct, listCategories, matchProduct } from "../lib/product-api";
-import { searchProducts } from "../lib/search-api";
+import type { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
+import { getCoverage } from "@app/shops/lib/coverage-api";
+import { ingestUrl } from "@app/shops/lib/ingest-api";
+import { acceptCandidatePair } from "@app/shops/lib/match-api";
+import { comparePrices, getProduct, listCategories, matchProduct } from "@app/shops/lib/product-api";
+import { searchProducts } from "@app/shops/lib/search-api";
 import {
     ackNotification,
     addFavorite,
     getRecentNotifications,
     getWatchlist,
     removeFavorite,
-} from "../lib/watchlist-api";
+} from "@app/shops/lib/watchlist-api";
 import {
     type JsonSchema,
     ShopsAcceptMatchInput,
@@ -40,7 +40,7 @@ import {
     ShopsWatchListInputJsonSchema,
     ShopsWatchRemoveInput,
     ShopsWatchRemoveInputJsonSchema,
-} from "./types";
+} from "@app/shops/mcp/types";
 
 export interface HandlerContext {
     shopsDb: ShopsDatabase;

@@ -1,7 +1,7 @@
 import { Badge } from "@app/utils/ui/components/badge";
 import { Button } from "@app/utils/ui/components/button";
 import { Card, CardContent } from "@app/utils/ui/components/card";
-import type { Notification } from "../../db/NotificationsRepository";
+import type { Notification } from "@app/shops/db/NotificationsRepository";
 
 interface Props {
     notification: Notification;

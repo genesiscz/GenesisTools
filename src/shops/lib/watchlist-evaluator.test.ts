@@ -2,12 +2,12 @@ import { describe, expect, it } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FavoritesRepository } from "../db/FavoritesRepository";
-import { NotificationsRepository } from "../db/NotificationsRepository";
-import { ShopsDatabase } from "../db/ShopsDatabase";
-import type { DispatchResult, NotificationChannel, NotificationPayload } from "./channels/types";
-import { NotificationDispatcher } from "./notification-dispatcher";
-import { WatchlistEvaluator } from "./watchlist-evaluator";
+import { FavoritesRepository } from "@app/shops/db/FavoritesRepository";
+import { NotificationsRepository } from "@app/shops/db/NotificationsRepository";
+import { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
+import type { DispatchResult, NotificationChannel, NotificationPayload } from "@app/shops/lib/channels/types";
+import { NotificationDispatcher } from "@app/shops/lib/notification-dispatcher";
+import { WatchlistEvaluator } from "@app/shops/lib/watchlist-evaluator";
 
 class CapturingChannel implements NotificationChannel {
     readonly name = "web" as const;

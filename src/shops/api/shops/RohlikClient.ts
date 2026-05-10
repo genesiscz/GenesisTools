@@ -1,7 +1,7 @@
 // Adapted from topmonks/hlidac-shopu (EUPL-1.2) — actors/rohlik-daily/main.js
 
-import { ShopApiClient, type ShopApiClientConstructorConfig } from "../ShopApiClient";
-import type { Category, ListingOptions, RawProduct, ShopCapabilities } from "../ShopApiClient.types";
+import { ShopApiClient, type ShopApiClientConstructorConfig } from "@app/shops/api/ShopApiClient";
+import type { Category, ListingOptions, RawProduct, ShopCapabilities } from "@app/shops/api/ShopApiClient.types";
 import type {
     RohlikCategoryCountResponse,
     RohlikCategoryProductsResponse,
@@ -11,7 +11,7 @@ import type {
     RohlikProductsPricesBatchResponse,
     RohlikRawCategory,
     RohlikRawProduct,
-} from "./RohlikClient.types";
+} from "@app/shops/api/shops/RohlikClient.types";
 
 const PRODUCTS_PER_BATCH = 15;
 const PRODUCTS_PER_PAGE = 100;

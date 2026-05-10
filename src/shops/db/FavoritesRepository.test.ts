@@ -2,8 +2,8 @@ import { describe, expect, it } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FavoritesRepository } from "./FavoritesRepository";
-import { ShopsDatabase } from "./ShopsDatabase";
+import { FavoritesRepository } from "@app/shops/db/FavoritesRepository";
+import { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
 
 function fixture(): { db: ShopsDatabase; repo: FavoritesRepository; masterId: number; productId: number } {
     const db = new ShopsDatabase(join(mkdtempSync(join(tmpdir(), "shops-fav-")), "test.db"));

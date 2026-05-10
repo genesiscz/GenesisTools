@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { gzipSync } from "node:zlib";
-import { walkSitemap } from "./sitemap-fetcher";
+import { walkSitemap } from "@app/shops/lib/sitemap-fetcher";
 
 interface MockedFetchScope {
     install(routes: Record<string, MockResponse>): void;

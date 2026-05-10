@@ -5,8 +5,8 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { ImageOff, Search } from "lucide-react";
 import { useState } from "react";
-import { useDebouncedValue } from "../hooks/useDebouncedValue";
-import { ShopBadge } from "./ShopBadge";
+import { useDebouncedValue } from "@app/shops/ui/hooks/useDebouncedValue";
+import { ShopBadge } from "@app/shops/ui/components/ShopBadge";
 
 interface ProductSearchPanelProps {
     onSelect?: (id: number, type: "master" | "product") => void;

@@ -1,7 +1,7 @@
 import type { CoverageRow } from "@app/shops/types";
 import { Badge } from "@app/utils/ui/components/badge";
 import { Card, CardContent } from "@app/utils/ui/components/card";
-import { ShopBadge } from "./ShopBadge";
+import { ShopBadge } from "@app/shops/ui/components/ShopBadge";
 
 interface CoverageShopCardProps {
     row: CoverageRow;

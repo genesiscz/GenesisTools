@@ -1,25 +1,25 @@
-import type { ShopApiClient } from "../api/ShopApiClient";
-import { AlbertCrawler } from "../crawlers/AlbertCrawler";
-import { AlzaCrawler } from "../crawlers/AlzaCrawler";
-import { BenuCrawler } from "../crawlers/BenuCrawler";
-import { BillaCrawler } from "../crawlers/BillaCrawler";
-import { DmCrawler } from "../crawlers/DmCrawler";
-import { DrmaxCrawler } from "../crawlers/DrmaxCrawler";
-import { HornbachCrawler } from "../crawlers/HornbachCrawler";
-import { ItescoCrawler } from "../crawlers/ItescoCrawler";
-import { KauflandCrawler } from "../crawlers/KauflandCrawler";
-import { KnihyDobrovskyCrawler } from "../crawlers/KnihyDobrovskyCrawler";
-import { KosikRestCrawler } from "../crawlers/KosikRestCrawler";
-import { LidlCrawler } from "../crawlers/LidlCrawler";
-import { MallCrawler } from "../crawlers/MallCrawler";
-import { MojaDmCrawler } from "../crawlers/MojaDmCrawler";
-import { MountfieldCrawler } from "../crawlers/MountfieldCrawler";
-import { NotinoCrawler } from "../crawlers/NotinoCrawler";
-import { PilulkaCrawler } from "../crawlers/PilulkaCrawler";
-import { RohlikRestCrawler } from "../crawlers/RohlikRestCrawler";
-import type { ShopCrawler } from "../crawlers/ShopCrawler";
-import { TetaCrawler } from "../crawlers/TetaCrawler";
-import type { ShopsDatabase } from "../db/ShopsDatabase";
+import type { ShopApiClient } from "@app/shops/api/ShopApiClient";
+import { AlbertCrawler } from "@app/shops/crawlers/AlbertCrawler";
+import { AlzaCrawler } from "@app/shops/crawlers/AlzaCrawler";
+import { BenuCrawler } from "@app/shops/crawlers/BenuCrawler";
+import { BillaCrawler } from "@app/shops/crawlers/BillaCrawler";
+import { DmCrawler } from "@app/shops/crawlers/DmCrawler";
+import { DrmaxCrawler } from "@app/shops/crawlers/DrmaxCrawler";
+import { HornbachCrawler } from "@app/shops/crawlers/HornbachCrawler";
+import { ItescoCrawler } from "@app/shops/crawlers/ItescoCrawler";
+import { KauflandCrawler } from "@app/shops/crawlers/KauflandCrawler";
+import { KnihyDobrovskyCrawler } from "@app/shops/crawlers/KnihyDobrovskyCrawler";
+import { KosikRestCrawler } from "@app/shops/crawlers/KosikRestCrawler";
+import { LidlCrawler } from "@app/shops/crawlers/LidlCrawler";
+import { MallCrawler } from "@app/shops/crawlers/MallCrawler";
+import { MojaDmCrawler } from "@app/shops/crawlers/MojaDmCrawler";
+import { MountfieldCrawler } from "@app/shops/crawlers/MountfieldCrawler";
+import { NotinoCrawler } from "@app/shops/crawlers/NotinoCrawler";
+import { PilulkaCrawler } from "@app/shops/crawlers/PilulkaCrawler";
+import { RohlikRestCrawler } from "@app/shops/crawlers/RohlikRestCrawler";
+import type { ShopCrawler } from "@app/shops/crawlers/ShopCrawler";
+import { TetaCrawler } from "@app/shops/crawlers/TetaCrawler";
+import type { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
 
 export function createCrawlerForShop(client: ShopApiClient, db: ShopsDatabase): ShopCrawler {
     switch (client.shopOrigin) {

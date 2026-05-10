@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { WorkspaceSplit } from "../components/WorkspaceSplit";
+import { WorkspaceSplit } from "@app/shops/ui/components/WorkspaceSplit";
 
 export const Route = createFileRoute("/workspace")({
     component: WorkspacePage,

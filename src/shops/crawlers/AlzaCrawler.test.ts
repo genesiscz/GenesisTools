@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
-import { AlzaClient } from "../api/shops/AlzaClient";
-import { buildTestDatabase } from "../test-utils/buildTestDatabase";
-import { AlzaCrawler } from "./AlzaCrawler";
+import { AlzaClient } from "@app/shops/api/shops/AlzaClient";
+import { buildTestDatabase } from "@app/shops/test-utils/buildTestDatabase";
+import { AlzaCrawler } from "@app/shops/crawlers/AlzaCrawler";
 
 describe("AlzaCrawler", () => {
     it("strategy is alza-webview", () => {

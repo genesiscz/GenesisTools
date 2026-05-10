@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { initShopRegistry } from "../api/registry-init";
-import { ShopRegistry } from "../api/ShopRegistry";
-import type { ShopApiClient } from "../api/ShopApiClient";
-import type { RawProduct } from "../api/ShopApiClient.types";
-import { ShopsDatabase } from "../db/ShopsDatabase";
-import { crawlFromSitemap } from "./sitemap-crawl";
+import { initShopRegistry } from "@app/shops/api/registry-init";
+import type { ShopApiClient } from "@app/shops/api/ShopApiClient";
+import type { RawProduct } from "@app/shops/api/ShopApiClient.types";
+import { ShopRegistry } from "@app/shops/api/ShopRegistry";
+import { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
+import { crawlFromSitemap } from "@app/shops/lib/sitemap-crawl";
 
 const realFetch = globalThis.fetch;
 

@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { getWatchlist } from "../../../lib/watchlist-api";
-import { apiHandler } from "../../server/api-utils";
+import { getWatchlist } from "@app/shops/lib/watchlist-api";
+import { apiHandler } from "@app/shops/ui/server/api-utils";
 
 export const Route = createFileRoute("/api/watchlist")({
     server: {

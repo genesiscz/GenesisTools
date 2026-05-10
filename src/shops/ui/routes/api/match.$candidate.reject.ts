@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { rejectCandidatePair } from "../../../lib/match-api";
-import { apiHandler } from "../../server/api-utils";
+import { rejectCandidatePair } from "@app/shops/lib/match-api";
+import { apiHandler } from "@app/shops/ui/server/api-utils";
 
 function parsePair(slug: string): { a: number; b: number } | null {
     const [a, b] = slug.split("-").map(Number);

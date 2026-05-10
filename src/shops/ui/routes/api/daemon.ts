@@ -1,7 +1,7 @@
 import logger from "@app/logger";
 import { getSettingsRepository } from "@app/shops/lib/settings";
 import { createFileRoute } from "@tanstack/react-router";
-import { apiHandler } from "../../server/api-utils";
+import { apiHandler } from "@app/shops/ui/server/api-utils";
 
 const log = logger.child({ component: "api:daemon" });
 

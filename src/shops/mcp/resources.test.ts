@@ -2,8 +2,8 @@ import { describe, expect, it } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ShopsDatabase } from "../db/ShopsDatabase";
-import { listResources, readResource } from "./resources";
+import { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
+import { listResources, readResource } from "@app/shops/mcp/resources";
 
 function setup(): { shopsDb: ShopsDatabase; masterId: number } {
     const db = new ShopsDatabase(join(mkdtempSync(join(tmpdir(), "shops-mcp-res-")), "test.db"));

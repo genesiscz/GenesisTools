@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { SITEMAP_STRATEGIES } from "./sitemap-strategies";
+import { SITEMAP_STRATEGIES } from "@app/shops/api/sitemap-strategies";
 
 describe("kosik strategy", () => {
     const k = SITEMAP_STRATEGIES["kosik.cz"];

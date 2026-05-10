@@ -1,7 +1,7 @@
 import logger from "@app/logger";
 import { getShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import { createFileRoute } from "@tanstack/react-router";
-import { apiHandler } from "../../server/api-utils";
+import { apiHandler } from "@app/shops/ui/server/api-utils";
 
 const log = logger.child({ component: "api:product:$shop:$slug" });
 

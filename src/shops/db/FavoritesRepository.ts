@@ -1,8 +1,8 @@
 import logger from "@app/logger";
 import { nowUtcIso } from "@app/utils/sql-time";
 import type { Selectable } from "kysely";
-import type { ShopsDatabase } from "./ShopsDatabase";
-import type { FavoritesTable } from "./types";
+import type { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
+import type { FavoritesTable } from "@app/shops/db/types";
 
 const log = logger.child({ component: "FavoritesRepository" });
 

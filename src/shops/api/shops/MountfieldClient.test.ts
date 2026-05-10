@@ -1,8 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { MemoryHttpRequestSink } from "../../lib/http-sink";
-import { MountfieldClient } from "./MountfieldClient";
+import { MemoryHttpRequestSink } from "@app/shops/lib/http-sink";
+import { MountfieldClient } from "@app/shops/api/shops/MountfieldClient";
 
 function readHtml(rel: string): string {
     return readFileSync(join(import.meta.dir, "__fixtures__/mountfield", rel), "utf8");
@@ -36,7 +36,7 @@ describe("MountfieldClient.listCategory", () => {
     it("yields RawProducts from a category page", async () => {
         const html = readHtml("category-page1.html");
         const { client } = buildClient([{ match: "/travni-sekacky", html }]);
-        const out: import("../ShopApiClient.types").RawProduct[] = [];
+        const out: import("@app/shops/api/ShopApiClient.types").RawProduct[] = [];
         for await (const p of client.listCategory({ category: "travni-sekacky", limit: 5 })) {
             out.push(p);
         }
@@ -53,7 +53,7 @@ describe("MountfieldClient.listCategory", () => {
     it("respects opts.limit", async () => {
         const html = readHtml("category-page1.html");
         const { client } = buildClient([{ match: "/travni-sekacky", html }]);
-        const out: import("../ShopApiClient.types").RawProduct[] = [];
+        const out: import("@app/shops/api/ShopApiClient.types").RawProduct[] = [];
         for await (const p of client.listCategory({ category: "travni-sekacky", limit: 1 })) {
             out.push(p);
         }
@@ -90,7 +90,7 @@ describe("MountfieldClient.listCategory", () => {
             { match: "/leaf-b", html: leafB },
         ]);
 
-        const out: import("../ShopApiClient.types").RawProduct[] = [];
+        const out: import("@app/shops/api/ShopApiClient.types").RawProduct[] = [];
         for await (const p of client.listCategory({ category: "predvypis", limit: 10 })) {
             out.push(p);
         }
@@ -124,7 +124,7 @@ describe("MountfieldClient.listCategory", () => {
             { match: "/zahradni-technika", html: page1 },
         ]);
 
-        const out: import("../ShopApiClient.types").RawProduct[] = [];
+        const out: import("@app/shops/api/ShopApiClient.types").RawProduct[] = [];
         for await (const p of client.listCategory({ category: "zahradni-technika", limit: 10 })) {
             out.push(p);
         }
@@ -156,7 +156,7 @@ describe("MountfieldClient.listCategory", () => {
             { match: "/loop-b", html: loopB },
         ]);
 
-        const out: import("../ShopApiClient.types").RawProduct[] = [];
+        const out: import("@app/shops/api/ShopApiClient.types").RawProduct[] = [];
         for await (const p of client.listCategory({ category: "loop-start", limit: 5 })) {
             out.push(p);
         }

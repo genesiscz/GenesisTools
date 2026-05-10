@@ -1,5 +1,5 @@
-import type { ShopsDatabase } from "./ShopsDatabase";
-import type { Product } from "./types";
+import type { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
+import type { Product } from "@app/shops/db/types";
 
 export interface SearchOptions {
     limit?: number;

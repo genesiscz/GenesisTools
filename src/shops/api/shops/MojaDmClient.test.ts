@@ -2,8 +2,8 @@ import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@app/utils/json";
-import { MemoryHttpRequestSink } from "../../lib/http-sink";
-import { MojaDmClient } from "./MojaDmClient";
+import { MemoryHttpRequestSink } from "@app/shops/lib/http-sink";
+import { MojaDmClient } from "@app/shops/api/shops/MojaDmClient";
 
 function readFixture<T>(rel: string): T {
     const full = join(import.meta.dir, "__fixtures__/mojadm", rel);
@@ -59,7 +59,7 @@ describe("MojaDmClient", () => {
             { match: "/sk/search/static", response: listing },
         ]);
 
-        const out: import("../ShopApiClient.types").RawProduct[] = [];
+        const out: import("@app/shops/api/ShopApiClient.types").RawProduct[] = [];
         for await (const p of client.listCategory({ category: "telo", limit: 1 })) {
             out.push(p);
         }

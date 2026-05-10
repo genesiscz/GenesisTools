@@ -1,8 +1,8 @@
 import logger from "@app/logger";
 import { slugify } from "@app/utils/string";
-import type { ShopsDatabase } from "../db/ShopsDatabase";
-import { refreshMasterDenorm } from "./master-denorm";
-import type { Matcher, MatcherInput, MatchResult } from "./matcher";
+import type { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
+import { refreshMasterDenorm } from "@app/shops/lib/master-denorm";
+import type { Matcher, MatcherInput, MatchResult } from "@app/shops/lib/matcher";
 
 export type { MatchResult };
 

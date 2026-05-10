@@ -7,9 +7,9 @@
 // window.__ALZA_CATEGORY__ globals.
 
 import { type WebView, type WebViewOptions, WebViewPool } from "@app/utils/WebView";
-import { ShopApiClient, type ShopApiClientConstructorConfig } from "../ShopApiClient";
-import type { Category, ListingOptions, RawProduct, ShopCapabilities } from "../ShopApiClient.types";
-import type { AlzaCategoryListing, AlzaListingEntry, AlzaPageData } from "./AlzaClient.types";
+import { ShopApiClient, type ShopApiClientConstructorConfig } from "@app/shops/api/ShopApiClient";
+import type { Category, ListingOptions, RawProduct, ShopCapabilities } from "@app/shops/api/ShopApiClient.types";
+import type { AlzaCategoryListing, AlzaListingEntry, AlzaPageData } from "@app/shops/api/shops/AlzaClient.types";
 
 const ALZA_ORIGIN = "alza.cz";
 const ROOT = "https://www.alza.cz";

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { MacOsChannel } from "./MacOsChannel";
-import type { NotificationPayload } from "./types";
+import { MacOsChannel } from "@app/shops/lib/channels/MacOsChannel";
+import type { NotificationPayload } from "@app/shops/lib/channels/types";
 
 const PAYLOAD: NotificationPayload = {
     notification: {

@@ -2,7 +2,7 @@ import logger from "@app/logger";
 import { getShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import type { MasterListItem, MasterListResponse } from "@app/shops/types";
 import { createFileRoute } from "@tanstack/react-router";
-import { apiHandler, intParam, parseQuery } from "../../server/api-utils";
+import { apiHandler, intParam, parseQuery } from "@app/shops/ui/server/api-utils";
 
 const log = logger.child({ component: "api:master" });
 

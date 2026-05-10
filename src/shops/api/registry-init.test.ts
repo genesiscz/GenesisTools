@@ -1,20 +1,20 @@
 import { beforeEach, describe, expect, it } from "bun:test";
-import { __resetInitState, initShopRegistry } from "./registry-init";
-import { ShopRegistry } from "./ShopRegistry";
-import { AlzaClient } from "./shops/AlzaClient";
-import { BenuClient } from "./shops/BenuClient";
-import { DrmaxClient } from "./shops/DrmaxClient";
-import { HornbachClient } from "./shops/HornbachClient";
-import { ItescoClient } from "./shops/ItescoClient";
-import { KauflandClient } from "./shops/KauflandClient";
-import { KnihyDobrovskyClient } from "./shops/KnihyDobrovskyClient";
-import { KosikClient } from "./shops/KosikClient";
-import { MallClient } from "./shops/MallClient";
-import { MojaDmClient } from "./shops/MojaDmClient";
-import { MountfieldClient } from "./shops/MountfieldClient";
-import { NotinoClient } from "./shops/NotinoClient";
-import { PilulkaClient } from "./shops/PilulkaClient";
-import { RohlikClient } from "./shops/RohlikClient";
+import { __resetInitState, initShopRegistry } from "@app/shops/api/registry-init";
+import { ShopRegistry } from "@app/shops/api/ShopRegistry";
+import { AlzaClient } from "@app/shops/api/shops/AlzaClient";
+import { BenuClient } from "@app/shops/api/shops/BenuClient";
+import { DrmaxClient } from "@app/shops/api/shops/DrmaxClient";
+import { HornbachClient } from "@app/shops/api/shops/HornbachClient";
+import { ItescoClient } from "@app/shops/api/shops/ItescoClient";
+import { KauflandClient } from "@app/shops/api/shops/KauflandClient";
+import { KnihyDobrovskyClient } from "@app/shops/api/shops/KnihyDobrovskyClient";
+import { KosikClient } from "@app/shops/api/shops/KosikClient";
+import { MallClient } from "@app/shops/api/shops/MallClient";
+import { MojaDmClient } from "@app/shops/api/shops/MojaDmClient";
+import { MountfieldClient } from "@app/shops/api/shops/MountfieldClient";
+import { NotinoClient } from "@app/shops/api/shops/NotinoClient";
+import { PilulkaClient } from "@app/shops/api/shops/PilulkaClient";
+import { RohlikClient } from "@app/shops/api/shops/RohlikClient";
 
 describe("registry-init", () => {
     beforeEach(() => {

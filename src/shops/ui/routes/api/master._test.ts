@@ -3,7 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ShopsDatabase, setShopsDatabaseSingletonForTest } from "@app/shops/db/ShopsDatabase";
-import * as masterRoute from "./master";
+import * as masterRoute from "@app/shops/ui/routes/api/master";
 
 function tmpDb(): ShopsDatabase {
     const path = join(mkdtempSync(join(tmpdir(), "shops-master-")), "test.db");

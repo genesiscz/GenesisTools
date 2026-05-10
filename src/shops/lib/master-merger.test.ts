@@ -2,8 +2,8 @@ import { describe, expect, it } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ShopsDatabase } from "../db/ShopsDatabase";
-import { MasterMerger } from "./master-merger";
+import { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
+import { MasterMerger } from "@app/shops/lib/master-merger";
 
 function setup() {
     const db = new ShopsDatabase(join(mkdtempSync(join(tmpdir(), "shops-merge-")), "test.db"));

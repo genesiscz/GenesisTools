@@ -5,8 +5,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { GitMerge } from "lucide-react";
 import { toast } from "sonner";
-import type { PairDTO, ProductSummary } from "../../lib/match-api";
-import { EmptyState } from "../components/EmptyState";
+import type { PairDTO, ProductSummary } from "@app/shops/lib/match-api";
+import { EmptyState } from "@app/shops/ui/components/EmptyState";
 
 export const Route = createFileRoute("/match/review")({
     component: MatchReviewPage,

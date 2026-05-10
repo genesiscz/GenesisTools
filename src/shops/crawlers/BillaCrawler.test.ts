@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
-import { BillaClient } from "../api/shops/BillaClient";
-import { buildTestDatabase } from "../test-utils/buildTestDatabase";
-import { BillaCrawler } from "./BillaCrawler";
+import { BillaClient } from "@app/shops/api/shops/BillaClient";
+import { buildTestDatabase } from "@app/shops/test-utils/buildTestDatabase";
+import { BillaCrawler } from "@app/shops/crawlers/BillaCrawler";
 
 describe("BillaCrawler", () => {
     it("strategy is billa-rest", () => {

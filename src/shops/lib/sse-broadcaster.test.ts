@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "bun:test";
-import { SseBroadcaster, sseBroadcaster } from "./sse-broadcaster";
+import { SseBroadcaster, sseBroadcaster } from "@app/shops/lib/sse-broadcaster";
 
 beforeEach(() => sseBroadcaster.reset());
 

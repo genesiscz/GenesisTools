@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { classifyAkamaiSignals, extractAbckCookie, isAkamaiBlock } from "./akamai-detect";
+import { classifyAkamaiSignals, extractAbckCookie, isAkamaiBlock } from "@app/shops/lib/akamai-detect";
 
 describe("isAkamaiBlock", () => {
     it("returns true on status 403", () => {

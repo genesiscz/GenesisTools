@@ -8,8 +8,8 @@ import {
 } from "@app/utils/ui/components/pagination";
 import { Skeleton } from "@app/utils/ui/components/skeleton";
 import { LayoutGrid } from "lucide-react";
-import { BrowseCard } from "./BrowseCard";
-import { EmptyState } from "./EmptyState";
+import { BrowseCard } from "@app/shops/ui/components/BrowseCard";
+import { EmptyState } from "@app/shops/ui/components/EmptyState";
 
 interface BrowseGridProps {
     data: MasterListResponse | undefined;

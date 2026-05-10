@@ -1,9 +1,9 @@
 // Adapted from topmonks/hlidac-shopu (EUPL-1.2) — actors/tetadrogerie-daily/main.js
 
 import { parseHTML } from "linkedom";
-import { ShopApiClient, type ShopApiClientConstructorConfig } from "../ShopApiClient";
-import type { Category, ListingOptions, RawProduct, ShopCapabilities } from "../ShopApiClient.types";
-import type { TetaCategoryListingResponse, TetaRawProduct, TetaTaxon } from "./TetaClient.types";
+import { ShopApiClient, type ShopApiClientConstructorConfig } from "@app/shops/api/ShopApiClient";
+import type { Category, ListingOptions, RawProduct, ShopCapabilities } from "@app/shops/api/ShopApiClient.types";
+import type { TetaCategoryListingResponse, TetaRawProduct, TetaTaxon } from "@app/shops/api/shops/TetaClient.types";
 
 const TETA_ORIGIN = "tetadrogerie.cz";
 const STORE_ROOT = "https://www.tetadrogerie.cz";

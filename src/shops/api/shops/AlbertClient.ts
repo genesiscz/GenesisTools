@@ -22,13 +22,13 @@
  */
 
 import { SafeJSON } from "@app/utils/json";
-import { ShopApiClient, type ShopApiClientConstructorConfig } from "../ShopApiClient";
-import type { Category, ListingOptions, RawProduct, ShopCapabilities } from "../ShopApiClient.types";
+import { ShopApiClient, type ShopApiClientConstructorConfig } from "@app/shops/api/ShopApiClient";
+import type { Category, ListingOptions, RawProduct, ShopCapabilities } from "@app/shops/api/ShopApiClient.types";
 import type {
     AlbertCategoryProductSearchResponse,
     AlbertNavigationResponse,
     AlbertRawProduct,
-} from "./AlbertClient.types";
+} from "@app/shops/api/shops/AlbertClient.types";
 
 const ALBERT_ORIGIN = "albert.cz";
 const STORE_ROOT = "https://www.albert.cz";
