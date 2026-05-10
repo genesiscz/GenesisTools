@@ -1,35 +1,14 @@
+import type { Selectable } from "kysely";
 import type { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
-import type { Product } from "@app/shops/db/types";
+import type { Product, ProductsTable } from "@app/shops/db/types";
 
 export interface SearchOptions {
     limit?: number;
     shopOrigin?: string;
 }
 
-interface FtsRow {
-    id: number;
-    shop_origin: string;
-    slug: string;
-    url: string;
-    name: string;
-    name_normalized: string;
-    brand: string | null;
-    brand_normalized: string | null;
-    ean: string | null;
-    image_url: string | null;
-    unit: string | null;
-    unit_amount: number | null;
-    pack_count: number | null;
-    flavor_key: string | null;
-    master_product_id: number | null;
-    match_method: string;
-    match_similarity: number | null;
-    match_at: string | null;
-    first_seen_at: string;
-    last_updated_at: string;
-    is_active: number;
-    metadata_json: string;
-}
+// FTS5 MATCH unmodeled by Kysely; SELECT p.* maps onto Selectable<ProductsTable>.
+type FtsRow = Selectable<ProductsTable>;
 
 export class SearchRepository {
     constructor(private readonly db: ShopsDatabase) {}
@@ -64,7 +43,7 @@ export class SearchRepository {
             .raw()
             .query<FtsRow, (string | number)[]>(sql)
             .all(...params);
-        return rows as Product[];
+        return rows;
     }
 }
 
