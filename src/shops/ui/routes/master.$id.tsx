@@ -35,6 +35,35 @@ function MasterPage() {
         },
     });
 
+    const bestTimeQuery = useQuery({
+        queryKey: ["master", id, "best-time"],
+        queryFn: async (): Promise<{
+            best_weekday: { weekday_name: string; avg_price: number; sample_size: number } | null;
+        }> => {
+            const res = await fetch(`/api/master/${id}/history?stats=1`);
+            if (!res.ok) {
+                throw new Error(`best-time fetch failed: ${res.status}`);
+            }
+
+            return res.json();
+        },
+    });
+
+    const watchlistQuery = useQuery({
+        queryKey: ["watchlist"],
+        queryFn: async (): Promise<{ master_product_id: number; target_price: number | null }[]> => {
+            const res = await fetch("/api/watchlist");
+            if (!res.ok) {
+                throw new Error(`watchlist fetch failed: ${res.status}`);
+            }
+
+            return res.json();
+        },
+    });
+
+    const targetPrice =
+        watchlistQuery.data?.find((w) => w.master_product_id === Number(id))?.target_price ?? null;
+
     return (
         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6">
             <MasterDetail
@@ -42,6 +71,8 @@ function MasterPage() {
                 history={historyQuery.data}
                 isLoading={detailQuery.isLoading}
                 isHistoryLoading={historyQuery.isLoading}
+                targetPrice={targetPrice}
+                bestTime={bestTimeQuery.data?.best_weekday ?? null}
             />
         </div>
     );

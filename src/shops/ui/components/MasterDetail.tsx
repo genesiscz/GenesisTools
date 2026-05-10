@@ -12,9 +12,18 @@ interface MasterDetailProps {
     history: PriceHistoryResponse | undefined;
     isLoading: boolean;
     isHistoryLoading: boolean;
+    targetPrice?: number | null;
+    bestTime?: { weekday_name: string; avg_price: number; sample_size: number } | null;
 }
 
-export function MasterDetail({ detail, history, isLoading, isHistoryLoading }: MasterDetailProps) {
+export function MasterDetail({
+    detail,
+    history,
+    isLoading,
+    isHistoryLoading,
+    targetPrice,
+    bestTime,
+}: MasterDetailProps) {
     if (isLoading || !detail) {
         return (
             <div className="space-y-6">
@@ -71,7 +80,15 @@ export function MasterDetail({ detail, history, isLoading, isHistoryLoading }: M
                 </div>
             </div>
 
-            <PriceHistoryChart history={history} isLoading={isHistoryLoading} />
+            <PriceHistoryChart history={history} isLoading={isHistoryLoading} targetPrice={targetPrice} />
+
+            {bestTime ? (
+                <div className="font-mono text-xs text-muted-foreground px-1">
+                    Usually cheapest on{" "}
+                    <span className="text-[var(--color-neon-cyan)]">{bestTime.weekday_name}s</span> — avg{" "}
+                    {bestTime.avg_price.toFixed(2)} CZK over {bestTime.sample_size} observations.
+                </div>
+            ) : null}
 
             <div>
                 <h2 className="font-mono text-xs tracking-[0.25em] text-muted-foreground uppercase mb-3">

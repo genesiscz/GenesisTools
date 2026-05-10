@@ -1,5 +1,6 @@
 import logger from "@app/logger";
 import { getShopsDatabase } from "@app/shops/db/ShopsDatabase";
+import { bestWeekday } from "@app/shops/lib/analytics/best-time";
 import type { PriceHistoryPoint, PriceHistoryResponse } from "@app/shops/types";
 import { apiHandler, intParam } from "@app/shops/ui/server/api-utils";
 import { createFileRoute } from "@tanstack/react-router";
@@ -29,6 +30,9 @@ export const Route = createFileRoute("/api/master/$id/history")({
                     return Response.json({ error: (err as Error).message }, { status: 400 });
                 }
 
+                const includeStats = url.searchParams.get("stats") === "1";
+                const best_weekday = includeStats ? await bestWeekday(getShopsDatabase(), id) : null;
+
                 const rows = await getShopsDatabase()
                     .kysely()
                     .selectFrom("prices as pr")
@@ -52,7 +56,7 @@ export const Route = createFileRoute("/api/master/$id/history")({
                         points: [],
                         range: { from: today, to: today },
                     };
-                    return Response.json(body);
+                    return Response.json({ ...body, best_weekday });
                 }
 
                 const shops = Array.from(new Set(rows.map((r) => r.shop_origin))).sort();
@@ -82,7 +86,7 @@ export const Route = createFileRoute("/api/master/$id/history")({
                 };
 
                 log.debug({ id, days, shops: shops.length, points: points.length }, "api: history served");
-                return Response.json(body);
+                return Response.json({ ...body, best_weekday });
             }),
         },
     },

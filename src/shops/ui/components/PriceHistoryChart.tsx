@@ -1,14 +1,26 @@
 import type { PriceHistoryResponse } from "@app/shops/types";
 import { Card, CardContent, CardHeader, CardTitle } from "@app/utils/ui/components/card";
 import { chartColors, chartSeriesPalette } from "@app/utils/ui/graphs/colors";
-import { Area, AreaChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import {
+    Area,
+    AreaChart,
+    CartesianGrid,
+    Legend,
+    ReferenceLine,
+    ResponsiveContainer,
+    Tooltip,
+    XAxis,
+    YAxis,
+} from "recharts";
 
 interface PriceHistoryChartProps {
     history: PriceHistoryResponse | undefined;
     isLoading: boolean;
+    targetPrice?: number | null;
+    referencePrice?: number | null;
 }
 
-export function PriceHistoryChart({ history, isLoading }: PriceHistoryChartProps) {
+export function PriceHistoryChart({ history, isLoading, targetPrice, referencePrice }: PriceHistoryChartProps) {
     return (
         <Card className="overflow-hidden">
             <CardHeader>
@@ -62,6 +74,26 @@ export function PriceHistoryChart({ history, isLoading }: PriceHistoryChartProps
                                     labelStyle={{ color: chartColors.cyan }}
                                 />
                                 <Legend wrapperStyle={{ fontFamily: "monospace", fontSize: 10 }} />
+                                {targetPrice ? (
+                                    <ReferenceLine
+                                        y={targetPrice}
+                                        stroke="var(--color-neon-amber)"
+                                        strokeDasharray="4 2"
+                                        label={{
+                                            value: "target",
+                                            fontSize: 10,
+                                            fill: "var(--color-neon-amber)",
+                                        }}
+                                    />
+                                ) : null}
+                                {referencePrice ? (
+                                    <ReferenceLine
+                                        y={referencePrice}
+                                        stroke={chartColors.axis}
+                                        strokeDasharray="2 2"
+                                        label={{ value: "ref", fontSize: 10, fill: chartColors.axis }}
+                                    />
+                                ) : null}
                                 {history.shops.map((shop, i) => {
                                     const color = chartSeriesPalette[i % chartSeriesPalette.length];
                                     return (
