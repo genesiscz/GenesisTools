@@ -1,6 +1,7 @@
 import logger from "@app/logger";
 import type { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import type { FavoritesTable } from "@app/shops/db/types";
+import { freshnessFor } from "@app/shops/lib/analytics/freshness";
 import { nowUtcIso } from "@app/utils/sql-time";
 import type { Selectable } from "kysely";
 
@@ -37,6 +38,8 @@ export interface FavoriteWithState extends Favorite {
     best_observed_at: string | null;
     delta_percent: number | null;
     delta_absolute: number | null;
+    last_observed_at: string | null;
+    shops_covered: number;
 }
 
 export class FavoritesRepository {
@@ -203,12 +206,27 @@ export class FavoritesRepository {
         }
 
         const rows = await q.execute();
-        return rows.map((r) => {
+        const baseMapped = rows.map((r) => {
             const ref = r.reference_price;
             const cur = r.best_price;
             const delta_absolute = ref !== null && cur !== null ? ref - cur : null;
             const delta_percent = ref !== null && ref > 0 && cur !== null ? (ref - cur) / ref : null;
             return { ...r, delta_absolute, delta_percent };
+        });
+
+        if (baseMapped.length === 0) {
+            return baseMapped.map((r) => ({ ...r, last_observed_at: null, shops_covered: 0 }));
+        }
+
+        const masterIds = [...new Set(baseMapped.map((r) => r.master_product_id))];
+        const freshness = await freshnessFor(this.db, masterIds);
+        return baseMapped.map((r) => {
+            const f = freshness.get(r.master_product_id);
+            return {
+                ...r,
+                last_observed_at: f?.last_observed_at ?? null,
+                shops_covered: f?.shops_covered ?? 0,
+            };
         });
     }
 }

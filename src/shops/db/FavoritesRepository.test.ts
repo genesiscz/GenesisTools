@@ -127,6 +127,8 @@ describe("FavoritesRepository", () => {
         expect(rows[0].best_price).toBe(39.9);
         expect(rows[0].best_shop).toBe("rohlik.cz");
         expect(rows[0].delta_percent).toBeCloseTo(0.2004, 3);
+        expect(rows[0].shops_covered).toBe(1);
+        expect(rows[0].last_observed_at).toBe("2026-05-08T10:00:00Z");
         db.close();
     });
 
