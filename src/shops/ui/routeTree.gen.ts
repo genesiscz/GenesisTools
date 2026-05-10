@@ -44,6 +44,7 @@ import { Route as ApiOrdersListRouteImport } from './routes/api/orders.list'
 import { Route as ApiMatchCandidatesRouteImport } from './routes/api/match.candidates'
 import { Route as ApiMasterIdRouteImport } from './routes/api/master.$id'
 import { Route as ApiLiveEventsRouteImport } from './routes/api/live.events'
+import { Route as ApiInsightsSpendRouteImport } from './routes/api/insights.spend'
 import { Route as ApiAuthRegisterRouteImport } from './routes/api/auth.register'
 import { Route as ApiAuthMeRouteImport } from './routes/api/auth.me'
 import { Route as ApiAuthLogoutRouteImport } from './routes/api/auth.logout'
@@ -231,6 +232,11 @@ const ApiLiveEventsRoute = ApiLiveEventsRouteImport.update({
   path: '/api/live/events',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiInsightsSpendRoute = ApiInsightsSpendRouteImport.update({
+  id: '/api/insights/spend',
+  path: '/api/insights/spend',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiAuthRegisterRoute = ApiAuthRegisterRouteImport.update({
   id: '/api/auth/register',
   path: '/api/auth/register',
@@ -315,6 +321,7 @@ export interface FileRoutesByFullPath {
   '/api/auth/logout': typeof ApiAuthLogoutRoute
   '/api/auth/me': typeof ApiAuthMeRoute
   '/api/auth/register': typeof ApiAuthRegisterRoute
+  '/api/insights/spend': typeof ApiInsightsSpendRoute
   '/api/live/events': typeof ApiLiveEventsRoute
   '/api/master/$id': typeof ApiMasterIdRouteWithChildren
   '/api/match/candidates': typeof ApiMatchCandidatesRoute
@@ -363,6 +370,7 @@ export interface FileRoutesByTo {
   '/api/auth/logout': typeof ApiAuthLogoutRoute
   '/api/auth/me': typeof ApiAuthMeRoute
   '/api/auth/register': typeof ApiAuthRegisterRoute
+  '/api/insights/spend': typeof ApiInsightsSpendRoute
   '/api/live/events': typeof ApiLiveEventsRoute
   '/api/master/$id': typeof ApiMasterIdRouteWithChildren
   '/api/match/candidates': typeof ApiMatchCandidatesRoute
@@ -412,6 +420,7 @@ export interface FileRoutesById {
   '/api/auth/logout': typeof ApiAuthLogoutRoute
   '/api/auth/me': typeof ApiAuthMeRoute
   '/api/auth/register': typeof ApiAuthRegisterRoute
+  '/api/insights/spend': typeof ApiInsightsSpendRoute
   '/api/live/events': typeof ApiLiveEventsRoute
   '/api/master/$id': typeof ApiMasterIdRouteWithChildren
   '/api/match/candidates': typeof ApiMatchCandidatesRoute
@@ -462,6 +471,7 @@ export interface FileRouteTypes {
     | '/api/auth/logout'
     | '/api/auth/me'
     | '/api/auth/register'
+    | '/api/insights/spend'
     | '/api/live/events'
     | '/api/master/$id'
     | '/api/match/candidates'
@@ -510,6 +520,7 @@ export interface FileRouteTypes {
     | '/api/auth/logout'
     | '/api/auth/me'
     | '/api/auth/register'
+    | '/api/insights/spend'
     | '/api/live/events'
     | '/api/master/$id'
     | '/api/match/candidates'
@@ -558,6 +569,7 @@ export interface FileRouteTypes {
     | '/api/auth/logout'
     | '/api/auth/me'
     | '/api/auth/register'
+    | '/api/insights/spend'
     | '/api/live/events'
     | '/api/master/$id'
     | '/api/match/candidates'
@@ -607,6 +619,7 @@ export interface RootRouteChildren {
   ApiAuthLogoutRoute: typeof ApiAuthLogoutRoute
   ApiAuthMeRoute: typeof ApiAuthMeRoute
   ApiAuthRegisterRoute: typeof ApiAuthRegisterRoute
+  ApiInsightsSpendRoute: typeof ApiInsightsSpendRoute
   ApiLiveEventsRoute: typeof ApiLiveEventsRoute
   ApiMatchCandidatesRoute: typeof ApiMatchCandidatesRoute
   ApiOrdersListRoute: typeof ApiOrdersListRoute
@@ -869,6 +882,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiLiveEventsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/insights/spend': {
+      id: '/api/insights/spend'
+      path: '/api/insights/spend'
+      fullPath: '/api/insights/spend'
+      preLoaderRoute: typeof ApiInsightsSpendRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/auth/register': {
       id: '/api/auth/register'
       path: '/api/auth/register'
@@ -1028,6 +1048,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiAuthLogoutRoute: ApiAuthLogoutRoute,
   ApiAuthMeRoute: ApiAuthMeRoute,
   ApiAuthRegisterRoute: ApiAuthRegisterRoute,
+  ApiInsightsSpendRoute: ApiInsightsSpendRoute,
   ApiLiveEventsRoute: ApiLiveEventsRoute,
   ApiMatchCandidatesRoute: ApiMatchCandidatesRoute,
   ApiOrdersListRoute: ApiOrdersListRoute,
