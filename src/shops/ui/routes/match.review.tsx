@@ -1,15 +1,23 @@
 import type { PairDTO, ProductSummary } from "@app/shops/lib/match-api";
 import { EmptyState } from "@app/shops/ui/components/EmptyState";
+import { type UnmatchedItem, UnmatchedItemsTab } from "@app/shops/ui/components/UnmatchedItemsTab";
+import { RequireAuth, requireAuthBeforeLoad } from "@app/shops/ui/lib/useAuthMe";
 import { Badge } from "@app/utils/ui/components/badge";
 import { Button } from "@app/utils/ui/components/button";
 import { Card, CardContent, CardFooter, CardHeader } from "@app/utils/ui/components/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@app/utils/ui/components/tabs";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { GitMerge } from "lucide-react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/match/review")({
-    component: MatchReviewPage,
+    component: () => (
+        <RequireAuth>
+            <MatchReviewPage />
+        </RequireAuth>
+    ),
+    beforeLoad: requireAuthBeforeLoad,
 });
 
 function MatchReviewPage() {
@@ -17,6 +25,18 @@ function MatchReviewPage() {
     const data = useQuery({
         queryKey: ["match-candidates"],
         queryFn: async () => (await fetch("/api/match/candidates")).json() as Promise<PairDTO[]>,
+    });
+    const myCount = useQuery({
+        queryKey: ["match", "my-unmatched-count"],
+        queryFn: async (): Promise<number> => {
+            const res = await fetch("/api/match/my-unmatched");
+            if (!res.ok) {
+                return 0;
+            }
+
+            const rows = (await res.json()) as UnmatchedItem[];
+            return rows.length;
+        },
     });
     const accept = useMutation({
         mutationFn: async (pair: PairDTO) =>
@@ -38,28 +58,41 @@ function MatchReviewPage() {
     const pairs = data.data ?? [];
 
     return (
-        <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6 space-y-5">
-            <h1 className="font-mono tracking-[0.3em] text-sm text-muted-foreground uppercase">
-                Match :: <span className="text-foreground">{pairs.length} pending</span>
-            </h1>
-            {pairs.length === 0 ? (
-                <EmptyState
-                    icon={<GitMerge />}
-                    title="All caught up"
-                    body="No pending merge candidates. New gray-zone pairs surface here when the auto-matcher isn't sure whether two products are the same SKU."
-                />
-            ) : (
-                <div className="grid gap-3">
-                    {pairs.map((pair) => (
-                        <PairCard
-                            key={`${pair.productIdA}-${pair.productIdB}`}
-                            pair={pair}
-                            onAccept={() => accept.mutate(pair)}
-                            onReject={() => reject.mutate(pair)}
-                        />
-                    ))}
-                </div>
-            )}
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 space-y-4">
+            <Tabs defaultValue="all">
+                <TabsList>
+                    <TabsTrigger value="all">All shops</TabsTrigger>
+                    <TabsTrigger value="mine">My items ({myCount.data ?? 0})</TabsTrigger>
+                </TabsList>
+                <TabsContent value="all">
+                    <div className="space-y-5">
+                        <h1 className="font-mono tracking-[0.3em] text-sm text-muted-foreground uppercase">
+                            Match :: <span className="text-foreground">{pairs.length} pending</span>
+                        </h1>
+                        {pairs.length === 0 ? (
+                            <EmptyState
+                                icon={<GitMerge />}
+                                title="All caught up"
+                                body="No pending merge candidates. New gray-zone pairs surface here when the auto-matcher isn't sure whether two products are the same SKU."
+                            />
+                        ) : (
+                            <div className="grid gap-3">
+                                {pairs.map((pair) => (
+                                    <PairCard
+                                        key={`${pair.productIdA}-${pair.productIdB}`}
+                                        pair={pair}
+                                        onAccept={() => accept.mutate(pair)}
+                                        onReject={() => reject.mutate(pair)}
+                                    />
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                </TabsContent>
+                <TabsContent value="mine">
+                    <UnmatchedItemsTab />
+                </TabsContent>
+            </Tabs>
         </div>
     );
 }
