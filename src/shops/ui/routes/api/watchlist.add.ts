@@ -1,3 +1,4 @@
+import { getShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import { addFavorite } from "@app/shops/lib/watchlist-api";
 import { apiHandler, jsonBody } from "@app/shops/ui/server/api-utils";
 import { createFileRoute } from "@tanstack/react-router";
@@ -11,12 +12,31 @@ export const Route = createFileRoute("/api/watchlist/add")({
                     return body;
                 }
 
-                if (typeof body.url !== "string" || body.url.length === 0) {
-                    return Response.json({ error: "Field 'url' is required" }, { status: 400 });
+                // Resolve `url` directly OR by master_product_id — StarWatchButton
+                // on the master detail page only knows the master id.
+                let url: string | null =
+                    typeof body.url === "string" && body.url.length > 0 ? body.url : null;
+                if (!url && typeof body.master_product_id === "number") {
+                    const db = getShopsDatabase().raw();
+                    const row = db
+                        .query<{ url: string }, [number]>(
+                            "SELECT url FROM products WHERE master_product_id = ? AND is_active = 1 ORDER BY id LIMIT 1"
+                        )
+                        .get(body.master_product_id);
+                    if (row) {
+                        url = row.url;
+                    }
+                }
+
+                if (!url) {
+                    return Response.json(
+                        { error: "Field 'url' or 'master_product_id' is required" },
+                        { status: 400 }
+                    );
                 }
 
                 const result = await addFavorite({
-                    url: body.url,
+                    url,
                     target_price: typeof body.target_price === "number" ? body.target_price : null,
                     drop_percent: typeof body.drop_percent === "number" ? body.drop_percent : null,
                     drop_absolute: typeof body.drop_absolute === "number" ? body.drop_absolute : null,

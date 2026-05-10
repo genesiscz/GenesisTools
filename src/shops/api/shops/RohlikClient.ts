@@ -13,7 +13,11 @@ import type {
     RohlikRawProduct,
 } from "@app/shops/api/shops/RohlikClient.types";
 
-const PRODUCTS_PER_BATCH = 15;
+// Rohlik's bulk endpoints (/api/v1/products and /api/v1/products/prices)
+// happily accept at least 200 ids per call (probed 2026-05-10). 100 keeps
+// URL length comfortably under typical proxy limits while shrinking the
+// 21 658-product full-catalog crawl from ~5 min to ~45 s.
+const PRODUCTS_PER_BATCH = 100;
 const PRODUCTS_PER_PAGE = 100;
 const ROHLIK_ORIGIN = "rohlik.cz";
 

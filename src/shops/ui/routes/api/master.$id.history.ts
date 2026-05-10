@@ -24,9 +24,12 @@ export const Route = createFileRoute("/api/master/$id/history")({
                     return Response.json({ error: `Invalid master id: ${idStr}` }, { status: 400 });
                 }
 
+                // Default 365d so the chart shows a full year out of the box.
+                // Cap at 10y to fit hlidacshopu's full historical depth — they
+                // mirror prices back to 2018 for some products.
                 let days: number;
                 try {
-                    days = intParam(url.searchParams, "days", 90, { min: 1, max: 365 });
+                    days = intParam(url.searchParams, "days", 365, { min: 1, max: 3650 });
                 } catch (err) {
                     return Response.json({ error: (err as Error).message }, { status: 400 });
                 }

@@ -35,6 +35,13 @@ export interface SitemapCrawlOptions {
     hlidacForce?: boolean;
     /** Concurrency for hlidac S3 fetches (default 10). */
     hlidacConcurrency?: number;
+    /**
+     * Skip the entire shop-API ingest path (no sitemap walk, no per-id
+     * product fetch) and ONLY run the hlidac drain over every active
+     * product currently in the DB for this shop. Use this to backfill
+     * historical price points without re-hitting the shop's own API.
+     */
+    hlidacOnly?: boolean;
     sink?: HttpRequestSink;
     signal?: AbortSignal;
     onProgress?: (event: SitemapCrawlProgress) => void;
@@ -68,6 +75,10 @@ export async function crawlFromSitemap(opts: SitemapCrawlOptions): Promise<Sitem
     const strategy = SITEMAP_STRATEGIES[opts.shopOrigin];
     if (!strategy) {
         throw new Error(`No sitemap strategy registered for ${opts.shopOrigin}`);
+    }
+
+    if (opts.hlidacOnly === true) {
+        return crawlHlidacOnly(opts);
     }
 
     initShopRegistry({ sink: opts.sink });
@@ -258,6 +269,79 @@ async function collectIds(
         pricesRecorded: 0,
     });
     return ids;
+}
+
+async function crawlHlidacOnly(opts: SitemapCrawlOptions): Promise<SitemapCrawlResult> {
+    const start = Date.now();
+    const products = opts.db
+        .raw()
+        .query<{ id: number; url: string }, [string]>(
+            "SELECT id, url FROM products WHERE shop_origin = ? AND is_active = 1 AND url IS NOT NULL ORDER BY id" +
+                (opts.limit ? ` LIMIT ${Math.max(1, opts.limit)}` : "")
+        )
+        .all(opts.shopOrigin);
+    log.info(
+        { shop: opts.shopOrigin, products: products.length, force: opts.hlidacForce ?? false },
+        "hlidac-only mode: skipping shop API, draining hlidac S3 only"
+    );
+
+    const crawlRunId = await opts.db.startCrawlRun({
+        shopOrigin: opts.shopOrigin,
+        strategy: "hlidac-only",
+        options: { limit: products.length },
+    });
+
+    const queue = products.map((p) => ({ productId: p.id, url: p.url }));
+    let backfilled = 0;
+    let pointsAdded = 0;
+    try {
+        const drained = await drainHlidacQueue(opts.db, queue, {
+            concurrency: opts.hlidacConcurrency ?? 10,
+            force: opts.hlidacForce ?? false,
+            signal: opts.signal,
+            onProgress: (n, points) => {
+                backfilled = n;
+                pointsAdded = points;
+                opts.onProgress?.({
+                    phase: "hlidac",
+                    discovered: products.length,
+                    enqueued: products.length,
+                    fetched: 0,
+                    persisted: 0,
+                    pricesRecorded: 0,
+                    hlidacBackfilled: n,
+                    hlidacPointsAdded: points,
+                });
+            },
+        });
+        backfilled = drained.fetched;
+        pointsAdded = drained.pointsAdded;
+        log.info(
+            { crawlRunId, backfilled, pointsAdded, skipped: drained.skipped, errors: drained.errors },
+            "hlidac-only drain complete"
+        );
+        await opts.db.finishCrawlRun(crawlRunId, "completed");
+    } catch (err) {
+        await opts.db.finishCrawlRun(
+            crawlRunId,
+            (err as Error).name === "AbortError" ? "cancelled" : "failed",
+            (err as Error).message
+        );
+        throw err;
+    }
+
+    return {
+        crawlRunId,
+        shopOrigin: opts.shopOrigin,
+        discovered: products.length,
+        enqueued: products.length,
+        fetched: 0,
+        persisted: 0,
+        pricesRecorded: 0,
+        hlidacBackfilled: backfilled,
+        hlidacPointsAdded: pointsAdded,
+        durationMs: Date.now() - start,
+    };
 }
 
 async function loadKnownSlugs(db: ShopsDatabase, shopOrigin: string): Promise<Set<string>> {

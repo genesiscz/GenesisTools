@@ -13,6 +13,7 @@ interface SitemapCrawlCliOpts {
     noHlidac?: boolean;
     hlidacForce?: boolean;
     hlidacConcurrency?: number;
+    hlidacOnly?: boolean;
 }
 
 export function registerSitemapCrawlCommand(program: Command): void {
@@ -31,6 +32,10 @@ export function registerSitemapCrawlCommand(program: Command): void {
         .option("--no-hlidac", "Skip the post-ingest hlidacshopu.cz price-history backfill")
         .option("--hlidac-force", "Re-fetch hlidac history even for products that already have it stored")
         .option("--hlidac-concurrency <n>", "Parallel hlidac S3 fetches (default 10)", (v) => Number.parseInt(v, 10))
+        .option(
+            "--hlidac-only",
+            "Skip the shop API entirely; just drain hlidac history for products already in the DB"
+        )
         .action(async (raw: SitemapCrawlCliOpts) => {
             const log = logger.child({ component: "shops:sitemap-crawl" });
             const db = new ShopsDatabase();
@@ -52,6 +57,7 @@ export function registerSitemapCrawlCommand(program: Command): void {
                     noHlidac: raw.noHlidac === true,
                     hlidacForce: raw.hlidacForce === true,
                     hlidacConcurrency: raw.hlidacConcurrency,
+                    hlidacOnly: raw.hlidacOnly === true,
                     signal: ctrl.signal,
                     onProgress: (p) => {
                         let line: string;
