@@ -41,6 +41,7 @@ export interface FavoriteWithState extends Favorite {
 
 interface CurrentStateRow {
     id: number;
+    user_id: number;
     master_product_id: number;
     restricted_to_shop: string | null;
     label: string | null;

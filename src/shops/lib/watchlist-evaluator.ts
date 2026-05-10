@@ -190,6 +190,7 @@ export class WatchlistEvaluator {
         return {
             notification: {
                 id: notificationId,
+                user_id: fav.user_id,
                 favorite_id: favoriteId,
                 master_product_id: fav.master_product_id,
                 product_id: hit.productId,

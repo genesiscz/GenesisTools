@@ -146,6 +146,7 @@ export interface CrawlRunsTable {
 
 export interface FavoritesTable {
     id: Generated<number>;
+    user_id: Generated<number>;
     master_product_id: number;
     restricted_to_shop: string | null;
     label: string | null;
@@ -161,6 +162,7 @@ export interface FavoritesTable {
 
 export interface NotificationsTable {
     id: Generated<number>;
+    user_id: Generated<number>;
     favorite_id: number;
     master_product_id: number;
     product_id: number | null;
@@ -244,6 +246,14 @@ export interface UserOrdersTable {
     ingested_at: string;
 }
 
+export interface SessionsTable {
+    token: string;
+    user_id: number;
+    created_at: string;
+    expires_at: string;
+    last_seen_at: string;
+}
+
 export interface UserOrderItemsTable {
     order_id: number;
     line_no: number;
@@ -303,6 +313,7 @@ export interface ShopsDB {
     user_providers: UserProvidersTable;
     user_orders: UserOrdersTable;
     user_order_items: UserOrderItemsTable;
+    sessions: SessionsTable;
     current_offers: CurrentOffersView;
 }
 
@@ -326,3 +337,6 @@ export type UserOrder = Selectable<UserOrdersTable>;
 export type NewUserOrder = Insertable<UserOrdersTable>;
 export type UserOrderItem = Selectable<UserOrderItemsTable>;
 export type NewUserOrderItem = Insertable<UserOrderItemsTable>;
+
+export type Session = Selectable<SessionsTable>;
+export type NewSession = Insertable<SessionsTable>;

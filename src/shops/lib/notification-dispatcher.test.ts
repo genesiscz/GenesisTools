@@ -35,6 +35,7 @@ function tmpDb(): { db: ShopsDatabase; repo: NotificationsRepository; favId: num
 const PAYLOAD = (id: number, favId: number, masterId: number): NotificationPayload => ({
     notification: {
         id,
+        user_id: 1,
         favorite_id: favId,
         master_product_id: masterId,
         product_id: null,

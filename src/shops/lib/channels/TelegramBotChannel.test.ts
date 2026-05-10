@@ -5,6 +5,7 @@ import type { NotificationPayload } from "@app/shops/lib/channels/types";
 const PAYLOAD: NotificationPayload = {
     notification: {
         id: 1,
+        user_id: 1,
         favorite_id: 10,
         master_product_id: 20,
         product_id: 30,
