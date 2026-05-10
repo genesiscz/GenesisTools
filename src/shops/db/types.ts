@@ -207,6 +207,57 @@ export interface BrandAliasesTable {
     created_at: string;
 }
 
+export interface UsersTable {
+    id: Generated<number>;
+    email: string;
+    password_hash: string | null;
+    display_name: string | null;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface UserProvidersTable {
+    id: Generated<number>;
+    user_id: number;
+    shop_origin: string;
+    status: "connected" | "expired" | "error" | "disconnected";
+    credentials_blob: string | null;
+    external_user_email: string | null;
+    last_sync_at: string | null;
+    last_sync_error: string | null;
+    auto_watchlist: Generated<number>;
+    watchlist_defaults_json: Generated<string>;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface UserOrdersTable {
+    id: Generated<number>;
+    user_provider_id: number;
+    external_order_id: string;
+    ordered_at: string;
+    total_amount: number;
+    currency: string;
+    items_count: number;
+    state: string | null;
+    raw_json: string | null;
+    ingested_at: string;
+}
+
+export interface UserOrderItemsTable {
+    order_id: number;
+    line_no: number;
+    external_product_id: string | null;
+    name: string;
+    quantity: number | null;
+    unit: string | null;
+    unit_price: number | null;
+    total_price: number | null;
+    product_id: number | null;
+    master_product_id: number | null;
+    matched_at: string | null;
+}
+
 // FTS5 virtual table mirrors a subset of products columns. Queried via raw SQL
 // (Kysely doesn't model MATCH); kept here so SearchRepository / searchProducts
 // can replace inline interfaces with a single source of truth.
@@ -248,6 +299,10 @@ export interface ShopsDB {
     notifications: NotificationsTable;
     http_requests: HttpRequestsTable;
     brand_aliases: BrandAliasesTable;
+    users: UsersTable;
+    user_providers: UserProvidersTable;
+    user_orders: UserOrdersTable;
+    user_order_items: UserOrderItemsTable;
     current_offers: CurrentOffersView;
 }
 
@@ -263,3 +318,11 @@ export type NewPrice = Insertable<PricesTable>;
 
 export type HttpRequest = Selectable<HttpRequestsTable>;
 export type NewHttpRequest = Insertable<HttpRequestsTable>;
+
+export type User = Selectable<UsersTable>;
+export type UserProvider = Selectable<UserProvidersTable>;
+export type NewUserProvider = Insertable<UserProvidersTable>;
+export type UserOrder = Selectable<UserOrdersTable>;
+export type NewUserOrder = Insertable<UserOrdersTable>;
+export type UserOrderItem = Selectable<UserOrderItemsTable>;
+export type NewUserOrderItem = Insertable<UserOrderItemsTable>;
