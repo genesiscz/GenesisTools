@@ -1,5 +1,12 @@
 import { SafeJSON } from "@app/utils/json";
 
+export {
+    authedApiHandler,
+    clearSessionCookie,
+    setSessionCookie,
+    type AuthedHandler,
+} from "@app/shops/ui/server/auth-handler";
+
 export function apiHandler(
     fn: (request: Request) => Promise<Response>
 ): (ctx: { request: Request }) => Promise<Response> {
