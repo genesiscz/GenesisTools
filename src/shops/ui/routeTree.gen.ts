@@ -41,6 +41,7 @@ import { Route as ApiProvidersDisconnectRouteImport } from './routes/api/provide
 import { Route as ApiProvidersConnectRouteImport } from './routes/api/providers.connect'
 import { Route as ApiProvidersBackfillRouteImport } from './routes/api/providers.backfill'
 import { Route as ApiOrdersListRouteImport } from './routes/api/orders.list'
+import { Route as ApiMatchMyUnmatchedRouteImport } from './routes/api/match.my-unmatched'
 import { Route as ApiMatchCandidatesRouteImport } from './routes/api/match.candidates'
 import { Route as ApiMasterIdRouteImport } from './routes/api/master.$id'
 import { Route as ApiLiveEventsRouteImport } from './routes/api/live.events'
@@ -55,6 +56,7 @@ import { Route as ApiWatchlistIdEditRouteImport } from './routes/api/watchlist.$
 import { Route as ApiWatchlistIdDeleteRouteImport } from './routes/api/watchlist.$id.delete'
 import { Route as ApiProductShopSlugRouteImport } from './routes/api/product.$shop.$slug'
 import { Route as ApiNotificationsIdAckRouteImport } from './routes/api/notifications.$id.ack'
+import { Route as ApiMatchMyUnmatchedAttachRouteImport } from './routes/api/match.my-unmatched.attach'
 import { Route as ApiMatchCandidateRejectRouteImport } from './routes/api/match.$candidate.reject'
 import { Route as ApiMatchCandidateAcceptRouteImport } from './routes/api/match.$candidate.accept'
 import { Route as ApiMasterIdHistoryRouteImport } from './routes/api/master.$id.history'
@@ -219,6 +221,11 @@ const ApiOrdersListRoute = ApiOrdersListRouteImport.update({
   path: '/api/orders/list',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiMatchMyUnmatchedRoute = ApiMatchMyUnmatchedRouteImport.update({
+  id: '/api/match/my-unmatched',
+  path: '/api/match/my-unmatched',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiMatchCandidatesRoute = ApiMatchCandidatesRouteImport.update({
   id: '/api/match/candidates',
   path: '/api/match/candidates',
@@ -289,6 +296,12 @@ const ApiNotificationsIdAckRoute = ApiNotificationsIdAckRouteImport.update({
   path: '/$id/ack',
   getParentRoute: () => ApiNotificationsRoute,
 } as any)
+const ApiMatchMyUnmatchedAttachRoute =
+  ApiMatchMyUnmatchedAttachRouteImport.update({
+    id: '/attach',
+    path: '/attach',
+    getParentRoute: () => ApiMatchMyUnmatchedRoute,
+  } as any)
 const ApiMatchCandidateRejectRoute = ApiMatchCandidateRejectRouteImport.update({
   id: '/api/match/$candidate/reject',
   path: '/api/match/$candidate/reject',
@@ -339,6 +352,7 @@ export interface FileRoutesByFullPath {
   '/api/live/events': typeof ApiLiveEventsRoute
   '/api/master/$id': typeof ApiMasterIdRouteWithChildren
   '/api/match/candidates': typeof ApiMatchCandidatesRoute
+  '/api/match/my-unmatched': typeof ApiMatchMyUnmatchedRouteWithChildren
   '/api/orders/list': typeof ApiOrdersListRoute
   '/api/providers/backfill': typeof ApiProvidersBackfillRoute
   '/api/providers/connect': typeof ApiProvidersConnectRoute
@@ -351,6 +365,7 @@ export interface FileRoutesByFullPath {
   '/api/master/$id/history': typeof ApiMasterIdHistoryRoute
   '/api/match/$candidate/accept': typeof ApiMatchCandidateAcceptRoute
   '/api/match/$candidate/reject': typeof ApiMatchCandidateRejectRoute
+  '/api/match/my-unmatched/attach': typeof ApiMatchMyUnmatchedAttachRoute
   '/api/notifications/$id/ack': typeof ApiNotificationsIdAckRoute
   '/api/product/$shop/$slug': typeof ApiProductShopSlugRoute
   '/api/watchlist/$id/delete': typeof ApiWatchlistIdDeleteRoute
@@ -390,6 +405,7 @@ export interface FileRoutesByTo {
   '/api/live/events': typeof ApiLiveEventsRoute
   '/api/master/$id': typeof ApiMasterIdRouteWithChildren
   '/api/match/candidates': typeof ApiMatchCandidatesRoute
+  '/api/match/my-unmatched': typeof ApiMatchMyUnmatchedRouteWithChildren
   '/api/orders/list': typeof ApiOrdersListRoute
   '/api/providers/backfill': typeof ApiProvidersBackfillRoute
   '/api/providers/connect': typeof ApiProvidersConnectRoute
@@ -402,6 +418,7 @@ export interface FileRoutesByTo {
   '/api/master/$id/history': typeof ApiMasterIdHistoryRoute
   '/api/match/$candidate/accept': typeof ApiMatchCandidateAcceptRoute
   '/api/match/$candidate/reject': typeof ApiMatchCandidateRejectRoute
+  '/api/match/my-unmatched/attach': typeof ApiMatchMyUnmatchedAttachRoute
   '/api/notifications/$id/ack': typeof ApiNotificationsIdAckRoute
   '/api/product/$shop/$slug': typeof ApiProductShopSlugRoute
   '/api/watchlist/$id/delete': typeof ApiWatchlistIdDeleteRoute
@@ -442,6 +459,7 @@ export interface FileRoutesById {
   '/api/live/events': typeof ApiLiveEventsRoute
   '/api/master/$id': typeof ApiMasterIdRouteWithChildren
   '/api/match/candidates': typeof ApiMatchCandidatesRoute
+  '/api/match/my-unmatched': typeof ApiMatchMyUnmatchedRouteWithChildren
   '/api/orders/list': typeof ApiOrdersListRoute
   '/api/providers/backfill': typeof ApiProvidersBackfillRoute
   '/api/providers/connect': typeof ApiProvidersConnectRoute
@@ -454,6 +472,7 @@ export interface FileRoutesById {
   '/api/master/$id/history': typeof ApiMasterIdHistoryRoute
   '/api/match/$candidate/accept': typeof ApiMatchCandidateAcceptRoute
   '/api/match/$candidate/reject': typeof ApiMatchCandidateRejectRoute
+  '/api/match/my-unmatched/attach': typeof ApiMatchMyUnmatchedAttachRoute
   '/api/notifications/$id/ack': typeof ApiNotificationsIdAckRoute
   '/api/product/$shop/$slug': typeof ApiProductShopSlugRoute
   '/api/watchlist/$id/delete': typeof ApiWatchlistIdDeleteRoute
@@ -495,6 +514,7 @@ export interface FileRouteTypes {
     | '/api/live/events'
     | '/api/master/$id'
     | '/api/match/candidates'
+    | '/api/match/my-unmatched'
     | '/api/orders/list'
     | '/api/providers/backfill'
     | '/api/providers/connect'
@@ -507,6 +527,7 @@ export interface FileRouteTypes {
     | '/api/master/$id/history'
     | '/api/match/$candidate/accept'
     | '/api/match/$candidate/reject'
+    | '/api/match/my-unmatched/attach'
     | '/api/notifications/$id/ack'
     | '/api/product/$shop/$slug'
     | '/api/watchlist/$id/delete'
@@ -546,6 +567,7 @@ export interface FileRouteTypes {
     | '/api/live/events'
     | '/api/master/$id'
     | '/api/match/candidates'
+    | '/api/match/my-unmatched'
     | '/api/orders/list'
     | '/api/providers/backfill'
     | '/api/providers/connect'
@@ -558,6 +580,7 @@ export interface FileRouteTypes {
     | '/api/master/$id/history'
     | '/api/match/$candidate/accept'
     | '/api/match/$candidate/reject'
+    | '/api/match/my-unmatched/attach'
     | '/api/notifications/$id/ack'
     | '/api/product/$shop/$slug'
     | '/api/watchlist/$id/delete'
@@ -597,6 +620,7 @@ export interface FileRouteTypes {
     | '/api/live/events'
     | '/api/master/$id'
     | '/api/match/candidates'
+    | '/api/match/my-unmatched'
     | '/api/orders/list'
     | '/api/providers/backfill'
     | '/api/providers/connect'
@@ -609,6 +633,7 @@ export interface FileRouteTypes {
     | '/api/master/$id/history'
     | '/api/match/$candidate/accept'
     | '/api/match/$candidate/reject'
+    | '/api/match/my-unmatched/attach'
     | '/api/notifications/$id/ack'
     | '/api/product/$shop/$slug'
     | '/api/watchlist/$id/delete'
@@ -648,6 +673,7 @@ export interface RootRouteChildren {
   ApiInsightsSpendRoute: typeof ApiInsightsSpendRoute
   ApiLiveEventsRoute: typeof ApiLiveEventsRoute
   ApiMatchCandidatesRoute: typeof ApiMatchCandidatesRoute
+  ApiMatchMyUnmatchedRoute: typeof ApiMatchMyUnmatchedRouteWithChildren
   ApiOrdersListRoute: typeof ApiOrdersListRoute
   ApiProvidersBackfillRoute: typeof ApiProvidersBackfillRoute
   ApiProvidersConnectRoute: typeof ApiProvidersConnectRoute
@@ -887,6 +913,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiOrdersListRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/match/my-unmatched': {
+      id: '/api/match/my-unmatched'
+      path: '/api/match/my-unmatched'
+      fullPath: '/api/match/my-unmatched'
+      preLoaderRoute: typeof ApiMatchMyUnmatchedRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/match/candidates': {
       id: '/api/match/candidates'
       path: '/api/match/candidates'
@@ -985,6 +1018,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiNotificationsIdAckRouteImport
       parentRoute: typeof ApiNotificationsRoute
     }
+    '/api/match/my-unmatched/attach': {
+      id: '/api/match/my-unmatched/attach'
+      path: '/attach'
+      fullPath: '/api/match/my-unmatched/attach'
+      preLoaderRoute: typeof ApiMatchMyUnmatchedAttachRouteImport
+      parentRoute: typeof ApiMatchMyUnmatchedRoute
+    }
     '/api/match/$candidate/reject': {
       id: '/api/match/$candidate/reject'
       path: '/api/match/$candidate/reject'
@@ -1060,6 +1100,17 @@ const ApiWatchlistRouteWithChildren = ApiWatchlistRoute._addFileChildren(
   ApiWatchlistRouteChildren,
 )
 
+interface ApiMatchMyUnmatchedRouteChildren {
+  ApiMatchMyUnmatchedAttachRoute: typeof ApiMatchMyUnmatchedAttachRoute
+}
+
+const ApiMatchMyUnmatchedRouteChildren: ApiMatchMyUnmatchedRouteChildren = {
+  ApiMatchMyUnmatchedAttachRoute: ApiMatchMyUnmatchedAttachRoute,
+}
+
+const ApiMatchMyUnmatchedRouteWithChildren =
+  ApiMatchMyUnmatchedRoute._addFileChildren(ApiMatchMyUnmatchedRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   BrowseRoute: BrowseRoute,
@@ -1093,6 +1144,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiInsightsSpendRoute: ApiInsightsSpendRoute,
   ApiLiveEventsRoute: ApiLiveEventsRoute,
   ApiMatchCandidatesRoute: ApiMatchCandidatesRoute,
+  ApiMatchMyUnmatchedRoute: ApiMatchMyUnmatchedRouteWithChildren,
   ApiOrdersListRoute: ApiOrdersListRoute,
   ApiProvidersBackfillRoute: ApiProvidersBackfillRoute,
   ApiProvidersConnectRoute: ApiProvidersConnectRoute,
