@@ -7,6 +7,10 @@ export interface MigrationRow {
     ms: number;
 }
 
+// _migrations is owned by the migrations framework — not modeled in ShopsDB.
+// sqlite_master is a SQLite-internal catalog table — also not in ShopsDB.
+// Per-table COUNT uses a runtime table name, which Kysely's typed builder
+// can't accept. All three queries remain on .raw() by design.
 export function listMigrations(db: ShopsDatabase = getShopsDatabase()): MigrationRow[] {
     return db.raw().query<MigrationRow, []>(`SELECT id, applied_at, ms FROM _migrations ORDER BY applied_at`).all();
 }
