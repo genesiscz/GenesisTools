@@ -5,12 +5,6 @@ import { createFileRoute } from "@tanstack/react-router";
 
 const log = logger.child({ component: "api:product:$shop:$slug" });
 
-interface ProductRow {
-    master_product_id: number | null;
-    name: string;
-    url: string;
-}
-
 export const Route = createFileRoute("/api/product/$shop/$slug")({
     server: {
         handlers: {
@@ -23,12 +17,13 @@ export const Route = createFileRoute("/api/product/$shop/$slug")({
                     return Response.json({ error: "shop and slug required" }, { status: 400 });
                 }
 
-                const db = getShopsDatabase().raw();
-                const product = db
-                    .query<ProductRow, [string, string]>(
-                        `SELECT master_product_id, name, url FROM products WHERE shop_origin = ? AND slug = ?`
-                    )
-                    .get(shop, slug);
+                const product = await getShopsDatabase()
+                    .kysely()
+                    .selectFrom("products")
+                    .select(["master_product_id", "name", "url"])
+                    .where("shop_origin", "=", shop)
+                    .where("slug", "=", slug)
+                    .executeTakeFirst();
 
                 if (!product) {
                     return Response.json({ error: "Product not found" }, { status: 404 });
