@@ -1,3 +1,4 @@
+import { sql } from "kysely";
 import logger from "@app/logger";
 import { getShopsDatabase, type ShopsDatabase } from "@app/shops/db/ShopsDatabase";
 
@@ -25,31 +26,8 @@ export interface ShopCoverage {
     last_crawl_failure: string | null;
 }
 
-interface ShopRow {
-    origin: string;
-    display_name: string;
-    enabled: number;
-    cap_live: number;
-    cap_history: number;
-    cap_listing: number;
-    cap_ean: number;
-    cap_search: number;
-    bot_protection: string;
-}
-
-interface CountRow {
-    shop_origin: string;
-    n: number;
-    last_update: string | null;
-}
-
-interface CrawlRow {
-    shop_origin: string;
-    last_success: string | null;
-    last_failure: string | null;
-}
-
 function crawlRunsTableExists(shopsDb: ShopsDatabase): boolean {
+    // sqlite_master is a SQLite-internal catalog table — not in ShopsDB. Stays raw.
     const row = shopsDb
         .raw()
         .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type='table' AND name='crawl_runs'")
@@ -59,36 +37,51 @@ function crawlRunsTableExists(shopsDb: ShopsDatabase): boolean {
 
 export async function getCoverage(ctx?: CoverageApiContext): Promise<ShopCoverage[]> {
     const shopsDb = ctx?.shopsDb ?? getShopsDatabase();
-    const shops = shopsDb
-        .raw()
-        .query<ShopRow, []>(
-            `SELECT origin, display_name, enabled, cap_live, cap_history, cap_listing, cap_ean, cap_search, bot_protection
-             FROM shops ORDER BY origin`
-        )
-        .all();
 
-    const counts = shopsDb
-        .raw()
-        .query<CountRow, []>(
-            `SELECT shop_origin, COUNT(*) AS n, MAX(last_updated_at) AS last_update
-             FROM products WHERE is_active = 1 GROUP BY shop_origin`
-        )
-        .all();
+    const shops = await shopsDb
+        .kysely()
+        .selectFrom("shops")
+        .select([
+            "origin",
+            "display_name",
+            "enabled",
+            "cap_live",
+            "cap_history",
+            "cap_listing",
+            "cap_ean",
+            "cap_search",
+            "bot_protection",
+        ])
+        .orderBy("origin")
+        .execute();
+
+    const counts = await shopsDb
+        .kysely()
+        .selectFrom("products")
+        .select((eb) => [
+            "shop_origin",
+            eb.fn.countAll<number>().as("n"),
+            eb.fn.max<string | null>("last_updated_at").as("last_update"),
+        ])
+        .where("is_active", "=", 1)
+        .groupBy("shop_origin")
+        .execute();
     const countByOrigin = new Map(counts.map((c) => [c.shop_origin, c]));
 
-    const crawlByOrigin = new Map<string, CrawlRow>();
+    const crawlByOrigin = new Map<string, { last_success: string | null; last_failure: string | null }>();
     if (crawlRunsTableExists(shopsDb)) {
-        const rows = shopsDb
-            .raw()
-            .query<CrawlRow, []>(
-                `SELECT shop_origin,
-                        MAX(CASE WHEN status = 'completed' THEN finished_at END) AS last_success,
-                        MAX(CASE WHEN status = 'failed'    THEN finished_at END) AS last_failure
-                 FROM crawl_runs GROUP BY shop_origin`
-            )
-            .all();
+        const rows = await shopsDb
+            .kysely()
+            .selectFrom("crawl_runs")
+            .select([
+                "shop_origin",
+                sql<string | null>`MAX(CASE WHEN status = 'completed' THEN finished_at END)`.as("last_success"),
+                sql<string | null>`MAX(CASE WHEN status = 'failed' THEN finished_at END)`.as("last_failure"),
+            ])
+            .groupBy("shop_origin")
+            .execute();
         for (const r of rows) {
-            crawlByOrigin.set(r.shop_origin, r);
+            crawlByOrigin.set(r.shop_origin, { last_success: r.last_success, last_failure: r.last_failure });
         }
     }
 
