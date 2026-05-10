@@ -35,6 +35,8 @@ export function WatchlistTable({ rows, notifications, sparklines, onAck, onSnooz
                     <TableHead className="text-right">Current</TableHead>
                     <TableHead className="text-right">Δ</TableHead>
                     <TableHead>Sparkline</TableHead>
+                    <TableHead className="w-32">Last seen</TableHead>
+                    <TableHead className="w-20 text-center">Shops</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
             </TableHeader>

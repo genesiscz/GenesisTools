@@ -1,7 +1,9 @@
 import type { FavoriteWithState } from "@app/shops/db/FavoritesRepository";
 import type { Notification } from "@app/shops/db/NotificationsRepository";
+import type { RecurringPurchase } from "@app/shops/lib/analytics/recurring";
 import { FilterPills, type WatchlistFilter } from "@app/shops/ui/components/FilterPills";
 import { PasteUrlQuickAdd } from "@app/shops/ui/components/PasteUrlQuickAdd";
+import { RegularsPanel } from "@app/shops/ui/components/RegularsPanel";
 import { WatchlistTable } from "@app/shops/ui/components/WatchlistTable";
 import { useSseStream } from "@app/shops/ui/hooks/useSseStream";
 import { RequireAuth, requireAuthBeforeLoad } from "@app/shops/ui/lib/useAuthMe";
@@ -9,7 +11,7 @@ import { SafeJSON } from "@app/utils/json";
 import { Card, CardContent, CardHeader, CardTitle } from "@app/utils/ui/components/card";
 import { Input } from "@app/utils/ui/components/input";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { createFileRoute, useRouter } from "@tanstack/react-router";
+import { createFileRoute, useNavigate, useRouter } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
@@ -35,6 +37,7 @@ const SSE_EVENTS = ["notification-fired"] as const;
 function WatchlistPage() {
     const queryClient = useQueryClient();
     const router = useRouter();
+    const navigate = useNavigate();
     const [filter, setFilter] = useState<WatchlistFilter>("all");
     const [query, setQuery] = useState("");
 
@@ -45,6 +48,28 @@ function WatchlistPage() {
     const notifications = useQuery({
         queryKey: ["notifications", "unacked"],
         queryFn: async () => (await fetch("/api/notifications?only_unacked=1")).json() as Promise<Notification[]>,
+    });
+    const recurring = useQuery({
+        queryKey: ["insights", "recurring"],
+        queryFn: async () => (await fetch("/api/insights/recurring")).json() as Promise<RecurringPurchase[]>,
+    });
+
+    const masterIds = (watchlist.data ?? []).map((r) => r.master_product_id);
+    const sparklines = useQuery({
+        queryKey: ["insights", "sparklines", masterIds.join(",")],
+        queryFn: async (): Promise<Record<number, { d: string; c: number | null }[]>> => {
+            if (masterIds.length === 0) {
+                return {};
+            }
+
+            const res = await fetch("/api/insights/sparklines", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: SafeJSON.stringify({ master_ids: masterIds, days: 30 }),
+            });
+            return res.ok ? await res.json() : {};
+        },
+        enabled: masterIds.length > 0,
     });
 
     useSseStream({
@@ -126,6 +151,12 @@ function WatchlistPage() {
                     className="w-56 font-mono bg-zinc-950/60 border-zinc-700"
                 />
             </div>
+            {recurring.data && recurring.data.length > 0 ? (
+                <RegularsPanel
+                    items={recurring.data}
+                    onOpen={(id) => navigate({ to: "/master/$id", params: { id: String(id) } })}
+                />
+            ) : null}
             <Card className="bg-zinc-950/40">
                 <CardHeader>
                     <CardTitle className="font-mono uppercase tracking-wider text-xs text-zinc-400">
@@ -136,7 +167,7 @@ function WatchlistPage() {
                     <WatchlistTable
                         rows={filtered}
                         notifications={notifs}
-                        sparklines={{}}
+                        sparklines={sparklines.data ?? {}}
                         onAck={(id) => ack.mutate(id)}
                         onSnooze={(favId) => snooze.mutate(favId)}
                         onRemove={(favId) => remove.mutate(favId)}

@@ -66,6 +66,22 @@ export function WatchlistRow({ row, pendingNotifications, sparklinePoints, onAck
             <TableCell className="w-32">
                 <PriceSparkline points={sparklinePoints} />
             </TableCell>
+            <TableCell className="w-32">
+                <span
+                    className={`text-[11px] font-mono ${
+                        row.last_observed_at && Date.now() - new Date(row.last_observed_at).getTime() < 24 * 3_600_000
+                            ? "text-muted-foreground"
+                            : "text-zinc-500"
+                    }`}
+                >
+                    {row.last_observed_at ? `${relativeTime(row.last_observed_at)} ago` : "never"}
+                </span>
+            </TableCell>
+            <TableCell className="w-20 text-center">
+                <Badge variant={row.shops_covered > 0 ? "secondary" : "outline"} className="text-[9px] tracking-widest">
+                    {row.shops_covered}
+                </Badge>
+            </TableCell>
             <TableCell className="text-right">
                 <div className="flex items-center justify-end gap-1.5">
                     <Button size="sm" variant="ghost" onClick={() => onOpen(row.master_product_id)}>
@@ -100,4 +116,18 @@ export function WatchlistRow({ row, pendingNotifications, sparklinePoints, onAck
             </TableCell>
         </TableRow>
     );
+}
+
+function relativeTime(iso: string): string {
+    const ms = Date.now() - new Date(iso).getTime();
+    const h = Math.floor(ms / 3_600_000);
+    if (h < 1) {
+        return `${Math.max(1, Math.floor(ms / 60_000))}m`;
+    }
+
+    if (h < 48) {
+        return `${h}h`;
+    }
+
+    return `${Math.floor(h / 24)}d`;
 }
