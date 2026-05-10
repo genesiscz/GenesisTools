@@ -50,16 +50,16 @@ describe("UsersRepository.register", () => {
 
     it("throws on too-short password", async () => {
         const repo = fresh();
-        await expect(
-            repo.register({ email: "x@y.com", password: "abc", displayName: null })
-        ).rejects.toThrow(/password/i);
+        await expect(repo.register({ email: "x@y.com", password: "abc", displayName: null })).rejects.toThrow(
+            /password/i
+        );
     });
 
     it("throws on invalid email", async () => {
         const repo = fresh();
-        await expect(
-            repo.register({ email: "not-an-email", password: "hunter22", displayName: null })
-        ).rejects.toThrow(/email/i);
+        await expect(repo.register({ email: "not-an-email", password: "hunter22", displayName: null })).rejects.toThrow(
+            /email/i
+        );
     });
 });
 

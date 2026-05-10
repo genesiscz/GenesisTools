@@ -1,6 +1,6 @@
 import type { NotificationReason } from "@app/shops/db/NotificationsRepository";
 import { getRecentNotifications } from "@app/shops/lib/watchlist-api";
-import { apiHandler } from "@app/shops/ui/server/api-utils";
+import { authedApiHandler } from "@app/shops/ui/server/api-utils";
 import { createFileRoute } from "@tanstack/react-router";
 
 const VALID_REASONS = new Set<NotificationReason>(["target-price", "drop-percent", "drop-absolute", "back-in-stock"]);
@@ -8,14 +8,14 @@ const VALID_REASONS = new Set<NotificationReason>(["target-price", "drop-percent
 export const Route = createFileRoute("/api/notifications")({
     server: {
         handlers: {
-            GET: apiHandler(async (request) => {
+            GET: authedApiHandler(async (request, userId) => {
                 const url = new URL(request.url);
                 const reasonParam = url.searchParams.get("reason");
                 const reason =
                     reasonParam && VALID_REASONS.has(reasonParam as NotificationReason)
                         ? (reasonParam as NotificationReason)
                         : undefined;
-                const rows = await getRecentNotifications({
+                const rows = await getRecentNotifications(userId, {
                     onlyUnacked: url.searchParams.get("only_unacked") === "1",
                     reason,
                     shop_origin: url.searchParams.get("shop") ?? undefined,

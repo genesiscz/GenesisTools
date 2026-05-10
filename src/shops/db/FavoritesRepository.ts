@@ -39,33 +39,15 @@ export interface FavoriteWithState extends Favorite {
     delta_absolute: number | null;
 }
 
-interface CurrentStateRow {
-    id: number;
-    user_id: number;
-    master_product_id: number;
-    restricted_to_shop: string | null;
-    label: string | null;
-    target_price: number | null;
-    drop_percent: number | null;
-    drop_absolute: number | null;
-    reference_price: number | null;
-    notify_back_in_stock: number;
-    cooldown_hours: number;
-    active: number;
-    created_at: string;
-    best_price: number | null;
-    best_shop: string | null;
-    best_observed_at: string | null;
-}
-
 export class FavoritesRepository {
     constructor(private readonly db: ShopsDatabase) {}
 
-    async addFavorite(args: AddFavoriteArgs): Promise<number> {
+    async addFavorite(userId: number, args: AddFavoriteArgs): Promise<number> {
         const result = await this.db
             .kysely()
             .insertInto("favorites")
             .values({
+                user_id: userId,
                 master_product_id: args.master_product_id,
                 restricted_to_shop: args.restricted_to_shop,
                 target_price: args.target_price,
@@ -80,16 +62,16 @@ export class FavoritesRepository {
             })
             .executeTakeFirstOrThrow();
         const id = Number(result.insertId ?? 0);
-        log.debug({ favoriteId: id, master: args.master_product_id }, "favorite added");
+        log.debug({ favoriteId: id, userId, master: args.master_product_id }, "favorite added");
         return id;
     }
 
-    async removeFavorite(id: number): Promise<void> {
-        await this.db.kysely().deleteFrom("favorites").where("id", "=", id).execute();
-        log.debug({ favoriteId: id }, "favorite removed");
+    async removeFavorite(userId: number, id: number): Promise<void> {
+        await this.db.kysely().deleteFrom("favorites").where("id", "=", id).where("user_id", "=", userId).execute();
+        log.debug({ favoriteId: id, userId }, "favorite removed");
     }
 
-    async editFavorite(id: number, patch: EditFavoriteArgs): Promise<void> {
+    async editFavorite(userId: number, id: number, patch: EditFavoriteArgs): Promise<void> {
         const update: Record<string, unknown> = {};
         if (patch.target_price !== undefined) {
             update.target_price = patch.target_price;
@@ -127,40 +109,100 @@ export class FavoritesRepository {
             return;
         }
 
-        await this.db.kysely().updateTable("favorites").set(update).where("id", "=", id).execute();
+        await this.db
+            .kysely()
+            .updateTable("favorites")
+            .set(update)
+            .where("id", "=", id)
+            .where("user_id", "=", userId)
+            .execute();
     }
 
-    async getFavorite(id: number): Promise<Favorite | undefined> {
-        return this.db.kysely().selectFrom("favorites").selectAll().where("id", "=", id).executeTakeFirst();
+    async getFavorite(userId: number, id: number): Promise<Favorite | undefined> {
+        return this.db
+            .kysely()
+            .selectFrom("favorites")
+            .selectAll()
+            .where("id", "=", id)
+            .where("user_id", "=", userId)
+            .executeTakeFirst();
     }
 
-    async listActive(): Promise<Favorite[]> {
+    async listActive(userId: number): Promise<Favorite[]> {
+        return this.db
+            .kysely()
+            .selectFrom("favorites")
+            .selectAll()
+            .where("user_id", "=", userId)
+            .where("active", "=", 1)
+            .execute();
+    }
+
+    /** Cross-user variant — used by the watchlist evaluator daemon which iterates ALL users' favorites. */
+    async listAllActive(): Promise<Favorite[]> {
         return this.db.kysely().selectFrom("favorites").selectAll().where("active", "=", 1).execute();
     }
 
-    async listWithCurrentState(): Promise<FavoriteWithState[]> {
-        const rows = this.db
-            .raw()
-            .query<CurrentStateRow, []>(
-                `SELECT f.*,
-                        co.current_price   AS best_price,
-                        co.shop_origin     AS best_shop,
-                        co.price_observed_at AS best_observed_at
-                 FROM favorites f
-                 LEFT JOIN current_offers co
-                   ON co.master_product_id = f.master_product_id
-                  AND (f.restricted_to_shop IS NULL OR co.shop_origin = f.restricted_to_shop)
-                  AND co.current_price = (
-                    SELECT MIN(co2.current_price)
-                    FROM current_offers co2
-                    WHERE co2.master_product_id = f.master_product_id
-                      AND (f.restricted_to_shop IS NULL OR co2.shop_origin = f.restricted_to_shop)
-                  )
-                 WHERE f.active = 1
-                 GROUP BY f.id`
-            )
-            .all();
+    async listWithCurrentState(userId: number): Promise<FavoriteWithState[]> {
+        return this.queryWithCurrentState(userId);
+    }
 
+    /** Cross-user variant — used by the watchlist evaluator daemon which scans every user's favorites. */
+    async listAllWithCurrentState(): Promise<FavoriteWithState[]> {
+        return this.queryWithCurrentState(null);
+    }
+
+    private async queryWithCurrentState(userId: number | null): Promise<FavoriteWithState[]> {
+        let q = this.db
+            .kysely()
+            .selectFrom("favorites as f")
+            .leftJoin("current_offers as co", (join) =>
+                join
+                    .onRef("co.master_product_id", "=", "f.master_product_id")
+                    .on((eb) =>
+                        eb.or([
+                            eb("f.restricted_to_shop", "is", null),
+                            eb("co.shop_origin", "=", eb.ref("f.restricted_to_shop")),
+                        ])
+                    )
+                    .on("co.current_price", "=", (eb) =>
+                        eb
+                            .selectFrom("current_offers as co2")
+                            .select((sub) => sub.fn.min("co2.current_price").as("min_price"))
+                            .whereRef("co2.master_product_id", "=", "f.master_product_id")
+                            .where((sub) =>
+                                sub.or([
+                                    sub("f.restricted_to_shop", "is", null),
+                                    sub("co2.shop_origin", "=", sub.ref("f.restricted_to_shop")),
+                                ])
+                            )
+                    )
+            )
+            .select([
+                "f.id",
+                "f.user_id",
+                "f.master_product_id",
+                "f.restricted_to_shop",
+                "f.label",
+                "f.target_price",
+                "f.drop_percent",
+                "f.drop_absolute",
+                "f.reference_price",
+                "f.notify_back_in_stock",
+                "f.cooldown_hours",
+                "f.active",
+                "f.created_at",
+                "co.current_price as best_price",
+                "co.shop_origin as best_shop",
+                "co.price_observed_at as best_observed_at",
+            ])
+            .where("f.active", "=", 1)
+            .groupBy("f.id");
+        if (userId !== null) {
+            q = q.where("f.user_id", "=", userId);
+        }
+
+        const rows = await q.execute();
         return rows.map((r) => {
             const ref = r.reference_price;
             const cur = r.best_price;

@@ -1,10 +1,10 @@
 import { SafeJSON } from "@app/utils/json";
 
 export {
+    type AuthedHandler,
     authedApiHandler,
     clearSessionCookie,
     setSessionCookie,
-    type AuthedHandler,
 } from "@app/shops/ui/server/auth-handler";
 
 export function apiHandler(

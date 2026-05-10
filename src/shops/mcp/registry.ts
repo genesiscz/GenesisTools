@@ -1,4 +1,8 @@
 import type { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
+
+// MCP runs as the seeded local user (migration 003 inserts user id=1).
+const MCP_USER_ID = 1;
+
 import { getCoverage } from "@app/shops/lib/coverage-api";
 import { ingestUrl } from "@app/shops/lib/ingest-api";
 import { acceptCandidatePair } from "@app/shops/lib/match-api";
@@ -153,7 +157,7 @@ export function buildRegistry(): ToolEntry[] {
             handler: (args, _ctx) =>
                 safeRun(async () => {
                     ShopsWatchListInput.parse(args);
-                    return jsonResult(await getWatchlist());
+                    return jsonResult(await getWatchlist(MCP_USER_ID));
                 }),
         },
         {
@@ -164,7 +168,7 @@ export function buildRegistry(): ToolEntry[] {
             handler: (args, _ctx) =>
                 safeRun(async () => {
                     const parsed = ShopsRecentNotificationsInput.parse(args);
-                    const rows = await getRecentNotifications({ limit: parsed.limit });
+                    const rows = await getRecentNotifications(MCP_USER_ID, { limit: parsed.limit });
                     if (parsed.since) {
                         const cutoff = parsed.since;
                         return jsonResult(rows.filter((r) => r.fired_at >= cutoff));
@@ -208,7 +212,7 @@ export function buildRegistry(): ToolEntry[] {
             handler: (args, _ctx) =>
                 safeRun(async () => {
                     const parsed = ShopsWatchAddInput.parse(args);
-                    return jsonResult(await addFavorite(parsed));
+                    return jsonResult(await addFavorite(MCP_USER_ID, parsed));
                 }),
         },
         {
@@ -219,7 +223,7 @@ export function buildRegistry(): ToolEntry[] {
             handler: (args, _ctx) =>
                 safeRun(async () => {
                     const parsed = ShopsWatchRemoveInput.parse(args);
-                    await removeFavorite(parsed.id);
+                    await removeFavorite(MCP_USER_ID, parsed.id);
                     return jsonResult({ ok: true });
                 }),
         },
@@ -231,7 +235,7 @@ export function buildRegistry(): ToolEntry[] {
             handler: (args, _ctx) =>
                 safeRun(async () => {
                     const parsed = ShopsNotifyAckInput.parse(args);
-                    await ackNotification(parsed.id);
+                    await ackNotification(MCP_USER_ID, parsed.id);
                     return jsonResult({ ok: true });
                 }),
         },

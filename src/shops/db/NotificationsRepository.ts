@@ -38,12 +38,13 @@ export interface ListNotificationsArgs {
 export class NotificationsRepository {
     constructor(private readonly db: ShopsDatabase) {}
 
-    async record(args: RecordNotificationArgs): Promise<number> {
+    async record(userId: number, args: RecordNotificationArgs): Promise<number> {
         const ts = nowUtcIso();
         const result = await this.db
             .kysely()
             .insertInto("notifications")
             .values({
+                user_id: userId,
                 favorite_id: args.favorite_id,
                 master_product_id: args.master_product_id,
                 product_id: args.product_id,
@@ -56,7 +57,10 @@ export class NotificationsRepository {
             })
             .executeTakeFirstOrThrow();
         const id = Number(result.insertId ?? 0);
-        log.debug({ notificationId: id, reason: args.reason, favorite_id: args.favorite_id }, "notification recorded");
+        log.debug(
+            { notificationId: id, userId, reason: args.reason, favorite_id: args.favorite_id },
+            "notification recorded"
+        );
         return id;
     }
 
@@ -98,18 +102,24 @@ export class NotificationsRepository {
             .execute();
     }
 
-    async listUnacked(): Promise<Notification[]> {
+    async listUnacked(userId: number): Promise<Notification[]> {
         return this.db
             .kysely()
             .selectFrom("notifications")
             .selectAll()
+            .where("user_id", "=", userId)
             .where("acknowledged_at", "is", null)
             .orderBy("fired_at", "desc")
             .execute();
     }
 
-    async listAll(args: ListNotificationsArgs = {}): Promise<Notification[]> {
-        let q = this.db.kysely().selectFrom("notifications").selectAll().orderBy("fired_at", "desc");
+    async listAll(userId: number, args: ListNotificationsArgs = {}): Promise<Notification[]> {
+        let q = this.db
+            .kysely()
+            .selectFrom("notifications")
+            .selectAll()
+            .where("user_id", "=", userId)
+            .orderBy("fired_at", "desc");
         if (args.reason) {
             q = q.where("reason", "=", args.reason);
         }
@@ -125,20 +135,22 @@ export class NotificationsRepository {
         return q.execute();
     }
 
-    async ack(id: number): Promise<void> {
+    async ack(userId: number, id: number): Promise<void> {
         await this.db
             .kysely()
             .updateTable("notifications")
             .set({ acknowledged_at: nowUtcIso() })
             .where("id", "=", id)
+            .where("user_id", "=", userId)
             .execute();
     }
 
-    async ackAll(): Promise<void> {
+    async ackAll(userId: number): Promise<void> {
         await this.db
             .kysely()
             .updateTable("notifications")
             .set({ acknowledged_at: nowUtcIso() })
+            .where("user_id", "=", userId)
             .where("acknowledged_at", "is", null)
             .execute();
     }

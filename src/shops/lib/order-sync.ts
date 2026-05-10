@@ -131,7 +131,7 @@ export async function syncProvider(args: SyncProviderArgs): Promise<SyncProvider
                     itemsMatched++;
                     if (autoWatchlist) {
                         try {
-                            await addFavoriteByMaster({
+                            await addFavoriteByMaster(provider.user_id, {
                                 master_product_id: productRow.master_product_id,
                                 drop_percent: watchlistDefaults.drop_percent ?? 0.1,
                                 cooldown_hours: watchlistDefaults.cooldown_hours ?? 24,

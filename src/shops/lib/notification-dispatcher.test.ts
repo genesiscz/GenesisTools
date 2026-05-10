@@ -76,7 +76,7 @@ class StubChannel implements NotificationChannel {
 describe("NotificationDispatcher", () => {
     it("invokes every available channel in parallel", async () => {
         const { db, repo, favId, masterId } = tmpDb();
-        const id = await repo.record({
+        const id = await repo.record(1, {
             favorite_id: favId,
             master_product_id: masterId,
             product_id: null,
@@ -101,7 +101,7 @@ describe("NotificationDispatcher", () => {
 
     it("writes delivered_*_at typed columns for each successful channel", async () => {
         const { db, repo, favId, masterId } = tmpDb();
-        const id = await repo.record({
+        const id = await repo.record(1, {
             favorite_id: favId,
             master_product_id: masterId,
             product_id: null,
@@ -119,7 +119,7 @@ describe("NotificationDispatcher", () => {
             ],
         });
         await dispatcher.dispatch(PAYLOAD(id, favId, masterId));
-        const rows = await repo.listAll();
+        const rows = await repo.listAll(1);
         const row = rows[0];
         expect(row.delivered_web_at).not.toBeNull();
         expect(row.delivered_macos_at).not.toBeNull();
@@ -129,7 +129,7 @@ describe("NotificationDispatcher", () => {
 
     it("records the last failure as delivery_error, others still mark delivered", async () => {
         const { db, repo, favId, masterId } = tmpDb();
-        const id = await repo.record({
+        const id = await repo.record(1, {
             favorite_id: favId,
             master_product_id: masterId,
             product_id: null,
@@ -147,7 +147,7 @@ describe("NotificationDispatcher", () => {
             ],
         });
         await dispatcher.dispatch(PAYLOAD(id, favId, masterId));
-        const rows = await repo.listAll();
+        const rows = await repo.listAll(1);
         const row = rows[0];
         expect(row.delivered_web_at).not.toBeNull();
         expect(row.delivered_telegram_at).toBeNull();
@@ -157,7 +157,7 @@ describe("NotificationDispatcher", () => {
 
     it("skips channels whose available() returns false", async () => {
         const { db, repo, favId, masterId } = tmpDb();
-        const id = await repo.record({
+        const id = await repo.record(1, {
             favorite_id: favId,
             master_product_id: masterId,
             product_id: null,
@@ -190,7 +190,7 @@ describe("NotificationDispatcher", () => {
 
     it("never throws even if a channel rejects", async () => {
         const { db, repo, favId, masterId } = tmpDb();
-        const id = await repo.record({
+        const id = await repo.record(1, {
             favorite_id: favId,
             master_product_id: masterId,
             product_id: null,
@@ -218,7 +218,7 @@ describe("NotificationDispatcher", () => {
         const results = await dispatcher.dispatch(PAYLOAD(id, favId, masterId));
         expect(results[0].delivered).toBe(false);
         expect(results[0].error).toContain("connection refused");
-        const rows = await repo.listAll();
+        const rows = await repo.listAll(1);
         const row = rows[0];
         expect(row.delivery_error).toContain("connection refused");
         db.close();

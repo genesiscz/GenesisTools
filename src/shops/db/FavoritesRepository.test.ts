@@ -36,10 +36,22 @@ function fixture(): { db: ShopsDatabase; repo: FavoritesRepository; masterId: nu
     return { db, repo: new FavoritesRepository(db), masterId, productId };
 }
 
+function seedUser(db: ShopsDatabase, email: string): number {
+    db.raw().exec(
+        `INSERT INTO users (email, display_name, created_at, updated_at)
+         VALUES ('${email}', '${email}', strftime('%Y-%m-%dT%H:%M:%fZ','now'), strftime('%Y-%m-%dT%H:%M:%fZ','now'))`
+    );
+    const r = db.raw().query<{ id: number }, []>("SELECT last_insert_rowid() as id").get();
+    if (!r) {
+        throw new Error("user insert failed");
+    }
+    return r.id;
+}
+
 describe("FavoritesRepository", () => {
     it("addFavorite inserts a master-scoped row with reference_price", async () => {
         const { db, repo, masterId } = fixture();
-        const id = await repo.addFavorite({
+        const id = await repo.addFavorite(1, {
             master_product_id: masterId,
             restricted_to_shop: null,
             target_price: 35,
@@ -55,7 +67,7 @@ describe("FavoritesRepository", () => {
 
     it("addFavorite enforces UNIQUE(master_product_id, restricted_to_shop) when restricted_to_shop is non-NULL", async () => {
         const { db, repo, masterId } = fixture();
-        await repo.addFavorite({
+        await repo.addFavorite(1, {
             master_product_id: masterId,
             restricted_to_shop: "rohlik.cz",
             target_price: 35,
@@ -66,7 +78,7 @@ describe("FavoritesRepository", () => {
             cooldown_hours: 24,
         });
         await expect(
-            repo.addFavorite({
+            repo.addFavorite(1, {
                 master_product_id: masterId,
                 restricted_to_shop: "rohlik.cz",
                 target_price: 30,
@@ -80,9 +92,9 @@ describe("FavoritesRepository", () => {
         db.close();
     });
 
-    it("listActive returns only active=1 rows", async () => {
+    it("listActive returns only active=1 rows for the given user", async () => {
         const { db, repo, masterId } = fixture();
-        const id = await repo.addFavorite({
+        const id = await repo.addFavorite(1, {
             master_product_id: masterId,
             restricted_to_shop: null,
             target_price: 35,
@@ -92,15 +104,15 @@ describe("FavoritesRepository", () => {
             label: null,
             cooldown_hours: 24,
         });
-        expect((await repo.listActive()).length).toBe(1);
-        await repo.removeFavorite(id);
-        expect((await repo.listActive()).length).toBe(0);
+        expect((await repo.listActive(1)).length).toBe(1);
+        await repo.removeFavorite(1, id);
+        expect((await repo.listActive(1)).length).toBe(0);
         db.close();
     });
 
     it("listWithCurrentState joins current_offers + delta", async () => {
         const { db, repo, masterId } = fixture();
-        await repo.addFavorite({
+        await repo.addFavorite(1, {
             master_product_id: masterId,
             restricted_to_shop: null,
             target_price: 35,
@@ -110,7 +122,7 @@ describe("FavoritesRepository", () => {
             label: null,
             cooldown_hours: 24,
         });
-        const rows = await repo.listWithCurrentState();
+        const rows = await repo.listWithCurrentState(1);
         expect(rows).toHaveLength(1);
         expect(rows[0].best_price).toBe(39.9);
         expect(rows[0].best_shop).toBe("rohlik.cz");
@@ -118,9 +130,9 @@ describe("FavoritesRepository", () => {
         db.close();
     });
 
-    it("editFavorite updates fields in-place", async () => {
+    it("editFavorite updates fields in-place when user matches", async () => {
         const { db, repo, masterId } = fixture();
-        const id = await repo.addFavorite({
+        const id = await repo.addFavorite(1, {
             master_product_id: masterId,
             restricted_to_shop: null,
             target_price: 35,
@@ -130,10 +142,56 @@ describe("FavoritesRepository", () => {
             label: null,
             cooldown_hours: 24,
         });
-        await repo.editFavorite(id, { target_price: 30, label: "weekend treat" });
-        const after = await repo.getFavorite(id);
+        await repo.editFavorite(1, id, { target_price: 30, label: "weekend treat" });
+        const after = await repo.getFavorite(1, id);
         expect(after?.target_price).toBe(30);
         expect(after?.label).toBe("weekend treat");
+        db.close();
+    });
+
+    it("queries are scoped: user A cannot see/edit/delete user B's favorites", async () => {
+        const { db, repo, masterId } = fixture();
+        const userB = seedUser(db, "b@x");
+        const idA = await repo.addFavorite(1, {
+            master_product_id: masterId,
+            restricted_to_shop: null,
+            target_price: 35,
+            drop_percent: null,
+            drop_absolute: null,
+            reference_price: 49.9,
+            label: "A's pick",
+            cooldown_hours: 24,
+        });
+        const idB = await repo.addFavorite(userB, {
+            master_product_id: masterId,
+            restricted_to_shop: "rohlik.cz",
+            target_price: 30,
+            drop_percent: null,
+            drop_absolute: null,
+            reference_price: 49.9,
+            label: "B's pick",
+            cooldown_hours: 24,
+        });
+
+        const aList = await repo.listActive(1);
+        const bList = await repo.listActive(userB);
+        expect(aList).toHaveLength(1);
+        expect(bList).toHaveLength(1);
+        expect(aList[0].id).toBe(idA);
+        expect(bList[0].id).toBe(idB);
+
+        // cross-user fetch
+        expect(await repo.getFavorite(1, idB)).toBeUndefined();
+        expect(await repo.getFavorite(userB, idA)).toBeUndefined();
+
+        // cross-user delete is a no-op
+        await repo.removeFavorite(1, idB);
+        expect(await repo.getFavorite(userB, idB)).toBeDefined();
+
+        // listWithCurrentState scoped
+        const aState = await repo.listWithCurrentState(1);
+        expect(aState).toHaveLength(1);
+        expect(aState[0].id).toBe(idA);
         db.close();
     });
 });

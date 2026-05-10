@@ -31,8 +31,5 @@ export function setSessionCookie(headers: Headers, token: string, ttlDays: numbe
 }
 
 export function clearSessionCookie(headers: Headers): void {
-    headers.append(
-        "Set-Cookie",
-        `${SESSION_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`
-    );
+    headers.append("Set-Cookie", `${SESSION_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
 }

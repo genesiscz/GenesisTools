@@ -1,10 +1,17 @@
+import { getShopsDatabase } from "@app/shops/db/ShopsDatabase";
+import { getSessionUser } from "@app/shops/lib/auth";
 import { getSettingsRepository } from "@app/shops/lib/settings";
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 
-const getDefaultLanding = createServerFn({ method: "GET" }).handler(async () => {
+const getDefaultLanding = createServerFn({ method: "GET" }).handler(async ({ request }) => {
     try {
-        const settings = await getSettingsRepository().read();
+        const user = await getSessionUser(request as Request, getShopsDatabase());
+        if (!user) {
+            return "/watchlist";
+        }
+
+        const settings = await getSettingsRepository().read(user.id);
         return settings.default_landing_view;
     } catch {
         return "/watchlist";

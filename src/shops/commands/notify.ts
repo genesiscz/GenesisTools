@@ -9,6 +9,9 @@ import { SafeJSON } from "@app/utils/json";
 import { formatTable } from "@app/utils/table";
 import type { Command } from "commander";
 
+// CLI runs as the seeded local user (migration 003 inserts user id=1).
+const LOCAL_USER_ID = 1;
+
 export function registerNotifyCommand(program: Command): void {
     const notify = program.command("notify").description("Inspect and acknowledge notifications");
 
@@ -27,7 +30,7 @@ export function registerNotifyCommand(program: Command): void {
                 shop_origin: opts.shop,
                 limit: opts.limit ? Number(opts.limit) : 100,
             };
-            const rows = await getRecentNotifications(args);
+            const rows = await getRecentNotifications(LOCAL_USER_ID, args);
             if (opts.json) {
                 console.log(SafeJSON.stringify(rows, null, 2));
                 return;
@@ -55,7 +58,7 @@ export function registerNotifyCommand(program: Command): void {
         .option("--all", "Acknowledge all pending notifications")
         .action(async (idArg: string | undefined, opts: { all?: boolean }) => {
             if (opts.all) {
-                await ackAllNotifications();
+                await ackAllNotifications(LOCAL_USER_ID);
                 console.log("acknowledged all pending");
                 return;
             }
@@ -64,7 +67,7 @@ export function registerNotifyCommand(program: Command): void {
                 throw new Error("Provide an id or use --all.");
             }
 
-            await ackNotification(Number(idArg));
+            await ackNotification(LOCAL_USER_ID, Number(idArg));
             console.log(`acknowledged #${idArg}`);
         });
 }

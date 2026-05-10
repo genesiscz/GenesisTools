@@ -30,10 +30,22 @@ function fixture() {
     return { db, repo: new NotificationsRepository(db), masterId, favId };
 }
 
+function seedUser(db: ShopsDatabase, email: string): number {
+    db.raw().exec(
+        `INSERT INTO users (email, display_name, created_at, updated_at)
+         VALUES ('${email}', '${email}', strftime('%Y-%m-%dT%H:%M:%fZ','now'), strftime('%Y-%m-%dT%H:%M:%fZ','now'))`
+    );
+    const r = db.raw().query<{ id: number }, []>("SELECT last_insert_rowid() as id").get();
+    if (!r) {
+        throw new Error("user insert failed");
+    }
+    return r.id;
+}
+
 describe("NotificationsRepository", () => {
     it("record inserts an unacknowledged row with all four delivered_* columns null", async () => {
         const { db, repo, masterId, favId } = fixture();
-        const id = await repo.record({
+        const id = await repo.record(1, {
             favorite_id: favId,
             master_product_id: masterId,
             product_id: null,
@@ -43,7 +55,7 @@ describe("NotificationsRepository", () => {
             shop_origin: "rohlik.cz",
             metadata: {},
         });
-        const rows = await repo.listAll();
+        const rows = await repo.listAll(1);
         const row = rows[0];
         expect(row.id).toBe(id);
         expect(row.acknowledged_at).toBeNull();
@@ -55,7 +67,7 @@ describe("NotificationsRepository", () => {
 
     it("findRecentByFavoriteAndReason returns last fire within window, otherwise undefined", async () => {
         const { db, repo, masterId, favId } = fixture();
-        await repo.record({
+        await repo.record(1, {
             favorite_id: favId,
             master_product_id: masterId,
             product_id: null,
@@ -87,7 +99,7 @@ describe("NotificationsRepository", () => {
 
     it("markDelivered sets the typed column for the named channel", async () => {
         const { db, repo, masterId, favId } = fixture();
-        const id = await repo.record({
+        const id = await repo.record(1, {
             favorite_id: favId,
             master_product_id: masterId,
             product_id: null,
@@ -99,7 +111,7 @@ describe("NotificationsRepository", () => {
         });
         await repo.markDelivered(id, "web");
         await repo.markDelivered(id, "macos");
-        const rows = await repo.listAll();
+        const rows = await repo.listAll(1);
         const row = rows.find((r) => r.id === id);
         expect(row).toBeDefined();
         expect(row?.delivered_web_at).not.toBeNull();
@@ -108,9 +120,9 @@ describe("NotificationsRepository", () => {
         db.close();
     });
 
-    it("ack and ackAll set acknowledged_at", async () => {
+    it("ack and ackAll set acknowledged_at, scoped to user", async () => {
         const { db, repo, masterId, favId } = fixture();
-        const id1 = await repo.record({
+        const id1 = await repo.record(1, {
             favorite_id: favId,
             master_product_id: masterId,
             product_id: null,
@@ -120,7 +132,7 @@ describe("NotificationsRepository", () => {
             shop_origin: "rohlik.cz",
             metadata: {},
         });
-        const id2 = await repo.record({
+        const id2 = await repo.record(1, {
             favorite_id: favId,
             master_product_id: masterId,
             product_id: null,
@@ -130,16 +142,16 @@ describe("NotificationsRepository", () => {
             shop_origin: "rohlik.cz",
             metadata: {},
         });
-        await repo.ack(id1);
-        expect((await repo.listUnacked()).map((r) => r.id)).toEqual([id2]);
-        await repo.ackAll();
-        expect((await repo.listUnacked()).length).toBe(0);
+        await repo.ack(1, id1);
+        expect((await repo.listUnacked(1)).map((r) => r.id)).toEqual([id2]);
+        await repo.ackAll(1);
+        expect((await repo.listUnacked(1)).length).toBe(0);
         db.close();
     });
 
     it("setDeliveryError records the last failure message", async () => {
         const { db, repo, masterId, favId } = fixture();
-        const id = await repo.record({
+        const id = await repo.record(1, {
             favorite_id: favId,
             master_product_id: masterId,
             product_id: null,
@@ -150,9 +162,39 @@ describe("NotificationsRepository", () => {
             metadata: {},
         });
         await repo.setDeliveryError(id, "telegram: 401 Unauthorized");
-        const rows = await repo.listAll();
+        const rows = await repo.listAll(1);
         const row = rows.find((r) => r.id === id);
         expect(row?.delivery_error).toBe("telegram: 401 Unauthorized");
+        db.close();
+    });
+
+    it("listUnacked / ack are scoped: user A cannot ack user B's notifications", async () => {
+        const { db, repo, masterId, favId } = fixture();
+        const userB = seedUser(db, "b@x");
+        const idA = await repo.record(1, {
+            favorite_id: favId,
+            master_product_id: masterId,
+            product_id: null,
+            reason: "target-price",
+            prev_price: 50,
+            curr_price: 29,
+            shop_origin: "rohlik.cz",
+            metadata: {},
+        });
+        const idB = await repo.record(userB, {
+            favorite_id: favId,
+            master_product_id: masterId,
+            product_id: null,
+            reason: "drop-percent",
+            prev_price: 50,
+            curr_price: 35,
+            shop_origin: "rohlik.cz",
+            metadata: {},
+        });
+        expect((await repo.listUnacked(1)).map((r) => r.id)).toEqual([idA]);
+        expect((await repo.listUnacked(userB)).map((r) => r.id)).toEqual([idB]);
+        await repo.ack(1, idB); // user A tries to ack B's
+        expect((await repo.listUnacked(userB)).map((r) => r.id)).toEqual([idB]);
         db.close();
     });
 });

@@ -2,13 +2,13 @@ import { KosikAuthClient } from "@app/shops/api/shops/KosikAuthClient";
 import { RohlikAuthClient } from "@app/shops/api/shops/RohlikAuthClient";
 import { getShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import { UserProvidersRepository } from "@app/shops/db/UserProvidersRepository";
-import { apiHandler, jsonBody } from "@app/shops/ui/server/api-utils";
+import { authedApiHandler, jsonBody } from "@app/shops/ui/server/api-utils";
 import { createFileRoute } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/api/providers/connect")({
     server: {
         handlers: {
-            POST: apiHandler(async (request) => {
+            POST: authedApiHandler(async (request, userId) => {
                 const body = await jsonBody(request);
                 if (body instanceof Response) {
                     return body;
@@ -39,7 +39,7 @@ export const Route = createFileRoute("/api/providers/connect")({
 
                     const profile = await client.getProfile();
                     const id = await repo.connect({
-                        user_id: 1,
+                        user_id: userId,
                         shop_origin: "rohlik.cz",
                         credentials: { type: "email-password", email, password },
                         external_user_email: profile.email,
@@ -68,7 +68,7 @@ export const Route = createFileRoute("/api/providers/connect")({
                     }
 
                     const id = await repo.connect({
-                        user_id: 1,
+                        user_id: userId,
                         shop_origin: "kosik.cz",
                         credentials: { type: "session-cookie", cookie },
                         external_user_email: profile.client.email,

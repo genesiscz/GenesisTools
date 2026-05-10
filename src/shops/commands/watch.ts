@@ -8,6 +8,9 @@ import type { Command } from "commander";
 
 const log = logger.child({ component: "shops:watch-cmd" });
 
+// CLI runs as the seeded local user (migration 003 inserts user id=1).
+const LOCAL_USER_ID = 1;
+
 export function registerWatchCommand(program: Command): void {
     const watch = program.command("watch").description("Manage the watchlist (favorites with discount alerts)");
 
@@ -26,7 +29,7 @@ export function registerWatchCommand(program: Command): void {
             const dropPercent = opts.drop !== undefined ? parsePercent(String(opts.drop)) : null;
             const dropAbsolute = opts.dropAbs !== undefined ? Number(opts.dropAbs) : null;
             const cooldownHours = parseCooldown(String(opts.cooldown ?? "24"));
-            const result = await addFavorite({
+            const result = await addFavorite(LOCAL_USER_ID, {
                 url,
                 target_price: targetPrice,
                 drop_percent: dropPercent,
@@ -57,7 +60,7 @@ export function registerWatchCommand(program: Command): void {
         .description("List active favorites with their current state")
         .option("--json", "Output JSON")
         .action(async (opts: { json?: boolean }) => {
-            const rows = await getWatchlist();
+            const rows = await getWatchlist(LOCAL_USER_ID);
             if (opts.json) {
                 console.log(SafeJSON.stringify(rows, null, 2));
                 return;
@@ -84,7 +87,7 @@ export function registerWatchCommand(program: Command): void {
         .description("Remove a favorite by id")
         .action(async (idStr: string) => {
             const id = Number(idStr);
-            await removeFavorite(id);
+            await removeFavorite(LOCAL_USER_ID, id);
             console.log(`removed favorite #${id}`);
         });
 
@@ -124,7 +127,7 @@ export function registerWatchCommand(program: Command): void {
                 patch.active = opts.active === "on";
             }
 
-            const updated = await editFavorite(id, patch);
+            const updated = await editFavorite(LOCAL_USER_ID, id, patch);
             console.log(SafeJSON.stringify(updated, null, 2));
         });
 

@@ -1,6 +1,6 @@
 import { getShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import { UserProvidersRepository } from "@app/shops/db/UserProvidersRepository";
-import { apiHandler } from "@app/shops/ui/server/api-utils";
+import { authedApiHandler } from "@app/shops/ui/server/api-utils";
 import { createFileRoute } from "@tanstack/react-router";
 
 const SUPPORTED = ["rohlik.cz", "kosik.cz"] as const;
@@ -8,10 +8,10 @@ const SUPPORTED = ["rohlik.cz", "kosik.cz"] as const;
 export const Route = createFileRoute("/api/providers/list")({
     server: {
         handlers: {
-            GET: apiHandler(async () => {
+            GET: authedApiHandler(async (_request, userId) => {
                 const db = getShopsDatabase();
                 const repo = new UserProvidersRepository(db);
-                const rows = await repo.listForUser(1);
+                const rows = await repo.listForUser(userId);
                 const byOrigin = new Map(rows.map((r) => [r.shop_origin, r]));
                 const cards = SUPPORTED.map((origin) => {
                     const row = byOrigin.get(origin);

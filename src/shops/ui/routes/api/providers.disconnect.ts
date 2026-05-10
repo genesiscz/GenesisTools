@@ -1,12 +1,12 @@
 import { getShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import { UserProvidersRepository } from "@app/shops/db/UserProvidersRepository";
-import { apiHandler, jsonBody } from "@app/shops/ui/server/api-utils";
+import { authedApiHandler, jsonBody } from "@app/shops/ui/server/api-utils";
 import { createFileRoute } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/api/providers/disconnect")({
     server: {
         handlers: {
-            POST: apiHandler(async (request) => {
+            POST: authedApiHandler(async (request, userId) => {
                 const body = await jsonBody(request);
                 if (body instanceof Response) {
                     return body;
@@ -17,7 +17,7 @@ export const Route = createFileRoute("/api/providers/disconnect")({
                 }
 
                 const repo = new UserProvidersRepository(getShopsDatabase());
-                const row = await repo.getByShop(1, body.shop_origin);
+                const row = await repo.getByShop(userId, body.shop_origin);
                 if (!row) {
                     return Response.json({ ok: true });
                 }

@@ -1,19 +1,17 @@
 import { getShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import { addFavorite } from "@app/shops/lib/watchlist-api";
-import { apiHandler, jsonBody } from "@app/shops/ui/server/api-utils";
+import { authedApiHandler, jsonBody } from "@app/shops/ui/server/api-utils";
 import { createFileRoute } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/api/watchlist/add")({
     server: {
         handlers: {
-            POST: apiHandler(async (request) => {
+            POST: authedApiHandler(async (request, userId) => {
                 const body = await jsonBody(request);
                 if (body instanceof Response) {
                     return body;
                 }
 
-                // Resolve `url` directly OR by master_product_id — StarWatchButton
-                // on the master detail page only knows the master id.
                 let url: string | null = typeof body.url === "string" && body.url.length > 0 ? body.url : null;
                 if (!url && typeof body.master_product_id === "number") {
                     const row = await getShopsDatabase()
@@ -34,7 +32,7 @@ export const Route = createFileRoute("/api/watchlist/add")({
                     return Response.json({ error: "Field 'url' or 'master_product_id' is required" }, { status: 400 });
                 }
 
-                const result = await addFavorite({
+                const result = await addFavorite(userId, {
                     url,
                     target_price: typeof body.target_price === "number" ? body.target_price : null,
                     drop_percent: typeof body.drop_percent === "number" ? body.drop_percent : null,

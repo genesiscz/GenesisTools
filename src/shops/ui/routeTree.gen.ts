@@ -41,6 +41,10 @@ import { Route as ApiOrdersListRouteImport } from './routes/api/orders.list'
 import { Route as ApiMatchCandidatesRouteImport } from './routes/api/match.candidates'
 import { Route as ApiMasterIdRouteImport } from './routes/api/master.$id'
 import { Route as ApiLiveEventsRouteImport } from './routes/api/live.events'
+import { Route as ApiAuthRegisterRouteImport } from './routes/api/auth.register'
+import { Route as ApiAuthMeRouteImport } from './routes/api/auth.me'
+import { Route as ApiAuthLogoutRouteImport } from './routes/api/auth.logout'
+import { Route as ApiAuthLoginRouteImport } from './routes/api/auth.login'
 import { Route as ApiWatchlistIdEditRouteImport } from './routes/api/watchlist.$id.edit'
 import { Route as ApiWatchlistIdDeleteRouteImport } from './routes/api/watchlist.$id.delete'
 import { Route as ApiProductShopSlugRouteImport } from './routes/api/product.$shop.$slug'
@@ -209,6 +213,26 @@ const ApiLiveEventsRoute = ApiLiveEventsRouteImport.update({
   path: '/api/live/events',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiAuthRegisterRoute = ApiAuthRegisterRouteImport.update({
+  id: '/api/auth/register',
+  path: '/api/auth/register',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiAuthMeRoute = ApiAuthMeRouteImport.update({
+  id: '/api/auth/me',
+  path: '/api/auth/me',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiAuthLogoutRoute = ApiAuthLogoutRouteImport.update({
+  id: '/api/auth/logout',
+  path: '/api/auth/logout',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiAuthLoginRoute = ApiAuthLoginRouteImport.update({
+  id: '/api/auth/login',
+  path: '/api/auth/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiWatchlistIdEditRoute = ApiWatchlistIdEditRouteImport.update({
   id: '/$id/edit',
   path: '/$id/edit',
@@ -267,6 +291,10 @@ export interface FileRoutesByFullPath {
   '/api/watchlist': typeof ApiWatchlistRouteWithChildren
   '/master/$id': typeof MasterIdRoute
   '/match/review': typeof MatchReviewRoute
+  '/api/auth/login': typeof ApiAuthLoginRoute
+  '/api/auth/logout': typeof ApiAuthLogoutRoute
+  '/api/auth/me': typeof ApiAuthMeRoute
+  '/api/auth/register': typeof ApiAuthRegisterRoute
   '/api/live/events': typeof ApiLiveEventsRoute
   '/api/master/$id': typeof ApiMasterIdRouteWithChildren
   '/api/match/candidates': typeof ApiMatchCandidatesRoute
@@ -308,6 +336,10 @@ export interface FileRoutesByTo {
   '/api/watchlist': typeof ApiWatchlistRouteWithChildren
   '/master/$id': typeof MasterIdRoute
   '/match/review': typeof MatchReviewRoute
+  '/api/auth/login': typeof ApiAuthLoginRoute
+  '/api/auth/logout': typeof ApiAuthLogoutRoute
+  '/api/auth/me': typeof ApiAuthMeRoute
+  '/api/auth/register': typeof ApiAuthRegisterRoute
   '/api/live/events': typeof ApiLiveEventsRoute
   '/api/master/$id': typeof ApiMasterIdRouteWithChildren
   '/api/match/candidates': typeof ApiMatchCandidatesRoute
@@ -350,6 +382,10 @@ export interface FileRoutesById {
   '/api/watchlist': typeof ApiWatchlistRouteWithChildren
   '/master/$id': typeof MasterIdRoute
   '/match/review': typeof MatchReviewRoute
+  '/api/auth/login': typeof ApiAuthLoginRoute
+  '/api/auth/logout': typeof ApiAuthLogoutRoute
+  '/api/auth/me': typeof ApiAuthMeRoute
+  '/api/auth/register': typeof ApiAuthRegisterRoute
   '/api/live/events': typeof ApiLiveEventsRoute
   '/api/master/$id': typeof ApiMasterIdRouteWithChildren
   '/api/match/candidates': typeof ApiMatchCandidatesRoute
@@ -393,6 +429,10 @@ export interface FileRouteTypes {
     | '/api/watchlist'
     | '/master/$id'
     | '/match/review'
+    | '/api/auth/login'
+    | '/api/auth/logout'
+    | '/api/auth/me'
+    | '/api/auth/register'
     | '/api/live/events'
     | '/api/master/$id'
     | '/api/match/candidates'
@@ -434,6 +474,10 @@ export interface FileRouteTypes {
     | '/api/watchlist'
     | '/master/$id'
     | '/match/review'
+    | '/api/auth/login'
+    | '/api/auth/logout'
+    | '/api/auth/me'
+    | '/api/auth/register'
     | '/api/live/events'
     | '/api/master/$id'
     | '/api/match/candidates'
@@ -475,6 +519,10 @@ export interface FileRouteTypes {
     | '/api/watchlist'
     | '/master/$id'
     | '/match/review'
+    | '/api/auth/login'
+    | '/api/auth/logout'
+    | '/api/auth/me'
+    | '/api/auth/register'
     | '/api/live/events'
     | '/api/master/$id'
     | '/api/match/candidates'
@@ -517,6 +565,10 @@ export interface RootRouteChildren {
   ApiWatchlistRoute: typeof ApiWatchlistRouteWithChildren
   MasterIdRoute: typeof MasterIdRoute
   MatchReviewRoute: typeof MatchReviewRoute
+  ApiAuthLoginRoute: typeof ApiAuthLoginRoute
+  ApiAuthLogoutRoute: typeof ApiAuthLogoutRoute
+  ApiAuthMeRoute: typeof ApiAuthMeRoute
+  ApiAuthRegisterRoute: typeof ApiAuthRegisterRoute
   ApiLiveEventsRoute: typeof ApiLiveEventsRoute
   ApiMatchCandidatesRoute: typeof ApiMatchCandidatesRoute
   ApiOrdersListRoute: typeof ApiOrdersListRoute
@@ -757,6 +809,34 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiLiveEventsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/auth/register': {
+      id: '/api/auth/register'
+      path: '/api/auth/register'
+      fullPath: '/api/auth/register'
+      preLoaderRoute: typeof ApiAuthRegisterRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/auth/me': {
+      id: '/api/auth/me'
+      path: '/api/auth/me'
+      fullPath: '/api/auth/me'
+      preLoaderRoute: typeof ApiAuthMeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/auth/logout': {
+      id: '/api/auth/logout'
+      path: '/api/auth/logout'
+      fullPath: '/api/auth/logout'
+      preLoaderRoute: typeof ApiAuthLogoutRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/auth/login': {
+      id: '/api/auth/login'
+      path: '/api/auth/login'
+      fullPath: '/api/auth/login'
+      preLoaderRoute: typeof ApiAuthLoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/watchlist/$id/edit': {
       id: '/api/watchlist/$id/edit'
       path: '/$id/edit'
@@ -882,6 +962,10 @@ const rootRouteChildren: RootRouteChildren = {
   ApiWatchlistRoute: ApiWatchlistRouteWithChildren,
   MasterIdRoute: MasterIdRoute,
   MatchReviewRoute: MatchReviewRoute,
+  ApiAuthLoginRoute: ApiAuthLoginRoute,
+  ApiAuthLogoutRoute: ApiAuthLogoutRoute,
+  ApiAuthMeRoute: ApiAuthMeRoute,
+  ApiAuthRegisterRoute: ApiAuthRegisterRoute,
   ApiLiveEventsRoute: ApiLiveEventsRoute,
   ApiMatchCandidatesRoute: ApiMatchCandidatesRoute,
   ApiOrdersListRoute: ApiOrdersListRoute,

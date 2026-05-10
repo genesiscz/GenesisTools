@@ -73,7 +73,7 @@ export class WatchlistEvaluator {
         }
 
         const startedAt = Date.now();
-        const favorites = await this.config.favorites.listWithCurrentState();
+        const favorites = await this.config.favorites.listAllWithCurrentState();
         let fired = 0;
         let skippedCooldown = 0;
         let skippedNoOffer = 0;
@@ -103,7 +103,7 @@ export class WatchlistEvaluator {
                 continue;
             }
 
-            const notificationId = await this.config.notifications.record({
+            const notificationId = await this.config.notifications.record(fav.user_id, {
                 favorite_id: fav.id,
                 master_product_id: fav.master_product_id,
                 product_id: hit.productId,

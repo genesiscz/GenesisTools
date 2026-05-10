@@ -1,15 +1,15 @@
 import { ackAllNotifications, ackNotification } from "@app/shops/lib/watchlist-api";
-import { apiHandler } from "@app/shops/ui/server/api-utils";
+import { authedApiHandler } from "@app/shops/ui/server/api-utils";
 import { createFileRoute } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/api/notifications/$id/ack")({
     server: {
         handlers: {
-            POST: apiHandler(async (request) => {
+            POST: authedApiHandler(async (request, userId) => {
                 const url = new URL(request.url);
                 const idStr = url.pathname.split("/").at(-2);
                 if (idStr === "all") {
-                    await ackAllNotifications();
+                    await ackAllNotifications(userId);
                     return Response.json({ ok: true, scope: "all" });
                 }
 
@@ -18,7 +18,7 @@ export const Route = createFileRoute("/api/notifications/$id/ack")({
                     return Response.json({ error: "Invalid id" }, { status: 400 });
                 }
 
-                await ackNotification(id);
+                await ackNotification(userId, id);
                 return Response.json({ ok: true, id });
             }),
         },

@@ -70,7 +70,7 @@ function seed(input: Seed) {
 }
 
 async function makeFav(env: Awaited<ReturnType<typeof seed>>, args: Partial<Seed> = {}) {
-    return env.favRepo.addFavorite({
+    return env.favRepo.addFavorite(1, {
         master_product_id: env.masterId,
         restricted_to_shop: env.input.restrictedToShop ?? null,
         target_price: args.targetPrice ?? env.input.targetPrice ?? null,
@@ -133,7 +133,7 @@ describe("WatchlistEvaluator.tick", () => {
 
     it("fires back-in-stock only when notify_back_in_stock=1 and current was 0 in last fire", async () => {
         const env = seed({ targetPrice: null, referencePrice: 50, currentPrice: 50, inStock: 1 });
-        const favId = await env.favRepo.addFavorite({
+        const favId = await env.favRepo.addFavorite(1, {
             master_product_id: env.masterId,
             restricted_to_shop: null,
             target_price: null,

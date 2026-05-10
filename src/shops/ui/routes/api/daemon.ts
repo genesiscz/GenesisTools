@@ -1,6 +1,6 @@
 import logger from "@app/logger";
 import { getSettingsRepository } from "@app/shops/lib/settings";
-import { apiHandler } from "@app/shops/ui/server/api-utils";
+import { authedApiHandler } from "@app/shops/ui/server/api-utils";
 import { createFileRoute } from "@tanstack/react-router";
 
 const log = logger.child({ component: "api:daemon" });
@@ -8,17 +8,17 @@ const log = logger.child({ component: "api:daemon" });
 export const Route = createFileRoute("/api/daemon")({
     server: {
         handlers: {
-            GET: apiHandler(async () => {
+            GET: authedApiHandler(async (_request, userId) => {
                 const repo = getSettingsRepository();
-                const settings = await repo.read();
-                log.debug({ enabled: settings.daemon_enabled }, "api: daemon status");
+                const settings = await repo.read(userId);
+                log.debug({ enabled: settings.daemon_enabled, userId }, "api: daemon status");
                 return Response.json({
                     enabled: settings.daemon_enabled,
                     pid: null,
                     uptime_seconds: null,
                 });
             }),
-            POST: apiHandler(async (request) => {
+            POST: authedApiHandler(async (request, userId) => {
                 const url = new URL(request.url);
                 const action = url.searchParams.get("action");
                 if (action !== "enable" && action !== "disable") {
@@ -26,8 +26,8 @@ export const Route = createFileRoute("/api/daemon")({
                 }
 
                 const repo = getSettingsRepository();
-                const next = await repo.patch({ daemon_enabled: action === "enable" });
-                log.info({ action }, "api: daemon toggle");
+                const next = await repo.patch(userId, { daemon_enabled: action === "enable" });
+                log.info({ action, userId }, "api: daemon toggle");
                 return Response.json({ enabled: next.daemon_enabled });
             }),
         },

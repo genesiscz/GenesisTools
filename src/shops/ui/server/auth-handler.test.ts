@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { setShopsDatabaseSingletonForTest, ShopsDatabase } from "@app/shops/db/ShopsDatabase";
+import { ShopsDatabase, setShopsDatabaseSingletonForTest } from "@app/shops/db/ShopsDatabase";
 import { authedApiHandler, clearSessionCookie, setSessionCookie } from "@app/shops/ui/server/auth-handler";
 import { nowUtcIso } from "@app/utils/sql-time";
 

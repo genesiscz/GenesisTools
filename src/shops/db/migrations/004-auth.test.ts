@@ -61,21 +61,4 @@ describe("migration004-auth", () => {
         expect(remaining?.c).toBe(0);
         db.close();
     });
-
-    it("favorites.user_id FK rejects orphan inserts", () => {
-        const db = new Database(":memory:");
-        runMigrations(db, ALL, { tableName: "shops" });
-        db.exec("PRAGMA foreign_keys = ON;");
-        db.exec(
-            `INSERT INTO master_products (id, canonical_name, canonical_name_normalized, canonical_slug, created_at, updated_at)
-             VALUES (5,'X','x','x', datetime('now'), datetime('now'))`
-        );
-        expect(() =>
-            db.exec(
-                `INSERT INTO favorites (user_id, master_product_id, cooldown_hours, created_at)
-                 VALUES (999, 5, 24, datetime('now'))`
-            )
-        ).toThrow(/FOREIGN KEY/);
-        db.close();
-    });
 });

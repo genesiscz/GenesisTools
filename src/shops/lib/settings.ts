@@ -1,5 +1,5 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { copyFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import logger from "@app/logger";
 import type {
     DefaultLandingView,
@@ -44,45 +44,86 @@ export type SettingsPatch = {
 };
 
 export class SettingsRepository {
-    private writeChain: Promise<void> = Promise.resolve();
+    private writeChain = new Map<number, Promise<void>>();
+    private legacyChecked = false;
 
-    constructor(private readonly path: string) {}
+    /** Base directory; per-user files live at `<baseDir>/<userId>.json`. */
+    constructor(private readonly baseDir: string) {}
 
-    async read(): Promise<SettingsPayload> {
+    private path(userId: number): string {
+        return join(this.baseDir, `${userId}.json`);
+    }
+
+    /**
+     * One-time migration: if `<baseDir>/1.json` is missing and the legacy
+     * `<baseDir>/../config.json` (single-user file) exists, copy it over so
+     * the seeded user's settings survive the multi-user retrofit.
+     */
+    private async migrateLegacyForUser1(): Promise<void> {
+        if (this.legacyChecked) {
+            return;
+        }
+
+        this.legacyChecked = true;
+        const target = this.path(1);
+        const legacy = join(dirname(this.baseDir), "config.json");
         try {
-            const raw = await readFile(this.path, "utf8");
+            await stat(target);
+            return;
+        } catch {
+            // target absent — try legacy
+        }
+
+        try {
+            await stat(legacy);
+        } catch {
+            return;
+        }
+
+        try {
+            await mkdir(this.baseDir, { recursive: true });
+            await copyFile(legacy, target);
+            log.info({ legacy, target }, "settings: migrated legacy config.json → 1.json");
+        } catch (err) {
+            log.warn({ err }, "settings: legacy migration failed");
+        }
+    }
+
+    async read(userId: number): Promise<SettingsPayload> {
+        if (userId === 1) {
+            await this.migrateLegacyForUser1();
+        }
+
+        try {
+            const raw = await readFile(this.path(userId), "utf8");
             const parsed = SafeJSON.parse(raw) as Partial<SettingsPayload>;
             return mergeWithDefaults(parsed);
         } catch (err) {
             if (isFileNotFound(err)) {
-                return {
-                    ...DEFAULTS,
-                    notification_channels: { ...DEFAULTS.notification_channels },
-                    shops: { ...DEFAULTS.shops },
-                };
+                return cloneDefaults();
             }
 
-            log.warn({ err, path: this.path }, "settings: failed to read; falling back to defaults");
-            return {
-                ...DEFAULTS,
-                notification_channels: { ...DEFAULTS.notification_channels },
-                shops: { ...DEFAULTS.shops },
-            };
+            log.warn({ err, path: this.path(userId) }, "settings: failed to read; falling back to defaults");
+            return cloneDefaults();
         }
     }
 
-    async patch(patch: SettingsPatch): Promise<SettingsPayload> {
+    async patch(userId: number, patch: SettingsPatch): Promise<SettingsPayload> {
         validatePatch(patch);
-        const result = this.writeChain.then(() => this.applyPatch(patch));
-        this.writeChain = result.then(
-            () => undefined,
-            () => undefined
+        const previous = this.writeChain.get(userId) ?? Promise.resolve();
+        const result = previous.then(() => this.applyPatch(userId, patch));
+        this.writeChain.set(
+            userId,
+            result.then(
+                () => undefined,
+                () => undefined
+            )
         );
         return result;
     }
 
-    private async applyPatch(patch: SettingsPatch): Promise<SettingsPayload> {
-        const current = await this.read();
+    private async applyPatch(userId: number, patch: SettingsPatch): Promise<SettingsPayload> {
+        const current = await this.read(userId);
         const next: SettingsPayload = {
             ...current,
             ...patch,
@@ -91,12 +132,14 @@ export class SettingsRepository {
                 : current.notification_channels,
             shops: patch.shops ? { ...current.shops, ...patch.shops } : current.shops,
         };
-        await ensureDir(this.path);
-        const tmp = `${this.path}.tmp`;
+        const filePath = this.path(userId);
+        await ensureDir(filePath);
+        const tmp = `${filePath}.tmp`;
         await writeFile(tmp, SafeJSON.stringify(next, null, 2), "utf8");
-        await Bun.write(this.path, await Bun.file(tmp).bytes());
+        await Bun.write(filePath, await Bun.file(tmp).bytes());
         log.info(
             {
+                userId,
                 changed: Object.keys(patch),
                 redacted: this.toLogString(next),
             },
@@ -115,6 +158,14 @@ export class SettingsRepository {
         };
         return SafeJSON.stringify(redacted);
     }
+}
+
+function cloneDefaults(): SettingsPayload {
+    return {
+        ...DEFAULTS,
+        notification_channels: { ...DEFAULTS.notification_channels },
+        shops: { ...DEFAULTS.shops },
+    };
 }
 
 function mergeWithDefaults(parsed: Partial<SettingsPayload>): SettingsPayload {
@@ -182,7 +233,7 @@ let _singleton: SettingsRepository | null = null;
 export function getSettingsRepository(): SettingsRepository {
     if (!_singleton) {
         const home = process.env.HOME ?? process.env.USERPROFILE ?? "/tmp";
-        _singleton = new SettingsRepository(`${home}/.genesis-tools/shops/config.json`);
+        _singleton = new SettingsRepository(`${home}/.genesis-tools/shops/settings`);
     }
 
     return _singleton;

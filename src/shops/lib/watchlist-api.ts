@@ -87,7 +87,7 @@ async function resolveProductByUrl(url: string): Promise<{
     };
 }
 
-export async function addFavorite(input: WatchInput): Promise<AddFavoriteResult> {
+export async function addFavorite(userId: number, input: WatchInput): Promise<AddFavoriteResult> {
     const { favorites, db } = repos();
     const resolved = await resolveProductByUrl(input.url);
 
@@ -130,8 +130,11 @@ export async function addFavorite(input: WatchInput): Promise<AddFavoriteResult>
         cooldown_hours: input.cooldown_hours ?? 24,
         notify_back_in_stock: input.notify_back_in_stock,
     };
-    const id = await favorites.addFavorite(args);
-    log.info({ favoriteId: id, masterId: resolved.masterId, autoIngested: resolved.autoIngested }, "favorite added");
+    const id = await favorites.addFavorite(userId, args);
+    log.info(
+        { favoriteId: id, userId, masterId: resolved.masterId, autoIngested: resolved.autoIngested },
+        "favorite added"
+    );
     return { favorite_id: id, master_product_id: resolved.masterId, auto_ingested: resolved.autoIngested };
 }
 
@@ -146,7 +149,7 @@ export interface AddFavoriteByMasterInput {
     notify_back_in_stock?: boolean;
 }
 
-export async function addFavoriteByMaster(input: AddFavoriteByMasterInput): Promise<AddFavoriteResult> {
+export async function addFavoriteByMaster(userId: number, input: AddFavoriteByMasterInput): Promise<AddFavoriteResult> {
     const { favorites, db } = repos();
 
     let referencePrice: number | null = null;
@@ -177,7 +180,7 @@ export async function addFavoriteByMaster(input: AddFavoriteByMasterInput): Prom
         label = master?.canonical_name ?? null;
     }
 
-    const id = await favorites.addFavorite({
+    const id = await favorites.addFavorite(userId, {
         master_product_id: input.master_product_id,
         restricted_to_shop: input.restricted_to_shop ?? null,
         target_price: input.target_price ?? null,
@@ -188,24 +191,24 @@ export async function addFavoriteByMaster(input: AddFavoriteByMasterInput): Prom
         cooldown_hours: input.cooldown_hours ?? 24,
         notify_back_in_stock: input.notify_back_in_stock,
     });
-    log.info({ favoriteId: id, masterId: input.master_product_id }, "favorite added by master");
+    log.info({ favoriteId: id, userId, masterId: input.master_product_id }, "favorite added by master");
     return { favorite_id: id, master_product_id: input.master_product_id, auto_ingested: false };
 }
 
-export async function removeFavorite(id: number): Promise<void> {
+export async function removeFavorite(userId: number, id: number): Promise<void> {
     const { favorites } = repos();
-    await favorites.removeFavorite(id);
+    await favorites.removeFavorite(userId, id);
 }
 
-export async function editFavorite(id: number, patch: EditFavoriteArgs): Promise<Favorite | undefined> {
+export async function editFavorite(userId: number, id: number, patch: EditFavoriteArgs): Promise<Favorite | undefined> {
     const { favorites } = repos();
-    await favorites.editFavorite(id, patch);
-    return favorites.getFavorite(id);
+    await favorites.editFavorite(userId, id, patch);
+    return favorites.getFavorite(userId, id);
 }
 
-export async function getWatchlist(): Promise<FavoriteWithState[]> {
+export async function getWatchlist(userId: number): Promise<FavoriteWithState[]> {
     const { favorites } = repos();
-    return favorites.listWithCurrentState();
+    return favorites.listWithCurrentState(userId);
 }
 
 export const VALID_NOTIFICATION_REASONS: ReadonlySet<NotificationReason> = new Set<NotificationReason>([
@@ -236,21 +239,28 @@ export interface RecentNotificationsArgs {
     onlyUnacked?: boolean;
 }
 
-export async function getRecentNotifications(args: RecentNotificationsArgs = {}): Promise<Notification[]> {
+export async function getRecentNotifications(
+    userId: number,
+    args: RecentNotificationsArgs = {}
+): Promise<Notification[]> {
     const { notifications } = repos();
     if (args.onlyUnacked) {
-        return notifications.listUnacked();
+        return notifications.listUnacked(userId);
     }
 
-    return notifications.listAll({ limit: args.limit ?? 100, reason: args.reason, shop_origin: args.shop_origin });
+    return notifications.listAll(userId, {
+        limit: args.limit ?? 100,
+        reason: args.reason,
+        shop_origin: args.shop_origin,
+    });
 }
 
-export async function ackNotification(id: number): Promise<void> {
+export async function ackNotification(userId: number, id: number): Promise<void> {
     const { notifications } = repos();
-    await notifications.ack(id);
+    await notifications.ack(userId, id);
 }
 
-export async function ackAllNotifications(): Promise<void> {
+export async function ackAllNotifications(userId: number): Promise<void> {
     const { notifications } = repos();
-    await notifications.ackAll();
+    await notifications.ackAll(userId);
 }

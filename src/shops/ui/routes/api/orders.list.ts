@@ -1,7 +1,7 @@
 import { getShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import { UserOrdersRepository } from "@app/shops/db/UserOrdersRepository";
 import { UserProvidersRepository } from "@app/shops/db/UserProvidersRepository";
-import { apiHandler, intParam, parseQuery } from "@app/shops/ui/server/api-utils";
+import { authedApiHandler, intParam, parseQuery } from "@app/shops/ui/server/api-utils";
 import { createFileRoute } from "@tanstack/react-router";
 
 interface OrderItemOut {
@@ -33,7 +33,7 @@ interface ProviderOrders {
 export const Route = createFileRoute("/api/orders/list")({
     server: {
         handlers: {
-            GET: apiHandler(async (request) => {
+            GET: authedApiHandler(async (request, userId) => {
                 const params = parseQuery(request, (p) => ({
                     shop: p.get("shop"),
                     limit: intParam(p, "limit", 20, { min: 1, max: 100 }),
@@ -46,7 +46,7 @@ export const Route = createFileRoute("/api/orders/list")({
                 const db = getShopsDatabase();
                 const providers = new UserProvidersRepository(db);
                 const orders = new UserOrdersRepository(db);
-                const all = await providers.listForUser(1);
+                const all = await providers.listForUser(userId);
                 const targets = all.filter((p) => !params.shop || p.shop_origin === params.shop);
 
                 const out: ProviderOrders[] = [];

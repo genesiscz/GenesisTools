@@ -40,12 +40,7 @@ export class SessionsRepository {
     }
 
     async findByToken(token: string): Promise<Session | undefined> {
-        return this.db
-            .kysely()
-            .selectFrom("sessions")
-            .selectAll()
-            .where("token", "=", token)
-            .executeTakeFirst();
+        return this.db.kysely().selectFrom("sessions").selectAll().where("token", "=", token).executeTakeFirst();
     }
 
     async delete(token: string): Promise<void> {

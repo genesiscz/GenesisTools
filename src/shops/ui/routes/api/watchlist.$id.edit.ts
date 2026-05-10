@@ -1,11 +1,11 @@
 import { editFavorite } from "@app/shops/lib/watchlist-api";
-import { apiHandler, jsonBody } from "@app/shops/ui/server/api-utils";
+import { authedApiHandler, jsonBody } from "@app/shops/ui/server/api-utils";
 import { createFileRoute } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/api/watchlist/$id/edit")({
     server: {
         handlers: {
-            POST: apiHandler(async (request) => {
+            POST: authedApiHandler(async (request, userId) => {
                 const url = new URL(request.url);
                 const idStr = url.pathname.split("/").at(-2);
                 const id = Number(idStr);
@@ -18,7 +18,7 @@ export const Route = createFileRoute("/api/watchlist/$id/edit")({
                     return body;
                 }
 
-                const updated = await editFavorite(id, {
+                const updated = await editFavorite(userId, id, {
                     target_price: typeof body.target_price === "number" ? body.target_price : undefined,
                     drop_percent: typeof body.drop_percent === "number" ? body.drop_percent : undefined,
                     drop_absolute: typeof body.drop_absolute === "number" ? body.drop_absolute : undefined,
