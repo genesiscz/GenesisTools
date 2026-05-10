@@ -77,12 +77,29 @@ interface ParseItemDetailsResult {
     itemUrl?: string;
 }
 
-const PRODUCT_SELECT = `
-    SELECT p.id, p.shop_origin, p.slug, p.url, p.name, p.brand, p.ean, p.image_url, p.unit, p.unit_amount, p.master_product_id,
-           co.current_price, co.original_price, co.in_stock, co.price_observed_at
-    FROM products p
-    LEFT JOIN current_offers co ON co.product_id = p.id
-`;
+function selectProductWithOffer(shopsDb: ShopsDatabase) {
+    return shopsDb
+        .kysely()
+        .selectFrom("products as p")
+        .leftJoin("current_offers as co", "co.product_id", "p.id")
+        .select([
+            "p.id",
+            "p.shop_origin",
+            "p.slug",
+            "p.url",
+            "p.name",
+            "p.brand",
+            "p.ean",
+            "p.image_url",
+            "p.unit",
+            "p.unit_amount",
+            "p.master_product_id",
+            "co.current_price",
+            "co.original_price",
+            "co.in_stock",
+            "co.price_observed_at",
+        ]);
+}
 
 function rowToDto(row: ProductRow): ProductDTO {
     return {
@@ -108,12 +125,15 @@ function db(ctx: ProductApiContext | undefined): ShopsDatabase {
     return ctx?.shopsDb ?? getShopsDatabase();
 }
 
-function findProductBy(shopsDb: ShopsDatabase, where: { shop?: string; slug?: string }): ProductRow | null {
+async function findProductBy(
+    shopsDb: ShopsDatabase,
+    where: { shop?: string; slug?: string }
+): Promise<ProductRow | null> {
     if (where.shop !== undefined && where.slug !== undefined) {
-        const row = shopsDb
-            .raw()
-            .query<ProductRow, [string, string]>(`${PRODUCT_SELECT} WHERE p.shop_origin = ? AND p.slug = ?`)
-            .get(where.shop, where.slug);
+        const row = await selectProductWithOffer(shopsDb)
+            .where("p.shop_origin", "=", where.shop)
+            .where("p.slug", "=", where.slug)
+            .executeTakeFirst();
         return row ?? null;
     }
 
@@ -129,9 +149,9 @@ export async function getProduct(input: GetProductInput, ctx?: ProductApiContext
             throw new Error(`Cannot parse shop+slug from url: ${input.url}`);
         }
 
-        row = findProductBy(shopsDb, { shop: parsed.origin, slug: parsed.itemId });
+        row = await findProductBy(shopsDb, { shop: parsed.origin, slug: parsed.itemId });
     } else if (input.shop && input.slug) {
-        row = findProductBy(shopsDb, { shop: input.shop, slug: input.slug });
+        row = await findProductBy(shopsDb, { shop: input.shop, slug: input.slug });
     } else {
         throw new Error("getProduct requires {url} or {shop, slug}");
     }
@@ -140,31 +160,22 @@ export async function getProduct(input: GetProductInput, ctx?: ProductApiContext
         throw new Error(`Product not found: ${SafeJSON.stringify(input)}`);
     }
 
-    const history = shopsDb
-        .raw()
-        .query<
-            {
-                observed_at: string;
-                current_price: number | null;
-                original_price: number | null;
-                in_stock: number | null;
-            },
-            [number]
-        >(
-            `SELECT observed_at, current_price, original_price, in_stock
-             FROM prices WHERE product_id = ? ORDER BY observed_at ASC`
-        )
-        .all(row.id);
+    const history = await shopsDb
+        .kysely()
+        .selectFrom("prices")
+        .select(["observed_at", "current_price", "original_price", "in_stock"])
+        .where("product_id", "=", row.id)
+        .orderBy("observed_at", "asc")
+        .execute();
 
     const matches =
         row.master_product_id === null
             ? []
-            : shopsDb
-                  .raw()
-                  .query<ProductRow, [number, number]>(
-                      `${PRODUCT_SELECT} WHERE p.master_product_id = ? AND p.id <> ? ORDER BY p.shop_origin ASC`
-                  )
-                  .all(row.master_product_id, row.id);
+            : await selectProductWithOffer(shopsDb)
+                  .where("p.master_product_id", "=", row.master_product_id)
+                  .where("p.id", "!=", row.id)
+                  .orderBy("p.shop_origin", "asc")
+                  .execute();
 
     log.debug({ productId: row.id, masterId: row.master_product_id }, "getProduct done");
 
@@ -194,12 +205,13 @@ export async function listCategories(
     ctx?: ProductApiContext
 ): Promise<Array<{ id: string; name: string; parent_id: string | null }>> {
     const shopsDb = db(ctx);
-    return shopsDb
-        .raw()
-        .query<{ id: string; name: string; parent_id: string | null }, [string]>(
-            "SELECT id, name, parent_id FROM categories WHERE shop_origin = ? ORDER BY id"
-        )
-        .all(input.shop);
+    return await shopsDb
+        .kysely()
+        .selectFrom("categories")
+        .select(["id", "name", "parent_id"])
+        .where("shop_origin", "=", input.shop)
+        .orderBy("id")
+        .execute();
 }
 
 export async function comparePrices(
@@ -209,21 +221,21 @@ export async function comparePrices(
     const shopsDb = db(ctx);
     const out: Array<{ master_id: number; offers: ProductDTO[]; history_points: number }> = [];
     for (const masterId of input.masterIds) {
-        const offers = shopsDb
-            .raw()
-            .query<ProductRow, [number]>(`${PRODUCT_SELECT} WHERE p.master_product_id = ? ORDER BY p.shop_origin`)
-            .all(masterId);
-        const counts =
-            shopsDb
-                .raw()
-                .query<{ n: number }, [number]>(
-                    `SELECT COUNT(*) AS n FROM prices p JOIN products pr ON pr.id = p.product_id WHERE pr.master_product_id = ?`
-                )
-                .get(masterId)?.n ?? 0;
+        const offers = await selectProductWithOffer(shopsDb)
+            .where("p.master_product_id", "=", masterId)
+            .orderBy("p.shop_origin")
+            .execute();
+        const totalRow = await shopsDb
+            .kysely()
+            .selectFrom("prices as p")
+            .innerJoin("products as pr", "pr.id", "p.product_id")
+            .select((eb) => eb.fn.countAll<number>().as("n"))
+            .where("pr.master_product_id", "=", masterId)
+            .executeTakeFirst();
         out.push({
             master_id: masterId,
             offers: offers.map(rowToDto),
-            history_points: counts,
+            history_points: totalRow?.n ?? 0,
         });
     }
 
@@ -235,20 +247,20 @@ export async function getMaster(
     ctx?: ProductApiContext
 ): Promise<{ master_id: number; canonical_name: string | null; offers: ProductDTO[] }> {
     const shopsDb = db(ctx);
-    const master = shopsDb
-        .raw()
-        .query<{ id: number; canonical_name: string | null }, [number]>(
-            "SELECT id, canonical_name FROM master_products WHERE id = ?"
-        )
-        .get(input.id);
+    const master = await shopsDb
+        .kysely()
+        .selectFrom("master_products")
+        .select(["id", "canonical_name"])
+        .where("id", "=", input.id)
+        .executeTakeFirst();
     if (!master) {
         throw new Error(`Master not found: ${input.id}`);
     }
 
-    const offers = shopsDb
-        .raw()
-        .query<ProductRow, [number]>(`${PRODUCT_SELECT} WHERE p.master_product_id = ? ORDER BY p.shop_origin`)
-        .all(input.id);
+    const offers = await selectProductWithOffer(shopsDb)
+        .where("p.master_product_id", "=", input.id)
+        .orderBy("p.shop_origin")
+        .execute();
     return {
         master_id: master.id,
         canonical_name: master.canonical_name,
