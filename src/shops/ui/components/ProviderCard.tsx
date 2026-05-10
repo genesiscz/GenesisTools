@@ -30,24 +30,13 @@ const statusVariant: Record<ProviderCardData["status"], "default" | "secondary" 
     error: "destructive",
 };
 
-export function ProviderCard({
-    data,
-    onConnect,
-    onDisconnect,
-    onSync,
-    onToggleAutoWatchlist,
-}: Props): ReactNode {
+export function ProviderCard({ data, onConnect, onDisconnect, onSync, onToggleAutoWatchlist }: Props): ReactNode {
     const isConnected = data.status === "connected";
     return (
         <Card className="border-zinc-800 bg-zinc-950">
             <CardHeader className="flex flex-row items-center justify-between gap-3 pb-3">
-                <CardTitle className="font-mono text-sm tracking-[0.25em] uppercase">
-                    {data.display_name}
-                </CardTitle>
-                <Badge
-                    variant={statusVariant[data.status]}
-                    className="font-mono text-[10px] tracking-widest uppercase"
-                >
+                <CardTitle className="font-mono text-sm tracking-[0.25em] uppercase">{data.display_name}</CardTitle>
+                <Badge variant={statusVariant[data.status]} className="font-mono text-[10px] tracking-widest uppercase">
                     {data.status}
                 </Badge>
             </CardHeader>
@@ -88,9 +77,7 @@ export function ProviderCard({
                 ) : (
                     <>
                         <div>
-                            {data.supports_auto_login
-                                ? "Email + password login."
-                                : "OAuth — paste session cookie."}
+                            {data.supports_auto_login ? "Email + password login." : "OAuth — paste session cookie."}
                         </div>
                         <Button size="sm" onClick={onConnect}>
                             Connect

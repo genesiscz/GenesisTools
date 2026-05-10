@@ -34,11 +34,7 @@ function ProvidersPage() {
 
     const [openShop, setOpenShop] = useState<string | null>(null);
 
-    const connect = useMutation<
-        ConnectResponse,
-        Error,
-        { shop_origin: string; credentials: Record<string, unknown> }
-    >({
+    const connect = useMutation<ConnectResponse, Error, { shop_origin: string; credentials: Record<string, unknown> }>({
         mutationFn: async (args) => {
             const res = await fetch("/api/providers/connect", {
                 method: "POST",

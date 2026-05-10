@@ -19,9 +19,7 @@ interface CliOpts {
 export function registerProviderConnectCommand(program: Command): void {
     program
         .command("provider-connect <shop>")
-        .description(
-            "Connect a shop account (rohlik.cz uses email/password; kosik.cz uses a paste-in 'sid' cookie)"
-        )
+        .description("Connect a shop account (rohlik.cz uses email/password; kosik.cz uses a paste-in 'sid' cookie)")
         .option("--email <email>", "Email (rohlik only)")
         .option("--password <password>", "Password (rohlik only)")
         .option("--cookie <cookie>", "sid cookie value (kosik only)")
@@ -83,9 +81,7 @@ export function registerProviderConnectCommand(program: Command): void {
                         credentials: { type: "session-cookie", cookie: cookieHeader },
                         external_user_email: profile.client.email,
                     });
-                    process.stdout.write(
-                        `✓ kosik.cz connected as ${profile.client.email} (user_provider_id=${id})\n`
-                    );
+                    process.stdout.write(`✓ kosik.cz connected as ${profile.client.email} (user_provider_id=${id})\n`);
                     return;
                 }
 

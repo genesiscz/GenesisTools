@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { setShopsDatabaseSingletonForTest, ShopsDatabase } from "@app/shops/db/ShopsDatabase";
+import { ShopsDatabase, setShopsDatabaseSingletonForTest } from "@app/shops/db/ShopsDatabase";
 import { UserOrdersRepository } from "@app/shops/db/UserOrdersRepository";
 import { UserProvidersRepository } from "@app/shops/db/UserProvidersRepository";
 import { resetCryptoForTest } from "@app/shops/lib/crypto";

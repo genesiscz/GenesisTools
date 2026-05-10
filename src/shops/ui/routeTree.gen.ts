@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as WorkspaceRouteImport } from './routes/workspace'
 import { Route as WatchlistRouteImport } from './routes/watchlist'
 import { Route as SettingsRouteImport } from './routes/settings'
+import { Route as ProvidersRouteImport } from './routes/providers'
 import { Route as NotificationsRouteImport } from './routes/notifications'
 import { Route as LiveRouteImport } from './routes/live'
 import { Route as CoverageRouteImport } from './routes/coverage'
@@ -31,6 +32,12 @@ import { Route as ApiCoverageRouteImport } from './routes/api/coverage'
 import { Route as ApiCompareRouteImport } from './routes/api/compare'
 import { Route as ProductShopSlugRouteImport } from './routes/product.$shop.$slug'
 import { Route as ApiWatchlistAddRouteImport } from './routes/api/watchlist.add'
+import { Route as ApiProvidersUpdateRouteImport } from './routes/api/providers.update'
+import { Route as ApiProvidersSyncRouteImport } from './routes/api/providers.sync'
+import { Route as ApiProvidersListRouteImport } from './routes/api/providers.list'
+import { Route as ApiProvidersDisconnectRouteImport } from './routes/api/providers.disconnect'
+import { Route as ApiProvidersConnectRouteImport } from './routes/api/providers.connect'
+import { Route as ApiOrdersListRouteImport } from './routes/api/orders.list'
 import { Route as ApiMatchCandidatesRouteImport } from './routes/api/match.candidates'
 import { Route as ApiMasterIdRouteImport } from './routes/api/master.$id'
 import { Route as ApiLiveEventsRouteImport } from './routes/api/live.events'
@@ -55,6 +62,11 @@ const WatchlistRoute = WatchlistRouteImport.update({
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ProvidersRoute = ProvidersRouteImport.update({
+  id: '/providers',
+  path: '/providers',
   getParentRoute: () => rootRouteImport,
 } as any)
 const NotificationsRoute = NotificationsRouteImport.update({
@@ -152,6 +164,36 @@ const ApiWatchlistAddRoute = ApiWatchlistAddRouteImport.update({
   path: '/add',
   getParentRoute: () => ApiWatchlistRoute,
 } as any)
+const ApiProvidersUpdateRoute = ApiProvidersUpdateRouteImport.update({
+  id: '/api/providers/update',
+  path: '/api/providers/update',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiProvidersSyncRoute = ApiProvidersSyncRouteImport.update({
+  id: '/api/providers/sync',
+  path: '/api/providers/sync',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiProvidersListRoute = ApiProvidersListRouteImport.update({
+  id: '/api/providers/list',
+  path: '/api/providers/list',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiProvidersDisconnectRoute = ApiProvidersDisconnectRouteImport.update({
+  id: '/api/providers/disconnect',
+  path: '/api/providers/disconnect',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiProvidersConnectRoute = ApiProvidersConnectRouteImport.update({
+  id: '/api/providers/connect',
+  path: '/api/providers/connect',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiOrdersListRoute = ApiOrdersListRouteImport.update({
+  id: '/api/orders/list',
+  path: '/api/orders/list',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiMatchCandidatesRoute = ApiMatchCandidatesRouteImport.update({
   id: '/api/match/candidates',
   path: '/api/match/candidates',
@@ -210,6 +252,7 @@ export interface FileRoutesByFullPath {
   '/coverage': typeof CoverageRoute
   '/live': typeof LiveRoute
   '/notifications': typeof NotificationsRoute
+  '/providers': typeof ProvidersRoute
   '/settings': typeof SettingsRoute
   '/watchlist': typeof WatchlistRoute
   '/workspace': typeof WorkspaceRoute
@@ -227,6 +270,12 @@ export interface FileRoutesByFullPath {
   '/api/live/events': typeof ApiLiveEventsRoute
   '/api/master/$id': typeof ApiMasterIdRouteWithChildren
   '/api/match/candidates': typeof ApiMatchCandidatesRoute
+  '/api/orders/list': typeof ApiOrdersListRoute
+  '/api/providers/connect': typeof ApiProvidersConnectRoute
+  '/api/providers/disconnect': typeof ApiProvidersDisconnectRoute
+  '/api/providers/list': typeof ApiProvidersListRoute
+  '/api/providers/sync': typeof ApiProvidersSyncRoute
+  '/api/providers/update': typeof ApiProvidersUpdateRoute
   '/api/watchlist/add': typeof ApiWatchlistAddRoute
   '/product/$shop/$slug': typeof ProductShopSlugRoute
   '/api/master/$id/history': typeof ApiMasterIdHistoryRoute
@@ -244,6 +293,7 @@ export interface FileRoutesByTo {
   '/coverage': typeof CoverageRoute
   '/live': typeof LiveRoute
   '/notifications': typeof NotificationsRoute
+  '/providers': typeof ProvidersRoute
   '/settings': typeof SettingsRoute
   '/watchlist': typeof WatchlistRoute
   '/workspace': typeof WorkspaceRoute
@@ -261,6 +311,12 @@ export interface FileRoutesByTo {
   '/api/live/events': typeof ApiLiveEventsRoute
   '/api/master/$id': typeof ApiMasterIdRouteWithChildren
   '/api/match/candidates': typeof ApiMatchCandidatesRoute
+  '/api/orders/list': typeof ApiOrdersListRoute
+  '/api/providers/connect': typeof ApiProvidersConnectRoute
+  '/api/providers/disconnect': typeof ApiProvidersDisconnectRoute
+  '/api/providers/list': typeof ApiProvidersListRoute
+  '/api/providers/sync': typeof ApiProvidersSyncRoute
+  '/api/providers/update': typeof ApiProvidersUpdateRoute
   '/api/watchlist/add': typeof ApiWatchlistAddRoute
   '/product/$shop/$slug': typeof ProductShopSlugRoute
   '/api/master/$id/history': typeof ApiMasterIdHistoryRoute
@@ -279,6 +335,7 @@ export interface FileRoutesById {
   '/coverage': typeof CoverageRoute
   '/live': typeof LiveRoute
   '/notifications': typeof NotificationsRoute
+  '/providers': typeof ProvidersRoute
   '/settings': typeof SettingsRoute
   '/watchlist': typeof WatchlistRoute
   '/workspace': typeof WorkspaceRoute
@@ -296,6 +353,12 @@ export interface FileRoutesById {
   '/api/live/events': typeof ApiLiveEventsRoute
   '/api/master/$id': typeof ApiMasterIdRouteWithChildren
   '/api/match/candidates': typeof ApiMatchCandidatesRoute
+  '/api/orders/list': typeof ApiOrdersListRoute
+  '/api/providers/connect': typeof ApiProvidersConnectRoute
+  '/api/providers/disconnect': typeof ApiProvidersDisconnectRoute
+  '/api/providers/list': typeof ApiProvidersListRoute
+  '/api/providers/sync': typeof ApiProvidersSyncRoute
+  '/api/providers/update': typeof ApiProvidersUpdateRoute
   '/api/watchlist/add': typeof ApiWatchlistAddRoute
   '/product/$shop/$slug': typeof ProductShopSlugRoute
   '/api/master/$id/history': typeof ApiMasterIdHistoryRoute
@@ -315,6 +378,7 @@ export interface FileRouteTypes {
     | '/coverage'
     | '/live'
     | '/notifications'
+    | '/providers'
     | '/settings'
     | '/watchlist'
     | '/workspace'
@@ -332,6 +396,12 @@ export interface FileRouteTypes {
     | '/api/live/events'
     | '/api/master/$id'
     | '/api/match/candidates'
+    | '/api/orders/list'
+    | '/api/providers/connect'
+    | '/api/providers/disconnect'
+    | '/api/providers/list'
+    | '/api/providers/sync'
+    | '/api/providers/update'
     | '/api/watchlist/add'
     | '/product/$shop/$slug'
     | '/api/master/$id/history'
@@ -349,6 +419,7 @@ export interface FileRouteTypes {
     | '/coverage'
     | '/live'
     | '/notifications'
+    | '/providers'
     | '/settings'
     | '/watchlist'
     | '/workspace'
@@ -366,6 +437,12 @@ export interface FileRouteTypes {
     | '/api/live/events'
     | '/api/master/$id'
     | '/api/match/candidates'
+    | '/api/orders/list'
+    | '/api/providers/connect'
+    | '/api/providers/disconnect'
+    | '/api/providers/list'
+    | '/api/providers/sync'
+    | '/api/providers/update'
     | '/api/watchlist/add'
     | '/product/$shop/$slug'
     | '/api/master/$id/history'
@@ -383,6 +460,7 @@ export interface FileRouteTypes {
     | '/coverage'
     | '/live'
     | '/notifications'
+    | '/providers'
     | '/settings'
     | '/watchlist'
     | '/workspace'
@@ -400,6 +478,12 @@ export interface FileRouteTypes {
     | '/api/live/events'
     | '/api/master/$id'
     | '/api/match/candidates'
+    | '/api/orders/list'
+    | '/api/providers/connect'
+    | '/api/providers/disconnect'
+    | '/api/providers/list'
+    | '/api/providers/sync'
+    | '/api/providers/update'
     | '/api/watchlist/add'
     | '/product/$shop/$slug'
     | '/api/master/$id/history'
@@ -418,6 +502,7 @@ export interface RootRouteChildren {
   CoverageRoute: typeof CoverageRoute
   LiveRoute: typeof LiveRoute
   NotificationsRoute: typeof NotificationsRoute
+  ProvidersRoute: typeof ProvidersRoute
   SettingsRoute: typeof SettingsRoute
   WatchlistRoute: typeof WatchlistRoute
   WorkspaceRoute: typeof WorkspaceRoute
@@ -434,6 +519,12 @@ export interface RootRouteChildren {
   MatchReviewRoute: typeof MatchReviewRoute
   ApiLiveEventsRoute: typeof ApiLiveEventsRoute
   ApiMatchCandidatesRoute: typeof ApiMatchCandidatesRoute
+  ApiOrdersListRoute: typeof ApiOrdersListRoute
+  ApiProvidersConnectRoute: typeof ApiProvidersConnectRoute
+  ApiProvidersDisconnectRoute: typeof ApiProvidersDisconnectRoute
+  ApiProvidersListRoute: typeof ApiProvidersListRoute
+  ApiProvidersSyncRoute: typeof ApiProvidersSyncRoute
+  ApiProvidersUpdateRoute: typeof ApiProvidersUpdateRoute
   ProductShopSlugRoute: typeof ProductShopSlugRoute
   ApiMatchCandidateAcceptRoute: typeof ApiMatchCandidateAcceptRoute
   ApiMatchCandidateRejectRoute: typeof ApiMatchCandidateRejectRoute
@@ -461,6 +552,13 @@ declare module '@tanstack/react-router' {
       path: '/settings'
       fullPath: '/settings'
       preLoaderRoute: typeof SettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/providers': {
+      id: '/providers'
+      path: '/providers'
+      fullPath: '/providers'
+      preLoaderRoute: typeof ProvidersRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/notifications': {
@@ -596,6 +694,48 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiWatchlistAddRouteImport
       parentRoute: typeof ApiWatchlistRoute
     }
+    '/api/providers/update': {
+      id: '/api/providers/update'
+      path: '/api/providers/update'
+      fullPath: '/api/providers/update'
+      preLoaderRoute: typeof ApiProvidersUpdateRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/providers/sync': {
+      id: '/api/providers/sync'
+      path: '/api/providers/sync'
+      fullPath: '/api/providers/sync'
+      preLoaderRoute: typeof ApiProvidersSyncRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/providers/list': {
+      id: '/api/providers/list'
+      path: '/api/providers/list'
+      fullPath: '/api/providers/list'
+      preLoaderRoute: typeof ApiProvidersListRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/providers/disconnect': {
+      id: '/api/providers/disconnect'
+      path: '/api/providers/disconnect'
+      fullPath: '/api/providers/disconnect'
+      preLoaderRoute: typeof ApiProvidersDisconnectRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/providers/connect': {
+      id: '/api/providers/connect'
+      path: '/api/providers/connect'
+      fullPath: '/api/providers/connect'
+      preLoaderRoute: typeof ApiProvidersConnectRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/orders/list': {
+      id: '/api/orders/list'
+      path: '/api/orders/list'
+      fullPath: '/api/orders/list'
+      preLoaderRoute: typeof ApiOrdersListRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/match/candidates': {
       id: '/api/match/candidates'
       path: '/api/match/candidates'
@@ -727,6 +867,7 @@ const rootRouteChildren: RootRouteChildren = {
   CoverageRoute: CoverageRoute,
   LiveRoute: LiveRoute,
   NotificationsRoute: NotificationsRoute,
+  ProvidersRoute: ProvidersRoute,
   SettingsRoute: SettingsRoute,
   WatchlistRoute: WatchlistRoute,
   WorkspaceRoute: WorkspaceRoute,
@@ -743,6 +884,12 @@ const rootRouteChildren: RootRouteChildren = {
   MatchReviewRoute: MatchReviewRoute,
   ApiLiveEventsRoute: ApiLiveEventsRoute,
   ApiMatchCandidatesRoute: ApiMatchCandidatesRoute,
+  ApiOrdersListRoute: ApiOrdersListRoute,
+  ApiProvidersConnectRoute: ApiProvidersConnectRoute,
+  ApiProvidersDisconnectRoute: ApiProvidersDisconnectRoute,
+  ApiProvidersListRoute: ApiProvidersListRoute,
+  ApiProvidersSyncRoute: ApiProvidersSyncRoute,
+  ApiProvidersUpdateRoute: ApiProvidersUpdateRoute,
   ProductShopSlugRoute: ProductShopSlugRoute,
   ApiMatchCandidateAcceptRoute: ApiMatchCandidateAcceptRoute,
   ApiMatchCandidateRejectRoute: ApiMatchCandidateRejectRoute,

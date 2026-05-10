@@ -3,17 +3,7 @@ import { Badge } from "@app/utils/ui/components/badge";
 import { DashboardLayout } from "@app/utils/ui/layouts/DashboardLayout";
 import { useQuery } from "@tanstack/react-query";
 import { createRootRoute, HeadContent, Outlet, Scripts, useRouter, useRouterState } from "@tanstack/react-router";
-import {
-    Bell,
-    GitMerge,
-    Heart,
-    LayoutGrid,
-    LayoutTemplate,
-    Plug,
-    Radio,
-    Settings,
-    ShoppingBasket,
-} from "lucide-react";
+import { Bell, GitMerge, Heart, LayoutGrid, LayoutTemplate, Plug, Radio, Settings, ShoppingBasket } from "lucide-react";
 import { Toaster } from "sonner";
 
 const navLinks = [

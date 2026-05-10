@@ -121,18 +121,12 @@ export async function syncProvider(args: SyncProviderArgs): Promise<SyncProvider
 
             const productRow = db
                 .raw()
-                .query<
-                    { id: number; master_product_id: number | null },
-                    [string, string]
-                >("SELECT id, master_product_id FROM products WHERE shop_origin = ? AND slug = ? LIMIT 1")
+                .query<{ id: number; master_product_id: number | null }, [string, string]>(
+                    "SELECT id, master_product_id FROM products WHERE shop_origin = ? AND slug = ? LIMIT 1"
+                )
                 .get(provider.shop_origin, item.external_product_id);
             if (productRow) {
-                await orders.markItemMatched(
-                    orderId,
-                    item.line_no,
-                    productRow.id,
-                    productRow.master_product_id
-                );
+                await orders.markItemMatched(orderId, item.line_no, productRow.id, productRow.master_product_id);
                 if (productRow.master_product_id !== null) {
                     itemsMatched++;
                     if (autoWatchlist) {
@@ -157,10 +151,7 @@ export async function syncProvider(args: SyncProviderArgs): Promise<SyncProvider
     }
 
     await providers.setLastSync(provider.id, nowUtcIso());
-    log.info(
-        { providerId: provider.id, ordersNew, itemsNew, itemsMatched, autoAdded },
-        "syncProvider completed"
-    );
+    log.info({ providerId: provider.id, ordersNew, itemsNew, itemsMatched, autoAdded }, "syncProvider completed");
     return {
         shop_origin: provider.shop_origin,
         orders_new: ordersNew,

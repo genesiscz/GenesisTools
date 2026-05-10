@@ -67,13 +67,11 @@ export class UserOrdersRepository {
             return;
         }
 
-        const stmt = this.db
-            .raw()
-            .prepare(
-                `INSERT OR IGNORE INTO user_order_items
+        const stmt = this.db.raw().prepare(
+            `INSERT OR IGNORE INTO user_order_items
                  (order_id, line_no, external_product_id, name, quantity, unit, unit_price, total_price)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-            );
+        );
         for (const it of items) {
             stmt.run(
                 orderId,

@@ -59,11 +59,7 @@ export class KosikAuthClient extends KosikClient {
         return res.data;
     }
 
-    async listOrders(opts: {
-        limit: number;
-        offset: number;
-        showArchived?: boolean;
-    }): Promise<KosikOrderListResponse> {
+    async listOrders(opts: { limit: number; offset: number; showArchived?: boolean }): Promise<KosikOrderListResponse> {
         const showArchived = opts.showArchived ?? true;
         const res = await this.requestRaw<KosikOrderListResponse>(
             "GET",
