@@ -85,8 +85,21 @@ function UnmatchedRow({ item, onAttach }: { item: UnmatchedItem; onAttach: (mast
                 return [];
             }
 
-            const body = (await res.json()) as { results?: SearchResult[] } | SearchResult[];
-            return Array.isArray(body) ? body : (body.results ?? []);
+            const body = (await res.json()) as
+                | { hits?: { type: string; id: number; name: string }[] }
+                | { results?: SearchResult[] }
+                | SearchResult[];
+            if (Array.isArray(body)) {
+                return body;
+            }
+
+            if ("hits" in body && Array.isArray(body.hits)) {
+                return body.hits
+                    .filter((h) => h.type === "master")
+                    .map((h) => ({ master_product_id: h.id, canonical_name: h.name }));
+            }
+
+            return body.results ?? [];
         },
         enabled: query.length >= 2,
     });
