@@ -1,5 +1,6 @@
 import logger from "@app/logger";
 import type { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
+import { refreshMasterDenorm } from "@app/shops/lib/master-denorm";
 
 const log = logger.child({
     component: "MasterMerger",
@@ -27,68 +28,52 @@ export class MasterMerger {
             throw new Error("MasterMerger.merge: survivor and absorbed are the same id");
         }
 
-        const db = this.shopsDb.raw();
+        const k = this.shopsDb.kysely();
         const now = new Date().toISOString();
 
-        const productsMoved =
-            db
-                .query<{ n: number }, [number]>("SELECT COUNT(*) AS n FROM products WHERE master_product_id = ?")
-                .get(args.absorbedMasterId)?.n ?? 0;
-        db.run("UPDATE products SET master_product_id = ?, last_updated_at = ? WHERE master_product_id = ?", [
-            args.survivorMasterId,
-            now,
-            args.absorbedMasterId,
-        ]);
+        const productsCount = await k
+            .selectFrom("products")
+            .select((eb) => eb.fn.countAll<number>().as("n"))
+            .where("master_product_id", "=", args.absorbedMasterId)
+            .executeTakeFirst();
+        const productsMoved = productsCount?.n ?? 0;
 
-        const favoritesMoved =
-            db
-                .query<{ n: number }, [number]>("SELECT COUNT(*) AS n FROM favorites WHERE master_product_id = ?")
-                .get(args.absorbedMasterId)?.n ?? 0;
-        db.run("UPDATE favorites SET master_product_id = ? WHERE master_product_id = ?", [
-            args.survivorMasterId,
-            args.absorbedMasterId,
-        ]);
+        await k
+            .updateTable("products")
+            .set({ master_product_id: args.survivorMasterId, last_updated_at: now })
+            .where("master_product_id", "=", args.absorbedMasterId)
+            .execute();
 
-        const notificationsMoved =
-            db
-                .query<{ n: number }, [number]>("SELECT COUNT(*) AS n FROM notifications WHERE master_product_id = ?")
-                .get(args.absorbedMasterId)?.n ?? 0;
-        db.run("UPDATE notifications SET master_product_id = ? WHERE master_product_id = ?", [
-            args.survivorMasterId,
-            args.absorbedMasterId,
-        ]);
+        const favoritesCount = await k
+            .selectFrom("favorites")
+            .select((eb) => eb.fn.countAll<number>().as("n"))
+            .where("master_product_id", "=", args.absorbedMasterId)
+            .executeTakeFirst();
+        const favoritesMoved = favoritesCount?.n ?? 0;
 
-        db.run("DELETE FROM master_products WHERE id = ?", [args.absorbedMasterId]);
+        await k
+            .updateTable("favorites")
+            .set({ master_product_id: args.survivorMasterId })
+            .where("master_product_id", "=", args.absorbedMasterId)
+            .execute();
 
-        db.run(
-            `UPDATE master_products SET total_offers = (
-                SELECT COUNT(*) FROM products WHERE master_product_id = ? AND is_active = 1
-             ), updated_at = ? WHERE id = ?`,
-            [args.survivorMasterId, now, args.survivorMasterId]
-        );
+        const notificationsCount = await k
+            .selectFrom("notifications")
+            .select((eb) => eb.fn.countAll<number>().as("n"))
+            .where("master_product_id", "=", args.absorbedMasterId)
+            .executeTakeFirst();
+        const notificationsMoved = notificationsCount?.n ?? 0;
 
-        const best = db
-            .query<{ current_price: number; shop_origin: string; price_observed_at: string }, [number]>(
-                `SELECT current_price, shop_origin, price_observed_at
-                 FROM current_offers
-                 WHERE master_product_id = ? AND current_price IS NOT NULL
-                 ORDER BY current_price ASC LIMIT 1`
-            )
-            .get(args.survivorMasterId);
+        await k
+            .updateTable("notifications")
+            .set({ master_product_id: args.survivorMasterId })
+            .where("master_product_id", "=", args.absorbedMasterId)
+            .execute();
 
-        if (best) {
-            db.run("UPDATE master_products SET best_price = ?, best_price_shop = ?, best_price_at = ? WHERE id = ?", [
-                best.current_price,
-                best.shop_origin,
-                best.price_observed_at,
-                args.survivorMasterId,
-            ]);
-        } else {
-            db.run(
-                "UPDATE master_products SET best_price = NULL, best_price_shop = NULL, best_price_at = NULL WHERE id = ?",
-                [args.survivorMasterId]
-            );
-        }
+        await k.deleteFrom("master_products").where("id", "=", args.absorbedMasterId).execute();
+
+        // Refresh denorm on survivor — refreshMasterDenorm now takes ShopsDatabase + is async (Task 4a).
+        await refreshMasterDenorm(this.shopsDb, args.survivorMasterId);
 
         log.info(
             {
@@ -110,18 +95,21 @@ export class MasterMerger {
         };
     }
 
-    pickSurvivor(masterIdA: number, masterIdB: number): { survivorMasterId: number; absorbedMasterId: number } {
-        const db = this.shopsDb.raw();
-        const a = db
-            .query<{ id: number; total_offers: number }, [number]>(
-                "SELECT id, total_offers FROM master_products WHERE id = ?"
-            )
-            .get(masterIdA);
-        const b = db
-            .query<{ id: number; total_offers: number }, [number]>(
-                "SELECT id, total_offers FROM master_products WHERE id = ?"
-            )
-            .get(masterIdB);
+    async pickSurvivor(
+        masterIdA: number,
+        masterIdB: number
+    ): Promise<{ survivorMasterId: number; absorbedMasterId: number }> {
+        const k = this.shopsDb.kysely();
+        const a = await k
+            .selectFrom("master_products")
+            .select(["id", "total_offers"])
+            .where("id", "=", masterIdA)
+            .executeTakeFirst();
+        const b = await k
+            .selectFrom("master_products")
+            .select(["id", "total_offers"])
+            .where("id", "=", masterIdB)
+            .executeTakeFirst();
         if (!a || !b) {
             throw new Error(`pickSurvivor: master not found (a=${masterIdA}, b=${masterIdB})`);
         }

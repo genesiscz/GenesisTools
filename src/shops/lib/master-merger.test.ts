@@ -62,7 +62,7 @@ describe("MasterMerger.merge", () => {
             [now, now, now, now]
         );
         const ids = db.raw().query<{ id: number }, []>("SELECT id FROM master_products ORDER BY id").all();
-        const decision = merger.pickSurvivor(ids[1].id, ids[0].id);
+        const decision = await merger.pickSurvivor(ids[1].id, ids[0].id);
         expect(decision.survivorMasterId).toBe(ids[0].id);
         expect(decision.absorbedMasterId).toBe(ids[1].id);
         db.close();

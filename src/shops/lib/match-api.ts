@@ -160,7 +160,7 @@ export async function acceptCandidatePair(args: PairIdsArgs): Promise<void> {
     }
 
     const merger = new MasterMerger(shopsDb);
-    const decision = merger.pickSurvivor(masters.a, masters.b);
+    const decision = await merger.pickSurvivor(masters.a, masters.b);
     await merger.merge(decision);
 }
 
