@@ -1,5 +1,6 @@
 import logger from "@app/logger";
 import type { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
+import type { MatchCandidatesTable } from "@app/shops/db/types";
 import { refreshMasterDenorm } from "@app/shops/lib/master-denorm";
 import type { Matcher, MatcherInput, MatchResult } from "@app/shops/lib/matcher";
 import { slugify } from "@app/utils/string";
@@ -29,7 +30,12 @@ export class MatchExecutor {
                 await this.writeSeed(input);
                 break;
             case "gray-zone":
-                this.writeGrayZone(input.productId, result.candidateProductId, result.method, result.similarity);
+                await this.writeGrayZone(
+                    input.productId,
+                    result.candidateProductId,
+                    result.method,
+                    result.similarity
+                );
                 break;
         }
 
@@ -42,18 +48,24 @@ export class MatchExecutor {
         method: "ean" | "fuzzy" | "sig:no-flavor" | "sig:no-size" | "fuzzy-brand-name",
         similarity: number | null
     ): Promise<void> {
-        const db = this.args.shopsDb.raw();
         const now = new Date().toISOString();
-        db.run(
-            `UPDATE products SET master_product_id = ?, match_method = ?, match_similarity = ?, match_at = ?, last_updated_at = ?
-             WHERE id = ?`,
-            [masterProductId, method, similarity, now, now, productId]
-        );
-        await this.refreshMasterDenorm(masterProductId);
+        await this.args.shopsDb
+            .kysely()
+            .updateTable("products")
+            .set({
+                master_product_id: masterProductId,
+                match_method: method,
+                match_similarity: similarity,
+                match_at: now,
+                last_updated_at: now,
+            })
+            .where("id", "=", productId)
+            .execute();
+        await refreshMasterDenorm(this.args.shopsDb, masterProductId);
     }
 
     private async writeSeed(input: MatcherInput): Promise<number> {
-        const db = this.args.shopsDb.raw();
+        const k = this.args.shopsDb.kysely();
         const now = new Date().toISOString();
         const baseSlug = slugify(input.name) || `master-${Date.now()}`;
 
@@ -67,35 +79,29 @@ export class MatchExecutor {
         let masterId = -1;
         let lastError: unknown = null;
         for (let attempt = 0; attempt < 5; attempt++) {
-            const slug = this.uniqueSlug(baseSlug);
+            const slug = await this.uniqueSlug(baseSlug);
             try {
-                db.run(
-                    `INSERT INTO master_products
-                     (canonical_name, canonical_name_normalized, canonical_slug,
-                      brand, brand_normalized, ean, unit, unit_amount, pack_count, flavor_key,
-                      total_offers, created_at, updated_at, verified_by)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, 'auto')`,
-                    [
-                        input.name,
-                        input.nameNormalized,
-                        slug,
-                        input.brandRaw,
-                        input.brandNormalized,
-                        input.ean,
-                        input.unit,
-                        input.unitAmount,
-                        input.packCount,
-                        input.flavorKey,
-                        now,
-                        now,
-                    ]
-                );
-                const row = db.query<{ id: number }, []>("SELECT last_insert_rowid() AS id").get();
-                if (!row) {
-                    throw new Error("master_products insert failed");
-                }
-
-                masterId = row.id;
+                const inserted = await k
+                    .insertInto("master_products")
+                    .values({
+                        canonical_name: input.name,
+                        canonical_name_normalized: input.nameNormalized,
+                        canonical_slug: slug,
+                        brand: input.brandRaw,
+                        brand_normalized: input.brandNormalized,
+                        ean: input.ean,
+                        unit: input.unit,
+                        unit_amount: input.unitAmount,
+                        pack_count: input.packCount,
+                        flavor_key: input.flavorKey,
+                        total_offers: 0,
+                        created_at: now,
+                        updated_at: now,
+                        verified_by: "auto",
+                    })
+                    .returning("id")
+                    .executeTakeFirstOrThrow();
+                masterId = inserted.id;
                 break;
             } catch (err) {
                 lastError = err;
@@ -113,41 +119,61 @@ export class MatchExecutor {
         if (masterId === -1) {
             throw lastError ?? new Error(`unable to seed master after retries (baseSlug=${baseSlug})`);
         }
-        db.run(
-            `UPDATE products SET master_product_id = ?, match_method = 'auto-seed', match_similarity = NULL, match_at = ?, last_updated_at = ?
-             WHERE id = ?`,
-            [masterId, now, now, input.productId]
-        );
-        await this.refreshMasterDenorm(masterId);
+
+        await k
+            .updateTable("products")
+            .set({
+                master_product_id: masterId,
+                match_method: "auto-seed",
+                match_similarity: null,
+                match_at: now,
+                last_updated_at: now,
+            })
+            .where("id", "=", input.productId)
+            .execute();
+        await refreshMasterDenorm(this.args.shopsDb, masterId);
         log.debug({ productId: input.productId, masterId }, "auto-seeded master");
         return masterId;
     }
 
-    private writeGrayZone(productId: number, candidateProductId: number, method: string, similarity: number): void {
-        const db = this.args.shopsDb.raw();
+    private async writeGrayZone(
+        productId: number,
+        candidateProductId: number,
+        method: string,
+        similarity: number
+    ): Promise<void> {
+        const k = this.args.shopsDb.kysely();
         const now = new Date().toISOString();
         const lo = Math.min(productId, candidateProductId);
         const hi = Math.max(productId, candidateProductId);
-        db.run(`UPDATE products SET match_method = 'gray-zone', match_at = ?, last_updated_at = ? WHERE id = ?`, [
-            now,
-            now,
-            productId,
-        ]);
-        db.run(
-            `INSERT OR IGNORE INTO match_candidates
-             (product_id_a, product_id_b, similarity, match_method, status, created_at)
-             VALUES (?, ?, ?, ?, 'pending', ?)`,
-            [lo, hi, similarity, method, now]
-        );
+
+        await k
+            .updateTable("products")
+            .set({ match_method: "gray-zone", match_at: now, last_updated_at: now })
+            .where("id", "=", productId)
+            .execute();
+        await k
+            .insertInto("match_candidates")
+            .values({
+                product_id_a: lo,
+                product_id_b: hi,
+                similarity,
+                match_method: method as MatchCandidatesTable["match_method"],
+                created_at: now,
+            })
+            .onConflict((oc) => oc.columns(["product_id_a", "product_id_b"]).doNothing())
+            .execute();
     }
 
-    private uniqueSlug(base: string): string {
-        const db = this.args.shopsDb.raw();
+    private async uniqueSlug(base: string): Promise<string> {
         let candidate = base;
         for (let suffix = 2; suffix < 1000; suffix++) {
-            const existing = db
-                .query<{ id: number }, [string]>("SELECT id FROM master_products WHERE canonical_slug = ?")
-                .get(candidate);
+            const existing = await this.args.shopsDb
+                .kysely()
+                .selectFrom("master_products")
+                .select("id")
+                .where("canonical_slug", "=", candidate)
+                .executeTakeFirst();
             if (!existing) {
                 return candidate;
             }
@@ -156,10 +182,6 @@ export class MatchExecutor {
         }
 
         throw new Error(`Could not allocate unique canonical_slug for ${base}`);
-    }
-
-    private async refreshMasterDenorm(masterId: number): Promise<void> {
-        await refreshMasterDenorm(this.args.shopsDb, masterId);
     }
 }
 
