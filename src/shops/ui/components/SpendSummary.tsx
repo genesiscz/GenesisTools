@@ -1,18 +1,8 @@
+import { ChartBox } from "@app/shops/ui/components/ChartBox";
 import { Card, CardContent, CardHeader, CardTitle } from "@app/utils/ui/components/card";
 import { chartColors, chartSeriesPalette } from "@app/utils/ui/graphs/colors";
 import type { ReactNode } from "react";
-import {
-    Bar,
-    BarChart,
-    CartesianGrid,
-    Cell,
-    Pie,
-    PieChart,
-    ResponsiveContainer,
-    Tooltip,
-    XAxis,
-    YAxis,
-} from "recharts";
+import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, Tooltip, XAxis, YAxis } from "recharts";
 
 export interface SpendInsights {
     months: { month: string; total: number; currency: string; orders: number }[];
@@ -59,9 +49,9 @@ export function SpendSummary({ data, onProductClick }: Props): ReactNode {
                         </CardTitle>
                     </CardHeader>
                     <CardContent>
-                        <div className="h-44">
-                            <ResponsiveContainer width="100%" height="100%">
-                                <BarChart data={data.months}>
+                        <ChartBox height={176}>
+                            {({ width, height }) => (
+                                <BarChart data={data.months} width={width} height={height}>
                                     <CartesianGrid stroke={chartColors.grid} strokeDasharray="3 3" />
                                     <XAxis
                                         dataKey="month"
@@ -83,8 +73,8 @@ export function SpendSummary({ data, onProductClick }: Props): ReactNode {
                                     />
                                     <Bar dataKey="total" fill={chartSeriesPalette[0]} />
                                 </BarChart>
-                            </ResponsiveContainer>
-                        </div>
+                            )}
+                        </ChartBox>
                     </CardContent>
                 </Card>
 
@@ -95,19 +85,21 @@ export function SpendSummary({ data, onProductClick }: Props): ReactNode {
                         </CardTitle>
                     </CardHeader>
                     <CardContent>
-                        <div className="h-44 flex items-center justify-center">
-                            {data.byShop.length === 0 ? (
-                                <div className="text-xs text-muted-foreground font-mono">no orders yet</div>
-                            ) : data.byShop.length === 1 ? (
-                                <div className="flex flex-col items-center gap-1 font-mono">
-                                    <div className="text-3xl tabular-nums text-[var(--color-neon-cyan)]">100%</div>
-                                    <div className="text-[10px] tracking-[0.25em] uppercase text-muted-foreground">
-                                        {data.byShop[0].shop_origin}
-                                    </div>
+                        {data.byShop.length === 0 ? (
+                            <div className="h-44 flex items-center justify-center text-xs text-muted-foreground font-mono">
+                                no orders yet
+                            </div>
+                        ) : data.byShop.length === 1 ? (
+                            <div className="h-44 flex flex-col items-center justify-center gap-1 font-mono">
+                                <div className="text-3xl tabular-nums text-[var(--color-neon-cyan)]">100%</div>
+                                <div className="text-[10px] tracking-[0.25em] uppercase text-muted-foreground">
+                                    {data.byShop[0].shop_origin}
                                 </div>
-                            ) : (
-                                <ResponsiveContainer width="100%" height="100%">
-                                    <PieChart>
+                            </div>
+                        ) : (
+                            <ChartBox height={176}>
+                                {({ width, height }) => (
+                                    <PieChart width={width} height={height}>
                                         <Pie
                                             data={data.byShop}
                                             dataKey="total"
@@ -132,9 +124,9 @@ export function SpendSummary({ data, onProductClick }: Props): ReactNode {
                                             }}
                                         />
                                     </PieChart>
-                                </ResponsiveContainer>
-                            )}
-                        </div>
+                                )}
+                            </ChartBox>
+                        )}
                     </CardContent>
                 </Card>
             </div>

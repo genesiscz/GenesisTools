@@ -1,3 +1,4 @@
+import { Skeleton } from "@app/utils/ui/components/skeleton";
 import { useQuery } from "@tanstack/react-query";
 import { redirect, useNavigate } from "@tanstack/react-router";
 import type { ReactNode } from "react";
@@ -60,7 +61,17 @@ export function RequireAuth({ children }: { children: ReactNode }) {
         }
     }, [unauthed, navigate]);
 
-    if (me.isLoading || unauthed) {
+    if (me.isLoading) {
+        return (
+            <div className="px-6 py-6 space-y-4">
+                <Skeleton className="h-10 w-full max-w-md" />
+                <Skeleton className="h-44 w-full" />
+                <Skeleton className="h-72 w-full" />
+            </div>
+        );
+    }
+
+    if (unauthed) {
         return null;
     }
 

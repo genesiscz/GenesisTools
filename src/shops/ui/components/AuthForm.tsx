@@ -69,11 +69,7 @@ export function AuthForm({ title, submitLabel, onSubmit, bottomSlot }: AuthFormP
                             }
                         />
                         {error ? <div className="text-xs text-[var(--color-neon-coral,#ff5577)]">{error}</div> : null}
-                        <Button
-                            type="submit"
-                            disabled={submitting || !email || !password}
-                            className="w-full"
-                        >
+                        <Button type="submit" disabled={submitting || !email || !password} className="w-full">
                             {submitting ? "..." : submitLabel}
                         </Button>
                         {bottomSlot}

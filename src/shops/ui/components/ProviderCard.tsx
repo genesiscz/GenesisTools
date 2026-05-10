@@ -51,9 +51,11 @@ export function ProviderCard({
             <CardContent className="space-y-3 text-xs font-mono text-muted-foreground">
                 {isConnected ? (
                     <>
-                        <div>
-                            account: <span className="text-foreground">{data.external_user_email ?? "?"}</span>
-                        </div>
+                        {data.external_user_email ? (
+                            <div>
+                                account: <span className="text-foreground">{data.external_user_email}</span>
+                            </div>
+                        ) : null}
                         <div>
                             last sync:{" "}
                             <span className="text-foreground">
