@@ -33,6 +33,7 @@ import { Route as ApiDaemonRouteImport } from './routes/api/daemon'
 import { Route as ApiCoverageRouteImport } from './routes/api/coverage'
 import { Route as ApiCompareRouteImport } from './routes/api/compare'
 import { Route as ProductShopSlugRouteImport } from './routes/product.$shop.$slug'
+import { Route as ApiWatchlistBulkAddRouteImport } from './routes/api/watchlist.bulk-add'
 import { Route as ApiWatchlistAddRouteImport } from './routes/api/watchlist.add'
 import { Route as ApiProvidersUpdateRouteImport } from './routes/api/providers.update'
 import { Route as ApiProvidersSyncRouteImport } from './routes/api/providers.sync'
@@ -180,6 +181,11 @@ const ProductShopSlugRoute = ProductShopSlugRouteImport.update({
   id: '/product/$shop/$slug',
   path: '/product/$shop/$slug',
   getParentRoute: () => rootRouteImport,
+} as any)
+const ApiWatchlistBulkAddRoute = ApiWatchlistBulkAddRouteImport.update({
+  id: '/bulk-add',
+  path: '/bulk-add',
+  getParentRoute: () => ApiWatchlistRoute,
 } as any)
 const ApiWatchlistAddRoute = ApiWatchlistAddRouteImport.update({
   id: '/add',
@@ -361,6 +367,7 @@ export interface FileRoutesByFullPath {
   '/api/providers/sync': typeof ApiProvidersSyncRoute
   '/api/providers/update': typeof ApiProvidersUpdateRoute
   '/api/watchlist/add': typeof ApiWatchlistAddRoute
+  '/api/watchlist/bulk-add': typeof ApiWatchlistBulkAddRoute
   '/product/$shop/$slug': typeof ProductShopSlugRoute
   '/api/master/$id/history': typeof ApiMasterIdHistoryRoute
   '/api/match/$candidate/accept': typeof ApiMatchCandidateAcceptRoute
@@ -414,6 +421,7 @@ export interface FileRoutesByTo {
   '/api/providers/sync': typeof ApiProvidersSyncRoute
   '/api/providers/update': typeof ApiProvidersUpdateRoute
   '/api/watchlist/add': typeof ApiWatchlistAddRoute
+  '/api/watchlist/bulk-add': typeof ApiWatchlistBulkAddRoute
   '/product/$shop/$slug': typeof ProductShopSlugRoute
   '/api/master/$id/history': typeof ApiMasterIdHistoryRoute
   '/api/match/$candidate/accept': typeof ApiMatchCandidateAcceptRoute
@@ -468,6 +476,7 @@ export interface FileRoutesById {
   '/api/providers/sync': typeof ApiProvidersSyncRoute
   '/api/providers/update': typeof ApiProvidersUpdateRoute
   '/api/watchlist/add': typeof ApiWatchlistAddRoute
+  '/api/watchlist/bulk-add': typeof ApiWatchlistBulkAddRoute
   '/product/$shop/$slug': typeof ProductShopSlugRoute
   '/api/master/$id/history': typeof ApiMasterIdHistoryRoute
   '/api/match/$candidate/accept': typeof ApiMatchCandidateAcceptRoute
@@ -523,6 +532,7 @@ export interface FileRouteTypes {
     | '/api/providers/sync'
     | '/api/providers/update'
     | '/api/watchlist/add'
+    | '/api/watchlist/bulk-add'
     | '/product/$shop/$slug'
     | '/api/master/$id/history'
     | '/api/match/$candidate/accept'
@@ -576,6 +586,7 @@ export interface FileRouteTypes {
     | '/api/providers/sync'
     | '/api/providers/update'
     | '/api/watchlist/add'
+    | '/api/watchlist/bulk-add'
     | '/product/$shop/$slug'
     | '/api/master/$id/history'
     | '/api/match/$candidate/accept'
@@ -629,6 +640,7 @@ export interface FileRouteTypes {
     | '/api/providers/sync'
     | '/api/providers/update'
     | '/api/watchlist/add'
+    | '/api/watchlist/bulk-add'
     | '/product/$shop/$slug'
     | '/api/master/$id/history'
     | '/api/match/$candidate/accept'
@@ -856,6 +868,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/product/$shop/$slug'
       preLoaderRoute: typeof ProductShopSlugRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/api/watchlist/bulk-add': {
+      id: '/api/watchlist/bulk-add'
+      path: '/bulk-add'
+      fullPath: '/api/watchlist/bulk-add'
+      preLoaderRoute: typeof ApiWatchlistBulkAddRouteImport
+      parentRoute: typeof ApiWatchlistRoute
     }
     '/api/watchlist/add': {
       id: '/api/watchlist/add'
@@ -1086,12 +1105,14 @@ const ApiNotificationsRouteWithChildren =
 
 interface ApiWatchlistRouteChildren {
   ApiWatchlistAddRoute: typeof ApiWatchlistAddRoute
+  ApiWatchlistBulkAddRoute: typeof ApiWatchlistBulkAddRoute
   ApiWatchlistIdDeleteRoute: typeof ApiWatchlistIdDeleteRoute
   ApiWatchlistIdEditRoute: typeof ApiWatchlistIdEditRoute
 }
 
 const ApiWatchlistRouteChildren: ApiWatchlistRouteChildren = {
   ApiWatchlistAddRoute: ApiWatchlistAddRoute,
+  ApiWatchlistBulkAddRoute: ApiWatchlistBulkAddRoute,
   ApiWatchlistIdDeleteRoute: ApiWatchlistIdDeleteRoute,
   ApiWatchlistIdEditRoute: ApiWatchlistIdEditRoute,
 }
