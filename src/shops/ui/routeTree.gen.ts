@@ -14,6 +14,7 @@ import { Route as WatchlistRouteImport } from './routes/watchlist'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as RegisterRouteImport } from './routes/register'
 import { Route as ProvidersRouteImport } from './routes/providers'
+import { Route as OrdersRouteImport } from './routes/orders'
 import { Route as NotificationsRouteImport } from './routes/notifications'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as LiveRouteImport } from './routes/live'
@@ -85,6 +86,11 @@ const RegisterRoute = RegisterRouteImport.update({
 const ProvidersRoute = ProvidersRouteImport.update({
   id: '/providers',
   path: '/providers',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const OrdersRoute = OrdersRouteImport.update({
+  id: '/orders',
+  path: '/orders',
   getParentRoute: () => rootRouteImport,
 } as any)
 const NotificationsRoute = NotificationsRouteImport.update({
@@ -332,6 +338,7 @@ export interface FileRoutesByFullPath {
   '/live': typeof LiveRoute
   '/login': typeof LoginRoute
   '/notifications': typeof NotificationsRoute
+  '/orders': typeof OrdersRoute
   '/providers': typeof ProvidersRoute
   '/register': typeof RegisterRoute
   '/settings': typeof SettingsRoute
@@ -386,6 +393,7 @@ export interface FileRoutesByTo {
   '/live': typeof LiveRoute
   '/login': typeof LoginRoute
   '/notifications': typeof NotificationsRoute
+  '/orders': typeof OrdersRoute
   '/providers': typeof ProvidersRoute
   '/register': typeof RegisterRoute
   '/settings': typeof SettingsRoute
@@ -441,6 +449,7 @@ export interface FileRoutesById {
   '/live': typeof LiveRoute
   '/login': typeof LoginRoute
   '/notifications': typeof NotificationsRoute
+  '/orders': typeof OrdersRoute
   '/providers': typeof ProvidersRoute
   '/register': typeof RegisterRoute
   '/settings': typeof SettingsRoute
@@ -497,6 +506,7 @@ export interface FileRouteTypes {
     | '/live'
     | '/login'
     | '/notifications'
+    | '/orders'
     | '/providers'
     | '/register'
     | '/settings'
@@ -551,6 +561,7 @@ export interface FileRouteTypes {
     | '/live'
     | '/login'
     | '/notifications'
+    | '/orders'
     | '/providers'
     | '/register'
     | '/settings'
@@ -605,6 +616,7 @@ export interface FileRouteTypes {
     | '/live'
     | '/login'
     | '/notifications'
+    | '/orders'
     | '/providers'
     | '/register'
     | '/settings'
@@ -660,6 +672,7 @@ export interface RootRouteChildren {
   LiveRoute: typeof LiveRoute
   LoginRoute: typeof LoginRoute
   NotificationsRoute: typeof NotificationsRoute
+  OrdersRoute: typeof OrdersRoute
   ProvidersRoute: typeof ProvidersRoute
   RegisterRoute: typeof RegisterRoute
   SettingsRoute: typeof SettingsRoute
@@ -734,6 +747,13 @@ declare module '@tanstack/react-router' {
       path: '/providers'
       fullPath: '/providers'
       preLoaderRoute: typeof ProvidersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/orders': {
+      id: '/orders'
+      path: '/orders'
+      fullPath: '/orders'
+      preLoaderRoute: typeof OrdersRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/notifications': {
@@ -1140,6 +1160,7 @@ const rootRouteChildren: RootRouteChildren = {
   LiveRoute: LiveRoute,
   LoginRoute: LoginRoute,
   NotificationsRoute: NotificationsRoute,
+  OrdersRoute: OrdersRoute,
   ProvidersRoute: ProvidersRoute,
   RegisterRoute: RegisterRoute,
   SettingsRoute: SettingsRoute,
