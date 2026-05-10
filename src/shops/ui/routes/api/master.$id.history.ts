@@ -3,14 +3,9 @@ import { getShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import type { PriceHistoryPoint, PriceHistoryResponse } from "@app/shops/types";
 import { apiHandler, intParam } from "@app/shops/ui/server/api-utils";
 import { createFileRoute } from "@tanstack/react-router";
+import { sql } from "kysely";
 
 const log = logger.child({ component: "api:master:$id:history" });
-
-interface DailyRow {
-    day: string;
-    shop_origin: string;
-    avg_price: number;
-}
 
 export const Route = createFileRoute("/api/master/$id/history")({
     server: {
@@ -34,23 +29,21 @@ export const Route = createFileRoute("/api/master/$id/history")({
                     return Response.json({ error: (err as Error).message }, { status: 400 });
                 }
 
-                const db = getShopsDatabase().raw();
-
-                const rows = db
-                    .query<DailyRow, [number, number]>(
-                        `SELECT
-                            substr(pr.observed_at, 1, 10) AS day,
-                            p.shop_origin AS shop_origin,
-                            AVG(pr.current_price) AS avg_price
-                         FROM prices pr
-                         JOIN products p ON p.id = pr.product_id
-                         WHERE p.master_product_id = ?
-                           AND pr.current_price IS NOT NULL
-                           AND pr.observed_at >= date('now', ? || ' day')
-                         GROUP BY day, p.shop_origin
-                         ORDER BY day ASC`
-                    )
-                    .all(id, -days);
+                const rows = await getShopsDatabase()
+                    .kysely()
+                    .selectFrom("prices as pr")
+                    .innerJoin("products as p", "p.id", "pr.product_id")
+                    .select((eb) => [
+                        sql<string>`substr(pr.observed_at, 1, 10)`.as("day"),
+                        "p.shop_origin",
+                        eb.fn.avg<number>("pr.current_price").as("avg_price"),
+                    ])
+                    .where("p.master_product_id", "=", id)
+                    .where("pr.current_price", "is not", null)
+                    .where("pr.observed_at", ">=", sql<string>`date('now', ${`-${days} day`})`)
+                    .groupBy([sql`substr(pr.observed_at, 1, 10)`, "p.shop_origin"])
+                    .orderBy("day", "asc")
+                    .execute();
 
                 if (rows.length === 0) {
                     const today = new Date().toISOString().slice(0, 10);
