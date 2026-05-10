@@ -45,6 +45,8 @@ import { Route as ApiMatchCandidatesRouteImport } from './routes/api/match.candi
 import { Route as ApiMasterIdRouteImport } from './routes/api/master.$id'
 import { Route as ApiLiveEventsRouteImport } from './routes/api/live.events'
 import { Route as ApiInsightsSpendRouteImport } from './routes/api/insights.spend'
+import { Route as ApiInsightsSparklinesRouteImport } from './routes/api/insights.sparklines'
+import { Route as ApiInsightsRecurringRouteImport } from './routes/api/insights.recurring'
 import { Route as ApiAuthRegisterRouteImport } from './routes/api/auth.register'
 import { Route as ApiAuthMeRouteImport } from './routes/api/auth.me'
 import { Route as ApiAuthLogoutRouteImport } from './routes/api/auth.logout'
@@ -237,6 +239,16 @@ const ApiInsightsSpendRoute = ApiInsightsSpendRouteImport.update({
   path: '/api/insights/spend',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiInsightsSparklinesRoute = ApiInsightsSparklinesRouteImport.update({
+  id: '/api/insights/sparklines',
+  path: '/api/insights/sparklines',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiInsightsRecurringRoute = ApiInsightsRecurringRouteImport.update({
+  id: '/api/insights/recurring',
+  path: '/api/insights/recurring',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiAuthRegisterRoute = ApiAuthRegisterRouteImport.update({
   id: '/api/auth/register',
   path: '/api/auth/register',
@@ -321,6 +333,8 @@ export interface FileRoutesByFullPath {
   '/api/auth/logout': typeof ApiAuthLogoutRoute
   '/api/auth/me': typeof ApiAuthMeRoute
   '/api/auth/register': typeof ApiAuthRegisterRoute
+  '/api/insights/recurring': typeof ApiInsightsRecurringRoute
+  '/api/insights/sparklines': typeof ApiInsightsSparklinesRoute
   '/api/insights/spend': typeof ApiInsightsSpendRoute
   '/api/live/events': typeof ApiLiveEventsRoute
   '/api/master/$id': typeof ApiMasterIdRouteWithChildren
@@ -370,6 +384,8 @@ export interface FileRoutesByTo {
   '/api/auth/logout': typeof ApiAuthLogoutRoute
   '/api/auth/me': typeof ApiAuthMeRoute
   '/api/auth/register': typeof ApiAuthRegisterRoute
+  '/api/insights/recurring': typeof ApiInsightsRecurringRoute
+  '/api/insights/sparklines': typeof ApiInsightsSparklinesRoute
   '/api/insights/spend': typeof ApiInsightsSpendRoute
   '/api/live/events': typeof ApiLiveEventsRoute
   '/api/master/$id': typeof ApiMasterIdRouteWithChildren
@@ -420,6 +436,8 @@ export interface FileRoutesById {
   '/api/auth/logout': typeof ApiAuthLogoutRoute
   '/api/auth/me': typeof ApiAuthMeRoute
   '/api/auth/register': typeof ApiAuthRegisterRoute
+  '/api/insights/recurring': typeof ApiInsightsRecurringRoute
+  '/api/insights/sparklines': typeof ApiInsightsSparklinesRoute
   '/api/insights/spend': typeof ApiInsightsSpendRoute
   '/api/live/events': typeof ApiLiveEventsRoute
   '/api/master/$id': typeof ApiMasterIdRouteWithChildren
@@ -471,6 +489,8 @@ export interface FileRouteTypes {
     | '/api/auth/logout'
     | '/api/auth/me'
     | '/api/auth/register'
+    | '/api/insights/recurring'
+    | '/api/insights/sparklines'
     | '/api/insights/spend'
     | '/api/live/events'
     | '/api/master/$id'
@@ -520,6 +540,8 @@ export interface FileRouteTypes {
     | '/api/auth/logout'
     | '/api/auth/me'
     | '/api/auth/register'
+    | '/api/insights/recurring'
+    | '/api/insights/sparklines'
     | '/api/insights/spend'
     | '/api/live/events'
     | '/api/master/$id'
@@ -569,6 +591,8 @@ export interface FileRouteTypes {
     | '/api/auth/logout'
     | '/api/auth/me'
     | '/api/auth/register'
+    | '/api/insights/recurring'
+    | '/api/insights/sparklines'
     | '/api/insights/spend'
     | '/api/live/events'
     | '/api/master/$id'
@@ -619,6 +643,8 @@ export interface RootRouteChildren {
   ApiAuthLogoutRoute: typeof ApiAuthLogoutRoute
   ApiAuthMeRoute: typeof ApiAuthMeRoute
   ApiAuthRegisterRoute: typeof ApiAuthRegisterRoute
+  ApiInsightsRecurringRoute: typeof ApiInsightsRecurringRoute
+  ApiInsightsSparklinesRoute: typeof ApiInsightsSparklinesRoute
   ApiInsightsSpendRoute: typeof ApiInsightsSpendRoute
   ApiLiveEventsRoute: typeof ApiLiveEventsRoute
   ApiMatchCandidatesRoute: typeof ApiMatchCandidatesRoute
@@ -889,6 +915,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiInsightsSpendRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/insights/sparklines': {
+      id: '/api/insights/sparklines'
+      path: '/api/insights/sparklines'
+      fullPath: '/api/insights/sparklines'
+      preLoaderRoute: typeof ApiInsightsSparklinesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/insights/recurring': {
+      id: '/api/insights/recurring'
+      path: '/api/insights/recurring'
+      fullPath: '/api/insights/recurring'
+      preLoaderRoute: typeof ApiInsightsRecurringRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/auth/register': {
       id: '/api/auth/register'
       path: '/api/auth/register'
@@ -1048,6 +1088,8 @@ const rootRouteChildren: RootRouteChildren = {
   ApiAuthLogoutRoute: ApiAuthLogoutRoute,
   ApiAuthMeRoute: ApiAuthMeRoute,
   ApiAuthRegisterRoute: ApiAuthRegisterRoute,
+  ApiInsightsRecurringRoute: ApiInsightsRecurringRoute,
+  ApiInsightsSparklinesRoute: ApiInsightsSparklinesRoute,
   ApiInsightsSpendRoute: ApiInsightsSpendRoute,
   ApiLiveEventsRoute: ApiLiveEventsRoute,
   ApiMatchCandidatesRoute: ApiMatchCandidatesRoute,
