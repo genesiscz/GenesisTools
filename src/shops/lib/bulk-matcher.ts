@@ -1,4 +1,3 @@
-import { sql } from "kysely";
 import logger from "@app/logger";
 import { BrandAliasesRepository } from "@app/shops/db/BrandAliasesRepository";
 import type { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
@@ -8,6 +7,7 @@ import { Matcher, type MatcherInput } from "@app/shops/lib/matcher";
 import { MATCHER_CONFIG } from "@app/shops/lib/matcher-config";
 import { compatPackCount } from "@app/shops/lib/multipack-guard";
 import { similarityScore } from "@app/utils/fuzzy-match";
+import { sql } from "kysely";
 
 export interface BulkMatcherArgs {
     matcher: Matcher;
@@ -86,12 +86,7 @@ export class BulkMatcher {
             .kysely()
             .selectFrom("products as p")
             .innerJoin("master_products as m", "m.ean", "p.ean")
-            .select([
-                "p.id as productId",
-                "m.id as masterId",
-                "p.pack_count as pPack",
-                "m.pack_count as mPack",
-            ])
+            .select(["p.id as productId", "m.id as masterId", "p.pack_count as pPack", "m.pack_count as mPack"])
             .where("p.master_product_id", "is", null)
             .where("p.match_method", "=", "pending")
             .where("p.ean", "is not", null)

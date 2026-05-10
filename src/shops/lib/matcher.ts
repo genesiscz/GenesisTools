@@ -446,7 +446,10 @@ export class Matcher {
         };
     }
 
-    private async findCandidateProductForMaster(masterProductId: number, inputProductId: number): Promise<number | null> {
+    private async findCandidateProductForMaster(
+        masterProductId: number,
+        inputProductId: number
+    ): Promise<number | null> {
         const rows = await this.shopsDb
             .kysely()
             .selectFrom("products")

@@ -54,9 +54,7 @@ export const Route = createFileRoute("/api/master")({
 
                 const k = getShopsDatabase().kysely();
 
-                let countQuery = k
-                    .selectFrom("master_products")
-                    .select((eb) => eb.fn.countAll<number>().as("total"));
+                let countQuery = k.selectFrom("master_products").select((eb) => eb.fn.countAll<number>().as("total"));
                 let listQuery = k
                     .selectFrom("master_products")
                     .select([

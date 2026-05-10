@@ -1,5 +1,5 @@
-import { sql } from "kysely";
 import type { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
+import { sql } from "kysely";
 
 /**
  * Refresh the cached/denormalized fields on a master_products row from its

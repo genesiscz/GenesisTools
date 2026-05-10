@@ -30,12 +30,7 @@ export class MatchExecutor {
                 await this.writeSeed(input);
                 break;
             case "gray-zone":
-                await this.writeGrayZone(
-                    input.productId,
-                    result.candidateProductId,
-                    result.method,
-                    result.similarity
-                );
+                await this.writeGrayZone(input.productId, result.candidateProductId, result.method, result.similarity);
                 break;
         }
 

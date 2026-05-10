@@ -1,6 +1,6 @@
-import type { Selectable } from "kysely";
 import type { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import type { Product, ProductsTable } from "@app/shops/db/types";
+import type { Selectable } from "kysely";
 
 export interface SearchOptions {
     limit?: number;
