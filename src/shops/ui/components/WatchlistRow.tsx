@@ -55,7 +55,7 @@ export function WatchlistRow({ row, pendingNotifications, sparklinePoints, onAck
                 )}
             </TableCell>
             <TableCell className="text-right">
-                {row.delta_percent !== null ? (
+                {row.delta_percent !== null && row.delta_percent !== 0 ? (
                     <span className={cn(row.delta_percent > 0 ? "text-emerald-300" : "text-zinc-400")}>
                         {(row.delta_percent * 100).toFixed(1)}%
                     </span>
