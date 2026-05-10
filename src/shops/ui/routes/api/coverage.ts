@@ -3,60 +3,58 @@ import { getShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import type { CoverageResponse, CoverageRow } from "@app/shops/types";
 import { apiHandler } from "@app/shops/ui/server/api-utils";
 import { createFileRoute } from "@tanstack/react-router";
+import { sql } from "kysely";
 
 const log = logger.child({ component: "api:coverage" });
-
-interface ShopRow {
-    origin: string;
-    display_name: string;
-    cap_live: number;
-    cap_history: number;
-    cap_listing: number;
-    cap_ean: number;
-    cap_search: number;
-    bot_protection: string;
-    product_count: number;
-    last_crawl_at: string | null;
-}
-
-interface RunRow {
-    id: number;
-    shop_origin: string;
-    started_at: string;
-    finished_at: string | null;
-    status: string;
-    products_seen: number;
-    products_new: number;
-}
 
 export const Route = createFileRoute("/api/coverage")({
     server: {
         handlers: {
             GET: apiHandler(async () => {
-                const db = getShopsDatabase().raw();
-                const shops = db
-                    .query<ShopRow, []>(
-                        `SELECT
-                            s.origin, s.display_name,
-                            s.cap_live, s.cap_history, s.cap_listing, s.cap_ean, s.cap_search,
-                            s.bot_protection,
-                            (SELECT COUNT(*) FROM products p WHERE p.shop_origin = s.origin AND p.is_active = 1) AS product_count,
-                            (SELECT MAX(finished_at) FROM crawl_runs cr WHERE cr.shop_origin = s.origin) AS last_crawl_at
-                         FROM shops s
-                         ORDER BY s.display_name`
-                    )
-                    .all();
+                const k = getShopsDatabase().kysely();
 
-                const recentRuns = db
-                    .query<RunRow, []>(
-                        `SELECT id, shop_origin, started_at, finished_at, status, products_seen, products_new
-                         FROM crawl_runs
-                         ORDER BY started_at DESC
-                         LIMIT 200`
-                    )
-                    .all();
+                const shops = await k
+                    .selectFrom("shops as s")
+                    .select((eb) => [
+                        "s.origin",
+                        "s.display_name",
+                        "s.cap_live",
+                        "s.cap_history",
+                        "s.cap_listing",
+                        "s.cap_ean",
+                        "s.cap_search",
+                        "s.bot_protection",
+                        eb
+                            .selectFrom("products as p")
+                            .select((eb2) => eb2.fn.countAll<number>().as("c"))
+                            .where("p.shop_origin", "=", eb.ref("s.origin"))
+                            .where("p.is_active", "=", 1)
+                            .as("product_count"),
+                        eb
+                            .selectFrom("crawl_runs as cr")
+                            .select((eb2) => eb2.fn.max("cr.finished_at").as("m"))
+                            .where("cr.shop_origin", "=", eb.ref("s.origin"))
+                            .as("last_crawl_at"),
+                    ])
+                    .orderBy("s.display_name")
+                    .execute();
 
-                const runsByShop = new Map<string, RunRow[]>();
+                const recentRuns = await k
+                    .selectFrom("crawl_runs")
+                    .select([
+                        "id",
+                        "shop_origin",
+                        "started_at",
+                        "finished_at",
+                        "status",
+                        "products_seen",
+                        "products_new",
+                    ])
+                    .orderBy("started_at", "desc")
+                    .limit(200)
+                    .execute();
+
+                const runsByShop = new Map<string, (typeof recentRuns)[number][]>();
                 for (const r of recentRuns) {
                     const arr = runsByShop.get(r.shop_origin) ?? [];
                     if (arr.length < 7) {
@@ -87,21 +85,28 @@ export const Route = createFileRoute("/api/coverage")({
                     })),
                 }));
 
-                const totalProductsRow = db
-                    .query<{ total: number }, []>(`SELECT COUNT(*) AS total FROM products WHERE is_active = 1`)
-                    .get();
-                const totalProducts = totalProductsRow?.total ?? 0;
+                const totalProducts =
+                    (
+                        await k
+                            .selectFrom("products")
+                            .select((eb) => eb.fn.countAll<number>().as("total"))
+                            .where("is_active", "=", 1)
+                            .executeTakeFirst()
+                    )?.total ?? 0;
 
-                const todayOffersRow = db
-                    .query<{ total: number }, []>(
-                        `SELECT COUNT(*) AS total FROM prices WHERE substr(observed_at, 1, 10) = date('now')`
-                    )
-                    .get();
-                const totalOffersToday = todayOffersRow?.total ?? 0;
+                const totalOffersToday =
+                    (
+                        await k
+                            .selectFrom("prices")
+                            .select((eb) => eb.fn.countAll<number>().as("total"))
+                            .where(sql`substr(observed_at, 1, 10)`, "=", sql`date('now')`)
+                            .executeTakeFirst()
+                    )?.total ?? 0;
 
-                const lastCrawlRow = db
-                    .query<{ last: string | null }, []>(`SELECT MAX(finished_at) AS last FROM crawl_runs`)
-                    .get();
+                const lastCrawlRow = await k
+                    .selectFrom("crawl_runs")
+                    .select((eb) => eb.fn.max("finished_at").as("last"))
+                    .executeTakeFirst();
 
                 const body: CoverageResponse = {
                     rows,
