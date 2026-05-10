@@ -14,8 +14,7 @@ export const Route = createFileRoute("/api/watchlist/add")({
 
                 // Resolve `url` directly OR by master_product_id — StarWatchButton
                 // on the master detail page only knows the master id.
-                let url: string | null =
-                    typeof body.url === "string" && body.url.length > 0 ? body.url : null;
+                let url: string | null = typeof body.url === "string" && body.url.length > 0 ? body.url : null;
                 if (!url && typeof body.master_product_id === "number") {
                     const db = getShopsDatabase().raw();
                     const row = db
@@ -29,10 +28,7 @@ export const Route = createFileRoute("/api/watchlist/add")({
                 }
 
                 if (!url) {
-                    return Response.json(
-                        { error: "Field 'url' or 'master_product_id' is required" },
-                        { status: 400 }
-                    );
+                    return Response.json({ error: "Field 'url' or 'master_product_id' is required" }, { status: 400 });
                 }
 
                 const result = await addFavorite({
