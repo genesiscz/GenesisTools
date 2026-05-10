@@ -86,22 +86,22 @@ function seedProduct(opts: { masterId: number; shop: string; price: number | nul
 }
 
 describe("refreshMasterDenorm", () => {
-    it("updates total_offers from active products", () => {
+    it("updates total_offers from active products", async () => {
         const masterId = seedMaster();
         seedProduct({ masterId, shop: "rohlik.cz", price: 50 });
         seedProduct({ masterId, shop: "kosik.cz", price: 60 });
 
-        refreshMasterDenorm(db.raw(), masterId);
+        await refreshMasterDenorm(db, masterId);
 
         expect(readMaster(masterId).total_offers).toBe(2);
     });
 
-    it("sets best_price to MIN(current_price) and records best_price_shop", () => {
+    it("sets best_price to MIN(current_price) and records best_price_shop", async () => {
         const masterId = seedMaster();
         seedProduct({ masterId, shop: "rohlik.cz", price: 79.9 });
         seedProduct({ masterId, shop: "kosik.cz", price: 49.5 });
 
-        refreshMasterDenorm(db.raw(), masterId);
+        await refreshMasterDenorm(db, masterId);
 
         const row = readMaster(masterId);
         expect(row.best_price).toBe(49.5);
@@ -109,11 +109,11 @@ describe("refreshMasterDenorm", () => {
         expect(row.best_price_at).not.toBeNull();
     });
 
-    it("clears best_price when no current offers carry a price", () => {
+    it("clears best_price when no current offers carry a price", async () => {
         const masterId = seedMaster();
         seedProduct({ masterId, shop: "rohlik.cz", price: null });
 
-        refreshMasterDenorm(db.raw(), masterId);
+        await refreshMasterDenorm(db, masterId);
 
         const row = readMaster(masterId);
         expect(row.best_price).toBeNull();
@@ -121,16 +121,16 @@ describe("refreshMasterDenorm", () => {
         expect(row.best_price_at).toBeNull();
     });
 
-    it("inherits representative_image_url from first product when master has none", () => {
+    it("inherits representative_image_url from first product when master has none", async () => {
         const masterId = seedMaster();
         seedProduct({ masterId, shop: "rohlik.cz", price: 10, imageUrl: "https://cdn/img.jpg" });
 
-        refreshMasterDenorm(db.raw(), masterId);
+        await refreshMasterDenorm(db, masterId);
 
         expect(readMaster(masterId).representative_image_url).toBe("https://cdn/img.jpg");
     });
 
-    it("does NOT overwrite a master image that was already set", () => {
+    it("does NOT overwrite a master image that was already set", async () => {
         const masterId = seedMaster();
         db.raw().run("UPDATE master_products SET representative_image_url = ? WHERE id = ?", [
             "https://curated/keep.jpg",
@@ -138,7 +138,7 @@ describe("refreshMasterDenorm", () => {
         ]);
         seedProduct({ masterId, shop: "rohlik.cz", price: 10, imageUrl: "https://other/skip.jpg" });
 
-        refreshMasterDenorm(db.raw(), masterId);
+        await refreshMasterDenorm(db, masterId);
 
         expect(readMaster(masterId).representative_image_url).toBe("https://curated/keep.jpg");
     });

@@ -23,7 +23,7 @@ import {
 } from "@app/shops/lib/normalize";
 import { createKyselyClient, type DatabaseClient } from "@app/utils/database/client";
 import { SafeJSON } from "@app/utils/json";
-import type { Insertable, Kysely } from "kysely";
+import { type Insertable, type Kysely, sql } from "kysely";
 
 export interface StartCrawlRunInput {
     shopOrigin: string;
@@ -373,35 +373,32 @@ export class ShopsDatabase {
     }
 
     async incrementCrawlCounters(crawlRunId: number, delta: CrawlCounterDelta): Promise<void> {
-        const sets: string[] = [];
-        const params: number[] = [];
+        const setClause: Record<string, unknown> = {};
         if (delta.productsSeen) {
-            sets.push("products_seen = products_seen + ?");
-            params.push(delta.productsSeen);
+            setClause.products_seen = sql`products_seen + ${delta.productsSeen}`;
         }
 
         if (delta.productsNew) {
-            sets.push("products_new = products_new + ?");
-            params.push(delta.productsNew);
+            setClause.products_new = sql`products_new + ${delta.productsNew}`;
         }
 
         if (delta.pricesRecorded) {
-            sets.push("prices_recorded = prices_recorded + ?");
-            params.push(delta.pricesRecorded);
+            setClause.prices_recorded = sql`prices_recorded + ${delta.pricesRecorded}`;
         }
 
         if (delta.candidatesAdded) {
-            sets.push("candidates_added = candidates_added + ?");
-            params.push(delta.candidatesAdded);
+            setClause.candidates_added = sql`candidates_added + ${delta.candidatesAdded}`;
         }
 
-        if (sets.length === 0) {
+        if (Object.keys(setClause).length === 0) {
             return;
         }
 
-        const sql = `UPDATE crawl_runs SET ${sets.join(", ")} WHERE id = ?`;
-        params.push(crawlRunId);
-        this.client.raw.prepare(sql).run(...params);
+        await this.client.kysely
+            .updateTable("crawl_runs")
+            .set(setClause as never)
+            .where("id", "=", crawlRunId)
+            .execute();
     }
 
     async finishCrawlRun(crawlRunId: number, status: CrawlRunStatus, error?: string): Promise<void> {

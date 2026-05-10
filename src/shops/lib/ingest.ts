@@ -131,7 +131,7 @@ export async function ingestFromHlidacResult(args: IngestArgs): Promise<IngestRe
     const recorded = priceRows.length > 0 ? await db.recordPrices(priceRows) : 0;
 
     if (masterId !== null) {
-        refreshMasterDenorm(db.raw(), masterId);
+        await refreshMasterDenorm(db, masterId);
     }
 
     log.debug(

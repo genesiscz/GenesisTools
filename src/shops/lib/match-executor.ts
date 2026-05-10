@@ -23,10 +23,10 @@ export class MatchExecutor {
         const result = await this.args.matcher.match(input);
         switch (result.kind) {
             case "linked":
-                this.writeLinked(input.productId, result.masterProductId, result.method, result.similarity);
+                await this.writeLinked(input.productId, result.masterProductId, result.method, result.similarity);
                 break;
             case "seed":
-                this.writeSeed(input);
+                await this.writeSeed(input);
                 break;
             case "gray-zone":
                 this.writeGrayZone(input.productId, result.candidateProductId, result.method, result.similarity);
@@ -36,12 +36,12 @@ export class MatchExecutor {
         return result;
     }
 
-    private writeLinked(
+    private async writeLinked(
         productId: number,
         masterProductId: number,
         method: "ean" | "fuzzy" | "sig:no-flavor" | "sig:no-size" | "fuzzy-brand-name",
         similarity: number | null
-    ): void {
+    ): Promise<void> {
         const db = this.args.shopsDb.raw();
         const now = new Date().toISOString();
         db.run(
@@ -49,10 +49,10 @@ export class MatchExecutor {
              WHERE id = ?`,
             [masterProductId, method, similarity, now, now, productId]
         );
-        this.refreshMasterDenorm(masterProductId);
+        await this.refreshMasterDenorm(masterProductId);
     }
 
-    private writeSeed(input: MatcherInput): number {
+    private async writeSeed(input: MatcherInput): Promise<number> {
         const db = this.args.shopsDb.raw();
         const now = new Date().toISOString();
         const baseSlug = slugify(input.name) || `master-${Date.now()}`;
@@ -118,7 +118,7 @@ export class MatchExecutor {
              WHERE id = ?`,
             [masterId, now, now, input.productId]
         );
-        this.refreshMasterDenorm(masterId);
+        await this.refreshMasterDenorm(masterId);
         log.debug({ productId: input.productId, masterId }, "auto-seeded master");
         return masterId;
     }
@@ -158,8 +158,8 @@ export class MatchExecutor {
         throw new Error(`Could not allocate unique canonical_slug for ${base}`);
     }
 
-    private refreshMasterDenorm(masterId: number): void {
-        refreshMasterDenorm(this.args.shopsDb.raw(), masterId);
+    private async refreshMasterDenorm(masterId: number): Promise<void> {
+        await refreshMasterDenorm(this.args.shopsDb, masterId);
     }
 }
 

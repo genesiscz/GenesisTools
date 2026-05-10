@@ -1,10 +1,5 @@
-import type { Database } from "bun:sqlite";
-
-interface BestOfferRow {
-    current_price: number;
-    shop_origin: string;
-    price_observed_at: string;
-}
+import { sql } from "kysely";
+import type { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
 
 /**
  * Refresh the cached/denormalized fields on a master_products row from its
@@ -20,46 +15,55 @@ interface BestOfferRow {
  *   from current_offers across all products under the master, NULL when
  *   no priced offer exists.
  */
-export function refreshMasterDenorm(db: Database, masterId: number): void {
+export async function refreshMasterDenorm(db: ShopsDatabase, masterId: number): Promise<void> {
+    const k = db.kysely();
     const now = new Date().toISOString();
 
-    db.run(
-        `UPDATE master_products SET
-            total_offers = (
-                SELECT COUNT(*) FROM products WHERE master_product_id = ? AND is_active = 1
-            ),
-            representative_image_url = COALESCE(
+    await k
+        .updateTable("master_products")
+        .set((eb) => ({
+            total_offers: eb
+                .selectFrom("products")
+                .select((eb2) => eb2.fn.countAll<number>().as("c"))
+                .where("master_product_id", "=", masterId)
+                .where("is_active", "=", 1),
+            representative_image_url: sql<string | null>`COALESCE(
                 representative_image_url,
                 (SELECT image_url FROM products
-                   WHERE master_product_id = ? AND is_active = 1 AND image_url IS NOT NULL
+                   WHERE master_product_id = ${masterId} AND is_active = 1 AND image_url IS NOT NULL
                    ORDER BY id LIMIT 1)
-            ),
-            updated_at = ?
-         WHERE id = ?`,
-        [masterId, masterId, now, masterId]
-    );
+            )`,
+            updated_at: now,
+        }))
+        .where("id", "=", masterId)
+        .execute();
 
-    const best = db
-        .query<BestOfferRow, [number]>(
-            `SELECT current_price, shop_origin, price_observed_at
-             FROM current_offers
-             WHERE master_product_id = ? AND current_price IS NOT NULL
-             ORDER BY current_price ASC, price_observed_at DESC
-             LIMIT 1`
-        )
-        .get(masterId);
+    const best = await k
+        .selectFrom("current_offers")
+        .select(["current_price", "shop_origin", "price_observed_at"])
+        .where("master_product_id", "=", masterId)
+        .where("current_price", "is not", null)
+        .orderBy("current_price", "asc")
+        .orderBy("price_observed_at", "desc")
+        .limit(1)
+        .executeTakeFirst();
 
-    if (best) {
-        db.run("UPDATE master_products SET best_price = ?, best_price_shop = ?, best_price_at = ? WHERE id = ?", [
-            best.current_price,
-            best.shop_origin,
-            best.price_observed_at,
-            masterId,
-        ]);
+    if (best && best.current_price !== null) {
+        await k
+            .updateTable("master_products")
+            .set({
+                best_price: best.current_price,
+                best_price_shop: best.shop_origin,
+                best_price_at: best.price_observed_at,
+            })
+            .where("id", "=", masterId)
+            .execute();
         return;
     }
 
-    db.run("UPDATE master_products SET best_price = NULL, best_price_shop = NULL, best_price_at = NULL WHERE id = ?", [
-        masterId,
-    ]);
+    await k
+        .updateTable("master_products")
+        .set({ best_price: null, best_price_shop: null, best_price_at: null })
+        .where("id", "=", masterId)
+        .execute();
 }
