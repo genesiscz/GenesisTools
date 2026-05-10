@@ -16,12 +16,15 @@ export const Route = createFileRoute("/api/watchlist/add")({
                 // on the master detail page only knows the master id.
                 let url: string | null = typeof body.url === "string" && body.url.length > 0 ? body.url : null;
                 if (!url && typeof body.master_product_id === "number") {
-                    const db = getShopsDatabase().raw();
-                    const row = db
-                        .query<{ url: string }, [number]>(
-                            "SELECT url FROM products WHERE master_product_id = ? AND is_active = 1 ORDER BY id LIMIT 1"
-                        )
-                        .get(body.master_product_id);
+                    const row = await getShopsDatabase()
+                        .kysely()
+                        .selectFrom("products")
+                        .select("url")
+                        .where("master_product_id", "=", body.master_product_id)
+                        .where("is_active", "=", 1)
+                        .orderBy("id")
+                        .limit(1)
+                        .executeTakeFirst();
                     if (row) {
                         url = row.url;
                     }
