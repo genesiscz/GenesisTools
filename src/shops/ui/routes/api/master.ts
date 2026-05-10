@@ -1,8 +1,9 @@
 import logger from "@app/logger";
 import { getShopsDatabase } from "@app/shops/db/ShopsDatabase";
-import type { MasterListItem, MasterListResponse } from "@app/shops/types";
+import type { MasterListResponse } from "@app/shops/types";
 import { apiHandler, intParam, parseQuery } from "@app/shops/ui/server/api-utils";
 import { createFileRoute } from "@tanstack/react-router";
+import { sql } from "kysely";
 
 const log = logger.child({ component: "api:master" });
 
@@ -51,45 +52,49 @@ export const Route = createFileRoute("/api/master")({
                     return parsed;
                 }
 
-                const db = getShopsDatabase().raw();
-                const conditions: string[] = [];
-                const params: Array<string | number> = [];
+                const k = getShopsDatabase().kysely();
+
+                let countQuery = k
+                    .selectFrom("master_products")
+                    .select((eb) => eb.fn.countAll<number>().as("total"));
+                let listQuery = k
+                    .selectFrom("master_products")
+                    .select([
+                        "id",
+                        "canonical_name",
+                        "canonical_slug",
+                        "brand",
+                        "representative_image_url",
+                        "total_offers",
+                        "best_price",
+                        "best_price_shop",
+                        "master_category_id",
+                    ]);
+
                 if (parsed.brand) {
-                    conditions.push("brand = ?");
-                    params.push(parsed.brand);
+                    countQuery = countQuery.where("brand", "=", parsed.brand);
+                    listQuery = listQuery.where("brand", "=", parsed.brand);
                 }
-
                 if (parsed.category_id !== null) {
-                    conditions.push("master_category_id = ?");
-                    params.push(parsed.category_id);
+                    countQuery = countQuery.where("master_category_id", "=", parsed.category_id);
+                    listQuery = listQuery.where("master_category_id", "=", parsed.category_id);
                 }
 
-                const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
-
-                const sortColumn =
+                const orderExpr =
                     parsed.sort === "best_price"
-                        ? "COALESCE(best_price, 9.999e15)"
+                        ? sql<number>`COALESCE(best_price, 9.999e15)`
                         : parsed.sort === "total_offers"
-                          ? "total_offers"
-                          : "canonical_name COLLATE NOCASE";
+                          ? sql<number>`total_offers`
+                          : sql<string>`canonical_name COLLATE NOCASE`;
 
-                const totalRow = db
-                    .query<{ total: number }, typeof params>(
-                        `SELECT COUNT(*) AS total FROM master_products ${whereClause}`
-                    )
-                    .get(...params);
+                const totalRow = await countQuery.executeTakeFirst();
                 const total = totalRow?.total ?? 0;
 
-                const items = db
-                    .query<MasterListItem, [...typeof params, number, number]>(
-                        `SELECT id, canonical_name, canonical_slug, brand, representative_image_url,
-                                total_offers, best_price, best_price_shop, master_category_id
-                         FROM master_products
-                         ${whereClause}
-                         ORDER BY ${sortColumn} ${parsed.order.toUpperCase()}
-                         LIMIT ? OFFSET ?`
-                    )
-                    .all(...params, parsed.limit, parsed.offset);
+                const items = await listQuery
+                    .orderBy(orderExpr, parsed.order)
+                    .limit(parsed.limit)
+                    .offset(parsed.offset)
+                    .execute();
 
                 log.debug({ total, returned: items.length, query: parsed }, "api: master list served");
                 const body: MasterListResponse = {
