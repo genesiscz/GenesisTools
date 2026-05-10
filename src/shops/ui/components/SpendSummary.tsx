@@ -154,7 +154,7 @@ export function SpendSummary({ data, onProductClick }: Props): ReactNode {
                                 key={p.master_product_id}
                                 type="button"
                                 onClick={() => onProductClick(p.master_product_id)}
-                                className="w-full flex justify-between items-center text-left text-xs font-mono py-1 px-2 rounded hover:bg-white/5"
+                                className="w-full flex justify-between items-center text-left text-xs font-mono py-1 px-2 rounded border-l-2 border-transparent transition-colors hover:bg-cyan-500/5 hover:border-cyan-500/40"
                             >
                                 <span className="truncate text-foreground">{p.name}</span>
                                 <span className="text-muted-foreground tabular-nums">
@@ -184,7 +184,11 @@ function renderShopPieLabel({ percent, name }: PieLabelProps): string {
 
 function StatCard({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
     return (
-        <Card className="border-zinc-800 bg-zinc-950">
+        <Card
+            className={`border-zinc-800 bg-zinc-950 transition-all duration-150 hover:-translate-y-0.5 hover:border-cyan-500/30 cursor-default ${
+                accent ? "hover:shadow-[0_0_20px_rgba(255,200,0,0.15)] hover:border-amber-400/40" : ""
+            }`}
+        >
             <CardContent className="py-4">
                 <div className="font-mono text-[10px] tracking-[0.2em] text-muted-foreground uppercase">{label}</div>
                 <div
