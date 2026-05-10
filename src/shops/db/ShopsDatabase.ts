@@ -10,6 +10,7 @@ import type {
     NewMasterProduct,
     NewPrice,
     NewProduct,
+    ProductsTable,
     ShopsDB,
     ShopsTable,
 } from "@app/shops/db/types";
@@ -23,7 +24,7 @@ import {
 } from "@app/shops/lib/normalize";
 import { createKyselyClient, type DatabaseClient } from "@app/utils/database/client";
 import { SafeJSON } from "@app/utils/json";
-import { type Insertable, type Kysely, sql } from "kysely";
+import { type Insertable, type Kysely, type Selectable, sql } from "kysely";
 
 export interface StartCrawlRunInput {
     shopOrigin: string;
@@ -460,7 +461,8 @@ export class ShopsDatabase {
         offset: number
     ): Promise<ListedProduct[]> {
         const ftsQuery = `${normalizeText(searchText)}*`;
-        const sql = `
+        // FTS5 MATCH unmodeled by Kysely; raw query — see ProductsFtsTable in db/types.ts.
+        const sqlText = `
             SELECT
                 p.id              AS id,
                 p.name            AS name,
@@ -476,14 +478,10 @@ export class ShopsDatabase {
               AND p.is_active = 1
             ORDER BY rank
             LIMIT ? OFFSET ?`;
-        const rows = this.client.raw.prepare(sql).all(ftsQuery, shopOrigin, limit, offset) as Array<{
-            id: number;
-            name: string;
-            brand: string | null;
+        type Row = Pick<Selectable<ProductsTable>, "id" | "name" | "brand" | "url" | "image_url"> & {
             current_price: number | null;
-            url: string;
-            image_url: string | null;
-        }>;
+        };
+        const rows = this.client.raw.prepare(sqlText).all(ftsQuery, shopOrigin, limit, offset) as Row[];
 
         return rows.map((r) => ({
             id: r.id,
