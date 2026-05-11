@@ -32,6 +32,12 @@ describe("parseJenkinsInput", () => {
         expect(r.buildNumber).toBe("6");
     });
 
+    it("preserves a job literally named 'view' (does not mistake it for a filter)", () => {
+        const r = parseJenkinsInput("https://jenkins.example.com/job/Foo/job/view/job/Bar/12/");
+        expect(r.jobPath).toBe("job/Foo/job/view/job/Bar");
+        expect(r.buildNumber).toBe("12");
+    });
+
     it("strips trailing meta segments", () => {
         expect(parseJenkinsInput("https://j.example/job/X/7948/console").buildNumber).toBe("7948");
         expect(parseJenkinsInput("https://j.example/job/X/7948/consoleText").buildNumber).toBe("7948");

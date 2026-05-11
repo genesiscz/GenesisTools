@@ -26,11 +26,20 @@ export function parseJenkinsInput(input: string): JenkinsRef {
     const url = new URL(trimmed);
     let segments = url.pathname.split("/").filter(Boolean);
 
-    // Strip view/<name>/ filter that change-request multibranch URLs include
+    // Strip view/<name>/ filter that change-request multibranch URLs include.
+    // A "view" segment is only a filter marker when it sits BETWEEN a job and the next job —
+    // i.e. previous segment is NOT "job" and segment[i+2] === "job". This keeps jobs
+    // literally named "view" (/job/.../job/view/job/...) intact.
     const filtered: string[] = [];
 
     for (let i = 0; i < segments.length; i++) {
-        if (segments[i] === "view" && segments[i + 1]) {
+        const isViewFilter =
+            segments[i] === "view" &&
+            !!segments[i + 1] &&
+            segments[i - 1] !== "job" &&
+            segments[i + 2] === "job";
+
+        if (isViewFilter) {
             i++;
             continue;
         }

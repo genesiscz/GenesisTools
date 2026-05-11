@@ -127,9 +127,10 @@ export async function fetchLog(
     await writeFile(file, content, "utf8");
 
     const lineCount = content === "" ? 0 : content.split("\n").length - (content.endsWith("\n") ? 1 : 0);
-    logger.debug(`Wrote Jenkins log to ${file} (${content.length}B, ${lineCount} lines)`);
+    const sizeBytes = Buffer.byteLength(content, "utf8");
+    logger.debug(`Wrote Jenkins log to ${file} (${sizeBytes}B, ${lineCount} lines)`);
 
-    return { path: file, content, sizeBytes: content.length, lineCount, nodeStatus, truncated };
+    return { path: file, content, sizeBytes, lineCount, nodeStatus, truncated };
 }
 
 export async function readLogPreview(filePath: string, opts: LogFilterOpts = {}): Promise<LogPreview> {

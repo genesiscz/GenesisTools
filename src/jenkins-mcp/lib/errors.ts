@@ -22,6 +22,8 @@ export function extractErrors(text: string, opts: ExtractOpts = {}): ErrorBlock[
     const matches: number[] = [];
 
     for (let i = 0; i < lines.length; i++) {
+        re.lastIndex = 0;
+
         if (re.test(lines[i])) {
             matches.push(i);
         }

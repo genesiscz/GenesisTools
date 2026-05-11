@@ -55,4 +55,12 @@ describe("extractErrors", () => {
         expect(errs).toHaveLength(1);
         expect(errs[0].matched).toContain("FAIL one");
     });
+
+    it("does not skip matches when caller passes a /g regex (resets lastIndex)", () => {
+        const lines = ["alpha bravo", "charlie bravo", "delta bravo"];
+        const errs = extractErrors(lines.join("\n"), { pattern: /bravo/g });
+        expect(errs.length).toBeGreaterThan(0);
+        // All three lines match — without re.lastIndex reset, the /g state would skip lines 2/3.
+        expect(errs[0].matched).toContain("alpha");
+    });
 });

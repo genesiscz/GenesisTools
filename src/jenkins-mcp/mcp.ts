@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import logger from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -86,8 +87,9 @@ class JenkinsServer {
 
         this.setupToolHandlers();
 
-        this.server.onerror = (error: Error) => console.error("[MCP Error]", error);
+        this.server.onerror = (error: Error) => logger.error({ err: error }, "[MCP Error]");
         process.on("SIGINT", async () => {
+            logger.info("Jenkins MCP server shutting down (SIGINT)");
             await this.server.close();
             process.exit(0);
         });
@@ -657,10 +659,15 @@ class JenkinsServer {
         const status = isDone
             ? `Build ${ref.buildNumber} already finished — ${statusBody(snap.status)} (${formatDuration(snap.durationMillis)}).`
             : `Build ${ref.buildNumber} is IN_PROGRESS (running ${elapsed}).`;
-        const recommendation = isDone
-            ? ""
-            : `\n\nRecommended next step — run this via Bash with run_in_background: true:\n\n  ${cmd}\n\nThe harness will notify you when the monitor exits. Click any stage notification to open the build in Brave.`;
-        return this.text(`${status}\n\n${lines.join("\n")}${recommendation}`);
+
+        return this.text({
+            status,
+            stageSummary: lines,
+            suggestCommand: isDone ? undefined : cmd,
+            recommendation: isDone
+                ? undefined
+                : "Run this via Bash with run_in_background: true. The harness will notify you when the monitor exits. Click any stage notification to open the build in your default browser.",
+        });
     }
 }
 
@@ -668,7 +675,7 @@ class JenkinsServerWithRun extends JenkinsServer {
     async run(): Promise<void> {
         const transport = new StdioServerTransport();
         await this.getMcpServer().connect(transport);
-        console.error("Jenkins MCP server running on stdio");
+        logger.info("Jenkins MCP server running on stdio");
     }
 }
 

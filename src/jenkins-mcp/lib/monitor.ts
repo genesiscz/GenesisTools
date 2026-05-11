@@ -155,11 +155,7 @@ export async function runMonitor(opts: MonitorOpts): Promise<MonitorResult> {
                     url: branchUrl,
                 });
 
-                if (
-                    !isFirstPoll &&
-                    branch.name.startsWith("Building ") &&
-                    branch.status !== "IN_PROGRESS"
-                ) {
+                if (!isFirstPoll && branch.name.startsWith("Building ") && branch.status !== "IN_PROGRESS") {
                     notifyTransition(ctx, {
                         subtitle: `${stage.name} · ${shortBranchName(branch.name)} · build`,
                         body: stageNotifyBody(branch),
@@ -288,21 +284,24 @@ async function emitErrorsForStage(opts: MonitorOpts, stage: Stage): Promise<void
 
     for (const block of blocks) {
         opts.out(
-            `${SafeJSON.stringify({
-                event: "error",
-                ts: new Date().toISOString(),
-                stage: stage.name,
-                stageId: stage.id,
-                line: block.line,
-                matched: block.matched,
-                window: block.window,
-            })}\n`
+            `${SafeJSON.stringify(
+                {
+                    event: "error",
+                    ts: new Date().toISOString(),
+                    stage: stage.name,
+                    stageId: stage.id,
+                    line: block.line,
+                    matched: block.matched,
+                    window: block.window,
+                },
+                { jsonl: true }
+            )}\n`
         );
     }
 }
 
 function emit(out: (line: string) => void, ev: MonitorEvent): void {
-    out(`${SafeJSON.stringify(ev)}\n`);
+    out(`${SafeJSON.stringify(ev, { jsonl: true })}\n`);
 }
 
 function sleep(ms: number): Promise<void> {
