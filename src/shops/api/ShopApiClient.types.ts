@@ -59,7 +59,7 @@ export interface ShopApiClientInterface {
     readonly currency: string;
     readonly capabilities: ShopCapabilities;
 
-    getProduct(input: { url?: string; slug?: string }): Promise<RawProduct>;
+    getProduct(input: { url?: string; slug?: string; signal?: AbortSignal }): Promise<RawProduct>;
     listCategory(opts: ListingOptions): AsyncIterable<RawProduct>;
     listCategories(): Promise<Category[]>;
     search?(opts: SearchOptions): Promise<RawProduct[]>;

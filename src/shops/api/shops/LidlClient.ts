@@ -210,7 +210,7 @@ function extractDatalayerProduct(html: string): LidlDatalayerProduct | null {
     }
 
     try {
-        return SafeJSON.parse(m[1]) as LidlDatalayerProduct;
+        return SafeJSON.parse(m[1], { strict: true }) as LidlDatalayerProduct;
     } catch {
         return null;
     }

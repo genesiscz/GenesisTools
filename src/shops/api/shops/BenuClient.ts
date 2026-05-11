@@ -137,7 +137,7 @@ export class BenuClient extends ShopApiClient {
             throw new Error(`BenuClient.getProduct: missing #snippet-productRichSnippet-richSnippet on ${url}`);
         }
 
-        const snippet = SafeJSON.parse(scriptEl.textContent ?? "{}") as BenuRichSnippet;
+        const snippet = SafeJSON.parse(scriptEl.textContent ?? "{}", { strict: true }) as BenuRichSnippet;
         const itemId = snippet.identifier;
         const itemUrl = snippet.url ?? url;
         const itemName = snippet.name ?? "";
@@ -145,7 +145,9 @@ export class BenuClient extends ShopApiClient {
             throw new Error(`BenuClient.getProduct: empty name on ${url}`);
         }
 
-        const priceRaw = snippet.offers?.price;
+        // Schema.org offers may be a single Offer or an Offer[] — normalize.
+        const offer = Array.isArray(snippet.offers) ? snippet.offers[0] : snippet.offers;
+        const priceRaw = offer?.price;
         const currentPrice = typeof priceRaw === "number" ? priceRaw : Number.parseFloat(String(priceRaw ?? ""));
 
         let originalPrice: number | undefined;
@@ -182,7 +184,10 @@ export class BenuClient extends ShopApiClient {
             imageUrl: snippet.image,
             currentPrice: Number.isFinite(currentPrice) && currentPrice > 0 ? currentPrice : undefined,
             originalPrice,
-            inStock: true,
+            // Benu's rich snippet exposes no availability field; leaving undefined
+            // is safer than hardcoding `true` (which would create false positives
+            // in watch/notification flows). Derive from page markers in a future pass.
+            inStock: undefined,
             categoryPath: breadcrumbs.length > 0 ? breadcrumbs : undefined,
             observedAt: new Date(),
             raw: { snippet, htmlLength: html.length },

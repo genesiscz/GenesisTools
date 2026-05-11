@@ -107,10 +107,12 @@ describe("crawlFromSitemap", () => {
             raw: {},
         });
 
-        // Wire a fake client into the singleton registry.
+        // Wire a fake client into the singleton registry, replacing the real
+        // RohlikClient that crawlFromSitemap would otherwise pick up.
+        ShopRegistry.reset();
         initShopRegistry();
         const fake = new FakeRohlikClient();
-        ShopRegistry.get().register(fake as unknown as ShopApiClient);
+        ShopRegistry.get().register(fake as unknown as ShopApiClient, { allowReplace: true });
 
         const result = await crawlFromSitemap({ shopOrigin: "rohlik.cz", db });
 
@@ -136,6 +138,7 @@ describe("crawlFromSitemap", () => {
         mockFetch({
             "https://www.rohlik.cz/sitemap.xml": `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"></urlset>`,
         });
+        ShopRegistry.reset();
         initShopRegistry();
 
         // RohlikClient has listByIds, so use a stub that doesn't.
@@ -160,7 +163,7 @@ describe("crawlFromSitemap", () => {
             }
         }
 
-        ShopRegistry.get().register(new NoBulk() as unknown as ShopApiClient);
+        ShopRegistry.get().register(new NoBulk() as unknown as ShopApiClient, { allowReplace: true });
 
         await expect(crawlFromSitemap({ shopOrigin: "rohlik.cz", db })).rejects.toThrow(/listByIds/);
 

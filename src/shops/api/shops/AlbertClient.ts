@@ -42,6 +42,10 @@ const PAGE_SIZE = 20;
  */
 export const ALBERT_PERSISTED_QUERY_HASHES: Readonly<Record<string, string>> = Object.freeze({
     LeftHandNavigationBar: "d4fbb58dccba05abc15c0a70cb5da9bdb98ac8aa4fbd859bd83e52c15a9be36c",
+    // TODO: Replace with real hash captured from DevTools. Current value is an
+    // intentional placeholder until the Phase 2 capture run lands; live-smoke
+    // will fail loudly with `PersistedQueryNotFound` when the hash is wrong,
+    // making the missing capture visible. See JSDoc runbook above for steps.
     GetCategoryProductSearch: "4ef83505000000000000000000000000000000000000000000000000000000ff",
 });
 

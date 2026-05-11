@@ -215,7 +215,12 @@ export class RohlikClient extends ShopApiClient {
                 }
 
                 return map;
-            })();
+            })().catch((err) => {
+                // Clear the cached promise so the next call can retry transient failures
+                // (network error, rate limit, etc.) instead of being permanently broken.
+                this.navigationPromise = null;
+                throw err;
+            });
         }
 
         return this.navigationPromise;
@@ -274,8 +279,11 @@ export class RohlikClient extends ShopApiClient {
 }
 
 function parseTextualAmount(text: string): { unit: string; amount: number } | undefined {
-    // "1,2 kg" / "500 g" / "6 ks" / "12x100 g" → take last digit-unit pair.
-    const matches = [...text.matchAll(/(\d+(?:[.,]\d+)?)\s*([a-zA-Zě]+)/g)];
+    // "1,2 kg" / "500 g" / "6 ks" / "12x100 g" / "1 200 g" → take last digit-unit pair.
+    // Strip thousands separators (space or dot between groups of digits) first so
+    // "1 200 g" doesn't degrade to "200 g".
+    const normalized = text.replace(/(\d)[\s.](\d{3})/g, "$1$2");
+    const matches = [...normalized.matchAll(/(\d+(?:[.,]\d+)?)\s*([a-zA-ZÀ-ɏ]+)/g)];
     const last = matches.at(-1);
     if (!last) {
         return undefined;

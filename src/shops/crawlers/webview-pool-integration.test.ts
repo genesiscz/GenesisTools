@@ -15,14 +15,14 @@ describe("WebViewPool integration (Alza-style bulk walk)", () => {
         return;
     }
 
-    const PORT = 3993;
     const fixture = readFileSync(
         join(import.meta.dir, "..", "api", "shops", "__fixtures__", "alza", "evaluate-product-data.json"),
         "utf8"
     );
     const html = `<!doctype html><html><head><title>fixture</title></head><body>${fixture}</body></html>`;
+    // Ephemeral port (0) — Bun.serve assigns a free port; `server.port` is set once serve() returns.
     const server = Bun.serve({
-        port: PORT,
+        port: 0,
         fetch(_req: Request): Response {
             return new Response(html, {
                 status: 200,
@@ -30,6 +30,7 @@ describe("WebViewPool integration (Alza-style bulk walk)", () => {
             });
         },
     });
+    const serverPort = server.port;
     afterAll(() => {
         server.stop();
     });
@@ -47,7 +48,7 @@ describe("WebViewPool integration (Alza-style bulk walk)", () => {
                 const titles = await Promise.all(
                     tasks.map((i) =>
                         pool.withInstance(async (wv) => {
-                            await wv.navigate(`http://localhost:${PORT}/?i=${i}`, { timeoutMs: 10_000 });
+                            await wv.navigate(`http://localhost:${serverPort}/?i=${i}`, { timeoutMs: 10_000 });
                             return wv.evaluate<string>("document.title", { timeoutMs: 5_000 });
                         })
                     )
@@ -97,7 +98,7 @@ describe("WebViewPool integration (Alza-style bulk walk)", () => {
                     Array.from({ length: 5 }, (_, i) =>
                         pool.withInstance(async (wv) => {
                             peakInUse = Math.max(peakInUse, pool.inUse);
-                            await wv.navigate(`http://localhost:${PORT}/?slow=${i}`, { timeoutMs: 10_000 });
+                            await wv.navigate(`http://localhost:${serverPort}/?slow=${i}`, { timeoutMs: 10_000 });
                             return null;
                         })
                     )

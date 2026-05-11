@@ -157,6 +157,8 @@ describe("KosikClient mapping rules", () => {
     });
 
     it("maps inStock to false when firstOrderDay is set", async () => {
+        // Use a dynamic future date so the test stays valid as the calendar advances.
+        const futureDate = new Date(Date.now() + 100 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
         const listing = {
             title: "Test",
             products: {
@@ -166,7 +168,7 @@ describe("KosikClient mapping rules", () => {
                         name: "Pre-order",
                         url: "/p222-x",
                         price: 50,
-                        firstOrderDay: "2026-12-01",
+                        firstOrderDay: futureDate,
                     },
                 ],
             },

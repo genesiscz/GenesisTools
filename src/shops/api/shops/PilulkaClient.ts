@@ -124,10 +124,17 @@ function parseDetail(html: string, url: string): RawProduct | undefined {
     }
 
     const ldRaw = ldEl.textContent ?? "[]";
-    const data = SafeJSON.parse(ldRaw) as PilulkaProductLD | PilulkaProductLD[];
+    const data = SafeJSON.parse(ldRaw, { strict: true }) as PilulkaProductLD | PilulkaProductLD[];
     const arr = Array.isArray(data) ? data : [data];
     const product = arr.find((x) => x["@type"] === "Product");
     if (!product || product.offers?.price === undefined) {
+        return undefined;
+    }
+
+    // Schema.org Offer.price is "Number or Text" — normalize either to a number.
+    const ldPrice =
+        typeof product.offers.price === "number" ? product.offers.price : Number.parseFloat(String(product.offers.price));
+    if (Number.isNaN(ldPrice)) {
         return undefined;
     }
 
@@ -146,15 +153,15 @@ function parseDetail(html: string, url: string): RawProduct | undefined {
     const hasCouponPrice =
         Boolean(giftPriceText) && giftElement !== null && !/pro\s+členy\s+Pilulka/i.test(giftElement.textContent ?? "");
 
-    let currentPrice: number = product.offers.price;
+    let currentPrice: number = ldPrice;
     let originalPrice: number | undefined;
     if (hasCouponPrice) {
-        currentPrice = parseFloatText(giftPriceText) ?? product.offers.price;
-        originalPrice = oldPrice ?? product.offers.price;
+        currentPrice = parseFloatText(giftPriceText) ?? ldPrice;
+        originalPrice = oldPrice ?? ldPrice;
     } else if (oldPrice !== undefined && oldPrice > 0) {
         const priceWithCodeText = document.querySelector(".price-with-code__price")?.textContent ?? "";
         const priceWithCode = parseFloatText(priceWithCodeText);
-        currentPrice = priceWithCode ?? product.offers.price;
+        currentPrice = priceWithCode ?? ldPrice;
         originalPrice = oldPrice;
     }
 

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "bun:test";
 import { __resetInitState, initShopRegistry } from "@app/shops/api/registry-init";
 import { ShopRegistry } from "@app/shops/api/ShopRegistry";
-import { renderShopsTable } from "@app/shops/commands/shops";
+import { renderShopsTable } from "@app/shops/lib/render";
 
 describe("renderShopsTable", () => {
     it("renders just the header + 'no shops' note when registry is empty", () => {
@@ -37,11 +37,11 @@ describe("renderShopsTable (with full registry)", () => {
     });
 
     it("drmax.cz / benu.cz declare cap_ean=false (no in ean column)", () => {
-        const out = renderShopsTable(ShopRegistry.get());
-        const drmaxLine = out.split("\n").find((l) => l.startsWith("drmax.cz"));
-        const benuLine = out.split("\n").find((l) => l.startsWith("benu.cz"));
-        expect(drmaxLine).toBeDefined();
-        expect(benuLine).toBeDefined();
+        const all = ShopRegistry.get().all();
+        const drmax = all.find((c) => c.shopOrigin === "drmax.cz");
+        const benu = all.find((c) => c.shopOrigin === "benu.cz");
+        expect(drmax?.capabilities.ean).toBe(false);
+        expect(benu?.capabilities.ean).toBe(false);
     });
 
     it("includes Phase 9 later shops (alza, notino, mall, mountfield, pilulka, knihydobrovsky, hornbach)", () => {

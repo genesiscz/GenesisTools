@@ -73,30 +73,57 @@ function mergeWithRawProduct(data: HlidacGetByUrlResult, raw: RawProduct): Hlida
               }
             : null;
 
+    const parsed = {
+        ...data.parsed,
+        itemId: data.parsed.itemId ?? raw.itemId ?? raw.slug,
+    };
+    const meta = {
+        itemId: data.meta?.itemId ?? raw.itemId ?? raw.slug ?? data.parsed.itemId ?? "",
+        itemName: data.meta?.itemName ?? raw.name,
+        itemImage: data.meta?.itemImage ?? raw.imageUrl,
+    };
+    const enrichment = {
+        ...data.enrichment,
+        brand: data.enrichment?.brand ?? raw.brand,
+        ean: data.enrichment?.ean ?? raw.ean,
+        unit: data.enrichment?.unit ?? coerceUnit(raw.unit),
+        unitAmount: data.enrichment?.unitAmount ?? raw.unitAmount,
+        categoryPath: data.enrichment?.categoryPath ?? raw.categoryPath,
+    };
+
     const hadHlidacName = Boolean(data.meta?.itemName ?? data.detail?.metadata.name);
+    if (!hadHlidacName) {
+        // No Hlídač name — we relied on the ShopClient for the canonical
+        // identity, so flip source to "scrape".
+        return {
+            source: "scrape",
+            parsed,
+            meta,
+            detail: data.detail,
+            history: data.history ?? synthesizedHistory,
+            enrichment,
+        };
+    }
+
+    // Preserve the original source ("s3" or "api"); the ShopClient call only
+    // enriched metadata, the price history is still Hlídač-sourced.
+    if (data.source === "s3") {
+        return {
+            source: "s3",
+            parsed,
+            meta,
+            history: data.history ?? synthesizedHistory ?? { commonPrice: null, minPrice: null, entries: [] },
+            enrichment,
+        };
+    }
+
     return {
-        ...data,
-        // Preserve "s3" source when Hlídač already had history; the ShopClient
-        // call only enriched metadata, the price history is still S3-sourced.
-        source: hadHlidacName ? data.source : "scrape",
-        parsed: {
-            ...data.parsed,
-            itemId: data.parsed.itemId ?? raw.itemId ?? raw.slug,
-        },
-        meta: {
-            itemId: data.meta?.itemId ?? raw.itemId ?? raw.slug ?? data.parsed.itemId ?? "",
-            itemName: data.meta?.itemName ?? raw.name,
-            itemImage: data.meta?.itemImage ?? raw.imageUrl,
-        },
-        history: data.history ?? synthesizedHistory,
-        enrichment: {
-            ...data.enrichment,
-            brand: data.enrichment?.brand ?? raw.brand,
-            ean: data.enrichment?.ean ?? raw.ean,
-            unit: data.enrichment?.unit ?? coerceUnit(raw.unit),
-            unitAmount: data.enrichment?.unitAmount ?? raw.unitAmount,
-            categoryPath: data.enrichment?.categoryPath ?? raw.categoryPath,
-        },
+        source: "api",
+        parsed,
+        detail: data.detail,
+        meta,
+        history: null,
+        enrichment,
     };
 }
 

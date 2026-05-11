@@ -193,7 +193,10 @@ export class KosikClient extends ShopApiClient {
             unitAmount: item.productQuantity?.value,
             currentPrice: item.price,
             originalPrice,
-            inStock: !item.firstOrderDay,
+            // `firstOrderDay` is the next available delivery date. When it's
+            // in the past (or absent), the item is in stock; only treat a future
+            // date as out-of-stock (preorder).
+            inStock: !item.firstOrderDay || new Date(item.firstOrderDay) <= new Date(),
             ean: item.ean,
             observedAt: new Date(),
             raw: item,

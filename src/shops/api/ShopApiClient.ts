@@ -10,7 +10,7 @@ import type {
     ShopOrigin,
 } from "@app/shops/api/ShopApiClient.types";
 import type { HttpRequestSink } from "@app/shops/lib/http-sink";
-import { ApiClient, type ApiClientResponse } from "@app/utils/api/ApiClient";
+import { ApiClient, type ApiClientResponse, resolveUrl } from "@app/utils/api/ApiClient";
 import { SafeJSON } from "@app/utils/json";
 // @ts-expect-error -- @hlidac-shopu/lib ships ESM with no .d.ts coverage
 import { parseItemDetails } from "@hlidac-shopu/lib/shops.mjs";
@@ -38,24 +38,35 @@ export abstract class ShopApiClient extends ApiClient implements ShopApiClientIn
 
     protected readonly rateLimitPerSecond: number;
     protected readonly sink: HttpRequestSink | null;
+    private readonly resolvedBaseUrl?: string;
     private lastRequestAt = 0;
+    private turnChain: Promise<void> = Promise.resolve();
     private readonly classLogger = logger.child({ component: "ShopApiClient" });
 
     constructor(config: ShopApiClientConstructorConfig = {}) {
         super({
+            ...config,
             // Tight per-request budget: a slow Czech CDN edge node can hang
             // a fetch indefinitely (observed >7min on Lidl) which stalls
             // sitemap crawls. 5s + 2 retries caps wall-time at ~15s/url.
+            // These are applied AFTER ...config so callers can't restore
+            // the long hangs this class is designed to prevent.
             timeoutMs: 5_000,
             retry: 2,
-            ...config,
             loggerContext: { component: "ShopApiClient", ...config.loggerContext },
         });
-        this.rateLimitPerSecond = config.rateLimitPerSecond ?? 2;
+
+        const rateLimitPerSecond = config.rateLimitPerSecond ?? 2;
+        if (!Number.isFinite(rateLimitPerSecond) || rateLimitPerSecond <= 0) {
+            throw new Error("rateLimitPerSecond must be a positive finite number");
+        }
+
+        this.rateLimitPerSecond = rateLimitPerSecond;
         this.sink = config.sink ?? null;
+        this.resolvedBaseUrl = config.baseUrl;
     }
 
-    abstract getProduct(input: { url?: string; slug?: string }): Promise<RawProduct>;
+    abstract getProduct(input: { url?: string; slug?: string; signal?: AbortSignal }): Promise<RawProduct>;
     abstract listCategory(opts: ListingOptions): AsyncIterable<RawProduct>;
     abstract listCategories(): Promise<Category[]>;
 
@@ -75,13 +86,30 @@ export abstract class ShopApiClient extends ApiClient implements ShopApiClientIn
     }
 
     protected async waitTurn(): Promise<void> {
-        const minGap = 1000 / this.rateLimitPerSecond;
-        const elapsed = Date.now() - this.lastRequestAt;
-        if (elapsed < minGap) {
-            await Bun.sleep(minGap - elapsed);
-        }
+        // Serialize concurrent callers via a promise chain — the previous
+        // turn must complete its sleep+timestamp update before the next
+        // turn reads lastRequestAt. Without this, two concurrent crawlers
+        // (e.g. Promise.allSettled in LidlClient.listCategory) can both
+        // observe the same lastRequestAt and burst past the rate limit.
+        const previousTurn = this.turnChain;
+        let release!: () => void;
+        this.turnChain = new Promise<void>((resolve) => {
+            release = resolve;
+        });
 
-        this.lastRequestAt = Date.now();
+        await previousTurn;
+
+        try {
+            const minGap = 1000 / this.rateLimitPerSecond;
+            const elapsed = Date.now() - this.lastRequestAt;
+            if (elapsed < minGap) {
+                await Bun.sleep(minGap - elapsed);
+            }
+
+            this.lastRequestAt = Date.now();
+        } finally {
+            release();
+        }
     }
 
     override async requestRaw<T>(
@@ -92,6 +120,11 @@ export abstract class ShopApiClient extends ApiClient implements ShopApiClientIn
     ): Promise<ApiClientResponse<T>> {
         const startedAt = Date.now();
         const requestId = crypto.randomUUID().slice(0, 8);
+        // Precompute the absolute URL so failure rows in the http_requests
+        // sink carry the same full-URL value as success rows. Without this,
+        // throws before super.requestRaw() returns leave us logging the bare
+        // relative path, which makes debugging harder.
+        const absoluteUrl = resolveUrl(this.resolvedBaseUrl, path);
         let status: number | undefined;
         let response: ApiClientResponse<T> | undefined;
         let error: unknown;
@@ -106,7 +139,7 @@ export abstract class ShopApiClient extends ApiClient implements ShopApiClientIn
             const durationMs = Date.now() - startedAt;
             await this.emitToSink({
                 method,
-                url: response?.url ?? path,
+                url: response?.url ?? absoluteUrl,
                 status,
                 durationMs,
                 requestId,
@@ -187,7 +220,7 @@ function excerptRequestBody(body: unknown): string | null {
     } else if (body instanceof FormData || body instanceof URLSearchParams) {
         text = String(body);
     } else if (body instanceof ArrayBuffer || ArrayBuffer.isView(body)) {
-        const byteLength = body instanceof ArrayBuffer ? body.byteLength : body.byteLength;
+        const byteLength = (body as ArrayBuffer | ArrayBufferView).byteLength;
         return `<binary ${byteLength} bytes>`;
     } else {
         try {
@@ -210,7 +243,7 @@ function excerptResponseData(data: unknown): string | null {
     }
 
     if (data instanceof ArrayBuffer || ArrayBuffer.isView(data)) {
-        const byteLength = data instanceof ArrayBuffer ? data.byteLength : data.byteLength;
+        const byteLength = (data as ArrayBuffer | ArrayBufferView).byteLength;
         return `<binary ${byteLength} bytes>`;
     }
 

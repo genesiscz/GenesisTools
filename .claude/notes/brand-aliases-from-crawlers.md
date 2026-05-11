@@ -1,5 +1,21 @@
 # Brand Aliases from Crawlers — Plan 04 Seed Source
 
+> **Status — hand-off document for future plan implementation.** This file is
+> NOT consumed at runtime. It is a curated set of brand-string observations
+> harvested from Plan 03 / Plan 05 / Plan 06 crawler implementations, parked
+> here so Plan 04 (`seed-brand-aliases.ts`) can re-use them instead of
+> re-discovering everything during matching. Do not delete without first
+> rolling unprocessed entries into the seeder.
+
+**Cross references:**
+- Seeder consumer: `src/shops/db/seed-brand-aliases.ts` (extracts brand
+  literals from actor sources and persists them via the repository below).
+- Runtime accessor: `src/shops/db/BrandAliasesRepository.ts`
+  (`upsertIfAbsent`, `lookup`, `listAll`).
+- Canonical-handling rules now also live as JSDoc on
+  `BrandAliasesRepository` so they stay close to the code that enforces
+  them.
+
 Hand-off file for Plan 04's `seed-brand-aliases.ts`. Format per row:
 `alias_string => canonical_brand`. Plan 04 normalizes via
 `removeDiacritics + lowercase + trim` before INSERT-OR-IGNORE-ing into
@@ -236,5 +252,7 @@ matches in third-party brand names.
   what was learned during crawler implementation.
 - Each shop client preserves the raw `brand` field from upstream API/HTML.
   Plan 04 normalizes and seeds via `BrandAliasesRepository`.
-- File MOVED here on 2026-05-09 from `src/shops/lib/brand-alias-candidates.md`
-  per team-lead direction (notes belong outside src/).
+- File MOVED here on 2026-05-09 from
+  `./src/shops/lib/brand-alias-candidates.md` (relative to repo root) to
+  `./.claude/notes/brand-aliases-from-crawlers.md` per team-lead direction
+  (notes belong outside `src/`).

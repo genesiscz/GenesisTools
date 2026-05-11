@@ -32,7 +32,7 @@ interface Row {
 }
 
 function parseTextualAmount(text: string): { unit: string; amount: number } | undefined {
-    const matches = [...text.matchAll(/(\d+(?:[.,]\d+)?)\s*([a-zA-Zě]+)/g)];
+    const matches = [...text.matchAll(/(\d+(?:[.,]\d+)?)\s*([a-zA-ZÀ-ɏ]+)/g)];
     const last = matches.at(-1);
     if (!last) {
         return undefined;

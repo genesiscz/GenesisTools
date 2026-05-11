@@ -1,5 +1,6 @@
 import type { ListedProduct, ShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import { ShopsDatabase as ShopsDatabaseClass } from "@app/shops/db/ShopsDatabase";
+import { parsePositiveInt } from "@app/shops/lib/cli-validators";
 import { formatTable } from "@app/utils/table";
 import type { Command } from "commander";
 
@@ -27,7 +28,7 @@ export function registerListCommand(program: Command): void {
         .command("list <shop>")
         .description("List products from local DB for one shop")
         .option("--cat <id>", "Restrict to one category id")
-        .option("--limit <n>", "Max rows to return", (v) => Number.parseInt(v, 10), 50)
+        .option("--limit <n>", "Max rows to return", parsePositiveInt("--limit"), 50)
         .option("--search <query>", "Full-text search (diacritic-insensitive prefix)")
         .action(async (shop: string, raw: { cat?: string; limit: number; search?: string }) => {
             const db = new ShopsDatabaseClass();

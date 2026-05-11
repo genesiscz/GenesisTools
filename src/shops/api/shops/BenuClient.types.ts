@@ -10,6 +10,12 @@ export interface BenuListingTile {
     inStock: boolean;
 }
 
+/** Single Schema.org Offer entry. */
+export interface BenuOffer {
+    price?: number | string;
+    priceCurrency?: string;
+}
+
 /** JSON-LD richSnippet inside `#snippet-productRichSnippet-richSnippet`. */
 export interface BenuRichSnippet {
     "@type"?: string;
@@ -17,10 +23,8 @@ export interface BenuRichSnippet {
     name?: string;
     url?: string;
     image?: string;
-    offers?: {
-        price?: number | string;
-        priceCurrency?: string;
-    };
+    /** Schema.org allows offers to be a single Offer or an array of Offers. */
+    offers?: BenuOffer | BenuOffer[];
 }
 
 /** Response from `/api/base/v1/products/{internalId}`. */

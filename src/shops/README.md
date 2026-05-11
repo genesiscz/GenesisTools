@@ -25,9 +25,17 @@ Personal grocery + drogerie + pharmacy price intelligence across Czech eshops.
 
 - Database: `~/.genesis-tools/shops/index.db`
 - Cache: `~/.genesis-tools/shops/cache/`
-- HTTP request log retention: 30 days (configurable in Plan 02 settings).
+- For full schema reference (tables, indexes, FTS), see
+  `GenesisBrain/GenesisTools/shops/Spec.md` § "Full schema" (around line 870).
 
 ## MCP server (Plan 08)
+
+> **HTTP request log retention:** Every shop API call is recorded in
+> `http_request_log` and kept for **30 days** (the retention window is
+> configurable via Plan 02 settings). MCP read tools and the dashboards
+> rely on this log for traffic analytics, debugging captchas / 403s, and
+> rate-limit tuning — so do not truncate it manually outside of explicit
+> ops procedures.
 
 `tools shops mcp` runs a stdio MCP server that exposes 8 read-only tools (always available) and 5 write tools (gated behind `--allow-write`):
 

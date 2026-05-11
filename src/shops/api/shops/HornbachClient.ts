@@ -104,7 +104,7 @@ export class HornbachClient extends ShopApiClient {
             }
 
             const url = new URL(href, ROOT).href;
-            const slug = new URL(url).pathname.replace(/^\//, "").replace(/\/$/, "");
+            const slug = new URL(url).pathname.replace(/^\/c\//, "").replace(/\/$/, "");
             if (seen.has(slug)) {
                 continue;
             }
@@ -137,7 +137,7 @@ function extractApolloState(html: string): HornbachApolloState | undefined {
     }
 
     try {
-        const parsed: unknown = SafeJSON.parse(slice.slice(0, lastBrace));
+        const parsed: unknown = SafeJSON.parse(slice.slice(0, lastBrace), { strict: true });
         if (typeof parsed === "object" && parsed !== null) {
             return parsed as HornbachApolloState;
         }

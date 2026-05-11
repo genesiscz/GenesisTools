@@ -163,6 +163,35 @@ export function withTimeout<T>(promise: Promise<T>, timeoutMs: number, timeoutEr
     });
 }
 
+// ============= Abortable Sleep =============
+
+/**
+ * Sleep for `ms` milliseconds, honoring an optional AbortSignal.
+ * Rejects with `signal.reason` (or a generic AbortError) when the signal fires;
+ * resolves normally once the timer elapses.
+ *
+ * Use instead of `Bun.sleep(ms)` in retry/backoff loops where callers may
+ * abort (e.g. user-driven crawl cancellation).
+ */
+export function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) {
+        return Promise.reject(signal.reason ?? new Error("Aborted"));
+    }
+
+    return new Promise<void>((resolve, reject) => {
+        const onAbort = (): void => {
+            clearTimeout(timer);
+            reject(signal?.reason ?? new Error("Aborted"));
+        };
+
+        const timer = setTimeout(() => {
+            signal?.removeEventListener("abort", onAbort);
+            resolve();
+        }, ms);
+        signal?.addEventListener("abort", onAbort, { once: true });
+    });
+}
+
 // ============= AsyncOpQueue =============
 
 /**

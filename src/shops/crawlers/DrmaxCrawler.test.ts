@@ -64,8 +64,8 @@ describe("DrmaxCrawler", () => {
             const crawlRow = db
                 .raw()
                 .query("SELECT status FROM crawl_runs WHERE shop_origin = ? ORDER BY id DESC LIMIT 1")
-                .get("drmax.cz") as { status: string };
-            expect(crawlRow.status).toBe("completed");
+                .get("drmax.cz") as { status: string } | undefined;
+            expect(crawlRow?.status).toBe("completed");
         } finally {
             db.close();
         }

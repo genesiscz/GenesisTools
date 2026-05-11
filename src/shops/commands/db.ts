@@ -4,7 +4,8 @@ import { formatTable } from "@app/utils/table";
 import type { Command } from "commander";
 
 export function registerDbCommand(program: Command): void {
-    const db = program.command("db").description("Database administration");
+    const existing = program.commands.find((c) => c.name() === "db");
+    const db = existing ?? program.command("db").description("Database administration");
 
     db.command("migrate")
         .description("Run pending migrations (auto-runs on every open)")

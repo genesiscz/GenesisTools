@@ -19,7 +19,16 @@ export class SearchRepository {
      * or plain words — the implementation prefix-matches each token.
      */
     search(query: string, opts: SearchOptions = {}): Product[] {
-        const limit = opts.limit ?? 50;
+        const requested = opts.limit ?? 50;
+        if (!Number.isFinite(requested) || requested < 0) {
+            return [];
+        }
+
+        const limit = Math.min(Math.floor(requested), 100);
+        if (limit === 0) {
+            return [];
+        }
+
         const ftsQuery = toPrefixQuery(query);
         if (!ftsQuery) {
             return [];

@@ -1,6 +1,6 @@
 import { initShopRegistry } from "@app/shops/api/registry-init";
 import { ShopRegistry } from "@app/shops/api/ShopRegistry";
-import { formatTable } from "@app/utils/table";
+import { renderShopsTable } from "@app/shops/lib/render";
 import type { Command } from "commander";
 
 export function registerShopsCommand(program: Command): void {
@@ -12,30 +12,4 @@ export function registerShopsCommand(program: Command): void {
             const r = ShopRegistry.get();
             process.stdout.write(`${renderShopsTable(r)}\n`);
         });
-}
-
-export function renderShopsTable(registry: ShopRegistry): string {
-    const headers = ["shop", "live", "history", "listing", "ean", "search", "bot-protection"];
-    const rows = registry
-        .all()
-        .map((c) => [
-            c.shopOrigin,
-            boolMark(c.capabilities.live),
-            boolMark(c.capabilities.history),
-            boolMark(c.capabilities.listing),
-            boolMark(c.capabilities.ean),
-            boolMark(c.capabilities.search),
-            c.capabilities.botProtection,
-        ]);
-
-    const table = formatTable(rows, headers);
-    if (rows.length === 0) {
-        return `${table}\n\n0 shops registered. Per-shop clients land in Plan 03.`;
-    }
-
-    return table;
-}
-
-function boolMark(b: boolean): string {
-    return b ? "yes" : "no";
 }

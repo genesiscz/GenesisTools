@@ -88,6 +88,7 @@ describe("ItescoCrawler", () => {
                 .raw()
                 .query("SELECT status, error FROM crawl_runs WHERE shop_origin = ? ORDER BY id DESC LIMIT 1")
                 .get("itesco.cz") as { status: string; error: string | null };
+            expect(crawlRow).toBeDefined();
             expect(crawlRow.status).toBe("failed");
             expect(crawlRow.error).toMatch(/Akamai/i);
         } finally {

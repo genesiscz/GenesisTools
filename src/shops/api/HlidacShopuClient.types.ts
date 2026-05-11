@@ -43,12 +43,35 @@ export interface HlidacEnrichment {
     categoryPath?: string[];
 }
 
-export interface HlidacGetByUrlResult {
-    source: "s3" | "api" | "scrape";
+interface HlidacGetByUrlBase {
     parsed: { origin: string; itemId: string | null; itemUrl: string };
-    history: HsPriceHistoryS3 | null;
-    detail?: HsDetailResponse;
-    meta?: HsMetaS3;
     /** Populated when get-product.ts merged a ShopClient.getProduct result for richer metadata. */
     enrichment?: HlidacEnrichment;
 }
+
+/** S3 path: hit Hlídač's bucket directly. Carries history + optional meta. */
+export interface HlidacGetByUrlS3Result extends HlidacGetByUrlBase {
+    source: "s3";
+    history: HsPriceHistoryS3;
+    meta?: HsMetaS3;
+    detail?: undefined;
+}
+
+/** API path: fell back to /v2/detail. No history; detail may be undefined if API also failed. */
+export interface HlidacGetByUrlApiResult extends HlidacGetByUrlBase {
+    source: "api";
+    history: null;
+    detail?: HsDetailResponse;
+    /** Synthesized by get-product enrichment when a ShopClient call backfilled the canonical name. */
+    meta?: HsMetaS3;
+}
+
+/** Scrape path: synthesized from a ShopClient response when Hlídač had no usable name. */
+export interface HlidacGetByUrlScrapeResult extends HlidacGetByUrlBase {
+    source: "scrape";
+    history: HsPriceHistoryS3 | null;
+    detail?: HsDetailResponse;
+    meta?: HsMetaS3;
+}
+
+export type HlidacGetByUrlResult = HlidacGetByUrlS3Result | HlidacGetByUrlApiResult | HlidacGetByUrlScrapeResult;

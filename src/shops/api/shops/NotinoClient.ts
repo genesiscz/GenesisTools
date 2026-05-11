@@ -105,7 +105,7 @@ export class NotinoClient extends ShopApiClient {
             return [];
         }
 
-        const state = SafeJSON.parse(scriptEl.textContent ?? "") as NotinoMainMenuState;
+        const state = SafeJSON.parse(scriptEl.textContent ?? "", { strict: true }) as NotinoMainMenuState;
         const out: Category[] = [];
         for (const cat of state.fragmentContextData.DataProvider.categories) {
             if (cat.columns.length > 0) {
@@ -145,8 +145,8 @@ function parseProductDetail(html: string, requestUrl: string): RawProduct[] {
         return [];
     }
 
-    const apolloRaw = (apolloEl.textContent ?? "").replace(/;/g, "");
-    const apollo = SafeJSON.parse(apolloRaw) as NotinoApolloCache;
+    const apolloRaw = (apolloEl.textContent ?? "").trim().replace(/;$/, "");
+    const apollo = SafeJSON.parse(apolloRaw, { strict: true }) as NotinoApolloCache;
 
     const variantIds: string[] = [];
     let brand = "";

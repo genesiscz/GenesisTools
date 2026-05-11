@@ -28,12 +28,16 @@ export class DrmaxClient extends ShopApiClient {
     };
 
     constructor(config: ShopApiClientConstructorConfig = {}) {
+        // Destructure `headers` so the trailing `...rest` spread cannot clobber
+        // our default User-Agent. Previously `...config` overwrote the merged
+        // headers object whenever the caller passed `headers` themselves.
+        const { headers, ...rest } = config;
         super({
             baseUrl: DRMAX_BASE_URL,
             loggerContext: { provider: "drmax" },
-            rateLimitPerSecond: config.rateLimitPerSecond ?? 1.5,
-            headers: { "User-Agent": DRMAX_BROWSER_UA, ...config.headers },
-            ...config,
+            rateLimitPerSecond: rest.rateLimitPerSecond ?? 1.5,
+            ...rest,
+            headers: { "User-Agent": DRMAX_BROWSER_UA, ...headers },
         });
     }
 
@@ -115,7 +119,7 @@ export class DrmaxClient extends ShopApiClient {
     }
 
     async getProduct(input: { url?: string; slug?: string }): Promise<RawProduct> {
-        const url = input.url ?? (input.slug ? `${DRMAX_BASE_URL}${input.slug}` : null);
+        const url = input.url ?? (input.slug ? slugToProductUrl(input.slug) : null);
         if (!url) {
             throw new Error("DrmaxClient.getProduct requires url or slug");
         }
@@ -154,10 +158,12 @@ export class DrmaxClient extends ShopApiClient {
             throw new Error(`DrmaxClient.getProduct: no JSON-LD Product on ${url}`);
         }
 
-        const priceRaw = parsed.offers?.price;
+        // Schema.org offers may be a single Offer or an Offer[] — normalize.
+        const offer = Array.isArray(parsed.offers) ? parsed.offers[0] : parsed.offers;
+        const priceRaw = offer?.price;
         const currentPrice = typeof priceRaw === "number" ? priceRaw : Number.parseFloat(String(priceRaw ?? ""));
         const imageUrl = Array.isArray(parsed.image) ? parsed.image[0] : parsed.image;
-        const inStock = parsed.offers?.availability?.includes("InStock") ?? true;
+        const inStock = offer?.availability?.includes("InStock") ?? true;
 
         const breadcrumbs = Array.from(document.querySelectorAll("ol.breadcrumb li a, nav.breadcrumb a"))
             .map((a) => (a.textContent ?? "").trim())
@@ -247,6 +253,27 @@ function slugFromUrl(url: string): string {
     } catch {
         return url;
     }
+}
+
+/**
+ * Round-trip a slug back to a Dr.Max product URL.
+ *
+ * `slugFromUrl()` returns the LAST path segment (no leading slash), while
+ * `listCategory` may emit fully-qualified URLs. Callers that pass the value
+ * back as `slug` need each shape coerced into a real URL — otherwise we'd
+ * concatenate `${DRMAX_BASE_URL}${slug}` and produce e.g.
+ * `https://www.drmax.czmy-product` (broken).
+ */
+function slugToProductUrl(slug: string): string {
+    if (slug.startsWith("http://") || slug.startsWith("https://")) {
+        return slug;
+    }
+
+    if (slug.startsWith("/")) {
+        return `${DRMAX_BASE_URL}${slug}`;
+    }
+
+    return `${DRMAX_BASE_URL}/${slug}`;
 }
 
 function parseCzPrice(raw: string | null | undefined): number | null {

@@ -1,5 +1,6 @@
 import logger from "@app/logger";
 import { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
+import { parsePositiveInt } from "@app/shops/lib/cli-validators";
 import { DbHttpRequestSink } from "@app/shops/lib/http-sink";
 import { crawlFromSitemap } from "@app/shops/lib/sitemap-crawl";
 import { listSitemapShops } from "@app/shops/lib/sitemap-sync";
@@ -10,7 +11,8 @@ interface SitemapCrawlCliOpts {
     limit?: number;
     concurrency?: number;
     refresh?: boolean;
-    noHlidac?: boolean;
+    /** Commander exposes `--no-hlidac` as `hlidac: false`. Defaults to `true` (backfill enabled). */
+    hlidac?: boolean;
     hlidacForce?: boolean;
     hlidacConcurrency?: number;
     hlidacOnly?: boolean;
@@ -24,16 +26,28 @@ export function registerSitemapCrawlCommand(program: Command): void {
             `Walk a shop's sitemap and ingest every discovered product into the local DB. Supported: ${supported.join(", ")}`
         )
         .requiredOption("--shop <shop>", `Shop origin (one of: ${supported.join(", ")})`)
-        .option("--limit <n>", "Stop after fetching N products", (v) => Number.parseInt(v, 10))
-        .option("--concurrency <n>", "Per-id fan-out for clients without bulk endpoints (kosik)", (v) =>
-            Number.parseInt(v, 10)
+        .option("--limit <n>", "Stop after fetching N products", parsePositiveInt("--limit"))
+        .option(
+            "--concurrency <n>",
+            "Per-id fan-out for clients without bulk endpoints (kosik)",
+            parsePositiveInt("--concurrency")
         )
         .option("--refresh", "Re-fetch products already in the DB (default: skip them and only ingest new ids)")
         .option("--no-hlidac", "Skip the post-ingest hlidacshopu.cz price-history backfill")
         .option("--hlidac-force", "Re-fetch hlidac history even for products that already have it stored")
-        .option("--hlidac-concurrency <n>", "Parallel hlidac S3 fetches (default 10)", (v) => Number.parseInt(v, 10))
+        .option(
+            "--hlidac-concurrency <n>",
+            "Parallel hlidac S3 fetches (default 10)",
+            parsePositiveInt("--hlidac-concurrency")
+        )
         .option("--hlidac-only", "Skip the shop API entirely; just drain hlidac history for products already in the DB")
         .action(async (raw: SitemapCrawlCliOpts) => {
+            if (!supported.includes(raw.shop)) {
+                process.stderr.write(`error: unknown shop "${raw.shop}". Supported: ${supported.join(", ")}\n`);
+                process.exitCode = 1;
+                return;
+            }
+
             const log = logger.child({ component: "shops:sitemap-crawl" });
             const db = new ShopsDatabase();
             const sink = new DbHttpRequestSink(db);
@@ -51,7 +65,7 @@ export function registerSitemapCrawlCommand(program: Command): void {
                     limit: raw.limit,
                     concurrency: raw.concurrency,
                     onlyNew: raw.refresh !== true,
-                    noHlidac: raw.noHlidac === true,
+                    noHlidac: raw.hlidac === false,
                     hlidacForce: raw.hlidacForce === true,
                     hlidacConcurrency: raw.hlidacConcurrency,
                     hlidacOnly: raw.hlidacOnly === true,

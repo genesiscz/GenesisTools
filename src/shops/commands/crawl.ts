@@ -3,6 +3,7 @@ import { initShopRegistry } from "@app/shops/api/registry-init";
 import { ShopRegistry } from "@app/shops/api/ShopRegistry";
 import type { CrawlResult } from "@app/shops/crawlers/ShopCrawler.types";
 import { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
+import { parsePositiveInt } from "@app/shops/lib/cli-validators";
 import { createCrawlerForShop } from "@app/shops/lib/crawler-factory";
 import { DbHttpRequestSink, type HttpRequestSink } from "@app/shops/lib/http-sink";
 import type { Command } from "commander";
@@ -40,7 +41,7 @@ export function registerCrawlCommand(program: Command): void {
         .description("Crawl a shop's catalog into the local DB")
         .requiredOption("--shop <shop>", "Shop origin (e.g. rohlik.cz)")
         .option("--category <id>", "Restrict to one shop-side category id")
-        .option("--limit <n>", "Stop after N products", (v) => Number.parseInt(v, 10))
+        .option("--limit <n>", "Stop after N products", parsePositiveInt("--limit"))
         .action(async (raw: { shop: string; category?: string; limit?: number }) => {
             const log = logger.child({ component: "shops:crawl" });
             const db = new ShopsDatabase();

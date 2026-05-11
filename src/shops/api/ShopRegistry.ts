@@ -28,7 +28,11 @@ export class ShopRegistry {
         ShopRegistry.instance = null;
     }
 
-    register(client: ShopApiClient): void {
+    register(client: ShopApiClient, opts: { allowReplace?: boolean } = {}): void {
+        if (this.clients.has(client.shopOrigin) && !opts.allowReplace) {
+            throw new Error(`Duplicate shop registration: ${client.shopOrigin}`);
+        }
+
         this.clients.set(client.shopOrigin, client);
     }
 

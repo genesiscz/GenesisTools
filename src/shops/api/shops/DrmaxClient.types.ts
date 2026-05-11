@@ -11,16 +11,19 @@ export interface DrmaxParsedTile {
     inStock: boolean;
 }
 
+export interface DrmaxOffer {
+    price?: number | string;
+    priceCurrency?: string;
+    availability?: string;
+}
+
 export interface DrmaxJsonLdProduct {
     "@type"?: string;
     name?: string;
     image?: string | string[];
     description?: string;
-    offers?: {
-        price?: number | string;
-        priceCurrency?: string;
-        availability?: string;
-    };
+    /** Schema.org allows offers to be a single Offer or an array of Offers. */
+    offers?: DrmaxOffer | DrmaxOffer[];
     gtin13?: string;
     sku?: string;
 }

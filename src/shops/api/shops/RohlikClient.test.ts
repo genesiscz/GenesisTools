@@ -178,8 +178,12 @@ describe("RohlikClient categoryPath enrichment", () => {
         expect(raw.categoryPath?.length ?? 0).toBeGreaterThan(0);
         expect(raw.categoryPath?.every((c) => typeof c === "string" && c.length > 0)).toBe(true);
 
-        // Subsequent lookups reuse the cached navigation tree — only one
-        // /navigation/flat.json call across N products.
+        // Trigger a second product lookup with a different slug — verifies
+        // that the navigation tree is cached across calls (only one
+        // /navigation/flat.json request hit, not one per product).
+        const raw2 = await client.getProduct({ slug: "1478741" });
+        expect(raw2.categoryPath).toBeDefined();
+
         const navCalls = calls.filter((c) => c.url.includes("/navigation/flat.json")).length;
         expect(navCalls).toBe(1);
     });

@@ -39,6 +39,20 @@ export class BillaClient extends ShopApiClient {
         });
     }
 
+    /**
+     * NOT IMPLEMENTED in Phase 2.
+     *
+     * Billa's product-discovery API exposes detail info as part of the listing
+     * response (see {@link BillaCategoryListingResponse} → `BillaRawProduct`),
+     * so most callers can use the `raw` payload from `listCategory()` directly.
+     * A dedicated endpoint for single-product lookup will land alongside the
+     * Phase 3 detail-augmentation work; until then this method intentionally
+     * throws to surface accidental live-detail traffic against Billa.
+     *
+     * The class still advertises `capabilities.live = true` because listing IS
+     * a live source; gate live-detail flows on `capabilities.detail` (added in
+     * Phase 3) rather than `live`.
+     */
     async getProduct(input: { url?: string; slug?: string }): Promise<RawProduct> {
         throw new Error(`BillaClient.getProduct: not implemented in Phase 2 (input=${input.url ?? input.slug})`);
     }
@@ -72,7 +86,11 @@ export class BillaClient extends ShopApiClient {
 
             const total = listing.total ?? 0;
             const count = listing.count ?? products.length;
-            if (total <= PAGE_SIZE || count < PAGE_SIZE) {
+            // Defensive: when `total` is omitted by the API, only stop if the
+            // current page is short. When `total` IS present, also stop once
+            // we've covered it. Avoids the original bug where `total ?? 0`
+            // halted pagination after page 0.
+            if (count < PAGE_SIZE || (total > 0 && (page + 1) * PAGE_SIZE >= total)) {
                 return;
             }
 

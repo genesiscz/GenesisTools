@@ -149,17 +149,34 @@ export class HlidacShopuClient {
             };
         } catch (err) {
             log.debug({ err, productUrl }, "S3 path failed, falling back to /v2/detail");
-            const detail = await this.detail(productUrl);
-            return {
-                source: "api",
-                parsed: {
-                    origin,
-                    itemId: parsedDetails.itemId ?? null,
-                    itemUrl: parsedDetails.itemUrl,
-                },
-                history: null,
-                detail,
-            };
+            try {
+                const detail = await this.detail(productUrl);
+                return {
+                    source: "api",
+                    parsed: {
+                        origin,
+                        itemId: parsedDetails.itemId ?? null,
+                        itemUrl: parsedDetails.itemUrl,
+                    },
+                    history: null,
+                    detail,
+                };
+            } catch (detailErr) {
+                // Mirror the no-slug branch (lines 125-133): if the API also
+                // fails, return undefined detail rather than throwing — the
+                // caller can render "no data" instead of surfacing an error.
+                log.debug({ err: detailErr, productUrl }, "Hlídač /v2/detail also failed after S3 fallback");
+                return {
+                    source: "api",
+                    parsed: {
+                        origin,
+                        itemId: parsedDetails.itemId ?? null,
+                        itemUrl: parsedDetails.itemUrl,
+                    },
+                    history: null,
+                    detail: undefined,
+                };
+            }
         }
     }
 
@@ -269,8 +286,88 @@ function serializeExcerpt(data: unknown): string | null {
         return data.length > RESPONSE_EXCERPT_MAX ? data.slice(0, RESPONSE_EXCERPT_MAX) : data;
     }
 
+    // Incremental serializer: stops walking once we've buffered enough chars
+    // to fill the excerpt. Avoids stringifying huge S3 responses (price-history
+    // arrays can hit MBs) only to throw most of it away.
     try {
-        const text = SafeJSON.stringify(data);
+        const buf: string[] = [];
+        let len = 0;
+        const append = (s: string): boolean => {
+            buf.push(s);
+            len += s.length;
+            return len >= RESPONSE_EXCERPT_MAX;
+        };
+
+        const walk = (value: unknown, seen: WeakSet<object>): boolean => {
+            if (value === null) {
+                return append("null");
+            }
+
+            const t = typeof value;
+            if (t === "number" || t === "boolean") {
+                return append(String(value));
+            }
+
+            if (t === "string") {
+                return append(SafeJSON.stringify(value));
+            }
+
+            if (t === "undefined" || t === "function" || t === "symbol") {
+                return append("null");
+            }
+
+            if (t !== "object") {
+                return append(SafeJSON.stringify(value));
+            }
+
+            const obj = value as object;
+            if (seen.has(obj)) {
+                return append('"[Circular]"');
+            }
+
+            seen.add(obj);
+            if (Array.isArray(value)) {
+                if (append("[")) {
+                    return true;
+                }
+
+                for (let i = 0; i < value.length; i++) {
+                    if (i > 0 && append(",")) {
+                        return true;
+                    }
+
+                    if (walk(value[i], seen)) {
+                        return true;
+                    }
+                }
+
+                return append("]");
+            }
+
+            if (append("{")) {
+                return true;
+            }
+
+            const entries = Object.entries(value as Record<string, unknown>);
+            for (let i = 0; i < entries.length; i++) {
+                if (i > 0 && append(",")) {
+                    return true;
+                }
+
+                if (append(`${SafeJSON.stringify(entries[i][0])}:`)) {
+                    return true;
+                }
+
+                if (walk(entries[i][1], seen)) {
+                    return true;
+                }
+            }
+
+            return append("}");
+        };
+
+        walk(data, new WeakSet());
+        const text = buf.join("");
         return text.length > RESPONSE_EXCERPT_MAX ? text.slice(0, RESPONSE_EXCERPT_MAX) : text;
     } catch {
         return null;

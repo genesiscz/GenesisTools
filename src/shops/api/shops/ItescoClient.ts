@@ -190,10 +190,14 @@ export class ItescoClient extends ShopApiClient {
             } catch (err) {
                 lastErr = err;
                 const e = err as Error & { status?: number; body?: string };
+                // 503 is intentionally NOT in this regex: the underlying ApiClient
+                // already retries 503s (retry: 2). Treating 503 as an Akamai block
+                // here triggers the outer escalation loop on top of inner retries
+                // (×3 inner × ×4 outer = 12 requests for one 503 burst).
                 const blocked =
                     typeof e?.status === "number"
                         ? isAkamaiBlock({ status: e.status, body: e.body ?? "", setCookie: [] })
-                        : /Akamai|sec-if-cpt|HTTP 40[39]|HTTP 429|HTTP 503/i.test(e?.message ?? "");
+                        : /Akamai|sec-if-cpt|HTTP 40[39]|HTTP 429/i.test(e?.message ?? "");
                 if (!blocked) {
                     throw err;
                 }

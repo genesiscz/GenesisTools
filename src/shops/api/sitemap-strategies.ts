@@ -73,12 +73,21 @@ function extractRohlikSlug(url: string): string | null {
     return match ? match[1] : null;
 }
 
+/**
+ * Extract Lidl's persisted slug (bare numeric `item.code`) from a sitemap URL.
+ *
+ * Lidl product URLs look like:
+ *   https://www.lidl.cz/p/livarno-elektricky-davkovac-mydla/p100396182
+ *
+ * `LidlClient` persists `slug = item.code` — a bare numeric (e.g. "100396182"),
+ * NOT the URL-embedded "p100396182". We strip the leading `p` so the diff
+ * against `products.slug` actually matches.
+ *
+ * Return safety: the regex requires `\d+` (one-or-more digits), so when it
+ * matches, `match[1]` is guaranteed to be a non-empty digit string. Callers
+ * may treat a non-null return as a usable id without further validation.
+ */
 function extractLidlSlug(url: string): string | null {
-    // Lidl product URLs look like:
-    //   https://www.lidl.cz/p/livarno-elektricky-davkovac-mydla/p100396182
-    // LidlClient persists `slug = item.code` — a bare numeric (e.g. "100396182"),
-    // NOT the URL-embedded "p100396182". We strip the leading `p` so the diff
-    // against `products.slug` actually matches.
     const match = url.match(/\/p(\d+)(?:[?#]|$)/);
     return match ? match[1] : null;
 }

@@ -1,5 +1,6 @@
 import logger from "@app/logger";
 import { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
+import { parsePositiveInt } from "@app/shops/lib/cli-validators";
 import { listSitemapShops, type SitemapSyncResult, syncShopSitemap } from "@app/shops/lib/sitemap-sync";
 import type { Command } from "commander";
 
@@ -19,10 +20,16 @@ export function registerSitemapSyncCommand(program: Command): void {
         )
         .option("--shop <shop>", `Single shop origin (one of: ${supported.join(", ")})`)
         .option("--all", "Sync all supported shops sequentially")
-        .option("--max-urls <n>", "Stop each shop after N URLs (loose cap)", (v) => Number.parseInt(v, 10))
+        .option("--max-urls <n>", "Stop each shop after N URLs (loose cap)", parsePositiveInt("--max-urls"))
         .option("--print", "Print every new URL (not just the first 5 sample)")
         .action(async (raw: SitemapSyncCliOpts) => {
             const log = logger.child({ component: "shops:sitemap-sync" });
+
+            if (raw.shop !== undefined && !supported.includes(raw.shop)) {
+                process.stderr.write(`error: unknown shop "${raw.shop}". Supported: ${supported.join(", ")}\n`);
+                process.exitCode = 1;
+                return;
+            }
 
             const targets = resolveTargets(raw, supported);
             if (targets.length === 0) {

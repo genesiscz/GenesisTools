@@ -100,10 +100,15 @@ describe("registry-init", () => {
 
     it("calling twice is idempotent", () => {
         initShopRegistry();
+        const c1 = ShopRegistry.get().forShop("rohlik.cz");
         initShopRegistry();
+        const c2 = ShopRegistry.get().forShop("rohlik.cz");
         const allRohlik = ShopRegistry.get()
             .all()
             .filter((c) => c.shopOrigin === "rohlik.cz");
         expect(allRohlik.length).toBe(1);
+        // Instance identity: second init must NOT replace the registered client
+        // — the same object reference is preserved across calls.
+        expect(c1).toBe(c2);
     });
 });

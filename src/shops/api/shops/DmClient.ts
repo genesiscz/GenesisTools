@@ -11,6 +11,7 @@ import type {
     DmRawProduct,
 } from "@app/shops/api/shops/DmClient.types";
 import { ApiClientError } from "@app/utils/api/ApiClient";
+import { abortableSleep } from "@app/utils/async";
 
 export type DmCountry = "CZ" | "SK";
 
@@ -66,7 +67,9 @@ export class DmClient extends ShopApiClient {
     readonly displayName: string;
     readonly currency: string;
     readonly capabilities: ShopCapabilities = {
-        live: true,
+        // `live` is gated to `false` until DmClient.getProduct is implemented.
+        // listing is fully live; only single-product detail lookup is missing.
+        live: false,
         history: true,
         listing: true,
         ean: true,
@@ -196,7 +199,9 @@ export class DmClient extends ShopApiClient {
                     },
                     "dm search-api 429 — backing off"
                 );
-                await Bun.sleep(waitMs);
+                // Honour caller-provided AbortSignal: long backoffs (up to 60s)
+                // would otherwise hang the search loop after a user-initiated abort.
+                await abortableSleep(waitMs, signal);
             }
         }
 

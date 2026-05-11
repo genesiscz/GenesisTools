@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import logger from "@app/logger";
 import { runGetProduct } from "@app/shops/lib/get-product";
 import { SafeJSON } from "@app/utils/json";
@@ -11,6 +12,7 @@ interface GetOptions {
     cache?: boolean;
     save?: boolean;
     match?: boolean;
+    out?: string;
 }
 
 const log = logger.child({ component: "shops:get" });
@@ -23,6 +25,7 @@ export function registerGetCommand(program: Command): void {
         .option("--full-history", "Request full price history (default: 365 days)")
         .option("--no-cache", "Bypass local cache (no-op in Plan 01 — cache lands later)")
         .option("--save", "Also copy the JSON output to the clipboard")
+        .option("--out <path>", "Also write the output to <path> (JSON or summary, matching --json)")
         .option("--match", "Print a stub pointing at Plan 04 (matcher not implemented yet)")
         .action(async (url: string, opts: GetOptions) => {
             await runGet(url, opts);
@@ -56,11 +59,7 @@ async function runGet(url: string, opts: GetOptions): Promise<void> {
             2
         );
         process.stdout.write(`${text}\n`);
-        if (opts.save) {
-            await clipboardy.write(text);
-            process.stderr.write("Copied to clipboard.\n");
-        }
-
+        await persistOutput(text, opts);
         return;
     }
 
@@ -78,9 +77,18 @@ async function runGet(url: string, opts: GetOptions): Promise<void> {
         ["field", "value"]
     );
     process.stdout.write(`${summary}\n`);
+    await persistOutput(summary, opts);
+}
 
+async function persistOutput(text: string, opts: GetOptions): Promise<void> {
     if (opts.save) {
-        await clipboardy.write(summary);
+        await clipboardy.write(text);
         process.stderr.write("Copied to clipboard.\n");
+    }
+
+    if (opts.out) {
+        const outPath = resolve(opts.out);
+        await Bun.write(outPath, text);
+        process.stderr.write(`Wrote ${outPath}\n`);
     }
 }

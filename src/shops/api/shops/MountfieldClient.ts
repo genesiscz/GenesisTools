@@ -64,7 +64,8 @@ export class MountfieldClient extends ShopApiClient {
 
         await this.waitTurn();
         const html = await this.getText(input.url, { signal: input.signal });
-        const parsed = parseDetail(html, input.url);
+        const { document } = parseHTML(html);
+        const parsed = parseDetail(document, input.url);
         if (!parsed) {
             throw new Error(`Mountfield could not parse ${input.url}`);
         }
@@ -119,7 +120,7 @@ export class MountfieldClient extends ShopApiClient {
                 }
             }
 
-            const products = parseListing(html);
+            const products = parseListing(document);
             for (const p of products) {
                 yield p;
                 yielded++;
@@ -156,8 +157,9 @@ export class MountfieldClient extends ShopApiClient {
     }
 }
 
-function parseListing(html: string): RawProduct[] {
-    const { document } = parseHTML(html);
+type MountfieldDocument = ReturnType<typeof parseHTML>["document"];
+
+function parseListing(document: MountfieldDocument): RawProduct[] {
     const breadcrumbs = Array.from(document.querySelectorAll(".box-breadcrumb__item")).map(
         (el) => el.textContent?.trim() ?? ""
     );
@@ -225,14 +227,13 @@ function parseListing(html: string): RawProduct[] {
     return out;
 }
 
-function parseDetail(html: string, url: string): RawProduct | undefined {
-    const products = parseListing(html);
+function parseDetail(document: MountfieldDocument, url: string): RawProduct | undefined {
+    const products = parseListing(document);
     if (products.length > 0) {
         return products[0];
     }
 
     const id = url.match(/-(\d+)$/)?.[1];
-    const { document } = parseHTML(html);
     const name = document.querySelector("h1")?.textContent?.trim();
     if (!id || !name) {
         return undefined;
