@@ -163,7 +163,6 @@
         "md-to-pdf": "^5.2.5",
         "mdream": "^0.15.3",
         "minimatch": "^10.0.1",
-        "node-notifier": "^10.0.1",
         "object-hash": "^3.0.0",
         "octokit": "^5.0.5",
         "ofetch": "^1.5.1",
