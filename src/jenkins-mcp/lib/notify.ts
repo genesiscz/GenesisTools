@@ -1,5 +1,4 @@
-import { existsSync } from "node:fs";
-import logger from "@app/logger";
+import { NotificationBackend, sendNotification } from "@app/utils/macos/notifications";
 
 export interface SendOpts {
     title: string;
@@ -8,73 +7,32 @@ export interface SendOpts {
     sound?: string;
     /** Stable per-build id so notifications collapse instead of stacking. */
     group: string;
-    /** URL opened on click — baked into the notification via terminal-notifier -execute,
-     *  so clicks work even after the monitor process exits. */
+    /** URL opened on click — baked into the notification at OS level via terminal-notifier `-execute`. */
     openUrl?: string;
 }
 
-const TERMINAL_NOTIFIER_CANDIDATES = ["/opt/homebrew/bin/terminal-notifier", "/usr/local/bin/terminal-notifier"];
-
-function findTerminalNotifier(): string | null {
-    for (const path of TERMINAL_NOTIFIER_CANDIDATES) {
-        if (existsSync(path)) {
-            return path;
-        }
-    }
-
-    return null;
-}
-
 /**
- * Fires notifications via `terminal-notifier -execute` so the click action is baked
- * into the notification at OS level — survives after the monitor process exits.
- * If terminal-notifier is missing, silently no-ops (notifications are nice-to-have).
+ * Routes through `@app/utils/macos/notifications.sendNotification` with
+ * `preferred: NotificationBackend.TerminalNotifier` — bakes the click
+ * action into the notification at OS level so clicks fire reliably even
+ * after the monitor process exits.
+ *
+ * Falls through gracefully if terminal-notifier is missing (handled by
+ * sendNotification's backend chain).
  */
 export class MonitorNotifier {
-    private bin: string | null = null;
-    private resolved = false;
-
-    private ensure(): string | null {
-        if (this.resolved) {
-            return this.bin;
-        }
-
-        this.bin = findTerminalNotifier();
-        this.resolved = true;
-
-        if (!this.bin) {
-            logger.debug("terminal-notifier not found — notifications will be skipped");
-        }
-
-        return this.bin;
-    }
-
     async send(opts: SendOpts): Promise<void> {
-        const bin = this.ensure();
+        const execute = opts.openUrl ? `open "${opts.openUrl.replace(/"/g, '\\"')}"` : undefined;
 
-        if (!bin) {
-            return;
-        }
-
-        const args = [bin, "-title", opts.title, "-message", opts.body, "-group", opts.group];
-
-        if (opts.subtitle) {
-            args.push("-subtitle", opts.subtitle);
-        }
-
-        if (opts.sound) {
-            args.push("-sound", opts.sound);
-        }
-
-        if (opts.openUrl) {
-            args.push("-execute", `open -a "Brave Browser" "${opts.openUrl}"`);
-        }
-
-        try {
-            Bun.spawn(args, { stdout: "ignore", stderr: "ignore" });
-        } catch (error) {
-            logger.debug(`Notification spawn failed: ${error instanceof Error ? error.message : error}`);
-        }
+        await sendNotification({
+            title: opts.title,
+            subtitle: opts.subtitle,
+            message: opts.body,
+            sound: opts.sound,
+            group: opts.group,
+            execute,
+            preferred: NotificationBackend.TerminalNotifier,
+        });
     }
 
     close(): void {

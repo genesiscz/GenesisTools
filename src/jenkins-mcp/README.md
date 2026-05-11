@@ -135,10 +135,10 @@ All required at startup. MCP server exits non-zero with a clear error if any are
 `parseJenkinsInput()` accepts any of:
 
 ```
-job/Org/job/Project/job/Team/job/web-build                                 → { jobPath }
-/job/Digi22/.../web-build/7948/                                         → { jobPath, buildNumber: "7948" }
-https://j.example/job/.../7948/pipeline-overview/?selected-node=41          → { jobPath, buildNumber, nodeId: "41" }
-https://j.example/job/X/job/Y/view/change-requests/job/PR-42/6/           → { jobPath: "job/X/job/Y/job/PR-42", buildNumber: "6" }
+job/Org/job/Project/job/Team/job/my-build                                   → { jobPath }
+/job/Org/.../my-build/123/                                                  → { jobPath, buildNumber: "123" }
+https://j.example/job/.../123/pipeline-overview/?selected-node=41           → { jobPath, buildNumber, nodeId: "41" }
+https://j.example/job/X/job/Y/view/change-requests/job/PR-42/6/             → { jobPath: "job/X/job/Y/job/PR-42", buildNumber: "6" }
 ```
 
 Strips trailing `pipeline-overview`, `console`, `consoleText`, `wfapi`, etc. Strips `view/<name>/` filters from multibranch URLs.
