@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import logger from "@app/logger";
 import type { DarwinKit } from "@app/utils/macos/darwinkit";
-import { getDarwinKit, hasDarwinKit } from "@app/utils/macos/darwinkit";
+import { getDarwinKit } from "@app/utils/macos/darwinkit";
 import { escapeJxa } from "@app/utils/macos/jxa";
 import { Storage } from "@app/utils/storage/storage";
 
@@ -181,19 +181,24 @@ function sendViaOsascript(opts: NotificationOptions): void {
  * Returns true if successful, false if darwinkit is unavailable or fails.
  */
 async function sendViaDarwinKit(opts: NotificationOptions): Promise<boolean> {
-    if (!hasDarwinKit()) {
+    let dk: DarwinKit & {
+        notifications?: { send(opts: Record<string, unknown>): Promise<void> };
+    };
+
+    try {
+        dk = getDarwinKit() as DarwinKit & {
+            notifications?: { send(opts: Record<string, unknown>): Promise<void> };
+        };
+    } catch (error) {
+        logger.debug(`DarwinKit init failed: ${error instanceof Error ? error.message : error}`);
+        return false;
+    }
+
+    if (!dk.notifications) {
         return false;
     }
 
     try {
-        const dk = getDarwinKit() as DarwinKit & {
-            notifications?: { send(opts: Record<string, unknown>): Promise<void> };
-        };
-
-        if (!dk.notifications) {
-            return false;
-        }
-
         await dk.notifications.send({
             title: opts.title ?? "GenesisTools",
             body: opts.message,
