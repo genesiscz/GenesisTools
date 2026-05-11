@@ -2,11 +2,11 @@ import { enhanceHelp } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
 import { Command } from "commander";
 import { createClient, readEnvAuth } from "./lib/client";
+import { formatStageLine } from "./lib/format";
 import { fetchLog, readLogPreview } from "./lib/log";
 import { exitCodeFor, runMonitor } from "./lib/monitor";
 import { MonitorNotifier } from "./lib/notify";
 import { type FlowNode, getStages, type Stage } from "./lib/pipeline";
-import { formatStageLine } from "./lib/format";
 import { parseJenkinsInput } from "./lib/url";
 
 function resolveRef(input: string, buildFlag?: string, nodeFlag?: string) {

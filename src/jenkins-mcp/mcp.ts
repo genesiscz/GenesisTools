@@ -3,12 +3,7 @@
 import { SafeJSON } from "@app/utils/json";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import {
-    CallToolRequestSchema,
-    ErrorCode,
-    ListToolsRequestSchema,
-    McpError,
-} from "@modelcontextprotocol/sdk/types.js";
+import { CallToolRequestSchema, ErrorCode, ListToolsRequestSchema, McpError } from "@modelcontextprotocol/sdk/types.js";
 import axios, { type AxiosInstance } from "axios";
 import { createClient, readEnvAuth } from "./lib/client";
 import { extractErrors } from "./lib/errors";
@@ -339,10 +334,7 @@ class JenkinsServer {
                     );
                 }
 
-                throw new McpError(
-                    ErrorCode.InternalError,
-                    error instanceof Error ? error.message : "Unknown error"
-                );
+                throw new McpError(ErrorCode.InternalError, error instanceof Error ? error.message : "Unknown error");
             }
         });
     }
@@ -386,9 +378,7 @@ class JenkinsServer {
             }
         }
 
-        const endpoint = args.parameters
-            ? `/${ref.jobPath}/buildWithParameters`
-            : `/${ref.jobPath}/build`;
+        const endpoint = args.parameters ? `/${ref.jobPath}/buildWithParameters` : `/${ref.jobPath}/build`;
         await this.client.post(endpoint, params);
         return this.text("Build triggered successfully");
     }
@@ -591,9 +581,7 @@ class JenkinsServer {
         const res = await this.client.get(`/${ref.jobPath}/${build}/api/json?tree=${tree}`);
         const changeCount = res.data.changeSet?.items?.length ?? 0;
         const causes =
-            (res.data.actions ?? [])
-                .flatMap((a: { causes?: unknown[] }) => a.causes ?? [])
-                .filter(Boolean) ?? [];
+            (res.data.actions ?? []).flatMap((a: { causes?: unknown[] }) => a.causes ?? []).filter(Boolean) ?? [];
         return this.text({
             jobPath: ref.jobPath,
             buildNumber: build,

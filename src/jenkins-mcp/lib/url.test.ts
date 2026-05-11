@@ -19,9 +19,7 @@ describe("parseJenkinsInput", () => {
     });
 
     it("extracts selected-node into nodeId", () => {
-        const r = parseJenkinsInput(
-            "https://jenkins.example.com/job/X/job/Y/7948/pipeline-overview/?selected-node=41"
-        );
+        const r = parseJenkinsInput("https://jenkins.example.com/job/X/job/Y/7948/pipeline-overview/?selected-node=41");
         expect(r.buildNumber).toBe("7948");
         expect(r.nodeId).toBe("41");
     });

@@ -1,16 +1,6 @@
 #!/usr/bin/env bun
 
-const CLI_COMMANDS = new Set([
-    "monitor",
-    "log",
-    "stages",
-    "info",
-    "changes",
-    "jobs",
-    "help",
-    "--help",
-    "-h",
-]);
+const CLI_COMMANDS = new Set(["monitor", "log", "stages", "info", "changes", "jobs", "help", "--help", "-h"]);
 
 const sub = process.argv[2];
 
