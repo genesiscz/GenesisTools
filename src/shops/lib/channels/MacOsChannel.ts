@@ -85,8 +85,7 @@ export class MacOsChannel implements NotificationChannel {
                   `shops-${payload.notification.master_product_id}`,
               ]
             : [
-                  // biome-ignore lint/style/noNonNullAssertion: available() guarantees one of the two paths is non-null
-                  this.osascriptPath!,
+                  this.osascriptPath ?? "/usr/bin/osascript",
                   "-e",
                   `display notification "${escapeAS(payload.body)}" with title "${escapeAS(payload.title)}"`,
               ];

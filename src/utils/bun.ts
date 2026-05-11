@@ -32,7 +32,7 @@ export function detectBunCapabilities(): BunCapabilities {
         (major === MIN_MAJOR && (minor > MIN_MINOR || (minor === MIN_MINOR && patch >= MIN_PATCH)));
 
     const bunGlobal = Bun as unknown as Record<string, unknown>;
-    const headlessBrowser = versionOk && typeof bunGlobal["WebView"] !== "undefined";
+    const headlessBrowser = versionOk && typeof bunGlobal.WebView !== "undefined";
 
     return { headlessBrowser, bunVersion };
 }
