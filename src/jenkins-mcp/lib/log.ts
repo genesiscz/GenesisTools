@@ -32,18 +32,6 @@ export interface LogResult {
     truncated: boolean;
 }
 
-export interface LogFilterOpts {
-    tail?: number;
-    head?: number;
-    grep?: string;
-}
-
-export interface LogPreview {
-    first: string[];
-    last: string[];
-    grepMatches?: { line: number; text: string }[];
-}
-
 interface NodeLogResponse {
     nodeId?: string;
     nodeStatus?: string;
@@ -133,31 +121,27 @@ export async function fetchLog(
     return { path: file, content, sizeBytes, lineCount, nodeStatus, truncated };
 }
 
-export async function readLogPreview(filePath: string, opts: LogFilterOpts = {}): Promise<LogPreview> {
-    const content = await Bun.file(filePath).text();
+/**
+ * Filter `content` by `pattern`, return up to 200 matches formatted `"L<lineno>: <text>"`
+ * (grep(1) `-n` style). Trailing `\r` is stripped from each matched line for clean
+ * rendering in JSON responses (Jenkins emits CRLF).
+ */
+export function grepLog(content: string, pattern: string): string[] {
+    const re = new RegExp(pattern);
     const lines = content.split("\n");
+    const matches: string[] = [];
 
-    const headCount = opts.head ?? 10;
-    const tailCount = opts.tail ?? 10;
-    const first = lines.slice(0, headCount);
-    const last = tailCount > 0 ? lines.slice(-tailCount) : [];
+    for (let i = 0; i < lines.length; i++) {
+        re.lastIndex = 0;
 
-    let grepMatches: { line: number; text: string }[] | undefined;
+        if (re.test(lines[i])) {
+            matches.push(`L${i + 1}: ${lines[i].replace(/\r$/, "")}`);
 
-    if (opts.grep) {
-        const re = new RegExp(opts.grep);
-        grepMatches = [];
-
-        for (let i = 0; i < lines.length; i++) {
-            if (re.test(lines[i])) {
-                grepMatches.push({ line: i + 1, text: lines[i] });
-
-                if (grepMatches.length >= 200) {
-                    break;
-                }
+            if (matches.length >= 200) {
+                break;
             }
         }
     }
 
-    return { first, last, grepMatches };
+    return matches;
 }

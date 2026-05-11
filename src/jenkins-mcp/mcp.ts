@@ -9,7 +9,7 @@ import axios, { type AxiosInstance } from "axios";
 import { createClient, readEnvAuth } from "./lib/client";
 import { extractErrors } from "./lib/errors";
 import { formatDuration, formatStageLine, statusBody } from "./lib/format";
-import { fetchLog, readLogPreview } from "./lib/log";
+import { fetchLog, grepLog } from "./lib/log";
 import { type BuildMeta, findFailingLeaf, flattenBuildMeta, getStages } from "./lib/pipeline";
 import { resolveRef } from "./lib/url";
 
@@ -30,8 +30,6 @@ interface GetBuildLogArgs {
     jobPath: string;
     buildNumber?: string;
     nodeId?: string;
-    tail?: number;
-    head?: number;
     grep?: string;
 }
 
@@ -129,7 +127,7 @@ class JenkinsServer {
                 {
                     name: "get_build_log",
                     description:
-                        "Fetch a build's console log (or a single node's log when nodeId is set), strip HTML timestamp wrappers, save to /tmp/jenkins-mcp/, and return path + summary + preview lines. Token-efficient: bytes never enter the response.",
+                        "Fetch a build's console log (or a single node's log when nodeId is set), strip HTML timestamp wrappers, and save to /tmp/jenkins-mcp/. Returns the file path + summary. If `grep` is set, also returns matching lines formatted as 'L<lineno>: <text>' (caps at 200 matches). Token-efficient: bytes never enter the response unless you grep.",
                     inputSchema: {
                         type: "object",
                         properties: {
@@ -139,9 +137,10 @@ class JenkinsServer {
                                 type: "string",
                                 description: "Pipeline node id (selected-node) — fetch just this node's log",
                             },
-                            tail: { type: "number", description: "Lines to include from the end (default 20)" },
-                            head: { type: "number", description: "Lines to include from the start" },
-                            grep: { type: "string", description: "Regex to filter lines (caps at 200 matches)" },
+                            grep: {
+                                type: "string",
+                                description: "Regex to filter lines. Returns up to 200 matches as 'L<n>: <text>' strings.",
+                            },
                         },
                         required: ["jobPath"],
                     },
@@ -382,19 +381,20 @@ class JenkinsServer {
         const ref = resolveRef({ input: args.jobPath, buildOverride: args.buildNumber, nodeOverride: args.nodeId });
         const build = ref.buildNumber ?? "lastBuild";
         const result = await fetchLog(this.client, ref.jobPath, build, { nodeId: ref.nodeId });
-        const preview = await readLogPreview(result.path, {
-            tail: args.tail ?? 20,
-            head: args.head,
-            grep: args.grep,
-        });
-        return this.text({
+
+        const base = {
             path: result.path,
             sizeBytes: result.sizeBytes,
             lineCount: result.lineCount,
             nodeStatus: result.nodeStatus,
             truncated: result.truncated,
-            preview,
-        });
+        };
+
+        if (args.grep) {
+            return this.text({ ...base, matches: grepLog(result.content, args.grep) });
+        }
+
+        return this.text(base);
     }
 
     private async listJobs(args: ListJobsArgs) {

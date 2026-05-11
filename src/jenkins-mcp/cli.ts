@@ -5,7 +5,7 @@ import type { AxiosInstance } from "axios";
 import { Command } from "commander";
 import { createClient, type JenkinsAuth, readEnvAuth } from "./lib/client";
 import { formatStageLine } from "./lib/format";
-import { fetchLog, readLogPreview } from "./lib/log";
+import { fetchLog, grepLog } from "./lib/log";
 import { exitCodeFor, runMonitor } from "./lib/monitor";
 import { MonitorNotifier } from "./lib/notify";
 import { getStages } from "./lib/pipeline";
@@ -98,24 +98,25 @@ export async function runCli(argv: string[]): Promise<void> {
                         r.nodeStatus ? `, status=${r.nodeStatus}` : ""
                     }${r.truncated ? ", TRUNCATED" : ""})`
                 );
-                const preview = await readLogPreview(r.path, {
-                    tail: opts.tail,
-                    head: opts.head,
-                    grep: opts.grep,
-                });
+
+                const lines = r.content.split("\n");
 
                 if (opts.head !== undefined) {
-                    console.log(`--- head (${preview.first.length}) ---`);
-                    console.log(preview.first.join("\n"));
+                    const first = lines.slice(0, opts.head);
+                    console.log(`--- head (${first.length}) ---`);
+                    console.log(first.join("\n"));
                 }
 
                 if (opts.grep) {
-                    console.log(`--- grep (${preview.grepMatches?.length ?? 0} matches) ---`);
-                    console.log(preview.grepMatches?.map((m) => `${m.line}: ${m.text}`).join("\n") ?? "");
+                    const matches = grepLog(r.content, opts.grep);
+                    console.log(`--- grep (${matches.length} matches) ---`);
+                    console.log(matches.join("\n"));
                 }
 
-                console.log(`--- tail (${preview.last.length}) ---`);
-                console.log(preview.last.join("\n"));
+                const tailN = opts.tail ?? 20;
+                const last = lines.slice(-tailN);
+                console.log(`--- tail (${last.length}) ---`);
+                console.log(last.join("\n"));
             }
         );
 

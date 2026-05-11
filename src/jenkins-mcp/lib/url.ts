@@ -34,10 +34,7 @@ export function parseJenkinsInput(input: string): JenkinsRef {
 
     for (let i = 0; i < segments.length; i++) {
         const isViewFilter =
-            segments[i] === "view" &&
-            !!segments[i + 1] &&
-            segments[i - 1] !== "job" &&
-            segments[i + 2] === "job";
+            segments[i] === "view" && !!segments[i + 1] && segments[i - 1] !== "job" && segments[i + 2] === "job";
 
         if (isViewFilter) {
             i++;

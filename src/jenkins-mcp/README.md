@@ -37,7 +37,7 @@ Without args (no CLI subcommand), the binary launches as a stdio MCP server — 
 | Subcommand | Flags | Behavior |
 |---|---|---|
 | `stages <input>` | `--build`, `--expand` | Stage tree (`wfapi/describe`). `--expand` drills into parallel branches. |
-| `log <input>` | `--build`, `--node`, `--tail`, `--head`, `--grep` | Save full log to `/tmp/jenkins-mcp/<slug>-<build>[-node<id>].log` after stripping HTML timestamp wrappers. Print path + preview. |
+| `log <input>` | `--build`, `--node`, `--tail`, `--head`, `--grep` | Save full log to `/tmp/jenkins-mcp/<slug>-<build>[-node<id>].log` after stripping HTML timestamp wrappers. Print path + head/grep/tail per the flags (default: tail 20). |
 | `info <input>` | `--build` | Build params, causes (who/what triggered), agent, executor, estimated duration. |
 | `changes <input>` | `--build` | SCM changeSet (commits/authors) + trigger causes. |
 | `jobs` | `--folder`, `--limit` | List jobs in a folder. |
@@ -82,7 +82,7 @@ Process exits with the result mapped to a code:
 |---|---|
 | `get_build_status` | `building` / `result` / `timestamp` / `duration` / `url` |
 | `trigger_build` | POST `/build` or `/buildWithParameters` |
-| `get_build_log` | **Saves to `/tmp/jenkins-mcp/`**, returns `{path, sizeBytes, lineCount, nodeStatus?, truncated, preview: {first, last, grepMatches?}}`. Pass `nodeId` for a single-node log. |
+| `get_build_log` | **Saves to `/tmp/jenkins-mcp/`**, returns `{path, sizeBytes, lineCount, nodeStatus?, truncated}` — bytes never enter the response. Pass `grep` to also get `matches: string[]` formatted `"L<n>: <text>"` (caps at 200). Pass `nodeId` for a single-node log. |
 | `list_jobs` | Folder listing. Supports `limit`. |
 | `get_build_history` | Last N builds (`limit`, default 10). |
 | `stop_build` | POST `/<build>/stop` |
