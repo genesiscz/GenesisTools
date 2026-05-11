@@ -58,6 +58,22 @@ export function parseJenkinsInput(input: string): JenkinsRef {
     return { jobPath, buildNumber, nodeId };
 }
 
+export interface ResolveRefOpts {
+    input: string;
+    buildOverride?: string;
+    nodeOverride?: string;
+}
+
+/** Parse `input` then apply optional explicit overrides (which win over URL-derived values). */
+export function resolveRef(opts: ResolveRefOpts): JenkinsRef {
+    const ref = parseJenkinsInput(opts.input);
+    return {
+        jobPath: ref.jobPath,
+        buildNumber: opts.buildOverride ?? ref.buildNumber,
+        nodeId: opts.nodeOverride ?? ref.nodeId,
+    };
+}
+
 /** Inverse: produce a build URL given a Jenkins base URL and a ref. */
 export function buildUrl(base: string, ref: JenkinsRef): string {
     const baseTrim = base.replace(/\/+$/, "");

@@ -1,34 +1,41 @@
 import { enhanceHelp } from "@app/utils/cli";
+import { parseDuration as parseDurationUtil } from "@app/utils/format";
 import { SafeJSON } from "@app/utils/json";
+import type { AxiosInstance } from "axios";
 import { Command } from "commander";
-import { createClient, readEnvAuth } from "./lib/client";
+import { createClient, type JenkinsAuth, readEnvAuth } from "./lib/client";
 import { formatStageLine } from "./lib/format";
 import { fetchLog, readLogPreview } from "./lib/log";
 import { exitCodeFor, runMonitor } from "./lib/monitor";
 import { MonitorNotifier } from "./lib/notify";
-import { type FlowNode, getStages, type Stage } from "./lib/pipeline";
-import { parseJenkinsInput } from "./lib/url";
+import { getStages } from "./lib/pipeline";
+import { resolveRef } from "./lib/url";
 
-function resolveRef(input: string, buildFlag?: string, nodeFlag?: string) {
-    const ref = parseJenkinsInput(input);
-    return {
-        jobPath: ref.jobPath,
-        buildNumber: buildFlag ?? ref.buildNumber,
-        nodeId: nodeFlag ?? ref.nodeId,
-    };
+let cachedAuth: JenkinsAuth | null = null;
+let cachedClient: AxiosInstance | null = null;
+
+function loadClient(): AxiosInstance {
+    if (!cachedClient) {
+        cachedAuth ??= readEnvAuth();
+        cachedClient = createClient(cachedAuth);
+    }
+
+    return cachedClient;
+}
+
+function loadAuth(): JenkinsAuth {
+    cachedAuth ??= readEnvAuth();
+    return cachedAuth;
 }
 
 function parseDuration(s: string): number {
-    const m = s.match(/^(\d+)\s*(s|m|h)?$/);
+    const ms = parseDurationUtil(s);
 
-    if (!m) {
-        throw new Error(`Bad duration: ${s} (expected like 30s, 10m, 2h)`);
+    if (ms === 0 && s.trim() !== "0") {
+        throw new Error(`Bad duration: ${s} (expected like 30s, 10m, 2h, or 1h30m)`);
     }
 
-    const n = Number.parseInt(m[1], 10);
-    const unit = (m[2] ?? "s") as "s" | "m" | "h";
-    const mult = { s: 1000, m: 60_000, h: 3_600_000 }[unit];
-    return n * mult;
+    return ms;
 }
 
 export async function runCli(argv: string[]): Promise<void> {
@@ -42,22 +49,22 @@ export async function runCli(argv: string[]): Promise<void> {
         .option("--build <n>", "Build number (or use URL with /<build>/)")
         .option("--expand", "Show parallel branches inside each stage")
         .action(async (input: string, opts: { build?: string; expand?: boolean }) => {
-            const ref = resolveRef(input, opts.build);
+            const ref = resolveRef({ input, buildOverride: opts.build });
 
             if (!ref.buildNumber) {
                 throw new Error("Need --build or URL with build number");
             }
 
-            const snap = await getStages(createClient(readEnvAuth()), ref.jobPath, ref.buildNumber, {
+            const snap = await getStages(loadClient(), ref.jobPath, ref.buildNumber, {
                 expand: opts.expand,
             });
             console.log(`Build ${ref.buildNumber} — ${snap.status}`);
 
-            for (const stage of snap.stages as Stage[]) {
+            for (const stage of snap.stages) {
                 console.log(`  ${formatStageLine(stage)}`);
 
                 if (opts.expand) {
-                    for (const branch of (stage.stageFlowNodes ?? []) as FlowNode[]) {
+                    for (const branch of stage.stageFlowNodes ?? []) {
                         console.log(`    ├ ${formatStageLine(branch)}`);
                     }
                 }
@@ -77,13 +84,13 @@ export async function runCli(argv: string[]): Promise<void> {
                 input: string,
                 opts: { build?: string; node?: string; tail?: number; head?: number; grep?: string }
             ) => {
-                const ref = resolveRef(input, opts.build, opts.node);
+                const ref = resolveRef({ input, buildOverride: opts.build, nodeOverride: opts.node });
 
                 if (!ref.buildNumber) {
                     throw new Error("Need --build or URL with build number");
                 }
 
-                const r = await fetchLog(createClient(readEnvAuth()), ref.jobPath, ref.buildNumber, {
+                const r = await fetchLog(loadClient(), ref.jobPath, ref.buildNumber, {
                     nodeId: ref.nodeId,
                 });
                 console.log(
@@ -117,10 +124,10 @@ export async function runCli(argv: string[]): Promise<void> {
         .description("Build summary: status + params + causes + agent")
         .option("--build <n>", "Build number")
         .action(async (input: string, opts: { build?: string }) => {
-            const ref = resolveRef(input, opts.build);
+            const ref = resolveRef({ input, buildOverride: opts.build });
             const tree =
                 "number,result,building,duration,timestamp,builtOn,estimatedDuration,executor[*],actions[parameters[name,value],causes[shortDescription,userId]]";
-            const res = await createClient(readEnvAuth()).get(
+            const res = await loadClient().get(
                 `/${ref.jobPath}/${ref.buildNumber ?? "lastBuild"}/api/json?tree=${tree}`
             );
             console.log(SafeJSON.stringify(res.data, null, 2));
@@ -131,10 +138,10 @@ export async function runCli(argv: string[]): Promise<void> {
         .description("Commits + trigger causes for a build")
         .option("--build <n>", "Build number")
         .action(async (input: string, opts: { build?: string }) => {
-            const ref = resolveRef(input, opts.build);
+            const ref = resolveRef({ input, buildOverride: opts.build });
             const tree =
                 "changeSet[items[commitId,author[fullName],msg,timestamp]],actions[causes[shortDescription,userId]]";
-            const res = await createClient(readEnvAuth()).get(
+            const res = await loadClient().get(
                 `/${ref.jobPath}/${ref.buildNumber ?? "lastBuild"}/api/json?tree=${tree}`
             );
             console.log(SafeJSON.stringify(res.data, null, 2));
@@ -147,7 +154,7 @@ export async function runCli(argv: string[]): Promise<void> {
         .option("--limit <n>", "Max jobs to print", (v) => Number.parseInt(v, 10))
         .action(async (opts: { folder?: string; limit?: number }) => {
             const path = opts.folder ? `/${opts.folder}/api/json` : "/api/json";
-            const res = await createClient(readEnvAuth()).get(path);
+            const res = await loadClient().get(path);
             const all = (res.data.jobs ?? []) as Array<{ name: string; color: string; url: string }>;
             const limited = opts.limit !== undefined ? all.slice(0, opts.limit) : all;
 
@@ -175,22 +182,19 @@ export async function runCli(argv: string[]): Promise<void> {
                     quiet?: boolean;
                 }
             ) => {
-                const ref = resolveRef(input, opts.build);
-                const auth = readEnvAuth();
-                const client = createClient(auth);
+                const ref = resolveRef({ input, buildOverride: opts.build });
                 const notifier = opts.notify === false ? undefined : new MonitorNotifier();
                 const out = opts.quiet ? () => {} : (line: string) => process.stdout.write(line);
                 const result = await runMonitor({
-                    client,
+                    client: loadClient(),
                     jobPath: ref.jobPath,
                     build: ref.buildNumber!,
-                    baseUrl: auth.url,
+                    baseUrl: loadAuth().url,
                     timeoutMs: parseDuration(opts.timeout),
                     pollMs: parseDuration(opts.poll),
                     notifier,
                     out,
                 });
-                notifier?.close();
                 process.exit(exitCodeFor(result.result, result.timedOut));
             }
         );

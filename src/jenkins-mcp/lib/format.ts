@@ -3,7 +3,7 @@ import type { FlowNode, Stage, StageStatus } from "./pipeline";
 
 export { formatDuration };
 
-export function slugify(jobPath: string): string {
+export function slugifyJobPath(jobPath: string): string {
     return jobPath
         .replace(/^\/+/, "")
         .replace(/\/+$/, "")

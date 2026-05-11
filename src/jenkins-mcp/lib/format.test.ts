@@ -1,17 +1,17 @@
 import { describe, expect, it } from "bun:test";
-import { formatStageLine, slugify, stageNotifyBody, statusBody, statusIcon } from "./format";
+import { formatStageLine, slugifyJobPath, stageNotifyBody, statusBody, statusIcon } from "./format";
 
-describe("slugify", () => {
+describe("slugifyJobPath", () => {
     it("collapses job/ segments to dashes", () => {
-        expect(slugify("job/Org/job/Project/job/Team/job/web-build")).toBe("Org-Project-Team-web-build");
+        expect(slugifyJobPath("job/Org/job/Project/job/Team/job/web-build")).toBe("Org-Project-Team-web-build");
     });
 
     it("handles already-clean input", () => {
-        expect(slugify("foo")).toBe("foo");
+        expect(slugifyJobPath("foo")).toBe("foo");
     });
 
     it("strips leading/trailing slashes", () => {
-        expect(slugify("/job/X/")).toBe("X");
+        expect(slugifyJobPath("/job/X/")).toBe("X");
     });
 });
 

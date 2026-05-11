@@ -9,23 +9,8 @@ import { createClient, readEnvAuth } from "./lib/client";
 import { extractErrors } from "./lib/errors";
 import { formatDuration, formatStageLine, statusBody } from "./lib/format";
 import { fetchLog, readLogPreview } from "./lib/log";
-import { findFailingLeaf, getStages } from "./lib/pipeline";
-import { parseJenkinsInput } from "./lib/url";
-
-interface ResolveResult {
-    jobPath: string;
-    buildNumber?: string;
-    nodeId?: string;
-}
-
-function resolveRef(input: string, buildOverride?: string, nodeOverride?: string): ResolveResult {
-    const ref = parseJenkinsInput(input);
-    return {
-        jobPath: ref.jobPath,
-        buildNumber: buildOverride ?? ref.buildNumber,
-        nodeId: nodeOverride ?? ref.nodeId,
-    };
-}
+import { type BuildMeta, findFailingLeaf, flattenBuildMeta, getStages } from "./lib/pipeline";
+import { resolveRef } from "./lib/url";
 
 const JOB_PATH_DESC =
     'Jenkins job path (e.g. "job/X/job/Y") or full Jenkins URL — build number and selected-node are auto-extracted from the URL.';
@@ -57,6 +42,8 @@ interface ListJobsArgs {
 interface GetBuildHistoryArgs {
     jobPath: string;
     limit?: number;
+    /** When true (default), include displayName, causes, parameters, branch, SCM revision, estimatedDuration. */
+    expand?: boolean;
 }
 
 interface StopBuildArgs {
@@ -174,12 +161,18 @@ class JenkinsServer {
                 },
                 {
                     name: "get_build_history",
-                    description: "Get build history for a Jenkins job",
+                    description:
+                        "Get build history for a Jenkins job. With expand=true (default), each entry also has displayName, causes (who/what triggered), parameters, branch, SCM revision, and estimatedDuration.",
                     inputSchema: {
                         type: "object",
                         properties: {
                             jobPath: { type: "string", description: JOB_PATH_DESC },
                             limit: { type: "number", description: "Number of recent builds (default 10)" },
+                            expand: {
+                                type: "boolean",
+                                description:
+                                    "Include richer per-build fields (default true). Pass false for a minimal status-only listing.",
+                            },
                         },
                         required: ["jobPath"],
                     },
@@ -351,7 +344,7 @@ class JenkinsServer {
     }
 
     private async getBuildStatus(args: GetBuildStatusArgs) {
-        const ref = resolveRef(args.jobPath, args.buildNumber);
+        const ref = resolveRef({ input: args.jobPath, buildOverride: args.buildNumber });
         const build = ref.buildNumber ?? "lastBuild";
         const res = await this.client.get(`/${ref.jobPath}/${build}/api/json`);
 
@@ -369,7 +362,7 @@ class JenkinsServer {
     }
 
     private async triggerBuild(args: TriggerBuildArgs) {
-        const ref = resolveRef(args.jobPath);
+        const ref = resolveRef({ input: args.jobPath });
         const params = new URLSearchParams();
 
         if (args.parameters) {
@@ -384,7 +377,7 @@ class JenkinsServer {
     }
 
     private async getBuildLog(args: GetBuildLogArgs) {
-        const ref = resolveRef(args.jobPath, args.buildNumber, args.nodeId);
+        const ref = resolveRef({ input: args.jobPath, buildOverride: args.buildNumber, nodeOverride: args.nodeId });
         const build = ref.buildNumber ?? "lastBuild";
         const result = await fetchLog(this.client, ref.jobPath, build, { nodeId: ref.nodeId });
         const preview = await readLogPreview(result.path, {
@@ -431,9 +424,14 @@ class JenkinsServer {
     }
 
     private async getBuildHistory(args: GetBuildHistoryArgs) {
-        const ref = resolveRef(args.jobPath);
+        const ref = resolveRef({ input: args.jobPath });
         const limit = args.limit ?? 10;
-        const treeQuery = `builds[number,result,timestamp,duration,building,url]{0,${limit}}`;
+        const expand = args.expand ?? true;
+        const baseFields = "number,result,timestamp,duration,building,url";
+        const expandedFields = expand
+            ? `,displayName,estimatedDuration,actions[causes[shortDescription,upstreamProject,upstreamBuild],parameters[name,value],lastBuiltRevision[branch[name,SHA1]],remoteUrls]`
+            : "";
+        const treeQuery = `builds[${baseFields}${expandedFields}]{0,${limit}}`;
         const res = await this.client.get(`/${ref.jobPath}/api/json?tree=${treeQuery}`);
         const builds = (res.data.builds ?? []) as Array<{
             number: number;
@@ -442,21 +440,38 @@ class JenkinsServer {
             duration: number;
             building: boolean;
             url: string;
+            displayName?: string;
+            estimatedDuration?: number;
+            actions?: unknown[];
         }>;
-        const buildHistory = builds.map((b) => ({
-            number: b.number,
-            result: b.result,
-            timestamp: b.timestamp,
-            duration: b.duration,
-            building: b.building,
-            url: b.url,
-            date: new Date(b.timestamp).toISOString(),
-        }));
+        const buildHistory = builds.map((b) => {
+            const base = {
+                number: b.number,
+                result: b.result,
+                timestamp: b.timestamp,
+                duration: b.duration,
+                building: b.building,
+                url: b.url,
+                date: new Date(b.timestamp).toISOString(),
+            };
+
+            if (!expand) {
+                return base;
+            }
+
+            const meta = flattenBuildMeta(b.actions);
+            return {
+                ...base,
+                displayName: b.displayName,
+                estimatedDuration: b.estimatedDuration,
+                ...meta,
+            };
+        });
         return this.text({ jobPath: ref.jobPath, totalBuilds: buildHistory.length, builds: buildHistory });
     }
 
     private async stopBuild(args: StopBuildArgs) {
-        const ref = resolveRef(args.jobPath, args.buildNumber);
+        const ref = resolveRef({ input: args.jobPath, buildOverride: args.buildNumber });
 
         if (!ref.buildNumber) {
             throw new Error("buildNumber required");
@@ -489,7 +504,7 @@ class JenkinsServer {
     }
 
     private async getJobConfig(args: GetJobConfigArgs) {
-        const ref = resolveRef(args.jobPath);
+        const ref = resolveRef({ input: args.jobPath });
         const res = await this.client.get(`/${ref.jobPath}/api/json`);
         const info = res.data;
         return this.text({
@@ -517,7 +532,7 @@ class JenkinsServer {
     }
 
     private async getPipelineStages(args: GetPipelineStagesArgs) {
-        const ref = resolveRef(args.jobPath, args.buildNumber);
+        const ref = resolveRef({ input: args.jobPath, buildOverride: args.buildNumber });
 
         if (!ref.buildNumber) {
             throw new Error("buildNumber required (pass as arg or include in URL)");
@@ -528,7 +543,7 @@ class JenkinsServer {
     }
 
     private async getFailingNode(args: BuildRefArgs) {
-        const ref = resolveRef(args.jobPath, args.buildNumber);
+        const ref = resolveRef({ input: args.jobPath, buildOverride: args.buildNumber });
 
         if (!ref.buildNumber) {
             throw new Error("buildNumber required");
@@ -549,8 +564,7 @@ class JenkinsServer {
 
         const nodeId = failing.node?.id ?? failing.stage.id;
         const log = await fetchLog(this.client, ref.jobPath, ref.buildNumber, { nodeId });
-        const text = await Bun.file(log.path).text();
-        const errors = extractErrors(text);
+        const errors = extractErrors(log.content);
 
         return this.text({
             stage: { id: failing.stage.id, name: failing.stage.name, status: failing.stage.status },
@@ -565,16 +579,41 @@ class JenkinsServer {
     }
 
     private async getBuildInfo(args: BuildRefArgs) {
-        const ref = resolveRef(args.jobPath, args.buildNumber);
+        const ref = resolveRef({ input: args.jobPath, buildOverride: args.buildNumber });
         const build = ref.buildNumber ?? "lastBuild";
         const tree =
-            "number,result,building,duration,timestamp,builtOn,estimatedDuration,executor[*],actions[parameters[name,value],causes[shortDescription,userId,upstreamProject,upstreamBuild]]";
+            "number,result,building,duration,timestamp,builtOn,displayName,estimatedDuration,executor[*],actions[parameters[name,value],causes[shortDescription,userId,upstreamProject,upstreamBuild],lastBuiltRevision[branch[name,SHA1]],remoteUrls]";
         const res = await this.client.get(`/${ref.jobPath}/${build}/api/json?tree=${tree}`);
-        return this.text(res.data);
+        const data = res.data as {
+            number: number;
+            result: string | null;
+            building: boolean;
+            duration: number;
+            timestamp: number;
+            builtOn?: string;
+            displayName?: string;
+            estimatedDuration?: number;
+            executor?: unknown;
+            actions?: unknown[];
+        };
+        const meta: BuildMeta = flattenBuildMeta(data.actions);
+        return this.text({
+            number: data.number,
+            result: data.result,
+            building: data.building,
+            duration: data.duration,
+            timestamp: data.timestamp,
+            date: new Date(data.timestamp).toISOString(),
+            builtOn: data.builtOn,
+            displayName: data.displayName,
+            estimatedDuration: data.estimatedDuration,
+            executor: data.executor,
+            ...meta,
+        });
     }
 
     private async getBuildChanges(args: BuildRefArgs) {
-        const ref = resolveRef(args.jobPath, args.buildNumber);
+        const ref = resolveRef({ input: args.jobPath, buildOverride: args.buildNumber });
         const build = ref.buildNumber ?? "lastBuild";
         const tree =
             "changeSet[items[commitId,author[fullName],msg,timestamp,affectedPaths]],actions[causes[shortDescription,userId,upstreamProject,upstreamBuild]]";
@@ -592,7 +631,7 @@ class JenkinsServer {
     }
 
     private async waitForBuild(args: BuildRefArgs) {
-        const ref = resolveRef(args.jobPath, args.buildNumber);
+        const ref = resolveRef({ input: args.jobPath, buildOverride: args.buildNumber });
 
         if (!ref.buildNumber) {
             return this.text(

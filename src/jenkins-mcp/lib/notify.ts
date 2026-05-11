@@ -7,7 +7,7 @@ export interface SendOpts {
     sound?: string;
     /** Stable per-build id so notifications collapse instead of stacking. */
     group: string;
-    /** URL opened on click — baked into the notification at OS level via terminal-notifier `-execute`. */
+    /** URL opened on click — baked into the notification at OS level. */
     openUrl?: string;
 }
 
@@ -17,25 +17,19 @@ export interface SendOpts {
  * action into the notification at OS level so clicks fire reliably even
  * after the monitor process exits.
  *
- * Falls through gracefully if terminal-notifier is missing (handled by
- * sendNotification's backend chain).
+ * Falls through gracefully if terminal-notifier is missing (sendNotification
+ * has its own backend chain).
  */
 export class MonitorNotifier {
     async send(opts: SendOpts): Promise<void> {
-        const execute = opts.openUrl ? `open "${opts.openUrl.replace(/"/g, '\\"')}"` : undefined;
-
         await sendNotification({
             title: opts.title,
             subtitle: opts.subtitle,
             message: opts.body,
             sound: opts.sound,
             group: opts.group,
-            execute,
+            open: opts.openUrl,
             preferred: NotificationBackend.TerminalNotifier,
         });
-    }
-
-    close(): void {
-        // No listener to unsubscribe — clicks are baked into the notification.
     }
 }

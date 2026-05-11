@@ -2,7 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import logger from "@app/logger";
 import type { AxiosInstance } from "axios";
-import { slugify } from "./format";
+import { slugifyJobPath } from "./format";
 
 const TMP_DIR = "/tmp/jenkins-mcp";
 const MAX_BYTES = 50 * 1024 * 1024;
@@ -24,6 +24,8 @@ export interface LogFetchOpts {
 
 export interface LogResult {
     path: string;
+    /** Cleaned (HTML-stripped) log content — same bytes as written to `path`. */
+    content: string;
     sizeBytes: number;
     lineCount: number;
     nodeStatus?: string;
@@ -59,7 +61,7 @@ export async function fetchLog(
     const maxBytes = opts.maxBytes ?? MAX_BYTES;
     await mkdir(TMP_DIR, { recursive: true });
 
-    const slug = slugify(jobPath);
+    const slug = slugifyJobPath(jobPath);
     const file = opts.nodeId
         ? join(TMP_DIR, `${slug}-${buildNumber}-node${opts.nodeId}.log`)
         : join(TMP_DIR, `${slug}-${buildNumber}.log`);
@@ -69,6 +71,7 @@ export async function fetchLog(
 
     if (opts.nodeId) {
         const chunks: string[] = [];
+        let totalSoFar = 0;
         let start = 0;
 
         for (;;) {
@@ -87,13 +90,15 @@ export async function fetchLog(
             const body = res.data as NodeLogResponse;
             const text = body.text ?? "";
             chunks.push(text);
+            totalSoFar += text.length;
             nodeStatus = body.nodeStatus;
-            const totalSoFar = chunks.reduce((sum, c) => sum + c.length, 0);
 
             if (!body.hasMore || totalSoFar >= maxBytes) {
                 break;
             }
 
+            // Jenkins's `length` field is the server-side cursor (cumulative bytes emitted),
+            // which is exactly what to pass back as `start` next round.
             start = body.length ?? totalSoFar;
         }
 
@@ -118,13 +123,13 @@ export async function fetchLog(
     }
 
     const truncated = raw.length >= maxBytes;
-    const clean = stripJenkinsHtml(raw);
-    await writeFile(file, clean, "utf8");
+    const content = stripJenkinsHtml(raw);
+    await writeFile(file, content, "utf8");
 
-    const lineCount = clean === "" ? 0 : clean.split("\n").length - (clean.endsWith("\n") ? 1 : 0);
-    logger.debug(`Wrote Jenkins log to ${file} (${clean.length}B, ${lineCount} lines)`);
+    const lineCount = content === "" ? 0 : content.split("\n").length - (content.endsWith("\n") ? 1 : 0);
+    logger.debug(`Wrote Jenkins log to ${file} (${content.length}B, ${lineCount} lines)`);
 
-    return { path: file, sizeBytes: clean.length, lineCount, nodeStatus, truncated };
+    return { path: file, content, sizeBytes: content.length, lineCount, nodeStatus, truncated };
 }
 
 export async function readLogPreview(filePath: string, opts: LogFilterOpts = {}): Promise<LogPreview> {

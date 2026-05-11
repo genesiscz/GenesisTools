@@ -63,18 +63,22 @@ export interface MonitorResult {
     timedOut: boolean;
 }
 
-const TERMINAL: RunStatus[] = ["SUCCESS", "FAILED", "UNSTABLE", "ABORTED", "NOT_EXECUTED"];
+const TERMINAL_STAGE: StageStatus[] = ["SUCCESS", "FAILED", "UNSTABLE", "ABORTED", "NOT_EXECUTED"];
+
+function isTerminalRun(status: RunStatus): boolean {
+    return status !== "IN_PROGRESS" && status !== "PAUSED_PENDING_INPUT" && status !== "QUEUED";
+}
 
 export async function runMonitor(opts: MonitorOpts): Promise<MonitorResult> {
     const { client, jobPath, build, baseUrl, timeoutMs, pollMs, notifier, out } = opts;
     const group = `jenkins-${jobPath.replace(/\//g, "_")}-${build}`;
     const baseRef = { jobPath, buildNumber: build };
     const buildHref = buildUrl(baseUrl, baseRef);
-    const ts0 = new Date().toISOString();
+    const titleBase = `${jobPath.split("/").pop()} #${build}`;
+    const ctx: NotifyContext = { notifier, group, titleBase };
 
-    emit(out, { event: "start", ts: ts0, jobPath, build, url: buildHref });
+    emit(out, { event: "start", ts: new Date().toISOString(), jobPath, build, url: buildHref });
 
-    let firstPoll = true;
     const seenStages = new Map<string, StageStatus>();
     const seenBranches = new Map<string, StageStatus>();
     const reportedErrors = new Set<string>();
@@ -91,75 +95,49 @@ export async function runMonitor(opts: MonitorOpts): Promise<MonitorResult> {
             continue;
         }
 
-        if (firstPoll) {
-            const completed = snap.stages.filter((s) => TERMINAL.includes(s.status as RunStatus));
+        const isFirstPoll = seenStages.size === 0;
 
-            if (completed.length > 0) {
+        if (isFirstPoll) {
+            seedSnapshotState(snap, seenStages, seenBranches, out);
+        }
+
+        for (const stage of snap.stages) {
+            const lastStage = seenStages.get(stage.id);
+            const stageUrl = buildUrl(baseUrl, { ...baseRef, nodeId: stage.id });
+
+            if (lastStage !== stage.status) {
+                seenStages.set(stage.id, stage.status);
                 emit(out, {
-                    event: "snapshot",
+                    event: "stage",
                     ts: new Date().toISOString(),
-                    stages: completed.map((s) => ({
-                        id: s.id,
-                        name: s.name,
-                        status: s.status,
-                        durationMillis: s.durationMillis,
-                    })),
+                    id: stage.id,
+                    name: stage.name,
+                    status: stage.status,
+                    durationMillis: stage.durationMillis,
+                    url: stageUrl,
                 });
 
-                for (const s of completed) {
-                    seenStages.set(s.id, s.status);
+                if (!isFirstPoll && stage.status !== "IN_PROGRESS") {
+                    const isDispatch = isMultibranchDispatch(stage);
+                    notifyTransition(ctx, {
+                        subtitle: isDispatch ? `${stage.name} · orchestration` : stage.name,
+                        body: stageNotifyBody(stage),
+                        sound: stage.status === "FAILED" ? "Basso" : undefined,
+                        openUrl: stageUrl,
+                    });
+                }
 
-                    for (const b of s.stageFlowNodes ?? []) {
-                        seenBranches.set(`${s.id}.${b.id}`, b.status);
-                    }
+                if (stage.status === "FAILED" && !reportedErrors.has(stage.id)) {
+                    reportedErrors.add(stage.id);
+                    await emitErrorsForStage(opts, stage);
                 }
             }
-        }
 
-        for (const stage of snap.stages) {
-            const last = seenStages.get(stage.id);
-
-            if (last === stage.status) {
-                continue;
-            }
-
-            seenStages.set(stage.id, stage.status);
-
-            const stageUrl = buildUrl(baseUrl, { ...baseRef, nodeId: stage.id });
-            emit(out, {
-                event: "stage",
-                ts: new Date().toISOString(),
-                id: stage.id,
-                name: stage.name,
-                status: stage.status,
-                durationMillis: stage.durationMillis,
-                url: stageUrl,
-            });
-
-            if (!firstPoll && stage.status !== "IN_PROGRESS") {
-                const isDispatch = isMultibranchDispatch(stage);
-                await notifier?.send({
-                    title: `${jobPath.split("/").pop()} #${build}`,
-                    subtitle: isDispatch ? `${stage.name} · orchestration` : stage.name,
-                    body: stageNotifyBody(stage),
-                    sound: stage.status === "FAILED" ? "Basso" : undefined,
-                    group,
-                    openUrl: stageUrl,
-                });
-            }
-
-            if (stage.status === "FAILED" && !reportedErrors.has(stage.id)) {
-                reportedErrors.add(stage.id);
-                await emitErrorsForStage(opts, stage);
-            }
-        }
-
-        for (const stage of snap.stages) {
             for (const branch of stage.stageFlowNodes ?? []) {
                 const key = `${stage.id}.${branch.id}`;
-                const last = seenBranches.get(key);
+                const lastBranch = seenBranches.get(key);
 
-                if (last === branch.status) {
+                if (lastBranch === branch.status) {
                     continue;
                 }
 
@@ -177,41 +155,37 @@ export async function runMonitor(opts: MonitorOpts): Promise<MonitorResult> {
                     url: branchUrl,
                 });
 
-                // Fire a notification for child-build branches (multibranch dispatch).
-                // Other branches (Shell Script, Check out, Error signal, ...) are sub-steps
-                // that would spam.
-                if (!firstPoll && branch.name.startsWith("Building ") && branch.status !== "IN_PROGRESS") {
-                    await notifier?.send({
-                        title: `${jobPath.split("/").pop()} #${build}`,
+                if (
+                    !isFirstPoll &&
+                    branch.name.startsWith("Building ") &&
+                    branch.status !== "IN_PROGRESS"
+                ) {
+                    notifyTransition(ctx, {
                         subtitle: `${stage.name} · ${shortBranchName(branch.name)} · build`,
                         body: stageNotifyBody(branch),
                         sound: branch.status === "FAILED" ? "Basso" : undefined,
-                        group,
                         openUrl: branchUrl,
                     });
                 }
             }
         }
 
-        if (TERMINAL.includes(snap.status as RunStatus)) {
+        if (isTerminalRun(snap.status)) {
             emit(out, {
                 event: "end",
                 ts: new Date().toISOString(),
                 result: snap.status,
                 durationMillis: snap.durationMillis,
             });
-            await notifier?.send({
-                title: `${jobPath.split("/").pop()} #${build}`,
+            notifyTransition(ctx, {
                 subtitle: "Build finished",
                 body: `${statusBody(snap.status)}  ${formatDuration(snap.durationMillis)}`,
                 sound: snap.status === "SUCCESS" ? "Glass" : "Basso",
-                group,
                 openUrl: buildHref,
             });
             return { result: snap.status, durationMs: snap.durationMillis, timedOut: false };
         }
 
-        firstPoll = false;
         await sleep(pollMs);
     }
 
@@ -222,6 +196,58 @@ export async function runMonitor(opts: MonitorOpts): Promise<MonitorResult> {
         durationMillis: timeoutMs,
     });
     return { result: "ABORTED", durationMs: timeoutMs, timedOut: true };
+}
+
+interface NotifyContext {
+    notifier: MonitorNotifier | undefined;
+    group: string;
+    titleBase: string;
+}
+
+function notifyTransition(
+    ctx: NotifyContext,
+    fields: { subtitle: string; body: string; sound?: string; openUrl: string }
+): void {
+    if (!ctx.notifier) {
+        return;
+    }
+
+    // Fire-and-forget — do not block the poll loop on notification I/O.
+    void ctx.notifier
+        .send({ title: ctx.titleBase, group: ctx.group, ...fields })
+        .catch((error) => logger.debug(`Notification send failed: ${error instanceof Error ? error.message : error}`));
+}
+
+function seedSnapshotState(
+    snap: PipelineSnapshot,
+    seenStages: Map<string, StageStatus>,
+    seenBranches: Map<string, StageStatus>,
+    out: (line: string) => void
+): void {
+    const completed = snap.stages.filter((s) => TERMINAL_STAGE.includes(s.status));
+
+    if (completed.length === 0) {
+        return;
+    }
+
+    emit(out, {
+        event: "snapshot",
+        ts: new Date().toISOString(),
+        stages: completed.map((s) => ({
+            id: s.id,
+            name: s.name,
+            status: s.status,
+            durationMillis: s.durationMillis,
+        })),
+    });
+
+    for (const stage of completed) {
+        seenStages.set(stage.id, stage.status);
+
+        for (const branch of stage.stageFlowNodes ?? []) {
+            seenBranches.set(`${stage.id}.${branch.id}`, branch.status);
+        }
+    }
 }
 
 /**
@@ -252,8 +278,7 @@ async function emitErrorsForStage(opts: MonitorOpts, stage: Stage): Promise<void
 
     try {
         const log = await fetchLog(opts.client, opts.jobPath, opts.build, { nodeId: failingFlow.id });
-        const text = await Bun.file(log.path).text();
-        blocks = extractErrors(text);
+        blocks = extractErrors(log.content);
     } catch (error) {
         logger.debug(
             `Error extraction failed for stage ${stage.id}: ${error instanceof Error ? error.message : error}`
