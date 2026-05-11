@@ -243,11 +243,7 @@ async function sendViaDarwinKit(opts: NotificationOptions): Promise<boolean> {
  * Always ends with osascript so a notification is always delivered.
  */
 function backendChain(preferred?: NotificationBackend): NotificationBackend[] {
-    const all = [
-        NotificationBackend.DarwinKit,
-        NotificationBackend.TerminalNotifier,
-        NotificationBackend.Osascript,
-    ];
+    const all = [NotificationBackend.DarwinKit, NotificationBackend.TerminalNotifier, NotificationBackend.Osascript];
 
     if (!preferred) {
         return all;
