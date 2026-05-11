@@ -191,25 +191,47 @@ export class MacCalendar {
         }
 
         const sources = await MacCalendar.getSources();
-        const icloudSource =
-            sources.find((s) => s.title.toLowerCase().includes("icloud")) ??
-            sources.find((s) => s.source_type === "calDAV");
-        const sourceId = icloudSource?.identifier ?? sources[0]?.identifier;
 
-        if (!sourceId) {
+        if (sources.length === 0) {
             throw new Error("No calendar source available");
         }
 
-        const dk = getDarwinKit();
-        const result = await dk.calendar.saveCalendar({
-            title: name,
-            source_identifier: sourceId,
-        });
+        const priority: SourceInfo["source_type"][] = ["local", "calDAV", "mobileMe", "exchange"];
+        const ordered = [
+            ...sources
+                .filter((s) => s.title.toLowerCase().includes("icloud"))
+                .filter((s) => priority.includes(s.source_type)),
+            ...priority.flatMap((type) =>
+                sources.filter((s) => s.source_type === type && !s.title.toLowerCase().includes("icloud"))
+            ),
+        ];
+        const candidates = ordered.length > 0 ? ordered : sources;
 
-        if (!result.success || !result.identifier) {
-            throw new Error(`Failed to create calendar "${name}": ${result.error ?? "unknown error"}`);
+        const dk = getDarwinKit();
+        const errors: string[] = [];
+
+        for (const source of candidates) {
+            const result = await dk.calendar.saveCalendar({
+                title: name,
+                source_identifier: source.identifier,
+            });
+
+            if (result.success && result.identifier) {
+                return result.identifier;
+            }
+
+            errors.push(`${source.title} (${source.source_type}): ${result.error ?? "unknown error"}`);
         }
 
-        return result.identifier;
+        const writable = allCalendars.find((c) => c.allows_content_modifications);
+
+        if (writable) {
+            return writable.identifier;
+        }
+
+        throw new Error(
+            `Failed to create calendar "${name}" in any source and no writable existing calendar available. Tried: ${errors.join("; ")}. ` +
+                `Hint: pass an existing calendar via calendarName, or grant Calendar write access in System Settings > Privacy & Security > Calendars.`
+        );
     }
 }
