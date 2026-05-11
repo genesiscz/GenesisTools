@@ -137,9 +137,10 @@ export async function runMonitor(opts: MonitorOpts): Promise<MonitorResult> {
             });
 
             if (!firstPoll && stage.status !== "IN_PROGRESS") {
+                const isDispatch = isMultibranchDispatch(stage);
                 await notifier?.send({
                     title: `${jobPath.split("/").pop()} #${build}`,
-                    subtitle: stage.name,
+                    subtitle: isDispatch ? `${stage.name} · orchestration` : stage.name,
                     body: stageNotifyBody(stage),
                     sound: stage.status === "FAILED" ? "Basso" : undefined,
                     group,
@@ -163,6 +164,7 @@ export async function runMonitor(opts: MonitorOpts): Promise<MonitorResult> {
                 }
 
                 seenBranches.set(key, branch.status);
+                const branchUrl = buildUrl(baseUrl, { ...baseRef, nodeId: branch.id });
                 emit(out, {
                     event: "branch",
                     ts: new Date().toISOString(),
@@ -172,8 +174,22 @@ export async function runMonitor(opts: MonitorOpts): Promise<MonitorResult> {
                     name: branch.name,
                     status: branch.status,
                     durationMillis: branch.durationMillis,
-                    url: buildUrl(baseUrl, { ...baseRef, nodeId: branch.id }),
+                    url: branchUrl,
                 });
+
+                // Fire a notification for child-build branches (multibranch dispatch).
+                // Other branches (Shell Script, Check out, Error signal, ...) are sub-steps
+                // that would spam.
+                if (!firstPoll && branch.name.startsWith("Building ") && branch.status !== "IN_PROGRESS") {
+                    await notifier?.send({
+                        title: `${jobPath.split("/").pop()} #${build}`,
+                        subtitle: `${stage.name} · ${shortBranchName(branch.name)} · build`,
+                        body: stageNotifyBody(branch),
+                        sound: branch.status === "FAILED" ? "Basso" : undefined,
+                        group,
+                        openUrl: branchUrl,
+                    });
+                }
             }
         }
 
@@ -206,6 +222,23 @@ export async function runMonitor(opts: MonitorOpts): Promise<MonitorResult> {
         durationMillis: timeoutMs,
     });
     return { result: "ABORTED", durationMs: timeoutMs, timedOut: true };
+}
+
+/**
+ * A stage is a multibranch "dispatch" if any of its branches is a child build
+ * named "Building XXX » ... » Build YYY". For these, the parent stage's duration
+ * reflects the orchestration step (often <100ms), not the actual child build —
+ * so we label such parent-stage notifications as "orchestration" and fire a
+ * separate notification when the child build branch transitions.
+ */
+function isMultibranchDispatch(stage: Stage): boolean {
+    return (stage.stageFlowNodes ?? []).some((n) => n.name.startsWith("Building "));
+}
+
+/** Trim "Building Org » Project » Team » Build COL Web" → "Build COL Web". */
+function shortBranchName(name: string): string {
+    const parts = name.split(" » ");
+    return parts[parts.length - 1] ?? name;
 }
 
 async function emitErrorsForStage(opts: MonitorOpts, stage: Stage): Promise<void> {
