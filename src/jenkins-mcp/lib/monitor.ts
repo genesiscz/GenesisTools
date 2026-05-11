@@ -2,7 +2,7 @@ import logger from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import type { AxiosInstance } from "axios";
 import { type ErrorBlock, extractErrors } from "./errors";
-import { formatDuration, statusBody } from "./format";
+import { formatDuration, stageNotifyBody, statusBody } from "./format";
 import { fetchLog } from "./log";
 import type { MonitorNotifier } from "./notify";
 import { getStages, type PipelineSnapshot, type RunStatus, type Stage, type StageStatus } from "./pipeline";
@@ -206,14 +206,6 @@ export async function runMonitor(opts: MonitorOpts): Promise<MonitorResult> {
         durationMillis: timeoutMs,
     });
     return { result: "ABORTED", durationMs: timeoutMs, timedOut: true };
-}
-
-function stageNotifyBody(stage: Stage): string {
-    if (stage.durationMillis !== undefined) {
-        return `${statusBody(stage.status)}  ${formatDuration(stage.durationMillis)}`;
-    }
-
-    return statusBody(stage.status);
 }
 
 async function emitErrorsForStage(opts: MonitorOpts, stage: Stage): Promise<void> {

@@ -31,7 +31,10 @@ export function createClient(auth: JenkinsAuth): AxiosInstance {
         baseURL: auth.url,
         auth: { username: auth.user, password: auth.token },
         timeout: 30_000,
-        validateStatus: () => true,
+        // Throw on 5xx so the retry interceptor (which fires on AxiosError) kicks in.
+        // Let 4xx through so handlers can branch on res.status === 404 (e.g. for builds
+        // pruned by Jenkins retention, missing node IDs, etc).
+        validateStatus: (status) => status < 500,
     });
 
     instance.interceptors.response.use(undefined, async (error) => {

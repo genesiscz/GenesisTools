@@ -45,9 +45,9 @@ Without args (no CLI subcommand), the binary launches as a stdio MCP server — 
 
 ### `monitor` JSONL schema
 
-One JSON object per line. Stream order:
+One JSON object per line. Schema shorthand below (`?` = optional, `// ...` = comment) — actual stream is valid JSON:
 
-```
+```text
 {event: "start",    jobPath, build, url}
 {event: "snapshot", stages: [{id, name, status, durationMillis}]}        // historical state on first poll (no notifications fired)
 {event: "stage",    id, name, status, durationMillis?, url}              // each transition
@@ -134,7 +134,7 @@ All required at startup. MCP server exits non-zero with a clear error if any are
 
 `parseJenkinsInput()` accepts any of:
 
-```
+```text
 job/Org/job/Project/job/Team/job/my-build                                   → { jobPath }
 /job/Org/.../my-build/123/                                                  → { jobPath, buildNumber: "123" }
 https://j.example/job/.../123/pipeline-overview/?selected-node=41           → { jobPath, buildNumber, nodeId: "41" }
@@ -147,9 +147,9 @@ Strips trailing `pipeline-overview`, `console`, `consoleText`, `wfapi`, etc. Str
 
 ## Architecture
 
-```
+```text
 src/jenkins-mcp/
-├── index.ts          # router: subcommand → cli.ts, else → mcp.ts
+├── index.ts          # router: any argv → cli.ts, else → mcp.ts
 ├── mcp.ts            # MCP server (13 tools)
 ├── cli.ts            # commander CLI (6 subcommands)
 └── lib/
@@ -157,9 +157,9 @@ src/jenkins-mcp/
     ├── client.ts     # axios with retry (3 attempts, exp backoff on 5xx/net)
     ├── pipeline.ts   # wfapi/describe + findFailingLeaf
     ├── log.ts        # progressiveText + wfapi/log + HTML strip + /tmp save
-    ├── format.ts     # slug / status icons / formatStageLine
+    ├── format.ts     # slug / status icons / stage line / notify body
     ├── errors.ts     # regex-windowed error extraction (±5 / ±3 lines)
-    ├── notify.ts     # MonitorNotifier — DarwinKit lifecycle + click→Brave
+    ├── notify.ts     # MonitorNotifier — sendNotification + click-to-default-browser
     └── monitor.ts    # diff engine + JSONL emitter + exitCodeFor
 ```
 

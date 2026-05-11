@@ -121,7 +121,7 @@ export async function fetchLog(
     const clean = stripJenkinsHtml(raw);
     await writeFile(file, clean, "utf8");
 
-    const lineCount = clean.split("\n").length - (clean.endsWith("\n") ? 1 : 0);
+    const lineCount = clean === "" ? 0 : clean.split("\n").length - (clean.endsWith("\n") ? 1 : 0);
     logger.debug(`Wrote Jenkins log to ${file} (${clean.length}B, ${lineCount} lines)`);
 
     return { path: file, sizeBytes: clean.length, lineCount, nodeStatus, truncated };
