@@ -50,7 +50,7 @@ describe("extractErrors", () => {
     });
 
     it("merges overlapping windows from adjacent matches", () => {
-        const text = "ok\nFAIL one\nFAIL two\nok\n" + "ok\n".repeat(20);
+        const text = `ok\nFAIL one\nFAIL two\nok\n${"ok\n".repeat(20)}`;
         const errs = extractErrors(text);
         expect(errs).toHaveLength(1);
         expect(errs[0].matched).toContain("FAIL one");

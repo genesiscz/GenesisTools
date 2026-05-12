@@ -139,7 +139,8 @@ class JenkinsServer {
                             },
                             grep: {
                                 type: "string",
-                                description: "Regex to filter lines. Returns up to 200 matches as 'L<n>: <text>' strings.",
+                                description:
+                                    "Regex to filter lines. Returns up to 200 matches as 'L<n>: <text>' strings.",
                             },
                         },
                         required: ["jobPath"],
