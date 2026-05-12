@@ -10,9 +10,50 @@ const MAX_BYTES = 50 * 1024 * 1024;
 const TIMESTAMP_SPAN_RE =
     /<span class="timestamp"><b>[^<]*<\/b>\s*<\/span><span style="display: none">\[[^\]]+\]<\/span>/g;
 const ANY_SPAN_RE = /<span[^>]*>|<\/span>/g;
+const CONSOLE_OUTPUT_RE = /<pre class="console-output">([\s\S]*?)<\/pre>/;
+const HTML_ENTITIES: Record<string, string> = {
+    "&amp;": "&",
+    "&lt;": "<",
+    "&gt;": ">",
+    "&quot;": '"',
+    "&#39;": "'",
+    "&apos;": "'",
+    "&nbsp;": " ",
+};
 
 export function stripJenkinsHtml(text: string): string {
     return text.replace(TIMESTAMP_SPAN_RE, "").replace(ANY_SPAN_RE, "");
+}
+
+/**
+ * Parse the HTML returned by `/execution/node/{id}/log/?consoleFull`:
+ *   1. Extract the <pre class="console-output">…</pre> body.
+ *   2. URL-decode it (Jenkins URL-encodes the inner text).
+ *   3. Strip the Jenkins per-line timestamp <span> wrappers.
+ *   4. Unescape HTML entities (&lt; &amp; etc).
+ * Returns the cleaned plaintext log content.
+ *
+ * Throws if the HTML doesn't contain a <pre class="console-output"> block —
+ * indicates Jenkins returned an unexpected page (error page, redirect, etc.).
+ */
+export function parseConsoleFullHtml(html: string): string {
+    const m = CONSOLE_OUTPUT_RE.exec(html);
+    if (!m) {
+        throw new Error("consoleFull response missing <pre class='console-output'> block");
+    }
+
+    // Jenkins URL-encodes the inner text but emits literal `%` from build output
+    // unchanged (e.g. "25%" in progress bars), so decodeURIComponent throws.
+    // Decode only well-formed %XX byte sequences, pass everything else through.
+    const urlDecoded = m[1].replace(/(?:%[0-9A-Fa-f]{2})+/g, (seq) => {
+        try {
+            return decodeURIComponent(seq);
+        } catch {
+            return seq;
+        }
+    });
+    const noSpans = stripJenkinsHtml(urlDecoded);
+    return noSpans.replace(/&(?:amp|lt|gt|quot|apos|nbsp|#39);/g, (e) => HTML_ENTITIES[e] ?? e);
 }
 
 export async function isBuildFinal(client: AxiosInstance, jobPath: string, buildNumber: string): Promise<boolean> {
@@ -84,14 +125,6 @@ export async function readCachedLog(
     };
 }
 
-interface NodeLogResponse {
-    nodeId?: string;
-    nodeStatus?: string;
-    length?: number;
-    hasMore?: boolean;
-    text?: string;
-}
-
 export async function fetchLog(
     client: AxiosInstance,
     jobPath: string,
@@ -116,39 +149,36 @@ export async function fetchLog(
     let nodeStatus: string | undefined;
 
     if (opts.nodeId) {
-        const chunks: string[] = [];
-        let totalSoFar = 0;
-        let start = 0;
+        // Fetch the whole node log in one shot via /log/?consoleFull. The wfapi/log
+        // endpoint is unsuitable here: at least on Jenkins 2.x it returns 10KB
+        // chunks and IGNORES the `start` query parameter on subsequent calls, so
+        // pagination loops forever and accumulates duplicated content. The HTML
+        // log viewer endpoint returns the full text in a single response.
+        const res = await client.get(`/${jobPath}/${buildNumber}/execution/node/${opts.nodeId}/log/?consoleFull`, {
+            responseType: "text",
+            maxContentLength: maxBytes * 4, // HTML inflates ~3-4x vs decoded text
+            transformResponse: [(d) => d as string],
+        });
 
-        for (;;) {
-            const res = await client.get(`/${jobPath}/${buildNumber}/execution/node/${opts.nodeId}/wfapi/log`, {
-                params: start > 0 ? { start } : undefined,
-            });
-
-            if (res.status === 404) {
-                throw new Error(`Node ${opts.nodeId} not found on build ${buildNumber}`);
-            }
-
-            if (res.status !== 200) {
-                throw new Error(`wfapi/log returned ${res.status}`);
-            }
-
-            const body = res.data as NodeLogResponse;
-            const text = body.text ?? "";
-            chunks.push(text);
-            totalSoFar += text.length;
-            nodeStatus = body.nodeStatus;
-
-            if (!body.hasMore || totalSoFar >= maxBytes) {
-                break;
-            }
-
-            // Jenkins's `length` field is the server-side cursor (cumulative bytes emitted),
-            // which is exactly what to pass back as `start` next round.
-            start = body.length ?? totalSoFar;
+        if (res.status === 404) {
+            throw new Error(`Node ${opts.nodeId} not found on build ${buildNumber}`);
         }
 
-        raw = chunks.join("");
+        if (res.status !== 200) {
+            throw new Error(`consoleFull returned ${res.status}`);
+        }
+
+        raw = parseConsoleFullHtml(typeof res.data === "string" ? res.data : "");
+
+        // Pull nodeStatus from a cheap wfapi describe call — consoleFull doesn't include it.
+        try {
+            const meta = await client.get(`/${jobPath}/${buildNumber}/execution/node/${opts.nodeId}/wfapi/describe`);
+            if (meta.status === 200) {
+                nodeStatus = (meta.data as { status?: string }).status;
+            }
+        } catch {
+            // nodeStatus is non-critical; cache hits already omit it.
+        }
     } else {
         const res = await client.get(`/${jobPath}/${buildNumber}/logText/progressiveText`, {
             params: { start: 0 },
@@ -184,42 +214,26 @@ export async function fetchLog(
  * (grep(1) `-n` style). Trailing `\r` is stripped from each matched line for clean
  * rendering in JSON responses (Jenkins emits CRLF).
  *
- * Walks the string with indexOf("\n") so a 26MB / 242k-line log doesn't allocate
- * a 242k-element String[] up front just to scan it. Only the (up to 200) match
- * strings are allocated.
+ * Note: this allocates a per-line array via split("\n"), but the cost is ~5ms
+ * on a 26MB / 242k-line log — negligible vs the (cached) wfapi cost it follows.
+ * Kept simple to preserve exact parity with grep(1) line numbering, including
+ * empty-line matching.
  */
 export function grepLog(content: string, pattern: string): string[] {
     const re = new RegExp(pattern);
+    const lines = content.split("\n");
     const matches: string[] = [];
-    let lineNumber = 0;
-    let start = 0;
 
-    while (start <= content.length) {
-        const nl = content.indexOf("\n", start);
-        const end = nl === -1 ? content.length : nl;
+    for (let i = 0; i < lines.length; i++) {
+        re.lastIndex = 0;
 
-        if (end > start) {
-            lineNumber++;
-            re.lastIndex = 0;
-            const line = content.slice(start, end);
+        if (re.test(lines[i])) {
+            matches.push(`L${i + 1}: ${lines[i].replace(/\r$/, "")}`);
 
-            if (re.test(line)) {
-                matches.push(`L${lineNumber}: ${line.replace(/\r$/, "")}`);
-
-                if (matches.length >= 200) {
-                    return matches;
-                }
+            if (matches.length >= 200) {
+                break;
             }
-        } else if (nl !== -1) {
-            // Empty line (two consecutive newlines or leading newline) — count it.
-            lineNumber++;
         }
-
-        if (nl === -1) {
-            break;
-        }
-
-        start = nl + 1;
     }
 
     return matches;

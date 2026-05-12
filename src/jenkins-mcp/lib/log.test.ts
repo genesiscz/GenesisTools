@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { fetchLog, grepLog, isBuildFinal, readCachedLog, stripJenkinsHtml } from "./log";
+import { fetchLog, grepLog, isBuildFinal, parseConsoleFullHtml, readCachedLog, stripJenkinsHtml } from "./log";
 
 describe("stripJenkinsHtml", () => {
     it("removes timestamp spans (b + hidden ISO)", () => {
@@ -171,6 +171,26 @@ describe("fetchLog (cache path)", () => {
         await expect(fetchLog(client, "job/cache-missing-zzz", "1", { nodeId: "9" })).rejects.toThrow(
             /unexpected fetch/
         );
+    });
+});
+
+describe("parseConsoleFullHtml", () => {
+    it("extracts the <pre class='console-output'> body, URL-decodes, strips spans, unescapes entities", () => {
+        // URL-encoded "Hello <world>" plus a Jenkins timestamp wrapper.
+        const html = `<html><body><pre class="console-output"><span class="timestamp"><b>10:00:00</b> </span><span style="display: none">[2026-05-12T10:00:00.000Z]</span>Hello%20%26lt%3Bworld%26gt%3B%0Aline2</pre></body></html>`;
+        // After URL-decode: <span...>...</span>Hello &lt;world&gt;\nline2
+        // After span strip: Hello &lt;world&gt;\nline2
+        // After entity unescape: Hello <world>\nline2
+        expect(parseConsoleFullHtml(html)).toBe("Hello <world>\nline2");
+    });
+
+    it("throws when the page has no <pre class='console-output'>", () => {
+        expect(() => parseConsoleFullHtml("<html><body>error page</body></html>")).toThrow(/missing/);
+    });
+
+    it("handles multi-line content with embedded < and > characters in URL-encoded form", () => {
+        const html = `<pre class="console-output">at%20Thread.run%28Thread.java%3A1583%29%0AException%3A%20%26lt%3Bunknown%26gt%3B</pre>`;
+        expect(parseConsoleFullHtml(html)).toBe("at Thread.run(Thread.java:1583)\nException: <unknown>");
     });
 });
 
