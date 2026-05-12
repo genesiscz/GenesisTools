@@ -181,6 +181,7 @@ vercel-skills
 .claude/settings.local.json
 .claude/worktrees/
 .claude/reviews/
+.claude/scheduled_tasks.lock
 .worktrees/
 
 # Audio/video files (never commit — voice memos, test artifacts, yt-dlp downloads)

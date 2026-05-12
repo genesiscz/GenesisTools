@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import logger from "@app/logger";
 import type { DarwinKit } from "@app/utils/macos/darwinkit";
-import { getDarwinKit, hasDarwinKit } from "@app/utils/macos/darwinkit";
+import { getDarwinKit } from "@app/utils/macos/darwinkit";
 import { escapeJxa } from "@app/utils/macos/jxa";
 import { Storage } from "@app/utils/storage/storage";
 
@@ -22,6 +22,25 @@ export interface NotificationOptions {
     categoryIdentifier?: string;
     /** DarwinKit-exclusive: notification attachments (file paths) */
     attachments?: string[];
+    /**
+     * Force a specific backend instead of the default chain (darwinkit → terminal-notifier → osascript).
+     *
+     * - `darwinkit`: native UNUserNotificationCenter via DarwinKit (~90ms, supports onInteraction listener
+     *   while sender is alive; click actions stored in user_info, lost when sender exits)
+     * - `terminal-notifier`: spawns terminal-notifier binary (~240ms, bakes `-execute` into the notification
+     *   at OS level so click actions survive sender exit)
+     * - `osascript`: uses macOS osascript fallback (no click actions, no grouping)
+     *
+     * If the preferred backend is unavailable (e.g. `terminal-notifier` not installed), falls through to
+     * the next available backend automatically. Omit to use the default chain.
+     */
+    preferred?: NotificationBackend;
+}
+
+export enum NotificationBackend {
+    DarwinKit = "darwinkit",
+    TerminalNotifier = "terminal-notifier",
+    Osascript = "osascript",
 }
 
 const storage = new Storage("notify");
@@ -181,19 +200,24 @@ function sendViaOsascript(opts: NotificationOptions): void {
  * Returns true if successful, false if darwinkit is unavailable or fails.
  */
 async function sendViaDarwinKit(opts: NotificationOptions): Promise<boolean> {
-    if (!hasDarwinKit()) {
+    let dk: DarwinKit & {
+        notifications?: { send(opts: Record<string, unknown>): Promise<void> };
+    };
+
+    try {
+        dk = getDarwinKit() as DarwinKit & {
+            notifications?: { send(opts: Record<string, unknown>): Promise<void> };
+        };
+    } catch (error) {
+        logger.debug(`DarwinKit init failed: ${error instanceof Error ? error.message : error}`);
+        return false;
+    }
+
+    if (!dk.notifications) {
         return false;
     }
 
     try {
-        const dk = getDarwinKit() as DarwinKit & {
-            notifications?: { send(opts: Record<string, unknown>): Promise<void> };
-        };
-
-        if (!dk.notifications) {
-            return false;
-        }
-
         await dk.notifications.send({
             title: opts.title ?? "GenesisTools",
             body: opts.message,
@@ -215,34 +239,56 @@ async function sendViaDarwinKit(opts: NotificationOptions): Promise<boolean> {
 }
 
 /**
+ * Build the fall-through chain starting from the preferred backend.
+ * Always ends with osascript so a notification is always delivered.
+ */
+function backendChain(preferred?: NotificationBackend): NotificationBackend[] {
+    const all = [NotificationBackend.DarwinKit, NotificationBackend.TerminalNotifier, NotificationBackend.Osascript];
+
+    if (!preferred) {
+        return all;
+    }
+
+    return [preferred, ...all.filter((b) => b !== preferred)];
+}
+
+/**
  * Send a macOS notification.
- * Primary: DarwinKit native UNUserNotificationCenter (full feature support).
- * Secondary: terminal-notifier (supports stacking, click actions, DnD bypass).
- * Fallback: osascript.
+ *
+ * Default backend chain: DarwinKit → terminal-notifier → osascript.
+ * Override with `opts.preferred` to force a specific starting point — the chain still
+ * falls through if the preferred backend is unavailable (e.g. `terminal-notifier` not
+ * installed → osascript).
  */
 export async function sendNotification(opts: NotificationOptions): Promise<void> {
-    // Try DarwinKit first (native UNUserNotificationCenter)
-    const sentViaDarwinKit = await sendViaDarwinKit(opts);
+    const chain = backendChain(opts.preferred);
 
-    if (sentViaDarwinKit) {
-        logger.debug(`Notification sent via DarwinKit: ${opts.message}`);
-    } else {
-        // Fall back to terminal-notifier / osascript
-        const bin = await resolveTerminalNotifier();
-
-        if (bin) {
-            const sent = sendViaTerminalNotifier(bin, opts);
-
-            if (sent) {
-                logger.debug(`Notification sent via terminal-notifier: ${opts.message}`);
-            } else {
-                logger.debug("terminal-notifier failed, falling back to osascript");
-                sendViaOsascript(opts);
+    for (const backend of chain) {
+        if (backend === NotificationBackend.DarwinKit) {
+            if (await sendViaDarwinKit(opts)) {
+                logger.debug(`Notification sent via DarwinKit: ${opts.message}`);
+                break;
             }
-        } else {
-            logger.debug("terminal-notifier not found, using osascript fallback");
-            sendViaOsascript(opts);
+
+            continue;
         }
+
+        if (backend === NotificationBackend.TerminalNotifier) {
+            const bin = await resolveTerminalNotifier();
+
+            if (bin && sendViaTerminalNotifier(bin, opts)) {
+                logger.debug(`Notification sent via terminal-notifier: ${opts.message}`);
+                break;
+            }
+
+            logger.debug("terminal-notifier unavailable or failed");
+            continue;
+        }
+
+        // osascript — always-available terminal fallback
+        sendViaOsascript(opts);
+        logger.debug(`Notification sent via osascript: ${opts.message}`);
+        break;
     }
 
     if (opts.say) {
