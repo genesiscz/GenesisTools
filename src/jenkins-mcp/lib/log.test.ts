@@ -1,7 +1,12 @@
 import { describe, expect, it } from "bun:test";
-import { mkdir, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { basename, join } from "node:path";
 import { fetchLog, grepLog, isBuildFinal, parseConsoleFullHtml, readCachedLog, stripJenkinsHtml } from "./log";
+import { getJenkinsMcpStorage } from "./storage";
+
+const LOG_DIR = join(tmpdir(), "jenkins-mcp");
+const OFFSET_DIR = getJenkinsMcpStorage().getCacheDir();
 
 describe("stripJenkinsHtml", () => {
     it("removes timestamp spans (b + hidden ISO)", () => {
@@ -80,7 +85,7 @@ describe("isBuildFinal", () => {
 });
 
 describe("readCachedLog", () => {
-    const TMP = "/tmp/jenkins-mcp";
+    const TMP = LOG_DIR;
 
     it("returns null when the file is absent", async () => {
         const result = await readCachedLog("job/nonexistent-xyz", "99999", "1");
@@ -118,7 +123,7 @@ describe("readCachedLog", () => {
 });
 
 describe("fetchLog (cache path)", () => {
-    const TMP = "/tmp/jenkins-mcp";
+    const TMP = LOG_DIR;
 
     function clientWith(callTracker: { calls: string[] }, building: boolean, result: string | null) {
         return {
@@ -171,6 +176,106 @@ describe("fetchLog (cache path)", () => {
         await expect(fetchLog(client, "job/cache-missing-zzz", "1", { nodeId: "9" })).rejects.toThrow(
             /unexpected fetch/
         );
+    });
+});
+
+describe("fetchLog (whole-build incremental)", () => {
+    const TMP = LOG_DIR;
+
+    function progressiveTextClient(scripted: Array<{ start: number; body: string; xTextSize: number }>) {
+        let cursor = 0;
+        return {
+            get: async (url: string, opts?: { params?: { start?: number; tree?: string } }) => {
+                // isBuildFinal probe — return in-progress so the cache-hit shortcut is skipped
+                // and the incremental whole-build path is exercised.
+                if (url.endsWith("/api/json")) {
+                    return { status: 200, data: { building: true, result: null } };
+                }
+                const start = opts?.params?.start ?? 0;
+                const step = scripted[cursor++];
+                if (!step) {
+                    throw new Error(`progressiveText called more times than scripted (start=${start})`);
+                }
+                if (step.start !== start) {
+                    throw new Error(`expected start=${step.start} got ${start}`);
+                }
+                return {
+                    status: 200,
+                    data: step.body,
+                    headers: { "x-text-size": String(step.xTextSize) },
+                };
+            },
+        } as unknown as import("axios").AxiosInstance;
+    }
+
+    it("first call writes full body and persists offset sidecar", async () => {
+        await mkdir(TMP, { recursive: true });
+        const file = join(TMP, "incr-test-1.log");
+        const offsetFile = join(OFFSET_DIR, `${basename(file)}.offset`);
+        await rm(file, { force: true });
+        await rm(offsetFile, { force: true });
+
+        const client = progressiveTextClient([{ start: 0, body: "line1\nline2\n", xTextSize: 12 }]);
+        const result = await fetchLog(client, "job/incr-test", "1");
+        expect(result.content).toBe("line1\nline2\n");
+        expect(result.lineCount).toBe(2);
+
+        const offset = await readFile(offsetFile, "utf8");
+        expect(offset).toBe("12");
+
+        await rm(file);
+        await rm(offsetFile);
+    });
+
+    it("second call requests start=priorOffset, appends delta, advances offset", async () => {
+        await mkdir(TMP, { recursive: true });
+        const file = join(TMP, "incr-test-2.log");
+        const offsetFile = join(OFFSET_DIR, `${basename(file)}.offset`);
+        await writeFile(file, "line1\nline2\n", "utf8");
+        await writeFile(offsetFile, "12", "utf8");
+
+        const client = progressiveTextClient([{ start: 12, body: "line3\n", xTextSize: 18 }]);
+        const result = await fetchLog(client, "job/incr-test", "2");
+        expect(result.content).toBe("line1\nline2\nline3\n");
+        expect(result.lineCount).toBe(3);
+
+        const offset = await readFile(offsetFile, "utf8");
+        expect(offset).toBe("18");
+
+        await rm(file);
+        await rm(offsetFile);
+    });
+
+    it("poll with no new bytes leaves content and offset unchanged", async () => {
+        await mkdir(TMP, { recursive: true });
+        const file = join(TMP, "incr-test-3.log");
+        const offsetFile = join(OFFSET_DIR, `${basename(file)}.offset`);
+        await writeFile(file, "settled\n", "utf8");
+        await writeFile(offsetFile, "8", "utf8");
+
+        const client = progressiveTextClient([{ start: 8, body: "", xTextSize: 8 }]);
+        const result = await fetchLog(client, "job/incr-test", "3");
+        expect(result.content).toBe("settled\n");
+        expect(result.lineCount).toBe(1);
+
+        await rm(file);
+        await rm(offsetFile);
+    });
+
+    it("strips Jenkins timestamp spans from each delta", async () => {
+        await mkdir(TMP, { recursive: true });
+        const file = join(TMP, "incr-test-4.log");
+        const offsetFile = join(OFFSET_DIR, `${basename(file)}.offset`);
+        await rm(file, { force: true });
+        await rm(offsetFile, { force: true });
+
+        const delta = `<span class="timestamp"><b>10:00:00</b> </span><span style="display: none">[2026-05-12T10:00:00.000Z]</span>hello\n`;
+        const client = progressiveTextClient([{ start: 0, body: delta, xTextSize: delta.length }]);
+        const result = await fetchLog(client, "job/incr-test", "4");
+        expect(result.content).toBe("hello\n");
+
+        await rm(file);
+        await rm(offsetFile);
     });
 });
 

@@ -1,10 +1,9 @@
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { appendFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import logger from "@app/logger";
 import type { AxiosInstance } from "axios";
 import { slugifyJobPath } from "./format";
+import { getJenkinsMcpStorage } from "./storage";
 
-const TMP_DIR = "/tmp/jenkins-mcp";
 const MAX_BYTES = 50 * 1024 * 1024;
 
 const TIMESTAMP_SPAN_RE =
@@ -87,7 +86,7 @@ export interface LogResult {
 }
 
 /**
- * Read a previously-written log file from /tmp/jenkins-mcp. Returns null if
+ * Read a previously-written log file from the cache dir. Returns null if
  * absent. Caller decides freshness — typically by checking isBuildFinal first.
  * nodeStatus is left undefined on cache hits (callers that need it already
  * have it via the stage snapshot).
@@ -98,10 +97,7 @@ export async function readCachedLog(
     nodeId?: string,
     maxBytes: number = MAX_BYTES
 ): Promise<LogResult | null> {
-    const slug = slugifyJobPath(jobPath);
-    const path = nodeId
-        ? join(TMP_DIR, `${slug}-${buildNumber}-node${nodeId}.log`)
-        : join(TMP_DIR, `${slug}-${buildNumber}.log`);
+    const path = getJenkinsMcpStorage().getLogPath(slugifyJobPath(jobPath), buildNumber, nodeId);
 
     let sizeBytes: number;
 
@@ -132,12 +128,12 @@ export async function fetchLog(
     opts: LogFetchOpts = {}
 ): Promise<LogResult> {
     const maxBytes = opts.maxBytes ?? MAX_BYTES;
-    await mkdir(TMP_DIR, { recursive: true });
+    const storage = getJenkinsMcpStorage();
+    // Persistent cache dir holds the offset sidecars; /tmp/jenkins-mcp holds the log blobs.
+    await storage.ensureDirs();
+    await mkdir(storage.getLogDir(), { recursive: true });
 
-    const slug = slugifyJobPath(jobPath);
-    const file = opts.nodeId
-        ? join(TMP_DIR, `${slug}-${buildNumber}-node${opts.nodeId}.log`)
-        : join(TMP_DIR, `${slug}-${buildNumber}.log`);
+    const file = storage.getLogPath(slugifyJobPath(jobPath), buildNumber, opts.nodeId);
 
     const cached = await readCachedLog(jobPath, buildNumber, opts.nodeId, maxBytes);
     if (cached && (await isBuildFinal(client, jobPath, buildNumber))) {
@@ -180,22 +176,7 @@ export async function fetchLog(
             // nodeStatus is non-critical; cache hits already omit it.
         }
     } else {
-        const res = await client.get(`/${jobPath}/${buildNumber}/logText/progressiveText`, {
-            params: { start: 0 },
-            responseType: "text",
-            maxContentLength: maxBytes,
-            transformResponse: [(d) => d as string],
-        });
-
-        if (res.status === 404) {
-            throw new Error(`Build ${buildNumber} log not found (build may have been pruned by retention)`);
-        }
-
-        if (res.status !== 200) {
-            throw new Error(`progressiveText returned ${res.status}`);
-        }
-
-        raw = typeof res.data === "string" ? res.data : "";
+        return await fetchWholeBuildLog(client, jobPath, buildNumber, file, maxBytes);
     }
 
     const truncated = raw.length >= maxBytes;
@@ -207,6 +188,89 @@ export async function fetchLog(
     logger.debug(`Wrote Jenkins log to ${file} (${sizeBytes}B, ${lineCount} lines)`);
 
     return { path: file, content, sizeBytes, lineCount, nodeStatus, truncated };
+}
+
+/**
+ * Whole-build incremental fetch. Persists the X-Text-Size cursor in a tiny
+ * `<cache>.offset` sidecar so subsequent calls (e.g. polling an in-progress
+ * build) only request the new bytes and append to the cache file. For final
+ * builds with a complete cache, the GET returns an empty body in one round-trip
+ * — basically free.
+ */
+async function fetchWholeBuildLog(
+    client: AxiosInstance,
+    jobPath: string,
+    buildNumber: string,
+    file: string,
+    maxBytes: number
+): Promise<LogResult> {
+    let priorOffset = 0;
+    let cacheExists = false;
+    try {
+        await stat(file);
+        cacheExists = true;
+        priorOffset = await readOffsetSidecar(file);
+    } catch {
+        // No cache yet — full fresh fetch.
+    }
+
+    const res = await client.get(`/${jobPath}/${buildNumber}/logText/progressiveText`, {
+        params: { start: priorOffset },
+        responseType: "text",
+        maxContentLength: maxBytes,
+        transformResponse: [(d) => d as string],
+    });
+
+    if (res.status === 404) {
+        throw new Error(`Build ${buildNumber} log not found (build may have been pruned by retention)`);
+    }
+
+    if (res.status !== 200) {
+        throw new Error(`progressiveText returned ${res.status}`);
+    }
+
+    const headers = res.headers as Record<string, string | undefined>;
+    const newOffset = Number(headers["x-text-size"] ?? priorOffset);
+    const deltaRaw = typeof res.data === "string" ? res.data : "";
+    const deltaContent = stripJenkinsHtml(deltaRaw);
+
+    if (priorOffset === 0 || !cacheExists) {
+        await writeFile(file, deltaContent, "utf8");
+    } else if (deltaContent.length > 0) {
+        await appendFile(file, deltaContent, "utf8");
+    }
+
+    if (newOffset > priorOffset) {
+        await writeOffsetSidecar(file, newOffset);
+    }
+
+    const content = await readFile(file, "utf8");
+    const lineCount = content === "" ? 0 : content.split("\n").length - (content.endsWith("\n") ? 1 : 0);
+    const sizeBytes = Buffer.byteLength(content, "utf8");
+    logger.debug(`Whole-build log ${file} now ${sizeBytes}B / ${lineCount} lines (offset ${newOffset})`);
+
+    return {
+        path: file,
+        content,
+        sizeBytes,
+        lineCount,
+        nodeStatus: undefined,
+        truncated: sizeBytes >= maxBytes,
+    };
+}
+
+async function readOffsetSidecar(cachePath: string): Promise<number> {
+    try {
+        const raw = await readFile(getJenkinsMcpStorage().getOffsetPath(cachePath), "utf8");
+        const n = Number(raw.trim());
+        return Number.isFinite(n) && n >= 0 ? n : 0;
+    } catch {
+        return 0;
+    }
+}
+
+async function writeOffsetSidecar(cachePath: string, offset: number): Promise<void> {
+    await writeFile(getJenkinsMcpStorage().getOffsetPath(cachePath), String(offset), "utf8");
 }
 
 /**
