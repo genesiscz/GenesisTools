@@ -5,7 +5,7 @@
 
 > **Model Context Protocol server + CLI for Jenkins — daily ops without the token blowup.**
 
-Inspect Jenkins from an AI assistant (MCP) *or* from your shell (CLI). Same backing library either way. Token-efficient: logs spill to `/tmp/jenkins-mcp/`, the MCP response is just a path + summary.
+Inspect Jenkins from an AI assistant (MCP) *or* from your shell (CLI). Same backing library either way. Token-efficient: logs spill to `$TMPDIR/jenkins-mcp/`, the MCP response is just a path + summary.
 
 ---
 
@@ -37,7 +37,7 @@ Without args (no CLI subcommand), the binary launches as a stdio MCP server — 
 | Subcommand | Flags | Behavior |
 |---|---|---|
 | `stages <input>` | `--build`, `--expand` | Stage tree (`wfapi/describe`). `--expand` drills into parallel branches. |
-| `log <input>` | `--build`, `--node`, `--tail`, `--head`, `--grep` | Save full log to `/tmp/jenkins-mcp/<slug>-<build>[-node<id>].log` after stripping HTML timestamp wrappers. Print path + head/grep/tail per the flags (default: tail 20). |
+| `log <input>` | `--build`, `--node`, `--tail`, `--head`, `--grep` | Save full log to `$TMPDIR/jenkins-mcp/<slug>-<build>[-node<id>].log` after stripping HTML timestamp wrappers. Print path + head/grep/tail per the flags (default: tail 20). |
 | `info <input>` | `--build` | Build params, causes (who/what triggered), agent, executor, estimated duration. |
 | `changes <input>` | `--build` | SCM changeSet (commits/authors) + trigger causes. |
 | `jobs` | `--folder`, `--limit` | List jobs in a folder. |
@@ -82,7 +82,7 @@ Process exits with the result mapped to a code:
 |---|---|
 | `get_build_status` | `building` / `result` / `timestamp` / `duration` / `url` |
 | `trigger_build` | POST `/build` or `/buildWithParameters` |
-| `get_build_log` | **Saves to `/tmp/jenkins-mcp/`**, returns `{path, sizeBytes, lineCount, nodeStatus?, truncated}` — bytes never enter the response. Pass `grep` to also get `matches: string[]` formatted `"L<n>: <text>"` (caps at 200). Pass `nodeId` for a single-node log. |
+| `get_build_log` | **Saves to `$TMPDIR/jenkins-mcp/`**, returns `{path, sizeBytes, lineCount, nodeStatus?, truncated}` — bytes never enter the response. Pass `grep` to also get `matches: string[]` formatted `"L<n>: <text>"` (caps at 200). Pass `nodeId` for a single-node log. |
 | `list_jobs` | Folder listing. Supports `limit`. |
 | `get_build_history` | Last N builds (`limit`, default 10). |
 | `stop_build` | POST `/<build>/stop` |
@@ -156,7 +156,10 @@ src/jenkins-mcp/
     ├── url.ts        # parseJenkinsInput / buildUrl
     ├── client.ts     # axios with retry (3 attempts, exp backoff on 5xx/net)
     ├── pipeline.ts   # wfapi/describe + findFailingLeaf
-    ├── log.ts        # progressiveText + wfapi/log + HTML strip + /tmp save
+    ├── log.ts        # fetchLog (consoleFull for node, progressiveText+offset
+    │                 #   for whole-build) + HTML/entity strip + cache write
+    ├── storage.ts    # JenkinsMcpStorage: log blobs in $TMPDIR/jenkins-mcp/,
+    │                 #   offset sidecars in ~/.genesis-tools/jenkins-mcp/cache/
     ├── format.ts     # slug / status icons / stage line / notify body
     ├── errors.ts     # regex-windowed error extraction (±5 / ±3 lines)
     ├── notify.ts     # MonitorNotifier — sendNotification + click-to-default-browser
@@ -164,6 +167,31 @@ src/jenkins-mcp/
 ```
 
 Pure-function modules are unit-tested under `bun:test`. I/O wrappers are smoke-tested against real Jenkins.
+
+---
+
+## Log Fetching & Caching
+
+Two endpoints, two strategies — each chosen because the alternative is broken on stock Jenkins:
+
+| Scope | Endpoint | Why |
+|---|---|---|
+| **Per-node** (`--node N`, MCP `nodeId`) | `/execution/node/{id}/log/?consoleFull` — single GET | The wfapi `/wfapi/log` paginator returns 10KB chunks but **ignores the `start` query parameter** on the Jenkins versions we tested, so looping until `hasMore=false` appends duplicate content forever. `consoleFull` returns the full node log in one response. |
+| **Whole-build** (no `--node`) | `/logText/progressiveText?start=N` + `X-Text-Size` header | This endpoint *does* respect `start` correctly. We persist the cursor in a `<basename>.log.offset` sidecar so polling an in-progress build only ships the delta on each call. |
+
+**Cache layout** — split by lifecycle:
+
+```text
+$TMPDIR/jenkins-mcp/                      ← log blobs (large, regenerable)
+  └── <slug>-<build>[-node<id>].log
+
+~/.genesis-tools/jenkins-mcp/cache/       ← persistent metadata
+  └── <slug>-<build>.log.offset           (only whole-build fetches)
+```
+
+A `/tmp` wipe is harmless: `fetchLog` notices the log file is missing and refetches from offset=0.
+
+**Cache hits on final builds** — `fetchLog` first probes `/api/json?tree=building,result`; if `building===false && result!=null`, the on-disk file is returned without re-fetching the log body. Cold call on a 600KB node log: ~300ms. Warm cache hit: ~50ms.
 
 ---
 
