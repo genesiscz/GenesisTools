@@ -665,9 +665,40 @@ class JenkinsServer {
             status,
             stageSummary: lines,
             suggestCommand: isDone ? undefined : cmd,
-            recommendation: isDone
+            runOptions: isDone
                 ? undefined
-                : "Run this via Bash with run_in_background: true. The harness will notify you when the monitor exits. Click any stage notification to open the build in your default browser.",
+                : {
+                      bashBackground:
+                          "Bash with run_in_background: true — single completion notification when the monitor exits. Click any stage notification to open the build in your default browser.",
+                      monitorTool:
+                          "Pass the command to the Monitor tool — every JSONL line on stdout becomes a notification. Add a grep filter for selectivity (see monitorFilterExamples).",
+                  },
+            emitsEvents: isDone
+                ? undefined
+                : [
+                      { event: "start", description: "monitor started; carries job URL" },
+                      { event: "snapshot", description: "initial full stage list at startup" },
+                      { event: "stage", description: "top-level pipeline stage transition" },
+                      {
+                          event: "branch",
+                          description: "inner stage step (shell script, library load, etc.) — high volume",
+                      },
+                      { event: "error", description: "poll/network error from the monitor itself" },
+                      {
+                          event: "end",
+                          description:
+                              'terminal — carries result: "SUCCESS" | "FAILED" | "UNSTABLE" | "ABORTED" | "NOT_EXECUTED" | "PAUSED_PENDING_INPUT" | "QUEUED"',
+                      },
+                  ],
+            monitorFilterExamples: isDone
+                ? undefined
+                : {
+                      stagesAndTerminal:
+                          'grep -E --line-buffered \'"event":"(stage|error|end)"\' — stage transitions + errors + final result (skips per-step branch noise)',
+                      terminalOnly:
+                          'grep -E --line-buffered \'"event":"end"\' — single notification when the build finishes',
+                      everything: "no filter — every event line becomes a notification (chatty; can be auto-stopped)",
+                  },
         });
     }
 }
