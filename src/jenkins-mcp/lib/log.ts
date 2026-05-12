@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import logger from "@app/logger";
 import type { AxiosInstance } from "axios";
@@ -43,6 +43,45 @@ export interface LogResult {
     lineCount: number;
     nodeStatus?: string;
     truncated: boolean;
+}
+
+/**
+ * Read a previously-written log file from /tmp/jenkins-mcp. Returns null if
+ * absent. Caller decides freshness — typically by checking isBuildFinal first.
+ * nodeStatus is left undefined on cache hits (callers that need it already
+ * have it via the stage snapshot).
+ */
+export async function readCachedLog(
+    jobPath: string,
+    buildNumber: string,
+    nodeId?: string,
+    maxBytes: number = MAX_BYTES
+): Promise<LogResult | null> {
+    const slug = slugifyJobPath(jobPath);
+    const path = nodeId
+        ? join(TMP_DIR, `${slug}-${buildNumber}-node${nodeId}.log`)
+        : join(TMP_DIR, `${slug}-${buildNumber}.log`);
+
+    let sizeBytes: number;
+
+    try {
+        const s = await stat(path);
+        sizeBytes = s.size;
+    } catch {
+        return null;
+    }
+
+    const content = await readFile(path, "utf8");
+    const lineCount = content === "" ? 0 : content.split("\n").length - (content.endsWith("\n") ? 1 : 0);
+
+    return {
+        path,
+        content,
+        sizeBytes,
+        lineCount,
+        nodeStatus: undefined,
+        truncated: sizeBytes >= maxBytes,
+    };
 }
 
 interface NodeLogResponse {

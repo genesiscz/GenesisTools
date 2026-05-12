@@ -1,5 +1,7 @@
+import { mkdir, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { describe, expect, it } from "bun:test";
-import { grepLog, isBuildFinal, stripJenkinsHtml } from "./log";
+import { grepLog, isBuildFinal, readCachedLog, stripJenkinsHtml } from "./log";
 
 describe("stripJenkinsHtml", () => {
     it("removes timestamp spans (b + hidden ISO)", () => {
@@ -74,5 +76,43 @@ describe("isBuildFinal", () => {
     it("returns false on 404 (pruned/absent — let fetchLog re-confirm with its own error)", async () => {
         const client = mockClient({ status: 404 });
         expect(await isBuildFinal(client, "job/foo", "42")).toBe(false);
+    });
+});
+
+describe("readCachedLog", () => {
+    const TMP = "/tmp/jenkins-mcp";
+
+    it("returns null when the file is absent", async () => {
+        const result = await readCachedLog("job/nonexistent-xyz", "99999", "1");
+        expect(result).toBeNull();
+    });
+
+    it("returns LogResult with content, sizeBytes, lineCount when file exists", async () => {
+        await mkdir(TMP, { recursive: true });
+        const path = join(TMP, "cache-test-1-node5.log");
+        const body = "alpha\nbravo\ncharlie\n";
+        await writeFile(path, body, "utf8");
+
+        const result = await readCachedLog("job/cache-test", "1", "5");
+        expect(result).not.toBeNull();
+        expect(result?.path).toBe(path);
+        expect(result?.content).toBe(body);
+        expect(result?.sizeBytes).toBe(Buffer.byteLength(body, "utf8"));
+        expect(result?.lineCount).toBe(3);
+        expect(result?.truncated).toBe(false);
+        expect(result?.nodeStatus).toBeUndefined();
+
+        await rm(path);
+    });
+
+    it("computes the path with or without nodeId", async () => {
+        await mkdir(TMP, { recursive: true });
+        const pathNoNode = join(TMP, "cache-test2-7.log");
+        await writeFile(pathNoNode, "x\n", "utf8");
+
+        const result = await readCachedLog("job/cache-test2", "7");
+        expect(result?.path).toBe(pathNoNode);
+
+        await rm(pathNoNode);
     });
 });
