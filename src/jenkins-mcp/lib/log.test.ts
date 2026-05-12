@@ -1,7 +1,7 @@
+import { describe, expect, it } from "bun:test";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { describe, expect, it } from "bun:test";
-import { grepLog, isBuildFinal, readCachedLog, stripJenkinsHtml } from "./log";
+import { fetchLog, grepLog, isBuildFinal, readCachedLog, stripJenkinsHtml } from "./log";
 
 describe("stripJenkinsHtml", () => {
     it("removes timestamp spans (b + hidden ISO)", () => {
@@ -114,5 +114,64 @@ describe("readCachedLog", () => {
         expect(result?.path).toBe(pathNoNode);
 
         await rm(pathNoNode);
+    });
+});
+
+describe("fetchLog (cache path)", () => {
+    const TMP = "/tmp/jenkins-mcp";
+
+    function clientWith(callTracker: { calls: string[] }, building: boolean, result: string | null) {
+        return {
+            get: async (url: string) => {
+                callTracker.calls.push(url);
+                if (url.endsWith("/api/json")) {
+                    return { status: 200, data: { building, result } };
+                }
+                throw new Error(`unexpected fetch: ${url}`);
+            },
+        } as unknown as import("axios").AxiosInstance;
+    }
+
+    it("returns cached log on a final build without paginating wfapi", async () => {
+        await mkdir(TMP, { recursive: true });
+        const path = join(TMP, "cache-fetch-42-node9.log");
+        const body = "cached line 1\ncached line 2\n";
+        await writeFile(path, body, "utf8");
+
+        const tracker = { calls: [] as string[] };
+        const client = clientWith(tracker, false, "FAILURE");
+
+        const result = await fetchLog(client, "job/cache-fetch", "42", { nodeId: "9" });
+
+        expect(result.content).toBe(body);
+        expect(result.lineCount).toBe(2);
+        expect(tracker.calls).toHaveLength(1);
+        expect(tracker.calls[0]).toContain("/api/json");
+
+        await rm(path);
+    });
+
+    it("ignores cache when build is still in progress", async () => {
+        await mkdir(TMP, { recursive: true });
+        const path = join(TMP, "cache-inflight-43-node9.log");
+        await writeFile(path, "stale\n", "utf8");
+
+        const tracker = { calls: [] as string[] };
+        const client = clientWith(tracker, true, null);
+
+        await expect(fetchLog(client, "job/cache-inflight", "43", { nodeId: "9" })).rejects.toThrow(
+            /unexpected fetch/
+        );
+
+        await rm(path);
+    });
+
+    it("ignores cache when the file does not exist", async () => {
+        const tracker = { calls: [] as string[] };
+        const client = clientWith(tracker, false, "SUCCESS");
+
+        await expect(fetchLog(client, "job/cache-missing-zzz", "1", { nodeId: "9" })).rejects.toThrow(
+            /unexpected fetch/
+        );
     });
 });

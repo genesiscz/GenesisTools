@@ -106,6 +106,12 @@ export async function fetchLog(
         ? join(TMP_DIR, `${slug}-${buildNumber}-node${opts.nodeId}.log`)
         : join(TMP_DIR, `${slug}-${buildNumber}.log`);
 
+    const cached = await readCachedLog(jobPath, buildNumber, opts.nodeId, maxBytes);
+    if (cached && (await isBuildFinal(client, jobPath, buildNumber))) {
+        logger.debug(`Reusing cached Jenkins log ${file} (${cached.sizeBytes}B, ${cached.lineCount} lines)`);
+        return cached;
+    }
+
     let raw: string;
     let nodeStatus: string | undefined;
 
