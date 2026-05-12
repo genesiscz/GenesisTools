@@ -15,6 +15,19 @@ export function stripJenkinsHtml(text: string): string {
     return text.replace(TIMESTAMP_SPAN_RE, "").replace(ANY_SPAN_RE, "");
 }
 
+export async function isBuildFinal(client: AxiosInstance, jobPath: string, buildNumber: string): Promise<boolean> {
+    const res = await client.get(`/${jobPath}/${buildNumber}/api/json`, {
+        params: { tree: "building,result" },
+    });
+
+    if (res.status !== 200) {
+        return false;
+    }
+
+    const data = res.data as { building?: boolean; result?: string | null };
+    return data.building === false && data.result != null;
+}
+
 export interface LogFetchOpts {
     /** If set, fetch this node's log via wfapi instead of whole build. */
     nodeId?: string;

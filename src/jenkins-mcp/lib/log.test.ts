@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { grepLog, stripJenkinsHtml } from "./log";
+import { grepLog, isBuildFinal, stripJenkinsHtml } from "./log";
 
 describe("stripJenkinsHtml", () => {
     it("removes timestamp spans (b + hidden ISO)", () => {
@@ -48,5 +48,31 @@ describe("grepLog", () => {
 
     it("returns empty array when no matches", () => {
         expect(grepLog("alpha\nbravo", "nothere")).toEqual([]);
+    });
+});
+
+describe("isBuildFinal", () => {
+    function mockClient(response: { status: number; data?: unknown }) {
+        return { get: async () => response } as unknown as import("axios").AxiosInstance;
+    }
+
+    it("returns true when building=false and result is non-null", async () => {
+        const client = mockClient({ status: 200, data: { building: false, result: "FAILURE" } });
+        expect(await isBuildFinal(client, "job/foo", "42")).toBe(true);
+    });
+
+    it("returns false when building=true", async () => {
+        const client = mockClient({ status: 200, data: { building: true, result: null } });
+        expect(await isBuildFinal(client, "job/foo", "42")).toBe(false);
+    });
+
+    it("returns false when result is null (queued/in-flight)", async () => {
+        const client = mockClient({ status: 200, data: { building: false, result: null } });
+        expect(await isBuildFinal(client, "job/foo", "42")).toBe(false);
+    });
+
+    it("returns false on 404 (pruned/absent — let fetchLog re-confirm with its own error)", async () => {
+        const client = mockClient({ status: 404 });
+        expect(await isBuildFinal(client, "job/foo", "42")).toBe(false);
     });
 });
