@@ -1,5 +1,8 @@
+// Tool-agnostic failure markers. Each term should appear across at least two
+// unrelated build/package/language ecosystems so the pattern doesn't bias
+// toward one stack.
 const DEFAULT_PATTERN =
-    /\bFAIL\b|✗|\bERROR\b|\bException\b|\bfatal\b|error TS\d+|exit code [1-9]\d*|ELIFECYCLE|npm ERR|Error:/;
+    /\bFAIL(?:ED|URE)?\b|✗|\bERROR\b|\bException\b|\bfatal\b|error TS\d+|exit code [1-9]\d*|ELIFECYCLE|npm ERR|Error:|Caused by|Execution failed|What went wrong|BUILD FAILED|FAILURE:/;
 
 export interface ErrorBlock {
     line: number;

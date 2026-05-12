@@ -64,3 +64,18 @@ describe("extractErrors", () => {
         expect(errs[0].matched).toContain("alpha");
     });
 });
+
+describe("extractErrors (agnostic patterns)", () => {
+    it.each([
+        ["BUILD FAILED in 2m 14s"],
+        ["FAILURE: Build failed with an exception."],
+        ["Execution failed for task ':app:bundleRelease'."],
+        ["* What went wrong:"],
+        ["Caused by: java.io.FileNotFoundException"],
+    ])("matches '%s'", (line) => {
+        const text = `line a\nline b\n${line}\nline d`;
+        const errs = extractErrors(text);
+        expect(errs.length).toBeGreaterThan(0);
+        expect(errs[0].matched).toContain(line.slice(0, 10));
+    });
+});
