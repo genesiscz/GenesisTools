@@ -1,8 +1,10 @@
 // Tool-agnostic failure markers. Each term should appear across at least two
 // unrelated build/package/language ecosystems so the pattern doesn't bias
-// toward one stack.
+// toward one stack. Case-insensitive so we catch `Failed`, `error:`, etc.
+// from tools that don't shout in ALL CAPS (clang/cmake/rustc/pnpm all emit
+// lowercase `error:`; pnpm/yarn emit `Failed to ...`).
 const DEFAULT_PATTERN =
-    /\bFAIL(?:ED|URE)?\b|✗|\bERROR\b|\bException\b|\bfatal\b|error TS\d+|exit code [1-9]\d*|ELIFECYCLE|npm ERR|Error:|Caused by|Execution failed|What went wrong|BUILD FAILED|FAILURE:/;
+    /\bFAIL(?:ED|URE)?\b|✗|\bERROR\b|\bException\b|\bfatal\b|error TS\d+|exit code [1-9]\d*|ELIFECYCLE|npm ERR|\bERR_\w+|Error:|Caused by|Execution failed|What went wrong|BUILD FAILED|FAILURE:/i;
 
 export interface ErrorBlock {
     line: number;

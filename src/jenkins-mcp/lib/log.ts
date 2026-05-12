@@ -9,6 +9,10 @@ const MAX_BYTES = 50 * 1024 * 1024;
 const TIMESTAMP_SPAN_RE =
     /<span class="timestamp"><b>[^<]*<\/b>\s*<\/span><span style="display: none">\[[^\]]+\]<\/span>/g;
 const ANY_SPAN_RE = /<span[^>]*>|<\/span>/g;
+// Jenkins decorates URLs in console output with <a href='...'>...</a> tags;
+// it can also emit <b>, <i>, etc. via console annotators. Strip all simple
+// tags but keep their inner text so URLs and other content survive.
+const SIMPLE_TAG_RE = /<\/?(?:a|b|i|u|em|strong|code|tt)\b[^>]*>/gi;
 const CONSOLE_OUTPUT_RE = /<pre class="console-output">([\s\S]*?)<\/pre>/;
 const HTML_ENTITIES: Record<string, string> = {
     "&amp;": "&",
@@ -21,7 +25,7 @@ const HTML_ENTITIES: Record<string, string> = {
 };
 
 export function stripJenkinsHtml(text: string): string {
-    return text.replace(TIMESTAMP_SPAN_RE, "").replace(ANY_SPAN_RE, "");
+    return text.replace(TIMESTAMP_SPAN_RE, "").replace(ANY_SPAN_RE, "").replace(SIMPLE_TAG_RE, "");
 }
 
 /**

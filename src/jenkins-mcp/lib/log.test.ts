@@ -29,6 +29,16 @@ describe("stripJenkinsHtml", () => {
         const input = "<span>foo</span> bar";
         expect(stripJenkinsHtml(input)).toBe("foo bar");
     });
+
+    it("strips <a href='...'> link decorations Jenkins adds to URLs", () => {
+        const input = "WARN  GET <a href='https://example.com/pkg.tgz'>https://example.com/pkg.tgz</a> error";
+        expect(stripJenkinsHtml(input)).toBe("WARN  GET https://example.com/pkg.tgz error");
+    });
+
+    it("strips other simple decoration tags (b, i, code, etc.) keeping inner text", () => {
+        const input = "<b>bold</b> and <code>inline-code</code> and <em>emph</em>";
+        expect(stripJenkinsHtml(input)).toBe("bold and inline-code and emph");
+    });
 });
 
 describe("grepLog", () => {

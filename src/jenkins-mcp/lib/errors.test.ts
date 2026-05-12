@@ -72,6 +72,14 @@ describe("extractErrors (agnostic patterns)", () => {
         ["Execution failed for task ':app:bundleRelease'."],
         ["* What went wrong:"],
         ["Caused by: java.io.FileNotFoundException"],
+        // Mixed-case variants — case-insensitive matching is required to catch
+        // failures from tools that don't shout in ALL CAPS.
+        ["Failed to add tarball from registry"],
+        ["error: cannot find symbol 'foo'"],
+        ['Exception in thread "main"'],
+        // Node/pnpm/esbuild-style error codes
+        ["ERR_PNPM_UNKNOWN  Failed to add tarball"],
+        ["ERR_REQUIRE_ESM cannot require ES module"],
     ])("matches '%s'", (line) => {
         const text = `line a\nline b\n${line}\nline d`;
         const errs = extractErrors(text);
