@@ -159,9 +159,7 @@ describe("fetchLog (cache path)", () => {
         const tracker = { calls: [] as string[] };
         const client = clientWith(tracker, true, null);
 
-        await expect(fetchLog(client, "job/cache-inflight", "43", { nodeId: "9" })).rejects.toThrow(
-            /unexpected fetch/
-        );
+        await expect(fetchLog(client, "job/cache-inflight", "43", { nodeId: "9" })).rejects.toThrow(/unexpected fetch/);
 
         await rm(path);
     });
@@ -173,5 +171,25 @@ describe("fetchLog (cache path)", () => {
         await expect(fetchLog(client, "job/cache-missing-zzz", "1", { nodeId: "9" })).rejects.toThrow(
             /unexpected fetch/
         );
+    });
+});
+
+describe("grepLog (streaming parity)", () => {
+    it("handles input without trailing newline", () => {
+        const content = "alpha MATCH\nbravo\ncharlie MATCH";
+        expect(grepLog(content, "MATCH")).toEqual(["L1: alpha MATCH", "L3: charlie MATCH"]);
+    });
+
+    it("returns line numbers identical to the old split-based impl on a 50k-line input", () => {
+        const lines: string[] = [];
+        for (let i = 0; i < 50_000; i++) {
+            lines.push(i % 1000 === 0 ? `MATCH at ${i}` : `noise ${i}`);
+        }
+        const content = lines.join("\n");
+        const matches = grepLog(content, "MATCH");
+
+        expect(matches).toHaveLength(50);
+        expect(matches[0]).toBe("L1: MATCH at 0");
+        expect(matches[1]).toBe("L1001: MATCH at 1000");
     });
 });

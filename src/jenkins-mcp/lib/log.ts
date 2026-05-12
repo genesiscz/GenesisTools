@@ -183,22 +183,43 @@ export async function fetchLog(
  * Filter `content` by `pattern`, return up to 200 matches formatted `"L<lineno>: <text>"`
  * (grep(1) `-n` style). Trailing `\r` is stripped from each matched line for clean
  * rendering in JSON responses (Jenkins emits CRLF).
+ *
+ * Walks the string with indexOf("\n") so a 26MB / 242k-line log doesn't allocate
+ * a 242k-element String[] up front just to scan it. Only the (up to 200) match
+ * strings are allocated.
  */
 export function grepLog(content: string, pattern: string): string[] {
     const re = new RegExp(pattern);
-    const lines = content.split("\n");
     const matches: string[] = [];
+    let lineNumber = 0;
+    let start = 0;
 
-    for (let i = 0; i < lines.length; i++) {
-        re.lastIndex = 0;
+    while (start <= content.length) {
+        const nl = content.indexOf("\n", start);
+        const end = nl === -1 ? content.length : nl;
 
-        if (re.test(lines[i])) {
-            matches.push(`L${i + 1}: ${lines[i].replace(/\r$/, "")}`);
+        if (end > start) {
+            lineNumber++;
+            re.lastIndex = 0;
+            const line = content.slice(start, end);
 
-            if (matches.length >= 200) {
-                break;
+            if (re.test(line)) {
+                matches.push(`L${lineNumber}: ${line.replace(/\r$/, "")}`);
+
+                if (matches.length >= 200) {
+                    return matches;
+                }
             }
+        } else if (nl !== -1) {
+            // Empty line (two consecutive newlines or leading newline) — count it.
+            lineNumber++;
         }
+
+        if (nl === -1) {
+            break;
+        }
+
+        start = nl + 1;
     }
 
     return matches;
