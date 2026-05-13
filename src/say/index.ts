@@ -45,6 +45,7 @@ interface SayOptions {
     model?: string;
     save?: boolean;
     unset?: string[];
+    fallback?: boolean;
 }
 
 const program = new Command()
@@ -76,6 +77,7 @@ const program = new Command()
         parseVariadic,
         [] as string[]
     )
+    .option("--no-fallback", "Disable automatic fallback to macos TTS when a cloud provider fails")
     .action(async (messageParts: string[], opts: SayOptions, cmd: Command) => {
         const mgr = new SayConfigManager();
 
@@ -175,13 +177,31 @@ const program = new Command()
             await speakCached({ mgr, text, provider, effective: effectiveForRun, opts, stream });
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
-            console.error(pc.red(`[say] TTS failed: ${message}`));
 
             if (isVoiceNotFoundError(message)) {
+                console.error(pc.red(`[say] TTS failed: ${message}`));
                 await printVoiceList(provider);
+                process.exit(1);
             }
 
-            process.exit(1);
+            // Cloud TTS is transient; macos is always available — drop provider-specific voice/model in the retry.
+            if (provider === "macos" || opts.fallback === false) {
+                console.error(pc.red(`[say] TTS failed: ${message}`));
+                process.exit(1);
+            }
+
+            console.error(pc.yellow(`[say] ${provider} failed: ${message.slice(0, 200)}`));
+            console.error(pc.yellow("[say] falling back to macos"));
+
+            const macosRun: EffectiveSettings = { ...effectiveForRun, voice: null, model: null };
+
+            try {
+                await speakCached({ mgr, text, provider: "macos", effective: macosRun, opts, stream });
+            } catch (fallbackErr) {
+                const fmsg = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
+                console.error(pc.red(`[say] macos fallback also failed: ${fmsg}`));
+                process.exit(1);
+            }
         }
 
         if (opts.save && saveApp && patch) {
