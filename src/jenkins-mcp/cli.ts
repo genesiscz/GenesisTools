@@ -167,7 +167,7 @@ export async function runCli(argv: string[]): Promise<void> {
     program
         .command("monitor <input>")
         .description("Stream pipeline stage events to stdout (JSONL), notify on transitions")
-        .requiredOption("--build <n>", "Build number")
+        .option("--build <n>", "Build number (or use URL with /<build>/)")
         .option("--timeout <duration>", "Max wait (30s, 10m, 2h)", "30m")
         .option("--poll <duration>", "Poll interval (default 5s)", "5s")
         .option("--no-notify", "Disable terminal notifications")
@@ -176,7 +176,7 @@ export async function runCli(argv: string[]): Promise<void> {
             async (
                 input: string,
                 opts: {
-                    build: string;
+                    build?: string;
                     timeout: string;
                     poll: string;
                     notify: boolean;
@@ -184,12 +184,17 @@ export async function runCli(argv: string[]): Promise<void> {
                 }
             ) => {
                 const ref = resolveRef({ input, buildOverride: opts.build });
+
+                if (!ref.buildNumber) {
+                    throw new Error("Need --build or URL with build number");
+                }
+
                 const notifier = opts.notify === false ? undefined : new MonitorNotifier();
                 const out = opts.quiet ? () => {} : (line: string) => process.stdout.write(line);
                 const result = await runMonitor({
                     client: loadClient(),
                     jobPath: ref.jobPath,
-                    build: ref.buildNumber!,
+                    build: ref.buildNumber,
                     baseUrl: loadAuth().url,
                     timeoutMs: parseDuration(opts.timeout),
                     pollMs: parseDuration(opts.poll),

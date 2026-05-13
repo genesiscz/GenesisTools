@@ -45,16 +45,18 @@ Without args (no CLI subcommand), the binary launches as a stdio MCP server — 
 
 ### `monitor` JSONL schema
 
-One JSON object per line. Schema shorthand below (`?` = optional, `// ...` = comment) — actual stream is valid JSON:
+One JSON object per line. All records carry an ISO `ts`. Example shapes (`durationMillis` is optional on in-progress transitions):
 
-```text
-{event: "start",    jobPath, build, url}
-{event: "snapshot", stages: [{id, name, status, durationMillis}]}        // historical state on first poll (no notifications fired)
-{event: "stage",    id, name, status, durationMillis?, url}              // each transition
-{event: "branch",   stage, stageId, id, name, status, durationMillis?, url}
-{event: "error",    stage, stageId, line, matched, window: [...]}        // ±5 / ±3 line windows around errors after a FAILED stage
-{event: "end",      result, durationMillis}                              // SUCCESS / FAILED / UNSTABLE / ABORTED / NOT_EXECUTED
+```json
+{"event": "start",    "ts": "2026-05-13T10:00:00.000Z", "jobPath": "job/X/job/main", "build": "42", "url": "https://j/.../42/"}
+{"event": "snapshot", "ts": "2026-05-13T10:00:00.000Z", "stages": [{"id": "7", "name": "Checkout", "status": "SUCCESS", "durationMillis": 1234}]}
+{"event": "stage",    "ts": "2026-05-13T10:00:05.000Z", "id": "12", "name": "Build", "status": "IN_PROGRESS", "url": "https://j/.../42/pipeline-overview/?selected-node=12"}
+{"event": "branch",   "ts": "2026-05-13T10:00:06.000Z", "stage": "Build", "stageId": "12", "id": "15", "name": "Building libfoo", "status": "SUCCESS", "durationMillis": 7000, "url": "https://j/.../42/pipeline-overview/?selected-node=15"}
+{"event": "error",    "ts": "2026-05-13T10:01:00.000Z", "stage": "Test", "stageId": "30", "line": 412, "matched": "FAILED: 3 of 100 tests", "window": ["...", "...", "..."]}
+{"event": "end",      "ts": "2026-05-13T10:02:00.000Z", "result": "SUCCESS", "durationMillis": 120000}
 ```
+
+Snapshot fires once on first poll with completed stages (no notifications). `end.result` is one of `SUCCESS`, `FAILED`, `UNSTABLE`, `ABORTED`, `NOT_EXECUTED`.
 
 Process exits with the result mapped to a code:
 

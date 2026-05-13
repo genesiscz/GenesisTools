@@ -67,6 +67,55 @@ interface GetPipelineStagesArgs extends BuildRefArgs {
     expand?: boolean;
 }
 
+type ArgFieldType = "string" | "number" | "boolean" | "object";
+
+interface ArgSchema {
+    required?: Record<string, ArgFieldType>;
+    optional?: Record<string, ArgFieldType>;
+}
+
+function buildRef(raw: unknown, toolName: string): BuildRefArgs {
+    return parseArgs<BuildRefArgs>(
+        raw,
+        { required: { jobPath: "string" }, optional: { buildNumber: "string" } },
+        toolName
+    );
+}
+
+function parseArgs<T>(raw: unknown, schema: ArgSchema, toolName: string): T {
+    if (raw === null || typeof raw !== "object") {
+        throw new McpError(ErrorCode.InvalidParams, `${toolName}: arguments must be an object`);
+    }
+
+    const args = raw as Record<string, unknown>;
+
+    for (const [field, type] of Object.entries(schema.required ?? {})) {
+        const value = args[field];
+
+        if (type === "string" && (typeof value !== "string" || value === "")) {
+            throw new McpError(ErrorCode.InvalidParams, `${toolName}: '${field}' must be a non-empty string`);
+        }
+
+        if (type !== "string" && typeof value !== type) {
+            throw new McpError(ErrorCode.InvalidParams, `${toolName}: '${field}' must be a ${type}`);
+        }
+    }
+
+    for (const [field, type] of Object.entries(schema.optional ?? {})) {
+        const value = args[field];
+
+        if (value === undefined || value === null) {
+            continue;
+        }
+
+        if (typeof value !== type) {
+            throw new McpError(ErrorCode.InvalidParams, `${toolName}: '${field}' must be a ${type}`);
+        }
+    }
+
+    return args as T;
+}
+
 class JenkinsServer {
     protected server: Server;
     protected client: AxiosInstance;
@@ -286,36 +335,89 @@ class JenkinsServer {
 
         this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
             try {
-                const args = request.params.arguments ?? {};
-                switch (request.params.name) {
+                const raw = request.params.arguments ?? {};
+                const name = request.params.name;
+
+                switch (name) {
                     case "get_build_status":
-                        return await this.getBuildStatus(args as unknown as GetBuildStatusArgs);
+                        return await this.getBuildStatus(
+                            parseArgs<GetBuildStatusArgs>(
+                                raw,
+                                { required: { jobPath: "string" }, optional: { buildNumber: "string" } },
+                                name
+                            )
+                        );
                     case "trigger_build":
-                        return await this.triggerBuild(args as unknown as TriggerBuildArgs);
+                        return await this.triggerBuild(
+                            parseArgs<TriggerBuildArgs>(
+                                raw,
+                                { required: { jobPath: "string" }, optional: { parameters: "object" } },
+                                name
+                            )
+                        );
                     case "get_build_log":
-                        return await this.getBuildLog(args as unknown as GetBuildLogArgs);
+                        return await this.getBuildLog(
+                            parseArgs<GetBuildLogArgs>(
+                                raw,
+                                {
+                                    required: { jobPath: "string" },
+                                    optional: { buildNumber: "string", nodeId: "string", grep: "string" },
+                                },
+                                name
+                            )
+                        );
                     case "list_jobs":
-                        return await this.listJobs(args as unknown as ListJobsArgs);
+                        return await this.listJobs(
+                            parseArgs<ListJobsArgs>(raw, { optional: { folderPath: "string", limit: "number" } }, name)
+                        );
                     case "get_build_history":
-                        return await this.getBuildHistory(args as unknown as GetBuildHistoryArgs);
+                        return await this.getBuildHistory(
+                            parseArgs<GetBuildHistoryArgs>(
+                                raw,
+                                {
+                                    required: { jobPath: "string" },
+                                    optional: { limit: "number", expand: "boolean" },
+                                },
+                                name
+                            )
+                        );
                     case "stop_build":
-                        return await this.stopBuild(args as unknown as StopBuildArgs);
+                        return await this.stopBuild(
+                            parseArgs<StopBuildArgs>(
+                                raw,
+                                { required: { jobPath: "string", buildNumber: "string" } },
+                                name
+                            )
+                        );
                     case "get_queue":
-                        return await this.getQueue(args as unknown as GetQueueArgs);
+                        return await this.getQueue(
+                            parseArgs<GetQueueArgs>(raw, { optional: { limit: "number" } }, name)
+                        );
                     case "get_job_config":
-                        return await this.getJobConfig(args as unknown as GetJobConfigArgs);
+                        return await this.getJobConfig(
+                            parseArgs<GetJobConfigArgs>(raw, { required: { jobPath: "string" } }, name)
+                        );
                     case "get_pipeline_stages":
-                        return await this.getPipelineStages(args as unknown as GetPipelineStagesArgs);
+                        return await this.getPipelineStages(
+                            parseArgs<GetPipelineStagesArgs>(
+                                raw,
+                                {
+                                    required: { jobPath: "string" },
+                                    optional: { buildNumber: "string", expand: "boolean" },
+                                },
+                                name
+                            )
+                        );
                     case "get_failing_node":
-                        return await this.getFailingNode(args as unknown as BuildRefArgs);
+                        return await this.getFailingNode(buildRef(raw, name));
                     case "get_build_info":
-                        return await this.getBuildInfo(args as unknown as BuildRefArgs);
+                        return await this.getBuildInfo(buildRef(raw, name));
                     case "get_build_changes":
-                        return await this.getBuildChanges(args as unknown as BuildRefArgs);
+                        return await this.getBuildChanges(buildRef(raw, name));
                     case "wait_for_build":
-                        return await this.waitForBuild(args as unknown as BuildRefArgs);
+                        return await this.waitForBuild(buildRef(raw, name));
                     default:
-                        throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${request.params.name}`);
+                        throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
                 }
             } catch (error) {
                 if (error instanceof McpError) {
