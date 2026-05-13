@@ -288,14 +288,26 @@ async function writeOffsetSidecar(cachePath: string, offset: number): Promise<vo
  * empty-line matching.
  */
 export function grepLog(content: string, pattern: string): string[] {
-    const re = new RegExp(pattern);
+    // Build a RegExp from user input; on syntax error fall back to literal substring search
+    // so a malformed --grep typo doesn't crash. ReDoS via a syntactically-valid catastrophic
+    // pattern is out of scope here — input comes from a local CLI/MCP, not a network boundary.
+    let test: (line: string) => boolean;
+
+    try {
+        const re = new RegExp(pattern);
+        test = (line) => {
+            re.lastIndex = 0;
+            return re.test(line);
+        };
+    } catch {
+        test = (line) => line.includes(pattern);
+    }
+
     const lines = content.split("\n");
     const matches: string[] = [];
 
     for (let i = 0; i < lines.length; i++) {
-        re.lastIndex = 0;
-
-        if (re.test(lines[i])) {
+        if (test(lines[i])) {
             matches.push(`L${i + 1}: ${lines[i].replace(/\r$/, "")}`);
 
             if (matches.length >= 200) {
