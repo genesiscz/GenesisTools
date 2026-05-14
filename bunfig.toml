@@ -1,4 +1,4 @@
-preload = ["./src/utils/bun/preload-solid-scoped.ts"]
+preload = ["./src/utils/bun/preload-solid-scoped.ts", "./src/utils/search/stores/sqlite-vec-preload.ts"]
 
 [test]
 preload = [

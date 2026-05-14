@@ -1,9 +1,9 @@
 import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 import logger from "@app/logger";
 import { Embedder } from "@app/utils/ai/tasks/Embedder";
+import { attachReadonly, detachQuietly } from "@app/utils/database/attach";
 import { countActiveEmbeddings, countPairedEmbeddings } from "@app/utils/database/embedding-stats";
 import { getPendingMigrations, runMigrations } from "@app/utils/database/migrations";
 import { acquireLock, type LockHandle } from "@app/utils/fs/lock";
@@ -229,6 +229,8 @@ export type ReadonlySearchMode = "fulltext" | "hybrid" | "vector" | "auto";
 export interface ReadonlySearchOptions {
     mode?: ReadonlySearchMode;
     limit?: number;
+    /** Optional warning sink for callers that need stdout reserved for structured output. */
+    onWarning?: (message: string) => void;
     /** When false, skip vector-store/embedder construction even if hybrid/vector requested. Default: true. */
     enableVector?: boolean;
     /** Optional WHERE-clause predicate AND-appended to BM25/cosine queries. */
@@ -237,6 +239,21 @@ export interface ReadonlySearchOptions {
     attach?: { alias: string; dbPath: string; mode?: "ro" | "rw" };
     /** Optional typed metadata column filters AND-appended to BM25/cosine queries. */
     metadataFilters?: MetadataFilter[];
+    /**
+     * When set, compare the requested window against the index's recorded
+     * date coverage, reusing the meta this function already reads, and invoke
+     * `onOutside` with an advisory string.
+     */
+    coverageCheck?: { from?: Date; to?: Date; onOutside: (advisory: string) => void };
+}
+
+function readonlySearchWarn(opts: ReadonlySearchOptions | undefined, message: string): void {
+    if (opts?.onWarning) {
+        opts.onWarning(message);
+        return;
+    }
+
+    logger.warn(message);
 }
 
 async function createReadonlyEmbedder(meta: IndexMeta): Promise<Embedder | null> {
@@ -261,6 +278,42 @@ function sqliteTableExists(db: Database, name: string): boolean {
 }
 
 const pendingWarnedFor = new Set<string>();
+
+/**
+ * Compare a requested date window against the index's recorded coverage.
+ * Returns a stderr-ready advisory string when the window falls outside
+ * coverage, or null when it is fully covered or coverage is unknown.
+ */
+export function checkDateRangeCoverage(args: {
+    dateRangeMin: number | null | undefined;
+    dateRangeMax: number | null | undefined;
+    from?: Date;
+    to?: Date;
+}): string | null {
+    const min = args.dateRangeMin ?? null;
+    const max = args.dateRangeMax ?? null;
+
+    if (min === null || max === null) {
+        return null;
+    }
+
+    const isoDay = (ts: number): string => new Date(ts).toISOString().slice(0, 10);
+    const minDay = isoDay(min * 1000);
+    const maxDay = isoDay(max * 1000);
+    const fromDay = args.from ? isoDay(args.from.getTime()) : undefined;
+    const toDay = args.to ? isoDay(args.to.getTime()) : undefined;
+    const outsideLower = fromDay !== undefined && fromDay < minDay;
+    const outsideUpper = toDay !== undefined && toDay > maxDay;
+
+    if (!outsideLower && !outsideUpper) {
+        return null;
+    }
+
+    return (
+        `Requested range partially outside indexed coverage (${minDay} -> ${maxDay}). ` +
+        `Run "tools macos mail index" to refresh.\n`
+    );
+}
 
 /**
  * Search an index in read-only mode — no lock, safe for concurrent access.
@@ -291,18 +344,7 @@ export async function searchIndexReadonly(
 
     try {
         if (opts?.attach) {
-            const { alias, dbPath: attachPath, mode = "ro" } = opts.attach;
-
-            if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(alias)) {
-                throw new Error(`Invalid attach alias: ${alias}`);
-            }
-
-            const baseUri = pathToFileURL(resolve(attachPath));
-            if (mode === "ro") {
-                baseUri.search = "mode=ro";
-            }
-            const uri = baseUri.toString().replace(/'/g, "''");
-            db.run(`ATTACH DATABASE '${uri}' AS ${alias}`);
+            attachReadonly(db, opts.attach.alias, opts.attach.dbPath, opts.attach.mode ?? "ro");
         }
 
         if (sqliteTableExists(db, "_migrations")) {
@@ -310,19 +352,34 @@ export async function searchIndexReadonly(
 
             if (pending.length > 0 && !pendingWarnedFor.has(indexName)) {
                 pendingWarnedFor.add(indexName);
-                logger.warn(
+                readonlySearchWarn(
+                    opts,
                     `[indexer] outdated schema for "${indexName}" — next "tools macos mail index sync" will apply: ${pending.map((m) => m.id).join(", ")}`
                 );
             }
         }
 
         const meta = readMeta(db, { name: indexName } as IndexConfig, Date.now());
+        if (opts?.coverageCheck) {
+            const advisory = checkDateRangeCoverage({
+                dateRangeMin: meta.stats?.dateRangeMin,
+                dateRangeMax: meta.stats?.dateRangeMax,
+                from: opts.coverageCheck.from,
+                to: opts.coverageCheck.to,
+            });
+
+            if (advisory) {
+                opts.coverageCheck.onOutside(advisory);
+            }
+        }
+
         if (meta.indexingStatus === "in-progress") {
             const ageMs = Date.now() - (meta.lastSyncAt ?? 0);
             const staleThresholdMs = 30 * 60 * 1000;
 
             if (ageMs > staleThresholdMs) {
-                logger.warn(
+                readonlySearchWarn(
+                    opts,
                     `[indexer] "${indexName}" status is "in-progress" but last update was ${Math.round(ageMs / 60000)}min ago — likely interrupted. Run: tools macos mail index sync`
                 );
             }
@@ -353,7 +410,8 @@ export async function searchIndexReadonly(
                 .get(`${tableName}_embeddings`);
 
             if (!vecTableExists && !embTableExists) {
-                logger.warn(
+                readonlySearchWarn(
+                    opts,
                     `[searchIndexReadonly] index "${indexName}" has no vector tables — falling back to fulltext`
                 );
                 resolvedMode = "fulltext";
@@ -368,13 +426,15 @@ export async function searchIndexReadonly(
                 const e = await createReadonlyEmbedder(meta);
 
                 if (!e) {
-                    logger.warn(
+                    readonlySearchWarn(
+                        opts,
                         `[searchIndexReadonly] index "${indexName}" requested ${resolvedMode} but no embedder available — falling back to fulltext`
                     );
                     resolvedMode = "fulltext";
                     vectorDriver = undefined;
                 } else if (meta.indexEmbedding && e.dimensions !== meta.indexEmbedding.dimensions) {
-                    logger.warn(
+                    readonlySearchWarn(
+                        opts,
                         `[searchIndexReadonly] embedder dimensions ${e.dimensions} ≠ stored ${meta.indexEmbedding.dimensions} — falling back to fulltext`
                     );
                     resolvedMode = "fulltext";
@@ -384,6 +444,12 @@ export async function searchIndexReadonly(
                 }
             }
         }
+
+        logger.debug(
+            `[searchIndexReadonly] index="${indexName}" requestedMode=${requestedMode} ` +
+                `resolvedMode=${resolvedMode} hasEmbeddings=${hasEmbeddings} ` +
+                `embedder=${embedder ? "yes" : "no"} vectorDriver=${vectorDriver ?? "none"}`
+        );
 
         const fts = SearchEngine.fromDatabase<ChunkDoc>(db, {
             tableName,
@@ -423,12 +489,9 @@ export async function searchIndexReadonly(
         });
     } finally {
         if (opts?.attach) {
-            try {
-                db.run(`DETACH DATABASE ${opts.attach.alias}`);
-            } catch {
-                // detach failures shouldn't mask the search result
-            }
+            detachQuietly(db, opts.attach.alias);
         }
+
         db.close();
     }
 }

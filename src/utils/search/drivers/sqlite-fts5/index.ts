@@ -266,6 +266,11 @@ export class SearchEngine<TDoc extends Record<string, unknown> = Record<string, 
                 throw err;
             }
 
+            logger.debug(
+                `[search] sqlite-vec unavailable, falling back to brute-force vectors: ${
+                    err instanceof Error ? err.message : String(err)
+                }`
+            );
             // Fall through to brute-force
         }
 

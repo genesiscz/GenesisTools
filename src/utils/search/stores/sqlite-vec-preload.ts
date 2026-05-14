@@ -1,27 +1,15 @@
 /**
- * Preload script for sqlite-vec tests.
- * Must be loaded BEFORE any Database instance is created.
+ * Preload script: swaps in extension-capable SQLite before any Database is
+ * created in the process. Wired into the `tools` launcher (see `tools`,
+ * executeTool) and into bunfig.toml's `preload` plus `[test].preload`.
  *
- * Usage: bun test --preload ./src/utils/search/stores/sqlite-vec-preload.ts
+ * Delegates to ensureExtensionCapableSQLite() so the loader's module-level
+ * state is set correctly and every later call is a clean no-op.
+ *
+ * Usage: bun run --preload ./src/utils/search/stores/sqlite-vec-preload.ts <entry>
  */
-import { Database } from "bun:sqlite";
-import { existsSync } from "node:fs";
+import logger from "@app/logger";
+import { ensureExtensionCapableSQLite } from "./sqlite-vec-loader";
 
-const HOMEBREW_SQLITE_PATHS = [
-    "/opt/homebrew/opt/sqlite3/lib/libsqlite3.dylib",
-    "/usr/local/opt/sqlite3/lib/libsqlite3.dylib",
-];
-
-if (process.platform === "darwin") {
-    for (const libPath of HOMEBREW_SQLITE_PATHS) {
-        if (existsSync(libPath)) {
-            try {
-                Database.setCustomSQLite(libPath);
-            } catch {
-                // Already loaded -- nothing we can do
-            }
-
-            break;
-        }
-    }
-}
+ensureExtensionCapableSQLite();
+logger.debug("[sqlite-vec-preload] ensureExtensionCapableSQLite() ran at preload time");

@@ -1,5 +1,4 @@
 import type { Database } from "bun:sqlite";
-import { pathToFileURL } from "node:url";
 import logger from "@app/logger";
 import { ENVELOPE_INDEX_PATH } from "@app/macos/lib/mail/constants";
 import type { MailDB } from "@app/macos/lib/mail/db-types";
@@ -12,6 +11,7 @@ import type {
     SearchOptions,
 } from "@app/macos/lib/mail/types";
 import { buildOrderedLikePattern, escapeLike } from "@app/utils/database";
+import { attachReadonly, detachQuietly } from "@app/utils/database/attach";
 import { type Expression, type SqlBool, sql } from "kysely";
 import { MacDatabase } from "./MacDatabase";
 import { type MailFilterOptions, resolveMailboxRowids, SQL_BIND_BATCH } from "./mail-sql";
@@ -73,8 +73,7 @@ export function selectStaleMailChunkIds(indexDb: Database, envelopeDb: Database,
         }
     }
 
-    const uri = pathToFileURL(envFilename).toString();
-    indexDb.run(`ATTACH DATABASE '${uri.replace(/'/g, "''")}?mode=ro' AS mailapp`);
+    attachReadonly(indexDb, "mailapp", envFilename);
 
     try {
         const result = indexDb.query(buildSql("mailapp.messages")).all() as Array<{ id: string }>;
@@ -85,11 +84,7 @@ export function selectStaleMailChunkIds(indexDb: Database, envelopeDb: Database,
 
         return result.map((r) => r.id);
     } finally {
-        try {
-            indexDb.run("DETACH DATABASE mailapp");
-        } catch {
-            // detach failures shouldn't mask the result
-        }
+        detachQuietly(indexDb, "mailapp");
     }
 }
 
