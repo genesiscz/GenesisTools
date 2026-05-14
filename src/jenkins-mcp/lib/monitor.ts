@@ -3,7 +3,7 @@ import { SafeJSON } from "@app/utils/json";
 import type { AxiosInstance } from "axios";
 import { type ErrorBlock, extractErrors } from "./errors";
 import { formatDuration, stageNotifyBody, statusBody } from "./format";
-import { fetchLog } from "./log";
+import { fetchLog, getBuildState } from "./log";
 import type { MonitorNotifier } from "./notify";
 import { getStages, type PipelineSnapshot, type RunStatus, type Stage, type StageStatus } from "./pipeline";
 import { buildUrl } from "./url";
@@ -44,7 +44,8 @@ export type MonitorEvent =
           matched: string;
           window: string[];
       }
-    | { event: "end"; ts: string; result: RunStatus; durationMillis: number };
+    | { event: "run"; ts: string; status: RunStatus }
+    | { event: "end"; ts: string; result: RunStatus; durationMillis: number; via?: "wfapi" | "api-json" };
 
 export interface MonitorOpts {
     client: AxiosInstance;
@@ -65,8 +66,32 @@ export interface MonitorResult {
 
 const TERMINAL_STAGE: StageStatus[] = ["SUCCESS", "FAILED", "UNSTABLE", "ABORTED", "NOT_EXECUTED"];
 
+// wfapi's run-level status can stay IN_PROGRESS for minutes after every visible
+// flow node finished (common with multibranch dispatcher pipelines that hold the
+// parent run open while downstream-build bookkeeping settles). After this many
+// consecutive polls with no stage/branch delta we cross-check `/api/json?tree=building,result`
+// which sees the build's authoritative state.
+const STALE_POLLS_BEFORE_API_FALLBACK = 3;
+
 function isTerminalRun(status: RunStatus): boolean {
     return status !== "IN_PROGRESS" && status !== "PAUSED_PENDING_INPUT" && status !== "QUEUED";
+}
+
+function mapJenkinsResult(result: string): RunStatus {
+    switch (result) {
+        case "SUCCESS":
+            return "SUCCESS";
+        case "FAILURE":
+            return "FAILED";
+        case "ABORTED":
+            return "ABORTED";
+        case "UNSTABLE":
+            return "UNSTABLE";
+        case "NOT_BUILT":
+            return "NOT_EXECUTED";
+        default:
+            return "FAILED";
+    }
 }
 
 export async function runMonitor(opts: MonitorOpts): Promise<MonitorResult> {
@@ -83,6 +108,8 @@ export async function runMonitor(opts: MonitorOpts): Promise<MonitorResult> {
     const seenBranches = new Map<string, StageStatus>();
     const reportedErrors = new Set<string>();
     const deadline = Date.now() + timeoutMs;
+    let lastRunStatus: RunStatus | null = null;
+    let pollsWithoutDelta = 0;
 
     while (Date.now() < deadline) {
         let snap: PipelineSnapshot;
@@ -101,11 +128,14 @@ export async function runMonitor(opts: MonitorOpts): Promise<MonitorResult> {
             seedSnapshotState(snap, seenStages, seenBranches, out);
         }
 
+        let stageDelta = false;
+
         for (const stage of snap.stages) {
             const lastStage = seenStages.get(stage.id);
             const stageUrl = buildUrl(baseUrl, { ...baseRef, nodeId: stage.id });
 
             if (lastStage !== stage.status) {
+                stageDelta = true;
                 seenStages.set(stage.id, stage.status);
                 emit(out, {
                     event: "stage",
@@ -141,6 +171,7 @@ export async function runMonitor(opts: MonitorOpts): Promise<MonitorResult> {
                     continue;
                 }
 
+                stageDelta = true;
                 seenBranches.set(key, branch.status);
                 const branchUrl = buildUrl(baseUrl, { ...baseRef, nodeId: branch.id });
                 emit(out, {
@@ -166,12 +197,18 @@ export async function runMonitor(opts: MonitorOpts): Promise<MonitorResult> {
             }
         }
 
+        if (snap.status !== lastRunStatus) {
+            lastRunStatus = snap.status;
+            emit(out, { event: "run", ts: new Date().toISOString(), status: snap.status });
+        }
+
         if (isTerminalRun(snap.status)) {
             emit(out, {
                 event: "end",
                 ts: new Date().toISOString(),
                 result: snap.status,
                 durationMillis: snap.durationMillis,
+                via: "wfapi",
             });
             notifyTransition(ctx, {
                 subtitle: "Build finished",
@@ -180,6 +217,36 @@ export async function runMonitor(opts: MonitorOpts): Promise<MonitorResult> {
                 openUrl: buildHref,
             });
             return { result: snap.status, durationMs: snap.durationMillis, timedOut: false };
+        }
+
+        pollsWithoutDelta = stageDelta ? 0 : pollsWithoutDelta + 1;
+
+        if (pollsWithoutDelta >= STALE_POLLS_BEFORE_API_FALLBACK) {
+            const state = await getBuildState(client, jobPath, build);
+
+            if (state && !state.building && state.result) {
+                const final = mapJenkinsResult(state.result);
+                const duration = state.duration || snap.durationMillis;
+
+                if (final === "FAILED") {
+                    await emitErrorsForFailedStages(opts, snap, reportedErrors);
+                }
+
+                emit(out, {
+                    event: "end",
+                    ts: new Date().toISOString(),
+                    result: final,
+                    durationMillis: duration,
+                    via: "api-json",
+                });
+                notifyTransition(ctx, {
+                    subtitle: "Build finished",
+                    body: `${statusBody(final)}  ${formatDuration(duration)}`,
+                    sound: final === "SUCCESS" ? "Glass" : "Basso",
+                    openUrl: buildHref,
+                });
+                return { result: final, durationMs: duration, timedOut: false };
+            }
         }
 
         await sleep(pollMs);
@@ -261,6 +328,26 @@ function isMultibranchDispatch(stage: Stage): boolean {
 function shortBranchName(name: string): string {
     const parts = name.split(" » ");
     return parts[parts.length - 1] ?? name;
+}
+
+/**
+ * Walk the latest snapshot and fire `emitErrorsForStage` for any FAILED stage
+ * we never reported during the normal transition loop. Used when the api-json
+ * fallback ends a run that wfapi never marked terminal.
+ */
+async function emitErrorsForFailedStages(
+    opts: MonitorOpts,
+    snap: PipelineSnapshot,
+    reportedErrors: Set<string>
+): Promise<void> {
+    for (const stage of snap.stages) {
+        if (stage.status !== "FAILED" || reportedErrors.has(stage.id)) {
+            continue;
+        }
+
+        reportedErrors.add(stage.id);
+        await emitErrorsForStage(opts, stage);
+    }
 }
 
 async function emitErrorsForStage(opts: MonitorOpts, stage: Stage): Promise<void> {

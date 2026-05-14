@@ -39,6 +39,16 @@ describe("stripJenkinsHtml", () => {
         const input = "<b>bold</b> and <code>inline-code</code> and <em>emph</em>";
         expect(stripJenkinsHtml(input)).toBe("bold and inline-code and emph");
     });
+
+    it("strips ANSI-concealed Jenkins HashAnchored action IDs (ESC[8mha:...ESC[0m)", () => {
+        const input = `Started by upstream project "\x1b[8mha:////4Mp5CAuXu5Tk/kDm+5j8Xzl+BX5cMGKDLQ5zKFXwbr5qAAAAwB+LCAAAAAAAAP9b85aBtbiI\x1b[0mparent-job" build`;
+        expect(stripJenkinsHtml(input)).toBe('Started by upstream project "parent-job" build');
+    });
+
+    it("strips multiple ANSI conceal blocks on one line", () => {
+        const input = `a \x1b[8mha:////ABC\x1b[0m b \x1b[8mha:////DEF\x1b[0m c`;
+        expect(stripJenkinsHtml(input)).toBe("a  b  c");
+    });
 });
 
 describe("grepLog", () => {

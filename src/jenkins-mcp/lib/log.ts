@@ -13,6 +13,13 @@ const ANY_SPAN_RE = /<span[^>]*>|<\/span>/g;
 // it can also emit <b>, <i>, etc. via console annotators. Strip all simple
 // tags but keep their inner text so URLs and other content survive.
 const SIMPLE_TAG_RE = /<\/?(?:a|b|i|u|em|strong|code|tt)\b[^>]*>/gi;
+// Jenkins workflow plugin wraps HashAnchored pipeline action IDs in an ANSI
+// "conceal" sequence (ESC[8m ... ESC[0m). Invisible in a real TTY, but they
+// leak into raw log files as ESC[8mha:////<base64>...ESC[0m noise.
+// Built via `new RegExp` (string form) to keep raw ESC out of the source —
+// biome's noControlCharactersInRegex rule rejects the literal `\x1b`.
+const ESC = "\\x1b";
+const ANSI_CONCEAL_HA_RE = new RegExp(`${ESC}\\[8mha:[^${ESC}]*${ESC}\\[0m`, "g");
 const CONSOLE_OUTPUT_RE = /<pre class="console-output">([\s\S]*?)<\/pre>/;
 const HTML_ENTITIES: Record<string, string> = {
     "&amp;": "&",
@@ -25,7 +32,11 @@ const HTML_ENTITIES: Record<string, string> = {
 };
 
 export function stripJenkinsHtml(text: string): string {
-    return text.replace(TIMESTAMP_SPAN_RE, "").replace(ANY_SPAN_RE, "").replace(SIMPLE_TAG_RE, "");
+    return text
+        .replace(TIMESTAMP_SPAN_RE, "")
+        .replace(ANY_SPAN_RE, "")
+        .replace(SIMPLE_TAG_RE, "")
+        .replace(ANSI_CONCEAL_HA_RE, "");
 }
 
 /**
@@ -70,6 +81,50 @@ export async function isBuildFinal(client: AxiosInstance, jobPath: string, build
 
     const data = res.data as { building?: boolean; result?: string | null };
     return data.building === false && data.result != null;
+}
+
+export interface BuildState {
+    building: boolean;
+    result: string | null;
+    duration: number;
+}
+
+/**
+ * Single-call probe of `/api/json?tree=building,result,duration`. Returns null on
+ * non-200 / network failure / malformed payload so callers can treat "no answer"
+ * uniformly. Used as wfapi-independent fallback when wfapi's run-level status
+ * lags behind the actual build state (common with multibranch dispatcher pipelines).
+ */
+export async function getBuildState(
+    client: AxiosInstance,
+    jobPath: string,
+    buildNumber: string
+): Promise<BuildState | null> {
+    let res: { status: number; data: unknown };
+
+    try {
+        res = await client.get(`/${jobPath}/${buildNumber}/api/json`, {
+            params: { tree: "building,result,duration" },
+        });
+    } catch {
+        return null;
+    }
+
+    if (res.status !== 200) {
+        return null;
+    }
+
+    const data = res.data as { building?: unknown; result?: unknown; duration?: unknown };
+
+    if (typeof data.building !== "boolean") {
+        return null;
+    }
+
+    return {
+        building: data.building,
+        result: typeof data.result === "string" ? data.result : null,
+        duration: typeof data.duration === "number" ? data.duration : 0,
+    };
 }
 
 export interface LogFetchOpts {
