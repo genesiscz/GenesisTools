@@ -5,6 +5,8 @@ export interface DaemonTask {
     retries: number;
     enabled: boolean;
     description?: string;
+    /** Kill a task that has not exited after this many milliseconds. Default: 10 minutes. */
+    timeoutMs?: number;
     /** Send macOS notifications on start/complete/fail. Default: true */
     notify?: boolean;
 }
@@ -33,6 +35,7 @@ export interface LogExit {
     ts: string;
     code: number | null;
     duration_ms: number;
+    timedOut?: boolean;
 }
 
 export type LogEntry = LogMeta | LogLine | LogExit;

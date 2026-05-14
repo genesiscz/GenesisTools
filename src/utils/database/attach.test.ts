@@ -51,7 +51,7 @@ describe("attachReadonly / detachQuietly", () => {
         const missingPath = join(dir, "missing.db");
 
         expect(() => attachReadonly(db, "missing", missingPath)).toThrow(
-            new RegExp(`Failed to attach SQLite database .*missing\\.db.* as missing`)
+            /Failed to attach SQLite database .*missing\.db.* as missing/
         );
         db.close();
     });

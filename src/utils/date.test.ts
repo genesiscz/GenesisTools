@@ -1,5 +1,12 @@
 import { describe, expect, it } from "bun:test";
-import { getDatesInMonth, getMonthDateRange, parseDate } from "./date";
+import {
+    formatLocalDateTimeStamp,
+    formatLocalFileTimestamp,
+    formatLocalMonth,
+    getDatesInMonth,
+    getMonthDateRange,
+    parseDate,
+} from "./date";
 
 describe("parseDate", () => {
     it("parses valid date string", () => {
@@ -59,5 +66,23 @@ describe("getDatesInMonth", () => {
         for (const d of getDatesInMonth("2026-03")) {
             expect(d).toMatch(/^\d{4}-\d{2}-\d{2}$/);
         }
+    });
+});
+
+describe("local timestamp formatting", () => {
+    const d = new Date(2026, 4, 14, 20, 49, 3, 120);
+
+    it("formats display timestamps using local date/time fields", () => {
+        expect(formatLocalDateTimeStamp(d)).toBe("2026-05-14 20:49:03");
+        expect(formatLocalDateTimeStamp(d, { seconds: false })).toBe("2026-05-14 20:49");
+    });
+
+    it("formats filename-safe timestamps using local date/time fields", () => {
+        expect(formatLocalFileTimestamp(d)).toBe("2026-05-14T20-49-03");
+        expect(formatLocalFileTimestamp(d, { separator: "_", milliseconds: true })).toBe("2026-05-14_20-49-03-120");
+    });
+
+    it("formats local month", () => {
+        expect(formatLocalMonth(d)).toBe("2026-05");
     });
 });

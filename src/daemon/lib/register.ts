@@ -9,6 +9,7 @@ export interface RegisterTaskOptions {
     retries?: number;
     enabled?: boolean;
     description?: string;
+    timeoutMs?: number;
     overwrite?: boolean;
     /** Send macOS notifications on start/complete/fail. Default: true */
     notify?: boolean;
@@ -38,6 +39,7 @@ export async function registerTask(opts: RegisterTaskOptions): Promise<boolean> 
         retries: opts.retries ?? 3,
         enabled: opts.enabled ?? true,
         description: opts.description,
+        ...(opts.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
         ...(opts.notify === false ? { notify: false } : {}),
     };
 

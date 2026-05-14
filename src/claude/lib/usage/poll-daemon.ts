@@ -2,9 +2,13 @@ import { fetchAllAccountsUsage } from "@app/claude/lib/usage/api";
 import { loadDashboardConfig } from "@app/claude/lib/usage/dashboard-config";
 import { UsageHistoryDb } from "@app/claude/lib/usage/history-db";
 import { NotificationManager } from "@app/claude/lib/usage/notification-manager";
+import logger from "@app/logger";
 import { Storage } from "@app/utils/storage/storage";
 
 async function main(): Promise<void> {
+    const startedAt = Date.now();
+    logger.info("[claude-usage] daemon poll starting");
+
     const dashConfig = await loadDashboardConfig();
 
     const db = new UsageHistoryDb();
@@ -18,6 +22,7 @@ async function main(): Promise<void> {
         const results = await fetchAllAccountsUsage();
 
         if (results.length === 0) {
+            logger.warn("[claude-usage] daemon poll found no configured accounts");
             console.error("No accounts configured. Run: tools claude login");
             process.exit(1);
         }
@@ -66,6 +71,10 @@ async function main(): Promise<void> {
 
         const accountNames = results.map((r) => r.accountName).join(", ");
         const errorCount = results.filter((r) => r.error).length;
+        logger.info(
+            { accounts: results.length, accountNames, errorCount, duration_ms: Date.now() - startedAt },
+            "[claude-usage] daemon poll completed"
+        );
         console.log(
             `Polled ${results.length} account(s): ${accountNames}${errorCount > 0 ? ` (${errorCount} error(s))` : ""}`
         );
@@ -74,7 +83,12 @@ async function main(): Promise<void> {
     }
 }
 
-main().catch((err) => {
-    console.error(err);
-    process.exit(1);
-});
+if (import.meta.main) {
+    main()
+        .then(() => process.exit(0))
+        .catch((err) => {
+            logger.error({ error: err }, "[claude-usage] daemon poll failed");
+            console.error(err);
+            process.exit(1);
+        });
+}

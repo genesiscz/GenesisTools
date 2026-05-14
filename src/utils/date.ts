@@ -288,6 +288,58 @@ export function formatLocalDate(d: Date): string {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+interface LocalDateTimeOptions {
+    seconds?: boolean;
+}
+
+interface LocalFileTimestampOptions {
+    separator?: "T" | "_";
+    milliseconds?: boolean;
+}
+
+function coerceDate(date: Date | string | number): Date {
+    return date instanceof Date ? date : new Date(date);
+}
+
+/**
+ * Format a date/time as a local, sortable timestamp for CLI display.
+ *
+ * Use this instead of `toISOString().slice(...).replace("T", " ")` when the
+ * string is shown to humans. ISO strings are UTC and look like local time after
+ * slicing, which creates timezone-skewed output.
+ */
+export function formatLocalDateTimeStamp(date: Date | string | number, options: LocalDateTimeOptions = {}): string {
+    const d = coerceDate(date);
+    const h = String(d.getHours()).padStart(2, "0");
+    const m = String(d.getMinutes()).padStart(2, "0");
+    const s = String(d.getSeconds()).padStart(2, "0");
+    const time = options.seconds === false ? `${h}:${m}` : `${h}:${m}:${s}`;
+
+    return `${formatLocalDate(d)} ${time}`;
+}
+
+/**
+ * Format a local timestamp safe for filenames/IDs.
+ */
+export function formatLocalFileTimestamp(
+    date: Date | string | number = new Date(),
+    options: LocalFileTimestampOptions = {}
+): string {
+    const d = coerceDate(date);
+    const h = String(d.getHours()).padStart(2, "0");
+    const m = String(d.getMinutes()).padStart(2, "0");
+    const s = String(d.getSeconds()).padStart(2, "0");
+    const ms = String(d.getMilliseconds()).padStart(3, "0");
+    const separator = options.separator ?? "T";
+    const suffix = options.milliseconds ? `-${ms}` : "";
+
+    return `${formatLocalDate(d)}${separator}${h}-${m}-${s}${suffix}`;
+}
+
+export function formatLocalMonth(d: Date): string {
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
 /**
  * Get the ISO week (Mon–Sun) range for a given date.
  */

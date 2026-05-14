@@ -26,6 +26,7 @@ import {
     requireConfig,
 } from "@app/azure-devops/utils";
 import logger, { consoleLog } from "@app/logger";
+import { formatLocalDateTimeStamp } from "@app/utils/date";
 import type { Command } from "commander";
 
 // Silent mode for JSON output - suppresses progress messages
@@ -57,7 +58,7 @@ function formatAI(queryId: string, items: WorkItem[], changes: ChangeInfo[], cac
     lines.push("|-----|-------|-------|----------|---------|----------|");
     for (const item of items) {
         const title = item.title.length > 40 ? `${item.title.slice(0, 37)}...` : item.title;
-        const changed = item.changed ? new Date(item.changed).toISOString().slice(0, 16).replace("T", " ") : "-";
+        const changed = item.changed ? formatLocalDateTimeStamp(item.changed, { seconds: false }) : "-";
         lines.push(
             `| ${item.id} | ${title} | ${item.state} | ${item.severity || "-"} | ${changed} | ${item.assignee || "-"} |`
         );
@@ -102,7 +103,7 @@ function formatMD(items: WorkItem[]): string {
     lines.push("| ID | Title | State | Severity | Changed | Assignee |");
     lines.push("|---|---|---|---|---|---|");
     for (const item of items) {
-        const changed = item.changed ? new Date(item.changed).toISOString().slice(0, 16).replace("T", " ") : "-";
+        const changed = item.changed ? formatLocalDateTimeStamp(item.changed, { seconds: false }) : "-";
         lines.push(
             `| ${item.id} | ${item.title.slice(0, 50)} | ${item.state} | ${item.severity || "-"} | ${changed} | ${item.assignee || "-"} |`
         );

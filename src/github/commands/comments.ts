@@ -17,6 +17,7 @@ import { calculateStats, formatIssue } from "@app/github/lib/output";
 import { findReplyTarget, processQuotes } from "@app/github/lib/quotes";
 import type { CommentData, CommentRecord, GitHubComment, IssueData } from "@app/github/types";
 import logger from "@app/logger";
+import { formatLocalDateTimeStamp } from "@app/utils/date";
 import { getOctokit } from "@app/utils/github/octokit";
 import { withRetry } from "@app/utils/github/rate-limit";
 import { detectRepoFromGit, extractCommentId, parseGitHubUrl } from "@app/utils/github/url-parser";
@@ -71,7 +72,7 @@ function formatCacheDate(dateStr: string): string {
     if (Number.isNaN(d.getTime())) {
         return dateStr;
     }
-    return d.toISOString().replace("T", " ").slice(0, 16);
+    return formatLocalDateTimeStamp(d, { seconds: false });
 }
 
 function isBot(username: string, userType?: string): boolean {
