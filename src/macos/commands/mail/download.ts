@@ -1,217 +1,100 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
 import logger from "@app/logger";
-import { parseMailDate } from "@app/macos/lib/mail/command-helpers";
-import { EmlxBodyExtractor } from "@app/macos/lib/mail/emlx";
-import { generateEmailMarkdown, generateIndexMarkdown, generateSlug } from "@app/macos/lib/mail/format";
-import { saveAttachment } from "@app/macos/lib/mail/jxa";
-import { MailStorage } from "@app/macos/lib/mail/mail-storage";
-import { truncateBody } from "@app/macos/lib/mail/transform";
+import { exportMessages, parseMailIds } from "@app/macos/lib/mail/export";
+import { rowToMessage } from "@app/macos/lib/mail/transform";
 import { MailDatabase } from "@app/utils/macos/MailDatabase";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 
 export function registerDownloadCommand(program: Command): void {
     program
-        .command("download <output-dir>")
-        .description("Download search results as markdown files")
-        .option("--yes", "Skip all confirmations")
+        .command("download [ids...]")
+        .description("Download specific emails by ID (with attachments) to a directory")
+        .option("--ids <ids>", "Comma-delimited email IDs (alternative to positional args)")
+        .option("--output-dir <dir>", "Directory to write into")
+        .option("--save-attachments", "Download attachments to output-dir/attachments/")
+        .option("--attachments-only", "Write only attachments, skip the .md files")
+        .option("--body-max-chars <n>", "Max body characters per email")
         .option("--overwrite", "Overwrite existing index.md")
         .option("--append", "Append to existing index.md")
-        .option("--save-attachments", "Download attachments to output-dir/attachments/")
-        .option("--from <date>", "Only download emails sent after date (ISO format)")
-        .option("--to <date>", "Only download emails sent before date (ISO format)")
-        .option("--body-max-chars <n>", "Max body characters per email")
+        .option("--yes", "Skip all confirmations")
         .action(
             async (
-                outputDirArg: string,
+                idsArg: string[],
                 options: {
-                    yes?: boolean;
+                    ids?: string;
+                    outputDir?: string;
+                    saveAttachments?: boolean;
+                    attachmentsOnly?: boolean;
+                    bodyMaxChars?: string;
                     overwrite?: boolean;
                     append?: boolean;
-                    saveAttachments?: boolean;
-                    from?: string;
-                    to?: string;
-                    bodyMaxChars?: string;
+                    yes?: boolean;
                 }
             ) => {
                 const db = new MailDatabase();
 
                 try {
-                    const outputDir = resolve(outputDirArg);
-                    const isTTY = process.stdout.isTTY;
+                    const ids = parseMailIds(idsArg ?? [], options.ids);
 
-                    // Load last search results
-                    const mailStorage = new MailStorage();
-                    const messages = mailStorage.loadSearchResults();
-
-                    if (!messages || messages.length === 0) {
-                        p.log.error("No search results found. Run 'tools macos mail search <query>' first.");
+                    if (ids.length === 0) {
+                        p.log.error(
+                            "No email IDs given. Usage: tools macos mail download <id,id,...> --output-dir <dir>\n" +
+                                "To export a whole search instead, use: tools macos mail search-download <query> --output-dir <dir>"
+                        );
                         process.exit(1);
                     }
 
-                    p.log.info(`Downloading ${messages.length} emails to ${outputDir}`);
-
-                    // Check for existing index.md
-                    const indexPath = join(outputDir, "index.md");
-                    if (existsSync(indexPath) && !options.overwrite && !options.append) {
-                        if (!isTTY && !options.yes) {
-                            p.log.error(`${indexPath} already exists. Use --overwrite, --append, or --yes.`);
-                            process.exit(1);
-                        }
-
-                        if (isTTY && !options.yes) {
-                            const action = await p.select({
-                                message: `${indexPath} already exists. What to do?`,
-                                options: [
-                                    { value: "overwrite", label: "Overwrite" },
-                                    { value: "append", label: "Append" },
-                                    { value: "skip", label: "Cancel" },
-                                ],
-                            });
-
-                            if (p.isCancel(action) || action === "skip") {
-                                p.cancel("Download cancelled.");
-                                process.exit(0);
-                            }
-
-                            if (action === "overwrite") {
-                                options.overwrite = true;
-                            }
-                            if (action === "append") {
-                                options.append = true;
-                            }
-                        }
+                    if (!options.outputDir) {
+                        p.log.error("--output-dir is required.");
+                        process.exit(1);
                     }
 
-                    // Warn on large result sets
-                    if (messages.length > 100 && !options.yes) {
-                        if (!isTTY) {
-                            p.log.error(`${messages.length} messages to download. Use --yes to confirm.`);
-                            process.exit(1);
-                        }
+                    logger.info(`[mail/download] requested ids=${ids.join(",")} outputDir=${options.outputDir}`);
 
-                        const proceed = await p.confirm({
-                            message: `Download ${messages.length} emails? This may take a while.`,
-                        });
-                        if (p.isCancel(proceed) || !proceed) {
-                            p.cancel("Download cancelled.");
-                            process.exit(0);
-                        }
+                    const rows = await db.getMessagesByRowids(ids);
+
+                    if (rows.length === 0) {
+                        p.log.error(`No emails found for the given IDs: ${ids.join(", ")}`);
+                        process.exit(1);
                     }
 
-                    // Create directories
-                    const emailsDir = join(outputDir, "emails");
-                    mkdirSync(emailsDir, { recursive: true });
-
-                    if (options.saveAttachments) {
-                        mkdirSync(join(outputDir, "attachments"), { recursive: true });
+                    if (rows.length < ids.length) {
+                        const found = new Set(rows.map((r) => r.rowid));
+                        const missing = ids.filter((id) => !found.has(id));
+                        p.log.warn(`Not found: ${missing.join(", ")}`);
                     }
 
-                    // Apply date filters
-                    let filteredMessages = messages;
+                    const messages = rows.map(rowToMessage);
+                    const attachmentsMap = await db.getAttachments(messages.map((m) => m.rowid));
 
-                    const fromDate = parseMailDate(options.from);
-
-                    if (fromDate) {
-                        filteredMessages = filteredMessages.filter((m) => m.dateSent >= fromDate);
+                    for (const m of messages) {
+                        m.attachments = attachmentsMap.get(m.rowid) ?? [];
                     }
 
-                    const toDate = parseMailDate(options.to, true);
+                    const result = await exportMessages({
+                        messages,
+                        outputDir: options.outputDir,
+                        db,
+                        saveAttachments: options.saveAttachments,
+                        attachmentsOnly: options.attachmentsOnly,
+                        bodyMaxChars: options.bodyMaxChars ? Number.parseInt(options.bodyMaxChars, 10) : undefined,
+                        overwrite: options.overwrite,
+                        append: options.append,
+                        yes: options.yes,
+                    });
 
-                    if (toDate) {
-                        filteredMessages = filteredMessages.filter((m) => m.dateSent <= toDate);
+                    p.log.success(`Downloaded ${result.emailCount} email(s) to ${result.outputDir}`);
+
+                    if (result.emailsDir) {
+                        p.log.info(`  Emails: ${result.emailsDir}/`);
                     }
 
-                    if (filteredMessages.length === 0) {
-                        p.log.info("No messages match the date filter.");
-                        return;
-                    }
-
-                    if (filteredMessages.length !== messages.length) {
-                        p.log.info(
-                            `Filtered to ${filteredMessages.length} of ${messages.length} messages by date range`
-                        );
-                    }
-
-                    // Fetch recipients for all messages
-                    const rowids = filteredMessages.map((m) => m.rowid);
-                    const recipientsMap = await db.getRecipients(rowids);
-
-                    // Create EmlxBodyExtractor (fast: ~42 msg/s L2, instant L1)
-                    const emlx = await EmlxBodyExtractor.create();
-                    const bodyMaxChars = options.bodyMaxChars ? Number.parseInt(options.bodyMaxChars, 10) : undefined;
-
-                    // Process each email
-                    const spinner = p.spinner();
-                    spinner.start("Processing emails...");
-                    let processed = 0;
-
-                    for (const msg of filteredMessages) {
-                        processed++;
-                        spinner.message(`[${processed}/${filteredMessages.length}] ${msg.subject.slice(0, 50)}...`);
-
-                        // Attach recipients
-                        msg.recipients = recipientsMap.get(msg.rowid) ?? [];
-
-                        const body = await emlx.getBody(msg.rowid);
-                        msg.body = body && bodyMaxChars ? truncateBody(body, bodyMaxChars) : (body ?? undefined);
-
-                        // Generate markdown
-                        const slug = generateSlug(msg);
-                        const emailMd = generateEmailMarkdown(msg);
-                        writeFileSync(join(emailsDir, `${slug}.md`), emailMd);
-
-                        // Save attachments if requested
-                        if (options.saveAttachments && msg.attachments.length > 0) {
-                            for (const att of msg.attachments) {
-                                const safeAttName = basename(att.name).replace(/[^\w.-]/g, "_");
-                                const attPath = join(outputDir, "attachments", safeAttName);
-                                if (!existsSync(attPath)) {
-                                    await saveAttachment(
-                                        msg.subject,
-                                        msg.senderAddress ?? "unknown-sender",
-                                        att.name,
-                                        attPath
-                                    );
-                                } else {
-                                    // Disambiguate with rowid to avoid silently dropping duplicates
-                                    const dotIdx = safeAttName.lastIndexOf(".");
-                                    const ext = dotIdx !== -1 ? safeAttName.slice(dotIdx) : "";
-                                    const base = safeAttName.slice(0, safeAttName.length - ext.length);
-                                    const disambiguated = `${base}_${msg.rowid}${ext}`;
-                                    const altPath = join(outputDir, "attachments", disambiguated);
-                                    logger.debug(`Attachment collision: ${safeAttName} → saving as ${disambiguated}`);
-                                    await saveAttachment(
-                                        msg.subject,
-                                        msg.senderAddress ?? "unknown-sender",
-                                        att.name,
-                                        altPath
-                                    );
-                                }
-                            }
-                        }
-                    }
-                    emlx.dispose();
-                    spinner.stop(`Processed ${processed} emails`);
-
-                    // Generate index.md
-                    const indexMd = generateIndexMarkdown(filteredMessages);
-                    if (options.append && existsSync(indexPath)) {
-                        const existing = readFileSync(indexPath, "utf-8");
-                        writeFileSync(indexPath, `${existing}\n\n---\n\n${indexMd}`);
-                    } else {
-                        writeFileSync(indexPath, indexMd);
-                    }
-
-                    p.log.success(`Downloaded to ${outputDir}`);
-                    p.log.info(`  Index: ${indexPath}`);
-                    p.log.info(`  Emails: ${emailsDir}/ (${filteredMessages.length} files)`);
-                    if (options.saveAttachments) {
-                        p.log.info(`  Attachments: ${join(outputDir, "attachments")}/`);
+                    if (result.attachmentsDir) {
+                        p.log.info(`  Attachments: ${result.attachmentsDir}/`);
                     }
                 } catch (error) {
                     p.log.error(error instanceof Error ? error.message : String(error));
+                    logger.error(`[mail/download] ${error instanceof Error ? error.stack : String(error)}`);
                     process.exit(1);
                 } finally {
                     db.close();

@@ -39,6 +39,8 @@ export interface MailMessage {
     bodyMatchesQuery?: boolean;
     /** Cosine distance from query (0 = identical). Set when semantic ranking is active. */
     semanticScore?: number;
+    /** Relevance score from the FTS/vector/hybrid index (BM25 / cosine / RRF). Set for index-backed searches. */
+    searchScore?: number;
     recipients?: MailRecipient[];
 }
 

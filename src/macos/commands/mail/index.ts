@@ -5,17 +5,19 @@ import { registerIndexCommand } from "./index-cmd";
 import { registerListCommand } from "./list";
 import { registerMonitorCommand } from "./monitor";
 import { registerSearchCommand } from "./search";
+import { registerSearchDownloadCommand } from "./search-download";
 import { registerShowCommand } from "./show";
 
 /**
  * Register the `mail` subcommand on the parent program.
- * Usage: tools macos mail <search|list|download|index|monitor> [options]
+ * Usage: tools macos mail <search|search-download|download|list|index|monitor> [options]
  */
 export function registerMailCommand(program: Command): void {
     const mail = new Command("mail");
     mail.description("Search, list, and download emails from macOS Mail.app").showHelpAfterError(true);
 
     registerSearchCommand(mail);
+    registerSearchDownloadCommand(mail);
     registerListCommand(mail);
     registerDownloadCommand(mail);
     registerIndexCommand(mail);

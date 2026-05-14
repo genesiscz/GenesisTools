@@ -1,8 +1,3 @@
-import { Database } from "bun:sqlite";
-import { existsSync } from "node:fs";
-import { join } from "node:path";
-import { getIndexerStorage } from "@app/indexer/lib/storage";
-import { searchIndexReadonly } from "@app/indexer/lib/store";
 import logger from "@app/logger";
 import { ALL_COLUMN_KEYS, type MailColumnKey } from "@app/macos/lib/mail/columns";
 import {
@@ -12,28 +7,13 @@ import {
     parseMailDate,
     resolveColumnsFromFlag,
 } from "@app/macos/lib/mail/command-helpers";
-import { ENVELOPE_INDEX_PATH } from "@app/macos/lib/mail/constants";
-import { MailStorage } from "@app/macos/lib/mail/mail-storage";
-import { buildMailFilterPredicate } from "@app/macos/lib/mail/search-filters";
-import {
-    formatFallbackStart,
-    formatFallbackStop,
-    formatSearchLabelEmpty,
-    formatSearchLabelStart,
-    formatSearchLabelStop,
-    type ResolvedMethod,
-} from "@app/macos/lib/mail/search-label";
-import { mdfindMailRowids } from "@app/macos/lib/mail/spotlight";
-import { rowToMessage } from "@app/macos/lib/mail/transform";
-import type { MailMessage, MailMessageRow, SearchOptions } from "@app/macos/lib/mail/types";
+import { type MailSearchMode, runMailSearch } from "@app/macos/lib/mail/search-runner";
+import type { SearchOptions } from "@app/macos/lib/mail/types";
 import { isQuietOutput } from "@app/utils/cli/output-mode";
-import { SafeJSON } from "@app/utils/json";
-import { closeDarwinKit, rankBySimilarity } from "@app/utils/macos";
 import { MailDatabase } from "@app/utils/macos/MailDatabase";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 
-type MailSearchMode = "auto" | "fulltext" | "hybrid" | "vector";
 const VALID_MAIL_SEARCH_MODES = new Set<MailSearchMode>(["auto", "fulltext", "hybrid", "vector"]);
 
 function isMailSearchMode(input: string): input is MailSearchMode {
@@ -50,66 +30,6 @@ function resolveMailSearchMode(input: string | undefined): MailSearchMode {
     }
 
     throw new Error(`Unknown --mode: "${input}". Valid: ${[...VALID_MAIL_SEARCH_MODES].join(", ")}`);
-}
-
-/**
- * Emit a stderr advisory when the user's `--from` / `--to` window falls (even
- * partially) outside the date span actually covered by the index. Best-effort:
- * a missing or unreadable meta row silently skips the check — search is the
- * primary action, not coverage validation.
- *
- * stderr-only so `--format json` / `toon` stay machine-readable.
- */
-function warnIfDateRangeOutsideCoverage(args: { indexDbPath: string; from?: Date; to?: Date }): void {
-    const { indexDbPath, from, to } = args;
-
-    try {
-        const metaDb = new Database(indexDbPath, { readonly: true });
-
-        try {
-            const row = metaDb.query("SELECT value FROM index_meta WHERE key = 'meta'").get() as {
-                value: string;
-            } | null;
-
-            if (!row) {
-                return;
-            }
-
-            const meta = SafeJSON.parse(row.value) as {
-                stats?: { dateRangeMin?: number | null; dateRangeMax?: number | null };
-            };
-            const min = meta.stats?.dateRangeMin ?? null;
-            const max = meta.stats?.dateRangeMax ?? null;
-
-            if (min === null || max === null) {
-                return;
-            }
-
-            // Compare on day-floor to avoid spurious warnings when the user's
-            // `--to` is end-of-day but the indexed max is a message timestamp
-            // earlier in that same day.
-            const isoDay = (ts: number): string => new Date(ts).toISOString().slice(0, 10);
-            const minDay = isoDay(min * 1000);
-            const maxDay = isoDay(max * 1000);
-            const fromDay = from ? isoDay(from.getTime()) : undefined;
-            const toDay = to ? isoDay(to.getTime()) : undefined;
-            const outsideLower = fromDay !== undefined && fromDay < minDay;
-            const outsideUpper = toDay !== undefined && toDay > maxDay;
-
-            if (!outsideLower && !outsideUpper) {
-                return;
-            }
-
-            process.stderr.write(
-                `⚠  Requested range partially outside indexed coverage (${minDay} → ${maxDay}). ` +
-                    `Run "tools macos mail index" to refresh.\n`
-            );
-        } finally {
-            metaDb.close();
-        }
-    } catch (err) {
-        logger.debug(`[mail/search] coverage check skipped: ${err}`);
-    }
 }
 
 interface SearchCommandOptions {
@@ -164,11 +84,6 @@ function buildSearchColumns({
     return result;
 }
 
-const MAIL_INDEX_NAME = "macos-mail";
-// Keep hybrid/vector filtered searches under sqlite-vec's k=4096 cap while
-// making small pages stable enough that --limit 20 and --limit 50 share first-N.
-const STABLE_INDEX_FETCH_LIMIT = 250;
-
 interface QuietSpinner {
     start: (msg: string) => void;
     stop: (msg: string) => void;
@@ -179,6 +94,17 @@ function createQuietSpinner(): QuietSpinner {
         start: (): void => {},
         stop: (): void => {},
     };
+}
+
+function isVerboseErrorOutput(): boolean {
+    return (
+        process.env.LOG_DEBUG === "1" ||
+        process.env.LOG_TRACE === "1" ||
+        process.argv.includes("--verbose") ||
+        process.argv.includes("-v") ||
+        process.argv.includes("--trace") ||
+        process.argv.includes("-vv")
+    );
 }
 
 export function registerSearchCommand(program: Command): void {
@@ -244,183 +170,42 @@ export function registerSearchCommand(program: Command): void {
                     offset: Number.parseInt(options.offset ?? "0", 10),
                 });
 
-                const resolvedMode = resolveMailSearchMode(options.mode);
-                const filterPredicate = buildMailFilterPredicate(searchOpts);
-
-                const indexerStorage = getIndexerStorage();
-                const indexDbPath = join(indexerStorage.getIndexDir(MAIL_INDEX_NAME), "index.db");
-                const indexExists = existsSync(indexDbPath);
-                const willUseIndex = indexExists && !options.jxa && !searchOpts.withoutBody;
-
-                // Only warn about indexed coverage when the search will actually
-                // read the index. --jxa and --without-body bypass it, so the
-                // "run mail index to refresh" advice would be misleading.
-                if (willUseIndex && (searchOpts.from || searchOpts.to)) {
-                    warnIfDateRangeOutsideCoverage({
-                        indexDbPath,
-                        from: searchOpts.from,
-                        to: searchOpts.to,
-                    });
-                }
-
-                let rows: MailMessageRow[] = [];
-                const snippetByRowid = new Map<number, string>();
-                let searchMethod: "fts" | "spotlight+like" = "spotlight+like";
-                let resolvedMethod: ResolvedMethod | undefined;
-
-                if (willUseIndex) {
-                    spinner.start(formatSearchLabelStart(resolvedMode));
-                    const t0 = performance.now();
-
-                    const fetchLimit = Math.max(
-                        (searchOpts.offset ?? 0) + (searchOpts.limit ?? 100),
-                        STABLE_INDEX_FETCH_LIMIT
-                    );
-
-                    const ftsResults = await searchIndexReadonly(MAIL_INDEX_NAME, query, {
-                        mode: resolvedMode,
-                        limit: fetchLimit,
-                        ...(filterPredicate && {
-                            filters: filterPredicate,
-                            attach: { alias: "mailapp", dbPath: ENVELOPE_INDEX_PATH, mode: "ro" as const },
-                        }),
-                    });
-
-                    const ms = performance.now() - t0;
-                    const ftsRowids: number[] = [];
-
-                    for (const r of ftsResults) {
-                        const sid = r.doc.sourceId ?? (r.doc as unknown as { source_id?: string }).source_id;
-
-                        if (!sid) {
-                            continue;
+                const outcome = await runMailSearch(query, {
+                    searchOpts,
+                    mode: resolveMailSearchMode(options.mode),
+                    jxa: options.jxa,
+                    semantic: options.semantic,
+                    maxDistance: options.maxDistance ? Number.parseFloat(options.maxDistance) : undefined,
+                    db,
+                    onProgress: spinner,
+                    onWarning: (message): void => {
+                        if (isStructuredOutput || quiet) {
+                            process.stderr.write(`WARN: ${message}\n`);
+                            return;
                         }
 
-                        const rowid = Number(sid);
-                        ftsRowids.push(rowid);
+                        logger.warn(message);
+                    },
+                });
+                const messages = outcome.messages;
 
-                        if (!snippetByRowid.has(rowid)) {
-                            const snippet =
-                                r.ftsSnippet ??
-                                (typeof r.doc.content === "string"
-                                    ? r.doc.content.replace(/\s+/g, " ").trim().slice(0, 200)
-                                    : undefined);
-
-                            if (snippet) {
-                                snippetByRowid.set(rowid, snippet);
-                            }
-                        }
-                    }
-
-                    resolvedMethod = ftsResults[0]?.method;
-                    rows = ftsRowids.length > 0 ? await db.getMessagesByRowids(ftsRowids, searchOpts) : [];
-                    searchMethod = "fts";
-
-                    const orderByRowid = new Map(ftsRowids.map((rowid, index) => [rowid, index]));
-                    rows.sort(
-                        (a, b) => (orderByRowid.get(a.rowid) ?? Infinity) - (orderByRowid.get(b.rowid) ?? Infinity)
-                    );
-
-                    if (rows.length > 0) {
-                        spinner.stop(formatSearchLabelStop(resolvedMode, resolvedMethod, rows.length, ms));
-                    } else {
-                        spinner.stop(formatSearchLabelEmpty(resolvedMode));
-                    }
-                }
-
-                if (!indexExists || (options.jxa ?? false) || (searchOpts.withoutBody ?? false)) {
-                    spinner.start(formatFallbackStart());
-                    const t0 = performance.now();
-
-                    const [spotlightRowids, likeRows] = await Promise.all([
-                        mdfindMailRowids(query),
-                        db.searchMessages(searchOpts),
-                    ]);
-
-                    const rowidSet = new Set<number>(likeRows.map((r) => r.rowid));
-                    const newSpotlightIds = spotlightRowids.filter((r) => !rowidSet.has(r));
-
-                    const spotlightRows =
-                        newSpotlightIds.length > 0 ? await db.getMessagesByRowids(newSpotlightIds, searchOpts) : [];
-
-                    rows = [...likeRows, ...spotlightRows];
-                    const fallbackOrder = new Map(rows.map((row, index) => [row.rowid, index]));
-                    rows = [...new Map(rows.map((row) => [row.rowid, row])).values()].sort(
-                        (a, b) => (fallbackOrder.get(a.rowid) ?? Infinity) - (fallbackOrder.get(b.rowid) ?? Infinity)
-                    );
-                    const ms = performance.now() - t0;
-                    spinner.stop(formatFallbackStop(rows.length, ms));
-                }
-
-                if (rows.length === 0) {
+                if (messages.length === 0) {
                     announce("No messages found matching your query.");
                     return;
                 }
 
-                const isFts = searchMethod === "fts";
-                const rowids = rows.map((r) => r.rowid);
-                const attachmentsMap = await db.getAttachments(rowids);
-
-                const messages: MailMessage[] = rows.map((row) => {
-                    const msg = rowToMessage(row);
-                    msg.attachments = attachmentsMap.get(row.rowid) ?? [];
-                    msg.bodyMatchesQuery = isFts;
-                    msg.ftsSnippet = snippetByRowid.get(row.rowid);
-                    return msg;
-                });
-
                 await enrichWithBodies(messages, baseColumns);
-
-                let semanticActive = false;
-
-                if (options.semantic === true && messages.length > 0) {
-                    spinner.start(`Apple NL re-ranking ${messages.length} results…`);
-
-                    try {
-                        const maxDist = Number.parseFloat(options.maxDistance ?? "1.2");
-                        const items = messages.map((m) => ({
-                            ...m,
-                            text: [m.subject, m.senderName, m.senderAddress, m.ftsSnippet ?? m.body ?? ""]
-                                .filter(Boolean)
-                                .join(" ")
-                                .slice(0, 2000),
-                        }));
-                        const ranked = await rankBySimilarity(query, items, { maxDistance: maxDist, language: "en" });
-                        const reordered: MailMessage[] = ranked.map((r) => {
-                            const msg = r.item as MailMessage;
-                            msg.semanticScore = r.score;
-                            return msg;
-                        });
-                        const rankedIds = new Set(reordered.map((m) => m.rowid));
-
-                        for (const msg of messages) {
-                            if (!rankedIds.has(msg.rowid)) {
-                                reordered.push(msg);
-                            }
-                        }
-
-                        messages.length = 0;
-                        messages.push(...reordered);
-                        semanticActive = true;
-                        spinner.stop(`Semantic ranking complete (${ranked.length} relevant results)`);
-                    } catch (err) {
-                        spinner.stop(`Semantic ranking skipped: ${err instanceof Error ? err.message : String(err)}`);
-                        logger.warn(`Semantic ranking failed: ${err}`);
-                    } finally {
-                        closeDarwinKit();
-                    }
-                }
 
                 const finalColumns = buildSearchColumns({
                     columns: baseColumns,
                     withBody: !searchOpts.withoutBody,
-                    ftsActive: isFts,
-                    semanticActive,
+                    ftsActive: outcome.searchMethod === "fts",
+                    semanticActive: messages.some((m) => m.semanticScore !== undefined),
                     columnsExplicit: options.columns !== undefined,
                 });
 
                 if (needsRecipients(finalColumns)) {
-                    const recipientsMap = await db.getRecipients(rowids);
+                    const recipientsMap = await db.getRecipients(messages.map((m) => m.rowid));
 
                     for (const msg of messages) {
                         msg.recipients = recipientsMap.get(msg.rowid) ?? [];
@@ -429,7 +214,7 @@ export function registerSearchCommand(program: Command): void {
 
                 const paginationOffset = searchOpts.offset ?? 0;
                 const pageLimit = searchOpts.limit ?? 100;
-                const totalCount = messages.length;
+                const totalCount = outcome.totalCount;
                 const paginatedMessages = messages.slice(paginationOffset, paginationOffset + pageLimit);
 
                 await outputFormattedResults({
@@ -449,16 +234,18 @@ export function registerSearchCommand(program: Command): void {
                     );
                 }
 
-                const mailStorage = new MailStorage();
-                const resultsPath = mailStorage.saveSearchResults(messages);
-                logger.debug(`Saved search results to ${resultsPath}`);
             } catch (error) {
                 const msg = error instanceof Error ? error.message : String(error);
+                const verboseDetails = error instanceof Error ? (error.stack ?? error.message) : String(error);
 
                 if (quiet) {
                     logger.error(msg);
                 } else {
                     p.log.error(msg);
+                }
+
+                if (isVerboseErrorOutput()) {
+                    process.stderr.write(`\n[mail/search] stack trace:\n${verboseDetails}\n`);
                 }
 
                 process.exit(1);

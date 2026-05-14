@@ -1,14 +1,16 @@
 import {
     ALL_COLUMN_KEYS,
     DEFAULT_LIST_COLUMNS,
+    type JsonColumnValue,
     MAIL_COLUMNS,
+    type MailColumnDef,
     type MailColumnKey,
     RECIPIENT_COLUMNS,
 } from "@app/macos/lib/mail/columns";
 import { EmlxBodyExtractor } from "@app/macos/lib/mail/emlx";
 import { formatResultsTable } from "@app/macos/lib/mail/format";
 import type { MailMessage } from "@app/macos/lib/mail/types";
-import { isInteractive } from "@app/utils/cli";
+import { isInteractive, printLn } from "@app/utils/cli";
 import { parseVariadic } from "@app/utils/cli/variadic";
 import { SafeJSON } from "@app/utils/json";
 import * as p from "@clack/prompts";
@@ -149,10 +151,11 @@ export async function enrichWithBodies(messages: MailMessage[], columns: MailCol
 
 export function formatJsonOutput(messages: MailMessage[], columns: MailColumnKey[]): string {
     const data = messages.map((msg) => {
-        const obj: Record<string, string> = {};
+        const obj: Record<string, JsonColumnValue> = {};
 
         for (const col of columns) {
-            obj[col] = MAIL_COLUMNS[col].get(msg);
+            const def: MailColumnDef = MAIL_COLUMNS[col];
+            obj[col] = def.getValue ? def.getValue(msg) : def.get(msg);
         }
 
         return obj;
@@ -171,7 +174,7 @@ export async function outputFormattedResults({
     format: string;
 }): Promise<void> {
     if (format === "json") {
-        console.log(formatJsonOutput(messages, columns));
+        await printLn(formatJsonOutput(messages, columns));
         return;
     }
 
@@ -186,7 +189,7 @@ export async function outputFormattedResults({
 
         if (exitCode !== 0) {
             p.log.warn(`toon format failed (exit code ${exitCode}), falling back to JSON`);
-            console.log(jsonStr);
+            await printLn(jsonStr);
         }
 
         return;
@@ -196,6 +199,5 @@ export async function outputFormattedResults({
         p.log.warn(`Unknown format "${format}" — using table`);
     }
 
-    console.log("");
-    console.log(formatResultsTable(messages, columns));
+    await printLn(["", formatResultsTable(messages, columns)]);
 }

@@ -264,3 +264,67 @@ describe("columns", () => {
         });
     });
 });
+
+function fakeMessage(overrides: Partial<MailMessage> = {}): MailMessage {
+    return {
+        rowid: 1,
+        subject: "Test",
+        senderAddress: "a@b.com",
+        senderName: "A B",
+        dateSent: new Date("2026-05-12T09:30:00.000Z"),
+        dateReceived: new Date("2026-05-12T09:30:05.000Z"),
+        mailbox: "INBOX",
+        account: "acct",
+        read: true,
+        flagged: false,
+        size: 1234,
+        attachments: [
+            { name: "Invoice-VCQYKK0H.pdf", attachmentId: "att1" },
+            { name: "receipt.pdf", attachmentId: "att2" },
+        ],
+        ...overrides,
+    };
+}
+
+describe("MAIL_COLUMNS getValue (typed JSON values)", () => {
+    it("date getValue returns full ISO timestamp, not a relative string", () => {
+        const def = MAIL_COLUMNS.date;
+        expect(def.getValue).toBeDefined();
+        expect(def.getValue?.(fakeMessage())).toBe("2026-05-12T09:30:00.000Z");
+    });
+
+    it("attachments getValue returns an array of filenames", () => {
+        const def = MAIL_COLUMNS.attachments;
+        expect(def.getValue).toBeDefined();
+        expect(def.getValue?.(fakeMessage())).toEqual(["Invoice-VCQYKK0H.pdf", "receipt.pdf"]);
+    });
+
+    it("attachments getValue returns an empty array when there are none", () => {
+        expect(MAIL_COLUMNS.attachments.getValue?.(fakeMessage({ attachments: [] }))).toEqual([]);
+    });
+
+    it("date get (table) still returns the compact relative string", () => {
+        const out = MAIL_COLUMNS.date.get(fakeMessage());
+        expect(typeof out).toBe("string");
+        expect(out).not.toBe("2026-05-12T09:30:00.000Z");
+    });
+});
+
+describe("MAIL_COLUMNS relevance score", () => {
+    it("getValue returns the FTS searchScore when present", () => {
+        expect(MAIL_COLUMNS.relevance.getValue?.(fakeMessage({ searchScore: 0.87 }))).toBe(0.87);
+    });
+
+    it("getValue falls back to the semantic-derived similarity", () => {
+        expect(MAIL_COLUMNS.relevance.getValue?.(fakeMessage({ semanticScore: 0.4 }))).toBeCloseTo(0.8);
+    });
+
+    it("getValue returns null when no score is available", () => {
+        expect(MAIL_COLUMNS.relevance.getValue?.(fakeMessage())).toBeNull();
+    });
+
+    it("get (table) renders a 2-decimal string, or empty when no score", () => {
+        expect(MAIL_COLUMNS.relevance.get(fakeMessage({ searchScore: 0.87 }))).toBe("0.87");
+        expect(MAIL_COLUMNS.relevance.get(fakeMessage())).toBe("");
+    });
+});
