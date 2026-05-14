@@ -1,7 +1,7 @@
 import logger from "@app/logger";
 import { parseMailDate } from "@app/macos/lib/mail/command-helpers";
 import { exportMessages } from "@app/macos/lib/mail/export";
-import { type MailSearchMode, runMailSearch } from "@app/macos/lib/mail/search-runner";
+import { resolveMailSearchMode, runMailSearch } from "@app/macos/lib/mail/search-runner";
 import { MailDatabase } from "@app/utils/macos/MailDatabase";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
@@ -70,7 +70,7 @@ export function registerSearchDownloadCommand(program: Command): void {
                     const spinner = p.spinner();
                     const outcome = await runMailSearch(query, {
                         searchOpts,
-                        mode: (options.mode as MailSearchMode) ?? "auto",
+                        mode: resolveMailSearchMode(options.mode),
                         jxa: options.jxa,
                         db,
                         onProgress: spinner,

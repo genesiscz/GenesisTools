@@ -90,6 +90,7 @@ function mapJenkinsResult(result: string): RunStatus {
         case "NOT_BUILT":
             return "NOT_EXECUTED";
         default:
+            logger.debug(`[mapJenkinsResult] unknown Jenkins result "${result}" — treating as FAILED`);
             return "FAILED";
     }
 }
@@ -222,11 +223,19 @@ export async function runMonitor(opts: MonitorOpts): Promise<MonitorResult> {
         pollsWithoutDelta = stageDelta ? 0 : pollsWithoutDelta + 1;
 
         if (pollsWithoutDelta >= STALE_POLLS_BEFORE_API_FALLBACK) {
-            const state = await getBuildState(client, jobPath, build);
+            let state: Awaited<ReturnType<typeof getBuildState>> | null = null;
+
+            try {
+                state = await getBuildState(client, jobPath, build);
+            } catch (error) {
+                logger.debug(
+                    `[runMonitor] api-json fallback failed: ${error instanceof Error ? error.message : error}`
+                );
+            }
 
             if (state && !state.building && state.result) {
                 const final = mapJenkinsResult(state.result);
-                const duration = state.duration || snap.durationMillis;
+                const duration = state.duration ?? snap.durationMillis ?? 0;
 
                 if (final === "FAILED") {
                     await emitErrorsForFailedStages(opts, snap, reportedErrors);

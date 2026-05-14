@@ -21,6 +21,24 @@ import type { MailDatabase } from "@app/utils/macos/MailDatabase";
 
 export type MailSearchMode = "auto" | "fulltext" | "hybrid" | "vector";
 
+const VALID_MAIL_SEARCH_MODES = new Set<MailSearchMode>(["auto", "fulltext", "hybrid", "vector"]);
+
+export function isMailSearchMode(input: string): input is MailSearchMode {
+    return VALID_MAIL_SEARCH_MODES.has(input as MailSearchMode);
+}
+
+export function resolveMailSearchMode(input: string | undefined): MailSearchMode {
+    if (!input) {
+        return "auto";
+    }
+
+    if (isMailSearchMode(input)) {
+        return input;
+    }
+
+    throw new Error(`Unknown --mode: "${input}". Valid: ${[...VALID_MAIL_SEARCH_MODES].join(", ")}`);
+}
+
 export interface RunMailSearchOptions {
     searchOpts: SearchOptions;
     mode: MailSearchMode;

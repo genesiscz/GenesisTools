@@ -24,6 +24,11 @@ function validateTaskName(name: string): void {
 export async function registerTask(opts: RegisterTaskOptions): Promise<boolean> {
     validateTaskName(opts.name);
     parseInterval(opts.every);
+
+    if (opts.timeoutMs !== undefined && (!Number.isFinite(opts.timeoutMs) || opts.timeoutMs <= 0)) {
+        throw new Error(`Invalid timeoutMs "${String(opts.timeoutMs)}". Must be a finite number greater than 0.`);
+    }
+
     await ensureStorage();
 
     const existing = await getTask(opts.name);
