@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
+import logger from "@app/logger";
 
 let extensionAvailable: boolean | null = null;
 let customSqliteAttempted = false;
@@ -34,12 +35,25 @@ export function ensureExtensionCapableSQLite(): void {
 
     for (const libPath of HOMEBREW_SQLITE_PATHS) {
         if (existsSync(libPath)) {
-            homebrewDylibFound = true;
-
             try {
-                Database.setCustomSQLite(libPath);
-            } catch {
-                // Already set by preload or another module -- that's fine
+                const swapped = Database.setCustomSQLite(libPath);
+                if (swapped === false) {
+                    logger.warn(
+                        `[sqlite-vec] setCustomSQLite(${libPath}) returned false - a Database may have been ` +
+                            "created before the preload ran; sqlite-vec will be unavailable."
+                    );
+                    return;
+                }
+
+                homebrewDylibFound = true;
+                logger.debug(`[sqlite-vec] swapped in extension-capable SQLite: ${libPath}`);
+            } catch (err) {
+                logger.warn(
+                    `[sqlite-vec] setCustomSQLite(${libPath}) failed - a Database was created ` +
+                        "before the preload ran; sqlite-vec will be unavailable. " +
+                        "Wire sqlite-vec-preload.ts into the entry point. " +
+                        `Cause: ${err instanceof Error ? err.message : String(err)}`
+                );
             }
 
             return;
@@ -107,8 +121,13 @@ export function loadSqliteVec(db: Database): boolean {
         sqliteVec.load(db);
         extensionAvailable = true;
         return true;
-    } catch {
+    } catch (err) {
         extensionAvailable = false;
+        logger.warn(
+            `[sqlite-vec] loadSqliteVec failed - extension unavailable: ${
+                err instanceof Error ? err.message : String(err)
+            }`
+        );
         return false;
     }
 }

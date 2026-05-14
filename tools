@@ -139,14 +139,15 @@ async function executeTool(scriptId, scriptArgs) {
         }
     }
 
-    // Pass bunfig.toml's preload via --preload so opentui's scoped JSX
-    // transform still loads even though we keep cwd at the user's shell —
-    // bun looks for bunfig.toml relative to cwd, so chdir'ing the spawn to
-    // workspaceRoot would break every tool that resolves user-project files
-    // (.claude/azure/config.json, .claude/azure/tasks/, etc.) via process.cwd().
-    const preloadAbs = join(workspaceRoot, "src/utils/bun/preload-solid-scoped.ts");
+    // Preloads run before any module code, and therefore before any
+    // `new Database()`. preload-solid-scoped.ts scopes the opentui JSX
+    // transform; sqlite-vec-preload.ts swaps in extension-capable SQLite so
+    // sqlite-vec can load. Bun looks for bunfig.toml relative to cwd, and we
+    // keep cwd at the user's shell, so both preloads are passed explicitly.
+    const solidPreload = join(workspaceRoot, "src/utils/bun/preload-solid-scoped.ts");
+    const sqliteVecPreload = join(workspaceRoot, "src/utils/search/stores/sqlite-vec-preload.ts");
     const exitCode = await runWithReinstallGuard(
-        ["run", "--preload", preloadAbs, targetScript, ...scriptArgs],
+        ["--preload", solidPreload, "--preload", sqliteVecPreload, targetScript, ...scriptArgs],
         workspaceRoot
     );
     process.exit(exitCode);
