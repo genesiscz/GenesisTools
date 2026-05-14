@@ -8,6 +8,7 @@
  * Run with: bun test src/__tests__/api.test.ts
  */
 import { beforeAll, describe, expect, test } from "bun:test";
+import { SafeJSON } from "@dashboard/shared";
 
 const BASE_URL = "http://localhost:3000";
 const SSE_ENDPOINT = `${BASE_URL}/api/events`;
@@ -78,7 +79,7 @@ async function readSSEMessages(
  * Helper to parse SSE data message
  */
 function parseSSEData<T>(data: string): T {
-    return JSON.parse(data) as T;
+    return SafeJSON.parse<T>(data);
 }
 
 describe("API Events SSE Endpoint", () => {
@@ -324,9 +325,9 @@ describe("API Events SSE Endpoint", () => {
             const messages = await readSSEMessages(response.body!, { timeout: 3000, maxMessages: 1 });
 
             // Verify we can parse the message as valid JSON
-            expect(() => JSON.parse(messages[0])).not.toThrow();
+            expect(() => SafeJSON.parse(messages[0])).not.toThrow();
 
-            const msg = JSON.parse(messages[0]);
+            const msg = SafeJSON.parse<Record<string, unknown>>(messages[0]);
 
             // Verify required fields exist
             expect(msg).toHaveProperty("type");

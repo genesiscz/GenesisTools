@@ -44,7 +44,6 @@ function TasksPage() {
     const {
         tasks,
         streak,
-        badges,
         loading,
         initialized,
         createTask,

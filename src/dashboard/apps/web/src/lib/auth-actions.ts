@@ -1,3 +1,4 @@
+import { SafeJSON } from "@dashboard/shared";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { encryptSession, workos } from "./auth-server";
@@ -32,7 +33,7 @@ const verifyEmailSchema = z.object({
 
 // Handle WorkOS errors
 function handleWorkOSError(error: unknown, email?: string): AuthError {
-    console.log("WorkOS Error:", JSON.stringify(error, null, 2));
+    console.log("WorkOS Error:", SafeJSON.stringify(error, null, 2));
 
     // Check for email verification required via rawData
     if (

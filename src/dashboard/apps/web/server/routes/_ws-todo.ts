@@ -10,6 +10,7 @@
  *   experimental: { websocket: true }
  */
 
+import { SafeJSON } from "@dashboard/shared";
 import { defineWebSocketHandler } from "h3";
 
 // Store connected clients for broadcasting
@@ -28,7 +29,7 @@ export default defineWebSocketHandler({
 
         // Send welcome message
         peer.send(
-            JSON.stringify({
+            SafeJSON.stringify({
                 type: "connected",
                 clientId,
                 timestamp: new Date().toISOString(),
@@ -38,7 +39,7 @@ export default defineWebSocketHandler({
 
     message(peer, message) {
         try {
-            const data = JSON.parse(message.text());
+            const data = SafeJSON.parse<{ type: string }>(message.text());
             console.log("[WS:Todo] Message received:", data.type, "| Total clients:", clients.size);
 
             // Broadcast todo changes to all other connected clients
@@ -68,7 +69,7 @@ export default defineWebSocketHandler({
 });
 
 function broadcastToOthers(sender: unknown, message: unknown): number {
-    const messageStr = JSON.stringify(message);
+    const messageStr = SafeJSON.stringify(message);
     let count = 0;
 
     for (const client of clients.values()) {

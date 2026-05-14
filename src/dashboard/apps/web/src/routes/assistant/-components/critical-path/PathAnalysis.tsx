@@ -63,7 +63,15 @@ function getUrgencyColors(urgency: Task["urgencyLevel"]): {
 }
 
 export function PathAnalysis({ analysis, onTaskClick, className }: PathAnalysisProps) {
-    const { criticalPath, daysToCompletion, bottlenecks, totalTasks, rootTasks, leafTasks, maxDepth } = analysis;
+    const {
+        criticalPath,
+        daysToCompletion,
+        bottlenecks,
+        totalTasks,
+        rootTasks: _rootTasks,
+        leafTasks,
+        maxDepth,
+    } = analysis;
 
     const hasCriticalPath = criticalPath.length > 0;
     const hasBottlenecks = bottlenecks.length > 0;

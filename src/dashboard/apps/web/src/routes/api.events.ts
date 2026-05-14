@@ -1,3 +1,4 @@
+import { SafeJSON } from "@dashboard/shared";
 import { createFileRoute } from "@tanstack/react-router";
 import { getEventEmitter } from "@/lib/events/server";
 
@@ -11,7 +12,7 @@ export const Route = createFileRoute("/api/events")({
 
                 // Validate required parameters
                 if (!userId) {
-                    return new Response(JSON.stringify({ error: "Missing userId parameter" }), {
+                    return new Response(SafeJSON.stringify({ error: "Missing userId parameter" }), {
                         status: 400,
                         headers: { "Content-Type": "application/json" },
                     });
@@ -39,7 +40,7 @@ export const Route = createFileRoute("/api/events")({
                             channels,
                             timestamp: Date.now(),
                         };
-                        controller.enqueue(encoder.encode(`data: ${JSON.stringify(connectionMsg)}\n\n`));
+                        controller.enqueue(encoder.encode(`data: ${SafeJSON.stringify(connectionMsg)}\n\n`));
 
                         // Create listeners for all requested channels
                         const listeners = new Map<string, (data: unknown) => void>();
@@ -55,7 +56,7 @@ export const Route = createFileRoute("/api/events")({
 
                                 // Send event to client
                                 try {
-                                    controller.enqueue(encoder.encode(`data: ${JSON.stringify(message)}\n\n`));
+                                    controller.enqueue(encoder.encode(`data: ${SafeJSON.stringify(message)}\n\n`));
                                 } catch (error) {
                                     console.error(`[SSE] Error sending to client:`, error);
                                 }

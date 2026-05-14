@@ -1,3 +1,5 @@
+import { SafeJSON } from "@dashboard/shared";
+
 /**
  * Generic SSE client for subscribing to real-time events
  *
@@ -70,7 +72,7 @@ export class EventStreamClient {
         };
 
         this.eventSource.onmessage = (event) => {
-            const message = JSON.parse(event.data);
+            const message = SafeJSON.parse(event.data);
 
             // Handle connection confirmation
             if (message.type === "connected") {

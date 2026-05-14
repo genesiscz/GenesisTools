@@ -22,7 +22,7 @@ interface EscalationWidgetProps {
  * - Clickable to open full escalation modal
  */
 export function EscalationWidget({ userId, tasks, onResolve, className }: EscalationWidgetProps) {
-    const { risks, loading, calculateAllRisks, getHighRiskTasks, getMediumRiskTasks } = useDeadlineRisk(userId);
+    const { risks: _risks, loading, calculateAllRisks, getHighRiskTasks, getMediumRiskTasks } = useDeadlineRisk(userId);
 
     const [selectedRisk, setSelectedRisk] = useState<{
         task: Task;

@@ -1,10 +1,11 @@
 import fs from "node:fs";
+import { SafeJSON } from "@dashboard/shared";
 
 const todosPath = "./mcp-todos.json";
 
 // In-memory todos storage
 const todos = fs.existsSync(todosPath)
-    ? JSON.parse(fs.readFileSync(todosPath, "utf8"))
+    ? SafeJSON.parse<Todo[]>(fs.readFileSync(todosPath, "utf8"))
     : [
           {
               id: 1,
@@ -28,7 +29,7 @@ export function getTodos(): Todo[] {
 // Add an item to the todos
 export function addTodo(title: string) {
     todos.push({ id: todos.length + 1, title });
-    fs.writeFileSync(todosPath, JSON.stringify(todos, null, 2));
+    fs.writeFileSync(todosPath, SafeJSON.stringify(todos, null, 2));
     notifySubscribers();
 }
 
@@ -46,6 +47,8 @@ function notifySubscribers() {
     for (const cb of subscribers) {
         try {
             cb(todos);
-        } catch {}
+        } catch (err) {
+            console.error("[mcp-todos] subscriber callback error:", err);
+        }
     }
 }

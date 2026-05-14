@@ -5,6 +5,7 @@
  * Falls back to localStorage when server is unavailable.
  */
 
+import { SafeJSON } from "@dashboard/shared";
 import { useQueryClient } from "@tanstack/react-query";
 import { useStore } from "@tanstack/react-store";
 import { Store } from "@tanstack/store";
@@ -33,7 +34,7 @@ function parseJsonbField<T>(value: unknown, defaultValue: T): T {
     }
     if (typeof value === "string") {
         try {
-            return JSON.parse(value) as T;
+            return SafeJSON.parse(value) as T;
         } catch {
             return defaultValue;
         }

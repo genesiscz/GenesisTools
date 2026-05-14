@@ -27,7 +27,7 @@ export function ProductivityStats({
     timerId,
     timerNames = {},
     className,
-    refreshTrigger,
+    refreshTrigger: _refreshTrigger,
 }: ProductivityStatsProps) {
     const [stats, setStats] = useState<ProductivityStatsType | null>(null);
     const [loading, setLoading] = useState(true);

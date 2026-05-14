@@ -1,13 +1,15 @@
-import type {
-    ActivityLogEntry,
-    ActivityLogInput,
-    ActivityLogQueryOptions,
-    ProductivityStats,
-    Timer,
-    TimerInput,
-    TimerUpdate,
+import {
+    type ActivityLogEntry,
+    type ActivityLogInput,
+    type ActivityLogQueryOptions,
+    generateActivityLogId,
+    generateTimerId,
+    type ProductivityStats,
+    SafeJSON,
+    type Timer,
+    type TimerInput,
+    type TimerUpdate,
 } from "@dashboard/shared";
-import { generateActivityLogId, generateTimerId } from "@dashboard/shared";
 import { getEventClient } from "@/lib/events/client";
 import { getTimersFromServer, uploadSyncBatch } from "../timer-sync.server";
 import { SYNC_CONFIG } from "./config";
@@ -319,14 +321,14 @@ export class LocalStorageAdapter implements StorageAdapter {
                         is_running: timer.isRunning ? 1 : 0,
                         elapsed_time: timer.elapsedTime,
                         duration: timer.duration,
-                        laps: JSON.stringify(timer.laps),
+                        laps: SafeJSON.stringify(timer.laps),
                         user_id: timer.userId,
                         created_at: timer.createdAt,
                         updated_at: timer.updatedAt,
                         show_total: timer.showTotal ? 1 : 0,
                         first_start_time: timer.firstStartTime,
                         start_time: timer.startTime,
-                        pomodoro_settings: timer.pomodoroSettings ? JSON.stringify(timer.pomodoroSettings) : null,
+                        pomodoro_settings: timer.pomodoroSettings ? SafeJSON.stringify(timer.pomodoroSettings) : null,
                         pomodoro_phase: timer.pomodoroPhase,
                         pomodoro_session_count: timer.pomodoroSessionCount,
                     },
@@ -432,7 +434,7 @@ export class LocalStorageAdapter implements StorageAdapter {
             if (!raw) {
                 return null;
             }
-            return JSON.parse(raw, this.dateReviver) as T;
+            return SafeJSON.parse(raw, this.dateReviver) as T;
         } catch {
             return null;
         }
@@ -442,7 +444,7 @@ export class LocalStorageAdapter implements StorageAdapter {
         if (typeof localStorage === "undefined") {
             return;
         }
-        localStorage.setItem(key, JSON.stringify(data));
+        localStorage.setItem(key, SafeJSON.stringify(data));
     }
 
     private dateReviver(_key: string, value: unknown): unknown {

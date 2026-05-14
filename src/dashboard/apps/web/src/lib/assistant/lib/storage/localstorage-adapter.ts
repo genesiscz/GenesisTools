@@ -1,3 +1,4 @@
+import { SafeJSON } from "@dashboard/shared";
 import type {
     Badge,
     BadgeProgress,
@@ -1907,7 +1908,7 @@ export class AssistantLocalStorageAdapter implements AssistantStorageAdapter {
             if (!raw) {
                 return null;
             }
-            return JSON.parse(raw, this.dateReviver) as T;
+            return SafeJSON.parse(raw, this.dateReviver) as T;
         } catch {
             return null;
         }
@@ -1917,7 +1918,7 @@ export class AssistantLocalStorageAdapter implements AssistantStorageAdapter {
         if (typeof localStorage === "undefined") {
             return;
         }
-        localStorage.setItem(key, JSON.stringify(data));
+        localStorage.setItem(key, SafeJSON.stringify(data));
     }
 
     private dateReviver(_key: string, value: unknown): unknown {

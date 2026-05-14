@@ -1,3 +1,4 @@
+import { SafeJSON } from "@dashboard/shared";
 import { useCallback, useRef, useState } from "react";
 
 /**
@@ -20,7 +21,7 @@ export function useTTS() {
             const response = await fetch("/demo/api/tts", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
+                body: SafeJSON.stringify({
                     text,
                     voice: "nova",
                     model: "tts-1",

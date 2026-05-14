@@ -1,14 +1,16 @@
-import type {
-    ActivityLogEntry,
-    ActivityLogInput,
-    ActivityLogQueryOptions,
-    LapEntry,
-    ProductivityStats,
-    Timer,
-    TimerInput,
-    TimerUpdate,
+import {
+    type ActivityLogEntry,
+    type ActivityLogInput,
+    type ActivityLogQueryOptions,
+    generateActivityLogId,
+    generateTimerId,
+    type LapEntry,
+    type ProductivityStats,
+    SafeJSON,
+    type Timer,
+    type TimerInput,
+    type TimerUpdate,
 } from "@dashboard/shared";
-import { generateActivityLogId, generateTimerId } from "@dashboard/shared";
 import { db, initializeDatabase, syncToServer } from "@/lib/db/powersync";
 import { getEventClient } from "@/lib/events/client";
 import { getActivityLogsFromServer, getTimersFromServer } from "@/lib/timer/timer-sync.server";
@@ -114,14 +116,14 @@ export class PowerSyncAdapter implements StorageAdapter {
             is_running: input.isRunning ? 1 : 0,
             elapsed_time: input.elapsedTime ?? 0,
             duration: input.duration ?? null,
-            laps: JSON.stringify(input.laps ?? []),
+            laps: SafeJSON.stringify(input.laps ?? []),
             user_id: userId,
             created_at: now.toISOString(),
             updated_at: now.toISOString(),
             show_total: (input.showTotal ?? false) ? 1 : 0,
             first_start_time: input.firstStartTime?.toISOString() ?? null,
             start_time: input.startTime?.toISOString() ?? null,
-            pomodoro_settings: input.pomodoroSettings ? JSON.stringify(input.pomodoroSettings) : null,
+            pomodoro_settings: input.pomodoroSettings ? SafeJSON.stringify(input.pomodoroSettings) : null,
             pomodoro_phase: input.pomodoroPhase ?? null,
             pomodoro_session_count: input.pomodoroSessionCount ?? 0,
         };
@@ -195,7 +197,7 @@ export class PowerSyncAdapter implements StorageAdapter {
         }
         if (updates.laps !== undefined) {
             setClauses.push("laps = ?");
-            values.push(JSON.stringify(updates.laps));
+            values.push(SafeJSON.stringify(updates.laps));
         }
         if (updates.showTotal !== undefined) {
             setClauses.push("show_total = ?");
@@ -211,7 +213,7 @@ export class PowerSyncAdapter implements StorageAdapter {
         }
         if (updates.pomodoroSettings !== undefined) {
             setClauses.push("pomodoro_settings = ?");
-            values.push(updates.pomodoroSettings ? JSON.stringify(updates.pomodoroSettings) : null);
+            values.push(updates.pomodoroSettings ? SafeJSON.stringify(updates.pomodoroSettings) : null);
         }
         if (updates.pomodoroPhase !== undefined) {
             setClauses.push("pomodoro_phase = ?");
@@ -275,7 +277,7 @@ export class PowerSyncAdapter implements StorageAdapter {
                 entry.sessionDuration ?? null,
                 entry.previousValue ?? null,
                 entry.newValue ?? null,
-                entry.metadata ? JSON.stringify(entry.metadata) : null,
+                entry.metadata ? SafeJSON.stringify(entry.metadata) : null,
             ]
         );
 
@@ -547,14 +549,14 @@ export class PowerSyncAdapter implements StorageAdapter {
                             timer.isRunning ? 1 : 0,
                             timer.elapsedTime,
                             timer.duration ?? null,
-                            JSON.stringify(timer.laps ?? []),
+                            SafeJSON.stringify(timer.laps ?? []),
                             timer.userId,
                             timer.createdAt,
                             timer.updatedAt,
                             timer.showTotal ? 1 : 0,
                             timer.firstStartTime ?? null,
                             timer.startTime ?? null,
-                            timer.pomodoroSettings ? JSON.stringify(timer.pomodoroSettings) : null,
+                            timer.pomodoroSettings ? SafeJSON.stringify(timer.pomodoroSettings) : null,
                             timer.pomodoroPhase ?? null,
                             timer.pomodoroSessionCount ?? 0,
                         ]
@@ -593,7 +595,7 @@ export class PowerSyncAdapter implements StorageAdapter {
                             log.sessionDuration ?? null,
                             log.previousValue ?? null,
                             log.newValue ?? null,
-                            log.metadata ? JSON.stringify(log.metadata) : null,
+                            log.metadata ? SafeJSON.stringify(log.metadata) : null,
                         ]
                     );
                 }
@@ -673,14 +675,14 @@ function deserializeTimer(row: TimerRow): Timer {
         isRunning: row.is_running > 0,
         elapsedTime: row.elapsed_time,
         duration: row.duration ?? undefined,
-        laps: JSON.parse(row.laps || "[]") as LapEntry[],
+        laps: SafeJSON.parse(row.laps || "[]") as LapEntry[],
         userId: row.user_id,
         createdAt: new Date(row.created_at),
         updatedAt: new Date(row.updated_at),
         showTotal: row.show_total > 0,
         firstStartTime: row.first_start_time ? new Date(row.first_start_time) : null,
         startTime: row.start_time ? new Date(row.start_time) : null,
-        pomodoroSettings: row.pomodoro_settings ? JSON.parse(row.pomodoro_settings) : undefined,
+        pomodoroSettings: row.pomodoro_settings ? SafeJSON.parse(row.pomodoro_settings) : undefined,
         pomodoroPhase: row.pomodoro_phase as Timer["pomodoroPhase"],
         pomodoroSessionCount: row.pomodoro_session_count,
     };
@@ -698,6 +700,6 @@ function deserializeActivityLog(row: ActivityLogRow): ActivityLogEntry {
         sessionDuration: row.session_duration ?? undefined,
         previousValue: row.previous_value ?? undefined,
         newValue: row.new_value ?? undefined,
-        metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
+        metadata: row.metadata ? SafeJSON.parse(row.metadata) : undefined,
     };
 }

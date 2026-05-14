@@ -151,7 +151,9 @@ export function useGraphInteractions(
 
             isPanningRef.current = true;
             lastPosRef.current = { x: e.clientX, y: e.clientY };
-            svg?.style.cursor = "grabbing";
+            if (svg) {
+                svg.style.cursor = "grabbing";
+            }
         }
 
         function handleMouseMove(e: MouseEvent) {
@@ -172,7 +174,9 @@ export function useGraphInteractions(
 
         function handleMouseUp() {
             isPanningRef.current = false;
-            svg?.style.cursor = "grab";
+            if (svg) {
+                svg.style.cursor = "grab";
+            }
         }
 
         svg.addEventListener("wheel", handleWheel, { passive: false });

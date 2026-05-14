@@ -10,7 +10,7 @@
 export { BadgeCelebration, useBadgeCelebrations } from "./BadgeCelebration";
 export {
     CelebrationManagerProvider,
-    CelebrationSettings,
+    CelebrationSettingsPanel,
     celebrationManagerStore,
     useCelebrationManager,
 } from "./CelebrationManager";

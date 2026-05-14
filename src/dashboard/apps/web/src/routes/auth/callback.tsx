@@ -1,3 +1,4 @@
+import { SafeJSON } from "@dashboard/shared";
 import { createFileRoute } from "@tanstack/react-router";
 import { handleCallbackRoute } from "@workos/authkit-tanstack-react-start";
 
@@ -11,7 +12,7 @@ export const Route = createFileRoute("/auth/callback")({
                 onError: ({ error }) => {
                     console.error("Authentication failed:", error);
                     return new Response(
-                        JSON.stringify({
+                        SafeJSON.stringify({
                             error: {
                                 message: "Authentication failed",
                                 description: "Something went wrong during sign in. Please try again.",

@@ -11,43 +11,26 @@
  * 7. Three sync modes: PowerSync-only, WebSocket-only, Integrated
  */
 
-import { createFileRoute } from "@tanstack/react-router";
+import { SafeJSON } from "@dashboard/shared";
+import type { InitialQueryBuilder } from "@tanstack/react-db";
 import { useLiveQuery } from "@tanstack/react-db";
-import { useState, useEffect, useRef } from "react";
-import {
-    Database,
-    Wifi,
-    WifiOff,
-    Plus,
-    Trash2,
-    Check,
-    Loader2,
-    RefreshCw,
-    Zap,
-    Server,
-    Cloud,
-} from "lucide-react";
+import { createFileRoute } from "@tanstack/react-router";
+import { Check, Cloud, Database, Loader2, Plus, RefreshCw, Server, Trash2, Wifi, WifiOff, Zap } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { DashboardLayout } from "@/components/dashboard";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { initializeDatabase, syncToServer } from "../../lib/db";
 import {
+    type getCollection,
     getTodosCollection,
-    getCollection,
-    type TodoInput,
     type Todo,
+    type TodoInput,
 } from "../../lib/example-todo/todo-collection";
-import {
-    syncToServer,
-    initializeDatabase,
-} from "../../lib/db";
-import {
-    getTodos,
-    createTodo,
-    type DbBackend,
-} from "../../lib/example-todo/todo-sync.server";
+import { createTodo, type DbBackend, getTodos } from "../../lib/example-todo/todo-sync.server";
 
 // Sync modes
 type SyncMode = "powersync-only" | "websocket-only" | "integrated";
@@ -59,12 +42,13 @@ export const Route = createFileRoute("/example/todo")({
 function TodoExample() {
     // ========== DATABASE INITIALIZATION ==========
     const [dbReady, setDbReady] = useState(false);
-    // biome-ignore lint/suspicious/noExplicitAny: Dynamic collection type from TanStack DB
     const [collection, setCollection] = useState<ReturnType<typeof getCollection>>(null);
 
     useEffect(() => {
         async function init() {
-            if (typeof window === "undefined") return;
+            if (typeof window === "undefined") {
+                return;
+            }
 
             console.log("[LiveSync] Initializing PowerSync database...");
             await initializeDatabase();
@@ -106,7 +90,6 @@ function TodoExample() {
     return <TodoContent collection={collection} />;
 }
 
-// biome-ignore lint/suspicious/noExplicitAny: Dynamic collection type
 function TodoContent({ collection }: { collection: NonNullable<ReturnType<typeof getCollection>> }) {
     // ========== SETTINGS SWITCHES ==========
     const [backend, setBackend] = useState<DbBackend>("drizzle-neon");
@@ -115,15 +98,14 @@ function TodoContent({ collection }: { collection: NonNullable<ReturnType<typeof
     const [wsConnected, setWsConnected] = useState(false);
 
     // ========== LIVE QUERY (TanStack DB + PowerSync) ==========
-    // biome-ignore lint/suspicious/noExplicitAny: TanStack DB collection type inference
-    const { data: rawTodos, isLoading, status } = useLiveQuery((q: any) =>
-        q.from({ todo: collection })
-    );
+    const {
+        data: rawTodos,
+        isLoading,
+        status,
+    } = useLiveQuery((q: InitialQueryBuilder) => q.from({ todo: collection }));
 
     // Filter to demo-user todos and cast to proper type
-    const userTodos = ((rawTodos ?? []) as Todo[]).filter(
-        (t) => t.user_id === "demo-user"
-    );
+    const userTodos = ((rawTodos ?? []) as Todo[]).filter((t) => t.user_id === "demo-user");
 
     // ========== WEBSOCKET CONNECTION ==========
     useEffect(() => {
@@ -145,7 +127,9 @@ function TodoContent({ collection }: { collection: NonNullable<ReturnType<typeof
 
         ws.onmessage = (e) => {
             try {
-                const msg = JSON.parse(e.data);
+                const msg = SafeJSON.parse<{ type: string; clientId?: string; todo?: TodoInput; todoId?: string }>(
+                    e.data
+                );
                 console.log("[LiveSync] WebSocket message received:", msg.type, msg);
 
                 if (msg.type === "connected") {
@@ -212,15 +196,11 @@ function TodoContent({ collection }: { collection: NonNullable<ReturnType<typeof
 
         if (syncMode === "websocket-only") {
             await createTodo({ data: { todo: newTodo, backend } });
-            wsRef.current?.send(
-                JSON.stringify({ type: "TODO_CREATED", todo: newTodo, backend })
-            );
+            wsRef.current?.send(SafeJSON.stringify({ type: "TODO_CREATED", todo: newTodo, backend }));
             console.log("[LiveSync] Saved to server + broadcasted via WebSocket");
         } else if (syncMode === "integrated") {
             await syncToServer();
-            wsRef.current?.send(
-                JSON.stringify({ type: "TODO_CREATED", todo: newTodo, backend })
-            );
+            wsRef.current?.send(SafeJSON.stringify({ type: "TODO_CREATED", todo: newTodo, backend }));
             console.log("[LiveSync] Synced via PowerSync + WebSocket");
         } else {
             await syncToServer();
@@ -245,7 +225,7 @@ function TodoContent({ collection }: { collection: NonNullable<ReturnType<typeof
         await syncToServer();
 
         if (syncMode !== "powersync-only" && wsRef.current) {
-            wsRef.current.send(JSON.stringify({ type: "TODO_DELETED", todoId: id }));
+            wsRef.current.send(SafeJSON.stringify({ type: "TODO_DELETED", todoId: id }));
         }
     };
 
@@ -302,7 +282,7 @@ function TodoContent({ collection }: { collection: NonNullable<ReturnType<typeof
                     </CardHeader>
                     <CardContent>
                         <pre className="text-xs text-muted-foreground font-mono overflow-x-auto">
-{`Client: collection.insert() → PowerSync SQLite → useLiveQuery() → UI
+                            {`Client: collection.insert() → PowerSync SQLite → useLiveQuery() → UI
    ↓
 Server: syncToServer() → connector.uploadData() → ${backend}`}
                         </pre>
@@ -313,7 +293,9 @@ Server: syncToServer() → connector.uploadData() → ${backend}`}
                 <Card className="border-border/50">
                     <CardHeader className="pb-3">
                         <CardTitle className="text-sm">Configuration</CardTitle>
-                        <CardDescription className="text-xs">Switch between database backends and sync modes</CardDescription>
+                        <CardDescription className="text-xs">
+                            Switch between database backends and sync modes
+                        </CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
                         {/* Database Backend */}
@@ -332,7 +314,8 @@ Server: syncToServer() → connector.uploadData() → ${backend}`}
                                             onClick={() => setBackend(b)}
                                             className={cn(
                                                 "gap-2 transition-all",
-                                                backend === b && "bg-primary text-primary-foreground shadow-[0_0_12px_rgba(251,146,60,0.3)]"
+                                                backend === b &&
+                                                    "bg-primary text-primary-foreground shadow-[0_0_12px_rgba(251,146,60,0.3)]"
                                             )}
                                         >
                                             <Icon className="h-3.5 w-3.5" />
@@ -357,7 +340,8 @@ Server: syncToServer() → connector.uploadData() → ${backend}`}
                                         onClick={() => setSyncMode(m)}
                                         className={cn(
                                             "gap-2 transition-all",
-                                            syncMode === m && "bg-secondary text-secondary-foreground shadow-[0_0_12px_rgba(34,211,238,0.3)]"
+                                            syncMode === m &&
+                                                "bg-secondary text-secondary-foreground shadow-[0_0_12px_rgba(34,211,238,0.3)]"
                                         )}
                                     >
                                         {m === "powersync-only" ? (
@@ -387,7 +371,12 @@ Server: syncToServer() → connector.uploadData() → ${backend}`}
                                 <RefreshCw className="h-3.5 w-3.5" />
                                 Load from Server
                             </Button>
-                            <Button variant="outline" size="sm" onClick={clearLocal} className="gap-2 text-destructive hover:text-destructive">
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={clearLocal}
+                                className="gap-2 text-destructive hover:text-destructive"
+                            >
                                 <Trash2 className="h-3.5 w-3.5" />
                                 Clear Local
                             </Button>
@@ -398,10 +387,12 @@ Server: syncToServer() → connector.uploadData() → ${backend}`}
                 {/* Status Bar */}
                 <div className="flex flex-wrap items-center gap-3 text-xs">
                     <Badge variant="outline" className="gap-1.5 font-mono">
-                        <span className={cn(
-                            "h-1.5 w-1.5 rounded-full",
-                            String(status) === "success" ? "bg-emerald-400" : "bg-yellow-400"
-                        )} />
+                        <span
+                            className={cn(
+                                "h-1.5 w-1.5 rounded-full",
+                                String(status) === "success" ? "bg-emerald-400" : "bg-yellow-400"
+                            )}
+                        />
                         {String(status)}
                     </Badge>
                     <Badge variant="outline" className="gap-1.5 font-mono">
@@ -424,7 +415,9 @@ Server: syncToServer() → connector.uploadData() → ${backend}`}
                             variant="outline"
                             className={cn(
                                 "gap-1.5 font-mono",
-                                wsConnected ? "border-emerald-500/30 text-emerald-400" : "border-destructive/30 text-destructive"
+                                wsConnected
+                                    ? "border-emerald-500/30 text-emerald-400"
+                                    : "border-destructive/30 text-destructive"
                             )}
                         >
                             {wsConnected ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}
@@ -520,8 +513,8 @@ Server: syncToServer() → connector.uploadData() → ${backend}`}
                         </CardHeader>
                         <CardContent>
                             <p className="text-xs text-muted-foreground">
-                                Direct server save + WebSocket broadcast to other clients.
-                                Good for real-time collaboration across devices.
+                                Direct server save + WebSocket broadcast to other clients. Good for real-time
+                                collaboration across devices.
                             </p>
                         </CardContent>
                     </Card>
@@ -535,8 +528,8 @@ Server: syncToServer() → connector.uploadData() → ${backend}`}
                         </CardHeader>
                         <CardContent>
                             <p className="text-xs text-muted-foreground">
-                                Both PowerSync and WebSocket together. PowerSync for offline-first +
-                                conflict resolution, WebSocket for instant cross-device updates.
+                                Both PowerSync and WebSocket together. PowerSync for offline-first + conflict
+                                resolution, WebSocket for instant cross-device updates.
                             </p>
                         </CardContent>
                     </Card>
@@ -544,8 +537,10 @@ Server: syncToServer() → connector.uploadData() → ${backend}`}
 
                 {/* Console hint */}
                 <div className="p-4 rounded-lg bg-muted/30 border border-border/50 font-mono text-xs space-y-1">
-                    <p className="text-primary">// Open DevTools Console to see [LiveSync] logs</p>
-                    <p className="text-muted-foreground">// Try opening this page in another tab and adding todos!</p>
+                    <p className="text-primary">{/* Open DevTools Console to see [LiveSync] logs */}</p>
+                    <p className="text-muted-foreground">
+                        {/* Try opening this page in another tab and adding todos! */}
+                    </p>
                 </div>
             </div>
         </DashboardLayout>
@@ -558,7 +553,9 @@ function AddTodoForm({ onAdd }: { onAdd: (text: string) => void }) {
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
-        if (!text.trim()) return;
+        if (!text.trim()) {
+            return;
+        }
 
         setIsAdding(true);
         Promise.resolve(onAdd(text)).finally(() => {
@@ -582,11 +579,7 @@ function AddTodoForm({ onAdd }: { onAdd: (text: string) => void }) {
                 disabled={isAdding || !text.trim()}
                 className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90 shadow-[0_0_12px_rgba(251,146,60,0.2)]"
             >
-                {isAdding ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                    <Plus className="h-4 w-4" />
-                )}
+                {isAdding ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
                 Add
             </Button>
         </form>

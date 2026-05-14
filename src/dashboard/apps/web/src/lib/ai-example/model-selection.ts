@@ -1,3 +1,5 @@
+import { SafeJSON } from "@dashboard/shared";
+
 export type Provider = "openai" | "anthropic" | "gemini" | "ollama";
 
 export interface ModelOption {
@@ -43,7 +45,7 @@ export function getStoredModelPreference(): ModelOption | null {
     try {
         const stored = localStorage.getItem(STORAGE_KEY);
         if (stored) {
-            const parsed = JSON.parse(stored);
+            const parsed = SafeJSON.parse(stored);
             // Validate that the stored option still exists in MODEL_OPTIONS
             const found = MODEL_OPTIONS.find((o) => o.provider === parsed.provider && o.model === parsed.model);
             if (found) {
@@ -61,7 +63,7 @@ export function setStoredModelPreference(option: ModelOption): void {
         return;
     }
     try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(option));
+        localStorage.setItem(STORAGE_KEY, SafeJSON.stringify(option));
     } catch {
         // Ignore storage errors
     }

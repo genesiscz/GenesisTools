@@ -1,4 +1,4 @@
-import { WS_EVENTS } from "@dashboard/shared";
+import { SafeJSON, WS_EVENTS } from "@dashboard/shared";
 import { defineWebSocketHandler } from "h3";
 
 interface Client {
@@ -18,7 +18,7 @@ export default defineWebSocketHandler({
 
         // Send welcome message
         peer.send(
-            JSON.stringify({
+            SafeJSON.stringify({
                 type: "connected",
                 clientId,
                 timestamp: new Date().toISOString(),
@@ -28,8 +28,8 @@ export default defineWebSocketHandler({
 
     message(peer, message) {
         try {
-            const data = JSON.parse(message.text());
-            const { type, payload } = data;
+            const data = SafeJSON.parse<{ type: string }>(message.text());
+            const { type } = data;
 
             console.log(`[WebSocket] Received message: ${type}`);
 
@@ -44,7 +44,7 @@ export default defineWebSocketHandler({
                 case WS_EVENTS.SYNC_REQUEST:
                     // Handle sync request
                     peer.send(
-                        JSON.stringify({
+                        SafeJSON.stringify({
                             type: WS_EVENTS.SYNC_RESPONSE,
                             timestamp: new Date().toISOString(),
                             message: "Sync request received",
@@ -77,7 +77,7 @@ export default defineWebSocketHandler({
 });
 
 function broadcastToOthers(sender: unknown, message: unknown) {
-    const messageStr = JSON.stringify(message);
+    const messageStr = SafeJSON.stringify(message);
 
     for (const client of clients.values()) {
         if (client.peer !== sender) {

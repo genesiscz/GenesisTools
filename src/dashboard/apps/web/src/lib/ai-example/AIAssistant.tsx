@@ -67,6 +67,7 @@ function Messages({ messages }: { messages: ChatMessages }) {
                                 </div>
                             );
                         }
+
                         if (part.type === "tool-call" && part.name === "recommendGuitar" && part.output) {
                             return (
                                 <div key={part.id} className="max-w-[80%] mx-auto">
@@ -74,6 +75,8 @@ function Messages({ messages }: { messages: ChatMessages }) {
                                 </div>
                             );
                         }
+
+                        return null;
                     })}
                 </div>
             ))}

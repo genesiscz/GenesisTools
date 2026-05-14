@@ -64,12 +64,11 @@ function TaskDetailPage() {
         getBlockersForTask,
         addBlocker,
         resolveBlocker,
-        updateBlocker,
         initialized: blockersInitialized,
     } = useBlockers(userId);
 
     // Handoff hooks
-    const { handoffs, createHandoff, acknowledgeHandoff, getHandoffsForTask } = useHandoff(userId);
+    const { handoffs: _handoffs, createHandoff, acknowledgeHandoff, getHandoffsForTask } = useHandoff(userId);
 
     // Decision hook for handoff compilation
     const { decisions } = useDecisionLog(userId);

@@ -10,6 +10,7 @@
  * 3. Displays celebration in queue order (one at a time for tier 2-3, stacked for tier 1)
  */
 
+import { SafeJSON } from "@dashboard/shared";
 import { useStore } from "@tanstack/react-store";
 import { Store } from "@tanstack/store";
 import { createContext, type ReactNode, useContext } from "react";
@@ -57,7 +58,7 @@ function loadSettings(): CelebrationSettings {
     try {
         const stored = localStorage.getItem(SETTINGS_STORAGE_KEY);
         if (stored) {
-            return { ...DEFAULT_CELEBRATION_SETTINGS, ...JSON.parse(stored) };
+            return { ...DEFAULT_CELEBRATION_SETTINGS, ...SafeJSON.parse(stored) };
         }
     } catch {
         // Ignore parse errors
@@ -70,7 +71,7 @@ function saveSettings(settings: CelebrationSettings): void {
         return;
     }
     try {
-        localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
+        localStorage.setItem(SETTINGS_STORAGE_KEY, SafeJSON.stringify(settings));
     } catch {
         // Ignore storage errors
     }
@@ -495,7 +496,7 @@ interface CelebrationSettingsProps {
     className?: string;
 }
 
-export function CelebrationSettings({ className }: CelebrationSettingsProps) {
+export function CelebrationSettingsPanel({ className }: CelebrationSettingsProps) {
     const { settings, setMode, updateSettings } = useCelebrationManager();
 
     const modes: { value: CelebrationMode; label: string; description: string }[] = [

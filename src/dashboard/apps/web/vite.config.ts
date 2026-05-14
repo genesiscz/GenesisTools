@@ -22,13 +22,15 @@ const nitroConfig: NitroConfig = {
     scanDirs: ["./server"],
 };
 
-import neon from "./neon-vite-plugin.ts";
-
 const config = defineConfig({
+    server: {
+        hmr: {
+            overlay: false,
+        },
+    },
     plugins: [
         devtools(),
         nitro(nitroConfig),
-        neon,
         // this is the plugin that enables path aliases
         viteTsConfigPaths({
             projects: ["./tsconfig.json"],

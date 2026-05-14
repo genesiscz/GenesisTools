@@ -1,6 +1,7 @@
 // TODO: Update field names to match @dashboard/shared types and add pomodoro support
 // Will be used by PowerSyncAdapter in /routes/timer/lib/storage/
 
+import { SafeJSON } from "@dashboard/shared";
 import { z } from "zod";
 import { db } from "@/lib/db/powersync";
 
@@ -18,7 +19,7 @@ export const timerSchema = z.object({
     is_running: z.number().transform((val) => val > 0), // SQLite int → boolean
     paused_time: z.number(),
     countdown_duration: z.number(),
-    laps: z.string().transform((val) => JSON.parse(val || "[]") as number[]),
+    laps: z.string().transform((val) => SafeJSON.parse(val || "[]") as number[]),
     user_id: z.string(),
     created_at: z.string().transform((val) => new Date(val)),
     updated_at: z.string().transform((val) => new Date(val)),
@@ -66,7 +67,7 @@ export function serializeTimer(input: TimerInput, userId: string): Omit<TimerRow
         is_running: input.isRunning ? 1 : 0,
         paused_time: input.pausedTime ?? 0,
         countdown_duration: input.countdownDuration ?? 5 * 60 * 1000, // 5 min default
-        laps: JSON.stringify(input.laps ?? []),
+        laps: SafeJSON.stringify(input.laps ?? []),
         user_id: userId,
         created_at: now,
         updated_at: now,
@@ -154,7 +155,7 @@ export async function updateTimer(id: string, updates: Partial<TimerInput>): Pro
     }
     if (updates.laps !== undefined) {
         setClauses.push("laps = ?");
-        values.push(JSON.stringify(updates.laps));
+        values.push(SafeJSON.stringify(updates.laps));
     }
 
     // Always update the timestamp

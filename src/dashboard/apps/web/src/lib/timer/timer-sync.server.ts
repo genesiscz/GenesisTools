@@ -8,6 +8,7 @@
  * - No manual type conversions needed
  */
 
+import { SafeJSON } from "@dashboard/shared";
 import { createServerFn } from "@tanstack/react-start";
 import { desc, eq } from "drizzle-orm";
 import { type ActivityLog, activityLogs, db, type Timer, timers } from "@/drizzle";
@@ -88,7 +89,7 @@ export const uploadSyncBatch = createServerFn({
                 }
             } catch (error) {
                 console.error(`[Sync] Failed to process ${op.table} operation ${op.op}:`, error);
-                console.error("[Sync] Operation data:", JSON.stringify(op, null, 2));
+                console.error("[Sync] Operation data:", SafeJSON.stringify(op, null, 2));
                 // Continue processing other operations
             }
         }
@@ -115,7 +116,7 @@ async function processTimerOperation(op: CrudOperation) {
     switch (op.op) {
         case "PUT":
             // Upsert timer (insert or replace)
-            console.log("[Sync] PUT operation data:", JSON.stringify(data, null, 2));
+            console.log("[Sync] PUT operation data:", SafeJSON.stringify(data, null, 2));
             await db
                 .insert(timers)
                 .values({
@@ -310,10 +311,10 @@ export const getTimersFromServer = createServerFn({
             // Parse JSONB fields (neon-http doesn't auto-parse them)
             const parsedResults = results.map((timer) => ({
                 ...timer,
-                laps: typeof timer.laps === "string" ? JSON.parse(timer.laps || "[]") : timer.laps,
+                laps: typeof timer.laps === "string" ? SafeJSON.parse(timer.laps || "[]") : timer.laps,
                 pomodoroSettings:
                     timer.pomodoroSettings && typeof timer.pomodoroSettings === "string"
-                        ? JSON.parse(timer.pomodoroSettings)
+                        ? SafeJSON.parse(timer.pomodoroSettings)
                         : timer.pomodoroSettings,
             }));
 
@@ -349,7 +350,8 @@ export const getActivityLogsFromServer = createServerFn({
             // Parse JSONB fields (neon-http doesn't auto-parse them)
             const parsedResults = results.map((log) => ({
                 ...log,
-                metadata: log.metadata && typeof log.metadata === "string" ? JSON.parse(log.metadata) : log.metadata,
+                metadata:
+                    log.metadata && typeof log.metadata === "string" ? SafeJSON.parse(log.metadata) : log.metadata,
             }));
 
             return parsedResults;

@@ -47,7 +47,9 @@ export function useAudioRecorder() {
                 const audioBlob = new Blob(chunksRef.current, { type: "audio/webm" });
 
                 // Stop all tracks
-                mediaRecorder.stream.getTracks().forEach((track) => track.stop());
+                mediaRecorder.stream.getTracks().forEach((track) => {
+                    track.stop();
+                });
 
                 try {
                     const formData = new FormData();

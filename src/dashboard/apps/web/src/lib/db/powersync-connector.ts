@@ -16,6 +16,7 @@
  * to transform them into RPC calls on the client.
  */
 
+import { SafeJSON } from "@dashboard/shared";
 import { uploadSyncBatch } from "@/lib/timer/timer-sync.server";
 
 // Define the PowerSync connector interface inline to avoid SSR import issues
@@ -65,7 +66,7 @@ export class DashboardConnector {
 
         try {
             console.log(`[PowerSync] Uploading ${batch.crud.length} operations...`);
-            console.log("[PowerSync] Raw CRUD batch:", JSON.stringify(batch.crud.slice(0, 2), null, 2));
+            console.log("[PowerSync] Raw CRUD batch:", SafeJSON.stringify(batch.crud.slice(0, 2), null, 2));
 
             const operations = batch.crud.map(
                 // biome-ignore lint/suspicious/noExplicitAny: PowerSync CRUD batch format varies
@@ -79,7 +80,7 @@ export class DashboardConnector {
             );
 
             console.log(`[PowerSync] Uploading ${operations.length} operations to server...`);
-            console.log("[PowerSync] First operation:", JSON.stringify(operations[0], null, 2));
+            console.log("[PowerSync] First operation:", SafeJSON.stringify(operations[0], null, 2));
 
             // Call server function (TanStack Start transforms to RPC on client)
             await uploadSyncBatch({ data: { operations } });

@@ -386,7 +386,7 @@ export function buildGraphEdges(tasks: Task[]): GraphEdge[] {
  */
 export function analyzeCriticalPath(tasks: Task[]): CriticalPathAnalysis {
     const incompleteTasks = tasks.filter((t) => t.status !== "completed");
-    const { levels, hasCycle } = topologicalSort(incompleteTasks);
+    const { levels, hasCycle: _hasCycle } = topologicalSort(incompleteTasks);
     const criticalPath = findCriticalPath(incompleteTasks);
     const bottlenecks = findBottlenecks(incompleteTasks);
 

@@ -417,7 +417,7 @@ export function HandoffDocument({ handoff, decisions = [], blockers = [], classN
  * Collapsible section component
  */
 function CollapsibleSection({
-    id,
+    id: _id,
     icon: Icon,
     title,
     color,

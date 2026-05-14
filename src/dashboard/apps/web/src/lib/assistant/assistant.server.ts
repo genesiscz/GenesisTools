@@ -10,6 +10,7 @@
  * - No PowerSync complexity - just REST-like endpoints
  */
 
+import { SafeJSON } from "@dashboard/shared";
 import { createServerFn } from "@tanstack/react-start";
 import { and, desc, eq } from "drizzle-orm";
 import {
@@ -68,7 +69,7 @@ function parseJsonbField<T>(value: unknown, fallback: T): T {
     }
     if (typeof value === "string") {
         try {
-            return JSON.parse(value) as T;
+            return SafeJSON.parse(value) as T;
         } catch {
             return fallback;
         }

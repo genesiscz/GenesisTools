@@ -221,7 +221,7 @@ export function useDeleteAssistantTaskMutation() {
     const queryClient = useQueryClient();
 
     return useMutation({
-        mutationFn: ({ id, userId }: { id: string; userId: string }) => deleteAssistantTask({ data: { id } }),
+        mutationFn: ({ id, userId: _userId }: { id: string; userId: string }) => deleteAssistantTask({ data: { id } }),
         onSuccess: (_, { userId }) => {
             queryClient.invalidateQueries({
                 queryKey: assistantKeys.taskList(userId),
@@ -260,8 +260,15 @@ export function useUpdateAssistantContextParkingMutation() {
     const queryClient = useQueryClient();
 
     return useMutation({
-        mutationFn: ({ id, data, userId }: { id: string; data: Partial<NewAssistantContextParking>; userId: string }) =>
-            updateAssistantContextParking({ data: { id, data } }),
+        mutationFn: ({
+            id,
+            data,
+            userId: _userId,
+        }: {
+            id: string;
+            data: Partial<NewAssistantContextParking>;
+            userId: string;
+        }) => updateAssistantContextParking({ data: { id, data } }),
         onSuccess: (_, { userId }) => {
             queryClient.invalidateQueries({
                 queryKey: assistantKeys.parkingList(userId),
@@ -378,8 +385,15 @@ export function useUpdateAssistantCommunicationMutation() {
     const queryClient = useQueryClient();
 
     return useMutation({
-        mutationFn: ({ id, data, userId }: { id: string; data: Partial<NewAssistantCommunication>; userId: string }) =>
-            updateAssistantCommunication({ data: { id, data } }),
+        mutationFn: ({
+            id,
+            data,
+            userId: _userId,
+        }: {
+            id: string;
+            data: Partial<NewAssistantCommunication>;
+            userId: string;
+        }) => updateAssistantCommunication({ data: { id, data } }),
         onSuccess: (_, { userId }) => {
             queryClient.invalidateQueries({
                 queryKey: assistantKeys.communicationList(userId),
@@ -392,7 +406,8 @@ export function useDeleteAssistantCommunicationMutation() {
     const queryClient = useQueryClient();
 
     return useMutation({
-        mutationFn: ({ id, userId }: { id: string; userId: string }) => deleteAssistantCommunication({ data: { id } }),
+        mutationFn: ({ id, userId: _userId }: { id: string; userId: string }) =>
+            deleteAssistantCommunication({ data: { id } }),
         onSuccess: (_, { userId }) => {
             queryClient.invalidateQueries({
                 queryKey: assistantKeys.communicationList(userId),
@@ -431,8 +446,15 @@ export function useUpdateAssistantDecisionMutation() {
     const queryClient = useQueryClient();
 
     return useMutation({
-        mutationFn: ({ id, data, userId }: { id: string; data: Partial<NewAssistantDecision>; userId: string }) =>
-            updateAssistantDecision({ data: { id, data } }),
+        mutationFn: ({
+            id,
+            data,
+            userId: _userId,
+        }: {
+            id: string;
+            data: Partial<NewAssistantDecision>;
+            userId: string;
+        }) => updateAssistantDecision({ data: { id, data } }),
         onSuccess: (_, { userId }) => {
             queryClient.invalidateQueries({
                 queryKey: assistantKeys.decisionList(userId),
@@ -445,7 +467,8 @@ export function useDeleteAssistantDecisionMutation() {
     const queryClient = useQueryClient();
 
     return useMutation({
-        mutationFn: ({ id, userId }: { id: string; userId: string }) => deleteAssistantDecision({ data: { id } }),
+        mutationFn: ({ id, userId: _userId }: { id: string; userId: string }) =>
+            deleteAssistantDecision({ data: { id } }),
         onSuccess: (_, { userId }) => {
             queryClient.invalidateQueries({
                 queryKey: assistantKeys.decisionList(userId),
@@ -499,8 +522,8 @@ export function useUpdateAssistantBlockerMutation() {
         mutationFn: ({
             id,
             data,
-            userId,
-            taskId,
+            userId: _userId,
+            taskId: _taskId,
         }: {
             id: string;
             data: Partial<NewAssistantBlocker>;
@@ -522,7 +545,7 @@ export function useResolveAssistantBlockerMutation() {
     const queryClient = useQueryClient();
 
     return useMutation({
-        mutationFn: ({ id, userId, taskId }: { id: string; userId: string; taskId: string }) =>
+        mutationFn: ({ id, userId: _userId, taskId: _taskId }: { id: string; userId: string; taskId: string }) =>
             resolveAssistantBlocker({ data: { id } }),
         onSuccess: (_, { userId, taskId }) => {
             queryClient.invalidateQueries({
@@ -580,8 +603,8 @@ export function useUpdateAssistantHandoffMutation() {
         mutationFn: ({
             id,
             data,
-            userId,
-            taskId,
+            userId: _userId,
+            taskId: _taskId,
         }: {
             id: string;
             data: Partial<NewAssistantHandoff>;
@@ -757,7 +780,8 @@ export function useMarkAssistantCelebrationShownMutation() {
     const queryClient = useQueryClient();
 
     return useMutation({
-        mutationFn: ({ id, userId }: { id: string; userId: string }) => markAssistantCelebrationShown({ data: { id } }),
+        mutationFn: ({ id, userId: _userId }: { id: string; userId: string }) =>
+            markAssistantCelebrationShown({ data: { id } }),
         onSuccess: (_, { userId }) => {
             queryClient.invalidateQueries({
                 queryKey: assistantKeys.celebrationList(userId),
@@ -770,7 +794,8 @@ export function useDismissAssistantCelebrationMutation() {
     const queryClient = useQueryClient();
 
     return useMutation({
-        mutationFn: ({ id, userId }: { id: string; userId: string }) => dismissAssistantCelebration({ data: { id } }),
+        mutationFn: ({ id, userId: _userId }: { id: string; userId: string }) =>
+            dismissAssistantCelebration({ data: { id } }),
         onSuccess: (_, { userId }) => {
             queryClient.invalidateQueries({
                 queryKey: assistantKeys.celebrationList(userId),

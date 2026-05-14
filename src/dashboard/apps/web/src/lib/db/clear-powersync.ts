@@ -54,5 +54,5 @@ export async function clearPowerSyncDatabase(): Promise<void> {
 
 // Expose globally for easy access from console
 if (typeof window !== "undefined") {
-    (window as any).clearPowerSyncDB = clearPowerSyncDatabase;
+    (window as Window & { clearPowerSyncDB: typeof clearPowerSyncDatabase }).clearPowerSyncDB = clearPowerSyncDatabase;
 }

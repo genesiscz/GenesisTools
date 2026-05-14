@@ -1,3 +1,4 @@
+import { SafeJSON } from "@dashboard/shared";
 import { useCallback, useEffect, useState } from "react";
 
 export interface AppSettings {
@@ -44,7 +45,7 @@ function loadSettings(): AppSettings {
     try {
         const stored = localStorage.getItem(STORAGE_KEY);
         if (stored) {
-            return { ...DEFAULT_SETTINGS, ...JSON.parse(stored) };
+            return { ...DEFAULT_SETTINGS, ...SafeJSON.parse(stored) };
         }
     } catch (e) {
         console.error("Failed to load settings:", e);
@@ -58,7 +59,7 @@ function saveSettings(settings: AppSettings): void {
     }
 
     try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+        localStorage.setItem(STORAGE_KEY, SafeJSON.stringify(settings));
     } catch (e) {
         console.error("Failed to save settings:", e);
     }
@@ -69,7 +70,9 @@ let globalSettings = loadSettings();
 const listeners = new Set<() => void>();
 
 function notifyListeners() {
-    listeners.forEach((listener) => listener());
+    listeners.forEach((listener) => {
+        listener();
+    });
 }
 
 /**
