@@ -1,4 +1,4 @@
-import { createLogger } from "@app/logger";
+import appLogger, { createLogger } from "@app/logger";
 import { dispatchNotification } from "@app/utils/notifications";
 import { loadConfig } from "./config";
 import { computeNextRunAt, parseInterval } from "./interval";
@@ -21,6 +21,7 @@ export async function runSchedulerLoop(logsBaseDir: string): Promise<void> {
     process.once("SIGINT", shutdown);
 
     log.info("Daemon scheduler started");
+    appLogger.info({ logsBaseDir }, "[daemon] scheduler started");
 
     await initializeTaskStates(taskStates, logsBaseDir);
 
@@ -49,7 +50,10 @@ export async function runSchedulerLoop(logsBaseDir: string): Promise<void> {
             state.running = true;
 
             executeTask(task, logsBaseDir)
-                .catch((err) => log.error({ err, task: task.name }, "Task execution error"))
+                .catch((err) => {
+                    log.error({ err, task: task.name }, "Task execution error");
+                    appLogger.error({ err, task: task.name }, "[daemon] task execution error");
+                })
                 .finally(() => {
                     activeRuns.delete(task.name);
                     const s = taskStates.get(task.name);
@@ -69,6 +73,10 @@ export async function runSchedulerLoop(logsBaseDir: string): Promise<void> {
 
     if (activeRuns.size > 0) {
         log.info({ activeCount: activeRuns.size }, "Waiting for active runs to finish...");
+        appLogger.info(
+            { activeCount: activeRuns.size, activeTasks: [...activeRuns] },
+            "[daemon] waiting for active runs"
+        );
         const deadline = Date.now() + 30_000;
 
         while (activeRuns.size > 0 && Date.now() < deadline) {
@@ -77,10 +85,12 @@ export async function runSchedulerLoop(logsBaseDir: string): Promise<void> {
 
         if (activeRuns.size > 0) {
             log.warn({ remaining: [...activeRuns] }, "Timed out waiting for active runs");
+            appLogger.warn({ remaining: [...activeRuns] }, "[daemon] timed out waiting for active runs");
         }
     }
 
     log.info("Daemon scheduler stopped");
+    appLogger.info("[daemon] scheduler stopped");
 }
 
 async function executeTask(task: DaemonTask, logsBaseDir: string): Promise<void> {
@@ -99,11 +109,16 @@ async function executeTask(task: DaemonTask, logsBaseDir: string): Promise<void>
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         log.info({ task: task.name, attempt, maxAttempts }, "Running task");
+        appLogger.info({ task: task.name, attempt, maxAttempts, timeoutMs: task.timeoutMs }, "[daemon] running task");
 
         const result = await runTask(task, attempt, logsBaseDir);
 
         if (result.exitCode === 0) {
             log.info({ task: task.name, duration: result.duration_ms }, "Task completed");
+            appLogger.info(
+                { task: task.name, duration_ms: result.duration_ms, logFile: result.logFile },
+                "[daemon] task completed"
+            );
 
             if (shouldNotify) {
                 dispatchNotification({
@@ -118,10 +133,15 @@ async function executeTask(task: DaemonTask, logsBaseDir: string): Promise<void>
         }
 
         log.warn({ task: task.name, exitCode: result.exitCode, attempt, maxAttempts }, "Task failed");
+        appLogger.warn(
+            { task: task.name, exitCode: result.exitCode, attempt, maxAttempts, logFile: result.logFile },
+            "[daemon] task failed"
+        );
 
         if (attempt < maxAttempts) {
             const backoffMs = Math.min(2 ** attempt * 1000, 60_000);
             log.info({ task: task.name, backoffMs }, "Retrying after backoff");
+            appLogger.info({ task: task.name, backoffMs }, "[daemon] retrying task after backoff");
             await Bun.sleep(backoffMs);
         }
     }

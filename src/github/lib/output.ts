@@ -13,6 +13,7 @@ import type {
     ReviewData,
     SearchResult,
 } from "@app/github/types";
+import { formatLocalDateTimeStamp } from "@app/utils/date";
 import { sumReactions } from "@app/utils/github/utils";
 
 import { SafeJSON } from "@app/utils/json";
@@ -727,7 +728,7 @@ function formatDate(dateStr: string): string {
     if (Number.isNaN(date.getTime())) {
         return "-";
     }
-    return date.toISOString().replace("T", " ").slice(0, 16);
+    return formatLocalDateTimeStamp(date, { seconds: false });
 }
 
 function formatDateShort(dateStr: string): string {

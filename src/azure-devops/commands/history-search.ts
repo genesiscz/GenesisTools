@@ -14,6 +14,7 @@ import { requireConfig } from "@app/azure-devops/utils";
 import { buildCombinedQuery, buildEverAssignedQuery } from "@app/azure-devops/wiql-builder";
 import logger from "@app/logger";
 import { suggestCommand } from "@app/utils/cli";
+import { formatLocalDate, formatLocalDateTimeStamp } from "@app/utils/date";
 import { formatDuration as _formatDuration } from "@app/utils/format";
 import * as p from "@clack/prompts";
 import pc from "picocolors";
@@ -350,9 +351,9 @@ async function localSearch(options: SearchOptions): Promise<void> {
 
     // Output
     // Build cache stats
-    const dataFrom = oldestActivity < Infinity ? new Date(oldestActivity).toISOString().slice(0, 10) : "?";
-    const dataTo = newestActivity > 0 ? new Date(newestActivity).toISOString().slice(0, 10) : "?";
-    const syncDate = lastSyncTime > 0 ? new Date(lastSyncTime).toISOString().slice(0, 16).replace("T", " ") : "?";
+    const dataFrom = oldestActivity < Infinity ? formatLocalDate(new Date(oldestActivity)) : "?";
+    const dataTo = newestActivity > 0 ? formatLocalDate(new Date(newestActivity)) : "?";
+    const syncDate = lastSyncTime > 0 ? formatLocalDateTimeStamp(lastSyncTime, { seconds: false }) : "?";
 
     if (options.output === "json") {
         console.log(

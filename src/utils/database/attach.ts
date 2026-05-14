@@ -30,10 +30,9 @@ export function attachReadonly(db: Database, alias: string, dbPath: string, mode
         db.run(`ATTACH DATABASE '${escaped}' AS ${alias}`);
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        throw new Error(
-            `Failed to attach SQLite database ${resolve(dbPath)} as ${alias} (${mode}): ${message}`,
-            { cause: error }
-        );
+        throw new Error(`Failed to attach SQLite database ${resolve(dbPath)} as ${alias} (${mode}): ${message}`, {
+            cause: error,
+        });
     }
 }
 

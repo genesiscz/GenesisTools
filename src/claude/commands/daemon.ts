@@ -25,6 +25,7 @@ export function registerDaemonCommand(program: Command): void {
                 command: `${bunPath()} run ${POLL_SCRIPT}`,
                 every: opts.interval,
                 retries: 1,
+                timeoutMs: 60_000,
                 description: "Poll Claude usage API and record to history DB",
                 overwrite: true,
                 notify: false,

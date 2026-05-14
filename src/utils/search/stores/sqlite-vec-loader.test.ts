@@ -59,15 +59,12 @@ describe("sqlite-vec-loader ordering", () => {
         }
     );
 
-    it.skipIf(!RUN_ORDERING_TESTS)(
-        "loadSqliteVec returns true when the swap runs before any Database",
-        async () => {
-            const { stdout, exitCode } = await runFixture(FIXTURE_ENSURE_FIRST);
+    it.skipIf(!RUN_ORDERING_TESTS)("loadSqliteVec returns true when the swap runs before any Database", async () => {
+        const { stdout, exitCode } = await runFixture(FIXTURE_ENSURE_FIRST);
 
-            expect(exitCode).toBe(0);
-            expect(parseLastStdoutLine(stdout)).toEqual({ loaded: true });
-        }
-    );
+        expect(exitCode).toBe(0);
+        expect(parseLastStdoutLine(stdout)).toEqual({ loaded: true });
+    });
 
     it.skipIf(!RUN_ORDERING_TESTS)(
         "sqlite-vec-preload.ts defeats the ordering trap: Database-first still loads",

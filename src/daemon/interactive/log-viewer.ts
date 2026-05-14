@@ -1,3 +1,4 @@
+import { formatLocalDateTimeStamp } from "@app/utils/date";
 import * as p from "@clack/prompts";
 import pc from "picocolors";
 import { getLogsBaseDir } from "../lib/config";
@@ -98,7 +99,7 @@ function formatRunLabel(
     durationMs: number | null,
     attempt: number
 ): string {
-    const date = startedAt.replace("T", " ").slice(0, 19);
+    const date = formatLocalDateTimeStamp(startedAt);
     const code = exitCode === null ? pc.dim("?") : exitCode === 0 ? pc.green("0") : pc.red(String(exitCode));
     const dur = durationMs !== null ? formatDuration(durationMs) : "?";
     const att = attempt > 1 ? pc.dim(` attempt:${attempt}`) : "";

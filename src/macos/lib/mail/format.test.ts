@@ -27,8 +27,6 @@ describe("generateAttachmentName", () => {
     });
 
     it("sanitizes path-unsafe characters in the original name", () => {
-        expect(generateAttachmentName(msg("Order #3"), "weird/na me.pdf")).toBe(
-            "2026-05-12-order-3-weird_na_me.pdf"
-        );
+        expect(generateAttachmentName(msg("Order #3"), "weird/na me.pdf")).toBe("2026-05-12-order-3-weird_na_me.pdf");
     });
 });

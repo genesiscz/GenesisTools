@@ -1,5 +1,6 @@
 import { homedir } from "node:os";
 import path from "node:path";
+import { formatLocalDate } from "@app/utils/date";
 import { SafeJSON } from "@app/utils/json";
 import chalk from "chalk";
 import pino from "pino";
@@ -71,6 +72,7 @@ let globalConfig: LoggerConfig = {
     timestampFormat: "HH:MM:ss",
     sync: true, // Default: sync mode to ensure proper log ordering
 };
+let fileLogWarningShown = false;
 
 /**
  * Create a pino logger with pretty printing
@@ -91,13 +93,23 @@ export const createLogger = (options: LoggerOptions = {}): pino.Logger => {
 
     // File stream (if enabled) — always captures debug+ regardless of console level
     if (logToFile) {
-        const date = new Date().toISOString().split("T")[0];
+        const date = formatLocalDate(new Date());
         const logDir = path.join(homedir(), ".genesis-tools", "logs");
         const logFilePath = path.join(logDir, `${date}.log`);
-        streams.push({
-            level: "debug" as pino.Level,
-            stream: pino.destination({ dest: logFilePath, sync: true, mkdir: true }),
-        });
+
+        try {
+            streams.push({
+                level: "debug" as pino.Level,
+                stream: pino.destination({ dest: logFilePath, sync: true, mkdir: true }),
+            });
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+
+            if (!fileLogWarningShown && process.stderr && typeof process.stderr.write === "function") {
+                fileLogWarningShown = true;
+                process.stderr.write(`[logger] Failed to open log file ${logFilePath}: ${message}\n`);
+            }
+        }
     }
 
     // Console stream

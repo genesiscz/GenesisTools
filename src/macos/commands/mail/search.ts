@@ -233,7 +233,6 @@ export function registerSearchCommand(program: Command): void {
                         `${rangeLabel} results.${totalCount > pageLimit ? " Use --offset/--limit to paginate." : ""}`
                     );
                 }
-
             } catch (error) {
                 const msg = error instanceof Error ? error.message : String(error);
                 const verboseDetails = error instanceof Error ? (error.stack ?? error.message) : String(error);

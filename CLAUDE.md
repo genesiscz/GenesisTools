@@ -186,6 +186,12 @@ See `.claude/docs/tool-template.md` for complete templates (@inquirer + @clack/p
 - When working with union types, use discriminant checks (e.g. `entity.className === "User"`).
 - Prefer `error: err` over `error: err instanceof Error ? err.message : String(err)` when the error field accepts unknown.
 
+## Debugging & Logging
+
+- **Triage from logs first.** When any tool misbehaves, the FIRST step is to read `~/.genesis-tools/logs/<today>.log` (and recent days) and `rg` for the tool name / error string — *before* forming hypotheses or reproducing. Logs are day-stamped pino JSON. This bug (`sqlite-vec extension failed to load`) was in the logs for weeks before it was triaged; checking them first collapses hours of guessing into one `rg`.
+- **Log enough to triage from logs alone.** Every tool must emit enough via `@app/logger` that a future reader can reconstruct what happened without re-running it: log key decision branches, every external-resource access (DB opens with their paths, spawned commands, API URLs), mode/config resolution, and result counts.
+- **Never swallow errors.** A bare `catch {}` is forbidden. At minimum `logger.debug` (or `.warn`) the caught error with context. A swallowed error is a future debugging session that did not have to happen.
+
 ## Claude Agent SDK Types Reference
 
 The session/message types in `src/utils/claude/` are aligned with `@anthropic-ai/claude-agent-sdk`. To check for upstream changes:

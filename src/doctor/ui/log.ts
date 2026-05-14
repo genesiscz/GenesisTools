@@ -1,5 +1,6 @@
 import { readHistorySince } from "@app/doctor/lib/history";
 import { formatBytes } from "@app/doctor/lib/size";
+import { formatLocalDate, formatLocalDateTimeStamp } from "@app/utils/date";
 import { SafeJSON } from "@app/utils/json";
 import pc from "picocolors";
 
@@ -37,7 +38,7 @@ export async function runLog(opts: LogOpts): Promise<void> {
         return;
     }
 
-    console.log(pc.bold(`${filtered.length} actions since ${since.toISOString().slice(0, 10)}:`));
+    console.log(pc.bold(`${filtered.length} actions since ${formatLocalDate(since)}:`));
 
     for (const entry of filtered.slice(-50).reverse()) {
         const s = entry.action.status;
@@ -46,7 +47,7 @@ export async function runLog(opts: LogOpts): Promise<void> {
             ? pc.dim(` · ${formatBytes(entry.action.actualReclaimedBytes)}`)
             : "";
         console.log(
-            `${pc.dim(entry.timestamp.slice(0, 19).replace("T", " "))} ${statusColor(s.padEnd(7))} ${entry.action.actionId.padEnd(20)} ${entry.action.findingId}${bytes}`
+            `${pc.dim(formatLocalDateTimeStamp(entry.timestamp))} ${statusColor(s.padEnd(7))} ${entry.action.actionId.padEnd(20)} ${entry.action.findingId}${bytes}`
         );
     }
 }

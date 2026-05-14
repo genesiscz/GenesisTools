@@ -72,7 +72,18 @@ describe("tools macos mail search --mode auto (e2e)", () => {
             const { tmpdir } = await import("node:os");
             const outDir = mkdtempSync(join(tmpdir(), "sd-e2e-"));
             const proc = Bun.spawn(
-                [TOOLS_BIN, "macos", "mail", "search-download", "invoice", "--output-dir", outDir, "--limit", "3", "--yes"],
+                [
+                    TOOLS_BIN,
+                    "macos",
+                    "mail",
+                    "search-download",
+                    "invoice",
+                    "--output-dir",
+                    outDir,
+                    "--limit",
+                    "3",
+                    "--yes",
+                ],
                 { stdout: "pipe", stderr: "pipe" }
             );
             const stderr = await new Response(proc.stderr).text();
