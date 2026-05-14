@@ -1,6 +1,15 @@
 import type { MailMessage } from "@app/macos/lib/mail/types";
 import { formatBytes, formatRelativeTime } from "@app/utils/format";
 
+export type JsonColumnValue = string | number | boolean | null | string[];
+
+export interface MailColumnDef {
+    label: string;
+    get: (m: MailMessage) => string;
+    /** Real typed value for structured output (--format json). Falls back to `get` when absent. */
+    getValue?: (m: MailMessage) => JsonColumnValue;
+}
+
 function formatRecipients(msg: MailMessage, type: "to" | "cc"): string {
     if (!msg.recipients) {
         return "";
@@ -32,6 +41,18 @@ function formatBodyPreview(text: string | undefined, maxChars = 120): string {
     return single.length > maxChars ? `${single.slice(0, maxChars)}…` : single;
 }
 
+function relevanceValue(m: MailMessage): number | null {
+    if (m.searchScore !== undefined) {
+        return m.searchScore;
+    }
+
+    if (m.semanticScore !== undefined) {
+        return 1 - m.semanticScore / 2;
+    }
+
+    return null;
+}
+
 export const MAIL_COLUMNS = {
     id: {
         label: "ID",
@@ -40,6 +61,7 @@ export const MAIL_COLUMNS = {
     date: {
         label: "Date",
         get: (m: MailMessage) => formatRelativeTime(m.dateSent, { compact: true }),
+        getValue: (m: MailMessage) => m.dateSent.toISOString(),
     },
     from: {
         label: "From",
@@ -90,6 +112,7 @@ export const MAIL_COLUMNS = {
     attachments: {
         label: "Attachments",
         get: (m: MailMessage) => (m.attachments.length > 0 ? String(m.attachments.length) : ""),
+        getValue: (m: MailMessage) => m.attachments.map((a) => a.name),
     },
     body: {
         label: "Body",
@@ -121,9 +144,13 @@ export const MAIL_COLUMNS = {
     },
     relevance: {
         label: "Relevance",
-        get: (m: MailMessage) => (m.semanticScore !== undefined ? (1 - m.semanticScore / 2).toFixed(2) : ""),
+        get: (m: MailMessage) => {
+            const v = relevanceValue(m);
+            return v === null ? "" : v.toFixed(2);
+        },
+        getValue: (m: MailMessage) => relevanceValue(m),
     },
-} as const;
+} satisfies Record<string, MailColumnDef>;
 
 export type MailColumnKey = keyof typeof MAIL_COLUMNS;
 export const DEFAULT_LIST_COLUMNS: MailColumnKey[] = ["id", "date", "from", "subject", "attachments"];

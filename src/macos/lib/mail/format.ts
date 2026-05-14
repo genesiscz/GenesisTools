@@ -122,3 +122,18 @@ export function generateSlug(msg: MailMessage): string {
         .slice(0, 50);
     return `${date}-${subjectSlug}-${msg.rowid}`;
 }
+
+/**
+ * Filename for a saved attachment: {YYYY-MM-DD}-{subject-slug}-{original-name}.
+ * The original name is sanitized to path-safe characters.
+ */
+export function generateAttachmentName(msg: MailMessage, attachmentName: string): string {
+    const date = msg.dateSent.toISOString().slice(0, 10);
+    const subjectSlug = msg.subject
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 50);
+    const safeName = attachmentName.replace(/[^\w.-]/g, "_");
+    return `${date}-${subjectSlug}-${safeName}`;
+}

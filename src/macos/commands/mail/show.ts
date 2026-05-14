@@ -1,5 +1,6 @@
 import { EmlxBodyExtractor } from "@app/macos/lib/mail/emlx";
 import { rowToMessage, truncateBody } from "@app/macos/lib/mail/transform";
+import { printLn } from "@app/utils/cli";
 import { formatBytes } from "@app/utils/format";
 import { SafeJSON } from "@app/utils/json";
 import { MailDatabase } from "@app/utils/macos/MailDatabase";
@@ -96,7 +97,7 @@ export function registerShowCommand(program: Command): void {
                 msg.bodyRaw = bodyRaw;
 
                 if (options.json) {
-                    console.log(
+                    await printLn(
                         SafeJSON.stringify(
                             {
                                 ...msg,
@@ -113,20 +114,20 @@ export function registerShowCommand(program: Command): void {
                     return;
                 }
 
-                // Pretty print
                 const isTTY = process.stdout.isTTY;
                 const dim = isTTY ? chalk.dim : (s: string) => s;
                 const bold = isTTY ? chalk.bold : (s: string) => s;
+                const out: string[] = [];
 
-                console.log();
-                console.log(bold(msg.subject));
-                console.log(dim("─".repeat(Math.min(msg.subject.length, 80))));
-                console.log(`From:     ${msg.senderName ?? ""} <${msg.senderAddress ?? "(no sender)"}>`);
+                out.push("");
+                out.push(bold(msg.subject));
+                out.push(dim("─".repeat(Math.min(msg.subject.length, 80))));
+                out.push(`From:     ${msg.senderName ?? ""} <${msg.senderAddress ?? "(no sender)"}>`);
 
                 const toRecipients = msg.recipients?.filter((r) => r.type === "to") ?? [];
 
                 if (toRecipients.length > 0) {
-                    console.log(
+                    out.push(
                         `To:       ${toRecipients.map((r) => (r.name ? `${r.name} <${r.address}>` : r.address)).join(", ")}`
                     );
                 }
@@ -134,30 +135,26 @@ export function registerShowCommand(program: Command): void {
                 const ccRecipients = msg.recipients?.filter((r) => r.type === "cc") ?? [];
 
                 if (ccRecipients.length > 0) {
-                    console.log(
+                    out.push(
                         `CC:       ${ccRecipients.map((r) => (r.name ? `${r.name} <${r.address}>` : r.address)).join(", ")}`
                     );
                 }
 
-                console.log(`Date:     ${msg.dateSent.toLocaleString()}`);
-                console.log(`Mailbox:  ${msg.mailbox}`);
-                console.log(`Size:     ${formatBytes(msg.size)}`);
-                console.log(`ID:       ${rowid}`);
-                console.log(`Body:     ${bodyFormat}`);
+                out.push(`Date:     ${msg.dateSent.toLocaleString()}`);
+                out.push(`Mailbox:  ${msg.mailbox}`);
+                out.push(`Size:     ${formatBytes(msg.size)}`);
+                out.push(`ID:       ${rowid}`);
+                out.push(`Body:     ${bodyFormat}`);
 
                 if (msg.attachments.length > 0) {
-                    console.log(`Attach:   ${msg.attachments.map((a) => a.name).join(", ")}`);
+                    out.push(`Attach:   ${msg.attachments.map((a) => a.name).join(", ")}`);
                 }
 
-                console.log();
+                out.push("");
+                out.push(displayBody ? displayBody : dim("(no body content available)"));
+                out.push("");
 
-                if (displayBody) {
-                    console.log(displayBody);
-                } else {
-                    console.log(dim("(no body content available)"));
-                }
-
-                console.log();
+                await printLn(out);
             } catch (error) {
                 console.error(error instanceof Error ? error.message : String(error));
                 process.exit(1);

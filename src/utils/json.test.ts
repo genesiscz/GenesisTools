@@ -86,3 +86,26 @@ describe("parseJSON", () => {
         expect(result).toEqual({ a: 1 });
     });
 });
+
+describe("SafeJSON.stringify — control character escaping (BUG 2 regression guard)", () => {
+    it("escapes every C0 control char so output is strict-JSON-parseable", () => {
+        let body = "";
+
+        for (let i = 0; i <= 0x1f; i++) {
+            body += `chunk${i}${String.fromCharCode(i)}`;
+        }
+
+        const value = { rowid: 769643, body, bodyHtml: body, bodyMarkdown: body, bodyRaw: body };
+        const out = SafeJSON.stringify(value, null, 2);
+
+        expect(() => SafeJSON.parse(out, { strict: true })).not.toThrow();
+
+        for (let i = 0; i <= 0x1f; i++) {
+            if (i === 0x09 || i === 0x0a || i === 0x0d) {
+                continue;
+            }
+
+            expect(out.includes(String.fromCharCode(i))).toBe(false);
+        }
+    });
+});
