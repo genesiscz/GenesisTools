@@ -7,30 +7,12 @@ import {
     parseMailDate,
     resolveColumnsFromFlag,
 } from "@app/macos/lib/mail/command-helpers";
-import { type MailSearchMode, runMailSearch } from "@app/macos/lib/mail/search-runner";
+import { resolveMailSearchMode, runMailSearch } from "@app/macos/lib/mail/search-runner";
 import type { SearchOptions } from "@app/macos/lib/mail/types";
 import { isQuietOutput } from "@app/utils/cli/output-mode";
 import { MailDatabase } from "@app/utils/macos/MailDatabase";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
-
-const VALID_MAIL_SEARCH_MODES = new Set<MailSearchMode>(["auto", "fulltext", "hybrid", "vector"]);
-
-function isMailSearchMode(input: string): input is MailSearchMode {
-    return VALID_MAIL_SEARCH_MODES.has(input as MailSearchMode);
-}
-
-function resolveMailSearchMode(input: string | undefined): MailSearchMode {
-    if (!input) {
-        return "auto";
-    }
-
-    if (isMailSearchMode(input)) {
-        return input;
-    }
-
-    throw new Error(`Unknown --mode: "${input}". Valid: ${[...VALID_MAIL_SEARCH_MODES].join(", ")}`);
-}
 
 interface SearchCommandOptions {
     withoutBody?: boolean;

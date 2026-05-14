@@ -22,7 +22,7 @@ describe("tools macos mail search --mode auto (e2e)", () => {
 
             expect(stderr).not.toContain("sqlite-vec extension failed to load");
             expect(exitCode).toBe(0);
-            expect(() => SafeJSON.parse(stdout.trim() || "[]")).not.toThrow();
+            expect(() => SafeJSON.parse(stdout.trim() || "[]", { strict: true })).not.toThrow();
         },
         60_000
     );
@@ -50,7 +50,7 @@ describe("tools macos mail search --mode auto (e2e)", () => {
             );
             const stdout = await new Response(proc.stdout).text();
             const exitCode = await proc.exited;
-            const rows = SafeJSON.parse(stdout.trim() || "[]") as Array<Record<string, unknown>>;
+            const rows = SafeJSON.parse(stdout.trim() || "[]", { strict: true }) as Array<Record<string, unknown>>;
 
             expect(exitCode).toBe(0);
             expect(rows.length).toBeGreaterThan(0);
@@ -119,7 +119,9 @@ describe("tools macos mail search --mode auto (e2e)", () => {
             );
             const idsRaw = await new Response(idsProc.stdout).text();
             await idsProc.exited;
-            const ids = (SafeJSON.parse(idsRaw.trim() || "[]") as Array<{ id: string }>).map((r) => Number(r.id));
+            const ids = (SafeJSON.parse(idsRaw.trim() || "[]", { strict: true }) as Array<{ id: string }>).map((r) =>
+                Number(r.id)
+            );
 
             let bigId: number | undefined;
             let fileLen = 0;
