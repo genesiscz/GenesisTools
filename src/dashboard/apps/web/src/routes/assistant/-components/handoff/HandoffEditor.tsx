@@ -3,6 +3,7 @@ import { Checkbox } from "@ui/components/checkbox";
 import { Input } from "@ui/components/input";
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@ui/components/sheet";
 import { Textarea } from "@ui/components/textarea";
+import { AlertBlock } from "@ui/custom";
 import {
     AlertTriangle,
     Ban,
@@ -95,6 +96,7 @@ export function HandoffEditor({
     // UI state
     const [showPreview, setShowPreview] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [recipientError, setRecipientError] = useState<string | null>(null);
 
     // Initialize form with task data
     useEffect(() => {
@@ -191,9 +193,11 @@ export function HandoffEditor({
 
     function handlePreview() {
         if (!recipient.trim()) {
-            // Could show error, for now just return
+            setRecipientError("Recipient is required before previewing the handoff.");
             return;
         }
+
+        setRecipientError(null);
         setShowPreview(true);
     }
 
@@ -250,10 +254,16 @@ export function HandoffEditor({
                             <SectionHeader icon={User} title="Hand off to" color="text-emerald-400" />
                             <Input
                                 value={recipient}
-                                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setRecipient(e.target.value)}
+                                onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                                    setRecipient(e.target.value);
+                                    if (recipientError) {
+                                        setRecipientError(null);
+                                    }
+                                }}
                                 placeholder="Enter recipient name or @username"
                                 className="bg-black/30 border-emerald-500/30 focus:border-emerald-500"
                             />
+                            {recipientError && <AlertBlock color="rose">{recipientError}</AlertBlock>}
                         </div>
 
                         {/* Summary */}
