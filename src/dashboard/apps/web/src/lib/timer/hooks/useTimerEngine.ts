@@ -1,105 +1,82 @@
-import type { Timer } from "@dashboard/shared";
+import type { Timer } from "@/drizzle";
 import { useEffect, useRef, useState } from "react";
+import { computeLiveElapsed, computePomodoroTarget } from "@/lib/timer/timer-state-machine";
 
 /**
- * Hook that manages the timer display loop using requestAnimationFrame
+ * Display-only hook that manages the timer rAF loop.
  *
- * This hook provides accurate time tracking by calculating elapsed time
- * from the start timestamp rather than incrementing a counter
+ * Reads elapsed from server snapshot and interpolates locally for smooth display.
+ * Never writes — all mutations go through server action server functions.
  */
-export function useTimerEngine(timer: Timer | null | undefined) {
-    // Derive isRunning directly from timer to avoid state lag
-    const isRunning = timer?.isRunning ?? false;
+export function useTimerEngine(
+    timer: Timer | null | undefined,
+    options?: { onTargetReached?: () => void }
+) {
+    const isRunning = Boolean(timer?.isRunning);
 
-    const [displayTime, setDisplayTime] = useState<number>(0);
+    const [nowMs, setNowMs] = useState(() => Date.now());
+    const rafRef = useRef<number | null>(null);
+    const targetReachedRef = useRef(false);
 
-    const animationFrameRef = useRef<number | null>(null);
-    const lastUpdateRef = useRef<number>(0);
-
-    // Calculate current elapsed time based on timer state
-    function calculateElapsed(): number {
-        if (!timer) {
-            return 0;
-        }
-
-        const baseElapsed = timer.elapsedTime ?? 0;
-
-        if (timer.isRunning && timer.startTime) {
-            const startTime =
-                timer.startTime instanceof Date ? timer.startTime.getTime() : new Date(timer.startTime).getTime();
-            const now = Date.now();
-            const sessionElapsed = now - startTime;
-
-            if (timer.timerType === "countdown") {
-                // Countdown: duration - elapsed
-                const remaining = (timer.duration ?? 0) - (baseElapsed + sessionElapsed);
-                return Math.max(0, remaining);
-            }
-
-            // Stopwatch/Pomodoro: accumulate elapsed
-            return baseElapsed + sessionElapsed;
-        }
-
-        // Not running - return base elapsed or remaining for countdown
-        if (timer.timerType === "countdown") {
-            return Math.max(0, (timer.duration ?? 0) - baseElapsed);
-        }
-
-        return baseElapsed;
-    }
-
-    // Animation loop
-    function tick() {
-        const now = performance.now();
-
-        // Throttle updates to ~60fps (16.67ms)
-        if (now - lastUpdateRef.current >= 16) {
-            const elapsed = calculateElapsed();
-            setDisplayTime(elapsed);
-            lastUpdateRef.current = now;
-        }
-
-        animationFrameRef.current = requestAnimationFrame(tick);
-    }
-
-    // Start/stop the animation loop based on timer running state
-    useEffect(() => {
-        if (isRunning) {
-            // Start animation loop
-            lastUpdateRef.current = performance.now();
-            animationFrameRef.current = requestAnimationFrame(tick);
-        } else {
-            // Stop animation loop
-            if (animationFrameRef.current) {
-                cancelAnimationFrame(animationFrameRef.current);
-                animationFrameRef.current = null;
-            }
-            // Update to final elapsed time
-            const elapsed = calculateElapsed();
-            setDisplayTime(elapsed);
-        }
-
-        return () => {
-            if (animationFrameRef.current) {
-                cancelAnimationFrame(animationFrameRef.current);
-                animationFrameRef.current = null;
-            }
-        };
-    });
-
-    // Update display time when timer changes externally (e.g., reset)
     useEffect(() => {
         if (!isRunning) {
-            const elapsed = calculateElapsed();
-            setDisplayTime(elapsed);
+            if (rafRef.current) {
+                cancelAnimationFrame(rafRef.current);
+                rafRef.current = null;
+            }
+
+            setNowMs(Date.now());
+            return;
         }
-    });
+
+        const tick = () => {
+            setNowMs(Date.now());
+            rafRef.current = requestAnimationFrame(tick);
+        };
+
+        rafRef.current = requestAnimationFrame(tick);
+
+        return () => {
+            if (rafRef.current) {
+                cancelAnimationFrame(rafRef.current);
+                rafRef.current = null;
+            }
+        };
+    }, [isRunning]);
+
+    // Reset target-reached flag when server-confirmed state changes
+    useEffect(() => {
+        targetReachedRef.current = false;
+    }, [timer?.elapsedTime, timer?.pomodoroPhase, timer?.startTime]);
+
+    const displayTime = timer ? computeDisplayTime(timer, nowMs) : 0;
+
+    const target = timer ? computePomodoroTarget(timer) : null;
+
+    if (options?.onTargetReached && target != null && displayTime >= target && !targetReachedRef.current) {
+        targetReachedRef.current = true;
+        queueMicrotask(() => options.onTargetReached?.());
+    }
 
     return {
         displayTime,
         isRunning,
-        calculateElapsed,
     };
+}
+
+/**
+ * Compute display time for the given timer.
+ * For countdown: remaining time (clamped to 0).
+ * For stopwatch/pomodoro: elapsed time.
+ */
+function computeDisplayTime(timer: Timer, nowMs: number): number {
+    const elapsed = computeLiveElapsed(timer, nowMs);
+
+    if (timer.timerType === "countdown") {
+        return Math.max(0, (timer.duration ?? 0) - elapsed);
+    }
+
+    return elapsed;
 }
 
 /**
@@ -157,9 +134,11 @@ export function formatDurationHuman(ms: number): string {
     if (hours > 0) {
         parts.push(`${hours}h`);
     }
+
     if (minutes > 0) {
         parts.push(`${minutes}m`);
     }
+
     if (seconds > 0 || parts.length === 0) {
         parts.push(`${seconds}s`);
     }
