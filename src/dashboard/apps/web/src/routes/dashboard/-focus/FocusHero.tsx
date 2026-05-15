@@ -1,11 +1,11 @@
+import { Button } from "@ui/components/button";
 import { AlertBlock, EmptyState, FloatingActionButton, KbdShortcut, PageLoadingSpinner } from "@ui/custom";
 import { useAuth } from "@workos/authkit-tanstack-react-start/client";
 import { Pause, Play, RotateCcw, ShieldAlert, SkipForward, Target } from "lucide-react";
 import { useEffect, useState } from "react";
-import { Button } from "@ui/components/button";
 import { useDistractions } from "@/lib/assistant/hooks";
-import { DistractionLogModal } from "@/routes/assistant/-components/distractions";
 import { FocusSessionComplete } from "@/routes/assistant/-components/celebrations/FocusSessionComplete";
+import { DistractionLogModal } from "@/routes/assistant/-components/distractions";
 import "@/components/auth/cyberpunk.css";
 import { FocusSettingsPopover } from "./FocusSettingsPopover";
 import { FocusStatsRow } from "./FocusStatsRow";
@@ -62,7 +62,7 @@ export function FocusHero() {
     }
 
     if (f.error) {
-        return <AlertBlock variant="error">Failed to load focus: {String(f.error)}</AlertBlock>;
+        return <AlertBlock color="rose">Failed to load focus: {String(f.error)}</AlertBlock>;
     }
 
     if (!f.focusTimer) {
@@ -72,12 +72,7 @@ export function FocusHero() {
                 title="Start a focus session"
                 description="Pomodoro: deep work in 25-minute blocks, short breaks between. Long break every 4 sessions."
                 cta={
-                    <Button
-                        variant="brand"
-                        size="lg"
-                        onClick={() => void f.ensureFocusTimer()}
-                        disabled={f.isCreating}
-                    >
+                    <Button variant="brand" size="lg" onClick={() => void f.ensureFocusTimer()} disabled={f.isCreating}>
                         Begin First Session
                     </Button>
                 }
@@ -165,11 +160,7 @@ export function FocusHero() {
                             }
                         }}
                     >
-                        {f.isRunning ? (
-                            <Pause className="h-5 w-5 mr-2" />
-                        ) : (
-                            <Play className="h-5 w-5 mr-2" />
-                        )}
+                        {f.isRunning ? <Pause className="h-5 w-5 mr-2" /> : <Play className="h-5 w-5 mr-2" />}
                         {f.isRunning ? "Pause" : f.elapsedMs > 0 ? "Resume" : "Start Focus"}
                     </Button>
                     <Button
@@ -193,11 +184,7 @@ export function FocusHero() {
                 </div>
 
                 {/* Stats row — stubbed to 0 pending aggregation hook */}
-                <FocusStatsRow
-                    timeFocusedTodayMs={0}
-                    sessionsToday={0}
-                    dayStreak={0}
-                />
+                <FocusStatsRow timeFocusedTodayMs={0} sessionsToday={0} dayStreak={0} />
             </div>
 
             {/* Distraction FAB — work phase only */}

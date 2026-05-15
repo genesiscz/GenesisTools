@@ -1,9 +1,9 @@
-import { useAuth } from "@workos/authkit-tanstack-react-start/client";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ASSISTANT_SYNC_CHANNEL, broadcastInvalidate } from "@/lib/sync/useBroadcastInvalidation";
-import { useAssistantTasksQuery, assistantKeys } from "@/lib/assistant/hooks/useAssistantQueries";
-import { rescheduleTask } from "@/lib/assistant/planner.server";
+import { useAuth } from "@workos/authkit-tanstack-react-start/client";
 import type { AssistantTask } from "@/drizzle";
+import { assistantKeys, useAssistantTasksQuery } from "@/lib/assistant/hooks/useAssistantQueries";
+import { rescheduleTask } from "@/lib/assistant/planner.server";
+import { ASSISTANT_SYNC_CHANNEL, broadcastInvalidate } from "@/lib/sync/useBroadcastInvalidation";
 
 /** Dev fallback userId when no WorkOS session is present. */
 const DEV_USER_ID = "dev-user";
@@ -11,11 +11,6 @@ const DEV_USER_ID = "dev-user";
 export interface ScheduledTask extends AssistantTask {
     scheduledStart: string;
     scheduledEnd: string;
-}
-
-export interface UnscheduledTask extends AssistantTask {
-    scheduledStart: null | undefined;
-    scheduledEnd: null | undefined;
 }
 
 export function usePlannerData() {
@@ -29,15 +24,11 @@ export function usePlannerData() {
     // Split tasks into scheduled (have both start+end) and unscheduled (inbox)
     const scheduledTasks: ScheduledTask[] = rawTasks.filter(
         (t): t is ScheduledTask =>
-            t.status !== "completed" &&
-            typeof t.scheduledStart === "string" &&
-            typeof t.scheduledEnd === "string"
+            t.status !== "completed" && typeof t.scheduledStart === "string" && typeof t.scheduledEnd === "string"
     );
 
-    const unscheduledTasks: UnscheduledTask[] = rawTasks.filter(
-        (t): t is UnscheduledTask =>
-            t.status !== "completed" &&
-            (t.scheduledStart == null || t.scheduledEnd == null)
+    const unscheduledTasks: AssistantTask[] = rawTasks.filter(
+        (t) => t.status !== "completed" && (t.scheduledStart == null || t.scheduledEnd == null)
     );
 
     const rescheduleMutation = useMutation({
