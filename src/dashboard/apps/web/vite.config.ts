@@ -88,7 +88,14 @@ const config = defineConfig({
     environments: {
         ssr: {
             optimizeDeps: {
-                include: ["react", "react-dom", "react-dom/server", "react/jsx-runtime", "react/jsx-dev-runtime", "react/compiler-runtime"],
+                include: [
+                    "react",
+                    "react-dom",
+                    "react-dom/server",
+                    "react/jsx-runtime",
+                    "react/jsx-dev-runtime",
+                    "react/compiler-runtime",
+                ],
             },
         },
     },

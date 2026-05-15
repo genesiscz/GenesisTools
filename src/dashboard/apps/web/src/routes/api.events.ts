@@ -16,10 +16,13 @@ export const Route = createFileRoute("/api/events")({
                 }
 
                 // SSE support has been removed. Cross-tab sync now uses BroadcastChannel API.
-                return new Response(SafeJSON.stringify({ error: "SSE endpoint removed. Use BroadcastChannel for cross-tab sync." }), {
-                    status: 410,
-                    headers: { "Content-Type": "application/json" },
-                });
+                return new Response(
+                    SafeJSON.stringify({ error: "SSE endpoint removed. Use BroadcastChannel for cross-tab sync." }),
+                    {
+                        status: 410,
+                        headers: { "Content-Type": "application/json" },
+                    }
+                );
             },
         },
     },
