@@ -22,6 +22,13 @@
       "when": 1778818845130,
       "tag": "0002_planner_scheduling_columns",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1778866571329,
+      "tag": "0003_absent_magik",
+      "breakpoints": true
     }
   ]
 }
