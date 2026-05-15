@@ -58,7 +58,7 @@ export function listTasksWithLogs(logsBaseDir: string): string[] {
         .sort();
 }
 
-export function listRunsForTask(logsBaseDir: string, taskName: string): RunSummary[] {
+export function listRunsForTask(logsBaseDir: string, taskName: string, limit?: number): RunSummary[] {
     const taskDir = join(logsBaseDir, taskName);
 
     if (!existsSync(taskDir)) {
@@ -73,6 +73,13 @@ export function listRunsForTask(logsBaseDir: string, taskName: string): RunSumma
     const summaries: RunSummary[] = [];
 
     for (const file of files) {
+        // Run-log filenames are ISO-timestamped, so the descending sort above is
+        // already newest-first. Stop once we have `limit` valid summaries instead
+        // of stat+open+read-ing every file (a polled task accrues 10k+ logs).
+        if (limit !== undefined && summaries.length >= limit) {
+            break;
+        }
+
         const logFile = join(taskDir, file);
 
         try {

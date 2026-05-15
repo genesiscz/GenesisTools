@@ -11,7 +11,7 @@ export async function getDaemonOverview(): Promise<DaemonOverview> {
 }
 
 export function getRecentRuns(opts: { task: string; limit: number }): RunSummary[] {
-    return listRunsForTask(getLogsBaseDir(), opts.task).slice(0, opts.limit);
+    return listRunsForTask(getLogsBaseDir(), opts.task, opts.limit).slice(0, opts.limit);
 }
 
 export function getAllRecentRuns(limit: number): RunSummary[] {
@@ -19,7 +19,9 @@ export function getAllRecentRuns(limit: number): RunSummary[] {
     const tasks = listTasksWithLogs(logsBaseDir);
     const all: RunSummary[] = [];
     for (const task of tasks) {
-        all.push(...listRunsForTask(logsBaseDir, task));
+        // Per-task newest-`limit` is enough: the global newest `limit` is a
+        // subset, so this stays correct while avoiding a full directory scan.
+        all.push(...listRunsForTask(logsBaseDir, task, limit));
     }
 
     all.sort((a, b) => b.startedAt.localeCompare(a.startedAt));
