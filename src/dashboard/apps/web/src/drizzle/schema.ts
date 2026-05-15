@@ -528,6 +528,36 @@ export const notes = sqliteTable(
 );
 
 // ============================================
+// Bookmarks
+// ============================================
+
+/**
+ * Bookmarks table - user-saved URLs with metadata
+ */
+export const bookmarks = sqliteTable(
+    "bookmarks",
+    {
+        id: text("id").primaryKey(),
+        userId: text("user_id").notNull(),
+        url: text("url").notNull(),
+        title: text("title").notNull().default(""),
+        description: text("description").notNull().default(""),
+        faviconUrl: text("favicon_url"),
+
+        // Tags stored as JSON array of strings
+        tags: text("tags", { mode: "json" }).$type<string[]>().default([]),
+
+        // Timestamps
+        createdAt: text("created_at").notNull(),
+        updatedAt: text("updated_at").notNull(),
+    },
+    (table) => ({
+        userIdIdx: index("idx_bookmarks_user_id").on(table.userId),
+        urlIdx: index("idx_bookmarks_url").on(table.url),
+    })
+);
+
+// ============================================
 // Inferred Types
 // ============================================
 
@@ -602,3 +632,7 @@ export type NewAssistantCelebration = typeof assistantCelebrations.$inferInsert;
 // Notes types
 export type Note = typeof notes.$inferSelect;
 export type NewNote = typeof notes.$inferInsert;
+
+// Bookmark types
+export type Bookmark = typeof bookmarks.$inferSelect;
+export type NewBookmark = typeof bookmarks.$inferInsert;
