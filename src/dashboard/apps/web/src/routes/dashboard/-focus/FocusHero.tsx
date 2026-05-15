@@ -10,6 +10,7 @@ import "@/components/auth/cyberpunk.css";
 import { FocusSettingsPopover } from "./FocusSettingsPopover";
 import { FocusStatsRow } from "./FocusStatsRow";
 import { PhaseBadge } from "./PhaseBadge";
+import { useAggregatedFocusStats } from "./useFocusStats";
 import { useFocusSession } from "./useFocusSession";
 import { usePhaseColor } from "./usePhaseColor";
 
@@ -29,6 +30,7 @@ export function FocusHero() {
     const { user } = useAuth();
     const userId = user?.id ?? (import.meta.env.DEV ? DEV_USER_ID : null);
     const { logDistraction } = useDistractions(userId);
+    const focusStats = useAggregatedFocusStats(userId);
     const [distractionOpen, setDistractionOpen] = useState(false);
 
     // Keyboard shortcuts
@@ -183,8 +185,12 @@ export function FocusHero() {
                     </Button>
                 </div>
 
-                {/* Stats row — stubbed to 0 pending aggregation hook */}
-                <FocusStatsRow timeFocusedTodayMs={0} sessionsToday={0} dayStreak={0} />
+                {/* Stats row — live from activity_logs aggregation */}
+                <FocusStatsRow
+                    timeFocusedTodayMs={focusStats.timeFocusedTodayMs}
+                    sessionsToday={focusStats.sessionsToday}
+                    dayStreak={focusStats.dayStreak}
+                />
             </div>
 
             {/* Distraction FAB — work phase only */}
