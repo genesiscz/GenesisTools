@@ -53,10 +53,7 @@ export function ClaudeRoute() {
                 ))}
             </div>
             {firstAccount ? (
-                <UsageChart
-                    snapshots={historyQuery.data?.snapshots ?? []}
-                    hint={historyQuery.data?.hint}
-                />
+                <UsageChart snapshots={historyQuery.data?.snapshots ?? []} hint={historyQuery.data?.hint} />
             ) : null}
         </div>
     );

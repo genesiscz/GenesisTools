@@ -11,25 +11,19 @@ export function DaemonRoute() {
 
     const { data: overview } = useQuery({
         queryKey: ["daemon", "status"],
-        queryFn: (): Promise<DaemonOverview> =>
-            fetch("/api/daemon/status").then((r) => r.json()),
+        queryFn: (): Promise<DaemonOverview> => fetch("/api/daemon/status").then((r) => r.json()),
         refetchInterval: 5000,
     });
 
     const { data: runs } = useQuery({
         queryKey: ["daemon", "runs"],
-        queryFn: (): Promise<RunSummary[]> =>
-            fetch("/api/daemon/runs?limit=20").then((r) => r.json()),
+        queryFn: (): Promise<RunSummary[]> => fetch("/api/daemon/runs?limit=20").then((r) => r.json()),
         refetchInterval: 5000,
     });
 
     return (
         <div className="flex flex-col gap-4 p-2">
-            <DaemonHeader
-                status={
-                    overview?.status ?? { installed: false, running: false, pid: null }
-                }
-            />
+            <DaemonHeader status={overview?.status ?? { installed: false, running: false, pid: null }} />
             <TasksTable tasks={overview?.tasks ?? []} />
             <RunsTimeline runs={runs ?? []} onSelect={setSelectedLogFile} />
             <LogModal logFile={selectedLogFile} onClose={() => setSelectedLogFile(null)} />

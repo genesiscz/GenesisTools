@@ -47,8 +47,7 @@ export function weatherCodeDescription(code: number): string {
 
 export function parseOpenMeteo(json: OpenMeteoResponse, label: string): WeatherSnapshot {
     const code = typeof json.current?.weather_code === "number" ? json.current.weather_code : null;
-    const temp =
-        typeof json.current?.temperature_2m === "number" ? json.current.temperature_2m : null;
+    const temp = typeof json.current?.temperature_2m === "number" ? json.current.temperature_2m : null;
     const sunrise = json.daily?.sunrise?.[0] ?? null;
     const sunset = json.daily?.sunset?.[0] ?? null;
 

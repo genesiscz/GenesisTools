@@ -20,10 +20,7 @@ export function DaemonHeader({ status }: Props) {
         <div className="dd-panel flex items-center justify-between p-4">
             <h1 className="dd-accent-text text-lg font-semibold">Daemon</h1>
             <div className="flex items-center gap-2 text-sm">
-                <span
-                    className="inline-block h-2.5 w-2.5 rounded-full"
-                    style={{ backgroundColor: color }}
-                />
+                <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: color }} />
                 <span style={{ color }}>{label}</span>
             </div>
         </div>

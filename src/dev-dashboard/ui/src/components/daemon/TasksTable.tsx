@@ -6,11 +6,7 @@ interface Props {
 
 export function TasksTable({ tasks }: Props) {
     if (tasks.length === 0) {
-        return (
-            <div className="dd-panel p-4 text-sm text-[var(--dd-text-muted)]">
-                No registered tasks.
-            </div>
-        );
+        return <div className="dd-panel p-4 text-sm text-[var(--dd-text-muted)]">No registered tasks.</div>;
     }
 
     return (

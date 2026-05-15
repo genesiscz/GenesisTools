@@ -44,7 +44,7 @@ describe("parseDockerPsJsonl", () => {
 
     test("lowercases state", () => {
         const result = parseDockerPsJsonl(
-            '{"ID":"x","Names":"n","Image":"i","State":"RUNNING","Status":"Up","Ports":""}',
+            '{"ID":"x","Names":"n","Image":"i","State":"RUNNING","Status":"Up","Ports":""}'
         );
 
         expect(result[0]?.state).toBe("running");

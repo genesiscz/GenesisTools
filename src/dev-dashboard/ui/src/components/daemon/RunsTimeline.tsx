@@ -31,11 +31,7 @@ function formatDuration(ms: number | null): string {
 
 export function RunsTimeline({ runs, onSelect }: Props) {
     if (runs.length === 0) {
-        return (
-            <div className="dd-panel p-4 text-sm text-[var(--dd-text-muted)]">
-                No recent runs.
-            </div>
-        );
+        return <div className="dd-panel p-4 text-sm text-[var(--dd-text-muted)]">No recent runs.</div>;
     }
 
     return (
@@ -53,9 +49,7 @@ export function RunsTimeline({ runs, onSelect }: Props) {
                             className="flex items-center justify-between rounded border border-[var(--dd-border)] px-3 py-2 text-left text-sm transition-colors hover:border-[var(--dd-accent-from)]"
                         >
                             <span className="text-[var(--dd-text-primary)]">{run.taskName}</span>
-                            <span className="text-xs text-[var(--dd-text-muted)]">
-                                {run.startedAt}
-                            </span>
+                            <span className="text-xs text-[var(--dd-text-muted)]">{run.startedAt}</span>
                             <span className="text-xs text-[var(--dd-text-secondary)]">
                                 {formatDuration(run.duration_ms)}
                             </span>

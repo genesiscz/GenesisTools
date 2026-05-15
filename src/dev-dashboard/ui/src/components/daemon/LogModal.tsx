@@ -10,8 +10,7 @@ function LogLineRow({ entry }: { entry: LogEntry }) {
     if (entry.type === "meta") {
         return (
             <div className="dd-accent-text border-b border-[var(--dd-border)] pb-2 text-xs">
-                {entry.taskName} · {entry.command} · run {entry.runId} · attempt {entry.attempt} ·{" "}
-                {entry.startedAt}
+                {entry.taskName} · {entry.command} · run {entry.runId} · attempt {entry.attempt} · {entry.startedAt}
             </div>
         );
     }
@@ -21,8 +20,7 @@ function LogLineRow({ entry }: { entry: LogEntry }) {
 
         return (
             <div className="text-xs" style={{ color }}>
-                [exit] code={entry.code === null ? "killed" : entry.code} (
-                {entry.duration_ms}ms)
+                [exit] code={entry.code === null ? "killed" : entry.code} ({entry.duration_ms}ms)
             </div>
         );
     }
@@ -40,9 +38,7 @@ export function LogModal({ logFile, onClose }: Props) {
     const { data, isLoading } = useQuery({
         queryKey: ["daemon", "runs", "log", logFile],
         queryFn: (): Promise<LogEntry[]> =>
-            fetch(
-                `/api/daemon/runs/log?logFile=${encodeURIComponent(logFile ?? "")}`,
-            ).then((r) => r.json()),
+            fetch(`/api/daemon/runs/log?logFile=${encodeURIComponent(logFile ?? "")}`).then((r) => r.json()),
         enabled: logFile !== null,
     });
 
@@ -52,10 +48,7 @@ export function LogModal({ logFile, onClose }: Props) {
 
     return (
         // biome-ignore lint/a11y/useKeyWithClickEvents: backdrop dismiss
-        <div
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6"
-            onClick={onClose}
-        >
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6" onClick={onClose}>
             <div
                 className="dd-panel flex max-h-[80vh] w-full max-w-3xl flex-col overflow-hidden p-4"
                 onClick={(e) => e.stopPropagation()}
@@ -76,9 +69,7 @@ export function LogModal({ logFile, onClose }: Props) {
                     ) : (data ?? []).length === 0 ? (
                         <div className="text-sm text-[var(--dd-text-muted)]">Empty log.</div>
                     ) : (
-                        (data ?? []).map((entry, i) => (
-                            <LogLineRow key={`${entry.type}-${i}`} entry={entry} />
-                        ))
+                        (data ?? []).map((entry, i) => <LogLineRow key={`${entry.type}-${i}`} entry={entry} />)
                     )}
                 </div>
             </div>

@@ -1,6 +1,6 @@
+import type { AccountUsage } from "@app/claude/lib/usage/api";
 import { fetchAllAccountsUsage } from "@app/claude/lib/usage/api";
 import { UsageHistoryDb } from "@app/claude/lib/usage/history-db";
-import type { AccountUsage } from "@app/claude/lib/usage/api";
 import type { UsageHistoryResult } from "./types";
 
 export function getCurrentUsage(): Promise<AccountUsage[]> {

@@ -19,14 +19,8 @@ export function ProcessTable({ processes }: ProcessTableProps) {
             ) : (
                 <ul className="flex flex-col gap-2">
                     {processes.map((p) => (
-                        <li
-                            key={p.pid}
-                            className="flex items-center justify-between font-mono text-sm"
-                        >
-                            <span
-                                className="truncate pr-2"
-                                style={{ color: "var(--dd-text-secondary)" }}
-                            >
+                        <li key={p.pid} className="flex items-center justify-between font-mono text-sm">
+                            <span className="truncate pr-2" style={{ color: "var(--dd-text-secondary)" }}>
                                 {p.name}
                             </span>
                             <span style={{ color: "var(--dd-text-primary)" }}>

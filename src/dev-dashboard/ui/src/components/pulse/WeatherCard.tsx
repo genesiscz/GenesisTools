@@ -21,14 +21,7 @@ function timeOnly(value: string | null): string {
     return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-export function WeatherCard({
-    tempC,
-    description,
-    sunrise,
-    sunset,
-    label,
-    error,
-}: WeatherCardProps) {
+export function WeatherCard({ tempC, description, sunrise, sunset, label, error }: WeatherCardProps) {
     return (
         <div className="dd-panel flex flex-col gap-2 p-4">
             <h3 className="dd-accent-text text-sm font-bold tracking-widest">WEATHER</h3>
@@ -41,16 +34,10 @@ export function WeatherCard({
                 </p>
             ) : (
                 <>
-                    <span
-                        className="text-3xl font-bold font-mono"
-                        style={{ color: "var(--dd-text-primary)" }}
-                    >
+                    <span className="text-3xl font-bold font-mono" style={{ color: "var(--dd-text-primary)" }}>
                         {tempC === null ? "—" : `${tempC.toFixed(1)}°C`}
                     </span>
-                    <span
-                        className="font-mono text-sm"
-                        style={{ color: "var(--dd-text-secondary)" }}
-                    >
+                    <span className="font-mono text-sm" style={{ color: "var(--dd-text-secondary)" }}>
                         {description || "—"}
                     </span>
                     <div

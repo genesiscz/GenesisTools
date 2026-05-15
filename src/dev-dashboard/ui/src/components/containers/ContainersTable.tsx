@@ -51,10 +51,7 @@ export function ContainersTable({ result }: ContainersTableProps) {
                     </thead>
                     <tbody>
                         {containers.map((c) => (
-                            <tr
-                                key={c.id}
-                                className="border-t border-[var(--dd-border)] text-[var(--dd-text-primary)]"
-                            >
+                            <tr key={c.id} className="border-t border-[var(--dd-border)] text-[var(--dd-text-primary)]">
                                 <td className="px-2 py-2">
                                     <span
                                         className="inline-block h-2.5 w-2.5 rounded-full"
@@ -63,12 +60,8 @@ export function ContainersTable({ result }: ContainersTableProps) {
                                     />
                                 </td>
                                 <td className="px-2 py-2">{c.name}</td>
-                                <td className="px-2 py-2 text-[var(--dd-text-secondary)]">
-                                    {c.image}
-                                </td>
-                                <td className="px-2 py-2 text-[var(--dd-text-secondary)]">
-                                    {c.status}
-                                </td>
+                                <td className="px-2 py-2 text-[var(--dd-text-secondary)]">{c.image}</td>
+                                <td className="px-2 py-2 text-[var(--dd-text-secondary)]">{c.status}</td>
                                 <td className="px-2 py-2 font-mono text-xs text-[var(--dd-text-muted)]">
                                     {c.ports ? c.ports : "—"}
                                 </td>

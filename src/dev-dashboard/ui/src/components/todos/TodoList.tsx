@@ -21,7 +21,9 @@ function formatDue(due: string): { label: string; overdue: boolean } {
 
 export function TodoList({ reminders, onComplete, onDelete }: TodoListProps) {
     if (reminders.length === 0) {
-        return <div className="py-8 text-center text-sm text-[var(--dd-text-muted)]">No todos. You're all caught up.</div>;
+        return (
+            <div className="py-8 text-center text-sm text-[var(--dd-text-muted)]">No todos. You're all caught up.</div>
+        );
     }
 
     return (

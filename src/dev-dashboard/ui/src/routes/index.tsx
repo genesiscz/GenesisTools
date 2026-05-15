@@ -83,15 +83,13 @@ export function IndexRoute() {
 
     const cpuHistory = useQuery<PulseSeries>({
         queryKey: ["pulse", "history", "cpu"],
-        queryFn: () =>
-            fetch("/api/system/pulse/history?metric=cpu&minutes=30").then((r) => r.json()),
+        queryFn: () => fetch("/api/system/pulse/history?metric=cpu&minutes=30").then((r) => r.json()),
         refetchInterval: 10000,
     });
 
     const memHistory = useQuery<PulseSeries>({
         queryKey: ["pulse", "history", "mem"],
-        queryFn: () =>
-            fetch("/api/system/pulse/history?metric=mem&minutes=30").then((r) => r.json()),
+        queryFn: () => fetch("/api/system/pulse/history?metric=mem&minutes=30").then((r) => r.json()),
         refetchInterval: 10000,
     });
 

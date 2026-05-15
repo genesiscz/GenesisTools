@@ -1,4 +1,4 @@
-import type { DaemonTask, RunSummary, LogEntry } from "@app/daemon/lib/types";
+import type { DaemonTask, LogEntry, RunSummary } from "@app/daemon/lib/types";
 
 export interface DaemonOverview {
     status: { installed: boolean; running: boolean; pid: number | null };
