@@ -39,6 +39,7 @@ const config = defineConfig({
         }),
     ],
     resolve: {
+        dedupe: ["react", "react-dom"],
         alias: [
             { find: "@ui", replacement: new URL("../../../utils/ui", import.meta.url).pathname },
             {
@@ -60,14 +61,7 @@ const config = defineConfig({
     // SSR config - mark nitro internals as external
     ssr: {
         external: ["nitro/database", "#nitro-internal-virtual/database"],
-        noExternal: [
-            "@radix-ui/react-avatar",
-            "@radix-ui/react-dialog",
-            "@radix-ui/react-dropdown-menu",
-            "@radix-ui/react-separator",
-            "@radix-ui/react-slot",
-            "@radix-ui/react-tooltip",
-        ],
+        noExternal: [/^@radix-ui\//],
     },
     optimizeDeps: {
         exclude: ["nitro", "nitro/database"],
