@@ -141,7 +141,7 @@ async function initializeTaskStates(taskStates: Map<string, TaskState>, logsBase
 
     for (const task of config.tasks) {
         const parsed = parseInterval(task.every);
-        const runs = listRunsForTask(logsBaseDir, task.name);
+        const runs = listRunsForTask(logsBaseDir, task.name, 1);
         let nextRunAt: Date;
 
         if (runs.length > 0) {
