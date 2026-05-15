@@ -117,6 +117,10 @@ export const assistantTasks = sqliteTable(
         blockedBy: text("blocked_by", { mode: "json" }).$type<string[]>().default([]),
         blocks: text("blocks", { mode: "json" }).$type<string[]>().default([]),
 
+        // Scheduling
+        scheduledStart: text("scheduled_start"), // ISO datetime or null
+        scheduledEnd: text("scheduled_end"),     // ISO datetime or null
+
         // Status & tracking
         status: text("status")
             .notNull()

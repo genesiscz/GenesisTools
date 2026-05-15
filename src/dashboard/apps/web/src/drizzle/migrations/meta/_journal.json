@@ -15,6 +15,13 @@
       "when": 1778815917455,
       "tag": "0001_add_timer_version",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1778818845130,
+      "tag": "0002_planner_scheduling_columns",
+      "breakpoints": true
     }
   ]
 }
