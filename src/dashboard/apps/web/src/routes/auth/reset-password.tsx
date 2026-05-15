@@ -2,7 +2,7 @@ import { createFileRoute, Link, useNavigate, useSearch } from "@tanstack/react-r
 import { AlertCircle, KeyRound, Loader2, Lock } from "lucide-react";
 import { useState } from "react";
 import { AuthLayout } from "@/components/auth";
-import { Button } from "@/components/ui/button";
+import { Button } from "@ui/components/button";
 
 export const Route = createFileRoute("/auth/reset-password")({
     component: ResetPasswordPage,

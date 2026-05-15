@@ -1,5 +1,6 @@
 import { Slot } from "@radix-ui/react-slot";
 import { cn } from "@ui/lib/utils";
+import { useTheme } from "@ui/theme/provider";
 import { cva, type VariantProps } from "class-variance-authority";
 import type * as React from "react";
 
@@ -16,6 +17,8 @@ const buttonVariants = cva(
                 secondary: "bg-secondary text-secondary-foreground hover:bg-secondary/80",
                 ghost: "hover:bg-accent hover:text-accent-foreground dark:hover:bg-accent/50",
                 link: "text-primary underline-offset-4 hover:underline",
+                brand: "bg-purple-600 text-white hover:bg-purple-700 shadow-lg shadow-purple-500/20 hover:shadow-xl hover:shadow-purple-500/30 transition-all",
+                nexus: "bg-primary text-primary-foreground hover:bg-primary/90",
                 cyber: "glass-card neon-border border-primary/30 bg-transparent text-primary hover:bg-primary/10 hover:border-primary/50 btn-glow",
                 "cyber-secondary":
                     "glass-card border-secondary/30 bg-transparent text-secondary hover:bg-secondary/10 hover:border-secondary/50",
@@ -39,7 +42,7 @@ const buttonVariants = cva(
 
 function Button({
     className,
-    variant = "default",
+    variant,
     size = "default",
     asChild = false,
     type,
@@ -49,13 +52,15 @@ function Button({
         asChild?: boolean;
     }) {
     const Comp = asChild ? Slot : "button";
+    const { variant: themeVariant } = useTheme();
+    const resolvedVariant = variant ?? (themeVariant === "nexus" ? "nexus" : "default");
 
     return (
         <Comp
             data-slot="button"
-            data-variant={variant}
+            data-variant={resolvedVariant}
             data-size={size}
-            className={cn(buttonVariants({ variant, size, className }))}
+            className={cn(buttonVariants({ variant: resolvedVariant, size, className }))}
             type={!asChild ? (type ?? "button") : undefined}
             {...props}
         />

@@ -54,6 +54,7 @@ export {
     DropdownMenuTrigger,
 } from "@ui/components/dropdown-menu";
 export { Input } from "@ui/components/input";
+export { Label } from "@ui/components/label";
 export {
     NavigationMenu,
     NavigationMenuContent,
@@ -154,9 +155,10 @@ export * from "@ui/graphs";
 export type { DashboardLayoutProps, NavLink } from "@ui/layouts/DashboardLayout";
 export { DashboardLayout } from "@ui/layouts/DashboardLayout";
 export { cn } from "@ui/lib/utils";
-export type { ThemeName } from "@ui/theme/themes";
-
 // Themes — apply via className: "wow" | "cyberpunk"
+export type { ThemeVariant } from "@ui/theme/provider";
+export { ThemeProvider, useTheme } from "@ui/theme/provider";
+export type { ThemeName } from "@ui/theme/themes";
 export { cyberpunkTheme, themes, wowTheme } from "@ui/theme/themes";
 // vite.base exports are NOT re-exported here — import directly from
 // "@ui/vite.base" in vite.config.ts files to avoid pulling vite types

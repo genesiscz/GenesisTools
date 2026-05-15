@@ -64,7 +64,7 @@ export function FeatureCard({
     );
 }
 
-export type FeatureCardNexusColor = "cyan" | "purple" | "amber" | "emerald" | "rose" | "blue" | "primary";
+export type FeatureCardNexusColor = "cyan" | "purple" | "amber" | "emerald" | "rose" | "blue" | "primary" | "neutral";
 
 interface FeatureCardNexusProps {
     color?: FeatureCardNexusColor;
@@ -124,6 +124,12 @@ const featureCardNexusColors: Record<
         corner: "border-primary/30 group-hover:border-primary/60",
         glow: "bg-primary/10",
         shadow: "hover:shadow-lg hover:shadow-primary/10",
+    },
+    neutral: {
+        border: "border-white/5 hover:border-white/10",
+        corner: "border-white/10 group-hover:border-white/20",
+        glow: "bg-white/5",
+        shadow: "hover:shadow-lg hover:shadow-white/5",
     },
 };
 

@@ -19,6 +19,7 @@ const colorStyles: Record<FeatureCardNexusColor, { bg: string; icon: string; bad
     rose: { bg: "bg-rose-500/10", icon: "text-rose-400", badge: "bg-rose-500/20 text-rose-400" },
     blue: { bg: "bg-blue-500/10", icon: "text-blue-400", badge: "bg-blue-500/20 text-blue-400" },
     primary: { bg: "bg-primary/10", icon: "text-primary", badge: "bg-primary/20 text-primary" },
+    neutral: { bg: "bg-white/5", icon: "text-white/70", badge: "bg-white/10 text-white/70" },
 };
 
 export interface FeatureGridItem {

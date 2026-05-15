@@ -2,12 +2,12 @@ import { createFileRoute } from "@tanstack/react-router";
 import { Bell, Database, Globe, Monitor, Moon, Palette, Shield, Sun } from "lucide-react";
 import { toast } from "sonner";
 import { DashboardLayout } from "@/components/dashboard";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Separator } from "@/components/ui/separator";
-import { Switch } from "@/components/ui/switch";
+import { Button } from "@ui/components/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@ui/components/card";
+import { Label } from "@ui/components/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@ui/components/select";
+import { Separator } from "@ui/components/separator";
+import { Switch } from "@ui/components/switch";
 import { useSettings } from "@/lib/hooks/useSettings";
 
 export const Route = createFileRoute("/settings")({

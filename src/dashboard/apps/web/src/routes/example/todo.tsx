@@ -18,10 +18,10 @@ import { createFileRoute } from "@tanstack/react-router";
 import { Check, Cloud, Database, Loader2, Plus, RefreshCw, Server, Trash2, Wifi, WifiOff, Zap } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { DashboardLayout } from "@/components/dashboard";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
+import { Badge } from "@ui/components/badge";
+import { Button } from "@ui/components/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@ui/components/card";
+import { Input } from "@ui/components/input";
 import { cn } from "@/lib/utils";
 import { initializeDatabase, syncToServer } from "../../lib/db";
 import {

@@ -2,13 +2,13 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useAuth } from "@workos/authkit-tanstack-react-start/client";
 import { AlertTriangle, Calendar, Camera, Check, Github, Link2, Mail, Trash2, User, X } from "lucide-react";
 import { DashboardLayout } from "@/components/dashboard";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Separator } from "@/components/ui/separator";
+import { Avatar, AvatarFallback, AvatarImage } from "@ui/components/avatar";
+import { Badge } from "@ui/components/badge";
+import { Button } from "@ui/components/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@ui/components/card";
+import { Input } from "@ui/components/input";
+import { Label } from "@ui/components/label";
+import { Separator } from "@ui/components/separator";
 
 export const Route = createFileRoute("/profile")({
     component: ProfilePage,

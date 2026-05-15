@@ -80,6 +80,14 @@ const tint: Record<
         previewIcon: "text-primary/60",
         btn: "bg-primary/20 text-primary border-primary/30 hover:bg-primary/30 hover:text-primary",
     },
+    neutral: {
+        iconText: "text-white/70",
+        iconBox: "bg-white/5 border-white/10",
+        badge: "bg-white/10 text-white/70 border-white/15",
+        previewBox: "bg-white/5 border-white/10",
+        previewIcon: "text-white/50",
+        btn: "bg-white/10 text-white/70 border-white/15 hover:bg-white/15 hover:text-white",
+    },
 };
 
 interface ComingSoonCardProps {

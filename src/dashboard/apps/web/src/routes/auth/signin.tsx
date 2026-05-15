@@ -2,7 +2,7 @@ import { createFileRoute, Link, useNavigate, useSearch } from "@tanstack/react-r
 import { AlertCircle, CheckCircle2, Github, Loader2, Lock, Mail } from "lucide-react";
 import { useState } from "react";
 import { AuthLayout } from "@/components/auth";
-import { Button } from "@/components/ui/button";
+import { Button } from "@ui/components/button";
 import type { AuthError } from "@/lib/auth-actions";
 import { getOAuthUrlFn, signInFn } from "@/lib/auth-actions";
 

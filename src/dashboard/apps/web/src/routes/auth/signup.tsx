@@ -3,7 +3,7 @@ import { useAuth } from "@workos/authkit-tanstack-react-start/client";
 import { AlertCircle, Github, Loader2, Lock, Mail, User } from "lucide-react";
 import { useState } from "react";
 import { AuthLayout } from "@/components/auth";
-import { Button } from "@/components/ui/button";
+import { Button } from "@ui/components/button";
 import { getOAuthUrlFn } from "@/lib/auth-actions";
 
 export const Route = createFileRoute("/auth/signup")({
