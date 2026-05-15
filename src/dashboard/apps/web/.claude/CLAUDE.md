@@ -1,6 +1,6 @@
 # Dashboard Web App
 
-> TanStack Start + Drizzle ORM + Neon + PowerSync
+> TanStack Start + Drizzle ORM + SQLite (better-sqlite3)
 
 ## Quick Start
 
@@ -12,59 +12,61 @@ bun install
 bun dev
 
 # Database operations
-bunx drizzle-kit push      # Push schema changes
 bunx drizzle-kit generate  # Generate migrations
+bunx drizzle-kit migrate   # Apply migrations
 bunx drizzle-kit studio    # Open Drizzle Studio
 ```
 
 ## Architecture Summary
 
-| Layer      | Technology       | Location                     |
-| ---------- | ---------------- | ---------------------------- |
-| Frontend   | TanStack Start   | `src/routes/`                |
-| State      | PowerSync        | `src/lib/db/powersync.ts`    |
-| Server     | Drizzle ORM      | `src/drizzle/`               |
-| Database   | Neon PostgreSQL  | Cloud                        |
-| Real-time  | SSE Events       | `src/lib/events/`            |
+| Layer      | Technology                              | Location                                    |
+| ---------- | --------------------------------------- | ------------------------------------------- |
+| Frontend   | TanStack Start (React 19)               | `src/routes/`                               |
+| State      | TanStack Query + Drizzle                | `src/lib/*/hooks/`                          |
+| Server     | Drizzle ORM (better-sqlite3)            | `src/drizzle/`                              |
+| Database   | SQLite (file: `.data/dashboard.sqlite`) | local / persistent volume                   |
+| Cross-tab  | BroadcastChannel API                    | `src/lib/sync/`                             |
+
+> Note: PowerSync / Neon Postgres / Convex / SSE removed in plan 06.
 
 ## Key Patterns
 
-- **Offline-first**: PowerSync (browser) -> Sync -> Drizzle (server) -> Neon
-- **Type-safe**: Drizzle infers types, share with PowerSync
-- **Real-time**: SSE broadcasts after DB mutations
+- **Server is the source of truth**. SQLite file on disk. No offline-first / no IndexedDB sync.
+- **Multi-tab sync**: every mutation calls `broadcastInvalidate(channel, queryKey)` after success. Other tabs listen via `useBroadcastInvalidation` and re-fetch via TanStack Query.
+- **Server functions** use `createServerFn` + Drizzle (sync — better-sqlite3 has no `await`).
 
 ---
 
 ## Context Triggers
 
-<context_trigger keywords="drizzle,database,schema,table,migration,neon,postgres">
-**Load:** .claude/docs/systems/database.md
-**Files:** src/drizzle/schema.ts, src/drizzle/index.ts, drizzle.config.ts
-**Quick:** Drizzle ORM + Neon. Define schema in `src/drizzle/schema.ts`, run `bunx drizzle-kit push`.
+<context_trigger keywords="db,database,schema,drizzle,sqlite,migration">
+**Load:** src/drizzle/schema.ts, src/drizzle/index.ts
+**Files:** src/drizzle/schema.ts, drizzle.config.ts
+**Quick:** Drizzle ORM + better-sqlite3. Define schema in `src/drizzle/schema.ts` using `sqliteTable`. JSON fields are `text` columns + SafeJSON parse/stringify in server functions. Migrations: `bunx drizzle-kit generate` then `bunx drizzle-kit migrate`.
 </context_trigger>
 
-<context_trigger keywords="sse,events,broadcast,realtime,sync,push,notify">
-**Load:** .claude/docs/systems/events.md
-**Files:** src/lib/events/server.ts, src/lib/events/client.ts, src/routes/api.events.ts
-**Quick:** Use `broadcastToUser()` after DB writes. Client subscribes via `getEventClient()`.
+<context_trigger keywords="sync,broadcast,cross-tab,realtime">
+**Load:** src/lib/sync/useBroadcastInvalidation.ts
+**Files:** src/lib/sync/useBroadcastInvalidation.ts
+**Quick:** Use `broadcastInvalidate(channel, queryKey)` after mutations. Subscribe with `useBroadcastInvalidation(channel)` in feature root.
 </context_trigger>
 
-<context_trigger keywords="powersync,offline,indexeddb,sync,types,schema-alignment">
-**Load:** .claude/docs/patterns/type-sharing.md
-**Files:** src/drizzle/schema.ts, src/lib/db/powersync.ts, src/lib/db/powersync-connector.ts
-**Quick:** Drizzle uses camelCase, PowerSync uses snake_case. JSON stored as text in PowerSync.
+<context_trigger keywords="env,environment,config">
+**Load:** src/lib/env.ts
+**Files:** src/lib/env.ts
+**Quick:** SQLite path is hardcoded — no DATABASE_URL needed. Auth env via @t3-oss/env-core.
 </context_trigger>
 
-<context_trigger keywords="env,environment,config,DATABASE_URL,secrets">
-**Load:** .claude/docs/systems/database.md
-**Files:** src/lib/env.ts, .env.local
-**Quick:** Type-safe env via @t3-oss/env-core. Add vars to `src/lib/env.ts`.
+<context_trigger keywords="timer,stopwatch,countdown,pomodoro,activity-log,focus">
+**Load:** src/lib/timer/
+**Files:** src/lib/timer/timer-sync.server.ts, src/lib/timer/components/, src/lib/timer/hooks/useTimerEngine.ts
+**Quick:** Timer engine in `useTimerEngine.ts` (requestAnimationFrame display loop). Server I/O in `timer-sync.server.ts`. Pomodoro fields live on the timer record. Phase auto-advance lives in the engine (see Focus Mode plan).
 </context_trigger>
 
-<context_trigger keywords="timer,stopwatch,countdown,pomodoro,activity-log">
-**Load:** .claude/docs/systems/events.md
-**Files:** src/lib/timer/timer-sync.server.ts, src/lib/timer/components/
-**Quick:** Timer feature uses full stack: Drizzle for DB, PowerSync for offline, SSE for sync.
+<context_trigger keywords="mcp,model-context-protocol,ai-tool">
+**Load:** src/lib/mcp/server.ts
+**Files:** src/lib/mcp/server.ts, src/lib/mcp/tools/, src/routes/mcp.ts
+**Quick:** MCP server exposes tasks + timers to AI assistants. Add new tools by creating a file under `src/lib/mcp/tools/` and calling `register*Tools(server)` from `server.ts`.
 </context_trigger>
 
 ---
@@ -73,48 +75,42 @@ bunx drizzle-kit studio    # Open Drizzle Studio
 
 ### Add a New Database Table
 
-1. Define in `src/drizzle/schema.ts`
-2. Mirror in `src/lib/db/powersync.ts`
-3. Run `bunx drizzle-kit generate && bunx drizzle-kit push`
-4. Update sync handler in connector
+1. Define in `src/drizzle/schema.ts` using `sqliteTable`. JSON columns are `text` — use `.$type<MyType>()` for typing.
+2. Run `bunx drizzle-kit generate && bunx drizzle-kit migrate`
+3. In any server function, import `db` from `@/drizzle` — calls are sync, no `await`.
 
-See: [Type Sharing](docs/patterns/type-sharing.md)
-
-### Broadcast Events After DB Changes
+### Broadcast Across Tabs After Mutation
 
 ```ts
-import { broadcastToUser } from '@/lib/events/server'
-
-// After mutation
-broadcastToUser('feature', userId, { type: 'sync' })
+import { broadcastInvalidate } from "@/lib/sync/useBroadcastInvalidation";
+const mutation = useMutation({
+    mutationFn: createTask,
+    onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: ["tasks"] });
+        broadcastInvalidate("assistant_sync_channel", ["tasks"]);
+    },
+});
 ```
 
-See: [Event System](docs/systems/events.md)
-
-### Create Server Function
+### Create a Server Function
 
 ```ts
-import { createServerFn } from '@tanstack/react-start'
-import { db, myTable } from '@/drizzle'
+import { createServerFn } from "@tanstack/react-start";
+import { db, myTable } from "@/drizzle";
 
-export const myServerFn = createServerFn({ method: 'POST' })
+export const myServerFn = createServerFn({ method: "POST" })
   .inputValidator((d: MyInput) => d)
-  .handler(async ({ data }) => {
-    // Use Drizzle for DB ops
-    await db.insert(myTable).values(data)
-    return { success: true }
-  })
+  .handler(({ data }) => {                  // sync
+    db.insert(myTable).values(data).run();
+    return { success: true };
+  });
 ```
 
 ---
 
 ## Environment Setup
 
-Required in `.env.local`:
-
-```
-DATABASE_URL=postgresql://...@neon.tech/neondb
-```
+No `DATABASE_URL` needed — SQLite lives at `.data/dashboard.sqlite`. WorkOS env vars (auth) stay required in `.env.local`.
 
 ## React Guidelines
 
