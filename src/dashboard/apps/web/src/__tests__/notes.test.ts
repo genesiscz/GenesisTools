@@ -3,8 +3,9 @@
  * Uses the real .data/dashboard.sqlite; data is isolated by a unique testUserId
  * and cleaned up in afterAll.
  */
-import { afterAll, describe, expect, test } from "vitest";
+
 import { eq } from "drizzle-orm";
+import { afterAll, describe, expect, test } from "vitest";
 import { db, notes } from "@/drizzle";
 
 describe("notes table", () => {
@@ -103,10 +104,7 @@ describe("notes table", () => {
 
         const later = new Date(Date.now() + 1000).toISOString();
 
-        db.update(notes)
-            .set({ body: "updated body", updatedAt: later })
-            .where(eq(notes.id, id))
-            .run();
+        db.update(notes).set({ body: "updated body", updatedAt: later }).where(eq(notes.id, id)).run();
 
         const result = db.select().from(notes).where(eq(notes.id, id)).get();
 
@@ -147,20 +145,32 @@ describe("notes table", () => {
 
         db.insert(notes)
             .values([
-                { id: normId, userId: testUserId, title: "Normal", body: "", tags: [], pinned: 0, createdAt: older, updatedAt: older },
-                { id: pinId, userId: testUserId, title: "Pinned", body: "", tags: [], pinned: 1, createdAt: now, updatedAt: now },
+                {
+                    id: normId,
+                    userId: testUserId,
+                    title: "Normal",
+                    body: "",
+                    tags: [],
+                    pinned: 0,
+                    createdAt: older,
+                    updatedAt: older,
+                },
+                {
+                    id: pinId,
+                    userId: testUserId,
+                    title: "Pinned",
+                    body: "",
+                    tags: [],
+                    pinned: 1,
+                    createdAt: now,
+                    updatedAt: now,
+                },
             ])
             .run();
 
-        const results = db
-            .select()
-            .from(notes)
-            .where(eq(notes.userId, testUserId))
-            .all();
+        const results = db.select().from(notes).where(eq(notes.userId, testUserId)).all();
 
-        const pinnedFirst = [...results].sort(
-            (a, b) => b.pinned - a.pinned || b.updatedAt.localeCompare(a.updatedAt)
-        );
+        const pinnedFirst = [...results].sort((a, b) => b.pinned - a.pinned || b.updatedAt.localeCompare(a.updatedAt));
 
         expect(pinnedFirst[0].id).toBe(pinId);
     });

@@ -33,8 +33,13 @@ export function useUpdateNoteMutation() {
     const queryClient = useQueryClient();
 
     return useMutation({
-        mutationFn: ({ id, patch }: { id: string; patch: Partial<Pick<NewNote, "title" | "body" | "tags" | "pinned">> }) =>
-            updateNote({ data: { id, patch } }),
+        mutationFn: ({
+            id,
+            patch,
+        }: {
+            id: string;
+            patch: Partial<Pick<NewNote, "title" | "body" | "tags" | "pinned">>;
+        }) => updateNote({ data: { id, patch } }),
         onSuccess: (result) => {
             queryClient.setQueryData(notesKeys.detail(result.id), result);
             queryClient.invalidateQueries({ queryKey: notesKeys.list(result.userId) });
@@ -46,8 +51,7 @@ export function useDeleteNoteMutation() {
     const queryClient = useQueryClient();
 
     return useMutation({
-        mutationFn: ({ id, userId }: { id: string; userId: string }) =>
-            deleteNote({ data: { id, userId } }),
+        mutationFn: ({ id, userId }: { id: string; userId: string }) => deleteNote({ data: { id, userId } }),
         onSuccess: (_, { userId }) => {
             queryClient.invalidateQueries({ queryKey: notesKeys.list(userId) });
         },

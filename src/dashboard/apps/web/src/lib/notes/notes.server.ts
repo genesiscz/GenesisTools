@@ -78,9 +78,7 @@ export const createNote = createServerFn({ method: "POST" })
 // ============================================
 
 export const updateNote = createServerFn({ method: "POST" })
-    .inputValidator(
-        (d: { id: string; patch: Partial<Pick<NewNote, "title" | "body" | "tags" | "pinned">> }) => d
-    )
+    .inputValidator((d: { id: string; patch: Partial<Pick<NewNote, "title" | "body" | "tags" | "pinned">> }) => d)
     .handler(({ data }): Note => {
         try {
             const result = db
