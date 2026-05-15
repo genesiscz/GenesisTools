@@ -3,6 +3,7 @@ import { Button } from "@ui/components/button";
 import { ArrowLeft, CheckCircle2, Loader2, Mail } from "lucide-react";
 import { useState } from "react";
 import { AuthAlertBanner, AuthInputField, AuthLayout } from "@/components/auth";
+import { forgotPasswordFn } from "@/lib/password-reset-actions";
 
 export const Route = createFileRoute("/auth/forgot-password")({
     component: ForgotPasswordPage,
@@ -24,9 +25,13 @@ function ForgotPasswordPage() {
         setEmail(emailValue);
 
         try {
-            // TODO: Implement password reset with WorkOS
-            await new Promise((resolve) => setTimeout(resolve, 1000));
-            setSuccess(true);
+            const result = await forgotPasswordFn({ data: { email: emailValue } });
+
+            if ("success" in result && result.success) {
+                setSuccess(true);
+            } else {
+                setError("message" in result ? result.message : "Failed to send reset email");
+            }
         } catch (err) {
             setError(err instanceof Error ? err.message : "Failed to send reset email");
         } finally {
