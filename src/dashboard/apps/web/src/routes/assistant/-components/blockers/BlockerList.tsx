@@ -9,6 +9,7 @@ import {
 } from "@ui/custom/feature-card-nexus";
 import { AlertTriangle, ArrowRight, User } from "lucide-react";
 import type { Task, TaskBlocker } from "@/lib/assistant/types";
+import { formatTimeBlockedCompact } from "@/lib/assistant/utils/format";
 import { cn } from "@/lib/utils";
 import { BlockerActions } from "./BlockerActions";
 import { BlockerCard } from "./BlockerCard";
@@ -41,27 +42,6 @@ function getBlockerUrgency(blockedSince: Date): "normal" | "warning" | "critical
         return "warning";
     }
     return "normal";
-}
-
-/**
- * Format time blocked in compact form
- */
-function formatTimeBlockedCompact(blockedSince: Date): string {
-    const now = new Date();
-    const diff = now.getTime() - new Date(blockedSince).getTime();
-    const hours = Math.floor(diff / (1000 * 60 * 60));
-    const days = Math.floor(hours / 24);
-
-    if (days === 0) {
-        if (hours === 0) {
-            return "now";
-        }
-        return `${hours}h`;
-    }
-    if (days < 7) {
-        return `${days}d`;
-    }
-    return `${Math.floor(days / 7)}w`;
 }
 
 /**

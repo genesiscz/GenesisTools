@@ -115,6 +115,31 @@ export function formatTimeBlocked(blockedSince: Date): string {
     return `${Math.floor(days / 7)} weeks ago`;
 }
 
+/**
+ * Compact relative time since a blocker was set.
+ * Returns short-form labels: "now", "2h", "3d", "1w".
+ */
+export function formatTimeBlockedCompact(blockedSince: Date): string {
+    const now = new Date();
+    const diff = now.getTime() - new Date(blockedSince).getTime();
+    const hours = Math.floor(diff / (1000 * 60 * 60));
+    const days = Math.floor(hours / 24);
+
+    if (days === 0) {
+        if (hours === 0) {
+            return "now";
+        }
+
+        return `${hours}h`;
+    }
+
+    if (days < 7) {
+        return `${days}d`;
+    }
+
+    return `${Math.floor(days / 7)}w`;
+}
+
 export function formatHandoffRelativeTime(date: Date): string {
     const now = new Date();
     const diff = now.getTime() - new Date(date).getTime();
