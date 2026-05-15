@@ -3,6 +3,7 @@ import { Button } from "@ui/components/button";
 import { AlertCircle, KeyRound, Loader2, Lock } from "lucide-react";
 import { useState } from "react";
 import { AuthAlertBanner, AuthInputField, AuthLayout } from "@/components/auth";
+import { resetPasswordFn } from "@/lib/password-reset-actions";
 
 export const Route = createFileRoute("/auth/reset-password")({
     component: ResetPasswordPage,
@@ -74,11 +75,17 @@ function ResetPasswordPage() {
         }
 
         try {
-            // TODO: Implement password reset with WorkOS
-            await new Promise((resolve) => setTimeout(resolve, 1000));
-            navigate({ to: "/auth/signin", search: { reset: true } });
+            const result = await resetPasswordFn({ data: { token, newPassword: password } });
+
+            if ("success" in result && result.success) {
+                navigate({ to: "/auth/signin", search: { reset: true } });
+                return;
+            }
+
+            setError("message" in result ? result.message : "Failed to reset password");
         } catch (err) {
             setError(err instanceof Error ? err.message : "Failed to reset password");
+        } finally {
             setIsLoading(false);
         }
     };
