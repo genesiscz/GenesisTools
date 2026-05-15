@@ -7,8 +7,11 @@ import { Label } from "@ui/components/label";
 import { Separator } from "@ui/components/separator";
 import { useAuth } from "@workos/authkit-tanstack-react-start/client";
 import { AlertTriangle, Calendar, Camera, Check, Github, Link2, Mail, Trash2, User, X } from "lucide-react";
+import { useRef, useState } from "react";
+import { AuthAlertBanner } from "@/components/auth";
 import { DashboardLayout } from "@/components/dashboard";
 import { SettingCard, SettingRow } from "@/components/settings";
+import { removeAvatarFn, updateAvatarFn } from "@/lib/profile-actions";
 
 export const Route = createFileRoute("/profile")({
     component: ProfilePage,
@@ -16,16 +19,20 @@ export const Route = createFileRoute("/profile")({
 
 function ProfilePage() {
     const { user } = useAuth();
+    const fileInputRef = useRef<HTMLInputElement>(null);
+    const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+    const [avatarLoading, setAvatarLoading] = useState(false);
+    const [avatarError, setAvatarError] = useState<string | null>(null);
 
     const userInitials =
         user?.firstName && user?.lastName
             ? `${user.firstName[0]}${user.lastName[0]}`
-            : user?.email?.substring(0, 2).toUpperCase() || "U";
+            : user?.email?.substring(0, 2).toUpperCase() ?? "U";
 
     const displayName =
         user?.firstName && user?.lastName
             ? `${user.firstName} ${user.lastName}`
-            : user?.email?.split("@")[0] || "Unknown User";
+            : user?.email?.split("@")[0] ?? "Unknown User";
 
     const createdAt = user?.createdAt
         ? new Date(user.createdAt).toLocaleDateString("en-US", {
@@ -34,6 +41,105 @@ function ProfilePage() {
               day: "numeric",
           })
         : "Unknown";
+
+    // avatarUrl state wins over OAuth profile picture
+    const displayAvatarSrc = avatarUrl ?? user?.profilePictureUrl ?? undefined;
+
+    const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+
+        if (!file || !user?.id) {
+            return;
+        }
+
+        if (file.size > 5 * 1024 * 1024) {
+            setAvatarError("Image must be under 5 MB");
+            return;
+        }
+
+        const mimeType = file.type as "image/jpeg" | "image/png" | "image/webp" | "image/gif";
+        const allowedTypes = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
+
+        if (!allowedTypes.has(mimeType)) {
+            setAvatarError("Unsupported format. Use JPEG, PNG, WebP, or GIF.");
+            return;
+        }
+
+        setAvatarLoading(true);
+        setAvatarError(null);
+
+        const reader = new FileReader();
+        reader.onload = async (ev) => {
+            const dataUrl = ev.target?.result as string;
+            // Strip the "data:<mime>;base64," prefix
+            const fileBase64 = dataUrl.split(",")[1];
+
+            if (!fileBase64) {
+                setAvatarError("Failed to read file");
+                setAvatarLoading(false);
+                return;
+            }
+
+            try {
+                const result = await updateAvatarFn({
+                    data: {
+                        userId: user.id,
+                        fileBase64,
+                        mimeType,
+                        origin: window.location.origin,
+                    },
+                });
+
+                if ("success" in result && result.success && "avatarUrl" in result) {
+                    setAvatarUrl(result.avatarUrl);
+                } else {
+                    setAvatarError("message" in result ? result.message : "Failed to upload avatar");
+                }
+            } catch (err) {
+                setAvatarError(err instanceof Error ? err.message : "Failed to upload avatar");
+            } finally {
+                setAvatarLoading(false);
+                // Reset input so the same file can be re-selected after removal
+                if (fileInputRef.current) {
+                    fileInputRef.current.value = "";
+                }
+            }
+        };
+
+        reader.onerror = () => {
+            setAvatarError("Failed to read file");
+            setAvatarLoading(false);
+        };
+
+        reader.readAsDataURL(file);
+    };
+
+    const handleRemoveAvatar = async () => {
+        if (!user?.id) {
+            return;
+        }
+
+        setAvatarLoading(true);
+        setAvatarError(null);
+
+        try {
+            const result = await removeAvatarFn({ data: { userId: user.id } });
+
+            if ("success" in result && result.success) {
+                setAvatarUrl(null);
+            } else {
+                setAvatarError("message" in result ? result.message : "Failed to remove avatar");
+            }
+        } catch (err) {
+            setAvatarError(err instanceof Error ? err.message : "Failed to remove avatar");
+        } finally {
+            setAvatarLoading(false);
+        }
+    };
+
+    const handleUploadClick = () => {
+        fileInputRef.current?.click();
+    };
 
     return (
         <DashboardLayout title="Profile" description="Manage your NEXUS identity">
@@ -45,20 +151,31 @@ function ProfilePage() {
                     icon={<User className="h-4 w-4" />}
                     tint="primary"
                 >
+                    {/* Hidden file input */}
+                    <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp,image/gif"
+                        className="hidden"
+                        onChange={handleFileChange}
+                        aria-label="Upload profile picture"
+                    />
+
                     {/* Avatar Section */}
                     <div className="flex items-center gap-6">
                         <div className="relative group">
                             <Avatar className="h-20 w-20 border-2 border-primary/30">
-                                <AvatarImage src={user?.profilePictureUrl || undefined} alt={displayName} />
+                                <AvatarImage src={displayAvatarSrc} alt={displayName} />
                                 <AvatarFallback className="bg-primary/20 text-primary text-xl font-bold">
                                     {userInitials}
                                 </AvatarFallback>
                             </Avatar>
                             <button
-                                className="absolute inset-0 flex items-center justify-center bg-black/60 rounded-full opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
-                                onClick={() => {
-                                    /* TODO: Implement avatar upload */
-                                }}
+                                type="button"
+                                disabled={avatarLoading}
+                                className="absolute inset-0 flex items-center justify-center bg-black/60 rounded-full opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer disabled:cursor-not-allowed"
+                                onClick={handleUploadClick}
+                                aria-label="Change profile picture"
                             >
                                 <Camera className="h-6 w-6 text-primary" />
                             </button>
@@ -67,23 +184,33 @@ function ProfilePage() {
                             <p className="text-sm text-muted-foreground">Profile Picture</p>
                             <div className="flex gap-2">
                                 <Button
+                                    type="button"
                                     variant="outline"
                                     size="sm"
+                                    disabled={avatarLoading}
                                     className="border-primary/30 text-primary hover:bg-primary/10 hover:text-primary"
+                                    onClick={handleUploadClick}
                                 >
                                     <Camera className="h-3 w-3 mr-2" />
-                                    Upload
+                                    {avatarLoading ? "Uploading…" : "Upload"}
                                 </Button>
                                 <Button
+                                    type="button"
                                     variant="ghost"
                                     size="sm"
+                                    disabled={avatarLoading || (!avatarUrl && !user?.profilePictureUrl)}
                                     className="text-muted-foreground hover:text-amber-400"
+                                    onClick={handleRemoveAvatar}
                                 >
                                     Remove
                                 </Button>
                             </div>
                         </div>
                     </div>
+
+                    {avatarError && (
+                        <AuthAlertBanner variant="error" message={avatarError} />
+                    )}
 
                     <Separator className="bg-primary/10" />
 
@@ -109,7 +236,7 @@ function ProfilePage() {
                         </Label>
                         <Input
                             id="email"
-                            defaultValue={user?.email || ""}
+                            defaultValue={user?.email ?? ""}
                             disabled
                             className="bg-card/50 border-primary/20 opacity-60"
                         />
@@ -142,7 +269,7 @@ function ProfilePage() {
 
                     <SettingRow label="User ID" description="Your unique identifier">
                         <code className="text-xs bg-card/50 px-2 py-1 rounded border border-accent/20 text-accent font-mono">
-                            {user?.id?.substring(0, 16) || "N/A"}...
+                            {user?.id?.substring(0, 16) ?? "N/A"}...
                         </code>
                     </SettingRow>
 
