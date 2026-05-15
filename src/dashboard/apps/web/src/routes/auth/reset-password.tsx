@@ -1,8 +1,8 @@
 import { createFileRoute, Link, useNavigate, useSearch } from "@tanstack/react-router";
-import { Button } from "@ui/components/button";
 import { AlertCircle, KeyRound, Loader2, Lock } from "lucide-react";
 import { useState } from "react";
-import { AuthLayout } from "@/components/auth";
+import { AuthAlertBanner, AuthInputField, AuthLayout } from "@/components/auth";
+import { Button } from "@ui/components/button";
 
 export const Route = createFileRoute("/auth/reset-password")({
     component: ResetPasswordPage,
@@ -18,7 +18,6 @@ function ResetPasswordPage() {
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
-    // Check for valid token
     if (!token || !email) {
         return (
             <AuthLayout>
@@ -76,7 +75,6 @@ function ResetPasswordPage() {
 
         try {
             // TODO: Implement password reset with WorkOS
-            // For now, simulate success
             await new Promise((resolve) => setTimeout(resolve, 1000));
             navigate({ to: "/auth/signin", search: { reset: true } });
         } catch (err) {
@@ -101,54 +99,34 @@ function ResetPasswordPage() {
                     </p>
                 </div>
 
-                {/* Error message */}
-                {error && (
-                    <div className="flex items-center gap-2 p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
-                        <AlertCircle className="h-4 w-4 shrink-0" />
-                        <span>{error}</span>
-                    </div>
-                )}
+                {error && <AuthAlertBanner variant="error" message={error} />}
 
                 {/* Reset Form */}
                 <form onSubmit={handleSubmit} className="space-y-4">
-                    <div className="space-y-2">
-                        <label htmlFor="password" className="text-sm font-medium text-gray-300">
-                            New Password
-                        </label>
-                        <div className="relative">
-                            <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-500" />
-                            <input
-                                id="password"
-                                name="password"
-                                type="password"
-                                autoComplete="new-password"
-                                required
-                                minLength={8}
-                                placeholder="Enter new password"
-                                className="w-full h-11 pl-10 pr-4 rounded-lg bg-black/50 border border-amber-500/20 focus:border-amber-500/50 focus:ring-2 focus:ring-amber-500/20 outline-none transition-all placeholder:text-gray-600 text-white"
-                            />
-                        </div>
-                        <p className="text-xs text-gray-500">Must be at least 8 characters</p>
-                    </div>
+                    <AuthInputField
+                        id="password"
+                        name="password"
+                        type="password"
+                        label="New Password"
+                        autoComplete="new-password"
+                        required
+                        minLength={8}
+                        placeholder="Enter new password"
+                        description="Must be at least 8 characters"
+                        icon={<Lock className="h-4 w-4" />}
+                    />
 
-                    <div className="space-y-2">
-                        <label htmlFor="confirmPassword" className="text-sm font-medium text-gray-300">
-                            Confirm Password
-                        </label>
-                        <div className="relative">
-                            <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-500" />
-                            <input
-                                id="confirmPassword"
-                                name="confirmPassword"
-                                type="password"
-                                autoComplete="new-password"
-                                required
-                                minLength={8}
-                                placeholder="Confirm new password"
-                                className="w-full h-11 pl-10 pr-4 rounded-lg bg-black/50 border border-amber-500/20 focus:border-amber-500/50 focus:ring-2 focus:ring-amber-500/20 outline-none transition-all placeholder:text-gray-600 text-white"
-                            />
-                        </div>
-                    </div>
+                    <AuthInputField
+                        id="confirmPassword"
+                        name="confirmPassword"
+                        type="password"
+                        label="Confirm Password"
+                        autoComplete="new-password"
+                        required
+                        minLength={8}
+                        placeholder="Confirm new password"
+                        icon={<Lock className="h-4 w-4" />}
+                    />
 
                     <Button
                         type="submit"

@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { AlertCircle, ArrowLeft, CheckCircle2, Loader2, Mail } from "lucide-react";
+import { ArrowLeft, CheckCircle2, Loader2, Mail } from "lucide-react";
 import { useState } from "react";
-import { AuthLayout } from "@/components/auth";
+import { AuthAlertBanner, AuthInputField, AuthLayout } from "@/components/auth";
 import { Button } from "@ui/components/button";
 
 export const Route = createFileRoute("/auth/forgot-password")({
@@ -25,7 +25,6 @@ function ForgotPasswordPage() {
 
         try {
             // TODO: Implement password reset with WorkOS
-            // For now, simulate success
             await new Promise((resolve) => setTimeout(resolve, 1000));
             setSuccess(true);
         } catch (err) {
@@ -74,34 +73,21 @@ function ForgotPasswordPage() {
                     <p className="text-gray-400">Enter your email and we'll send you a reset link</p>
                 </div>
 
-                {/* Error message */}
-                {error && (
-                    <div className="flex items-center gap-2 p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
-                        <AlertCircle className="h-4 w-4 shrink-0" />
-                        <span>{error}</span>
-                    </div>
-                )}
+                {error && <AuthAlertBanner variant="error" message={error} />}
 
                 {/* Reset Form */}
                 <form onSubmit={handleSubmit} className="space-y-4">
-                    <div className="space-y-2">
-                        <label htmlFor="email" className="text-sm font-medium text-gray-300">
-                            Email
-                        </label>
-                        <div className="relative">
-                            <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-500" />
-                            <input
-                                id="email"
-                                name="email"
-                                type="email"
-                                autoComplete="username"
-                                autoCapitalize="off"
-                                required
-                                placeholder="you@example.com"
-                                className="w-full h-11 pl-10 pr-4 rounded-lg bg-black/50 border border-amber-500/20 focus:border-amber-500/50 focus:ring-2 focus:ring-amber-500/20 outline-none transition-all placeholder:text-gray-600 text-white"
-                            />
-                        </div>
-                    </div>
+                    <AuthInputField
+                        id="email"
+                        name="email"
+                        type="email"
+                        label="Email"
+                        autoComplete="username"
+                        autoCapitalize="off"
+                        required
+                        placeholder="you@example.com"
+                        icon={<Mail className="h-4 w-4" />}
+                    />
 
                     <Button
                         type="submit"
