@@ -77,6 +77,7 @@ const config = defineConfig({
             "react-dom",
             "react/jsx-runtime",
             "react/jsx-dev-runtime",
+            "react/compiler-runtime",
             "react-dom/client",
             "@tanstack/react-query",
             "@tanstack/query-core",

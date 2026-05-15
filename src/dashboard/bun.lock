@@ -16,8 +16,8 @@
       "dependencies": {
         "@repo/ui": "*",
         "next": "16.0.10",
-        "react": "^19.2.0",
-        "react-dom": "^19.1.0",
+        "react": "19.2.5",
+        "react-dom": "19.2.5",
       },
       "devDependencies": {
         "@next/eslint-plugin-next": "^15.4.6",
@@ -26,7 +26,7 @@
         "@repo/typescript-config": "*",
         "@tailwindcss/postcss": "^4.1.5",
         "@types/node": "^22.15.30",
-        "@types/react": "^19.1.0",
+        "@types/react": "^19.2.2",
         "@types/react-dom": "^19.1.1",
         "autoprefixer": "^10.4.20",
         "eslint": "^9.39.1",
@@ -102,8 +102,8 @@
         "iron-session": "^8.0.4",
         "lucide-react": "^0.562.0",
         "nitro": "latest",
-        "react": "^19.2.0",
-        "react-dom": "^19.2.0",
+        "react": "19.2.5",
+        "react-dom": "19.2.5",
         "recharts": "^3.6.0",
         "server-only": "^0.0.1",
         "sonner": "^2.0.7",
@@ -122,7 +122,7 @@
         "@testing-library/react": "^16.2.0",
         "@types/better-sqlite3": "^7.6.13",
         "@types/node": "^22.10.2",
-        "@types/react": "^19.2.0",
+        "@types/react": "^19.2.2",
         "@types/react-dom": "^19.2.0",
         "@vitejs/plugin-react": "^5.0.4",
         "babel-plugin-react-compiler": "^1.0.0",
@@ -192,6 +192,10 @@
         "react": "^19",
       },
     },
+  },
+  "overrides": {
+    "react": "19.2.5",
+    "react-dom": "19.2.5",
   },
   "packages": {
     "@acemir/cssom": ["@acemir/cssom@0.9.30", "", {}, "sha512-9CnlMCI0LmCIq0olalQqdWrJHPzm0/tw3gzOA9zJSgvFX7Xau3D24mAGa4BtwxwY69nsuJW6kQqqCzf/mEcQgg=="],
@@ -2392,9 +2396,9 @@
 
     "rc9": ["rc9@2.1.2", "", { "dependencies": { "defu": "^6.1.4", "destr": "^2.0.3" } }, "sha512-btXCnMmRIBINM2LDZoEmOogIZU7Qe7zn4BpomSKZ/ykbLObuBdvG+mFq11DL6fjH1DRwHhrlgtYWG96bJiC7Cg=="],
 
-    "react": ["react@19.2.3", "", {}, "sha512-Ku/hhYbVjOQnXDZFv2+RibmLFGwFdeeKHFcOTlrt7xplBnya5OGn/hIRDsqDiSUcfORsDC7MPxwork8jBwsIWA=="],
+    "react": ["react@19.2.5", "", {}, "sha512-llUJLzz1zTUBrskt2pwZgLq59AemifIftw4aB7JxOqf1HY2FDaGDxgwpAPVzHU1kdWabH7FauP4i1oEeer2WCA=="],
 
-    "react-dom": ["react-dom@19.2.3", "", { "dependencies": { "scheduler": "^0.27.0" }, "peerDependencies": { "react": "^19.2.3" } }, "sha512-yELu4WmLPw5Mr/lmeEpox5rw3RETacE++JgHqQzd2dg+YbJuat3jH4ingc+WPZhxaoFzdv9y33G+F7Nl5O0GBg=="],
+    "react-dom": ["react-dom@19.2.5", "", { "dependencies": { "scheduler": "^0.27.0" }, "peerDependencies": { "react": "^19.2.5" } }, "sha512-J5bAZz+DXMMwW/wV3xzKke59Af6CHY7G4uYLN1OvBcKEsWOs4pQExj86BBKamxl/Ik5bx9whOrvBlSDfWzgSag=="],
 
     "react-is": ["react-is@17.0.2", "", {}, "sha512-w2GsyukL62IJnlaff/nRegPQR94C/XXamvMWmSHRJ4y7Ts/4ocGRmTHvOs8PSE6pB3dWOrD/nueuU5sduBsQ4w=="],
 
