@@ -1,6 +1,6 @@
 import hljs from "highlight.js";
-import { Marked } from "marked";
 import type { MarkedExtension, Tokens } from "marked";
+import { Marked } from "marked";
 import markedAlert from "marked-alert";
 import { markedHighlight } from "marked-highlight";
 import markedKatex from "marked-katex-extension";
@@ -122,9 +122,7 @@ function renderTagsHeader(tags: string[]): string {
         return "";
     }
 
-    const chips = tags
-        .map((tag) => `<span class="dd-md-tag">#${escapeHtml(tag.replace(/^#/, ""))}</span>`)
-        .join("");
+    const chips = tags.map((tag) => `<span class="dd-md-tag">#${escapeHtml(tag.replace(/^#/, ""))}</span>`).join("");
 
     return `<div class="dd-md-meta">${chips}</div>`;
 }

@@ -9,7 +9,8 @@ interface ShareTemplateOptions {
 const HLJS_CSS_URL = "https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.10.0/build/styles/atom-one-dark.min.css";
 const KATEX_CSS_URL = "https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css";
 const MERMAID_JS_URL = "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
-const INTER_FONT_URL = "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&family=Lora:ital,wght@0,400;0,600;1,400&display=swap";
+const INTER_FONT_URL =
+    "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&family=Lora:ital,wght@0,400;0,600;1,400&display=swap";
 
 function escapeHtml(value: string): string {
     return value.replace(/[&<>"']/g, (char) => {
@@ -414,9 +415,7 @@ export function renderSharePage(options: ShareTemplateOptions): string {
         bodyExtras.push(buildMermaidScript());
     }
 
-    const sourceLine = sourcePath
-        ? `<span class="dd-share-source">${escapeHtml(sourcePath)}</span>`
-        : "";
+    const sourceLine = sourcePath ? `<span class="dd-share-source">${escapeHtml(sourcePath)}</span>` : "";
 
     return `<!doctype html>
 <html lang="en">
