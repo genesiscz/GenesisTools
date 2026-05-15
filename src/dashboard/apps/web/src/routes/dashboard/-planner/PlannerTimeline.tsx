@@ -1,4 +1,6 @@
 import { useDroppable } from "@dnd-kit/core";
+import type { FocusSessionBlock } from "@/lib/timer/timer-sync.server";
+import { FocusSessionGhost } from "./FocusSessionGhost";
 import { NowMarker } from "./NowMarker";
 import { TaskBlock } from "./TaskBlock";
 import type { ScheduledTask } from "./usePlannerData";
@@ -37,6 +39,8 @@ interface PlannerTimelineProps {
     activeDragId: string | null;
     dragListeners?: Record<string, unknown>;
     dragAttributes?: Record<string, unknown>;
+    /** Completed pomodoro focus sessions to render as ghost blocks */
+    focusSessions: FocusSessionBlock[];
 }
 
 function DroppableTimeline({ children }: { children: React.ReactNode }) {
@@ -53,7 +57,7 @@ function DroppableTimeline({ children }: { children: React.ReactNode }) {
     );
 }
 
-export function PlannerTimeline({ scheduledTasks, activeDragId }: PlannerTimelineProps) {
+export function PlannerTimeline({ scheduledTasks, activeDragId, focusSessions }: PlannerTimelineProps) {
     const topPx = nowTopPx();
 
     return (
@@ -95,6 +99,21 @@ export function PlannerTimeline({ scheduledTasks, activeDragId }: PlannerTimelin
                     <DroppableTimeline>
                         {/* Now marker */}
                         <NowMarker topPx={topPx} />
+
+                        {/* Focus session ghost blocks (completed pomodoros) */}
+                        {focusSessions.map((session) => {
+                            const blockTopPx = isoToPx(session.startIso);
+                            const blockEndPx = isoToPx(session.endIso);
+                            const blockHeightPx = Math.max(14, blockEndPx - blockTopPx);
+                            return (
+                                <FocusSessionGhost
+                                    key={`${session.timerId}-${session.startIso}`}
+                                    session={session}
+                                    topPx={blockTopPx}
+                                    heightPx={blockHeightPx}
+                                />
+                            );
+                        })}
 
                         {/* Scheduled task blocks */}
                         {scheduledTasks.map((task) => {
