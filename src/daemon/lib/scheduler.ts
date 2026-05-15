@@ -3,6 +3,7 @@ import { dispatchNotification } from "@app/utils/notifications";
 import { loadConfig } from "./config";
 import { computeNextRunAt, parseInterval } from "./interval";
 import { listRunsForTask } from "./log-reader";
+import { pruneTaskRunLogs } from "./retention";
 import { runTask } from "./runner";
 import type { DaemonTask, TaskState } from "./types";
 
@@ -84,6 +85,20 @@ export async function runSchedulerLoop(logsBaseDir: string): Promise<void> {
 }
 
 async function executeTask(task: DaemonTask, logsBaseDir: string): Promise<void> {
+    try {
+        await runAttempts(task, logsBaseDir);
+    } finally {
+        if (task.retention) {
+            try {
+                pruneTaskRunLogs(logsBaseDir, task.name, task.retention);
+            } catch (err) {
+                log.warn({ err, task: task.name }, "retention prune failed");
+            }
+        }
+    }
+}
+
+async function runAttempts(task: DaemonTask, logsBaseDir: string): Promise<void> {
     const maxAttempts = task.retries + 1;
 
     const shouldNotify = task.notify !== false;

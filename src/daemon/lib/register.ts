@@ -1,6 +1,6 @@
 import { ensureStorage, getTask, removeTask, upsertTask } from "./config";
 import { parseInterval } from "./interval";
-import type { DaemonTask } from "./types";
+import type { DaemonTask, RunLogRetention } from "./types";
 
 export interface RegisterTaskOptions {
     name: string;
@@ -12,6 +12,8 @@ export interface RegisterTaskOptions {
     overwrite?: boolean;
     /** Send macOS notifications on start/complete/fail. Default: true */
     notify?: boolean;
+    /** Optional run-log retention; daemon prunes post-run. */
+    retention?: RunLogRetention;
 }
 
 function validateTaskName(name: string): void {
@@ -39,6 +41,7 @@ export async function registerTask(opts: RegisterTaskOptions): Promise<boolean> 
         enabled: opts.enabled ?? true,
         description: opts.description,
         ...(opts.notify === false ? { notify: false } : {}),
+        ...(opts.retention ? { retention: opts.retention } : {}),
     };
 
     await upsertTask(task);
