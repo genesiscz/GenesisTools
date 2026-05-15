@@ -1,4 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import type { PomodoroSettings } from "@dashboard/shared";
 import type { Timer } from "@/drizzle";
 import { broadcastInvalidate, CHRONO_SYNC_CHANNEL } from "@/lib/sync/useBroadcastInvalidation";
 import {
@@ -6,6 +7,7 @@ import {
     lapTimer,
     pauseTimer,
     resetTimer,
+    setPomodoroSettings,
     startTimer,
     updateTimerMetadata,
 } from "@/lib/timer/timer-sync.server";
@@ -38,6 +40,8 @@ interface UseTimerReturn {
     setType: (type: "stopwatch" | "countdown" | "pomodoro") => void;
     editElapsedTime: (newElapsedMs: number) => void;
     toggleShowTotal: () => void;
+    setPomodoroSettings: (settings: PomodoroSettings) => void;
+    advancePhase: () => void;
     // Computed
     totalTimeElapsed: number;
     completionPercentage: number;
@@ -116,6 +120,14 @@ export function useTimer({ userId, timerId }: UseTimerOptions): UseTimerReturn {
         mutationFn: () =>
             advancePomodoroPhase({
                 data: { id: timerId, userId: effectiveUserId!, expectedVersion: timer?.version },
+            }),
+        onSuccess,
+    });
+
+    const settingsMutation = useMutation({
+        mutationFn: (settings: PomodoroSettings) =>
+            setPomodoroSettings({
+                data: { id: timerId, userId: effectiveUserId!, expectedVersion: timer?.version, settings },
             }),
         onSuccess,
     });
@@ -232,6 +244,22 @@ export function useTimer({ userId, timerId }: UseTimerOptions): UseTimerReturn {
         metadataMutation.mutate({ showTotal: timer.showTotal ? 0 : 1 });
     }
 
+    function setPomodoroSettingsFn(settings: PomodoroSettings) {
+        if (!effectiveUserId || !timer) {
+            return;
+        }
+
+        settingsMutation.mutate(settings);
+    }
+
+    function advancePhase() {
+        if (!effectiveUserId || !timer) {
+            return;
+        }
+
+        advanceMutation.mutate();
+    }
+
     function calcTotalTimeElapsed(): number {
         if (!timer?.firstStartTime) {
             return 0;
@@ -269,6 +297,8 @@ export function useTimer({ userId, timerId }: UseTimerOptions): UseTimerReturn {
         setType,
         editElapsedTime,
         toggleShowTotal,
+        setPomodoroSettings: setPomodoroSettingsFn,
+        advancePhase,
         totalTimeElapsed: calcTotalTimeElapsed(),
         completionPercentage: calcCompletionPercentage(),
     };
