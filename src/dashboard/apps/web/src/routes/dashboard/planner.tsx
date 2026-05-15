@@ -2,13 +2,14 @@ import { DndContext, DragOverlay } from "@dnd-kit/core";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { DashboardLayout } from "@/components/dashboard";
-import { useBroadcastInvalidation, ASSISTANT_SYNC_CHANNEL } from "@/lib/sync/useBroadcastInvalidation";
+import type { AssistantTask } from "@/drizzle";
+import { ASSISTANT_SYNC_CHANNEL, useBroadcastInvalidation } from "@/lib/sync/useBroadcastInvalidation";
+import type { PlannerView } from "./-planner/PlannerHeader";
 import { PlannerHeader } from "./-planner/PlannerHeader";
 import { PlannerInbox } from "./-planner/PlannerInbox";
 import { PlannerTimeline } from "./-planner/PlannerTimeline";
 import { usePlannerData } from "./-planner/usePlannerData";
 import { usePlannerDnd } from "./-planner/usePlannerDnd";
-import type { PlannerView } from "./-planner/PlannerHeader";
 
 export const Route = createFileRoute("/dashboard/planner")({
     component: DailyPlannerPage,
@@ -16,10 +17,7 @@ export const Route = createFileRoute("/dashboard/planner")({
 
 function DailyPlannerPage() {
     return (
-        <DashboardLayout
-            title="Daily Planner"
-            description="Block your day and keep tasks on track"
-        >
+        <DashboardLayout title="Daily Planner" description="Block your day and keep tasks on track">
             <PlannerRoot />
         </DashboardLayout>
     );
@@ -69,10 +67,7 @@ function PlannerRoot() {
             {view === "day" ? (
                 <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
                     <div className="flex gap-3" style={{ minHeight: "calc(100vh - 220px)" }}>
-                        <PlannerTimeline
-                            scheduledTasks={scheduledTasks}
-                            activeDragId={activeDragId}
-                        />
+                        <PlannerTimeline scheduledTasks={scheduledTasks} activeDragId={activeDragId} />
                         <PlannerInbox tasks={unscheduledTasks} />
                     </div>
 
@@ -104,19 +99,14 @@ const URGENCY_ROW_COLOR: Record<string, string> = {
 };
 
 interface PlannerListViewProps {
-    tasks: (typeof allActiveTasks)[number][];
+    tasks: AssistantTask[];
     onFocus: (id: string) => void;
 }
-
-// biome-ignore lint/suspicious/noShadowRestrictedNames: local alias for type inference
-const allActiveTasks: ReturnType<typeof usePlannerData>["allActiveTasks"] = [];
 
 function PlannerListView({ tasks, onFocus }: PlannerListViewProps) {
     return (
         <div className="flex flex-col gap-2">
-            {tasks.length === 0 && (
-                <p className="py-12 text-center text-sm text-zinc-600">No active tasks.</p>
-            )}
+            {tasks.length === 0 && <p className="py-12 text-center text-sm text-zinc-600">No active tasks.</p>}
             {tasks.map((task) => {
                 const urgency = task.urgencyLevel ?? "nice-to-have";
                 const borderCls = URGENCY_ROW_COLOR[urgency] ?? URGENCY_ROW_COLOR["nice-to-have"];
@@ -137,7 +127,10 @@ function PlannerListView({ tasks, onFocus }: PlannerListViewProps) {
                                     className="text-[10px] text-zinc-500"
                                     style={{ fontFamily: "'JetBrains Mono', monospace" }}
                                 >
-                                    {new Date(task.scheduledStart).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                                    {new Date(task.scheduledStart).toLocaleTimeString([], {
+                                        hour: "2-digit",
+                                        minute: "2-digit",
+                                    })}
                                     {task.scheduledEnd &&
                                         ` – ${new Date(task.scheduledEnd).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`}
                                 </p>
