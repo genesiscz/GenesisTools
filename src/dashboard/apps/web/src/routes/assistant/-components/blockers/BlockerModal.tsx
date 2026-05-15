@@ -7,13 +7,12 @@ import {
     DialogHeader,
     DialogTitle,
 } from "@ui/components/dialog";
-import { Input } from "@ui/components/input";
-import { Label } from "@ui/components/label";
 import { Textarea } from "@ui/components/textarea";
+import { FormField, SelectorButton } from "@ui/custom";
 import { AlertTriangle, ArrowRight, Ban, Bell, Timer, User } from "lucide-react";
 import { useState } from "react";
+import { Input } from "@ui/components/input";
 import type { BlockerFollowUpAction, Task, TaskBlockerInput } from "@/lib/assistant/types";
-import { cn } from "@/lib/utils";
 
 interface BlockerModalProps {
     open: boolean;
@@ -29,29 +28,29 @@ const followUpActions: {
     value: BlockerFollowUpAction;
     label: string;
     description: string;
-    icon: typeof Bell;
-    colorClass: string;
+    icon: React.ReactNode;
+    selectedClass: string;
 }[] = [
     {
         value: "remind",
         label: "Remind Owner",
-        description: "I need to follow up with someone",
-        icon: Bell,
-        colorClass: "text-blue-400 border-blue-500/30 hover:border-blue-500/50 hover:bg-blue-500/10",
+        description: "Follow up with someone",
+        icon: <Bell className="h-4 w-4" />,
+        selectedClass: "border-blue-500 bg-blue-500/10 text-blue-300",
     },
     {
         value: "switch",
         label: "Switch Task",
-        description: "I should work on something else",
-        icon: ArrowRight,
-        colorClass: "text-purple-400 border-purple-500/30 hover:border-purple-500/50 hover:bg-purple-500/10",
+        description: "Work on something else",
+        icon: <ArrowRight className="h-4 w-4" />,
+        selectedClass: "border-purple-500 bg-purple-500/10 text-purple-300",
     },
     {
         value: "wait",
         label: "Wait",
-        description: "Nothing I can do, just waiting",
-        icon: Timer,
-        colorClass: "text-amber-400 border-amber-500/30 hover:border-amber-500/50 hover:bg-amber-500/10",
+        description: "Nothing to do but wait",
+        icon: <Timer className="h-4 w-4" />,
+        selectedClass: "border-amber-500 bg-amber-500/10 text-amber-300",
     },
 ];
 
@@ -71,11 +70,11 @@ export function BlockerModal({ open, onOpenChange, task, onSubmit }: BlockerModa
 
     function handleOpenChange(newOpen: boolean) {
         if (!newOpen) {
-            // Reset form when closing
             setReason("");
             setBlockerOwner("");
             setFollowUpAction(null);
         }
+
         onOpenChange(newOpen);
     }
 
@@ -85,6 +84,7 @@ export function BlockerModal({ open, onOpenChange, task, onSubmit }: BlockerModa
         }
 
         setIsSubmitting(true);
+
         try {
             await onSubmit({
                 taskId: task.id,
@@ -120,13 +120,16 @@ export function BlockerModal({ open, onOpenChange, task, onSubmit }: BlockerModa
                 </DialogHeader>
 
                 <div className="mt-4 space-y-4">
-                    {/* Blocker reason */}
-                    <div className="space-y-2">
-                        <Label htmlFor="blocker-reason" className="flex items-center gap-2">
-                            <AlertTriangle className="h-4 w-4 text-rose-400" />
-                            What's blocking this task?
-                            <span className="text-rose-400">*</span>
-                        </Label>
+                    <FormField
+                        id="blocker-reason"
+                        label={
+                            <span className="flex items-center gap-2">
+                                <AlertTriangle className="h-4 w-4 text-rose-400" />
+                                What's blocking this task?
+                            </span>
+                        }
+                        required
+                    >
                         <Textarea
                             id="blocker-reason"
                             value={reason}
@@ -134,15 +137,18 @@ export function BlockerModal({ open, onOpenChange, task, onSubmit }: BlockerModa
                             placeholder="e.g., Waiting for API documentation from backend team"
                             className="min-h-[80px] resize-none bg-background/50"
                         />
-                    </div>
+                    </FormField>
 
-                    {/* Blocker owner */}
-                    <div className="space-y-2">
-                        <Label htmlFor="blocker-owner" className="flex items-center gap-2">
-                            <User className="h-4 w-4 text-muted-foreground" />
-                            Who's responsible for unblocking?
-                            <span className="text-xs text-muted-foreground">(optional)</span>
-                        </Label>
+                    <FormField
+                        id="blocker-owner"
+                        label={
+                            <span className="flex items-center gap-2">
+                                <User className="h-4 w-4 text-muted-foreground" />
+                                Who's responsible for unblocking?
+                            </span>
+                        }
+                        hint="Optional — e.g., @sarah or Backend Team"
+                    >
                         <Input
                             id="blocker-owner"
                             value={blockerOwner}
@@ -150,58 +156,24 @@ export function BlockerModal({ open, onOpenChange, task, onSubmit }: BlockerModa
                             placeholder="e.g., @sarah or Backend Team"
                             className="bg-background/50"
                         />
-                    </div>
+                    </FormField>
 
-                    {/* Follow-up action */}
-                    <div className="space-y-2">
-                        <Label className="flex items-center gap-2">
-                            What's your next step?
-                            <span className="text-xs text-muted-foreground">(optional)</span>
-                        </Label>
+                    <FormField label="What's your next step?" hint="Optional">
                         <div className="grid grid-cols-3 gap-2">
-                            {followUpActions.map((action) => {
-                                const Icon = action.icon;
-                                const isSelected = followUpAction === action.value;
-
-                                return (
-                                    <button
-                                        key={action.value}
-                                        type="button"
-                                        onClick={() => setFollowUpAction(isSelected ? null : action.value)}
-                                        className={cn(
-                                            "p-3 rounded-lg border transition-all text-center",
-                                            "border-border hover:border-rose-500/30",
-                                            isSelected && action.colorClass,
-                                            isSelected && "ring-2 ring-offset-2 ring-offset-background",
-                                            isSelected && action.value === "remind" && "ring-blue-500/50",
-                                            isSelected && action.value === "switch" && "ring-purple-500/50",
-                                            isSelected && action.value === "wait" && "ring-amber-500/50"
-                                        )}
-                                    >
-                                        <Icon
-                                            className={cn(
-                                                "h-5 w-5 mx-auto mb-1",
-                                                isSelected ? action.colorClass.split(" ")[0] : "text-muted-foreground"
-                                            )}
-                                        />
-                                        <span
-                                            className={cn(
-                                                "text-xs font-medium",
-                                                isSelected ? action.colorClass.split(" ")[0] : "text-muted-foreground"
-                                            )}
-                                        >
-                                            {action.label}
-                                        </span>
-                                    </button>
-                                );
-                            })}
+                            {followUpActions.map((action) => (
+                                <SelectorButton
+                                    key={action.value}
+                                    selected={followUpAction === action.value}
+                                    onClick={() => setFollowUpAction(followUpAction === action.value ? null : action.value)}
+                                    icon={action.icon}
+                                    title={action.label}
+                                    description={action.description}
+                                    layout="column"
+                                    selectedClassName={action.selectedClass}
+                                />
+                            ))}
                         </div>
-                        {followUpAction && (
-                            <p className="text-xs text-muted-foreground mt-1">
-                                {followUpActions.find((a) => a.value === followUpAction)?.description}
-                            </p>
-                        )}
-                    </div>
+                    </FormField>
                 </div>
 
                 <DialogFooter className="mt-6">

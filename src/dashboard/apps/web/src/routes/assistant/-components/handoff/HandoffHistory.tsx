@@ -1,5 +1,6 @@
 import { Button } from "@ui/components/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@ui/components/select";
+import { MetaItem, MetaRow } from "@ui/custom";
 import { FeatureCard, FeatureCardContent, FeatureCardHeader } from "@ui/custom/feature-card-nexus";
 import { ArrowRight, Calendar, Check, ChevronRight, Clock, FileText, Filter, History, User } from "lucide-react";
 import { useState } from "react";
@@ -41,18 +42,16 @@ function HandoffCard({ handoff, onClick }: { handoff: HandoffDocument; onClick: 
                     <h4 className="font-semibold text-foreground truncate">{handoff.summary}</h4>
 
                     {/* Metadata row */}
-                    <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground font-mono">
-                        <div className="flex items-center gap-1">
-                            <User className="h-3 w-3 text-purple-400" />
+                    <MetaRow className="mt-2 font-mono">
+                        <MetaItem icon={<User className="text-purple-400" />}>
                             <span className="text-purple-400">{handoff.handedOffFrom}</span>
-                            <ArrowRight className="h-2.5 w-2.5" />
+                            <ArrowRight className="inline h-2.5 w-2.5 mx-0.5" />
                             <span className="text-emerald-400">{handoff.handedOffTo}</span>
-                        </div>
-                        <div className="flex items-center gap-1">
-                            <Calendar className="h-3 w-3" />
-                            <span>{formatHandoffRelativeTime(new Date(handoff.handoffAt))}</span>
-                        </div>
-                    </div>
+                        </MetaItem>
+                        <MetaItem icon={<Calendar />}>
+                            {formatHandoffRelativeTime(new Date(handoff.handoffAt))}
+                        </MetaItem>
+                    </MetaRow>
 
                     {/* Stats row */}
                     <div className="flex items-center gap-3 mt-2 text-xs">
