@@ -170,6 +170,23 @@ async function collectWifi(): Promise<string | null> {
     return parseWifiSsid(out);
 }
 
+// macOS `ps comm=` yields the full executable path. Surface a readable name:
+// the .app bundle name when present, otherwise the binary's basename.
+export function friendlyProcessName(comm: string): string {
+    const trimmed = comm.trim();
+    if (!trimmed) {
+        return "—";
+    }
+
+    const appMatch = trimmed.match(/\/([^/]+)\.app\//);
+    if (appMatch) {
+        return appMatch[1];
+    }
+
+    const base = trimmed.split("/").pop();
+    return base && base.length > 0 ? base : trimmed;
+}
+
 async function collectTopProcesses(): Promise<TopProcess[]> {
     const out = await runShell(["ps", "-axo", "pid=,rss=,etime=,comm="]);
 
@@ -181,7 +198,7 @@ async function collectTopProcesses(): Promise<TopProcess[]> {
     return rows
         .sort((a, b) => b.rssBytes - a.rssBytes)
         .slice(0, 5)
-        .map((r) => ({ pid: r.pid, name: r.name, rssBytes: r.rssBytes }));
+        .map((r) => ({ pid: r.pid, name: friendlyProcessName(r.name), rssBytes: r.rssBytes }));
 }
 
 export async function collectPulse(): Promise<PulseSnapshot> {

@@ -9,7 +9,7 @@ import { TasksTable } from "@/components/daemon/TasksTable";
 export function DaemonRoute() {
     const [selectedLogFile, setSelectedLogFile] = useState<string | null>(null);
 
-    const { data: overview } = useQuery({
+    const { data: overview, isLoading } = useQuery({
         queryKey: ["daemon", "status"],
         queryFn: (): Promise<DaemonOverview> => fetch("/api/daemon/status").then((r) => r.json()),
         refetchInterval: 5000,
@@ -20,6 +20,14 @@ export function DaemonRoute() {
         queryFn: (): Promise<RunSummary[]> => fetch("/api/daemon/runs?limit=20").then((r) => r.json()),
         refetchInterval: 5000,
     });
+
+    if (isLoading && !overview) {
+        return (
+            <div className="dd-panel flex h-[calc(100vh-2rem)] items-center justify-center text-[var(--dd-text-muted)]">
+                Loading daemon status…
+            </div>
+        );
+    }
 
     return (
         <div className="flex flex-col gap-4 p-2">

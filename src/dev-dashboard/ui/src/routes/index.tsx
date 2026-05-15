@@ -101,6 +101,14 @@ export function IndexRoute() {
 
     const s = snap.data;
 
+    if (snap.isLoading && !s) {
+        return (
+            <div className="dd-panel flex h-[calc(100vh-2rem)] items-center justify-center font-mono text-[var(--dd-text-muted)]">
+                Loading system pulse…
+            </div>
+        );
+    }
+
     return (
         <div className="flex flex-col gap-4 font-mono">
             <h1 className="dd-accent-text text-2xl font-bold tracking-widest">SYSTEM PULSE_</h1>

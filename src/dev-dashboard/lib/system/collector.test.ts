@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { parseBattery, parseCpuIdlePct, parseDfRoot, parseVmStat, parseWifiSsid } from "./collector";
+import {
+    friendlyProcessName,
+    parseBattery,
+    parseCpuIdlePct,
+    parseDfRoot,
+    parseVmStat,
+    parseWifiSsid,
+} from "./collector";
 
 const TOP_OUT = `Processes: 1790 total, 17 running, 1773 sleeping, 14680 threads
 2026/05/15 16:45:26
@@ -76,5 +83,25 @@ describe("parseWifiSsid", () => {
 
     test("returns null when not associated", () => {
         expect(parseWifiSsid(WIFI_NOT_ASSOCIATED)).toBeNull();
+    });
+});
+
+describe("friendlyProcessName", () => {
+    test("extracts the .app bundle name", () => {
+        expect(friendlyProcessName("/Applications/Android Studio.app/Contents/MacOS/studio")).toBe(
+            "Android Studio"
+        );
+    });
+
+    test("falls back to the binary basename", () => {
+        expect(friendlyProcessName("/Users/Martin/.bun/install/global/node_modules/.bin/node")).toBe("node");
+    });
+
+    test("returns a dash for empty input", () => {
+        expect(friendlyProcessName("   ")).toBe("—");
+    });
+
+    test("returns input unchanged when there is no path separator", () => {
+        expect(friendlyProcessName("bun")).toBe("bun");
     });
 });
