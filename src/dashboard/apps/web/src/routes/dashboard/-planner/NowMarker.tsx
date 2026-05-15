@@ -15,10 +15,7 @@ export function NowMarker({ topPx }: NowMarkerProps) {
     }, []);
 
     return (
-        <div
-            className="pointer-events-none absolute inset-x-0 z-20 flex items-center"
-            style={{ top: `${topPx}px` }}
-        >
+        <div className="pointer-events-none absolute inset-x-0 z-20 flex items-center" style={{ top: `${topPx}px` }}>
             {/* Glowing dot on the left */}
             <div
                 className={[

@@ -1,5 +1,5 @@
-import type { Timer } from "@/drizzle";
 import { useEffect, useRef, useState } from "react";
+import type { Timer } from "@/drizzle";
 import { computeLiveElapsed, computePomodoroTarget } from "@/lib/timer/timer-state-machine";
 
 /**
@@ -8,10 +8,7 @@ import { computeLiveElapsed, computePomodoroTarget } from "@/lib/timer/timer-sta
  * Reads elapsed from server snapshot and interpolates locally for smooth display.
  * Never writes — all mutations go through server action server functions.
  */
-export function useTimerEngine(
-    timer: Timer | null | undefined,
-    options?: { onTargetReached?: () => void }
-) {
+export function useTimerEngine(timer: Timer | null | undefined, options?: { onTargetReached?: () => void }) {
     const isRunning = Boolean(timer?.isRunning);
 
     const [nowMs, setNowMs] = useState(() => Date.now());

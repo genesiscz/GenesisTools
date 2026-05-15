@@ -18,9 +18,7 @@ export function SettingRow({ label, description, children, className }: SettingR
         <div className={cn("flex items-center justify-between gap-4 py-2", className)}>
             <div className="space-y-0.5 min-w-0">
                 <Label className="text-sm text-foreground cursor-default">{label}</Label>
-                {description && (
-                    <p className="text-xs text-muted-foreground font-mono leading-snug">{description}</p>
-                )}
+                {description && <p className="text-xs text-muted-foreground font-mono leading-snug">{description}</p>}
             </div>
             <div className="shrink-0">{children}</div>
         </div>

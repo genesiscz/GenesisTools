@@ -1,11 +1,7 @@
-import { describe, expect, it } from "vitest";
 import { DEFAULT_POMODORO_SETTINGS } from "@dashboard/shared";
-import {
-    applyAction,
-    computeLiveElapsed,
-    computePomodoroTarget,
-} from "../timer-state-machine";
+import { describe, expect, it } from "vitest";
 import type { Timer } from "@/drizzle";
+import { applyAction, computeLiveElapsed, computePomodoroTarget } from "../timer-state-machine";
 
 const T0_MS = new Date("2026-05-15T10:00:00Z").getTime();
 const T_PLUS_5SEC_MS = T0_MS + 5_000;

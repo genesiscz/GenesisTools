@@ -1,7 +1,6 @@
 import { Link, useLocation } from "@tanstack/react-router";
 import { AppSidebar as SharedAppSidebar, type SidebarNavGroup } from "@ui/custom";
 import { useAuth } from "@workos/authkit-tanstack-react-start/client";
-import { useFocusSession } from "@/routes/dashboard/-focus";
 import {
     BarChart3,
     Bookmark,
@@ -19,6 +18,7 @@ import {
     Timer,
     User,
 } from "lucide-react";
+import { useFocusSession } from "@/routes/dashboard/-focus";
 
 const mainNavItems = [
     {

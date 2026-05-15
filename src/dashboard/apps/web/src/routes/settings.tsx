@@ -1,12 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { Bell, Database, Globe, Monitor, Moon, Palette, Shield, Sun } from "lucide-react";
-import { toast } from "sonner";
-import { DashboardLayout } from "@/components/dashboard";
-import { SettingCard, SettingRow } from "@/components/settings";
 import { Button } from "@ui/components/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@ui/components/select";
 import { Separator } from "@ui/components/separator";
 import { Switch } from "@ui/components/switch";
+import { Bell, Database, Globe, Monitor, Moon, Palette, Shield, Sun } from "lucide-react";
+import { toast } from "sonner";
+import { DashboardLayout } from "@/components/dashboard";
+import { SettingCard, SettingRow } from "@/components/settings";
 import { useSettings } from "@/lib/hooks/useSettings";
 
 export const Route = createFileRoute("/settings")({
@@ -65,9 +65,7 @@ function SettingsPage() {
                     <SettingRow label="Scan Lines Effect" description="Enable retro CRT scan lines">
                         <Switch
                             checked={settings.scanLinesEffect}
-                            onCheckedChange={(checked) =>
-                                handleSettingChange("scanLinesEffect", checked, "Scan lines")
-                            }
+                            onCheckedChange={(checked) => handleSettingChange("scanLinesEffect", checked, "Scan lines")}
                             className="data-[state=checked]:bg-primary"
                         />
                     </SettingRow>
@@ -115,9 +113,7 @@ function SettingsPage() {
                     <SettingRow label="Sound Effects" description="Play sounds for timer events">
                         <Switch
                             checked={settings.soundEffects}
-                            onCheckedChange={(checked) =>
-                                handleSettingChange("soundEffects", checked, "Sound effects")
-                            }
+                            onCheckedChange={(checked) => handleSettingChange("soundEffects", checked, "Sound effects")}
                             className="data-[state=checked]:bg-accent"
                         />
                     </SettingRow>
@@ -153,9 +149,7 @@ function SettingsPage() {
                     <SettingRow label="Local Storage" description="Keep data offline">
                         <Switch
                             checked={settings.localStorage}
-                            onCheckedChange={(checked) =>
-                                handleSettingChange("localStorage", checked, "Local storage")
-                            }
+                            onCheckedChange={(checked) => handleSettingChange("localStorage", checked, "Local storage")}
                             className="data-[state=checked]:bg-secondary"
                         />
                     </SettingRow>

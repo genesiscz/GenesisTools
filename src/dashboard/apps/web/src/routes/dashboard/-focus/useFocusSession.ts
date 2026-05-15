@@ -3,10 +3,10 @@ import { DEFAULT_POMODORO_SETTINGS } from "@dashboard/shared";
 import { useAuth } from "@workos/authkit-tanstack-react-start/client";
 import { useEffect, useRef, useState } from "react";
 import { CHRONO_SYNC_CHANNEL, useBroadcastInvalidation } from "@/lib/sync/useBroadcastInvalidation";
-import { computeLiveElapsed, computePomodoroTarget } from "@/lib/timer/timer-state-machine";
 import { useTimer } from "@/lib/timer/hooks/useTimer";
 import { useTimerSSE } from "@/lib/timer/hooks/useTimerSSE";
 import { useTimerStore } from "@/lib/timer/hooks/useTimerStore";
+import { computeLiveElapsed, computePomodoroTarget } from "@/lib/timer/timer-state-machine";
 
 /** Dev fallback userId when no WorkOS session is present. */
 const DEV_USER_ID = "dev-user";
@@ -59,7 +59,12 @@ export function useFocusSession() {
 
     const settings: PomodoroSettings =
         (focusTimer?.pomodoroSettings as PomodoroSettings | null | undefined) ?? DEFAULT_POMODORO_SETTINGS;
-    const target = computePomodoroTarget(focusTimer ?? { timerType: "pomodoro", pomodoroPhase: "work", pomodoroSettings: null } as Parameters<typeof computePomodoroTarget>[0]);
+    const target = computePomodoroTarget(
+        focusTimer ??
+            ({ timerType: "pomodoro", pomodoroPhase: "work", pomodoroSettings: null } as Parameters<
+                typeof computePomodoroTarget
+            >[0])
+    );
 
     // Live elapsed: use engine's displayTime when we have a timer; fall back to 0
     const elapsedMs = focusTimer ? computeLiveElapsed(focusTimer, Date.now()) : 0;

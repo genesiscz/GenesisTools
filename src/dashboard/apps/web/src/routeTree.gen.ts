@@ -33,6 +33,7 @@ import { Route as AssistantNextRouteImport } from './routes/assistant/next'
 import { Route as AssistantDecisionsRouteImport } from './routes/assistant/decisions'
 import { Route as AssistantCommunicationRouteImport } from './routes/assistant/communication'
 import { Route as AssistantAnalyticsRouteImport } from './routes/assistant/analytics'
+import { Route as ApiTimerEventsRouteImport } from './routes/api.timer-events'
 import { Route as ApiEventsRouteImport } from './routes/api.events'
 import { Route as AssistantTasksIndexRouteImport } from './routes/assistant/tasks/index'
 import { Route as AssistantTasksTaskIdRouteImport } from './routes/assistant/tasks/$taskId'
@@ -157,6 +158,11 @@ const AssistantAnalyticsRoute = AssistantAnalyticsRouteImport.update({
   path: '/assistant/analytics',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiTimerEventsRoute = ApiTimerEventsRouteImport.update({
+  id: '/api/timer-events',
+  path: '/api/timer-events',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiEventsRoute = ApiEventsRouteImport.update({
   id: '/api/events',
   path: '/api/events',
@@ -179,6 +185,7 @@ export interface FileRoutesByFullPath {
   '/profile': typeof ProfileRoute
   '/settings': typeof SettingsRoute
   '/api/events': typeof ApiEventsRoute
+  '/api/timer-events': typeof ApiTimerEventsRoute
   '/assistant/analytics': typeof AssistantAnalyticsRoute
   '/assistant/communication': typeof AssistantCommunicationRoute
   '/assistant/decisions': typeof AssistantDecisionsRoute
@@ -208,6 +215,7 @@ export interface FileRoutesByTo {
   '/profile': typeof ProfileRoute
   '/settings': typeof SettingsRoute
   '/api/events': typeof ApiEventsRoute
+  '/api/timer-events': typeof ApiTimerEventsRoute
   '/assistant/analytics': typeof AssistantAnalyticsRoute
   '/assistant/communication': typeof AssistantCommunicationRoute
   '/assistant/decisions': typeof AssistantDecisionsRoute
@@ -238,6 +246,7 @@ export interface FileRoutesById {
   '/profile': typeof ProfileRoute
   '/settings': typeof SettingsRoute
   '/api/events': typeof ApiEventsRoute
+  '/api/timer-events': typeof ApiTimerEventsRoute
   '/assistant/analytics': typeof AssistantAnalyticsRoute
   '/assistant/communication': typeof AssistantCommunicationRoute
   '/assistant/decisions': typeof AssistantDecisionsRoute
@@ -269,6 +278,7 @@ export interface FileRouteTypes {
     | '/profile'
     | '/settings'
     | '/api/events'
+    | '/api/timer-events'
     | '/assistant/analytics'
     | '/assistant/communication'
     | '/assistant/decisions'
@@ -298,6 +308,7 @@ export interface FileRouteTypes {
     | '/profile'
     | '/settings'
     | '/api/events'
+    | '/api/timer-events'
     | '/assistant/analytics'
     | '/assistant/communication'
     | '/assistant/decisions'
@@ -327,6 +338,7 @@ export interface FileRouteTypes {
     | '/profile'
     | '/settings'
     | '/api/events'
+    | '/api/timer-events'
     | '/assistant/analytics'
     | '/assistant/communication'
     | '/assistant/decisions'
@@ -357,6 +369,7 @@ export interface RootRouteChildren {
   ProfileRoute: typeof ProfileRoute
   SettingsRoute: typeof SettingsRoute
   ApiEventsRoute: typeof ApiEventsRoute
+  ApiTimerEventsRoute: typeof ApiTimerEventsRoute
   AssistantAnalyticsRoute: typeof AssistantAnalyticsRoute
   AssistantCommunicationRoute: typeof AssistantCommunicationRoute
   AssistantDecisionsRoute: typeof AssistantDecisionsRoute
@@ -551,6 +564,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AssistantAnalyticsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/timer-events': {
+      id: '/api/timer-events'
+      path: '/api/timer-events'
+      fullPath: '/api/timer-events'
+      preLoaderRoute: typeof ApiTimerEventsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/events': {
       id: '/api/events'
       path: '/api/events'
@@ -581,6 +601,7 @@ const rootRouteChildren: RootRouteChildren = {
   ProfileRoute: ProfileRoute,
   SettingsRoute: SettingsRoute,
   ApiEventsRoute: ApiEventsRoute,
+  ApiTimerEventsRoute: ApiTimerEventsRoute,
   AssistantAnalyticsRoute: AssistantAnalyticsRoute,
   AssistantCommunicationRoute: AssistantCommunicationRoute,
   AssistantDecisionsRoute: AssistantDecisionsRoute,

@@ -7,11 +7,11 @@ import {
     DialogHeader,
     DialogTitle,
 } from "@ui/components/dialog";
+import { Input } from "@ui/components/input";
 import { Textarea } from "@ui/components/textarea";
 import { FormField, SelectorButton } from "@ui/custom";
 import { AlertTriangle, ArrowRight, Ban, Bell, Timer, User } from "lucide-react";
 import { useState } from "react";
-import { Input } from "@ui/components/input";
 import type { BlockerFollowUpAction, Task, TaskBlockerInput } from "@/lib/assistant/types";
 
 interface BlockerModalProps {
@@ -164,7 +164,9 @@ export function BlockerModal({ open, onOpenChange, task, onSubmit }: BlockerModa
                                 <SelectorButton
                                     key={action.value}
                                     selected={followUpAction === action.value}
-                                    onClick={() => setFollowUpAction(followUpAction === action.value ? null : action.value)}
+                                    onClick={() =>
+                                        setFollowUpAction(followUpAction === action.value ? null : action.value)
+                                    }
                                     icon={action.icon}
                                     title={action.label}
                                     description={action.description}

@@ -40,10 +40,7 @@ function DraggableInboxItem({ task, onFocus }: DraggableInboxItemProps) {
             <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium text-zinc-100">{task.title}</p>
                 {task.deadline && (
-                    <p
-                        className="text-[10px] text-zinc-500"
-                        style={{ fontFamily: "'JetBrains Mono', monospace" }}
-                    >
+                    <p className="text-[10px] text-zinc-500" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
                         due {new Date(task.deadline).toLocaleDateString()}
                     </p>
                 )}
@@ -84,10 +81,7 @@ export function PlannerInbox({ tasks }: PlannerInboxProps) {
         <div className="flex w-72 shrink-0 flex-col gap-2 rounded-xl border border-white/5 bg-zinc-900/60 p-3 backdrop-blur-sm">
             <div className="flex items-center justify-between px-1">
                 <h3 className="text-xs font-semibold uppercase tracking-widest text-zinc-400">Inbox</h3>
-                <span
-                    className="text-[10px] text-zinc-600"
-                    style={{ fontFamily: "'JetBrains Mono', monospace" }}
-                >
+                <span className="text-[10px] text-zinc-600" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
                     {tasks.length} task{tasks.length !== 1 ? "s" : ""}
                 </span>
             </div>

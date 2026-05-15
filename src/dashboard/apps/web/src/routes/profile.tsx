@@ -1,14 +1,14 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useAuth } from "@workos/authkit-tanstack-react-start/client";
-import { AlertTriangle, Calendar, Camera, Check, Github, Link2, Mail, Trash2, User, X } from "lucide-react";
-import { DashboardLayout } from "@/components/dashboard";
-import { SettingCard, SettingRow } from "@/components/settings";
 import { Avatar, AvatarFallback, AvatarImage } from "@ui/components/avatar";
 import { Badge } from "@ui/components/badge";
 import { Button } from "@ui/components/button";
 import { Input } from "@ui/components/input";
 import { Label } from "@ui/components/label";
 import { Separator } from "@ui/components/separator";
+import { useAuth } from "@workos/authkit-tanstack-react-start/client";
+import { AlertTriangle, Calendar, Camera, Check, Github, Link2, Mail, Trash2, User, X } from "lucide-react";
+import { DashboardLayout } from "@/components/dashboard";
+import { SettingCard, SettingRow } from "@/components/settings";
 
 export const Route = createFileRoute("/profile")({
     component: ProfilePage,
@@ -74,7 +74,11 @@ function ProfilePage() {
                                     <Camera className="h-3 w-3 mr-2" />
                                     Upload
                                 </Button>
-                                <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-amber-400">
+                                <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="text-muted-foreground hover:text-amber-400"
+                                >
                                     Remove
                                 </Button>
                             </div>

@@ -8,10 +8,7 @@ export const Route = createFileRoute("/dashboard/focus")({
 
 function FocusModePage() {
     return (
-        <DashboardLayout
-            title="Focus Mode"
-            description="Deep work sessions with Pomodoro technique"
-        >
+        <DashboardLayout title="Focus Mode" description="Deep work sessions with Pomodoro technique">
             <FocusHero />
         </DashboardLayout>
     );

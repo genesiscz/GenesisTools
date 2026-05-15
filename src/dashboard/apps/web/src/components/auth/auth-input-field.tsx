@@ -13,15 +13,7 @@ interface AuthInputFieldProps extends React.InputHTMLAttributes<HTMLInputElement
  * AuthInputField — neon amber-bordered input with optional leading icon.
  * Matches the amber-500/20 auth form aesthetic across all auth routes.
  */
-export function AuthInputField({
-    icon,
-    label,
-    description,
-    error,
-    id,
-    className,
-    ...props
-}: AuthInputFieldProps) {
+export function AuthInputField({ icon, label, description, error, id, className, ...props }: AuthInputFieldProps) {
     return (
         <div className="space-y-2">
             {label && (
@@ -48,12 +40,8 @@ export function AuthInputField({
                     {...props}
                 />
             </div>
-            {description && !error && (
-                <p className="text-xs text-gray-500">{description}</p>
-            )}
-            {error && (
-                <p className="text-xs text-red-400">{error}</p>
-            )}
+            {description && !error && <p className="text-xs text-gray-500">{description}</p>}
+            {error && <p className="text-xs text-red-400">{error}</p>}
         </div>
     );
 }

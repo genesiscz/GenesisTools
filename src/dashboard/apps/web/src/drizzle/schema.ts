@@ -119,7 +119,7 @@ export const assistantTasks = sqliteTable(
 
         // Scheduling
         scheduledStart: text("scheduled_start"), // ISO datetime or null
-        scheduledEnd: text("scheduled_end"),     // ISO datetime or null
+        scheduledEnd: text("scheduled_end"), // ISO datetime or null
 
         // Status & tracking
         status: text("status")

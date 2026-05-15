@@ -4,10 +4,7 @@ import type React from "react";
 
 type SettingCardTint = "primary" | "accent" | "secondary" | "muted" | "destructive";
 
-const tintMap: Record<
-    SettingCardTint,
-    { border: string; borderHover: string; iconBg: string; iconColor: string }
-> = {
+const tintMap: Record<SettingCardTint, { border: string; borderHover: string; iconBg: string; iconColor: string }> = {
     primary: {
         border: "border-primary/20",
         borderHover: "hover:border-primary/40",
@@ -53,14 +50,7 @@ interface SettingCardProps {
  * SettingCard — a themed glassmorphic group container for setting rows.
  * Wraps Card with neon tint border, icon badge, title, and description.
  */
-export function SettingCard({
-    title,
-    description,
-    icon,
-    tint = "primary",
-    children,
-    className,
-}: SettingCardProps) {
+export function SettingCard({ title, description, icon, tint = "primary", children, className }: SettingCardProps) {
     const colors = tintMap[tint];
 
     return (
@@ -81,9 +71,7 @@ export function SettingCard({
                     )}
                     <div>
                         <CardTitle className="text-base">{title}</CardTitle>
-                        {description && (
-                            <CardDescription className="text-xs">{description}</CardDescription>
-                        )}
+                        {description && <CardDescription className="text-xs">{description}</CardDescription>}
                     </div>
                 </div>
             </CardHeader>

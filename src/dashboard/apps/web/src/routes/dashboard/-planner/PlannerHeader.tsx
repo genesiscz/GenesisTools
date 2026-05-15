@@ -1,5 +1,5 @@
-import { Calendar, LayoutList } from "lucide-react";
 import { ViewModeToggle } from "@ui/custom";
+import { Calendar, LayoutList } from "lucide-react";
 
 export type PlannerView = "day" | "list";
 
@@ -33,10 +33,7 @@ export function PlannerHeader({ view, onViewChange, scheduledCount, inboxCount }
         >
             <div>
                 <h2 className="text-base font-semibold text-zinc-100">Daily Planner</h2>
-                <p
-                    className="text-xs text-zinc-500"
-                    style={{ fontFamily: "'JetBrains Mono', monospace" }}
-                >
+                <p className="text-xs text-zinc-500" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
                     {todayLabel()} &middot; {scheduledCount} scheduled &middot; {inboxCount} in inbox
                 </p>
             </div>

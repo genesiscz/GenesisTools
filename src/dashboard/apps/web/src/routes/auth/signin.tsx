@@ -1,10 +1,10 @@
 import { createFileRoute, Link, useNavigate, useSearch } from "@tanstack/react-router";
+import { Button } from "@ui/components/button";
 import { Github, Loader2, Lock, Mail } from "lucide-react";
 import { useState } from "react";
 import { AuthAlertBanner, AuthInputField, AuthLayout, OAuthButton } from "@/components/auth";
 import type { AuthError } from "@/lib/auth-actions";
 import { getOAuthUrlFn, signInFn } from "@/lib/auth-actions";
-import { Button } from "@ui/components/button";
 
 export const Route = createFileRoute("/auth/signin")({
     component: SignInPage,

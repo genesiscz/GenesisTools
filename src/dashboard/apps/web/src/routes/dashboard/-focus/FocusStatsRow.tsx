@@ -30,12 +30,7 @@ export function FocusStatsRow({ timeFocusedTodayMs, sessionsToday, dayStreak }: 
                 label="POMODOROS"
                 valueColor="text-purple-400"
             />
-            <StatTile
-                icon={<Flame />}
-                value={dayStreak.toString()}
-                label="DAY STREAK"
-                valueColor="text-rose-400"
-            />
+            <StatTile icon={<Flame />} value={dayStreak.toString()} label="DAY STREAK" valueColor="text-rose-400" />
         </div>
     );
 }

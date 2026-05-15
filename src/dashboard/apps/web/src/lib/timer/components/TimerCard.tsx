@@ -319,9 +319,9 @@ export const TimerCard = memo(function TimerCard({ timerId, userId, onDelete, on
                 {/* Laps list (stopwatch only) - compact with max height */}
                 {timer.timerType === "stopwatch" && timer.laps && timer.laps.length > 0 && (
                     <LapsList
-                        laps={(timer.laps as { number: number; lapTime: number; splitTime: number; timestamp: string }[]).map(
-                            (l) => ({ ...l, timestamp: new Date(l.timestamp) })
-                        )}
+                        laps={(
+                            timer.laps as { number: number; lapTime: number; splitTime: number; timestamp: string }[]
+                        ).map((l) => ({ ...l, timestamp: new Date(l.timestamp) }))}
                         onClear={clearLaps}
                         className="mt-2"
                     />

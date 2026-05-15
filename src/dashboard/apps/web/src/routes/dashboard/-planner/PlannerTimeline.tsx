@@ -45,10 +45,7 @@ function DroppableTimeline({ children }: { children: React.ReactNode }) {
     return (
         <div
             ref={setNodeRef}
-            className={[
-                "relative transition-colors duration-150",
-                isOver ? "bg-white/5" : "",
-            ].join(" ")}
+            className={["relative transition-colors duration-150", isOver ? "bg-white/5" : ""].join(" ")}
             style={{ height: TIMELINE_HEIGHT }}
         >
             {children}

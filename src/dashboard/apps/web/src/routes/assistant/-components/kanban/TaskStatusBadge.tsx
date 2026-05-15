@@ -1,6 +1,6 @@
-import type { TaskStatus } from "@/lib/assistant/types";
 import { StatusBadge } from "@ui/custom";
 import { Ban, CheckCircle, Circle, Play } from "lucide-react";
+import type { TaskStatus } from "@/lib/assistant/types";
 
 const statusConfig: Record<
     TaskStatus,

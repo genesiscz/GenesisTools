@@ -12,7 +12,7 @@ const START_HOUR = 6;
 function offsetToIso(offsetPx: number, durationMs: number, referenceDate: Date): { start: string; end: string } {
     const fractionalHour = START_HOUR + offsetPx / PX_PER_HOUR;
     // Snap to nearest 15-minute slot
-    const totalMinutes = Math.round(fractionalHour * 60 / 15) * 15;
+    const totalMinutes = Math.round((fractionalHour * 60) / 15) * 15;
     const hours = Math.floor(totalMinutes / 60);
     const minutes = totalMinutes % 60;
 
