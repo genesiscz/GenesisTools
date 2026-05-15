@@ -472,3 +472,48 @@ export const getProductivityStats = createServerFn({ method: "GET" })
             pomodoroCompleted,
         };
     });
+
+export interface FocusStatsForToday {
+    timeFocusedTodayMs: number;
+    sessionsToday: number;
+}
+
+export const aggregateFocusStats = createServerFn({ method: "GET" })
+    .inputValidator((d: { userId: string }) => d)
+    .handler(({ data }): FocusStatsForToday => {
+        // UTC start of today and start of tomorrow for lexicographic ISO comparison
+        const now = new Date();
+        const startOfToday = new Date(now);
+        startOfToday.setUTCHours(0, 0, 0, 0);
+        const startOfTomorrow = new Date(startOfToday);
+        startOfTomorrow.setUTCDate(startOfTomorrow.getUTCDate() + 1);
+
+        const rows = db
+            .select()
+            .from(activityLogs)
+            .where(
+                and(
+                    eq(activityLogs.userId, data.userId),
+                    gte(activityLogs.timestamp, startOfToday.toISOString()),
+                    lt(activityLogs.timestamp, startOfTomorrow.toISOString())
+                )
+            )
+            .all();
+
+        let timeFocusedTodayMs = 0;
+        let sessionsToday = 0;
+
+        for (const row of rows) {
+            if (
+                row.eventType === "pause" &&
+                row.newValue !== null &&
+                row.previousValue !== null &&
+                row.newValue > row.previousValue
+            ) {
+                timeFocusedTodayMs += row.newValue - row.previousValue;
+                sessionsToday += 1;
+            }
+        }
+
+        return { timeFocusedTodayMs, sessionsToday };
+    });
