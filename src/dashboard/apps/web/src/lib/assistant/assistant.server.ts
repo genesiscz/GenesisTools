@@ -10,7 +10,6 @@
  * - No PowerSync complexity - just REST-like endpoints
  */
 
-import { SafeJSON } from "@dashboard/shared";
 import { createServerFn } from "@tanstack/react-start";
 import { and, desc, eq } from "drizzle-orm";
 import {
@@ -59,23 +58,6 @@ import {
     type NewAssistantWeeklyReview,
 } from "@/drizzle";
 
-// ============================================
-// Helper: Parse JSONB fields from neon-http
-// ============================================
-
-function parseJsonbField<T>(value: unknown, fallback: T): T {
-    if (value === null || value === undefined) {
-        return fallback;
-    }
-    if (typeof value === "string") {
-        try {
-            return SafeJSON.parse(value) as T;
-        } catch {
-            return fallback;
-        }
-    }
-    return value as T;
-}
 
 // ============================================
 // Tasks CRUD
@@ -85,19 +67,16 @@ export const getAssistantTasks = createServerFn({
     method: "GET",
 })
     .inputValidator((d: { userId: string }) => d)
-    .handler(async ({ data }): Promise<AssistantTask[]> => {
+    .handler(({ data }): AssistantTask[] => {
         try {
-            const results = await db
+            const results = db
                 .select()
                 .from(assistantTasks)
                 .where(eq(assistantTasks.userId, data.userId))
-                .orderBy(desc(assistantTasks.updatedAt));
+                .orderBy(desc(assistantTasks.updatedAt))
+                .all();
 
-            return results.map((task) => ({
-                ...task,
-                blockedBy: parseJsonbField<string[]>(task.blockedBy, []),
-                blocks: parseJsonbField<string[]>(task.blocks, []),
-            }));
+            return results;
         } catch (error) {
             console.error("[Assistant] getAssistantTasks error:", error);
             return [];
@@ -108,9 +87,9 @@ export const getAssistantTask = createServerFn({
     method: "GET",
 })
     .inputValidator((d: { id: string }) => d)
-    .handler(async ({ data }): Promise<AssistantTask | null> => {
+    .handler(({ data }): AssistantTask | null => {
         try {
-            const [result] = await db.select().from(assistantTasks).where(eq(assistantTasks.id, data.id)).limit(1);
+            const result = db.select().from(assistantTasks).where(eq(assistantTasks.id, data.id)).get();
 
             if (!result) {
                 return null;
@@ -118,8 +97,6 @@ export const getAssistantTask = createServerFn({
 
             return {
                 ...result,
-                blockedBy: parseJsonbField<string[]>(result.blockedBy, []),
-                blocks: parseJsonbField<string[]>(result.blocks, []),
             };
         } catch (error) {
             console.error("[Assistant] getAssistantTask error:", error);
@@ -131,9 +108,9 @@ export const createAssistantTask = createServerFn({
     method: "POST",
 })
     .inputValidator((d: NewAssistantTask) => d)
-    .handler(async ({ data }): Promise<AssistantTask | null> => {
+    .handler(({ data }): AssistantTask | null => {
         try {
-            const [result] = await db.insert(assistantTasks).values(data).returning();
+            const result = db.insert(assistantTasks).values(data).returning().get();
             return result ?? null;
         } catch (error) {
             console.error("[Assistant] createAssistantTask error:", error);
@@ -145,16 +122,17 @@ export const updateAssistantTask = createServerFn({
     method: "POST",
 })
     .inputValidator((d: { id: string; data: Partial<NewAssistantTask> }) => d)
-    .handler(async ({ data: input }): Promise<AssistantTask | null> => {
+    .handler(({ data: input }): AssistantTask | null => {
         try {
-            const [result] = await db
+            const result = db
                 .update(assistantTasks)
                 .set({
                     ...input.data,
                     updatedAt: new Date().toISOString(),
                 })
                 .where(eq(assistantTasks.id, input.id))
-                .returning();
+                .returning()
+                .get();
 
             return result ?? null;
         } catch (error) {
@@ -167,9 +145,9 @@ export const deleteAssistantTask = createServerFn({
     method: "POST",
 })
     .inputValidator((d: { id: string }) => d)
-    .handler(async ({ data }): Promise<{ success: boolean }> => {
+    .handler(({ data }): { success: boolean } => {
         try {
-            await db.delete(assistantTasks).where(eq(assistantTasks.id, data.id));
+            db.delete(assistantTasks).where(eq(assistantTasks.id, data.id)).run();
             return { success: true };
         } catch (error) {
             console.error("[Assistant] deleteAssistantTask error:", error);
@@ -185,18 +163,16 @@ export const getAssistantContextParkings = createServerFn({
     method: "GET",
 })
     .inputValidator((d: { userId: string }) => d)
-    .handler(async ({ data }): Promise<AssistantContextParking[]> => {
+    .handler(({ data }): AssistantContextParking[] => {
         try {
-            const results = await db
+            const results = db
                 .select()
                 .from(assistantContextParking)
                 .where(eq(assistantContextParking.userId, data.userId))
-                .orderBy(desc(assistantContextParking.parkedAt));
+                .orderBy(desc(assistantContextParking.parkedAt))
+                .all();
 
-            return results.map((item) => ({
-                ...item,
-                codeContext: parseJsonbField(item.codeContext, undefined),
-            }));
+            return results;
         } catch (error) {
             console.error("[Assistant] getAssistantContextParkings error:", error);
             return [];
@@ -207,9 +183,9 @@ export const createAssistantContextParking = createServerFn({
     method: "POST",
 })
     .inputValidator((d: NewAssistantContextParking) => d)
-    .handler(async ({ data }): Promise<AssistantContextParking | null> => {
+    .handler(({ data }): AssistantContextParking | null => {
         try {
-            const [result] = await db.insert(assistantContextParking).values(data).returning();
+            const result = db.insert(assistantContextParking).values(data).returning().get();
             return result ?? null;
         } catch (error) {
             console.error("[Assistant] createAssistantContextParking error:", error);
@@ -221,13 +197,14 @@ export const updateAssistantContextParking = createServerFn({
     method: "POST",
 })
     .inputValidator((d: { id: string; data: Partial<NewAssistantContextParking> }) => d)
-    .handler(async ({ data: input }): Promise<AssistantContextParking | null> => {
+    .handler(({ data: input }): AssistantContextParking | null => {
         try {
-            const [result] = await db
+            const result = db
                 .update(assistantContextParking)
                 .set(input.data)
                 .where(eq(assistantContextParking.id, input.id))
-                .returning();
+                .returning()
+                .get();
 
             return result ?? null;
         } catch (error) {
@@ -244,19 +221,17 @@ export const getAssistantCompletions = createServerFn({
     method: "GET",
 })
     .inputValidator((d: { userId: string; limit?: number }) => d)
-    .handler(async ({ data }): Promise<AssistantCompletion[]> => {
+    .handler(({ data }): AssistantCompletion[] => {
         try {
-            const results = await db
+            const results = db
                 .select()
                 .from(assistantCompletions)
                 .where(eq(assistantCompletions.userId, data.userId))
                 .orderBy(desc(assistantCompletions.completedAt))
-                .limit(data.limit ?? 100);
+                .limit(data.limit ?? 100)
+                .all();
 
-            return results.map((item) => ({
-                ...item,
-                metadata: parseJsonbField(item.metadata, {}),
-            }));
+            return results;
         } catch (error) {
             console.error("[Assistant] getAssistantCompletions error:", error);
             return [];
@@ -267,9 +242,9 @@ export const createAssistantCompletion = createServerFn({
     method: "POST",
 })
     .inputValidator((d: NewAssistantCompletion) => d)
-    .handler(async ({ data }): Promise<AssistantCompletion | null> => {
+    .handler(({ data }): AssistantCompletion | null => {
         try {
-            const [result] = await db.insert(assistantCompletions).values(data).returning();
+            const result = db.insert(assistantCompletions).values(data).returning().get();
             return result ?? null;
         } catch (error) {
             console.error("[Assistant] createAssistantCompletion error:", error);
@@ -285,13 +260,14 @@ export const getAssistantStreak = createServerFn({
     method: "GET",
 })
     .inputValidator((d: { userId: string }) => d)
-    .handler(async ({ data }): Promise<AssistantStreak | null> => {
+    .handler(({ data }): AssistantStreak | null => {
         try {
-            const [result] = await db
+            const result = db
                 .select()
                 .from(assistantStreaks)
                 .where(eq(assistantStreaks.userId, data.userId))
-                .limit(1);
+                .limit(1)
+                .get();
 
             return result ?? null;
         } catch (error) {
@@ -304,9 +280,9 @@ export const upsertAssistantStreak = createServerFn({
     method: "POST",
 })
     .inputValidator((d: NewAssistantStreak) => d)
-    .handler(async ({ data }): Promise<AssistantStreak | null> => {
+    .handler(({ data }): AssistantStreak | null => {
         try {
-            const [result] = await db
+            const result = db
                 .insert(assistantStreaks)
                 .values(data)
                 .onConflictDoUpdate({
@@ -318,7 +294,8 @@ export const upsertAssistantStreak = createServerFn({
                         streakResetDate: data.streakResetDate,
                     },
                 })
-                .returning();
+                .returning()
+                .get();
 
             return result ?? null;
         } catch (error) {
@@ -335,13 +312,14 @@ export const getAssistantBadges = createServerFn({
     method: "GET",
 })
     .inputValidator((d: { userId: string }) => d)
-    .handler(async ({ data }): Promise<AssistantBadge[]> => {
+    .handler(({ data }): AssistantBadge[] => {
         try {
-            return await db
+            return db
                 .select()
                 .from(assistantBadges)
                 .where(eq(assistantBadges.userId, data.userId))
-                .orderBy(desc(assistantBadges.earnedAt));
+                .orderBy(desc(assistantBadges.earnedAt))
+                .all();
         } catch (error) {
             console.error("[Assistant] getAssistantBadges error:", error);
             return [];
@@ -352,9 +330,9 @@ export const createAssistantBadge = createServerFn({
     method: "POST",
 })
     .inputValidator((d: NewAssistantBadge) => d)
-    .handler(async ({ data }): Promise<AssistantBadge | null> => {
+    .handler(({ data }): AssistantBadge | null => {
         try {
-            const [result] = await db.insert(assistantBadges).values(data).returning();
+            const result = db.insert(assistantBadges).values(data).returning().get();
             return result ?? null;
         } catch (error) {
             console.error("[Assistant] createAssistantBadge error:", error);
@@ -370,20 +348,17 @@ export const getAssistantCommunications = createServerFn({
     method: "GET",
 })
     .inputValidator((d: { userId: string; limit?: number }) => d)
-    .handler(async ({ data }): Promise<AssistantCommunication[]> => {
+    .handler(({ data }): AssistantCommunication[] => {
         try {
-            const results = await db
+            const results = db
                 .select()
                 .from(assistantCommunications)
                 .where(eq(assistantCommunications.userId, data.userId))
                 .orderBy(desc(assistantCommunications.discussedAt))
-                .limit(data.limit ?? 100);
+                .limit(data.limit ?? 100)
+                .all();
 
-            return results.map((item) => ({
-                ...item,
-                tags: parseJsonbField<string[]>(item.tags, []),
-                relatedTaskIds: parseJsonbField<string[]>(item.relatedTaskIds, []),
-            }));
+            return results;
         } catch (error) {
             console.error("[Assistant] getAssistantCommunications error:", error);
             return [];
@@ -394,9 +369,9 @@ export const createAssistantCommunication = createServerFn({
     method: "POST",
 })
     .inputValidator((d: NewAssistantCommunication) => d)
-    .handler(async ({ data }): Promise<AssistantCommunication | null> => {
+    .handler(({ data }): AssistantCommunication | null => {
         try {
-            const [result] = await db.insert(assistantCommunications).values(data).returning();
+            const result = db.insert(assistantCommunications).values(data).returning().get();
             return result ?? null;
         } catch (error) {
             console.error("[Assistant] createAssistantCommunication error:", error);
@@ -408,16 +383,17 @@ export const updateAssistantCommunication = createServerFn({
     method: "POST",
 })
     .inputValidator((d: { id: string; data: Partial<NewAssistantCommunication> }) => d)
-    .handler(async ({ data: input }): Promise<AssistantCommunication | null> => {
+    .handler(({ data: input }): AssistantCommunication | null => {
         try {
-            const [result] = await db
+            const result = db
                 .update(assistantCommunications)
                 .set({
                     ...input.data,
                     updatedAt: new Date().toISOString(),
                 })
                 .where(eq(assistantCommunications.id, input.id))
-                .returning();
+                .returning()
+                .get();
 
             return result ?? null;
         } catch (error) {
@@ -430,9 +406,9 @@ export const deleteAssistantCommunication = createServerFn({
     method: "POST",
 })
     .inputValidator((d: { id: string }) => d)
-    .handler(async ({ data }): Promise<{ success: boolean }> => {
+    .handler(({ data }): { success: boolean } => {
         try {
-            await db.delete(assistantCommunications).where(eq(assistantCommunications.id, data.id));
+            db.delete(assistantCommunications).where(eq(assistantCommunications.id, data.id)).run();
             return { success: true };
         } catch (error) {
             console.error("[Assistant] deleteAssistantCommunication error:", error);
@@ -448,21 +424,17 @@ export const getAssistantDecisions = createServerFn({
     method: "GET",
 })
     .inputValidator((d: { userId: string; limit?: number }) => d)
-    .handler(async ({ data }): Promise<AssistantDecision[]> => {
+    .handler(({ data }): AssistantDecision[] => {
         try {
-            const results = await db
+            const results = db
                 .select()
                 .from(assistantDecisions)
                 .where(eq(assistantDecisions.userId, data.userId))
                 .orderBy(desc(assistantDecisions.decidedAt))
-                .limit(data.limit ?? 100);
+                .limit(data.limit ?? 100)
+                .all();
 
-            return results.map((item) => ({
-                ...item,
-                alternativesConsidered: parseJsonbField<string[]>(item.alternativesConsidered, []),
-                relatedTaskIds: parseJsonbField<string[]>(item.relatedTaskIds, []),
-                tags: parseJsonbField<string[]>(item.tags, []),
-            }));
+            return results;
         } catch (error) {
             console.error("[Assistant] getAssistantDecisions error:", error);
             return [];
@@ -473,9 +445,9 @@ export const createAssistantDecision = createServerFn({
     method: "POST",
 })
     .inputValidator((d: NewAssistantDecision) => d)
-    .handler(async ({ data }): Promise<AssistantDecision | null> => {
+    .handler(({ data }): AssistantDecision | null => {
         try {
-            const [result] = await db.insert(assistantDecisions).values(data).returning();
+            const result = db.insert(assistantDecisions).values(data).returning().get();
             return result ?? null;
         } catch (error) {
             console.error("[Assistant] createAssistantDecision error:", error);
@@ -487,16 +459,17 @@ export const updateAssistantDecision = createServerFn({
     method: "POST",
 })
     .inputValidator((d: { id: string; data: Partial<NewAssistantDecision> }) => d)
-    .handler(async ({ data: input }): Promise<AssistantDecision | null> => {
+    .handler(({ data: input }): AssistantDecision | null => {
         try {
-            const [result] = await db
+            const result = db
                 .update(assistantDecisions)
                 .set({
                     ...input.data,
                     updatedAt: new Date().toISOString(),
                 })
                 .where(eq(assistantDecisions.id, input.id))
-                .returning();
+                .returning()
+                .get();
 
             return result ?? null;
         } catch (error) {
@@ -509,9 +482,9 @@ export const deleteAssistantDecision = createServerFn({
     method: "POST",
 })
     .inputValidator((d: { id: string }) => d)
-    .handler(async ({ data }): Promise<{ success: boolean }> => {
+    .handler(({ data }): { success: boolean } => {
         try {
-            await db.delete(assistantDecisions).where(eq(assistantDecisions.id, data.id));
+            db.delete(assistantDecisions).where(eq(assistantDecisions.id, data.id)).run();
             return { success: true };
         } catch (error) {
             console.error("[Assistant] deleteAssistantDecision error:", error);
@@ -527,15 +500,14 @@ export const getAssistantBlockers = createServerFn({
     method: "GET",
 })
     .inputValidator((d: { userId: string; activeOnly?: boolean }) => d)
-    .handler(async ({ data }): Promise<AssistantBlocker[]> => {
+    .handler(({ data }): AssistantBlocker[] => {
         try {
-            const query = db
+            const results = db
                 .select()
                 .from(assistantBlockers)
                 .where(eq(assistantBlockers.userId, data.userId))
-                .orderBy(desc(assistantBlockers.blockedSince));
-
-            const results = await query;
+                .orderBy(desc(assistantBlockers.blockedSince))
+                .all();
 
             if (data.activeOnly) {
                 return results.filter((b) => !b.unblockedAt);
@@ -552,13 +524,14 @@ export const getAssistantBlockersByTask = createServerFn({
     method: "GET",
 })
     .inputValidator((d: { taskId: string }) => d)
-    .handler(async ({ data }): Promise<AssistantBlocker[]> => {
+    .handler(({ data }): AssistantBlocker[] => {
         try {
-            return await db
+            return db
                 .select()
                 .from(assistantBlockers)
                 .where(eq(assistantBlockers.taskId, data.taskId))
-                .orderBy(desc(assistantBlockers.blockedSince));
+                .orderBy(desc(assistantBlockers.blockedSince))
+                .all();
         } catch (error) {
             console.error("[Assistant] getAssistantBlockersByTask error:", error);
             return [];
@@ -569,9 +542,9 @@ export const createAssistantBlocker = createServerFn({
     method: "POST",
 })
     .inputValidator((d: NewAssistantBlocker) => d)
-    .handler(async ({ data }): Promise<AssistantBlocker | null> => {
+    .handler(({ data }): AssistantBlocker | null => {
         try {
-            const [result] = await db.insert(assistantBlockers).values(data).returning();
+            const result = db.insert(assistantBlockers).values(data).returning().get();
             return result ?? null;
         } catch (error) {
             console.error("[Assistant] createAssistantBlocker error:", error);
@@ -583,16 +556,17 @@ export const updateAssistantBlocker = createServerFn({
     method: "POST",
 })
     .inputValidator((d: { id: string; data: Partial<NewAssistantBlocker> }) => d)
-    .handler(async ({ data: input }): Promise<AssistantBlocker | null> => {
+    .handler(({ data: input }): AssistantBlocker | null => {
         try {
-            const [result] = await db
+            const result = db
                 .update(assistantBlockers)
                 .set({
                     ...input.data,
                     updatedAt: new Date().toISOString(),
                 })
                 .where(eq(assistantBlockers.id, input.id))
-                .returning();
+                .returning()
+                .get();
 
             return result ?? null;
         } catch (error) {
@@ -605,16 +579,17 @@ export const resolveAssistantBlocker = createServerFn({
     method: "POST",
 })
     .inputValidator((d: { id: string }) => d)
-    .handler(async ({ data }): Promise<AssistantBlocker | null> => {
+    .handler(({ data }): AssistantBlocker | null => {
         try {
-            const [result] = await db
+            const result = db
                 .update(assistantBlockers)
                 .set({
                     unblockedAt: new Date().toISOString(),
                     updatedAt: new Date().toISOString(),
                 })
                 .where(eq(assistantBlockers.id, data.id))
-                .returning();
+                .returning()
+                .get();
 
             return result ?? null;
         } catch (error) {
@@ -631,21 +606,17 @@ export const getAssistantHandoffs = createServerFn({
     method: "GET",
 })
     .inputValidator((d: { userId: string; limit?: number }) => d)
-    .handler(async ({ data }): Promise<AssistantHandoff[]> => {
+    .handler(({ data }): AssistantHandoff[] => {
         try {
-            const results = await db
+            const results = db
                 .select()
                 .from(assistantHandoffs)
                 .where(eq(assistantHandoffs.userId, data.userId))
                 .orderBy(desc(assistantHandoffs.handoffAt))
-                .limit(data.limit ?? 50);
+                .limit(data.limit ?? 50)
+                .all();
 
-            return results.map((item) => ({
-                ...item,
-                decisions: parseJsonbField<string[]>(item.decisions, []),
-                blockers: parseJsonbField<string[]>(item.blockers, []),
-                nextSteps: parseJsonbField<string[]>(item.nextSteps, []),
-            }));
+            return results;
         } catch (error) {
             console.error("[Assistant] getAssistantHandoffs error:", error);
             return [];
@@ -656,20 +627,16 @@ export const getAssistantHandoffsByTask = createServerFn({
     method: "GET",
 })
     .inputValidator((d: { taskId: string }) => d)
-    .handler(async ({ data }): Promise<AssistantHandoff[]> => {
+    .handler(({ data }): AssistantHandoff[] => {
         try {
-            const results = await db
+            const results = db
                 .select()
                 .from(assistantHandoffs)
                 .where(eq(assistantHandoffs.taskId, data.taskId))
-                .orderBy(desc(assistantHandoffs.handoffAt));
+                .orderBy(desc(assistantHandoffs.handoffAt))
+                .all();
 
-            return results.map((item) => ({
-                ...item,
-                decisions: parseJsonbField<string[]>(item.decisions, []),
-                blockers: parseJsonbField<string[]>(item.blockers, []),
-                nextSteps: parseJsonbField<string[]>(item.nextSteps, []),
-            }));
+            return results;
         } catch (error) {
             console.error("[Assistant] getAssistantHandoffsByTask error:", error);
             return [];
@@ -680,9 +647,9 @@ export const createAssistantHandoff = createServerFn({
     method: "POST",
 })
     .inputValidator((d: NewAssistantHandoff) => d)
-    .handler(async ({ data }): Promise<AssistantHandoff | null> => {
+    .handler(({ data }): AssistantHandoff | null => {
         try {
-            const [result] = await db.insert(assistantHandoffs).values(data).returning();
+            const result = db.insert(assistantHandoffs).values(data).returning().get();
             return result ?? null;
         } catch (error) {
             console.error("[Assistant] createAssistantHandoff error:", error);
@@ -694,16 +661,17 @@ export const updateAssistantHandoff = createServerFn({
     method: "POST",
 })
     .inputValidator((d: { id: string; data: Partial<NewAssistantHandoff> }) => d)
-    .handler(async ({ data: input }): Promise<AssistantHandoff | null> => {
+    .handler(({ data: input }): AssistantHandoff | null => {
         try {
-            const [result] = await db
+            const result = db
                 .update(assistantHandoffs)
                 .set({
                     ...input.data,
                     updatedAt: new Date().toISOString(),
                 })
                 .where(eq(assistantHandoffs.id, input.id))
-                .returning();
+                .returning()
+                .get();
 
             return result ?? null;
         } catch (error) {
@@ -720,13 +688,14 @@ export const getAssistantDeadlineRisks = createServerFn({
     method: "GET",
 })
     .inputValidator((d: { userId: string }) => d)
-    .handler(async ({ data }): Promise<AssistantDeadlineRisk[]> => {
+    .handler(({ data }): AssistantDeadlineRisk[] => {
         try {
-            return await db
+            return db
                 .select()
                 .from(assistantDeadlineRisks)
                 .where(eq(assistantDeadlineRisks.userId, data.userId))
-                .orderBy(desc(assistantDeadlineRisks.calculatedAt));
+                .orderBy(desc(assistantDeadlineRisks.calculatedAt))
+                .all();
         } catch (error) {
             console.error("[Assistant] getAssistantDeadlineRisks error:", error);
             return [];
@@ -737,14 +706,15 @@ export const getAssistantDeadlineRiskByTask = createServerFn({
     method: "GET",
 })
     .inputValidator((d: { taskId: string }) => d)
-    .handler(async ({ data }): Promise<AssistantDeadlineRisk | null> => {
+    .handler(({ data }): AssistantDeadlineRisk | null => {
         try {
-            const [result] = await db
+            const result = db
                 .select()
                 .from(assistantDeadlineRisks)
                 .where(eq(assistantDeadlineRisks.taskId, data.taskId))
                 .orderBy(desc(assistantDeadlineRisks.calculatedAt))
-                .limit(1);
+                .limit(1)
+                .get();
 
             return result ?? null;
         } catch (error) {
@@ -757,9 +727,9 @@ export const createAssistantDeadlineRisk = createServerFn({
     method: "POST",
 })
     .inputValidator((d: NewAssistantDeadlineRisk) => d)
-    .handler(async ({ data }): Promise<AssistantDeadlineRisk | null> => {
+    .handler(({ data }): AssistantDeadlineRisk | null => {
         try {
-            const [result] = await db.insert(assistantDeadlineRisks).values(data).returning();
+            const result = db.insert(assistantDeadlineRisks).values(data).returning().get();
             return result ?? null;
         } catch (error) {
             console.error("[Assistant] createAssistantDeadlineRisk error:", error);
@@ -775,14 +745,15 @@ export const getAssistantEnergySnapshots = createServerFn({
     method: "GET",
 })
     .inputValidator((d: { userId: string; limit?: number }) => d)
-    .handler(async ({ data }): Promise<AssistantEnergySnapshot[]> => {
+    .handler(({ data }): AssistantEnergySnapshot[] => {
         try {
-            return await db
+            return db
                 .select()
                 .from(assistantEnergySnapshots)
                 .where(eq(assistantEnergySnapshots.userId, data.userId))
                 .orderBy(desc(assistantEnergySnapshots.timestamp))
-                .limit(data.limit ?? 168); // Default to 1 week of hourly data
+                .limit(data.limit ?? 168) // Default to 1 week of hourly data
+                .all();
         } catch (error) {
             console.error("[Assistant] getAssistantEnergySnapshots error:", error);
             return [];
@@ -793,9 +764,9 @@ export const createAssistantEnergySnapshot = createServerFn({
     method: "POST",
 })
     .inputValidator((d: NewAssistantEnergySnapshot) => d)
-    .handler(async ({ data }): Promise<AssistantEnergySnapshot | null> => {
+    .handler(({ data }): AssistantEnergySnapshot | null => {
         try {
-            const [result] = await db.insert(assistantEnergySnapshots).values(data).returning();
+            const result = db.insert(assistantEnergySnapshots).values(data).returning().get();
             return result ?? null;
         } catch (error) {
             console.error("[Assistant] createAssistantEnergySnapshot error:", error);
@@ -811,14 +782,15 @@ export const getAssistantDistractions = createServerFn({
     method: "GET",
 })
     .inputValidator((d: { userId: string; limit?: number }) => d)
-    .handler(async ({ data }): Promise<AssistantDistraction[]> => {
+    .handler(({ data }): AssistantDistraction[] => {
         try {
-            return await db
+            return db
                 .select()
                 .from(assistantDistractions)
                 .where(eq(assistantDistractions.userId, data.userId))
                 .orderBy(desc(assistantDistractions.timestamp))
-                .limit(data.limit ?? 100);
+                .limit(data.limit ?? 100)
+                .all();
         } catch (error) {
             console.error("[Assistant] getAssistantDistractions error:", error);
             return [];
@@ -829,9 +801,9 @@ export const createAssistantDistraction = createServerFn({
     method: "POST",
 })
     .inputValidator((d: NewAssistantDistraction) => d)
-    .handler(async ({ data }): Promise<AssistantDistraction | null> => {
+    .handler(({ data }): AssistantDistraction | null => {
         try {
-            const [result] = await db.insert(assistantDistractions).values(data).returning();
+            const result = db.insert(assistantDistractions).values(data).returning().get();
             return result ?? null;
         } catch (error) {
             console.error("[Assistant] createAssistantDistraction error:", error);
@@ -847,22 +819,15 @@ export const getAssistantWeeklyReviews = createServerFn({
     method: "GET",
 })
     .inputValidator((d: { userId: string; limit?: number }) => d)
-    .handler(async ({ data }): Promise<AssistantWeeklyReview[]> => {
+    .handler(({ data }): AssistantWeeklyReview[] => {
         try {
-            const results = await db
+            return db
                 .select()
                 .from(assistantWeeklyReviews)
                 .where(eq(assistantWeeklyReviews.userId, data.userId))
                 .orderBy(desc(assistantWeeklyReviews.weekStart))
-                .limit(data.limit ?? 10);
-
-            return results.map((item) => ({
-                ...item,
-                energyByDay: parseJsonbField<Record<string, number>>(item.energyByDay, {}),
-                insights: parseJsonbField<string[]>(item.insights, []),
-                recommendations: parseJsonbField<string[]>(item.recommendations, []),
-                badgesEarned: parseJsonbField<string[]>(item.badgesEarned, []),
-            }));
+                .limit(data.limit ?? 10)
+                .all();
         } catch (error) {
             console.error("[Assistant] getAssistantWeeklyReviews error:", error);
             return [];
@@ -873,7 +838,7 @@ export const getAssistantCurrentWeekReview = createServerFn({
     method: "GET",
 })
     .inputValidator((d: { userId: string }) => d)
-    .handler(async ({ data }): Promise<AssistantWeeklyReview | null> => {
+    .handler(({ data }): AssistantWeeklyReview | null => {
         try {
             // Calculate start of current week (Sunday)
             const now = new Date();
@@ -881,7 +846,7 @@ export const getAssistantCurrentWeekReview = createServerFn({
             startOfWeek.setDate(now.getDate() - now.getDay());
             startOfWeek.setHours(0, 0, 0, 0);
 
-            const results = await db
+            const result = db
                 .select()
                 .from(assistantWeeklyReviews)
                 .where(
@@ -890,20 +855,10 @@ export const getAssistantCurrentWeekReview = createServerFn({
                         eq(assistantWeeklyReviews.weekStart, startOfWeek.toISOString())
                     )
                 )
-                .limit(1);
+                .limit(1)
+                .get();
 
-            if (results.length === 0) {
-                return null;
-            }
-
-            const item = results[0];
-            return {
-                ...item,
-                energyByDay: parseJsonbField<Record<string, number>>(item.energyByDay, {}),
-                insights: parseJsonbField<string[]>(item.insights, []),
-                recommendations: parseJsonbField<string[]>(item.recommendations, []),
-                badgesEarned: parseJsonbField<string[]>(item.badgesEarned, []),
-            };
+            return result ?? null;
         } catch (error) {
             console.error("[Assistant] getAssistantCurrentWeekReview error:", error);
             return null;
@@ -914,9 +869,9 @@ export const createAssistantWeeklyReview = createServerFn({
     method: "POST",
 })
     .inputValidator((d: NewAssistantWeeklyReview) => d)
-    .handler(async ({ data }): Promise<AssistantWeeklyReview | null> => {
+    .handler(({ data }): AssistantWeeklyReview | null => {
         try {
-            const [result] = await db.insert(assistantWeeklyReviews).values(data).returning();
+            const result = db.insert(assistantWeeklyReviews).values(data).returning().get();
             return result ?? null;
         } catch (error) {
             console.error("[Assistant] createAssistantWeeklyReview error:", error);
@@ -932,14 +887,15 @@ export const getAssistantCelebrations = createServerFn({
     method: "GET",
 })
     .inputValidator((d: { userId: string; unshownOnly?: boolean }) => d)
-    .handler(async ({ data }): Promise<AssistantCelebration[]> => {
+    .handler(({ data }): AssistantCelebration[] => {
         try {
-            const results = await db
+            const results = db
                 .select()
                 .from(assistantCelebrations)
                 .where(eq(assistantCelebrations.userId, data.userId))
                 .orderBy(desc(assistantCelebrations.createdAt))
-                .limit(50);
+                .limit(50)
+                .all();
 
             if (data.unshownOnly) {
                 return results.filter((c) => !c.shownAt && !c.dismissed);
@@ -956,9 +912,9 @@ export const createAssistantCelebration = createServerFn({
     method: "POST",
 })
     .inputValidator((d: NewAssistantCelebration) => d)
-    .handler(async ({ data }): Promise<AssistantCelebration | null> => {
+    .handler(({ data }): AssistantCelebration | null => {
         try {
-            const [result] = await db.insert(assistantCelebrations).values(data).returning();
+            const result = db.insert(assistantCelebrations).values(data).returning().get();
             return result ?? null;
         } catch (error) {
             console.error("[Assistant] createAssistantCelebration error:", error);
@@ -970,13 +926,14 @@ export const markAssistantCelebrationShown = createServerFn({
     method: "POST",
 })
     .inputValidator((d: { id: string }) => d)
-    .handler(async ({ data }): Promise<AssistantCelebration | null> => {
+    .handler(({ data }): AssistantCelebration | null => {
         try {
-            const [result] = await db
+            const result = db
                 .update(assistantCelebrations)
                 .set({ shownAt: new Date().toISOString() })
                 .where(eq(assistantCelebrations.id, data.id))
-                .returning();
+                .returning()
+                .get();
 
             return result ?? null;
         } catch (error) {
@@ -989,13 +946,14 @@ export const dismissAssistantCelebration = createServerFn({
     method: "POST",
 })
     .inputValidator((d: { id: string }) => d)
-    .handler(async ({ data }): Promise<AssistantCelebration | null> => {
+    .handler(({ data }): AssistantCelebration | null => {
         try {
-            const [result] = await db
+            const result = db
                 .update(assistantCelebrations)
                 .set({ dismissed: 1 })
                 .where(eq(assistantCelebrations.id, data.id))
-                .returning();
+                .returning()
+                .get();
 
             return result ?? null;
         } catch (error) {

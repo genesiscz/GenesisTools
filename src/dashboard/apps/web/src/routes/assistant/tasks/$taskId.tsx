@@ -39,7 +39,6 @@ import type {
     TaskUpdate,
     UrgencyLevel,
 } from "@/lib/assistant/types";
-import { getUrgencyColor } from "@/lib/assistant/types";
 import { formatFocusTime } from "@/lib/assistant/utils";
 import { cn } from "@/lib/utils";
 import { BlockerModal } from "../-components/blockers";
@@ -291,9 +290,7 @@ function TaskDetailPage() {
         );
     }
 
-    const _urgencyColors = getUrgencyColor(urgency);
     const isCompleted = status === "completed";
-    const _isBlocked = status === "blocked";
 
     return (
         <DashboardLayout title="Edit Task" description={task.title}>

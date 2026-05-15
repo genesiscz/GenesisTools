@@ -18,7 +18,6 @@ import { useEffect, useState } from "react";
 import { DashboardLayout } from "@/components/dashboard";
 import { useTaskStore } from "@/lib/assistant/hooks";
 import type { ContextParking, Task } from "@/lib/assistant/types";
-import { getUrgencyColor } from "@/lib/assistant/types";
 import { formatFocusTime } from "@/lib/assistant/utils";
 import { cn } from "@/lib/utils";
 
@@ -283,7 +282,6 @@ function RecommendationCard({
     isPrimary?: boolean;
 }) {
     const { task, reasons, parkingContext } = recommendation;
-    const _urgencyColors = getUrgencyColor(task.urgencyLevel);
 
     const urgencyConfig = {
         critical: { icon: AlertTriangle, label: "Critical", color: "text-red-400" },

@@ -21,10 +21,6 @@ interface DependencyNodeProps {
     onMouseLeave: () => void;
 }
 
-// Hexagon dimensions
-const _NODE_WIDTH = 80;
-const _NODE_HEIGHT = 70;
-
 /**
  * Generate hexagon points for SVG polygon
  */

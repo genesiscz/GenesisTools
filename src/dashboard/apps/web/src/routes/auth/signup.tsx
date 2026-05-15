@@ -1,17 +1,17 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
-import { useAuth } from "@workos/authkit-tanstack-react-start/client";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { AlertCircle, Github, Loader2, Lock, Mail, User } from "lucide-react";
 import { useState } from "react";
 import { AuthLayout } from "@/components/auth";
 import { Button } from "@ui/components/button";
-import { getOAuthUrlFn } from "@/lib/auth-actions";
+import type { AuthError } from "@/lib/auth-actions";
+import { getOAuthUrlFn, signUpFn } from "@/lib/auth-actions";
 
 export const Route = createFileRoute("/auth/signup")({
     component: SignUpPage,
 });
 
 function SignUpPage() {
-    const { signIn } = useAuth();
+    const navigate = useNavigate();
     const [isLoading, setIsLoading] = useState(false);
     const [oauthLoading, setOauthLoading] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
@@ -35,24 +35,27 @@ function SignUpPage() {
         const password = formData.get("password") as string;
 
         try {
-            // Use WorkOS AuthKit for signup
-            await signIn({
-                email,
-                password,
-                firstName,
-                lastName,
-            });
-            // On success, AuthKit will handle the redirect
+            const result = await signUpFn({ data: { email, password, firstName, lastName } });
+
+            if (result && typeof result === "object" && "success" in result && result.success) {
+                const sessionData = result as { success: true; session: string; user: unknown };
+                if (typeof window !== "undefined") {
+                    localStorage.setItem("wos-session", sessionData.session);
+                }
+                await navigate({ to: "/dashboard" });
+            } else {
+                setError((result as AuthError).message ?? "Failed to create account");
+                setIsLoading(false);
+            }
         } catch (err) {
             setError(err instanceof Error ? err.message : "Failed to create account");
             setIsLoading(false);
         }
     };
 
-    const handleOAuthSignIn = async (provider: "google" | "github") => {
+    const handleOAuthSignIn = async (provider: "GoogleOAuth" | "GitHubOAuth") => {
         try {
             setOauthLoading(provider);
-            // Get OAuth URL from server and redirect directly (bypasses AuthKit hosted page)
             const url = await getOAuthUrlFn({ data: { provider } });
             window.location.href = url;
         } catch (err) {
@@ -84,10 +87,10 @@ function SignUpPage() {
                         type="button"
                         variant="outline"
                         className="w-full h-11 border-amber-500/20 hover:border-amber-500/40 hover:bg-amber-500/5 text-white"
-                        onClick={() => handleOAuthSignIn("google")}
+                        onClick={() => handleOAuthSignIn("GoogleOAuth")}
                         disabled={!!oauthLoading || isLoading}
                     >
-                        {oauthLoading === "google" ? (
+                        {oauthLoading === "GoogleOAuth" ? (
                             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                         ) : (
                             <svg className="mr-2 h-4 w-4" viewBox="0 0 24 24">
@@ -116,10 +119,10 @@ function SignUpPage() {
                         type="button"
                         variant="outline"
                         className="w-full h-11 border-amber-500/20 hover:border-amber-500/40 hover:bg-amber-500/5 text-white"
-                        onClick={() => handleOAuthSignIn("github")}
+                        onClick={() => handleOAuthSignIn("GitHubOAuth")}
                         disabled={!!oauthLoading || isLoading}
                     >
-                        {oauthLoading === "github" ? (
+                        {oauthLoading === "GitHubOAuth" ? (
                             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                         ) : (
                             <Github className="mr-2 h-4 w-4" />

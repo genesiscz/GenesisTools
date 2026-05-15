@@ -64,7 +64,7 @@ const rarityUnlockConfig: Record<
  * Get Lucide icon component by name
  */
 function getIconComponent(iconName: string): Icons.LucideIcon {
-    const icon = (Icons as Record<string, Icons.LucideIcon>)[iconName];
+    const icon = (Icons as unknown as Record<string, Icons.LucideIcon>)[iconName];
     return icon ?? Icons.Award;
 }
 
@@ -95,10 +95,11 @@ function ConfettiCanvas({ active, colors, className }: { active: boolean; colors
         }
 
         const canvas = canvasRef.current;
-        const ctx = canvas.getContext("2d");
-        if (!ctx) {
+        const ctxOrNull = canvas.getContext("2d");
+        if (!ctxOrNull) {
             return;
         }
+        const ctx: CanvasRenderingContext2D = ctxOrNull;
 
         // Set canvas size
         const rect = canvas.getBoundingClientRect();
@@ -187,7 +188,7 @@ function ConfettiCanvas({ active, colors, className }: { active: boolean; colors
  * - Rarity-colored glow effects
  * - Share button
  */
-export function BadgeUnlockAnimation({ badge, open, onClose, onShare }: BadgeUnlockAnimationProps) {
+export function BadgeUnlockAnimation({ badge, open, onClose }: BadgeUnlockAnimationProps) {
     const [showConfetti, setShowConfetti] = useState(false);
     const [showBadge, setShowBadge] = useState(false);
 
@@ -217,13 +218,6 @@ export function BadgeUnlockAnimation({ badge, open, onClose, onShare }: BadgeUnl
             setShowBadge(false);
         }
     }, [open]);
-
-    // Handle share
-    function _handleShare() {
-        if (badge && onShare) {
-            onShare(badge);
-        }
-    }
 
     // Copy share text to clipboard
     async function handleCopyShare() {

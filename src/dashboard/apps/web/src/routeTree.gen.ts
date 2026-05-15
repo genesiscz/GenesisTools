@@ -17,7 +17,6 @@ import { Route as TimerIndexRouteImport } from './routes/timer/index'
 import { Route as DashboardIndexRouteImport } from './routes/dashboard/index'
 import { Route as AssistantIndexRouteImport } from './routes/assistant/index'
 import { Route as TimerTimerIdRouteImport } from './routes/timer.$timerId'
-import { Route as ExampleTodoRouteImport } from './routes/example/todo'
 import { Route as DashboardPlannerRouteImport } from './routes/dashboard/planner'
 import { Route as DashboardNotesRouteImport } from './routes/dashboard/notes'
 import { Route as DashboardFocusRouteImport } from './routes/dashboard/focus'
@@ -37,7 +36,6 @@ import { Route as AssistantAnalyticsRouteImport } from './routes/assistant/analy
 import { Route as ApiEventsRouteImport } from './routes/api.events'
 import { Route as AssistantTasksIndexRouteImport } from './routes/assistant/tasks/index'
 import { Route as AssistantTasksTaskIdRouteImport } from './routes/assistant/tasks/$taskId'
-import { Route as ApiTrpcSplatRouteImport } from './routes/api.trpc.$'
 
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
@@ -77,11 +75,6 @@ const AssistantIndexRoute = AssistantIndexRouteImport.update({
 const TimerTimerIdRoute = TimerTimerIdRouteImport.update({
   id: '/timer/$timerId',
   path: '/timer/$timerId',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ExampleTodoRoute = ExampleTodoRouteImport.update({
-  id: '/example/todo',
-  path: '/example/todo',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DashboardPlannerRoute = DashboardPlannerRouteImport.update({
@@ -179,11 +172,6 @@ const AssistantTasksTaskIdRoute = AssistantTasksTaskIdRouteImport.update({
   path: '/assistant/tasks/$taskId',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiTrpcSplatRoute = ApiTrpcSplatRouteImport.update({
-  id: '/api/trpc/$',
-  path: '/api/trpc/$',
-  getParentRoute: () => rootRouteImport,
-} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -207,12 +195,10 @@ export interface FileRoutesByFullPath {
   '/dashboard/focus': typeof DashboardFocusRoute
   '/dashboard/notes': typeof DashboardNotesRoute
   '/dashboard/planner': typeof DashboardPlannerRoute
-  '/example/todo': typeof ExampleTodoRoute
   '/timer/$timerId': typeof TimerTimerIdRoute
   '/assistant': typeof AssistantIndexRoute
   '/dashboard': typeof DashboardIndexRoute
   '/timer': typeof TimerIndexRoute
-  '/api/trpc/$': typeof ApiTrpcSplatRoute
   '/assistant/tasks/$taskId': typeof AssistantTasksTaskIdRoute
   '/assistant/tasks': typeof AssistantTasksIndexRoute
 }
@@ -238,12 +224,10 @@ export interface FileRoutesByTo {
   '/dashboard/focus': typeof DashboardFocusRoute
   '/dashboard/notes': typeof DashboardNotesRoute
   '/dashboard/planner': typeof DashboardPlannerRoute
-  '/example/todo': typeof ExampleTodoRoute
   '/timer/$timerId': typeof TimerTimerIdRoute
   '/assistant': typeof AssistantIndexRoute
   '/dashboard': typeof DashboardIndexRoute
   '/timer': typeof TimerIndexRoute
-  '/api/trpc/$': typeof ApiTrpcSplatRoute
   '/assistant/tasks/$taskId': typeof AssistantTasksTaskIdRoute
   '/assistant/tasks': typeof AssistantTasksIndexRoute
 }
@@ -270,12 +254,10 @@ export interface FileRoutesById {
   '/dashboard/focus': typeof DashboardFocusRoute
   '/dashboard/notes': typeof DashboardNotesRoute
   '/dashboard/planner': typeof DashboardPlannerRoute
-  '/example/todo': typeof ExampleTodoRoute
   '/timer/$timerId': typeof TimerTimerIdRoute
   '/assistant/': typeof AssistantIndexRoute
   '/dashboard/': typeof DashboardIndexRoute
   '/timer/': typeof TimerIndexRoute
-  '/api/trpc/$': typeof ApiTrpcSplatRoute
   '/assistant/tasks/$taskId': typeof AssistantTasksTaskIdRoute
   '/assistant/tasks/': typeof AssistantTasksIndexRoute
 }
@@ -303,12 +285,10 @@ export interface FileRouteTypes {
     | '/dashboard/focus'
     | '/dashboard/notes'
     | '/dashboard/planner'
-    | '/example/todo'
     | '/timer/$timerId'
     | '/assistant'
     | '/dashboard'
     | '/timer'
-    | '/api/trpc/$'
     | '/assistant/tasks/$taskId'
     | '/assistant/tasks'
   fileRoutesByTo: FileRoutesByTo
@@ -334,12 +314,10 @@ export interface FileRouteTypes {
     | '/dashboard/focus'
     | '/dashboard/notes'
     | '/dashboard/planner'
-    | '/example/todo'
     | '/timer/$timerId'
     | '/assistant'
     | '/dashboard'
     | '/timer'
-    | '/api/trpc/$'
     | '/assistant/tasks/$taskId'
     | '/assistant/tasks'
   id:
@@ -365,12 +343,10 @@ export interface FileRouteTypes {
     | '/dashboard/focus'
     | '/dashboard/notes'
     | '/dashboard/planner'
-    | '/example/todo'
     | '/timer/$timerId'
     | '/assistant/'
     | '/dashboard/'
     | '/timer/'
-    | '/api/trpc/$'
     | '/assistant/tasks/$taskId'
     | '/assistant/tasks/'
   fileRoutesById: FileRoutesById
@@ -397,12 +373,10 @@ export interface RootRouteChildren {
   DashboardFocusRoute: typeof DashboardFocusRoute
   DashboardNotesRoute: typeof DashboardNotesRoute
   DashboardPlannerRoute: typeof DashboardPlannerRoute
-  ExampleTodoRoute: typeof ExampleTodoRoute
   TimerTimerIdRoute: typeof TimerTimerIdRoute
   AssistantIndexRoute: typeof AssistantIndexRoute
   DashboardIndexRoute: typeof DashboardIndexRoute
   TimerIndexRoute: typeof TimerIndexRoute
-  ApiTrpcSplatRoute: typeof ApiTrpcSplatRoute
   AssistantTasksTaskIdRoute: typeof AssistantTasksTaskIdRoute
   AssistantTasksIndexRoute: typeof AssistantTasksIndexRoute
 }
@@ -463,13 +437,6 @@ declare module '@tanstack/react-router' {
       path: '/timer/$timerId'
       fullPath: '/timer/$timerId'
       preLoaderRoute: typeof TimerTimerIdRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/example/todo': {
-      id: '/example/todo'
-      path: '/example/todo'
-      fullPath: '/example/todo'
-      preLoaderRoute: typeof ExampleTodoRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/dashboard/planner': {
@@ -605,13 +572,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AssistantTasksTaskIdRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/trpc/$': {
-      id: '/api/trpc/$'
-      path: '/api/trpc/$'
-      fullPath: '/api/trpc/$'
-      preLoaderRoute: typeof ApiTrpcSplatRouteImport
-      parentRoute: typeof rootRouteImport
-    }
   }
 }
 
@@ -637,12 +597,10 @@ const rootRouteChildren: RootRouteChildren = {
   DashboardFocusRoute: DashboardFocusRoute,
   DashboardNotesRoute: DashboardNotesRoute,
   DashboardPlannerRoute: DashboardPlannerRoute,
-  ExampleTodoRoute: ExampleTodoRoute,
   TimerTimerIdRoute: TimerTimerIdRoute,
   AssistantIndexRoute: AssistantIndexRoute,
   DashboardIndexRoute: DashboardIndexRoute,
   TimerIndexRoute: TimerIndexRoute,
-  ApiTrpcSplatRoute: ApiTrpcSplatRoute,
   AssistantTasksTaskIdRoute: AssistantTasksTaskIdRoute,
   AssistantTasksIndexRoute: AssistantTasksIndexRoute,
 }

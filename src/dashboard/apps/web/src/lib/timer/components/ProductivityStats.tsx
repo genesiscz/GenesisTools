@@ -1,7 +1,6 @@
 import type { ProductivityStats as ProductivityStatsType } from "@dashboard/shared";
 import { Award, Clock, Coffee, Flame, Target, Timer, TrendingUp, Zap } from "lucide-react";
-import { useEffect, useState } from "react";
-import { getStorageAdapter } from "@/lib/timer/storage";
+import { useState } from "react";
 import { cn } from "@/lib/utils";
 
 interface ProductivityStatsProps {
@@ -17,49 +16,23 @@ interface ProductivityStatsProps {
 }
 
 /**
- * Productivity statistics display with cyberpunk styling
+ * Productivity statistics display with cyberpunk styling.
+ * Stats fetching is not yet implemented in the server-side architecture.
  */
 export function ProductivityStats({
-    userId,
-    startDate,
-    endDate,
+    userId: _userId,
+    startDate: _startDate,
+    endDate: _endDate,
     timeRangeLabel = "Today",
     timerId,
     timerNames = {},
     className,
     refreshTrigger: _refreshTrigger,
 }: ProductivityStatsProps) {
-    const [stats, setStats] = useState<ProductivityStatsType | null>(null);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState<string | null>(null);
-
-    useEffect(() => {
-        if (!userId) {
-            setLoading(false);
-            return;
-        }
-
-        async function fetchStats() {
-            if (!userId) {
-                return;
-            }
-            setLoading(true);
-            try {
-                const adapter = getStorageAdapter();
-                const start = startDate || new Date(0);
-                const end = endDate || new Date();
-                const result = await adapter.getProductivityStats(userId, start, end, timerId);
-                setStats(result);
-                setError(null);
-            } catch (err) {
-                setError(err instanceof Error ? err.message : "Failed to load stats");
-            } finally {
-                setLoading(false);
-            }
-        }
-
-        fetchStats();
-    }, [userId, timerId, endDate, startDate]);
+    // Stats fetching is not yet implemented in the server-side architecture.
+    const [stats] = useState<ProductivityStatsType | null>(null);
+    const loading = false;
+    const error: string | null = null;
 
     if (loading) {
         return (

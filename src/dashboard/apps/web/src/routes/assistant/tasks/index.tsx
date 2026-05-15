@@ -137,7 +137,7 @@ function TasksPage() {
         if (result) {
             const { task, newBadges } = result;
             const stats = await getCompletionStats();
-            const totalCompleted = stats?.totalTasks ?? 0;
+            const totalCompleted = stats?.totalTasksCompleted ?? 0;
 
             // Trigger celebration
             celebrations.celebrateTaskCompletion(task, streak, newBadges, totalCompleted);

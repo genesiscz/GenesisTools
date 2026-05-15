@@ -9,14 +9,7 @@ import viteTsConfigPaths from "vite-tsconfig-paths";
 
 const nitroConfig: NitroConfig = {
     experimental: {
-        database: true,
-        websocket: true, // Enable WebSocket support for live sync
-    },
-    database: {
-        default: {
-            connector: "sqlite",
-            options: { name: "dashboard" },
-        },
+        websocket: false,
     },
     // Scan server/routes directory for API and WebSocket handlers
     scanDirs: ["./server"],
@@ -64,9 +57,9 @@ const config = defineConfig({
             { find: "@radix-ui/react-tooltip", replacement: dashboardDependency("@radix-ui/react-tooltip") },
         ],
     },
-    // SSR config - mark browser-only packages and nitro internals as external
+    // SSR config - mark nitro internals as external
     ssr: {
-        external: ["nitro/database", "#nitro-internal-virtual/database", "@powersync/web", "@journeyapps/wa-sqlite"],
+        external: ["nitro/database", "#nitro-internal-virtual/database"],
         noExternal: [
             "@radix-ui/react-avatar",
             "@radix-ui/react-dialog",
@@ -76,15 +69,8 @@ const config = defineConfig({
             "@radix-ui/react-tooltip",
         ],
     },
-    // PowerSync web workers require 'es' format for code-splitting builds
-    worker: {
-        format: "es",
-    },
-    // PowerSync worker/WASM configuration
-    // Exclude packages with workers/WASM from optimization
     optimizeDeps: {
-        exclude: ["@journeyapps/wa-sqlite", "@powersync/web", "nitro", "nitro/database"],
-        include: ["@powersync/web > js-logger"],
+        exclude: ["nitro", "nitro/database"],
     },
 });
 

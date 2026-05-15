@@ -26,7 +26,7 @@ export const activityLogEntrySchema = z.object({
     sessionDuration: z.number().optional(), // For pause events: duration of this session
     previousValue: z.number().optional(), // For time_edit: previous elapsed time
     newValue: z.number().optional(), // For time_edit: new elapsed time
-    metadata: z.record(z.unknown()).optional(),
+    metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
 export type ActivityLogEntry = z.infer<typeof activityLogEntrySchema>;

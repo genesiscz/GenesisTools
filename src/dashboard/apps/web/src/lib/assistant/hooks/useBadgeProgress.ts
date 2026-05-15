@@ -1,142 +1,136 @@
 /**
- * Badge Progress Hook - Server-first with localStorage fallback
- *
- * Uses TanStack Query for caching computed badge progress.
- * Badge progress is derived from tasks, streaks, badges, and other data.
+ * Badge Progress Hook - Derives progress from server data (SQLite via TanStack Query)
  */
 
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { useMemo } from "react";
-import { initializeAssistantStorage } from "@/lib/assistant/lib/storage";
 import type { BadgeProgress, BadgeRarity, BadgeType } from "@/lib/assistant/types";
 import { BADGE_DEFINITIONS, getBadgeRarityColor } from "@/lib/assistant/types";
-import { assistantKeys } from "./useAssistantQueries";
+import {
+    assistantKeys,
+    useAssistantBadgesQuery,
+    useAssistantTasksQuery,
+    useAssistantStreakQuery,
+} from "./useAssistantQueries";
 
 /**
- * Fetch badge progress from storage adapter
- */
-async function fetchBadgeProgress(userId: string): Promise<BadgeProgress[]> {
-    const adapter = await initializeAssistantStorage();
-    return adapter.getBadgeProgress(userId);
-}
-
-/**
- * Hook to compute progress toward badges
- * Uses TanStack Query for caching with refetch on window focus
+ * Hook to compute progress toward badges from server data
  */
 export function useBadgeProgress(userId: string | null) {
     const queryClient = useQueryClient();
 
-    // Use TanStack Query for badge progress with computed key
-    const badgeProgressQuery = useQuery({
-        queryKey: [...assistantKeys.badgeList(userId ?? ""), "progress"],
-        queryFn: () => fetchBadgeProgress(userId!),
-        enabled: !!userId,
-        staleTime: 30_000,
-        refetchOnWindowFocus: true,
-    });
+    const badgesQuery = useAssistantBadgesQuery(userId);
+    const tasksQuery = useAssistantTasksQuery(userId);
+    const streakQuery = useAssistantStreakQuery(userId);
 
-    // Progress data
-    const progress = useMemo(() => {
-        return badgeProgressQuery.data ?? [];
-    }, [badgeProgressQuery.data]);
+    const progress = useMemo<BadgeProgress[]>(() => {
+        const earnedBadges = badgesQuery.data ?? [];
+        const tasks = tasksQuery.data ?? [];
+        const streak = streakQuery.data;
 
-    // Loading state
-    const loading = badgeProgressQuery.isLoading;
+        const earnedTypes = new Set(earnedBadges.map((b) => b.badgeType));
+        const completedTasks = tasks.filter((t) => t.status === "completed");
+        const currentStreak = streak?.currentStreakDays ?? 0;
 
-    // Error state
-    const error = badgeProgressQuery.error
-        ? badgeProgressQuery.error instanceof Error
-            ? badgeProgressQuery.error.message
+        const result: BadgeProgress[] = [];
+
+        for (const def of BADGE_DEFINITIONS) {
+            if (earnedTypes.has(def.type)) {
+                continue;
+            }
+
+            let current = 0;
+            let target = 1;
+
+            switch (def.requirement.type) {
+                case "task-count":
+                    current = completedTasks.length;
+                    target = def.requirement.value;
+                    break;
+                case "streak-days":
+                    current = currentStreak;
+                    target = def.requirement.value;
+                    break;
+                case "first-action":
+                    current = completedTasks.length > 0 ? 1 : 0;
+                    target = 1;
+                    break;
+                default:
+                    current = 0;
+                    target = 1;
+            }
+
+            const percentComplete = Math.min(Math.round((current / target) * 100), 100);
+
+            result.push({
+                badgeType: def.type,
+                displayName: def.displayName,
+                description: def.description,
+                rarity: def.rarity,
+                current,
+                target,
+                percentComplete,
+            });
+        }
+
+        // Sort by percent complete descending
+        result.sort((a, b) => b.percentComplete - a.percentComplete);
+
+        return result;
+    }, [badgesQuery.data, tasksQuery.data, streakQuery.data]);
+
+    const loading = badgesQuery.isLoading || tasksQuery.isLoading || streakQuery.isLoading;
+    const error = badgesQuery.error
+        ? badgesQuery.error instanceof Error
+            ? badgesQuery.error.message
             : "Failed to load badge progress"
         : null;
 
-    /**
-     * Refresh badge progress
-     */
     function refresh(): void {
         if (userId) {
-            queryClient.invalidateQueries({
-                queryKey: [...assistantKeys.badgeList(userId), "progress"],
-            });
+            queryClient.invalidateQueries({ queryKey: assistantKeys.badgeList(userId) });
         }
     }
 
-    /**
-     * Get progress for a specific badge
-     */
     function getProgressForBadge(badgeType: BadgeType): BadgeProgress | undefined {
         return progress.find((p) => p.badgeType === badgeType);
     }
 
-    /**
-     * Get badges close to completion (>= 75%)
-     */
     function getAlmostCompleteBadges(): BadgeProgress[] {
         return progress.filter((p) => p.percentComplete >= 75);
     }
 
-    /**
-     * Get badges in progress (25-75%)
-     */
     function getInProgressBadges(): BadgeProgress[] {
         return progress.filter((p) => p.percentComplete >= 25 && p.percentComplete < 75);
     }
 
-    /**
-     * Get badges not started (<25%)
-     */
     function getNotStartedBadges(): BadgeProgress[] {
         return progress.filter((p) => p.percentComplete < 25);
     }
 
-    /**
-     * Get badges by rarity
-     */
     function getBadgesByRarity(rarity: BadgeRarity): BadgeProgress[] {
         return progress.filter((p) => p.rarity === rarity);
     }
 
-    /**
-     * Get next achievable badge (closest to completion)
-     */
     function getNextAchievableBadge(): BadgeProgress | null {
-        if (progress.length === 0) {
-            return null;
-        }
-        // Already sorted by percent complete descending
-        return progress[0];
+        return progress[0] ?? null;
     }
 
-    /**
-     * Get top N badges to focus on
-     */
     function getTopBadgesToFocus(n = 3): BadgeProgress[] {
         return progress.slice(0, n);
     }
 
-    /**
-     * Get badge icon from definitions
-     */
     function getBadgeIcon(badgeType: BadgeType): string {
         const definition = BADGE_DEFINITIONS.find((b) => b.type === badgeType);
         return definition?.icon ?? "Award";
     }
 
-    /**
-     * Get badge rarity color
-     */
     function getRarityColor(rarity: BadgeRarity): string {
         return getBadgeRarityColor(rarity);
     }
 
-    /**
-     * Format progress text
-     */
     function formatProgressText(badgeProgress: BadgeProgress): string {
         const { current, target } = badgeProgress;
-
-        // Format based on badge type
         const definition = BADGE_DEFINITIONS.find((b) => b.type === badgeProgress.badgeType);
         if (!definition) {
             return `${current}/${target}`;
@@ -147,23 +141,11 @@ export function useBadgeProgress(userId: string | null) {
                 return `${current}/${target} tasks`;
             case "streak-days":
                 return `${current}/${target} days`;
-            case "focus-time": {
-                const currentHours = Math.floor(current / 60);
-                const targetHours = Math.floor(target / 60);
-                return `${currentHours}/${targetHours} hours`;
-            }
-            case "decision-count":
-                return `${current}/${target} decisions`;
-            case "communication-count":
-                return `${current}/${target} entries`;
             default:
                 return `${current}/${target}`;
         }
     }
 
-    /**
-     * Get remaining amount text
-     */
     function getRemainingText(badgeProgress: BadgeProgress): string {
         const { current, target } = badgeProgress;
         const remaining = target - current;
@@ -182,38 +164,21 @@ export function useBadgeProgress(userId: string | null) {
                 return `${remaining} more task${remaining === 1 ? "" : "s"}`;
             case "streak-days":
                 return `${remaining} more day${remaining === 1 ? "" : "s"}`;
-            case "focus-time": {
-                const hours = Math.ceil(remaining / 60);
-                return `${hours} more hour${hours === 1 ? "" : "s"}`;
-            }
-            case "decision-count":
-                return `${remaining} more decision${remaining === 1 ? "" : "s"}`;
-            case "communication-count":
-                return `${remaining} more entr${remaining === 1 ? "y" : "ies"}`;
             default:
                 return `${remaining} more`;
         }
     }
 
-    /**
-     * Get rarity label
-     */
     function getRarityLabel(rarity: BadgeRarity): string {
-        switch (rarity) {
-            case "common":
-                return "Common";
-            case "uncommon":
-                return "Uncommon";
-            case "rare":
-                return "Rare";
-            case "legendary":
-                return "Legendary";
-        }
+        const labels: Record<BadgeRarity, string> = {
+            common: "Common",
+            uncommon: "Uncommon",
+            rare: "Rare",
+            legendary: "Legendary",
+        };
+        return labels[rarity];
     }
 
-    /**
-     * Get overall badge completion stats
-     */
     function getCompletionStats(): {
         totalBadges: number;
         earnedBadges: number;
@@ -234,9 +199,6 @@ export function useBadgeProgress(userId: string | null) {
         };
     }
 
-    /**
-     * Get badges grouped by rarity
-     */
     function getBadgesGroupedByRarity(): Record<BadgeRarity, BadgeProgress[]> {
         return {
             common: getBadgesByRarity("common"),
@@ -246,25 +208,16 @@ export function useBadgeProgress(userId: string | null) {
         };
     }
 
-    /**
-     * Clear error (no-op since TanStack Query manages error state)
-     */
     function clearError() {
-        // TanStack Query manages error state via refetch
         refresh();
     }
 
     return {
-        // State
         progress,
         loading,
         error,
-
-        // Operations
         refresh,
         getProgressForBadge,
-
-        // Filters
         getAlmostCompleteBadges,
         getInProgressBadges,
         getNotStartedBadges,
@@ -272,19 +225,12 @@ export function useBadgeProgress(userId: string | null) {
         getNextAchievableBadge,
         getTopBadgesToFocus,
         getBadgesGroupedByRarity,
-
-        // Analytics
         getCompletionStats,
-
-        // Utilities
         getBadgeIcon,
         getRarityColor,
         getRarityLabel,
         formatProgressText,
         getRemainingText,
         clearError,
-
-        // Server status (badge progress uses localStorage adapter for computation)
-        isServerMode: !badgeProgressQuery.isError,
     };
 }

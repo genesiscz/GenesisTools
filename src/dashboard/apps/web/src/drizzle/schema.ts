@@ -1,29 +1,28 @@
-import { index, integer, jsonb, pgTable, text } from "drizzle-orm/pg-core";
+import { index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 /**
  * Timers table - tracks user timers
  */
-export const timers = pgTable(
+export const timers = sqliteTable(
     "timers",
     {
         id: text("id").primaryKey(),
         name: text("name").notNull(),
         timerType: text("timer_type").notNull().$type<"stopwatch" | "countdown" | "pomodoro">(),
 
-        // State (PostgreSQL uses integer for booleans like SQLite)
-        isRunning: integer("is_running").notNull().default(0), // 0 = false, 1 = true
+        // State (integer for booleans: 0 = false, 1 = true)
+        isRunning: integer("is_running").notNull().default(0),
         elapsedTime: integer("elapsed_time").notNull().default(0), // milliseconds
         duration: integer("duration"), // milliseconds (for countdown/pomodoro)
 
-        // JSON fields - use jsonb for better PostgreSQL performance
-        // LapEntry from @dashboard/shared
-        laps: jsonb("laps")
+        // JSON fields - stored as text with JSON mode
+        laps: text("laps", { mode: "json" })
             .$type<
                 Array<{
-                    number: number; // Lap number (1-based)
-                    lapTime: number; // Time for this individual lap in ms
-                    splitTime: number; // Total elapsed time at this lap in ms
-                    timestamp: string; // ISO date string when lap was recorded
+                    number: number;
+                    lapTime: number;
+                    splitTime: number;
+                    timestamp: string;
                 }>
             >()
             .default([]),
@@ -36,12 +35,12 @@ export const timers = pgTable(
         updatedAt: text("updated_at").notNull(),
 
         // Enhanced functionality
-        showTotal: integer("show_total").notNull().default(0), // 0 = false, 1 = true
-        firstStartTime: text("first_start_time"), // ISO timestamp
-        startTime: text("start_time"), // ISO timestamp
+        showTotal: integer("show_total").notNull().default(0),
+        firstStartTime: text("first_start_time"),
+        startTime: text("start_time"),
 
         // Pomodoro-specific fields
-        pomodoroSettings: jsonb("pomodoro_settings").$type<{
+        pomodoroSettings: text("pomodoro_settings", { mode: "json" }).$type<{
             workDuration: number;
             shortBreakDuration: number;
             longBreakDuration: number;
@@ -58,7 +57,7 @@ export const timers = pgTable(
 /**
  * Activity logs table - tracks timer events
  */
-export const activityLogs = pgTable(
+export const activityLogs = sqliteTable(
     "activity_logs",
     {
         id: text("id").primaryKey(),
@@ -75,30 +74,11 @@ export const activityLogs = pgTable(
         sessionDuration: integer("session_duration"), // milliseconds
         previousValue: integer("previous_value"), // milliseconds
         newValue: integer("new_value"), // milliseconds
-        metadata: jsonb("metadata").$type<Record<string, unknown>>().default({}),
+        metadata: text("metadata", { mode: "json" }).$type<Record<string, unknown>>().default({}),
     },
     (table) => ({
         userIdIdx: index("idx_activity_logs_user_id").on(table.userId),
         timerIdIdx: index("idx_activity_logs_timer_id").on(table.timerId),
-    })
-);
-
-/**
- * Todos table - for example/demo purposes
- * (Not connected to components yet - uses raw SQL)
- */
-export const todos = pgTable(
-    "todos",
-    {
-        id: text("id").primaryKey(),
-        text: text("text").notNull(),
-        completed: integer("completed").notNull().default(0), // 0 = false, 1 = true
-        userId: text("user_id").notNull(),
-        createdAt: text("created_at").notNull(),
-        updatedAt: text("updated_at").notNull(),
-    },
-    (table) => ({
-        userIdIdx: index("idx_todos_user_id").on(table.userId),
     })
 );
 
@@ -109,7 +89,7 @@ export const todos = pgTable(
 /**
  * Assistant Tasks - core task management
  */
-export const assistantTasks = pgTable(
+export const assistantTasks = sqliteTable(
     "assistant_tasks",
     {
         id: text("id").primaryKey(),
@@ -124,15 +104,15 @@ export const assistantTasks = pgTable(
             .notNull()
             .$type<"critical" | "important" | "nice-to-have">()
             .default("nice-to-have"),
-        isShippingBlocker: integer("is_shipping_blocker").notNull().default(0), // 0 = false, 1 = true
+        isShippingBlocker: integer("is_shipping_blocker").notNull().default(0),
 
         // Context management
         contextParkingLot: text("context_parking_lot"),
         linkedGitHub: text("linked_github"),
 
         // Dependencies
-        blockedBy: jsonb("blocked_by").$type<string[]>().default([]),
-        blocks: jsonb("blocks").$type<string[]>().default([]),
+        blockedBy: text("blocked_by", { mode: "json" }).$type<string[]>().default([]),
+        blocks: text("blocks", { mode: "json" }).$type<string[]>().default([]),
 
         // Status & tracking
         status: text("status")
@@ -154,7 +134,7 @@ export const assistantTasks = pgTable(
 /**
  * Context Parking - captures working memory when switching tasks
  */
-export const assistantContextParking = pgTable(
+export const assistantContextParking = sqliteTable(
     "assistant_context_parking",
     {
         id: text("id").primaryKey(),
@@ -162,8 +142,8 @@ export const assistantContextParking = pgTable(
         taskId: text("task_id").notNull(),
         content: text("content").notNull(),
 
-        // Code context (JSONB)
-        codeContext: jsonb("code_context").$type<{
+        // Code context (JSON)
+        codeContext: text("code_context", { mode: "json" }).$type<{
             filePath?: string;
             lineNumber?: number;
             snippet?: string;
@@ -189,7 +169,7 @@ export const assistantContextParking = pgTable(
 /**
  * Completion Events - tracks task completions for celebrations
  */
-export const assistantCompletions = pgTable(
+export const assistantCompletions = sqliteTable(
     "assistant_completions",
     {
         id: text("id").primaryKey(),
@@ -199,10 +179,10 @@ export const assistantCompletions = pgTable(
             .notNull()
             .$type<"task-complete" | "focus-session" | "streak-milestone" | "badge-earned">(),
         completedAt: text("completed_at").notNull(), // ISO timestamp
-        celebrationShown: integer("celebration_shown").notNull().default(0), // 0 = false, 1 = true
+        celebrationShown: integer("celebration_shown").notNull().default(0),
 
         // Metadata
-        metadata: jsonb("metadata")
+        metadata: text("metadata", { mode: "json" })
             .$type<{
                 focusTimeSpent?: number;
                 taskUrgency?: "critical" | "important" | "nice-to-have";
@@ -220,7 +200,7 @@ export const assistantCompletions = pgTable(
 /**
  * Streaks - user streak tracking
  */
-export const assistantStreaks = pgTable("assistant_streaks", {
+export const assistantStreaks = sqliteTable("assistant_streaks", {
     userId: text("user_id").primaryKey(),
     currentStreakDays: integer("current_streak_days").notNull().default(0),
     longestStreakDays: integer("longest_streak_days").notNull().default(0),
@@ -231,7 +211,7 @@ export const assistantStreaks = pgTable("assistant_streaks", {
 /**
  * Badges - user earned badges
  */
-export const assistantBadges = pgTable(
+export const assistantBadges = sqliteTable(
     "assistant_badges",
     {
         id: text("id").primaryKey(),
@@ -266,7 +246,7 @@ export const assistantBadges = pgTable(
 /**
  * Communication Log - captures discussions and context from various sources
  */
-export const assistantCommunications = pgTable(
+export const assistantCommunications = sqliteTable(
     "assistant_communications",
     {
         id: text("id").primaryKey(),
@@ -276,8 +256,8 @@ export const assistantCommunications = pgTable(
         content: text("content").notNull(),
         sourceUrl: text("source_url"),
         discussedAt: text("discussed_at").notNull(), // ISO timestamp
-        tags: jsonb("tags").$type<string[]>().default([]),
-        relatedTaskIds: jsonb("related_task_ids").$type<string[]>().default([]),
+        tags: text("tags", { mode: "json" }).$type<string[]>().default([]),
+        relatedTaskIds: text("related_task_ids", { mode: "json" }).$type<string[]>().default([]),
         sentiment: text("sentiment")
             .notNull()
             .$type<"decision" | "discussion" | "blocker" | "context">()
@@ -295,24 +275,24 @@ export const assistantCommunications = pgTable(
 /**
  * Decision Log - records technical and process decisions
  */
-export const assistantDecisions = pgTable(
+export const assistantDecisions = sqliteTable(
     "assistant_decisions",
     {
         id: text("id").primaryKey(),
         userId: text("user_id").notNull(),
         title: text("title").notNull(),
         reasoning: text("reasoning").notNull(),
-        alternativesConsidered: jsonb("alternatives_considered").$type<string[]>().default([]),
+        alternativesConsidered: text("alternatives_considered", { mode: "json" }).$type<string[]>().default([]),
         decidedAt: text("decided_at").notNull(), // ISO timestamp
         decidedBy: text("decided_by").notNull(),
         status: text("status").notNull().$type<"active" | "superseded" | "reversed">().default("active"),
-        supersededBy: text("superseded_by"), // Decision ID
+        supersededBy: text("superseded_by"),
         reversalReason: text("reversal_reason"),
         impactArea: text("impact_area")
             .notNull()
             .$type<"frontend" | "backend" | "infrastructure" | "process" | "architecture" | "product">(),
-        relatedTaskIds: jsonb("related_task_ids").$type<string[]>().default([]),
-        tags: jsonb("tags").$type<string[]>().default([]),
+        relatedTaskIds: text("related_task_ids", { mode: "json" }).$type<string[]>().default([]),
+        tags: text("tags", { mode: "json" }).$type<string[]>().default([]),
 
         // Timestamps
         createdAt: text("created_at").notNull(),
@@ -326,7 +306,7 @@ export const assistantDecisions = pgTable(
 /**
  * Task Blockers - tracks why a task is blocked
  */
-export const assistantBlockers = pgTable(
+export const assistantBlockers = sqliteTable(
     "assistant_blockers",
     {
         id: text("id").primaryKey(),
@@ -352,7 +332,7 @@ export const assistantBlockers = pgTable(
 /**
  * Handoff Documents - structured documents for handing off work
  */
-export const assistantHandoffs = pgTable(
+export const assistantHandoffs = sqliteTable(
     "assistant_handoffs",
     {
         id: text("id").primaryKey(),
@@ -363,12 +343,12 @@ export const assistantHandoffs = pgTable(
         handoffAt: text("handoff_at").notNull(), // ISO timestamp
         summary: text("summary").notNull(),
         contextNotes: text("context_notes").notNull(),
-        decisions: jsonb("decisions").$type<string[]>().default([]), // Decision IDs
-        blockers: jsonb("blockers").$type<string[]>().default([]), // Blocker IDs
-        nextSteps: jsonb("next_steps").$type<string[]>().default([]),
+        decisions: text("decisions", { mode: "json" }).$type<string[]>().default([]),
+        blockers: text("blockers", { mode: "json" }).$type<string[]>().default([]),
+        nextSteps: text("next_steps", { mode: "json" }).$type<string[]>().default([]),
         gotchas: text("gotchas"),
         contact: text("contact").notNull(),
-        reviewed: integer("reviewed").notNull().default(0), // 0 = false, 1 = true
+        reviewed: integer("reviewed").notNull().default(0),
         reviewedAt: text("reviewed_at"), // ISO timestamp
 
         // Timestamps
@@ -384,7 +364,7 @@ export const assistantHandoffs = pgTable(
 /**
  * Deadline Risks - calculated risk assessments for task deadlines
  */
-export const assistantDeadlineRisks = pgTable(
+export const assistantDeadlineRisks = sqliteTable(
     "assistant_deadline_risks",
     {
         id: text("id").primaryKey(),
@@ -410,7 +390,7 @@ export const assistantDeadlineRisks = pgTable(
 /**
  * Energy Snapshots - captures energy and focus state at points in time
  */
-export const assistantEnergySnapshots = pgTable(
+export const assistantEnergySnapshots = sqliteTable(
     "assistant_energy_snapshots",
     {
         id: text("id").primaryKey(),
@@ -433,7 +413,7 @@ export const assistantEnergySnapshots = pgTable(
 /**
  * Distractions - tracks interruptions and their impact
  */
-export const assistantDistractions = pgTable(
+export const assistantDistractions = sqliteTable(
     "assistant_distractions",
     {
         id: text("id").primaryKey(),
@@ -443,7 +423,7 @@ export const assistantDistractions = pgTable(
         description: text("description"),
         duration: integer("duration"), // minutes
         taskInterrupted: text("task_interrupted"), // taskId
-        resumedTask: integer("resumed_task").notNull().default(0), // 0 = false, 1 = true
+        resumedTask: integer("resumed_task").notNull().default(0),
 
         // Timestamps
         createdAt: text("created_at").notNull(),
@@ -456,7 +436,7 @@ export const assistantDistractions = pgTable(
 /**
  * Weekly Reviews - aggregated weekly analytics and insights
  */
-export const assistantWeeklyReviews = pgTable(
+export const assistantWeeklyReviews = sqliteTable(
     "assistant_weekly_reviews",
     {
         id: text("id").primaryKey(),
@@ -470,13 +450,13 @@ export const assistantWeeklyReviews = pgTable(
         totalMinutes: integer("total_minutes").notNull().default(0),
         deepFocusMinutes: integer("deep_focus_minutes").notNull().default(0),
         meetingMinutes: integer("meeting_minutes").notNull().default(0),
-        averageEnergy: integer("average_energy").notNull().default(0), // Scaled 1-5 * 100 for precision
-        energyByDay: jsonb("energy_by_day").$type<Record<string, number>>().default({}),
+        averageEnergy: integer("average_energy").notNull().default(0),
+        energyByDay: text("energy_by_day", { mode: "json" }).$type<Record<string, number>>().default({}),
         peakFocusTime: text("peak_focus_time"),
         lowEnergyTime: text("low_energy_time"),
-        insights: jsonb("insights").$type<string[]>().default([]),
-        recommendations: jsonb("recommendations").$type<string[]>().default([]),
-        badgesEarned: jsonb("badges_earned").$type<string[]>().default([]),
+        insights: text("insights", { mode: "json" }).$type<string[]>().default([]),
+        recommendations: text("recommendations", { mode: "json" }).$type<string[]>().default([]),
+        badgesEarned: text("badges_earned", { mode: "json" }).$type<string[]>().default([]),
         streakDays: integer("streak_days").notNull().default(0),
         generatedAt: text("generated_at").notNull(), // ISO timestamp
 
@@ -491,7 +471,7 @@ export const assistantWeeklyReviews = pgTable(
 /**
  * Celebrations - represents celebrations to show to user
  */
-export const assistantCelebrations = pgTable(
+export const assistantCelebrations = sqliteTable(
     "assistant_celebrations",
     {
         id: text("id").primaryKey(),
@@ -504,9 +484,9 @@ export const assistantCelebrations = pgTable(
             .$type<
                 "task-complete" | "focus-session" | "streak-milestone" | "badge-earned" | "weekly-review" | "milestone"
             >(),
-        triggerId: text("trigger_id"), // ID of the triggering event
+        triggerId: text("trigger_id"),
         shownAt: text("shown_at"), // ISO timestamp
-        dismissed: integer("dismissed").notNull().default(0), // 0 = false, 1 = true
+        dismissed: integer("dismissed").notNull().default(0),
 
         // Timestamps
         createdAt: text("created_at").notNull(),
@@ -527,10 +507,6 @@ export type NewTimer = typeof timers.$inferInsert;
 // Activity log types
 export type ActivityLog = typeof activityLogs.$inferSelect;
 export type NewActivityLog = typeof activityLogs.$inferInsert;
-
-// Todo types (not used yet)
-export type Todo = typeof todos.$inferSelect;
-export type NewTodo = typeof todos.$inferInsert;
 
 // ============================================
 // Assistant Types

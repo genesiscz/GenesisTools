@@ -1,14 +1,6 @@
-/**
- * Distractions Hook - Server-first with localStorage fallback
- *
- * Uses TanStack Query for server data with refetchOnWindowFocus.
- * Falls back to localStorage when server is unavailable.
- */
-
 import { useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { getAssistantStorageAdapter, initializeAssistantStorage } from "@/lib/assistant/lib/storage";
-import type { DistractionQueryOptions, DistractionStats } from "@/lib/assistant/lib/storage/types";
+import { useCallback, useMemo, useState } from "react";
+import type { DistractionStats } from "@/lib/assistant/lib/storage/types";
 import type { Distraction, DistractionInput } from "@/lib/assistant/types";
 import { generateDistractionId } from "@/lib/assistant/types";
 import {
@@ -17,59 +9,16 @@ import {
     useCreateAssistantDistractionMutation,
 } from "./useAssistantQueries";
 
-/**
- * Hook to log and query distractions
- * Server-first with localStorage fallback
- */
+export type { DistractionStats };
+
 export function useDistractions(userId: string | null) {
     const queryClient = useQueryClient();
-    const [fallbackMode, setFallbackMode] = useState(false);
-    const [fallbackDistractions, setFallbackDistractions] = useState<Distraction[]>([]);
     const [error, setError] = useState<string | null>(null);
 
-    // Server queries
     const distractionsQuery = useAssistantDistractionsQuery(userId, 100);
-
-    // Server mutations
     const createMutation = useCreateAssistantDistractionMutation();
 
-    // Determine if we should use fallback mode
-    const useFallback = fallbackMode || (distractionsQuery.isError && !distractionsQuery.data);
-
-    // Initialize localStorage fallback if server fails
-    useEffect(() => {
-        if (!userId) {
-            return;
-        }
-
-        if (distractionsQuery.isError && !fallbackMode) {
-            const currentUserId = userId;
-
-            async function loadFallback() {
-                try {
-                    const adapter = await initializeAssistantStorage();
-                    const endDate = new Date();
-                    const startDate = new Date();
-                    startDate.setDate(startDate.getDate() - 7);
-
-                    const data = await adapter.getDistractions(currentUserId, { startDate, endDate });
-                    setFallbackMode(true);
-                    setFallbackDistractions(data);
-                } catch (err) {
-                    setError(err instanceof Error ? err.message : "Failed to load fallback");
-                }
-            }
-
-            loadFallback();
-        }
-    }, [userId, distractionsQuery.isError, fallbackMode]);
-
-    // Convert server distractions to app Distraction type
     const distractions: Distraction[] = useMemo(() => {
-        if (useFallback) {
-            return fallbackDistractions;
-        }
-
         return (distractionsQuery.data ?? []).map((d) => ({
             id: d.id,
             userId: d.userId,
@@ -80,14 +29,10 @@ export function useDistractions(userId: string | null) {
             timestamp: new Date(d.timestamp),
             createdAt: new Date(d.createdAt),
         }));
-    }, [useFallback, fallbackDistractions, distractionsQuery.data]);
+    }, [distractionsQuery.data]);
 
-    // Loading state
     const loading = distractionsQuery.isLoading;
 
-    /**
-     * Log a new distraction
-     */
     async function logDistraction(input: DistractionInput): Promise<Distraction | null> {
         if (!userId) {
             return null;
@@ -95,18 +40,6 @@ export function useDistractions(userId: string | null) {
 
         const now = new Date();
         const distractionId = generateDistractionId();
-
-        if (useFallback) {
-            try {
-                const adapter = getAssistantStorageAdapter();
-                const distraction = await adapter.logDistraction(input, userId);
-                setFallbackDistractions((prev) => [distraction, ...prev]);
-                return distraction;
-            } catch (err) {
-                setError(err instanceof Error ? err.message : "Failed to log distraction");
-                return null;
-            }
-        }
 
         try {
             const result = await createMutation.mutateAsync({
@@ -135,22 +68,11 @@ export function useDistractions(userId: string | null) {
                 createdAt: now,
             };
         } catch (err) {
-            // Fall back to localStorage on error
-            try {
-                const adapter = await initializeAssistantStorage();
-                const distraction = await adapter.logDistraction(input, userId);
-                setFallbackDistractions((prev) => [distraction, ...prev]);
-                return distraction;
-            } catch {
-                setError(err instanceof Error ? err.message : "Failed to log distraction");
-                return null;
-            }
+            setError(err instanceof Error ? err.message : "Failed to log distraction");
+            return null;
         }
     }
 
-    /**
-     * Quick log distraction (simplified)
-     */
     async function quickLog(source: Distraction["source"], taskInterrupted?: string): Promise<Distraction | null> {
         return logDistraction({
             source,
@@ -159,27 +81,13 @@ export function useDistractions(userId: string | null) {
         });
     }
 
-    /**
-     * Mark that user resumed task after distraction
-     */
-    async function markResumed(distractionId: string): Promise<void> {
-        if (useFallback) {
-            setFallbackDistractions((prev) =>
-                prev.map((d) => (d.id === distractionId ? { ...d, resumedTask: true } : d))
-            );
-        }
-        // Note: Server mode doesn't have update endpoint, so just update local cache
+    interface DistractionQueryOptions {
+        startDate?: Date;
+        endDate?: Date;
+        source?: Distraction["source"];
     }
 
-    /**
-     * Get distractions with filters (local filtering)
-     * Note: DistractionQueryOptions doesn't have taskId - filter by source instead
-     */
-    async function getDistractions(options?: DistractionQueryOptions): Promise<Distraction[]> {
-        if (!userId) {
-            return [];
-        }
-
+    function getDistractions(options?: DistractionQueryOptions): Distraction[] {
         let filtered = [...distractions];
 
         if (options?.startDate) {
@@ -195,15 +103,8 @@ export function useDistractions(userId: string | null) {
         return filtered.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
     }
 
-    /**
-     * Get distraction statistics
-     */
     const getStats = useCallback(
-        async (startDate: Date, endDate: Date): Promise<DistractionStats | null> => {
-            if (!userId) {
-                return null;
-            }
-
+        (startDate: Date, endDate: Date): DistractionStats => {
             const filtered = distractions.filter((d) => d.timestamp >= startDate && d.timestamp <= endDate);
 
             if (filtered.length === 0) {
@@ -218,7 +119,6 @@ export function useDistractions(userId: string | null) {
                 };
             }
 
-            // Compute stats
             const bySource: Record<string, { count: number; duration: number }> = {};
             let totalDuration = 0;
             let resumedCount = 0;
@@ -239,10 +139,8 @@ export function useDistractions(userId: string | null) {
                 }
             }
 
-            // Calculate days in range for averagePerDay
             const daysDiff = Math.max(1, Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)));
 
-            // Find most common source (by count)
             let mostCommonSource = "";
             let maxCount = 0;
             for (const [source, stats] of Object.entries(bySource)) {
@@ -252,7 +150,6 @@ export function useDistractions(userId: string | null) {
                 }
             }
 
-            // Find most disruptive source (by duration)
             let mostDisruptiveSource = "";
             let maxDuration = 0;
             for (const [source, stats] of Object.entries(bySource)) {
@@ -272,42 +169,27 @@ export function useDistractions(userId: string | null) {
                 mostDisruptiveSource,
             };
         },
-        [distractions, userId]
+        [distractions]
     );
 
-    /**
-     * Get today's distractions
-     */
     function getTodayDistractions(): Distraction[] {
         const today = new Date();
         today.setHours(0, 0, 0, 0);
         return distractions.filter((d) => d.timestamp >= today);
     }
 
-    /**
-     * Get distractions by source
-     */
     function getBySource(source: Distraction["source"]): Distraction[] {
         return distractions.filter((d) => d.source === source);
     }
 
-    /**
-     * Get distractions that interrupted a specific task
-     */
     function getByTask(taskId: string): Distraction[] {
         return distractions.filter((d) => d.taskInterrupted === taskId);
     }
 
-    /**
-     * Get distraction count for today
-     */
     function getTodayCount(): number {
         return getTodayDistractions().length;
     }
 
-    /**
-     * Get most common distraction source
-     */
     function getMostCommonSource(): Distraction["source"] | null {
         if (distractions.length === 0) {
             return null;
@@ -330,9 +212,6 @@ export function useDistractions(userId: string | null) {
         return maxSource as Distraction["source"];
     }
 
-    /**
-     * Get distraction source icon
-     */
     function getSourceIcon(source: Distraction["source"]): string {
         switch (source) {
             case "slack":
@@ -350,9 +229,6 @@ export function useDistractions(userId: string | null) {
         }
     }
 
-    /**
-     * Get distraction source label
-     */
     function getSourceLabel(source: Distraction["source"]): string {
         switch (source) {
             case "slack":
@@ -370,9 +246,6 @@ export function useDistractions(userId: string | null) {
         }
     }
 
-    /**
-     * Get resumption rate (percentage of distractions where task was resumed)
-     */
     function getResumptionRate(): number {
         if (distractions.length === 0) {
             return 0;
@@ -381,16 +254,10 @@ export function useDistractions(userId: string | null) {
         return (resumed / distractions.length) * 100;
     }
 
-    /**
-     * Get total distraction duration today
-     */
     function getTodayDurationMinutes(): number {
         return getTodayDistractions().reduce((sum, d) => sum + (d.duration ?? 0), 0);
     }
 
-    /**
-     * Format distraction duration
-     */
     function formatDuration(minutes: number | undefined): string {
         if (!minutes) {
             return "Unknown";
@@ -403,14 +270,7 @@ export function useDistractions(userId: string | null) {
         return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
     }
 
-    /**
-     * Get distraction trend (improving, worsening, stable)
-     */
-    const getDistractionTrend = useCallback(async (): Promise<"improving" | "worsening" | "stable"> => {
-        if (!userId) {
-            return "stable";
-        }
-
+    const getDistractionTrend = useCallback((): "improving" | "worsening" | "stable" => {
         const now = new Date();
         const startOfThisWeek = new Date(now);
         startOfThisWeek.setDate(now.getDate() - now.getDay());
@@ -420,10 +280,8 @@ export function useDistractions(userId: string | null) {
         startOfLastWeek.setDate(startOfLastWeek.getDate() - 7);
 
         const thisWeek = distractions.filter((d) => d.timestamp >= startOfThisWeek && d.timestamp <= now);
-
         const lastWeek = distractions.filter((d) => d.timestamp >= startOfLastWeek && d.timestamp < startOfThisWeek);
 
-        // Normalize by days passed
         const daysPassed = Math.ceil((now.getTime() - startOfThisWeek.getTime()) / (1000 * 60 * 60 * 24));
         const thisWeekDaily = thisWeek.length / Math.max(daysPassed, 1);
         const lastWeekDaily = lastWeek.length / 7;
@@ -436,18 +294,12 @@ export function useDistractions(userId: string | null) {
             return "worsening";
         }
         return "stable";
-    }, [distractions, userId]);
+    }, [distractions]);
 
-    /**
-     * Clear error
-     */
     function clearError() {
         setError(null);
     }
 
-    /**
-     * Manual refresh
-     */
     function refresh() {
         if (userId) {
             queryClient.invalidateQueries({ queryKey: assistantKeys.distractionList(userId) });
@@ -455,38 +307,25 @@ export function useDistractions(userId: string | null) {
     }
 
     return {
-        // State
         distractions,
         loading,
         error,
-
-        // Operations
         logDistraction,
         quickLog,
-        markResumed,
         getDistractions,
         getStats,
-
-        // Filters
         getTodayDistractions,
         getBySource,
         getByTask,
-
-        // Analytics
         getTodayCount,
         getMostCommonSource,
         getResumptionRate,
         getTodayDurationMinutes,
         getDistractionTrend,
-
-        // Utilities
         getSourceIcon,
         getSourceLabel,
         formatDuration,
         clearError,
         refresh,
-
-        // Server status
-        isServerMode: !useFallback,
     };
 }

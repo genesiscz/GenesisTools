@@ -94,7 +94,7 @@ const sizeConfig = {
  * Get Lucide icon component by name
  */
 function getIconComponent(iconName: string): Icons.LucideIcon {
-    const icon = (Icons as Record<string, Icons.LucideIcon>)[iconName];
+    const icon = (Icons as unknown as Record<string, Icons.LucideIcon>)[iconName];
     return icon ?? Icons.Award;
 }
 

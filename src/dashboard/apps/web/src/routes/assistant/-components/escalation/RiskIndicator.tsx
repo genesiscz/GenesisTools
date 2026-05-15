@@ -121,7 +121,7 @@ export function RiskIndicator({
                         "rounded-full",
                         sizes.dot,
                         config.dotColor,
-                        animate && riskLevel !== "green" && "animate-pulse"
+                        animate && "animate-pulse"
                     )}
                     style={{
                         boxShadow: config.glowColor ? `0 0 12px ${config.glowColor}` : undefined,

@@ -117,15 +117,16 @@ export function useGraphInteractions(
     const lastPosRef = useRef({ x: 0, y: 0 });
 
     useEffect(() => {
-        const svg = svgRef.current;
-        if (!svg) {
+        const svgOrNull = svgRef.current;
+        if (!svgOrNull) {
             return;
         }
+        const svg: SVGSVGElement = svgOrNull;
 
         function handleWheel(e: WheelEvent) {
             e.preventDefault();
 
-            const rect = svg?.getBoundingClientRect();
+            const rect = svg.getBoundingClientRect();
             const mouseX = e.clientX - rect.left;
             const mouseY = e.clientY - rect.top;
 

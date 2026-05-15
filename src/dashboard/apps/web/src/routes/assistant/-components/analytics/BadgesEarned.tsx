@@ -1,5 +1,5 @@
 import { Award, Brain, CheckCircle, Crown, Flame, Rocket, Target, Trophy } from "lucide-react";
-import type { BadgeRarity, BadgeType, WeeklyReview } from "@/lib/assistant/types";
+import type { BadgeDefinition, BadgeRarity, BadgeType, WeeklyReview } from "@/lib/assistant/types";
 import { BADGE_DEFINITIONS } from "@/lib/assistant/types";
 import { cn } from "@/lib/utils";
 
@@ -38,7 +38,7 @@ export function BadgesEarned({ review, loading }: BadgesEarnedProps) {
     // Get badge definitions for earned badges
     const earnedBadges = badgeTypes
         .map((badgeType) => BADGE_DEFINITIONS.find((b) => b.type === badgeType))
-        .filter(Boolean);
+        .filter((b): b is BadgeDefinition => b !== undefined);
 
     return (
         <div className="relative overflow-hidden rounded-xl bg-[#0a0a14]/80 backdrop-blur-sm border border-white/5 p-4">
@@ -72,12 +72,12 @@ export function BadgesEarned({ review, loading }: BadgesEarnedProps) {
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                     {earnedBadges.map((badge) => (
                         <BadgeCard
-                            key={badge?.type}
-                            type={badge?.type}
-                            displayName={badge?.displayName}
-                            description={badge?.description}
-                            iconName={badge?.icon}
-                            rarity={badge?.rarity}
+                            key={badge.type}
+                            type={badge.type}
+                            displayName={badge.displayName}
+                            description={badge.description}
+                            iconName={badge.icon}
+                            rarity={badge.rarity}
                         />
                     ))}
                 </div>

@@ -1,5 +1,4 @@
-import type { ActivityLogInput, Timer, TimerType } from "@dashboard/shared";
-import { getStorageAdapter } from "@/lib/timer/storage";
+import type { Timer, TimerType } from "@dashboard/shared";
 import { formatTime, formatTimeCompact, useTimerEngine } from "./useTimerEngine";
 import { useTimerStore } from "./useTimerStore";
 
@@ -15,17 +14,17 @@ interface UseTimerReturn {
     formattedTimeCompact: string;
     isRunning: boolean;
     // Actions
-    start: () => Promise<void>;
-    pause: () => Promise<void>;
-    reset: () => Promise<void>;
-    toggleRunning: () => Promise<void>;
-    addLap: () => Promise<void>;
-    clearLaps: () => Promise<void>;
-    setName: (name: string) => Promise<void>;
-    setDuration: (durationMs: number) => Promise<void>;
-    setType: (type: TimerType) => Promise<void>;
-    editElapsedTime: (newElapsedMs: number) => Promise<void>;
-    toggleShowTotal: () => Promise<void>;
+    start: () => void;
+    pause: () => void;
+    reset: () => void;
+    toggleRunning: () => void;
+    addLap: () => void;
+    clearLaps: () => void;
+    setName: (name: string) => void;
+    setDuration: (durationMs: number) => void;
+    setType: (type: TimerType) => void;
+    editElapsedTime: (newElapsedMs: number) => void;
+    toggleShowTotal: () => void;
     // Computed
     totalTimeElapsed: number;
     completionPercentage: number;
@@ -40,26 +39,8 @@ export function useTimer({ userId, timerId }: UseTimerOptions): UseTimerReturn {
     const timer = getTimer(timerId);
     const { displayTime, isRunning } = useTimerEngine(timer);
 
-    // Log activity helper
-    async function logActivity(eventType: ActivityLogInput["eventType"], extras: Partial<ActivityLogInput> = {}) {
-        if (!timer || !userId) {
-            return;
-        }
-
-        const adapter = getStorageAdapter();
-        await adapter.logActivity({
-            timerId: timer.id,
-            timerName: timer.name,
-            userId,
-            eventType,
-            timestamp: new Date(),
-            elapsedAtEvent: timer.elapsedTime ?? 0,
-            ...extras,
-        });
-    }
-
     // Start timer
-    async function start() {
+    function start() {
         if (!timer) {
             return;
         }
@@ -70,25 +51,15 @@ export function useTimer({ userId, timerId }: UseTimerOptions): UseTimerReturn {
             startTime: now,
         };
 
-        // Calculate pause duration if timer was previously paused (not first start)
-        let pauseDuration: number | undefined;
-        if (timer.updatedAt && !timer.isRunning && timer.elapsedTime && timer.elapsedTime > 0) {
-            const lastPausedAt =
-                timer.updatedAt instanceof Date ? timer.updatedAt.getTime() : new Date(timer.updatedAt).getTime();
-            pauseDuration = now.getTime() - lastPausedAt;
-        }
-
-        // Set firstStartTime if this is the first time starting
         if (!timer.firstStartTime) {
             updates.firstStartTime = now;
         }
 
-        await updateTimer(timerId, updates);
-        await logActivity("start", pauseDuration ? { metadata: { pauseDuration } } : {});
+        updateTimer(timerId, updates);
     }
 
     // Pause timer
-    async function pause() {
+    function pause() {
         if (!timer || !timer.isRunning || !timer.startTime) {
             return;
         }
@@ -98,57 +69,43 @@ export function useTimer({ userId, timerId }: UseTimerOptions): UseTimerReturn {
         const sessionDuration = Date.now() - startTime;
         const newElapsed = (timer.elapsedTime ?? 0) + sessionDuration;
 
-        await updateTimer(timerId, {
+        updateTimer(timerId, {
             isRunning: false,
             startTime: null,
             elapsedTime: newElapsed,
         });
-
-        await logActivity("pause", { sessionDuration, elapsedAtEvent: newElapsed });
     }
 
     // Toggle running state
-    async function toggleRunning() {
+    function toggleRunning() {
         if (timer?.isRunning) {
-            await pause();
+            pause();
         } else {
-            await start();
+            start();
         }
     }
 
     // Reset timer
-    async function reset() {
+    function reset() {
         if (!timer) {
             return;
         }
 
-        // Calculate elapsed at event before reset
-        let elapsedAtEvent = timer.elapsedTime ?? 0;
-        if (timer.isRunning && timer.startTime) {
-            const startTime =
-                timer.startTime instanceof Date ? timer.startTime.getTime() : new Date(timer.startTime).getTime();
-            elapsedAtEvent += Date.now() - startTime;
-        }
-
-        await updateTimer(timerId, {
+        updateTimer(timerId, {
             isRunning: false,
             startTime: null,
             elapsedTime: 0,
             laps: [],
-            // Reset pomodoro session count if resetting
             pomodoroSessionCount: 0,
         });
-
-        await logActivity("reset", { elapsedAtEvent });
     }
 
     // Add lap
-    async function addLap() {
+    function addLap() {
         if (!timer) {
             return;
         }
 
-        // Calculate current elapsed
         let currentElapsed = timer.elapsedTime ?? 0;
         if (timer.isRunning && timer.startTime) {
             const startTime =
@@ -156,60 +113,47 @@ export function useTimer({ userId, timerId }: UseTimerOptions): UseTimerReturn {
             currentElapsed += Date.now() - startTime;
         }
 
-        const lap = await addLapToStore(timerId, currentElapsed);
-        if (lap) {
-            await logActivity("lap", {
-                elapsedAtEvent: currentElapsed,
-                metadata: { lapNumber: lap.number, lapTime: lap.lapTime },
-            });
-        }
+        addLapToStore(timerId, currentElapsed);
     }
 
     // Clear laps
-    async function clearLaps() {
-        await clearLapsFromStore(timerId);
+    function clearLaps() {
+        clearLapsFromStore(timerId);
     }
 
     // Set timer name
-    async function setName(name: string) {
-        await updateTimer(timerId, { name });
+    function setName(name: string) {
+        updateTimer(timerId, { name });
     }
 
     // Set countdown duration (only when paused) - also reset elapsedTime
-    async function setDuration(durationMs: number) {
+    function setDuration(durationMs: number) {
         if (timer?.isRunning) {
             return;
         }
-        await updateTimer(timerId, { duration: durationMs, elapsedTime: 0 });
+        updateTimer(timerId, { duration: durationMs, elapsedTime: 0 });
     }
 
     // Set timer type
-    async function setType(type: TimerType) {
-        await updateTimer(timerId, { timerType: type });
+    function setType(type: TimerType) {
+        updateTimer(timerId, { timerType: type });
     }
 
     // Edit elapsed time (manual adjustment when paused)
-    async function editElapsedTime(newElapsedMs: number) {
+    function editElapsedTime(newElapsedMs: number) {
         if (!timer || timer.isRunning) {
             return;
         }
 
-        const previousValue = timer.elapsedTime ?? 0;
-
-        await updateTimer(timerId, { elapsedTime: newElapsedMs });
-
-        await logActivity("time_edit", {
-            previousValue,
-            newValue: newElapsedMs,
-        });
+        updateTimer(timerId, { elapsedTime: newElapsedMs });
     }
 
     // Toggle show total time
-    async function toggleShowTotal() {
+    function toggleShowTotal() {
         if (!timer) {
             return;
         }
-        await updateTimer(timerId, { showTotal: !timer.showTotal });
+        updateTimer(timerId, { showTotal: !timer.showTotal });
     }
 
     // Calculate total time since first start

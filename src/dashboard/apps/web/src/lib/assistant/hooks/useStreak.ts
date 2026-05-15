@@ -1,84 +1,24 @@
-import { useEffect, useState } from "react";
-import { getAssistantStorageAdapter, initializeAssistantStorage } from "@/lib/assistant/lib/storage";
-import type { Badge, Streak } from "@/lib/assistant/types";
+import type { Streak } from "@/lib/assistant/types";
+import { useAssistantStreakQuery } from "./useAssistantQueries";
 
 /**
- * Hook to manage streak state and badge checking
+ * Hook to access the user's streak state from SQLite via TanStack Query
  */
 export function useStreak(userId: string | null) {
-    const [streak, setStreak] = useState<Streak | null>(null);
-    const [loading, setLoading] = useState(true);
+    const streakQuery = useAssistantStreakQuery(userId);
 
-    // Load streak on mount
-    useEffect(() => {
-        if (!userId) {
-            setStreak(null);
-            setLoading(false);
-            return;
-        }
+    const raw = streakQuery.data ?? null;
 
-        const currentUserId = userId;
-        async function loadStreak() {
-            try {
-                await initializeAssistantStorage();
-                const adapter = getAssistantStorageAdapter();
-                const currentStreak = await adapter.getStreak(currentUserId);
-                setStreak(currentStreak);
-            } finally {
-                setLoading(false);
-            }
-        }
+    const streak: Streak | null = raw
+        ? {
+              userId: raw.userId,
+              currentStreakDays: raw.currentStreakDays,
+              longestStreakDays: raw.longestStreakDays,
+              lastTaskCompletionDate: new Date(raw.lastTaskCompletionDate),
+              streakResetDate: raw.streakResetDate ? new Date(raw.streakResetDate) : undefined,
+          }
+        : null;
 
-        loadStreak();
-    }, [userId]);
-
-    /**
-     * Update streak after task completion
-     * Returns new streak value
-     */
-    async function updateStreak(): Promise<Streak | null> {
-        if (!userId) {
-            return null;
-        }
-
-        try {
-            const adapter = getAssistantStorageAdapter();
-            const newStreak = await adapter.updateStreak(userId);
-            setStreak(newStreak);
-            return newStreak;
-        } catch {
-            return null;
-        }
-    }
-
-    /**
-     * Check for newly earned badges after task completion
-     * Automatically awards eligible badges and returns list
-     */
-    async function checkAndAwardBadges(): Promise<Badge[]> {
-        if (!userId) {
-            return [];
-        }
-
-        try {
-            const adapter = getAssistantStorageAdapter();
-            const eligibleBadges = await adapter.checkBadgeEligibility(userId);
-            const awardedBadges: Badge[] = [];
-
-            for (const badgeType of eligibleBadges) {
-                const badge = await adapter.awardBadge(userId, badgeType);
-                awardedBadges.push(badge);
-            }
-
-            return awardedBadges;
-        } catch {
-            return [];
-        }
-    }
-
-    /**
-     * Get streak motivation message
-     */
     function getStreakMessage(): string | null {
         if (!streak) {
             return null;
@@ -107,9 +47,6 @@ export function useStreak(userId: string | null) {
         return `${days}-day streak! LEGENDARY!`;
     }
 
-    /**
-     * Check if streak is at risk (last completion was yesterday)
-     */
     function isStreakAtRisk(): boolean {
         if (!streak || streak.currentStreakDays === 0) {
             return false;
@@ -125,14 +62,9 @@ export function useStreak(userId: string | null) {
         );
 
         const daysDiff = Math.floor((today.getTime() - lastCompletionDay.getTime()) / (1000 * 60 * 60 * 24));
-
-        // At risk if last completion was yesterday and no completion today
         return daysDiff >= 1;
     }
 
-    /**
-     * Get streak milestone info (for celebration)
-     */
     function getStreakMilestone(): { days: number; message: string } | null {
         if (!streak) {
             return null;
@@ -143,21 +75,15 @@ export function useStreak(userId: string | null) {
 
         for (const milestone of milestones) {
             if (days === milestone) {
-                return {
-                    days: milestone,
-                    message:
-                        milestone === 3
-                            ? "Warming Up!"
-                            : milestone === 7
-                              ? "One Week Strong!"
-                              : milestone === 14
-                                ? "Two Weeks Unstoppable!"
-                                : milestone === 30
-                                  ? "Monthly Master!"
-                                  : milestone === 60
-                                    ? "Two Months of Excellence!"
-                                    : "Century of Consistency!",
+                const messages: Record<number, string> = {
+                    3: "Warming Up!",
+                    7: "One Week Strong!",
+                    14: "Two Weeks Unstoppable!",
+                    30: "Monthly Master!",
+                    60: "Two Months of Excellence!",
+                    100: "Century of Consistency!",
                 };
+                return { days: milestone, message: messages[milestone] ?? "" };
             }
         }
 
@@ -166,9 +92,7 @@ export function useStreak(userId: string | null) {
 
     return {
         streak,
-        loading,
-        updateStreak,
-        checkAndAwardBadges,
+        loading: streakQuery.isLoading,
         getStreakMessage,
         isStreakAtRisk,
         getStreakMilestone,

@@ -1,16 +1,7 @@
-/**
- * Communication Log Hook - Server-first with localStorage fallback
- *
- * Uses TanStack Query for server data with refetchOnWindowFocus.
- * Falls back to localStorage when server is unavailable.
- */
-
 import { useQueryClient } from "@tanstack/react-query";
 import { useStore } from "@tanstack/react-store";
 import { Store } from "@tanstack/store";
-import { useEffect, useMemo } from "react";
-import { getAssistantStorageAdapter, initializeAssistantStorage } from "@/lib/assistant/lib/storage";
-import type { CommunicationQueryOptions } from "@/lib/assistant/lib/storage/types";
+import { useMemo } from "react";
 import type { CommunicationEntry, CommunicationEntryInput, CommunicationEntryUpdate } from "@/lib/assistant/types";
 import { generateCommunicationId } from "@/lib/assistant/types";
 import {
@@ -21,80 +12,25 @@ import {
     useUpdateAssistantCommunicationMutation,
 } from "./useAssistantQueries";
 
-/**
- * Communication log store state for fallback mode
- */
 interface CommunicationStoreState {
-    fallbackMode: boolean;
-    fallbackEntries: CommunicationEntry[];
     error: string | null;
 }
 
-/**
- * Create the communication store (for fallback state only)
- */
 export const communicationStore = new Store<CommunicationStoreState>({
-    fallbackMode: false,
-    fallbackEntries: [],
     error: null,
 });
 
-/**
- * Hook to manage communication log entries
- * Server-first with localStorage fallback
- */
 export function useCommunicationLog(userId: string | null) {
     const state = useStore(communicationStore);
     const queryClient = useQueryClient();
 
-    // Server queries
     const communicationsQuery = useAssistantCommunicationsQuery(userId);
 
-    // Server mutations
     const createMutation = useCreateAssistantCommunicationMutation();
     const updateMutation = useUpdateAssistantCommunicationMutation();
     const deleteMutation = useDeleteAssistantCommunicationMutation();
 
-    // Determine if we should use fallback mode
-    const useFallback = state.fallbackMode || (communicationsQuery.isError && !communicationsQuery.data);
-
-    // Initialize localStorage fallback if server fails
-    useEffect(() => {
-        if (!userId) {
-            return;
-        }
-
-        if (communicationsQuery.isError && !state.fallbackMode) {
-            const currentUserId = userId;
-
-            async function loadFallback() {
-                try {
-                    const adapter = await initializeAssistantStorage();
-                    const entries = await adapter.getCommunicationEntries(currentUserId);
-
-                    communicationStore.setState((s) => ({
-                        ...s,
-                        fallbackMode: true,
-                        fallbackEntries: entries,
-                    }));
-                } catch (err) {
-                    communicationStore.setState((s) => ({
-                        ...s,
-                        error: err instanceof Error ? err.message : "Failed to load fallback",
-                    }));
-                }
-            }
-
-            loadFallback();
-        }
-    }, [userId, communicationsQuery.isError, state.fallbackMode]);
-
-    // Convert server entries to app CommunicationEntry type
     const entries: CommunicationEntry[] = useMemo(() => {
-        if (useFallback) {
-            return state.fallbackEntries;
-        }
-
         return (communicationsQuery.data ?? []).map((e) => ({
             id: e.id,
             userId: e.userId,
@@ -109,15 +45,11 @@ export function useCommunicationLog(userId: string | null) {
             createdAt: new Date(e.createdAt),
             updatedAt: new Date(e.updatedAt),
         }));
-    }, [useFallback, state.fallbackEntries, communicationsQuery.data]);
+    }, [communicationsQuery.data]);
 
-    // Loading state
     const loading = communicationsQuery.isLoading;
-    const initialized = !loading && (communicationsQuery.data !== undefined || useFallback);
+    const initialized = !loading && communicationsQuery.data !== undefined;
 
-    /**
-     * Create a new communication entry
-     */
     async function createEntry(input: CommunicationEntryInput): Promise<CommunicationEntry | null> {
         if (!userId) {
             return null;
@@ -125,19 +57,6 @@ export function useCommunicationLog(userId: string | null) {
 
         const now = new Date();
         const entryId = generateCommunicationId();
-
-        if (useFallback) {
-            try {
-                const adapter = getAssistantStorageAdapter();
-                return await adapter.createCommunicationEntry(input, userId);
-            } catch (err) {
-                communicationStore.setState((s) => ({
-                    ...s,
-                    error: err instanceof Error ? err.message : "Failed to create communication entry",
-                }));
-                return null;
-            }
-        }
 
         try {
             const result = await createMutation.mutateAsync({
@@ -174,29 +93,19 @@ export function useCommunicationLog(userId: string | null) {
                 updatedAt: now,
             };
         } catch (err) {
-            // Fall back to localStorage on error
-            try {
-                const adapter = await initializeAssistantStorage();
-                return await adapter.createCommunicationEntry(input, userId);
-            } catch {
-                communicationStore.setState((s) => ({
-                    ...s,
-                    error: err instanceof Error ? err.message : "Failed to create communication entry",
-                }));
-                return null;
-            }
+            communicationStore.setState((s) => ({
+                ...s,
+                error: err instanceof Error ? err.message : "Failed to create communication entry",
+            }));
+            return null;
         }
     }
 
-    /**
-     * Update an existing communication entry
-     */
     async function updateEntry(id: string, updates: CommunicationEntryUpdate): Promise<CommunicationEntry | null> {
         if (!userId) {
             return null;
         }
 
-        // Convert updates for server - use correct field names
         const serverUpdates: Record<string, unknown> = {};
         if (updates.title !== undefined) {
             serverUpdates.title = updates.title;
@@ -220,26 +129,12 @@ export function useCommunicationLog(userId: string | null) {
             serverUpdates.discussedAt = updates.discussedAt.toISOString();
         }
 
-        if (useFallback) {
-            try {
-                const adapter = getAssistantStorageAdapter();
-                return await adapter.updateCommunicationEntry(id, updates);
-            } catch (err) {
-                communicationStore.setState((s) => ({
-                    ...s,
-                    error: err instanceof Error ? err.message : "Failed to update communication entry",
-                }));
-                return null;
-            }
-        }
-
         try {
             const result = await updateMutation.mutateAsync({ id, data: serverUpdates, userId });
             if (!result) {
                 throw new Error("Failed to update communication entry");
             }
 
-            // Return the updated entry
             const existingEntry = entries.find((e) => e.id === id);
             if (!existingEntry) {
                 return null;
@@ -251,40 +146,21 @@ export function useCommunicationLog(userId: string | null) {
                 updatedAt: new Date(),
             };
         } catch (err) {
-            // Fall back to localStorage
-            try {
-                const adapter = await initializeAssistantStorage();
-                return await adapter.updateCommunicationEntry(id, updates);
-            } catch {
-                communicationStore.setState((s) => ({
-                    ...s,
-                    error: err instanceof Error ? err.message : "Failed to update communication entry",
-                }));
-                return null;
-            }
+            communicationStore.setState((s) => ({
+                ...s,
+                error: err instanceof Error ? err.message : "Failed to update communication entry",
+            }));
+            return null;
         }
     }
 
-    /**
-     * Delete a communication entry
-     */
     async function deleteEntry(id: string): Promise<boolean> {
-        if (useFallback) {
-            try {
-                const adapter = getAssistantStorageAdapter();
-                await adapter.deleteCommunicationEntry(id);
-                return true;
-            } catch (err) {
-                communicationStore.setState((s) => ({
-                    ...s,
-                    error: err instanceof Error ? err.message : "Failed to delete communication entry",
-                }));
-                return false;
-            }
+        if (!userId) {
+            return false;
         }
 
         try {
-            const result = await deleteMutation.mutateAsync({ id, userId: userId! });
+            const result = await deleteMutation.mutateAsync({ id, userId });
             return result.success;
         } catch (err) {
             communicationStore.setState((s) => ({
@@ -295,22 +171,21 @@ export function useCommunicationLog(userId: string | null) {
         }
     }
 
-    /**
-     * Get an entry by ID
-     */
     function getEntry(id: string): CommunicationEntry | undefined {
         return entries.find((e) => e.id === id);
     }
 
-    /**
-     * Query entries with filters (falls back to local filtering)
-     */
-    async function queryEntries(options: CommunicationQueryOptions): Promise<CommunicationEntry[]> {
-        if (!userId) {
-            return [];
-        }
+    interface CommunicationQueryOptions {
+        source?: CommunicationEntry["source"];
+        sentiment?: CommunicationEntry["sentiment"];
+        relatedTaskId?: string;
+        tags?: string[];
+        startDate?: Date;
+        endDate?: Date;
+        limit?: number;
+    }
 
-        // For server mode, we filter locally since we have all entries
+    function queryEntries(options: CommunicationQueryOptions): CommunicationEntry[] {
         let filtered = [...entries];
 
         if (options.source) {
@@ -332,7 +207,6 @@ export function useCommunicationLog(userId: string | null) {
             filtered = filtered.filter((e) => e.discussedAt <= options.endDate!);
         }
 
-        // Sort by discussedAt descending
         filtered.sort((a, b) => b.discussedAt.getTime() - a.discussedAt.getTime());
 
         if (options.limit) {
@@ -342,37 +216,22 @@ export function useCommunicationLog(userId: string | null) {
         return filtered;
     }
 
-    /**
-     * Get entries by source
-     */
     function getBySource(source: CommunicationEntry["source"]): CommunicationEntry[] {
         return entries.filter((e) => e.source === source);
     }
 
-    /**
-     * Get entries by sentiment
-     */
     function getBySentiment(sentiment: CommunicationEntry["sentiment"]): CommunicationEntry[] {
         return entries.filter((e) => e.sentiment === sentiment);
     }
 
-    /**
-     * Get entries related to a task
-     */
     function getByTaskId(taskId: string): CommunicationEntry[] {
         return entries.filter((e) => e.relatedTaskIds.includes(taskId));
     }
 
-    /**
-     * Get entries with a specific tag
-     */
     function getByTag(tag: string): CommunicationEntry[] {
         return entries.filter((e) => e.tags.includes(tag));
     }
 
-    /**
-     * Get all unique tags
-     */
     function getAllTags(): string[] {
         const tagSet = new Set<string>();
         for (const entry of entries) {
@@ -383,25 +242,16 @@ export function useCommunicationLog(userId: string | null) {
         return Array.from(tagSet).sort();
     }
 
-    /**
-     * Get recent entries (last 7 days)
-     */
     function getRecentEntries(days = 7): CommunicationEntry[] {
         const cutoff = new Date();
         cutoff.setDate(cutoff.getDate() - days);
         return entries.filter((e) => e.discussedAt >= cutoff);
     }
 
-    /**
-     * Clear error
-     */
     function clearError() {
         communicationStore.setState((s) => ({ ...s, error: null }));
     }
 
-    /**
-     * Manual refresh
-     */
     function refresh() {
         if (userId) {
             queryClient.invalidateQueries({ queryKey: assistantKeys.communicationList(userId) });
@@ -409,32 +259,22 @@ export function useCommunicationLog(userId: string | null) {
     }
 
     return {
-        // State
         entries,
         loading,
         error: state.error,
         initialized,
-
-        // CRUD operations
         createEntry,
         updateEntry,
         deleteEntry,
         getEntry,
         queryEntries,
-
-        // Filters
         getBySource,
         getBySentiment,
         getByTaskId,
         getByTag,
         getAllTags,
         getRecentEntries,
-
-        // Utilities
         clearError,
         refresh,
-
-        // Server status
-        isServerMode: !useFallback,
     };
 }

@@ -199,7 +199,6 @@ export function DependencySelector({
                 ) : (
                     <div className="space-y-1.5">
                         {dependencyTasks.map((task) => {
-                            const _colors = getUrgencyChipColors(task.urgencyLevel);
                             const isCompleted = task.status === "completed";
 
                             return (

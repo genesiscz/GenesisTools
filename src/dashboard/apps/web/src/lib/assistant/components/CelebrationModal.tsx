@@ -19,7 +19,7 @@ interface CelebrationModalProps {
 /**
  * Canvas-based confetti animation
  */
-function useConfetti(canvasRef: React.RefObject<HTMLCanvasElement>, isActive: boolean) {
+function useConfetti(canvasRef: React.RefObject<HTMLCanvasElement | null>, isActive: boolean) {
     useEffect(() => {
         if (!isActive || !canvasRef.current) {
             return;

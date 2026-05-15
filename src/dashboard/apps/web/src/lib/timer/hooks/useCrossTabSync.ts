@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { BROADCAST_CHANNEL_NAME, type SyncMessage } from "@/lib/timer/storage";
+import { BROADCAST_CHANNEL_NAME, type SyncMessage } from "@/lib/timer/storage/types";
 
 interface CrossTabState {
     tabId: string;

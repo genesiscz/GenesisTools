@@ -28,34 +28,6 @@ interface HandoffDocumentProps {
 }
 
 /**
- * Terminal-style document section header with neon underline
- */
-function _SectionHeader({
-    icon: Icon,
-    title,
-    color = "cyan",
-}: {
-    icon: typeof Terminal;
-    title: string;
-    color?: "cyan" | "purple" | "amber" | "rose" | "emerald";
-}) {
-    const colorClasses = {
-        cyan: "text-cyan-400 border-cyan-500/50",
-        purple: "text-purple-400 border-purple-500/50",
-        amber: "text-amber-400 border-amber-500/50",
-        rose: "text-rose-400 border-rose-500/50",
-        emerald: "text-emerald-400 border-emerald-500/50",
-    };
-
-    return (
-        <div className={cn("flex items-center gap-2 pb-2 mb-3 border-b", colorClasses[color])}>
-            <Icon className="h-4 w-4" />
-            <span className="font-mono text-sm font-semibold uppercase tracking-wider">{title}</span>
-        </div>
-    );
-}
-
-/**
  * Terminal-style code block for context
  */
 function CodeBlock({ children, className }: { children: React.ReactNode; className?: string }) {

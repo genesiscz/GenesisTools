@@ -1,6 +1,6 @@
 import { SafeJSON } from "@dashboard/shared";
-import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { z } from "zod";
 import {
     createAssistantTask,
     deleteAssistantTask,
@@ -9,19 +9,18 @@ import {
 } from "@/lib/assistant/assistant.server";
 
 export function registerTaskTools(server: McpServer) {
-    server.tool(
+    server.registerTool(
         "list_tasks",
         {
-            description:
-                "List assistant tasks for a user. Optionally filter by status.",
-            inputSchema: z.object({
+            description: "List assistant tasks for a user. Optionally filter by status.",
+            inputSchema: {
                 userId: z.string().describe("The user's WorkOS ID"),
                 status: z
                     .enum(["backlog", "in-progress", "blocked", "completed"])
                     .optional()
                     .describe("Filter by task status"),
                 limit: z.number().min(1).max(200).default(50),
-            }),
+            },
         },
         async ({ userId, status, limit }) => {
             const tasks = await getAssistantTasks({ data: { userId } });
@@ -38,21 +37,17 @@ export function registerTaskTools(server: McpServer) {
         }
     );
 
-    server.tool(
+    server.registerTool(
         "create_task",
         {
             description: "Create a new assistant task for a user.",
-            inputSchema: z.object({
+            inputSchema: {
                 userId: z.string().describe("The user's WorkOS ID"),
                 title: z.string().describe("Task title"),
                 description: z.string().optional().describe("Task description"),
-                status: z
-                    .enum(["backlog", "in-progress", "blocked", "completed"])
-                    .default("backlog"),
-                urgencyLevel: z
-                    .enum(["critical", "important", "nice-to-have"])
-                    .default("nice-to-have"),
-            }),
+                status: z.enum(["backlog", "in-progress", "blocked", "completed"]).default("backlog"),
+                urgencyLevel: z.enum(["critical", "important", "nice-to-have"]).default("nice-to-have"),
+            },
         },
         async ({ userId, title, description, status, urgencyLevel }) => {
             const now = new Date().toISOString();
@@ -81,21 +76,17 @@ export function registerTaskTools(server: McpServer) {
         }
     );
 
-    server.tool(
+    server.registerTool(
         "update_task",
         {
             description: "Update an existing assistant task.",
-            inputSchema: z.object({
+            inputSchema: {
                 id: z.string().describe("Task ID to update"),
                 title: z.string().optional(),
                 description: z.string().optional(),
-                status: z
-                    .enum(["backlog", "in-progress", "blocked", "completed"])
-                    .optional(),
-                urgencyLevel: z
-                    .enum(["critical", "important", "nice-to-have"])
-                    .optional(),
-            }),
+                status: z.enum(["backlog", "in-progress", "blocked", "completed"]).optional(),
+                urgencyLevel: z.enum(["critical", "important", "nice-to-have"]).optional(),
+            },
         },
         async ({ id, ...patch }) => {
             const updated = await updateAssistantTask({ data: { id, data: patch } });
@@ -108,13 +99,13 @@ export function registerTaskTools(server: McpServer) {
         }
     );
 
-    server.tool(
+    server.registerTool(
         "delete_task",
         {
             description: "Delete an assistant task by ID.",
-            inputSchema: z.object({
+            inputSchema: {
                 id: z.string().describe("Task ID to delete"),
-            }),
+            },
         },
         async ({ id }) => {
             const result = await deleteAssistantTask({ data: { id } });

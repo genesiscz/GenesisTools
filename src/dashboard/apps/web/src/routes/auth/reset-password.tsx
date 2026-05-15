@@ -78,7 +78,7 @@ function ResetPasswordPage() {
             // TODO: Implement password reset with WorkOS
             // For now, simulate success
             await new Promise((resolve) => setTimeout(resolve, 1000));
-            navigate({ to: "/auth/signin", search: { reset: "success" } });
+            navigate({ to: "/auth/signin", search: { reset: true } });
         } catch (err) {
             setError(err instanceof Error ? err.message : "Failed to reset password");
             setIsLoading(false);

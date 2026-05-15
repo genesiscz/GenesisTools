@@ -107,7 +107,7 @@ export const signInFn = createServerFn({ method: "POST" })
         return parsed.data;
     })
     .handler(async ({ data }) => {
-        if (data.code) {
+        if ("code" in data) {
             // Validation error was returned
             return data as AuthError;
         }
@@ -117,7 +117,7 @@ export const signInFn = createServerFn({ method: "POST" })
             return { code: "config_error", message: "Client ID not configured" };
         }
 
-        const { email, password } = data as z.infer<typeof signInSchema>;
+        const { email, password } = data;
 
         try {
             const authResult = await workos.userManagement.authenticateWithPassword({
@@ -151,7 +151,7 @@ export const signUpFn = createServerFn({ method: "POST" })
         return parsed.data;
     })
     .handler(async ({ data }) => {
-        if (data.code) {
+        if ("code" in data) {
             // Validation error was returned
             return data as AuthError;
         }
@@ -161,7 +161,7 @@ export const signUpFn = createServerFn({ method: "POST" })
             return { code: "config_error", message: "Client ID not configured" };
         }
 
-        const { email, password, firstName, lastName } = data as z.infer<typeof signUpSchema>;
+        const { email, password, firstName, lastName } = data;
 
         try {
             // Create the user

@@ -8,8 +8,9 @@ import { getOAuthUrlFn, signInFn } from "@/lib/auth-actions";
 
 export const Route = createFileRoute("/auth/signin")({
     component: SignInPage,
-    validateSearch: (search: Record<string, unknown>) => ({
-        reset: search.reset === "success",
+    validateSearch: (search: Record<string, unknown>): { reset?: boolean; returnTo?: string } => ({
+        ...(search.reset !== undefined ? { reset: search.reset === "success" } : {}),
+        ...(typeof search.returnTo === "string" ? { returnTo: search.returnTo } : {}),
     }),
 });
 

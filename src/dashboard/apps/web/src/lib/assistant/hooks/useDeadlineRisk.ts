@@ -1,89 +1,114 @@
-import { useEffect, useState } from "react";
-import { getAssistantStorageAdapter, initializeAssistantStorage } from "@/lib/assistant/lib/storage";
+import { useMemo, useState } from "react";
 import type { DeadlineRisk, DeadlineRiskInput, Task } from "@/lib/assistant/types";
+import { generateDeadlineRiskId } from "@/lib/assistant/types";
+import {
+    useAssistantDeadlineRisksQuery,
+    useCreateAssistantDeadlineRiskMutation,
+} from "./useAssistantQueries";
 
-/**
- * Hook to calculate and manage deadline risks
- */
+function computeRiskLevel(daysLate: number): DeadlineRisk["riskLevel"] {
+    if (daysLate > 2) {
+        return "red";
+    }
+    if (daysLate > 0) {
+        return "yellow";
+    }
+    return "green";
+}
+
+function computeRecommendedOption(riskLevel: DeadlineRisk["riskLevel"]): DeadlineRisk["recommendedOption"] {
+    switch (riskLevel) {
+        case "red":
+            return "extend";
+        case "yellow":
+            return "help";
+        case "green":
+            return "accept";
+    }
+}
+
 export function useDeadlineRisk(userId: string | null) {
-    const [risks, setRisks] = useState<DeadlineRisk[]>([]);
-    const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
-    // Load existing risks on mount
-    useEffect(() => {
-        if (!userId) {
-            setRisks([]);
-            setLoading(false);
-            return;
-        }
+    const risksQuery = useAssistantDeadlineRisksQuery(userId);
+    const createMutation = useCreateAssistantDeadlineRiskMutation();
 
-        const currentUserId = userId;
-        let mounted = true;
+    const risks: DeadlineRisk[] = useMemo(() => {
+        return (risksQuery.data ?? []).map((r) => ({
+            id: r.id,
+            userId: r.userId,
+            taskId: r.taskId,
+            riskLevel: r.riskLevel as DeadlineRisk["riskLevel"],
+            projectedCompletionDate: new Date(r.projectedCompletionDate),
+            daysLate: r.daysLate,
+            daysRemaining: r.daysRemaining,
+            percentComplete: r.percentComplete,
+            recommendedOption: r.recommendedOption as DeadlineRisk["recommendedOption"],
+            calculatedAt: new Date(r.calculatedAt),
+            createdAt: new Date(r.createdAt),
+        }));
+    }, [risksQuery.data]);
 
-        async function load() {
-            setLoading(true);
-            try {
-                await initializeAssistantStorage();
-                const adapter = getAssistantStorageAdapter();
-                const data = await adapter.getDeadlineRisks(currentUserId);
-                if (mounted) {
-                    setRisks(data);
-                }
-            } catch (err) {
-                if (mounted) {
-                    setError(err instanceof Error ? err.message : "Failed to load deadline risks");
-                }
-            } finally {
-                if (mounted) {
-                    setLoading(false);
-                }
-            }
-        }
+    const loading = risksQuery.isLoading;
 
-        load();
-
-        return () => {
-            mounted = false;
-        };
-    }, [userId]);
-
-    /**
-     * Calculate deadline risk for a task
-     */
     async function calculateRisk(input: DeadlineRiskInput): Promise<DeadlineRisk | null> {
         if (!userId) {
             return null;
         }
 
-        try {
-            const adapter = getAssistantStorageAdapter();
-            const risk = await adapter.calculateDeadlineRisk(input, userId);
+        const now = new Date();
+        const percentComplete = input.percentComplete ?? 0;
+        const projectedCompletion = input.projectedCompletionDate ?? now;
 
-            // Update local state
-            setRisks((prev) => {
-                // Remove any existing risk for this task, add new one
-                const filtered = prev.filter((r) => r.taskId !== input.taskId);
-                return [risk, ...filtered];
+        const daysLate = Math.ceil((projectedCompletion.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+        const daysRemaining = Math.max(0, -daysLate);
+        const riskLevel = computeRiskLevel(daysLate);
+        const recommendedOption = computeRecommendedOption(riskLevel);
+
+        try {
+            const result = await createMutation.mutateAsync({
+                id: generateDeadlineRiskId(),
+                userId,
+                taskId: input.taskId,
+                riskLevel,
+                projectedCompletionDate: projectedCompletion.toISOString(),
+                daysLate,
+                daysRemaining,
+                percentComplete,
+                recommendedOption,
+                calculatedAt: now.toISOString(),
+                createdAt: now.toISOString(),
             });
 
-            return risk;
+            if (!result) {
+                throw new Error("Failed to create deadline risk");
+            }
+
+            return {
+                id: result.id,
+                userId,
+                taskId: input.taskId,
+                riskLevel,
+                projectedCompletionDate: projectedCompletion,
+                daysLate,
+                daysRemaining,
+                percentComplete,
+                recommendedOption,
+                calculatedAt: now,
+                createdAt: now,
+            };
         } catch (err) {
             setError(err instanceof Error ? err.message : "Failed to calculate deadline risk");
             return null;
         }
     }
 
-    /**
-     * Calculate risks for all tasks with deadlines
-     */
     async function calculateAllRisks(tasks: Task[]): Promise<DeadlineRisk[]> {
         if (!userId) {
             return [];
         }
 
         const tasksWithDeadlines = tasks.filter((t) => t.deadline && t.status !== "completed");
-
         const calculatedRisks: DeadlineRisk[] = [];
 
         for (const task of tasksWithDeadlines) {
@@ -103,61 +128,37 @@ export function useDeadlineRisk(userId: string | null) {
         return calculatedRisks;
     }
 
-    /**
-     * Get risk for a specific task
-     */
-    async function getRiskForTask(taskId: string): Promise<DeadlineRisk | null> {
-        // Check local state first
+    function getRiskForTask(taskId: string): DeadlineRisk | null {
         const cached = risks.find((r) => r.taskId === taskId);
-        if (cached) {
-            // Check if it's recent (within last hour)
-            const age = Date.now() - new Date(cached.calculatedAt).getTime();
-            if (age < 60 * 60 * 1000) {
-                return cached;
-            }
-        }
-
-        // Fetch fresh data
-        try {
-            const adapter = getAssistantStorageAdapter();
-            return await adapter.getDeadlineRiskForTask(taskId);
-        } catch {
+        if (!cached) {
             return null;
         }
+
+        const age = Date.now() - cached.calculatedAt.getTime();
+        if (age < 60 * 60 * 1000) {
+            return cached;
+        }
+
+        return null;
     }
 
-    /**
-     * Get high-risk tasks (red level)
-     */
     function getHighRiskTasks(): DeadlineRisk[] {
         return risks.filter((r) => r.riskLevel === "red");
     }
 
-    /**
-     * Get medium-risk tasks (yellow level)
-     */
     function getMediumRiskTasks(): DeadlineRisk[] {
         return risks.filter((r) => r.riskLevel === "yellow");
     }
 
-    /**
-     * Get low-risk tasks (green level)
-     */
     function getLowRiskTasks(): DeadlineRisk[] {
         return risks.filter((r) => r.riskLevel === "green");
     }
 
-    /**
-     * Get tasks sorted by risk level
-     */
     function getRisksSortedByLevel(): DeadlineRisk[] {
-        const levelOrder = { red: 0, yellow: 1, green: 2 };
+        const levelOrder: Record<DeadlineRisk["riskLevel"], number> = { red: 0, yellow: 1, green: 2 };
         return [...risks].sort((a, b) => levelOrder[a.riskLevel] - levelOrder[b.riskLevel]);
     }
 
-    /**
-     * Get recommended action label
-     */
     function getRecommendedActionLabel(option: DeadlineRisk["recommendedOption"]): string {
         switch (option) {
             case "extend":
@@ -171,39 +172,17 @@ export function useDeadlineRisk(userId: string | null) {
         }
     }
 
-    /**
-     * Get risk level color
-     */
-    function getRiskLevelColor(level: DeadlineRisk["riskLevel"]): {
-        bg: string;
-        border: string;
-        text: string;
-    } {
+    function getRiskLevelColor(level: DeadlineRisk["riskLevel"]): { bg: string; border: string; text: string } {
         switch (level) {
             case "green":
-                return {
-                    bg: "bg-green-500/10",
-                    border: "border-green-500/30",
-                    text: "text-green-400",
-                };
+                return { bg: "bg-green-500/10", border: "border-green-500/30", text: "text-green-400" };
             case "yellow":
-                return {
-                    bg: "bg-yellow-500/10",
-                    border: "border-yellow-500/30",
-                    text: "text-yellow-400",
-                };
+                return { bg: "bg-yellow-500/10", border: "border-yellow-500/30", text: "text-yellow-400" };
             case "red":
-                return {
-                    bg: "bg-red-500/10",
-                    border: "border-red-500/30",
-                    text: "text-red-400",
-                };
+                return { bg: "bg-red-500/10", border: "border-red-500/30", text: "text-red-400" };
         }
     }
 
-    /**
-     * Get risk level label
-     */
     function getRiskLevelLabel(level: DeadlineRisk["riskLevel"]): string {
         switch (level) {
             case "green":
@@ -215,9 +194,6 @@ export function useDeadlineRisk(userId: string | null) {
         }
     }
 
-    /**
-     * Format days late/early
-     */
     function formatDaysLate(daysLate: number): string {
         if (daysLate > 0) {
             return `${daysLate} day${daysLate === 1 ? "" : "s"} late`;
@@ -227,42 +203,26 @@ export function useDeadlineRisk(userId: string | null) {
         return "On deadline";
     }
 
-    /**
-     * Estimate task completion percentage based on status
-     * This is a simple heuristic - can be customized
-     */
     function estimateTaskCompletion(task: Task): number {
         switch (task.status) {
             case "backlog":
                 return 0;
             case "in-progress":
-                // Estimate based on time spent vs average
                 if (task.focusTimeLogged > 0) {
-                    // Assume 4 hours average per task
                     return Math.min((task.focusTimeLogged / 240) * 100, 80);
                 }
                 return 25;
             case "blocked":
-                return 30; // Assume some progress before blocking
+                return 30;
             case "completed":
                 return 100;
         }
     }
 
-    /**
-     * Get overall risk summary
-     */
-    function getRiskSummary(): {
-        total: number;
-        red: number;
-        yellow: number;
-        green: number;
-        averageDaysLate: number;
-    } {
+    function getRiskSummary(): { total: number; red: number; yellow: number; green: number; averageDaysLate: number } {
         const red = getHighRiskTasks().length;
         const yellow = getMediumRiskTasks().length;
         const green = getLowRiskTasks().length;
-
         const avgDaysLate = risks.length > 0 ? risks.reduce((sum, r) => sum + r.daysLate, 0) / risks.length : 0;
 
         return {
@@ -274,35 +234,23 @@ export function useDeadlineRisk(userId: string | null) {
         };
     }
 
-    /**
-     * Clear error
-     */
     function clearError() {
         setError(null);
     }
 
     return {
-        // State
         risks,
         loading,
         error,
-
-        // Operations
         calculateRisk,
         calculateAllRisks,
         getRiskForTask,
-
-        // Filters
         getHighRiskTasks,
         getMediumRiskTasks,
         getLowRiskTasks,
         getRisksSortedByLevel,
-
-        // Analytics
         getRiskSummary,
         estimateTaskCompletion,
-
-        // Utilities
         getRecommendedActionLabel,
         getRiskLevelColor,
         getRiskLevelLabel,
