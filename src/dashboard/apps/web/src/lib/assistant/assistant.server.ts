@@ -78,7 +78,7 @@ export const getAssistantTasks = createServerFn({
             return results;
         } catch (error) {
             console.error("[Assistant] getAssistantTasks error:", error);
-            return [];
+            throw error;
         }
     });
 
@@ -99,7 +99,7 @@ export const getAssistantTask = createServerFn({
             };
         } catch (error) {
             console.error("[Assistant] getAssistantTask error:", error);
-            return null;
+            throw error;
         }
     });
 
@@ -113,7 +113,7 @@ export const createAssistantTask = createServerFn({
             return result ?? null;
         } catch (error) {
             console.error("[Assistant] createAssistantTask error:", error);
-            return null;
+            throw error;
         }
     });
 
@@ -136,7 +136,7 @@ export const updateAssistantTask = createServerFn({
             return result ?? null;
         } catch (error) {
             console.error("[Assistant] updateAssistantTask error:", error);
-            return null;
+            throw error;
         }
     });
 
@@ -150,7 +150,7 @@ export const deleteAssistantTask = createServerFn({
             return { success: true };
         } catch (error) {
             console.error("[Assistant] deleteAssistantTask error:", error);
-            return { success: false };
+            throw error;
         }
     });
 
@@ -174,7 +174,7 @@ export const getAssistantContextParkings = createServerFn({
             return results;
         } catch (error) {
             console.error("[Assistant] getAssistantContextParkings error:", error);
-            return [];
+            throw error;
         }
     });
 
@@ -188,7 +188,7 @@ export const createAssistantContextParking = createServerFn({
             return result ?? null;
         } catch (error) {
             console.error("[Assistant] createAssistantContextParking error:", error);
-            return null;
+            throw error;
         }
     });
 
@@ -208,7 +208,7 @@ export const updateAssistantContextParking = createServerFn({
             return result ?? null;
         } catch (error) {
             console.error("[Assistant] updateAssistantContextParking error:", error);
-            return null;
+            throw error;
         }
     });
 
@@ -233,7 +233,7 @@ export const getAssistantCompletions = createServerFn({
             return results;
         } catch (error) {
             console.error("[Assistant] getAssistantCompletions error:", error);
-            return [];
+            throw error;
         }
     });
 
@@ -247,7 +247,7 @@ export const createAssistantCompletion = createServerFn({
             return result ?? null;
         } catch (error) {
             console.error("[Assistant] createAssistantCompletion error:", error);
-            return null;
+            throw error;
         }
     });
 
@@ -271,7 +271,7 @@ export const getAssistantStreak = createServerFn({
             return result ?? null;
         } catch (error) {
             console.error("[Assistant] getAssistantStreak error:", error);
-            return null;
+            throw error;
         }
     });
 
@@ -299,7 +299,7 @@ export const upsertAssistantStreak = createServerFn({
             return result ?? null;
         } catch (error) {
             console.error("[Assistant] upsertAssistantStreak error:", error);
-            return null;
+            throw error;
         }
     });
 
@@ -321,7 +321,7 @@ export const getAssistantBadges = createServerFn({
                 .all();
         } catch (error) {
             console.error("[Assistant] getAssistantBadges error:", error);
-            return [];
+            throw error;
         }
     });
 
@@ -335,7 +335,7 @@ export const createAssistantBadge = createServerFn({
             return result ?? null;
         } catch (error) {
             console.error("[Assistant] createAssistantBadge error:", error);
-            return null;
+            throw error;
         }
     });
 
@@ -360,7 +360,7 @@ export const getAssistantCommunications = createServerFn({
             return results;
         } catch (error) {
             console.error("[Assistant] getAssistantCommunications error:", error);
-            return [];
+            throw error;
         }
     });
 
@@ -374,7 +374,7 @@ export const createAssistantCommunication = createServerFn({
             return result ?? null;
         } catch (error) {
             console.error("[Assistant] createAssistantCommunication error:", error);
-            return null;
+            throw error;
         }
     });
 
@@ -397,7 +397,7 @@ export const updateAssistantCommunication = createServerFn({
             return result ?? null;
         } catch (error) {
             console.error("[Assistant] updateAssistantCommunication error:", error);
-            return null;
+            throw error;
         }
     });
 
@@ -411,7 +411,7 @@ export const deleteAssistantCommunication = createServerFn({
             return { success: true };
         } catch (error) {
             console.error("[Assistant] deleteAssistantCommunication error:", error);
-            return { success: false };
+            throw error;
         }
     });
 
@@ -436,7 +436,7 @@ export const getAssistantDecisions = createServerFn({
             return results;
         } catch (error) {
             console.error("[Assistant] getAssistantDecisions error:", error);
-            return [];
+            throw error;
         }
     });
 
@@ -450,7 +450,7 @@ export const createAssistantDecision = createServerFn({
             return result ?? null;
         } catch (error) {
             console.error("[Assistant] createAssistantDecision error:", error);
-            return null;
+            throw error;
         }
     });
 
@@ -473,7 +473,7 @@ export const updateAssistantDecision = createServerFn({
             return result ?? null;
         } catch (error) {
             console.error("[Assistant] updateAssistantDecision error:", error);
-            return null;
+            throw error;
         }
     });
 
@@ -487,7 +487,7 @@ export const deleteAssistantDecision = createServerFn({
             return { success: true };
         } catch (error) {
             console.error("[Assistant] deleteAssistantDecision error:", error);
-            return { success: false };
+            throw error;
         }
     });
 
@@ -515,7 +515,7 @@ export const getAssistantBlockers = createServerFn({
             return results;
         } catch (error) {
             console.error("[Assistant] getAssistantBlockers error:", error);
-            return [];
+            throw error;
         }
     });
 
@@ -533,7 +533,7 @@ export const getAssistantBlockersByTask = createServerFn({
                 .all();
         } catch (error) {
             console.error("[Assistant] getAssistantBlockersByTask error:", error);
-            return [];
+            throw error;
         }
     });
 
@@ -547,7 +547,7 @@ export const createAssistantBlocker = createServerFn({
             return result ?? null;
         } catch (error) {
             console.error("[Assistant] createAssistantBlocker error:", error);
-            return null;
+            throw error;
         }
     });
 
@@ -570,7 +570,7 @@ export const updateAssistantBlocker = createServerFn({
             return result ?? null;
         } catch (error) {
             console.error("[Assistant] updateAssistantBlocker error:", error);
-            return null;
+            throw error;
         }
     });
 
@@ -593,7 +593,7 @@ export const resolveAssistantBlocker = createServerFn({
             return result ?? null;
         } catch (error) {
             console.error("[Assistant] resolveAssistantBlocker error:", error);
-            return null;
+            throw error;
         }
     });
 
@@ -618,7 +618,7 @@ export const getAssistantHandoffs = createServerFn({
             return results;
         } catch (error) {
             console.error("[Assistant] getAssistantHandoffs error:", error);
-            return [];
+            throw error;
         }
     });
 
@@ -638,7 +638,7 @@ export const getAssistantHandoffsByTask = createServerFn({
             return results;
         } catch (error) {
             console.error("[Assistant] getAssistantHandoffsByTask error:", error);
-            return [];
+            throw error;
         }
     });
 
@@ -652,7 +652,7 @@ export const createAssistantHandoff = createServerFn({
             return result ?? null;
         } catch (error) {
             console.error("[Assistant] createAssistantHandoff error:", error);
-            return null;
+            throw error;
         }
     });
 
@@ -675,7 +675,7 @@ export const updateAssistantHandoff = createServerFn({
             return result ?? null;
         } catch (error) {
             console.error("[Assistant] updateAssistantHandoff error:", error);
-            return null;
+            throw error;
         }
     });
 
@@ -697,7 +697,7 @@ export const getAssistantDeadlineRisks = createServerFn({
                 .all();
         } catch (error) {
             console.error("[Assistant] getAssistantDeadlineRisks error:", error);
-            return [];
+            throw error;
         }
     });
 
@@ -718,7 +718,7 @@ export const getAssistantDeadlineRiskByTask = createServerFn({
             return result ?? null;
         } catch (error) {
             console.error("[Assistant] getAssistantDeadlineRiskByTask error:", error);
-            return null;
+            throw error;
         }
     });
 
@@ -732,7 +732,7 @@ export const createAssistantDeadlineRisk = createServerFn({
             return result ?? null;
         } catch (error) {
             console.error("[Assistant] createAssistantDeadlineRisk error:", error);
-            return null;
+            throw error;
         }
     });
 
@@ -755,7 +755,7 @@ export const getAssistantEnergySnapshots = createServerFn({
                 .all();
         } catch (error) {
             console.error("[Assistant] getAssistantEnergySnapshots error:", error);
-            return [];
+            throw error;
         }
     });
 
@@ -769,7 +769,7 @@ export const createAssistantEnergySnapshot = createServerFn({
             return result ?? null;
         } catch (error) {
             console.error("[Assistant] createAssistantEnergySnapshot error:", error);
-            return null;
+            throw error;
         }
     });
 
@@ -792,7 +792,7 @@ export const getAssistantDistractions = createServerFn({
                 .all();
         } catch (error) {
             console.error("[Assistant] getAssistantDistractions error:", error);
-            return [];
+            throw error;
         }
     });
 
@@ -806,7 +806,7 @@ export const createAssistantDistraction = createServerFn({
             return result ?? null;
         } catch (error) {
             console.error("[Assistant] createAssistantDistraction error:", error);
-            return null;
+            throw error;
         }
     });
 
@@ -829,7 +829,7 @@ export const getAssistantWeeklyReviews = createServerFn({
                 .all();
         } catch (error) {
             console.error("[Assistant] getAssistantWeeklyReviews error:", error);
-            return [];
+            throw error;
         }
     });
 
@@ -860,7 +860,7 @@ export const getAssistantCurrentWeekReview = createServerFn({
             return result ?? null;
         } catch (error) {
             console.error("[Assistant] getAssistantCurrentWeekReview error:", error);
-            return null;
+            throw error;
         }
     });
 
@@ -874,7 +874,7 @@ export const createAssistantWeeklyReview = createServerFn({
             return result ?? null;
         } catch (error) {
             console.error("[Assistant] createAssistantWeeklyReview error:", error);
-            return null;
+            throw error;
         }
     });
 
@@ -903,7 +903,7 @@ export const getAssistantCelebrations = createServerFn({
             return results;
         } catch (error) {
             console.error("[Assistant] getAssistantCelebrations error:", error);
-            return [];
+            throw error;
         }
     });
 
@@ -917,7 +917,7 @@ export const createAssistantCelebration = createServerFn({
             return result ?? null;
         } catch (error) {
             console.error("[Assistant] createAssistantCelebration error:", error);
-            return null;
+            throw error;
         }
     });
 
@@ -937,7 +937,7 @@ export const markAssistantCelebrationShown = createServerFn({
             return result ?? null;
         } catch (error) {
             console.error("[Assistant] markAssistantCelebrationShown error:", error);
-            return null;
+            throw error;
         }
     });
 
@@ -957,6 +957,6 @@ export const dismissAssistantCelebration = createServerFn({
             return result ?? null;
         } catch (error) {
             console.error("[Assistant] dismissAssistantCelebration error:", error);
-            return null;
+            throw error;
         }
     });
