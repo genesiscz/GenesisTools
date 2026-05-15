@@ -1,9 +1,11 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@workos/authkit-tanstack-react-start/client";
 import type { AssistantTask } from "@/drizzle";
 import { assistantKeys, useAssistantTasksQuery } from "@/lib/assistant/hooks/useAssistantQueries";
 import { rescheduleTask } from "@/lib/assistant/planner.server";
 import { ASSISTANT_SYNC_CHANNEL, broadcastInvalidate } from "@/lib/sync/useBroadcastInvalidation";
+import type { FocusSessionBlock } from "@/lib/timer/timer-sync.server";
+import { aggregateFocusSessions } from "@/lib/timer/timer-sync.server";
 
 /** Dev fallback userId when no WorkOS session is present. */
 const DEV_USER_ID = "dev-user";
@@ -50,6 +52,38 @@ export function usePlannerData() {
         return rescheduleMutation.mutateAsync({ id, scheduledStart: null, scheduledEnd: null });
     }
 
+    // ── Focus session ghost blocks (today's completed pomodoros) ─────────────
+    const focusSessionsQuery = useQuery({
+        queryKey: ["focus-sessions-today", userId],
+        queryFn: () => aggregateFocusSessions({ data: { userId: userId! } }),
+        enabled: !!userId,
+        staleTime: 10_000,
+        refetchOnWindowFocus: true,
+    });
+
+    const focusSessions: FocusSessionBlock[] = focusSessionsQuery.data ?? [];
+
+    // ── Planner Inbox footer counts ──────────────────────────────────────────
+    const todayDateStr = new Date().toLocaleDateString("en-CA"); // "YYYY-MM-DD" in local time
+    const tomorrowDate = new Date();
+    tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+    const tomorrowDateStr = tomorrowDate.toLocaleDateString("en-CA");
+
+    const completedToday: number = rawTasks.filter(
+        (t) =>
+            t.status === "completed" &&
+            t.completedAt !== null &&
+            t.completedAt !== undefined &&
+            new Date(t.completedAt).toLocaleDateString("en-CA") === todayDateStr
+    ).length;
+
+    const deferredToTomorrow: number = rawTasks.filter(
+        (t) =>
+            t.status !== "completed" &&
+            typeof t.scheduledStart === "string" &&
+            new Date(t.scheduledStart).toLocaleDateString("en-CA") === tomorrowDateStr
+    ).length;
+
     return {
         userId,
         isLoading: tasksQuery.isLoading,
@@ -60,5 +94,9 @@ export function usePlannerData() {
         scheduleTask,
         unscheduleTask,
         isRescheduling: rescheduleMutation.isPending,
+        // New
+        focusSessions,
+        completedToday,
+        deferredToTomorrow,
     };
 }

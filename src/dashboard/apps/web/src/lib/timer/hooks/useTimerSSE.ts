@@ -54,6 +54,7 @@ export function useTimerSSE(userId: string | null) {
                 // emits an SSE event — keep the activity log live in lockstep.
                 qc.invalidateQueries({ queryKey: ["activity-logs", userId] });
                 qc.invalidateQueries({ queryKey: ["focus-stats-today", userId] });
+                qc.invalidateQueries({ queryKey: ["focus-sessions-today", userId] });
             } catch {
                 // malformed event — ignore
             }
