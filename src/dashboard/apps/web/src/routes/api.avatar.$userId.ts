@@ -1,3 +1,4 @@
+import { access, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { SafeJSON } from "@dashboard/shared";
 import { createFileRoute } from "@tanstack/react-router";
@@ -27,12 +28,13 @@ export const Route = createFileRoute("/api/avatar/$userId")({
 
                 for (const ext of Object.keys(MIME_BY_EXT)) {
                     const filePath = join(AVATAR_DIR, `${userId}.${ext}`);
-                    const file = Bun.file(filePath);
-                    const exists = await file.exists();
+                    const exists = await access(filePath)
+                        .then(() => true)
+                        .catch(() => false);
 
                     if (exists) {
-                        const buffer = await file.arrayBuffer();
-                        return new Response(buffer, {
+                        const buffer = await readFile(filePath);
+                        return new Response(new Uint8Array(buffer), {
                             status: 200,
                             headers: {
                                 "Content-Type": MIME_BY_EXT[ext] ?? "application/octet-stream",

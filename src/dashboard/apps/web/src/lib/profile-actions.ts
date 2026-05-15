@@ -1,4 +1,4 @@
-import { mkdir, unlink } from "node:fs/promises";
+import { access, mkdir, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { SafeJSON } from "@dashboard/shared";
 import { createServerFn } from "@tanstack/react-start";
@@ -87,8 +87,9 @@ export const updateAvatarFn = createServerFn({ method: "POST" })
             // Remove old avatar files for this user (any extension)
             for (const oldExt of ALLOWED_EXTS) {
                 const oldPath = join(AVATAR_DIR, `${userId}${oldExt}`);
-                const oldFile = Bun.file(oldPath);
-                const exists = await oldFile.exists();
+                const exists = await access(oldPath)
+                    .then(() => true)
+                    .catch(() => false);
 
                 if (exists) {
                     await unlink(oldPath);
@@ -97,7 +98,7 @@ export const updateAvatarFn = createServerFn({ method: "POST" })
 
             const filePath = join(AVATAR_DIR, `${userId}${ext}`);
             const buffer = Buffer.from(fileBase64, "base64");
-            await Bun.write(filePath, buffer);
+            await writeFile(filePath, buffer);
 
             const avatarUrl = `${origin}/api/avatar/${userId}?v=${Date.now()}`;
             await setWorkOSProfilePicture(userId, avatarUrl);
@@ -135,8 +136,9 @@ export const removeAvatarFn = createServerFn({ method: "POST" })
         try {
             for (const ext of ALLOWED_EXTS) {
                 const filePath = join(AVATAR_DIR, `${userId}${ext}`);
-                const file = Bun.file(filePath);
-                const exists = await file.exists();
+                const exists = await access(filePath)
+                    .then(() => true)
+                    .catch(() => false);
 
                 if (exists) {
                     await unlink(filePath);
