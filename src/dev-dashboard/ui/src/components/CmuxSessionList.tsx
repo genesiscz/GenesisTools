@@ -7,15 +7,20 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Mosaic, type MosaicNode, MosaicWindow } from "react-mosaic-component";
 import "react-mosaic-component/react-mosaic-component.css";
 import { SemanticTerminalPreview } from "@/components/SemanticTerminalPreview";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { cmuxApi } from "@/lib/api";
-import { flattenMosaicLeaves, pruneMosaicLeaves, reconcileMosaicLayout } from "@/lib/mosaic-layout";
+import {
+    buildBalancedMosaicLayout,
+    flattenMosaicLeaves,
+    pruneMosaicLeaves,
+    reconcileMosaicLayout,
+} from "@/lib/mosaic-layout";
 
 interface Props {
     snapshot: CmuxSnapshot;
 }
 
 const GONE_PANE_GRACE_MS = 5000;
-const CMUX_MOSAIC_OPTIONS = { maxColumns: 2, extraRowPlacement: "start" as const };
 
 interface GonePaneProps {
     id: string;
@@ -63,14 +68,32 @@ export function CmuxSessionList({ snapshot }: Props) {
         setLayout((current) => pruneMosaicLeaves(current, new Set([id])));
     }, []);
 
+    // Phone-width screens stack panes vertically instead of side by side.
+    const isNarrow = useMediaQuery("(max-width: 640px)");
+    const mosaicOptions = useMemo(
+        () => ({ maxColumns: isNarrow ? 1 : 2, extraRowPlacement: "start" as const }),
+        [isNarrow]
+    );
+
     useEffect(() => {
         setLayout((current) => {
             const livePaneIds = new Set(paneIds);
             const gonePaneIds = flattenMosaicLeaves(current).filter((id) => !livePaneIds.has(id));
 
-            return reconcileMosaicLayout(current, [...paneIds, ...gonePaneIds], CMUX_MOSAIC_OPTIONS);
+            return reconcileMosaicLayout(current, [...paneIds, ...gonePaneIds], mosaicOptions);
         });
-    }, [paneIdsKey, paneIds]);
+    }, [paneIdsKey, paneIds, mosaicOptions]);
+
+    useEffect(() => {
+        setLayout((current) => {
+            const ids = flattenMosaicLeaves(current);
+            if (ids.length === 0) {
+                return current;
+            }
+
+            return buildBalancedMosaicLayout(ids, mosaicOptions);
+        });
+    }, [mosaicOptions]);
 
     useEffect(() => {
         setSurfaceSelectionByPaneId((current) => {

@@ -5,8 +5,9 @@ import { Mosaic, type MosaicNode, MosaicWindow } from "react-mosaic-component";
 import "react-mosaic-component/react-mosaic-component.css";
 import { Button } from "@ui/components/button";
 import { TtydPane } from "@/components/TtydPane";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { ttydApi } from "@/lib/api";
-import { reconcileMosaicLayout } from "@/lib/mosaic-layout";
+import { buildBalancedMosaicLayout, flattenMosaicLeaves, reconcileMosaicLayout } from "@/lib/mosaic-layout";
 
 export function TtydRoute() {
     const queryClient = useQueryClient();
@@ -14,15 +15,31 @@ export function TtydRoute() {
     const sessions = data?.sessions ?? [];
     const [layout, setLayout] = useState<MosaicNode<string> | null>(null);
 
+    // Phone-width screens stack panes vertically (maxColumns 1 → column split)
+    // instead of squeezing terminals side by side.
+    const isNarrow = useMediaQuery("(max-width: 640px)");
+    const maxColumns = isNarrow ? 1 : 3;
+
     useEffect(() => {
         setLayout((current) =>
             reconcileMosaicLayout(
                 current,
                 sessions.map((session) => session.id),
-                { maxColumns: 3 }
+                { maxColumns }
             )
         );
-    }, [sessions]);
+    }, [sessions, maxColumns]);
+
+    useEffect(() => {
+        setLayout((current) => {
+            const ids = flattenMosaicLeaves(current);
+            if (ids.length === 0) {
+                return current;
+            }
+
+            return buildBalancedMosaicLayout(ids, { maxColumns });
+        });
+    }, [maxColumns]);
 
     const spawn = useMutation({
         mutationFn: () => ttydApi.spawn(),
