@@ -37,6 +37,7 @@ import { Route as ApiTimerEventsRouteImport } from './routes/api.timer-events'
 import { Route as ApiEventsRouteImport } from './routes/api.events'
 import { Route as AssistantTasksIndexRouteImport } from './routes/assistant/tasks/index'
 import { Route as AssistantTasksTaskIdRouteImport } from './routes/assistant/tasks/$taskId'
+import { Route as ApiAvatarUserIdRouteImport } from './routes/api.avatar.$userId'
 
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
@@ -178,6 +179,11 @@ const AssistantTasksTaskIdRoute = AssistantTasksTaskIdRouteImport.update({
   path: '/assistant/tasks/$taskId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiAvatarUserIdRoute = ApiAvatarUserIdRouteImport.update({
+  id: '/api/avatar/$userId',
+  path: '/api/avatar/$userId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -206,6 +212,7 @@ export interface FileRoutesByFullPath {
   '/assistant': typeof AssistantIndexRoute
   '/dashboard': typeof DashboardIndexRoute
   '/timer': typeof TimerIndexRoute
+  '/api/avatar/$userId': typeof ApiAvatarUserIdRoute
   '/assistant/tasks/$taskId': typeof AssistantTasksTaskIdRoute
   '/assistant/tasks': typeof AssistantTasksIndexRoute
 }
@@ -236,6 +243,7 @@ export interface FileRoutesByTo {
   '/assistant': typeof AssistantIndexRoute
   '/dashboard': typeof DashboardIndexRoute
   '/timer': typeof TimerIndexRoute
+  '/api/avatar/$userId': typeof ApiAvatarUserIdRoute
   '/assistant/tasks/$taskId': typeof AssistantTasksTaskIdRoute
   '/assistant/tasks': typeof AssistantTasksIndexRoute
 }
@@ -267,6 +275,7 @@ export interface FileRoutesById {
   '/assistant/': typeof AssistantIndexRoute
   '/dashboard/': typeof DashboardIndexRoute
   '/timer/': typeof TimerIndexRoute
+  '/api/avatar/$userId': typeof ApiAvatarUserIdRoute
   '/assistant/tasks/$taskId': typeof AssistantTasksTaskIdRoute
   '/assistant/tasks/': typeof AssistantTasksIndexRoute
 }
@@ -299,6 +308,7 @@ export interface FileRouteTypes {
     | '/assistant'
     | '/dashboard'
     | '/timer'
+    | '/api/avatar/$userId'
     | '/assistant/tasks/$taskId'
     | '/assistant/tasks'
   fileRoutesByTo: FileRoutesByTo
@@ -329,6 +339,7 @@ export interface FileRouteTypes {
     | '/assistant'
     | '/dashboard'
     | '/timer'
+    | '/api/avatar/$userId'
     | '/assistant/tasks/$taskId'
     | '/assistant/tasks'
   id:
@@ -359,6 +370,7 @@ export interface FileRouteTypes {
     | '/assistant/'
     | '/dashboard/'
     | '/timer/'
+    | '/api/avatar/$userId'
     | '/assistant/tasks/$taskId'
     | '/assistant/tasks/'
   fileRoutesById: FileRoutesById
@@ -390,6 +402,7 @@ export interface RootRouteChildren {
   AssistantIndexRoute: typeof AssistantIndexRoute
   DashboardIndexRoute: typeof DashboardIndexRoute
   TimerIndexRoute: typeof TimerIndexRoute
+  ApiAvatarUserIdRoute: typeof ApiAvatarUserIdRoute
   AssistantTasksTaskIdRoute: typeof AssistantTasksTaskIdRoute
   AssistantTasksIndexRoute: typeof AssistantTasksIndexRoute
 }
@@ -592,6 +605,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AssistantTasksTaskIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/avatar/$userId': {
+      id: '/api/avatar/$userId'
+      path: '/api/avatar/$userId'
+      fullPath: '/api/avatar/$userId'
+      preLoaderRoute: typeof ApiAvatarUserIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -622,6 +642,7 @@ const rootRouteChildren: RootRouteChildren = {
   AssistantIndexRoute: AssistantIndexRoute,
   DashboardIndexRoute: DashboardIndexRoute,
   TimerIndexRoute: TimerIndexRoute,
+  ApiAvatarUserIdRoute: ApiAvatarUserIdRoute,
   AssistantTasksTaskIdRoute: AssistantTasksTaskIdRoute,
   AssistantTasksIndexRoute: AssistantTasksIndexRoute,
 }

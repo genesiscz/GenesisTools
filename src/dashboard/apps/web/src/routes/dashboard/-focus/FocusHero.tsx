@@ -10,8 +10,8 @@ import "@/components/auth/cyberpunk.css";
 import { FocusSettingsPopover } from "./FocusSettingsPopover";
 import { FocusStatsRow } from "./FocusStatsRow";
 import { PhaseBadge } from "./PhaseBadge";
-import { useAggregatedFocusStats } from "./useFocusStats";
 import { useFocusSession } from "./useFocusSession";
+import { useAggregatedFocusStats } from "./useFocusStats";
 import { usePhaseColor } from "./usePhaseColor";
 
 /** Dev fallback userId when no WorkOS session is present. */
