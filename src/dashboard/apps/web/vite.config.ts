@@ -66,12 +66,42 @@ const config = defineConfig({
             { find: "@radix-ui/react-tooltip", replacement: dashboardDependency("@radix-ui/react-tooltip") },
         ],
     },
-    // SSR config - mark nitro internals as external
+    // Per-environment dep optimizer fix for the dev-only duplicate-React bug.
+    //
+    // Under @tanstack/react-start, the `tanstackStart()` plugin only pre-bundles
+    // React into the SSR environment when `optimizeDeps.noDiscovery === false`.
+    // In non-standard SSR setups (our nested bun workspace included) that
+    // condition isn't met, so the SSR environment *lazily discovers* React and
+    // optimizes a SECOND copy — distinct from the client pre-bundle. The
+    // browser then loads two `react*?v=<hash>` chunks; TanStack Query's
+    // useSyncExternalStore observer subscribes on one React instance while the
+    // tree renders on the other, so useQuery-driven routes hang on "Loading…"
+    // forever (dev only — prod is a single Rollup graph).
+    //
+    // Fix (community-confirmed on TanStack/router#7119): explicitly declare
+    // React in the SSR environment's optimizeDeps so it shares one pre-bundle
+    // with the client. `react/compiler-runtime` is included because
+    // babel-plugin-react-compiler injects it into every component — it's the
+    // entry point the SSR optimizer was diverging on. `resolve.dedupe` alone
+    // does NOT fix this (it only affects client-env resolution).
+    // Refs: TanStack/router#7119, vitejs/vite#19323, vite-plugin-react#700.
+    environments: {
+        ssr: {
+            optimizeDeps: {
+                include: ["react", "react-dom", "react-dom/server", "react/jsx-runtime", "react/jsx-dev-runtime", "react/compiler-runtime"],
+            },
+        },
+    },
     ssr: {
+        // nitro virtual DB modules can't be bundled — keep them external.
         external: ["nitro/database", "#nitro-internal-virtual/database"],
+        // Bundle Radix + TanStack through Vite (proper CJS→ESM interop); Radix
+        // was crashing SSR with "Cannot read properties of null ('useMemo')".
         noExternal: [/^@radix-ui\//, /^@tanstack\//],
     },
     optimizeDeps: {
+        // Client environment: pre-bundle every React entrypoint once so the
+        // client optimizer produces a single shared React chunk.
         include: [
             "react",
             "react-dom",
