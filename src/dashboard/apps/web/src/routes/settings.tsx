@@ -2,9 +2,8 @@ import { createFileRoute } from "@tanstack/react-router";
 import { Bell, Database, Globe, Monitor, Moon, Palette, Shield, Sun } from "lucide-react";
 import { toast } from "sonner";
 import { DashboardLayout } from "@/components/dashboard";
+import { SettingCard, SettingRow } from "@/components/settings";
 import { Button } from "@ui/components/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@ui/components/card";
-import { Label } from "@ui/components/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@ui/components/select";
 import { Separator } from "@ui/components/separator";
 import { Switch } from "@ui/components/switch";
@@ -25,280 +24,197 @@ function SettingsPage() {
         updateSetting(key, value);
         toast.success(`${label} ${value ? "enabled" : "disabled"}`);
     };
+
     return (
         <DashboardLayout title="Settings" description="Configure your NEXUS experience">
             <div className="max-w-3xl space-y-6">
                 {/* Appearance */}
-                <Card className="border-primary/20 bg-card/80 backdrop-blur-sm hover:border-primary/40 transition-colors">
-                    <CardHeader>
-                        <div className="flex items-center gap-3">
-                            <div className="p-2 rounded-lg bg-primary/10">
-                                <Palette className="h-4 w-4 text-primary" />
-                            </div>
-                            <div>
-                                <CardTitle className="text-base">Appearance</CardTitle>
-                                <CardDescription className="text-xs">
-                                    Customize how NEXUS looks and feels
-                                </CardDescription>
-                            </div>
-                        </div>
-                    </CardHeader>
-                    <CardContent className="space-y-4">
-                        <div className="flex items-center justify-between">
-                            <div className="space-y-0.5">
-                                <Label className="text-sm">Theme</Label>
-                                <p className="text-xs text-muted-foreground">Choose your preferred color scheme</p>
-                            </div>
-                            <Select defaultValue="dark">
-                                <SelectTrigger className="w-32 bg-card/50 border-primary/20">
-                                    <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent className="bg-card border-primary/20">
-                                    <SelectItem value="dark">
-                                        <div className="flex items-center gap-2">
-                                            <Moon className="h-3 w-3" /> Dark
-                                        </div>
-                                    </SelectItem>
-                                    <SelectItem value="light">
-                                        <div className="flex items-center gap-2">
-                                            <Sun className="h-3 w-3" /> Light
-                                        </div>
-                                    </SelectItem>
-                                    <SelectItem value="system">
-                                        <div className="flex items-center gap-2">
-                                            <Monitor className="h-3 w-3" /> System
-                                        </div>
-                                    </SelectItem>
-                                </SelectContent>
-                            </Select>
-                        </div>
+                <SettingCard
+                    title="Appearance"
+                    description="Customize how NEXUS looks and feels"
+                    icon={<Palette className="h-4 w-4" />}
+                    tint="primary"
+                >
+                    <SettingRow label="Theme" description="Choose your preferred color scheme">
+                        <Select defaultValue="dark">
+                            <SelectTrigger className="w-32 bg-card/50 border-primary/20">
+                                <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent className="bg-card border-primary/20">
+                                <SelectItem value="dark">
+                                    <div className="flex items-center gap-2">
+                                        <Moon className="h-3 w-3" /> Dark
+                                    </div>
+                                </SelectItem>
+                                <SelectItem value="light">
+                                    <div className="flex items-center gap-2">
+                                        <Sun className="h-3 w-3" /> Light
+                                    </div>
+                                </SelectItem>
+                                <SelectItem value="system">
+                                    <div className="flex items-center gap-2">
+                                        <Monitor className="h-3 w-3" /> System
+                                    </div>
+                                </SelectItem>
+                            </SelectContent>
+                        </Select>
+                    </SettingRow>
 
-                        <Separator className="bg-primary/10" />
+                    <Separator className="bg-primary/10" />
 
-                        <div className="flex items-center justify-between">
-                            <div className="space-y-0.5">
-                                <Label className="text-sm">Scan Lines Effect</Label>
-                                <p className="text-xs text-muted-foreground">Enable retro CRT scan lines</p>
-                            </div>
-                            <Switch
-                                checked={settings.scanLinesEffect}
-                                onCheckedChange={(checked) =>
-                                    handleSettingChange("scanLinesEffect", checked, "Scan lines")
-                                }
-                                className="data-[state=checked]:bg-primary"
-                            />
-                        </div>
+                    <SettingRow label="Scan Lines Effect" description="Enable retro CRT scan lines">
+                        <Switch
+                            checked={settings.scanLinesEffect}
+                            onCheckedChange={(checked) =>
+                                handleSettingChange("scanLinesEffect", checked, "Scan lines")
+                            }
+                            className="data-[state=checked]:bg-primary"
+                        />
+                    </SettingRow>
 
-                        <div className="flex items-center justify-between">
-                            <div className="space-y-0.5">
-                                <Label className="text-sm">Grid Background</Label>
-                                <p className="text-xs text-muted-foreground">Show cyber grid background</p>
-                            </div>
-                            <Switch
-                                checked={settings.gridBackground}
-                                onCheckedChange={(checked) =>
-                                    handleSettingChange("gridBackground", checked, "Grid background")
-                                }
-                                className="data-[state=checked]:bg-primary"
-                            />
-                        </div>
+                    <SettingRow label="Grid Background" description="Show cyber grid background">
+                        <Switch
+                            checked={settings.gridBackground}
+                            onCheckedChange={(checked) =>
+                                handleSettingChange("gridBackground", checked, "Grid background")
+                            }
+                            className="data-[state=checked]:bg-primary"
+                        />
+                    </SettingRow>
 
-                        <div className="flex items-center justify-between">
-                            <div className="space-y-0.5">
-                                <Label className="text-sm">Reduced Motion</Label>
-                                <p className="text-xs text-muted-foreground">Minimize animations</p>
-                            </div>
-                            <Switch
-                                checked={settings.reducedMotion}
-                                onCheckedChange={(checked) =>
-                                    handleSettingChange("reducedMotion", checked, "Reduced motion")
-                                }
-                                className="data-[state=checked]:bg-primary"
-                            />
-                        </div>
-                    </CardContent>
-                </Card>
+                    <SettingRow label="Reduced Motion" description="Minimize animations">
+                        <Switch
+                            checked={settings.reducedMotion}
+                            onCheckedChange={(checked) =>
+                                handleSettingChange("reducedMotion", checked, "Reduced motion")
+                            }
+                            className="data-[state=checked]:bg-primary"
+                        />
+                    </SettingRow>
+                </SettingCard>
 
                 {/* Notifications */}
-                <Card className="border-accent/20 bg-card/80 backdrop-blur-sm hover:border-accent/40 transition-colors">
-                    <CardHeader>
-                        <div className="flex items-center gap-3">
-                            <div className="p-2 rounded-lg bg-accent/10">
-                                <Bell className="h-4 w-4 text-accent" />
-                            </div>
-                            <div>
-                                <CardTitle className="text-base">Notifications</CardTitle>
-                                <CardDescription className="text-xs">Manage how you receive alerts</CardDescription>
-                            </div>
-                        </div>
-                    </CardHeader>
-                    <CardContent className="space-y-4">
-                        <div className="flex items-center justify-between">
-                            <div className="space-y-0.5">
-                                <Label className="text-sm">Push Notifications</Label>
-                                <p className="text-xs text-muted-foreground">Get notified in your browser</p>
-                            </div>
-                            <Switch
-                                checked={settings.pushNotifications}
-                                onCheckedChange={(checked) =>
-                                    handleSettingChange("pushNotifications", checked, "Push notifications")
-                                }
-                                className="data-[state=checked]:bg-accent"
-                            />
-                        </div>
+                <SettingCard
+                    title="Notifications"
+                    description="Manage how you receive alerts"
+                    icon={<Bell className="h-4 w-4" />}
+                    tint="accent"
+                >
+                    <SettingRow label="Push Notifications" description="Get notified in your browser">
+                        <Switch
+                            checked={settings.pushNotifications}
+                            onCheckedChange={(checked) =>
+                                handleSettingChange("pushNotifications", checked, "Push notifications")
+                            }
+                            className="data-[state=checked]:bg-accent"
+                        />
+                    </SettingRow>
 
-                        <Separator className="bg-accent/10" />
+                    <Separator className="bg-accent/10" />
 
-                        <div className="flex items-center justify-between">
-                            <div className="space-y-0.5">
-                                <Label className="text-sm">Sound Effects</Label>
-                                <p className="text-xs text-muted-foreground">Play sounds for timer events</p>
-                            </div>
-                            <Switch
-                                checked={settings.soundEffects}
-                                onCheckedChange={(checked) =>
-                                    handleSettingChange("soundEffects", checked, "Sound effects")
-                                }
-                                className="data-[state=checked]:bg-accent"
-                            />
-                        </div>
+                    <SettingRow label="Sound Effects" description="Play sounds for timer events">
+                        <Switch
+                            checked={settings.soundEffects}
+                            onCheckedChange={(checked) =>
+                                handleSettingChange("soundEffects", checked, "Sound effects")
+                            }
+                            className="data-[state=checked]:bg-accent"
+                        />
+                    </SettingRow>
 
-                        <div className="flex items-center justify-between">
-                            <div className="space-y-0.5">
-                                <Label className="text-sm">Timer Complete Alert</Label>
-                                <p className="text-xs text-muted-foreground">Visual flash when countdown ends</p>
-                            </div>
-                            <Switch
-                                checked={settings.timerCompleteAlert}
-                                onCheckedChange={(checked) =>
-                                    handleSettingChange("timerCompleteAlert", checked, "Timer complete alert")
-                                }
-                                className="data-[state=checked]:bg-accent"
-                            />
-                        </div>
-                    </CardContent>
-                </Card>
+                    <SettingRow label="Timer Complete Alert" description="Visual flash when countdown ends">
+                        <Switch
+                            checked={settings.timerCompleteAlert}
+                            onCheckedChange={(checked) =>
+                                handleSettingChange("timerCompleteAlert", checked, "Timer complete alert")
+                            }
+                            className="data-[state=checked]:bg-accent"
+                        />
+                    </SettingRow>
+                </SettingCard>
 
                 {/* Data & Privacy */}
-                <Card className="border-secondary/20 bg-card/80 backdrop-blur-sm hover:border-secondary/40 transition-colors">
-                    <CardHeader>
-                        <div className="flex items-center gap-3">
-                            <div className="p-2 rounded-lg bg-secondary/10">
-                                <Shield className="h-4 w-4 text-secondary" />
-                            </div>
-                            <div>
-                                <CardTitle className="text-base">Data & Privacy</CardTitle>
-                                <CardDescription className="text-xs">
-                                    Control your data and sync settings
-                                </CardDescription>
-                            </div>
-                        </div>
-                    </CardHeader>
-                    <CardContent className="space-y-4">
-                        <div className="flex items-center justify-between">
-                            <div className="space-y-0.5">
-                                <Label className="text-sm">Cloud Sync</Label>
-                                <p className="text-xs text-muted-foreground">Sync data across devices</p>
-                            </div>
-                            <Switch
-                                checked={settings.cloudSync}
-                                onCheckedChange={(checked) => handleSettingChange("cloudSync", checked, "Cloud sync")}
-                                className="data-[state=checked]:bg-secondary"
-                            />
-                        </div>
+                <SettingCard
+                    title="Data & Privacy"
+                    description="Control your data and sync settings"
+                    icon={<Shield className="h-4 w-4" />}
+                    tint="secondary"
+                >
+                    <SettingRow label="Cloud Sync" description="Sync data across devices">
+                        <Switch
+                            checked={settings.cloudSync}
+                            onCheckedChange={(checked) => handleSettingChange("cloudSync", checked, "Cloud sync")}
+                            className="data-[state=checked]:bg-secondary"
+                        />
+                    </SettingRow>
 
-                        <Separator className="bg-secondary/10" />
+                    <Separator className="bg-secondary/10" />
 
-                        <div className="flex items-center justify-between">
-                            <div className="space-y-0.5">
-                                <Label className="text-sm">Local Storage</Label>
-                                <p className="text-xs text-muted-foreground">Keep data offline</p>
-                            </div>
-                            <Switch
-                                checked={settings.localStorage}
-                                onCheckedChange={(checked) =>
-                                    handleSettingChange("localStorage", checked, "Local storage")
-                                }
-                                className="data-[state=checked]:bg-secondary"
-                            />
-                        </div>
+                    <SettingRow label="Local Storage" description="Keep data offline">
+                        <Switch
+                            checked={settings.localStorage}
+                            onCheckedChange={(checked) =>
+                                handleSettingChange("localStorage", checked, "Local storage")
+                            }
+                            className="data-[state=checked]:bg-secondary"
+                        />
+                    </SettingRow>
 
-                        <div className="flex items-center justify-between">
-                            <div className="space-y-0.5">
-                                <Label className="text-sm">Analytics</Label>
-                                <p className="text-xs text-muted-foreground">Help improve NEXUS</p>
-                            </div>
-                            <Switch
-                                checked={settings.analytics}
-                                onCheckedChange={(checked) => handleSettingChange("analytics", checked, "Analytics")}
-                                className="data-[state=checked]:bg-secondary"
-                            />
-                        </div>
+                    <SettingRow label="Analytics" description="Help improve NEXUS">
+                        <Switch
+                            checked={settings.analytics}
+                            onCheckedChange={(checked) => handleSettingChange("analytics", checked, "Analytics")}
+                            className="data-[state=checked]:bg-secondary"
+                        />
+                    </SettingRow>
 
-                        <Separator className="bg-secondary/10" />
+                    <Separator className="bg-secondary/10" />
 
-                        <div className="pt-2">
-                            <Button
-                                variant="outline"
-                                size="sm"
-                                className="border-destructive/30 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                            >
-                                <Database className="h-3 w-3 mr-2" />
-                                Clear Local Data
-                            </Button>
-                        </div>
-                    </CardContent>
-                </Card>
+                    <div className="pt-2">
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            className="border-destructive/30 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                        >
+                            <Database className="h-3 w-3 mr-2" />
+                            Clear Local Data
+                        </Button>
+                    </div>
+                </SettingCard>
 
                 {/* Language */}
-                <Card className="border-muted/30 bg-card/80 backdrop-blur-sm hover:border-muted/50 transition-colors">
-                    <CardHeader>
-                        <div className="flex items-center gap-3">
-                            <div className="p-2 rounded-lg bg-muted/20">
-                                <Globe className="h-4 w-4 text-muted-foreground" />
-                            </div>
-                            <div>
-                                <CardTitle className="text-base">Language & Region</CardTitle>
-                                <CardDescription className="text-xs">Set your locale preferences</CardDescription>
-                            </div>
-                        </div>
-                    </CardHeader>
-                    <CardContent className="space-y-4">
-                        <div className="flex items-center justify-between">
-                            <div className="space-y-0.5">
-                                <Label className="text-sm">Language</Label>
-                                <p className="text-xs text-muted-foreground">Interface language</p>
-                            </div>
-                            <Select defaultValue="en">
-                                <SelectTrigger className="w-40 bg-card/50 border-muted/20">
-                                    <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent className="bg-card border-muted/20">
-                                    <SelectItem value="en">English</SelectItem>
-                                    <SelectItem value="cs">Čeština</SelectItem>
-                                    <SelectItem value="de">Deutsch</SelectItem>
-                                    <SelectItem value="ja">日本語</SelectItem>
-                                </SelectContent>
-                            </Select>
-                        </div>
+                <SettingCard
+                    title="Language & Region"
+                    description="Set your locale preferences"
+                    icon={<Globe className="h-4 w-4" />}
+                    tint="muted"
+                >
+                    <SettingRow label="Language" description="Interface language">
+                        <Select defaultValue="en">
+                            <SelectTrigger className="w-40 bg-card/50 border-muted/20">
+                                <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent className="bg-card border-muted/20">
+                                <SelectItem value="en">English</SelectItem>
+                                <SelectItem value="cs">Čeština</SelectItem>
+                                <SelectItem value="de">Deutsch</SelectItem>
+                                <SelectItem value="ja">日本語</SelectItem>
+                            </SelectContent>
+                        </Select>
+                    </SettingRow>
 
-                        <div className="flex items-center justify-between">
-                            <div className="space-y-0.5">
-                                <Label className="text-sm">Time Format</Label>
-                                <p className="text-xs text-muted-foreground">12-hour or 24-hour</p>
-                            </div>
-                            <Select defaultValue="24h">
-                                <SelectTrigger className="w-40 bg-card/50 border-muted/20">
-                                    <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent className="bg-card border-muted/20">
-                                    <SelectItem value="12h">12-hour (AM/PM)</SelectItem>
-                                    <SelectItem value="24h">24-hour</SelectItem>
-                                </SelectContent>
-                            </Select>
-                        </div>
-                    </CardContent>
-                </Card>
+                    <SettingRow label="Time Format" description="12-hour or 24-hour">
+                        <Select defaultValue="24h">
+                            <SelectTrigger className="w-40 bg-card/50 border-muted/20">
+                                <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent className="bg-card border-muted/20">
+                                <SelectItem value="12h">12-hour (AM/PM)</SelectItem>
+                                <SelectItem value="24h">24-hour</SelectItem>
+                            </SelectContent>
+                        </Select>
+                    </SettingRow>
+                </SettingCard>
             </div>
         </DashboardLayout>
     );
