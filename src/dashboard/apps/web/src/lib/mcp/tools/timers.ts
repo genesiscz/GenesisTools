@@ -1,8 +1,8 @@
 import { SafeJSON } from "@dashboard/shared";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { deleteTimerFromServer, getTimersFromServer } from "@/lib/timer/timer-sync.server";
 import { db, timers } from "@/drizzle";
+import { deleteTimerFromServer, getTimersFromServer } from "@/lib/timer/timer-sync.server";
 
 export function registerTimerTools(server: McpServer) {
     server.registerTool(

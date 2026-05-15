@@ -9,6 +9,10 @@
  */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+    ASSISTANT_SYNC_CHANNEL,
+    useInvalidateAndBroadcast,
+} from "@/lib/sync/useBroadcastInvalidation";
 import type {
     NewAssistantBadge,
     NewAssistantBlocker,
@@ -188,20 +192,19 @@ export function useAssistantTaskQuery(id: string | null) {
 }
 
 export function useCreateAssistantTaskMutation() {
-    const queryClient = useQueryClient();
+    const invalidate = useInvalidateAndBroadcast(ASSISTANT_SYNC_CHANNEL);
 
     return useMutation({
         mutationFn: (data: NewAssistantTask) => createAssistantTask({ data }),
         onSuccess: (_, variables) => {
-            queryClient.invalidateQueries({
-                queryKey: assistantKeys.taskList(variables.userId),
-            });
+            invalidate(assistantKeys.taskList(variables.userId));
         },
     });
 }
 
 export function useUpdateAssistantTaskMutation() {
     const queryClient = useQueryClient();
+    const invalidate = useInvalidateAndBroadcast(ASSISTANT_SYNC_CHANNEL);
 
     return useMutation({
         mutationFn: ({ id, data }: { id: string; data: Partial<NewAssistantTask> }) =>
@@ -209,23 +212,19 @@ export function useUpdateAssistantTaskMutation() {
         onSuccess: (result) => {
             if (result) {
                 queryClient.setQueryData(assistantKeys.taskDetail(result.id), result);
-                queryClient.invalidateQueries({
-                    queryKey: assistantKeys.taskList(result.userId),
-                });
+                invalidate(assistantKeys.taskList(result.userId));
             }
         },
     });
 }
 
 export function useDeleteAssistantTaskMutation() {
-    const queryClient = useQueryClient();
+    const invalidate = useInvalidateAndBroadcast(ASSISTANT_SYNC_CHANNEL);
 
     return useMutation({
         mutationFn: ({ id, userId: _userId }: { id: string; userId: string }) => deleteAssistantTask({ data: { id } }),
         onSuccess: (_, { userId }) => {
-            queryClient.invalidateQueries({
-                queryKey: assistantKeys.taskList(userId),
-            });
+            invalidate(assistantKeys.taskList(userId));
         },
     });
 }
@@ -244,20 +243,18 @@ export function useAssistantContextParkingsQuery(userId: string | null) {
 }
 
 export function useCreateAssistantContextParkingMutation() {
-    const queryClient = useQueryClient();
+    const invalidate = useInvalidateAndBroadcast(ASSISTANT_SYNC_CHANNEL);
 
     return useMutation({
         mutationFn: (data: NewAssistantContextParking) => createAssistantContextParking({ data }),
         onSuccess: (_, variables) => {
-            queryClient.invalidateQueries({
-                queryKey: assistantKeys.parkingList(variables.userId),
-            });
+            invalidate(assistantKeys.parkingList(variables.userId));
         },
     });
 }
 
 export function useUpdateAssistantContextParkingMutation() {
-    const queryClient = useQueryClient();
+    const invalidate = useInvalidateAndBroadcast(ASSISTANT_SYNC_CHANNEL);
 
     return useMutation({
         mutationFn: ({
@@ -270,9 +267,7 @@ export function useUpdateAssistantContextParkingMutation() {
             userId: string;
         }) => updateAssistantContextParking({ data: { id, data } }),
         onSuccess: (_, { userId }) => {
-            queryClient.invalidateQueries({
-                queryKey: assistantKeys.parkingList(userId),
-            });
+            invalidate(assistantKeys.parkingList(userId));
         },
     });
 }
@@ -291,14 +286,12 @@ export function useAssistantCompletionsQuery(userId: string | null, limit?: numb
 }
 
 export function useCreateAssistantCompletionMutation() {
-    const queryClient = useQueryClient();
+    const invalidate = useInvalidateAndBroadcast(ASSISTANT_SYNC_CHANNEL);
 
     return useMutation({
         mutationFn: (data: NewAssistantCompletion) => createAssistantCompletion({ data }),
         onSuccess: (_, variables) => {
-            queryClient.invalidateQueries({
-                queryKey: assistantKeys.completionList(variables.userId),
-            });
+            invalidate(assistantKeys.completionList(variables.userId));
         },
     });
 }
@@ -317,14 +310,12 @@ export function useAssistantStreakQuery(userId: string | null) {
 }
 
 export function useUpsertAssistantStreakMutation() {
-    const queryClient = useQueryClient();
+    const invalidate = useInvalidateAndBroadcast(ASSISTANT_SYNC_CHANNEL);
 
     return useMutation({
         mutationFn: (data: NewAssistantStreak) => upsertAssistantStreak({ data }),
         onSuccess: (_, variables) => {
-            queryClient.invalidateQueries({
-                queryKey: assistantKeys.streak(variables.userId),
-            });
+            invalidate(assistantKeys.streak(variables.userId));
         },
     });
 }
@@ -343,14 +334,12 @@ export function useAssistantBadgesQuery(userId: string | null) {
 }
 
 export function useCreateAssistantBadgeMutation() {
-    const queryClient = useQueryClient();
+    const invalidate = useInvalidateAndBroadcast(ASSISTANT_SYNC_CHANNEL);
 
     return useMutation({
         mutationFn: (data: NewAssistantBadge) => createAssistantBadge({ data }),
         onSuccess: (_, variables) => {
-            queryClient.invalidateQueries({
-                queryKey: assistantKeys.badgeList(variables.userId),
-            });
+            invalidate(assistantKeys.badgeList(variables.userId));
         },
     });
 }
@@ -369,20 +358,18 @@ export function useAssistantCommunicationsQuery(userId: string | null, limit?: n
 }
 
 export function useCreateAssistantCommunicationMutation() {
-    const queryClient = useQueryClient();
+    const invalidate = useInvalidateAndBroadcast(ASSISTANT_SYNC_CHANNEL);
 
     return useMutation({
         mutationFn: (data: NewAssistantCommunication) => createAssistantCommunication({ data }),
         onSuccess: (_, variables) => {
-            queryClient.invalidateQueries({
-                queryKey: assistantKeys.communicationList(variables.userId),
-            });
+            invalidate(assistantKeys.communicationList(variables.userId));
         },
     });
 }
 
 export function useUpdateAssistantCommunicationMutation() {
-    const queryClient = useQueryClient();
+    const invalidate = useInvalidateAndBroadcast(ASSISTANT_SYNC_CHANNEL);
 
     return useMutation({
         mutationFn: ({
@@ -395,23 +382,19 @@ export function useUpdateAssistantCommunicationMutation() {
             userId: string;
         }) => updateAssistantCommunication({ data: { id, data } }),
         onSuccess: (_, { userId }) => {
-            queryClient.invalidateQueries({
-                queryKey: assistantKeys.communicationList(userId),
-            });
+            invalidate(assistantKeys.communicationList(userId));
         },
     });
 }
 
 export function useDeleteAssistantCommunicationMutation() {
-    const queryClient = useQueryClient();
+    const invalidate = useInvalidateAndBroadcast(ASSISTANT_SYNC_CHANNEL);
 
     return useMutation({
         mutationFn: ({ id, userId: _userId }: { id: string; userId: string }) =>
             deleteAssistantCommunication({ data: { id } }),
         onSuccess: (_, { userId }) => {
-            queryClient.invalidateQueries({
-                queryKey: assistantKeys.communicationList(userId),
-            });
+            invalidate(assistantKeys.communicationList(userId));
         },
     });
 }
@@ -430,20 +413,18 @@ export function useAssistantDecisionsQuery(userId: string | null, limit?: number
 }
 
 export function useCreateAssistantDecisionMutation() {
-    const queryClient = useQueryClient();
+    const invalidate = useInvalidateAndBroadcast(ASSISTANT_SYNC_CHANNEL);
 
     return useMutation({
         mutationFn: (data: NewAssistantDecision) => createAssistantDecision({ data }),
         onSuccess: (_, variables) => {
-            queryClient.invalidateQueries({
-                queryKey: assistantKeys.decisionList(variables.userId),
-            });
+            invalidate(assistantKeys.decisionList(variables.userId));
         },
     });
 }
 
 export function useUpdateAssistantDecisionMutation() {
-    const queryClient = useQueryClient();
+    const invalidate = useInvalidateAndBroadcast(ASSISTANT_SYNC_CHANNEL);
 
     return useMutation({
         mutationFn: ({
@@ -456,23 +437,19 @@ export function useUpdateAssistantDecisionMutation() {
             userId: string;
         }) => updateAssistantDecision({ data: { id, data } }),
         onSuccess: (_, { userId }) => {
-            queryClient.invalidateQueries({
-                queryKey: assistantKeys.decisionList(userId),
-            });
+            invalidate(assistantKeys.decisionList(userId));
         },
     });
 }
 
 export function useDeleteAssistantDecisionMutation() {
-    const queryClient = useQueryClient();
+    const invalidate = useInvalidateAndBroadcast(ASSISTANT_SYNC_CHANNEL);
 
     return useMutation({
         mutationFn: ({ id, userId: _userId }: { id: string; userId: string }) =>
             deleteAssistantDecision({ data: { id } }),
         onSuccess: (_, { userId }) => {
-            queryClient.invalidateQueries({
-                queryKey: assistantKeys.decisionList(userId),
-            });
+            invalidate(assistantKeys.decisionList(userId));
         },
     });
 }
@@ -501,13 +478,12 @@ export function useAssistantBlockersByTaskQuery(taskId: string | null) {
 
 export function useCreateAssistantBlockerMutation() {
     const queryClient = useQueryClient();
+    const invalidate = useInvalidateAndBroadcast(ASSISTANT_SYNC_CHANNEL);
 
     return useMutation({
         mutationFn: (data: NewAssistantBlocker) => createAssistantBlocker({ data }),
         onSuccess: (_, variables) => {
-            queryClient.invalidateQueries({
-                queryKey: assistantKeys.blockerList(variables.userId),
-            });
+            invalidate(assistantKeys.blockerList(variables.userId));
             queryClient.invalidateQueries({
                 queryKey: assistantKeys.blockersByTask(variables.taskId),
             });
@@ -517,6 +493,7 @@ export function useCreateAssistantBlockerMutation() {
 
 export function useUpdateAssistantBlockerMutation() {
     const queryClient = useQueryClient();
+    const invalidate = useInvalidateAndBroadcast(ASSISTANT_SYNC_CHANNEL);
 
     return useMutation({
         mutationFn: ({
@@ -531,9 +508,7 @@ export function useUpdateAssistantBlockerMutation() {
             taskId: string;
         }) => updateAssistantBlocker({ data: { id, data } }),
         onSuccess: (_, { userId, taskId }) => {
-            queryClient.invalidateQueries({
-                queryKey: assistantKeys.blockerList(userId),
-            });
+            invalidate(assistantKeys.blockerList(userId));
             queryClient.invalidateQueries({
                 queryKey: assistantKeys.blockersByTask(taskId),
             });
@@ -543,14 +518,13 @@ export function useUpdateAssistantBlockerMutation() {
 
 export function useResolveAssistantBlockerMutation() {
     const queryClient = useQueryClient();
+    const invalidate = useInvalidateAndBroadcast(ASSISTANT_SYNC_CHANNEL);
 
     return useMutation({
         mutationFn: ({ id, userId: _userId, taskId: _taskId }: { id: string; userId: string; taskId: string }) =>
             resolveAssistantBlocker({ data: { id } }),
         onSuccess: (_, { userId, taskId }) => {
-            queryClient.invalidateQueries({
-                queryKey: assistantKeys.blockerList(userId),
-            });
+            invalidate(assistantKeys.blockerList(userId));
             queryClient.invalidateQueries({
                 queryKey: assistantKeys.blockersByTask(taskId),
             });
@@ -582,13 +556,12 @@ export function useAssistantHandoffsByTaskQuery(taskId: string | null) {
 
 export function useCreateAssistantHandoffMutation() {
     const queryClient = useQueryClient();
+    const invalidate = useInvalidateAndBroadcast(ASSISTANT_SYNC_CHANNEL);
 
     return useMutation({
         mutationFn: (data: NewAssistantHandoff) => createAssistantHandoff({ data }),
         onSuccess: (_, variables) => {
-            queryClient.invalidateQueries({
-                queryKey: assistantKeys.handoffList(variables.userId),
-            });
+            invalidate(assistantKeys.handoffList(variables.userId));
             queryClient.invalidateQueries({
                 queryKey: assistantKeys.handoffsByTask(variables.taskId),
             });
@@ -598,6 +571,7 @@ export function useCreateAssistantHandoffMutation() {
 
 export function useUpdateAssistantHandoffMutation() {
     const queryClient = useQueryClient();
+    const invalidate = useInvalidateAndBroadcast(ASSISTANT_SYNC_CHANNEL);
 
     return useMutation({
         mutationFn: ({
@@ -612,9 +586,7 @@ export function useUpdateAssistantHandoffMutation() {
             taskId: string;
         }) => updateAssistantHandoff({ data: { id, data } }),
         onSuccess: (_, { userId, taskId }) => {
-            queryClient.invalidateQueries({
-                queryKey: assistantKeys.handoffList(userId),
-            });
+            invalidate(assistantKeys.handoffList(userId));
             queryClient.invalidateQueries({
                 queryKey: assistantKeys.handoffsByTask(taskId),
             });
@@ -646,13 +618,12 @@ export function useAssistantDeadlineRiskByTaskQuery(taskId: string | null) {
 
 export function useCreateAssistantDeadlineRiskMutation() {
     const queryClient = useQueryClient();
+    const invalidate = useInvalidateAndBroadcast(ASSISTANT_SYNC_CHANNEL);
 
     return useMutation({
         mutationFn: (data: NewAssistantDeadlineRisk) => createAssistantDeadlineRisk({ data }),
         onSuccess: (_, variables) => {
-            queryClient.invalidateQueries({
-                queryKey: assistantKeys.deadlineRiskList(variables.userId),
-            });
+            invalidate(assistantKeys.deadlineRiskList(variables.userId));
             queryClient.invalidateQueries({
                 queryKey: assistantKeys.deadlineRiskByTask(variables.taskId),
             });
@@ -674,14 +645,12 @@ export function useAssistantEnergySnapshotsQuery(userId: string | null, limit?: 
 }
 
 export function useCreateAssistantEnergySnapshotMutation() {
-    const queryClient = useQueryClient();
+    const invalidate = useInvalidateAndBroadcast(ASSISTANT_SYNC_CHANNEL);
 
     return useMutation({
         mutationFn: (data: NewAssistantEnergySnapshot) => createAssistantEnergySnapshot({ data }),
         onSuccess: (_, variables) => {
-            queryClient.invalidateQueries({
-                queryKey: assistantKeys.energySnapshotList(variables.userId),
-            });
+            invalidate(assistantKeys.energySnapshotList(variables.userId));
         },
     });
 }
@@ -700,14 +669,12 @@ export function useAssistantDistractionsQuery(userId: string | null, limit?: num
 }
 
 export function useCreateAssistantDistractionMutation() {
-    const queryClient = useQueryClient();
+    const invalidate = useInvalidateAndBroadcast(ASSISTANT_SYNC_CHANNEL);
 
     return useMutation({
         mutationFn: (data: NewAssistantDistraction) => createAssistantDistraction({ data }),
         onSuccess: (_, variables) => {
-            queryClient.invalidateQueries({
-                queryKey: assistantKeys.distractionList(variables.userId),
-            });
+            invalidate(assistantKeys.distractionList(variables.userId));
         },
     });
 }
@@ -736,13 +703,12 @@ export function useAssistantCurrentWeekReviewQuery(userId: string | null) {
 
 export function useCreateAssistantWeeklyReviewMutation() {
     const queryClient = useQueryClient();
+    const invalidate = useInvalidateAndBroadcast(ASSISTANT_SYNC_CHANNEL);
 
     return useMutation({
         mutationFn: (data: NewAssistantWeeklyReview) => createAssistantWeeklyReview({ data }),
         onSuccess: (_, variables) => {
-            queryClient.invalidateQueries({
-                queryKey: assistantKeys.weeklyReviewList(variables.userId),
-            });
+            invalidate(assistantKeys.weeklyReviewList(variables.userId));
             queryClient.invalidateQueries({
                 queryKey: assistantKeys.currentWeekReview(variables.userId),
             });
@@ -764,42 +730,36 @@ export function useAssistantCelebrationsQuery(userId: string | null, unshownOnly
 }
 
 export function useCreateAssistantCelebrationMutation() {
-    const queryClient = useQueryClient();
+    const invalidate = useInvalidateAndBroadcast(ASSISTANT_SYNC_CHANNEL);
 
     return useMutation({
         mutationFn: (data: NewAssistantCelebration) => createAssistantCelebration({ data }),
         onSuccess: (_, variables) => {
-            queryClient.invalidateQueries({
-                queryKey: assistantKeys.celebrationList(variables.userId),
-            });
+            invalidate(assistantKeys.celebrationList(variables.userId));
         },
     });
 }
 
 export function useMarkAssistantCelebrationShownMutation() {
-    const queryClient = useQueryClient();
+    const invalidate = useInvalidateAndBroadcast(ASSISTANT_SYNC_CHANNEL);
 
     return useMutation({
         mutationFn: ({ id, userId: _userId }: { id: string; userId: string }) =>
             markAssistantCelebrationShown({ data: { id } }),
         onSuccess: (_, { userId }) => {
-            queryClient.invalidateQueries({
-                queryKey: assistantKeys.celebrationList(userId),
-            });
+            invalidate(assistantKeys.celebrationList(userId));
         },
     });
 }
 
 export function useDismissAssistantCelebrationMutation() {
-    const queryClient = useQueryClient();
+    const invalidate = useInvalidateAndBroadcast(ASSISTANT_SYNC_CHANNEL);
 
     return useMutation({
         mutationFn: ({ id, userId: _userId }: { id: string; userId: string }) =>
             dismissAssistantCelebration({ data: { id } }),
         onSuccess: (_, { userId }) => {
-            queryClient.invalidateQueries({
-                queryKey: assistantKeys.celebrationList(userId),
-            });
+            invalidate(assistantKeys.celebrationList(userId));
         },
     });
 }

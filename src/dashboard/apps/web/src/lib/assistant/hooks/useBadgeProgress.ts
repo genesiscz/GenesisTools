@@ -9,8 +9,8 @@ import { BADGE_DEFINITIONS, getBadgeRarityColor } from "@/lib/assistant/types";
 import {
     assistantKeys,
     useAssistantBadgesQuery,
-    useAssistantTasksQuery,
     useAssistantStreakQuery,
+    useAssistantTasksQuery,
 } from "./useAssistantQueries";
 
 /**

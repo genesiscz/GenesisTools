@@ -1,10 +1,7 @@
 import { useMemo, useState } from "react";
 import type { DeadlineRisk, DeadlineRiskInput, Task } from "@/lib/assistant/types";
 import { generateDeadlineRiskId } from "@/lib/assistant/types";
-import {
-    useAssistantDeadlineRisksQuery,
-    useCreateAssistantDeadlineRiskMutation,
-} from "./useAssistantQueries";
+import { useAssistantDeadlineRisksQuery, useCreateAssistantDeadlineRiskMutation } from "./useAssistantQueries";
 
 function computeRiskLevel(daysLate: number): DeadlineRisk["riskLevel"] {
     if (daysLate > 2) {

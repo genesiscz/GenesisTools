@@ -22,6 +22,7 @@ import type {
     TaskStatus,
     UrgencyLevel,
 } from "@/lib/assistant/types";
+import { ASSISTANT_SYNC_CHANNEL, useBroadcastInvalidation } from "@/lib/sync/useBroadcastInvalidation";
 import { CelebrationManagerProvider, useCelebrationManager } from "../-components/celebrations";
 import type { EscalationResolutionData } from "../-components/escalation";
 import { EscalationAlert, EscalationWidget } from "../-components/escalation";
@@ -32,9 +33,12 @@ export const Route = createFileRoute("/assistant/tasks/")({
 });
 
 /**
- * Wrapper component that provides the celebration context
+ * Wrapper component that provides the celebration context and cross-tab sync.
+ * Subscribes to assistant query invalidations broadcast from other tabs.
  */
 function TasksPageWrapper() {
+    useBroadcastInvalidation(ASSISTANT_SYNC_CHANNEL);
+
     return (
         <CelebrationManagerProvider>
             <TasksPage />

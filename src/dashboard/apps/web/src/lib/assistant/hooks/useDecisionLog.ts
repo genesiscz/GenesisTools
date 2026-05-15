@@ -118,17 +118,39 @@ export function useDecisionLog(userId: string | null) {
         }
 
         const serverUpdates: Record<string, unknown> = {};
-        if (updates.title !== undefined) { serverUpdates.title = updates.title; }
-        if (updates.reasoning !== undefined) { serverUpdates.reasoning = updates.reasoning; }
-        if (updates.alternativesConsidered !== undefined) { serverUpdates.alternativesConsidered = updates.alternativesConsidered; }
-        if (updates.decidedAt !== undefined) { serverUpdates.decidedAt = updates.decidedAt.toISOString(); }
-        if (updates.decidedBy !== undefined) { serverUpdates.decidedBy = updates.decidedBy; }
-        if (updates.status !== undefined) { serverUpdates.status = updates.status; }
-        if (updates.supersededBy !== undefined) { serverUpdates.supersededBy = updates.supersededBy; }
-        if (updates.reversalReason !== undefined) { serverUpdates.reversalReason = updates.reversalReason; }
-        if (updates.impactArea !== undefined) { serverUpdates.impactArea = updates.impactArea; }
-        if (updates.relatedTaskIds !== undefined) { serverUpdates.relatedTaskIds = updates.relatedTaskIds; }
-        if (updates.tags !== undefined) { serverUpdates.tags = updates.tags; }
+        if (updates.title !== undefined) {
+            serverUpdates.title = updates.title;
+        }
+        if (updates.reasoning !== undefined) {
+            serverUpdates.reasoning = updates.reasoning;
+        }
+        if (updates.alternativesConsidered !== undefined) {
+            serverUpdates.alternativesConsidered = updates.alternativesConsidered;
+        }
+        if (updates.decidedAt !== undefined) {
+            serverUpdates.decidedAt = updates.decidedAt.toISOString();
+        }
+        if (updates.decidedBy !== undefined) {
+            serverUpdates.decidedBy = updates.decidedBy;
+        }
+        if (updates.status !== undefined) {
+            serverUpdates.status = updates.status;
+        }
+        if (updates.supersededBy !== undefined) {
+            serverUpdates.supersededBy = updates.supersededBy;
+        }
+        if (updates.reversalReason !== undefined) {
+            serverUpdates.reversalReason = updates.reversalReason;
+        }
+        if (updates.impactArea !== undefined) {
+            serverUpdates.impactArea = updates.impactArea;
+        }
+        if (updates.relatedTaskIds !== undefined) {
+            serverUpdates.relatedTaskIds = updates.relatedTaskIds;
+        }
+        if (updates.tags !== undefined) {
+            serverUpdates.tags = updates.tags;
+        }
 
         try {
             const result = await updateMutation.mutateAsync({ id, data: serverUpdates, userId });

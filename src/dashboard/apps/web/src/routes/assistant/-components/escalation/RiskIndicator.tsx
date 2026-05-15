@@ -117,12 +117,7 @@ export function RiskIndicator({
             {/* Pulsing dot indicator */}
             <span className="relative flex items-center justify-center">
                 <span
-                    className={cn(
-                        "rounded-full",
-                        sizes.dot,
-                        config.dotColor,
-                        animate && "animate-pulse"
-                    )}
+                    className={cn("rounded-full", sizes.dot, config.dotColor, animate && "animate-pulse")}
                     style={{
                         boxShadow: config.glowColor ? `0 0 12px ${config.glowColor}` : undefined,
                     }}

@@ -4,6 +4,7 @@ import { useAuth } from "@workos/authkit-tanstack-react-start/client";
 import { Activity, Loader2, Plus } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { DashboardLayout } from "@/components/dashboard";
+import { CHRONO_SYNC_CHANNEL, useBroadcastInvalidation } from "@/lib/sync/useBroadcastInvalidation";
 import { Button } from "@ui/components/button";
 import { ActivityLogSidebar, TimerCard } from "@/lib/timer/components";
 import { useTimerStore } from "@/lib/timer/hooks/useTimerStore";
@@ -15,6 +16,9 @@ export const Route = createFileRoute("/timer/")({
 });
 
 function TimerPage() {
+    // Subscribe to timer query invalidations from other tabs (ready for Plan 08 TanStack Query migration)
+    useBroadcastInvalidation(CHRONO_SYNC_CHANNEL);
+
     const { user, loading: authLoading } = useAuth();
     const userId = user?.id ?? null;
     const [activityLogOpen, setActivityLogOpen] = useState(false);

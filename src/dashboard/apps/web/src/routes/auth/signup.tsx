@@ -1,8 +1,8 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { Button } from "@ui/components/button";
 import { AlertCircle, Github, Loader2, Lock, Mail, User } from "lucide-react";
 import { useState } from "react";
 import { AuthLayout } from "@/components/auth";
-import { Button } from "@ui/components/button";
 import type { AuthError } from "@/lib/auth-actions";
 import { getOAuthUrlFn, signUpFn } from "@/lib/auth-actions";
 

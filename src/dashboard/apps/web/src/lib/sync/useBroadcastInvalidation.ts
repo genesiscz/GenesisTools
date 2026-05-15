@@ -2,15 +2,16 @@
  * BroadcastChannel-based cross-tab query invalidation.
  *
  * Usage:
- *   // In feature root component:
+ *   // In feature root component (subscribes this tab to invalidations from others):
  *   useBroadcastInvalidation(ASSISTANT_SYNC_CHANNEL);
  *
- *   // After a mutation:
- *   broadcastInvalidate(ASSISTANT_SYNC_CHANNEL, ["assistant-tasks"]);
+ *   // In mutation onSuccess (invalidates locally AND notifies other tabs):
+ *   const invalidate = useInvalidateAndBroadcast(ASSISTANT_SYNC_CHANNEL);
+ *   invalidate(["assistant-tasks"]);
  */
 
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect } from "react";
+import { useCallback, useEffect } from "react";
 
 export const CHRONO_SYNC_CHANNEL = "chrono_sync_channel";
 export const ASSISTANT_SYNC_CHANNEL = "assistant_sync_channel";
@@ -21,18 +22,35 @@ interface BroadcastInvalidateMessage {
 }
 
 /**
- * Broadcast a query invalidation to other tabs on the same channel.
- * Also invalidates locally so the current tab stays in sync.
+ * Broadcast a query invalidation to OTHER tabs on the same channel.
+ * Does NOT invalidate locally — call queryClient.invalidateQueries separately,
+ * or use useInvalidateAndBroadcast() which does both.
  */
-export function broadcastInvalidate(channelName: string, queryKey: unknown[]): void {
+export function broadcastInvalidate(channelName: string, queryKey: readonly unknown[]): void {
     try {
         const channel = new BroadcastChannel(channelName);
-        const message: BroadcastInvalidateMessage = { type: "invalidate", queryKey };
+        const message: BroadcastInvalidateMessage = { type: "invalidate", queryKey: Array.from(queryKey) };
         channel.postMessage(message);
         channel.close();
     } catch {
         // BroadcastChannel not supported (e.g. SSR) — silently skip
     }
+}
+
+/**
+ * Returns a stable callback that invalidates locally AND broadcasts to other tabs.
+ * Use this in mutation onSuccess handlers instead of calling both functions manually.
+ */
+export function useInvalidateAndBroadcast(channelName: string) {
+    const queryClient = useQueryClient();
+
+    return useCallback(
+        (queryKey: readonly unknown[]) => {
+            queryClient.invalidateQueries({ queryKey: Array.from(queryKey) });
+            broadcastInvalidate(channelName, queryKey);
+        },
+        [channelName, queryClient],
+    );
 }
 
 /**
