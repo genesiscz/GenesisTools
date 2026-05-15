@@ -46,10 +46,6 @@ export function subscribeEvents(userId: string, listener: (event: DomainEvent) =
 /**
  * Emit a domain event for a user (called from server mutations).
  */
-export function emitDomainEvent(
-    userId: string,
-    domain: string,
-    event: { type: string; [key: string]: unknown }
-): void {
+export function emitDomainEvent(userId: string, domain: string, event: { type: string; [key: string]: unknown }): void {
     getEmitter(userId).emit("event", { ...event, domain } satisfies DomainEvent);
 }
