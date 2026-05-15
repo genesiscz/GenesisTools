@@ -1,13 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { NewBookmark } from "@/drizzle";
+import { createBookmark, deleteBookmark, fetchUrlMetadata, listBookmarks, updateBookmark } from "../bookmarks.server";
 import { bookmarkKeys } from "../bookmarks-keys";
-import {
-    createBookmark,
-    deleteBookmark,
-    fetchUrlMetadata,
-    listBookmarks,
-    updateBookmark,
-} from "../bookmarks.server";
 
 const queryConfig = {
     staleTime: 30_000,
@@ -46,11 +40,8 @@ export function useUpdateBookmarkMutation() {
     const queryClient = useQueryClient();
 
     return useMutation({
-        mutationFn: (d: {
-            id: string;
-            userId: string;
-            patch: Parameters<typeof updateBookmark>[0]["data"]["patch"];
-        }) => updateBookmark({ data: d }),
+        mutationFn: (d: { id: string; userId: string; patch: Parameters<typeof updateBookmark>[0]["data"]["patch"] }) =>
+            updateBookmark({ data: d }),
         onSuccess: (result) => {
             queryClient.invalidateQueries({ queryKey: bookmarkKeys.list(result.userId) });
         },
