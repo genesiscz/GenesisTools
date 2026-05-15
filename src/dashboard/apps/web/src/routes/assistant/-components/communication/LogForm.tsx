@@ -21,6 +21,11 @@ interface LogFormProps {
     existingTags?: string[];
 }
 
+// Module-scope so its reference is stable — used in the reset effect's deps.
+function formatDateForInput(date: Date): string {
+    return new Date(date).toISOString().split("T")[0];
+}
+
 /**
  * Source selector button component
  */
@@ -214,11 +219,6 @@ export function LogForm({
     const [tagInput, setTagInput] = useState("");
     const [isSubmitting, setIsSubmitting] = useState(false);
 
-    function formatDateForInput(date: Date): string {
-        const d = new Date(date);
-        return d.toISOString().split("T")[0];
-    }
-
     // Reset form when dialog opens
     useEffect(() => {
         if (open) {
@@ -235,7 +235,7 @@ export function LogForm({
             setTags(initialValues?.tags ?? []);
             setTagInput("");
         }
-    }, [open, initialValues, formatDateForInput]);
+    }, [open, initialValues]);
 
     function handleAddTag() {
         const trimmed = tagInput.trim().toLowerCase();
