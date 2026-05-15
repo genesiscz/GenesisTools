@@ -1,5 +1,5 @@
-import { ScrollArea } from "@ui/components/scroll-area";
 import type { UIMessage } from "@tanstack/ai-react";
+import { ScrollArea } from "@ui/components/scroll-area";
 import { MessageSquareDashed } from "lucide-react";
 import { useEffect, useRef } from "react";
 import type { AiMessage } from "@/drizzle";

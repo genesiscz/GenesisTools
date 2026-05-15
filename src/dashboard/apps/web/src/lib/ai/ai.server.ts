@@ -113,12 +113,7 @@ export const listMessages = createServerFn({ method: "GET" })
 
 export const appendMessage = createServerFn({ method: "POST" })
     .inputValidator(
-        (d: {
-            id: string;
-            conversationId: string;
-            role: "user" | "assistant" | "system";
-            content: string;
-        }) => d
+        (d: { id: string; conversationId: string; role: "user" | "assistant" | "system"; content: string }) => d
     )
     .handler(({ data }): AiMessage => {
         const now = new Date().toISOString();
@@ -135,10 +130,7 @@ export const appendMessage = createServerFn({ method: "POST" })
                 .run();
 
             // Bump conversation updatedAt so it floats to top of list
-            db.update(aiConversations)
-                .set({ updatedAt: now })
-                .where(eq(aiConversations.id, data.conversationId))
-                .run();
+            db.update(aiConversations).set({ updatedAt: now }).where(eq(aiConversations.id, data.conversationId)).run();
 
             const row = db.select().from(aiMessages).where(eq(aiMessages.id, data.id)).get();
 

@@ -1,11 +1,11 @@
 import { SafeJSON } from "@dashboard/shared";
-import { type ModelMessage, type StreamChunk, chat, toServerSentEventsResponse } from "@tanstack/ai";
+import { chat, type ModelMessage, type StreamChunk, toServerSentEventsResponse } from "@tanstack/ai";
 import { createAnthropicChat } from "@tanstack/ai-anthropic";
 import { createFileRoute } from "@tanstack/react-router";
 import { and, eq } from "drizzle-orm";
 import { aiConversations, aiMessages, db } from "@/drizzle";
-import { emitDomainEvent } from "@/lib/events/event-bus.server";
 import { env } from "@/lib/env";
+import { emitDomainEvent } from "@/lib/events/event-bus.server";
 
 export const Route = createFileRoute("/api/ai-chat")({
     server: {

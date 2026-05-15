@@ -34,8 +34,7 @@ function AIAssistantPage() {
     useServerEvents({
         userId,
         domain: "ai",
-        onEvent: () =>
-            queryClient.invalidateQueries({ queryKey: aiQueryKeys.conversations(userId ?? "") }),
+        onEvent: () => queryClient.invalidateQueries({ queryKey: aiQueryKeys.conversations(userId ?? "") }),
     });
 
     const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
@@ -132,8 +131,7 @@ function AIAssistantPage() {
                     <div className="flex items-center gap-2.5 border-b border-white/10 px-4 py-3">
                         <Brain className="h-4 w-4 text-violet-400" />
                         <span className="text-sm font-mono font-semibold text-white/80">
-                            {conversations.find((c) => c.id === activeConversationId)?.title ??
-                                "AI Assistant"}
+                            {conversations.find((c) => c.id === activeConversationId)?.title ?? "AI Assistant"}
                         </span>
                     </div>
 
@@ -146,9 +144,7 @@ function AIAssistantPage() {
                     {!activeConversationId && (
                         <div className="flex flex-1 flex-col items-center justify-center gap-3 text-white/30">
                             <Brain className="h-12 w-12" />
-                            <p className="text-sm font-mono">
-                                Select a conversation or create a new one
-                            </p>
+                            <p className="text-sm font-mono">Select a conversation or create a new one</p>
                         </div>
                     )}
 

@@ -2,9 +2,7 @@ import { Streamdown } from "streamdown";
 import type { AiMessage } from "@/drizzle";
 
 interface MessageBubbleProps {
-    message:
-        | AiMessage
-        | { id: string; role: "user" | "assistant" | "system"; content: string; createdAt: string };
+    message: AiMessage | { id: string; role: "user" | "assistant" | "system"; content: string; createdAt: string };
     isStreaming?: boolean;
 }
 
@@ -41,12 +39,7 @@ export function MessageBubble({ message, isStreaming = false }: MessageBubblePro
             ].join(" ")}
         >
             <header className="mb-1.5 flex items-center gap-2">
-                <span
-                    className={[
-                        "text-xs font-semibold font-mono uppercase tracking-widest",
-                        labelStyle,
-                    ].join(" ")}
-                >
+                <span className={["text-xs font-semibold font-mono uppercase tracking-widest", labelStyle].join(" ")}>
                     {ROLE_LABEL[role]}
                 </span>
                 <span className="text-xs text-white/30">
