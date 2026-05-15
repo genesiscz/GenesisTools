@@ -1,3 +1,4 @@
+import { FeatureCard, FeatureCardContent, FeatureCardHeader } from "@ui/custom/feature-card-nexus";
 import {
     ArrowRightCircle,
     Calendar,
@@ -21,7 +22,6 @@ import {
     DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { FeatureCard, FeatureCardContent, FeatureCardHeader } from "@/components/ui/feature-card";
 import type { Decision, DecisionImpactArea, DecisionStatus } from "@/lib/assistant/types";
 import { cn } from "@/lib/utils";
 

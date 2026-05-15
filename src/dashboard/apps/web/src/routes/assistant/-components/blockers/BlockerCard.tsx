@@ -1,6 +1,6 @@
 import { Link } from "@tanstack/react-router";
+import { FeatureCard, FeatureCardContent, FeatureCardHeader } from "@ui/custom/feature-card-nexus";
 import { AlertTriangle, ArrowRight, Bell, Clock, Timer, User } from "lucide-react";
-import { FeatureCard, FeatureCardContent, FeatureCardHeader } from "@/components/ui/feature-card";
 import type { BlockerFollowUpAction, Task, TaskBlocker } from "@/lib/assistant/types";
 import { cn } from "@/lib/utils";
 import { BlockerActions } from "./BlockerActions";

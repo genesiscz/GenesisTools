@@ -1,3 +1,4 @@
+import { FeatureCard, FeatureCardContent, FeatureCardHeader } from "@ui/custom/feature-card-nexus";
 import {
     BellOff,
     Calendar,
@@ -11,7 +12,6 @@ import {
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { FeatureCard, FeatureCardContent, FeatureCardHeader } from "@/components/ui/feature-card";
 import type { DistractionStats } from "@/lib/assistant/lib/storage/types";
 import type { Distraction } from "@/lib/assistant/types";
 import { cn } from "@/lib/utils";

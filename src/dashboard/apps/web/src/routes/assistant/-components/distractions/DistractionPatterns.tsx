@@ -1,7 +1,7 @@
+import { FeatureCard, FeatureCardContent, FeatureCardHeader } from "@ui/custom/feature-card-nexus";
 import { AlertTriangle, Calendar, Clock } from "lucide-react";
 import { useMemo } from "react";
 import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { FeatureCard, FeatureCardContent, FeatureCardHeader } from "@/components/ui/feature-card";
 import type { Distraction } from "@/lib/assistant/types";
 
 interface DistractionPatternsProps {

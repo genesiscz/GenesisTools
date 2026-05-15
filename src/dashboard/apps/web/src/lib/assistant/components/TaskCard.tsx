@@ -1,4 +1,5 @@
 import { Link } from "@tanstack/react-router";
+import { FeatureCard, FeatureCardContent, FeatureCardHeader } from "@ui/custom/feature-card-nexus";
 import { AlertTriangle, Ban, Calendar, CheckCircle, Circle, Clock, MoreVertical, Play, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -8,7 +9,6 @@ import {
     DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { FeatureCard, FeatureCardContent, FeatureCardHeader } from "@/components/ui/feature-card";
 import type { DeadlineRiskLevel, Task, TaskStatus, UrgencyLevel } from "@/lib/assistant/types";
 import { getUrgencyColor } from "@/lib/assistant/types";
 import { cn } from "@/lib/utils";

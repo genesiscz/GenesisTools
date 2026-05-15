@@ -1,6 +1,7 @@
 @import 'tailwindcss';
 @import 'tw-animate-css';
 @import './components/auth/cyberpunk.css';
+@source "../../../../utils/ui";
 
 @custom-variant dark (&:is(.dark *));
 

@@ -101,6 +101,32 @@ export {
     SheetTitle,
     SheetTrigger,
 } from "@ui/components/sheet";
+export {
+    Sidebar,
+    SidebarContent,
+    SidebarFooter,
+    SidebarGroup,
+    SidebarGroupAction,
+    SidebarGroupContent,
+    SidebarGroupLabel,
+    SidebarHeader,
+    SidebarInput,
+    SidebarInset,
+    SidebarMenu,
+    SidebarMenuAction,
+    SidebarMenuBadge,
+    SidebarMenuButton,
+    SidebarMenuItem,
+    SidebarMenuSkeleton,
+    SidebarMenuSub,
+    SidebarMenuSubButton,
+    SidebarMenuSubItem,
+    SidebarProvider,
+    SidebarRail,
+    SidebarSeparator,
+    SidebarTrigger,
+    useSidebar,
+} from "@ui/components/sidebar";
 export type { SkeletonProps, SkeletonVariant } from "@ui/components/skeleton";
 export { Skeleton } from "@ui/components/skeleton";
 export { Slider } from "@ui/components/slider";

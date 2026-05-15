@@ -1,13 +1,13 @@
 import { Link } from "@tanstack/react-router";
-import { AlertTriangle, ArrowRight, User } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import {
     FeatureCard,
     FeatureCardContent,
     FeatureCardDescription,
     FeatureCardHeader,
     FeatureCardTitle,
-} from "@/components/ui/feature-card";
+} from "@ui/custom/feature-card-nexus";
+import { AlertTriangle, ArrowRight, User } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import type { Task, TaskBlocker } from "@/lib/assistant/types";
 import { cn } from "@/lib/utils";
 import { BlockerActions } from "./BlockerActions";

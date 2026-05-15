@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { FeatureCard, FeatureCardContent, FeatureCardHeader } from "@ui/custom/feature-card-nexus";
 import { useAuth } from "@workos/authkit-tanstack-react-start/client";
 import {
     AlertCircle,
@@ -17,7 +18,6 @@ import {
 import { useEffect, useState } from "react";
 import { DashboardLayout } from "@/components/dashboard";
 import { Button } from "@/components/ui/button";
-import { FeatureCard, FeatureCardContent, FeatureCardHeader } from "@/components/ui/feature-card";
 import { useTaskStore } from "@/lib/assistant/hooks";
 import type { ContextParking, Task } from "@/lib/assistant/types";
 import { getUrgencyColor } from "@/lib/assistant/types";

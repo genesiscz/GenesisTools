@@ -1,3 +1,4 @@
+import { FeatureCard, FeatureCardContent, FeatureCardHeader } from "@ui/custom/feature-card-nexus";
 import {
     AlertCircle,
     Clock,
@@ -12,7 +13,6 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
-import { FeatureCard, FeatureCardContent, FeatureCardHeader } from "@/components/ui/feature-card";
 import type { DistractionStats as DistractionStatsType } from "@/lib/assistant/lib/storage/types";
 import type { DistractionSource } from "@/lib/assistant/types";
 import { cn } from "@/lib/utils";

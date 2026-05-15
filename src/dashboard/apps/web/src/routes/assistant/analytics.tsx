@@ -1,9 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { FeatureCard } from "@ui/custom/feature-card-nexus";
 import { useAuth } from "@workos/authkit-tanstack-react-start/client";
 import { Activity, Loader2, Zap } from "lucide-react";
 import { useEffect, useState } from "react";
 import { DashboardLayout } from "@/components/dashboard";
-import { FeatureCard } from "@/components/ui/feature-card";
 import { useDistractions, useEnergyData, useTaskStore } from "@/lib/assistant/hooks";
 import { useBadgeProgress } from "@/lib/assistant/hooks/useBadgeProgress";
 import type { DistractionStats as DistractionStatsType, EnergyHeatmapData } from "@/lib/assistant/lib/storage/types";

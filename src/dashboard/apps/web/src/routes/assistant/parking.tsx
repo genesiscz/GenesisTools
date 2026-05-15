@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { FeatureCard, FeatureCardContent, FeatureCardHeader } from "@ui/custom/feature-card-nexus";
 import { useAuth } from "@workos/authkit-tanstack-react-start/client";
 import { Archive, ArrowRight, CheckCircle, Clock, Filter, Loader2, ParkingCircle } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -12,7 +13,6 @@ import {
     DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { FeatureCard, FeatureCardContent, FeatureCardHeader } from "@/components/ui/feature-card";
 import { useTaskStore } from "@/lib/assistant/hooks";
 import type { ContextParking, ParkingStatus } from "@/lib/assistant/types";
 import { cn } from "@/lib/utils";

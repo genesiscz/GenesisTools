@@ -1,4 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { FeatureCard, FeatureCardHeader } from "@ui/custom/feature-card-nexus";
 import { useAuth } from "@workos/authkit-tanstack-react-start/client";
 import {
     AlertCircle,
@@ -25,7 +26,6 @@ import {
 import { useEffect, useState } from "react";
 import { DashboardLayout } from "@/components/dashboard";
 import { Button } from "@/components/ui/button";
-import { FeatureCard, FeatureCardHeader } from "@/components/ui/feature-card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";

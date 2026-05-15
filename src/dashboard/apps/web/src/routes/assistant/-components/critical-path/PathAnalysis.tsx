@@ -9,6 +9,7 @@
  */
 
 import { Link } from "@tanstack/react-router";
+import { FeatureCard, FeatureCardHeader } from "@ui/custom/feature-card-nexus";
 import {
     AlertTriangle,
     ArrowRight,
@@ -21,7 +22,6 @@ import {
     Zap,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { FeatureCard, FeatureCardHeader } from "@/components/ui/feature-card";
 import type { Task } from "@/lib/assistant/types";
 import { cn } from "@/lib/utils";
 import type { CriticalPathAnalysis } from "./types";

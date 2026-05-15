@@ -1,7 +1,7 @@
+import { FeatureCard, FeatureCardContent, FeatureCardHeader } from "@ui/custom/feature-card-nexus";
 import { ArrowRight, Calendar, Check, ChevronRight, Clock, FileText, Filter, History, User } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { FeatureCard, FeatureCardContent, FeatureCardHeader } from "@/components/ui/feature-card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { Decision, HandoffDocument, TaskBlocker } from "@/lib/assistant/types";
 import { cn } from "@/lib/utils";
