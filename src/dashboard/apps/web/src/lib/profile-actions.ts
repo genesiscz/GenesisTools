@@ -1,7 +1,7 @@
-import { SafeJSON } from "@dashboard/shared";
-import { createServerFn } from "@tanstack/react-start";
 import { mkdir, unlink } from "node:fs/promises";
 import { join } from "node:path";
+import { SafeJSON } from "@dashboard/shared";
+import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 
 const AVATAR_DIR = join(process.cwd(), ".data", "avatars");
@@ -14,10 +14,7 @@ interface WorkOSUserResponse {
     profile_picture_url: string | null;
 }
 
-async function setWorkOSProfilePicture(
-    userId: string,
-    profilePictureUrl: string | null
-): Promise<WorkOSUserResponse> {
+async function setWorkOSProfilePicture(userId: string, profilePictureUrl: string | null): Promise<WorkOSUserResponse> {
     const apiKey = process.env.WORKOS_API_KEY;
 
     if (!apiKey) {

@@ -1,6 +1,6 @@
+import { join } from "node:path";
 import { SafeJSON } from "@dashboard/shared";
 import { createFileRoute } from "@tanstack/react-router";
-import { join } from "node:path";
 
 const AVATAR_DIR = join(process.cwd(), ".data", "avatars");
 

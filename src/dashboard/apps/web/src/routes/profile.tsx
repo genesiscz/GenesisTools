@@ -27,12 +27,12 @@ function ProfilePage() {
     const userInitials =
         user?.firstName && user?.lastName
             ? `${user.firstName[0]}${user.lastName[0]}`
-            : user?.email?.substring(0, 2).toUpperCase() ?? "U";
+            : (user?.email?.substring(0, 2).toUpperCase() ?? "U");
 
     const displayName =
         user?.firstName && user?.lastName
             ? `${user.firstName} ${user.lastName}`
-            : user?.email?.split("@")[0] ?? "Unknown User";
+            : (user?.email?.split("@")[0] ?? "Unknown User");
 
     const createdAt = user?.createdAt
         ? new Date(user.createdAt).toLocaleDateString("en-US", {
@@ -208,9 +208,7 @@ function ProfilePage() {
                         </div>
                     </div>
 
-                    {avatarError && (
-                        <AuthAlertBanner variant="error" message={avatarError} />
-                    )}
+                    {avatarError && <AuthAlertBanner variant="error" message={avatarError} />}
 
                     <Separator className="bg-primary/10" />
 
