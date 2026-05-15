@@ -2,6 +2,7 @@ import { Link } from "@tanstack/react-router";
 import { FeatureCard, FeatureCardContent, FeatureCardHeader } from "@ui/custom/feature-card-nexus";
 import { AlertTriangle, ArrowRight, Bell, Clock, Timer, User } from "lucide-react";
 import type { BlockerFollowUpAction, Task, TaskBlocker } from "@/lib/assistant/types";
+import { formatTimeBlocked } from "@/lib/assistant/utils";
 import { cn } from "@/lib/utils";
 import { BlockerActions } from "./BlockerActions";
 
@@ -13,36 +14,6 @@ interface BlockerCardProps {
     onSetReminder?: (blocker: TaskBlocker, date: Date) => void;
     onResolve?: (blockerId: string) => void;
     className?: string;
-}
-
-/**
- * Format time blocked in human-readable form
- */
-function formatTimeBlocked(blockedSince: Date): string {
-    const now = new Date();
-    const diff = now.getTime() - new Date(blockedSince).getTime();
-    const hours = Math.floor(diff / (1000 * 60 * 60));
-    const days = Math.floor(hours / 24);
-
-    if (days === 0) {
-        if (hours === 0) {
-            return "Just now";
-        }
-        if (hours === 1) {
-            return "1 hour ago";
-        }
-        return `${hours} hours ago`;
-    }
-    if (days === 1) {
-        return "1 day ago";
-    }
-    if (days < 7) {
-        return `${days} days ago`;
-    }
-    if (days < 14) {
-        return "1 week ago";
-    }
-    return `${Math.floor(days / 7)} weeks ago`;
 }
 
 /**

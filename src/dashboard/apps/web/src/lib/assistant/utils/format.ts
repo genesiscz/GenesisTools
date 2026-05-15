@@ -78,6 +78,43 @@ export function formatCompactRelativeTime(date: Date): string {
     });
 }
 
+/**
+ * Format time elapsed since a blocker was set, in human-readable form.
+ * Ranges from "Just now" to "N weeks ago".
+ */
+export function formatTimeBlocked(blockedSince: Date): string {
+    const now = new Date();
+    const diff = now.getTime() - new Date(blockedSince).getTime();
+    const hours = Math.floor(diff / (1000 * 60 * 60));
+    const days = Math.floor(hours / 24);
+
+    if (days === 0) {
+        if (hours === 0) {
+            return "Just now";
+        }
+
+        if (hours === 1) {
+            return "1 hour ago";
+        }
+
+        return `${hours} hours ago`;
+    }
+
+    if (days === 1) {
+        return "1 day ago";
+    }
+
+    if (days < 7) {
+        return `${days} days ago`;
+    }
+
+    if (days < 14) {
+        return "1 week ago";
+    }
+
+    return `${Math.floor(days / 7)} weeks ago`;
+}
+
 export function formatHandoffRelativeTime(date: Date): string {
     const now = new Date();
     const diff = now.getTime() - new Date(date).getTime();

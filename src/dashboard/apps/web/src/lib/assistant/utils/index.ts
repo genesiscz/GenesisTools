@@ -4,4 +4,5 @@ export {
     formatFocusTime,
     formatHandoffRelativeTime,
     formatParkingRelativeTime,
+    formatTimeBlocked,
 } from "./format";
