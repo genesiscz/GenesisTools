@@ -1,6 +1,6 @@
-import type { ProductivityStats as ProductivityStatsType } from "@dashboard/shared";
+import { useQuery } from "@tanstack/react-query";
 import { Award, Clock, Coffee, Flame, Target, Timer, TrendingUp, Zap } from "lucide-react";
-import { useState } from "react";
+import { getProductivityStats } from "@/lib/timer/timer-sync.server";
 import { cn } from "@/lib/utils";
 
 interface ProductivityStatsProps {
@@ -17,22 +17,33 @@ interface ProductivityStatsProps {
 
 /**
  * Productivity statistics display with cyberpunk styling.
- * Stats fetching is not yet implemented in the server-side architecture.
+ * Aggregates activity_logs rows from the server via TanStack Query.
  */
 export function ProductivityStats({
-    userId: _userId,
-    startDate: _startDate,
-    endDate: _endDate,
+    userId,
+    startDate,
+    endDate,
     timeRangeLabel = "Today",
     timerId,
     timerNames = {},
     className,
-    refreshTrigger: _refreshTrigger,
+    refreshTrigger,
 }: ProductivityStatsProps) {
-    // Stats fetching is not yet implemented in the server-side architecture.
-    const [stats] = useState<ProductivityStatsType | null>(null);
-    const loading = false;
-    const error: string | null = null;
+    const startIso = (startDate ?? new Date(0)).toISOString();
+    const endIso = (endDate ?? new Date()).toISOString();
+
+    const {
+        data: stats,
+        isLoading: loading,
+        error: queryError,
+    } = useQuery({
+        queryKey: ["productivity-stats", userId, startIso, endIso, refreshTrigger],
+        queryFn: () => getProductivityStats({ data: { userId: userId!, startIso, endIso } }),
+        enabled: !!userId,
+        staleTime: 10_000,
+    });
+
+    const error: string | null = queryError ? String(queryError) : null;
 
     if (loading) {
         return (
