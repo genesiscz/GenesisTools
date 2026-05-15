@@ -18,7 +18,7 @@ export const Route = createFileRoute("/timer/")({
 const DEV_USER_ID = "dev-user";
 
 function TimerPage() {
-    const { user, loading: authLoading } = useAuth();
+    const { user } = useAuth();
     const userId = user?.id ?? (import.meta.env.DEV ? DEV_USER_ID : null);
 
     // 3-channel sync: SSE (primary), BroadcastChannel (same-origin), refetchOnWindowFocus (safety net)
@@ -82,8 +82,10 @@ function TimerPage() {
         );
     }
 
-    // Show loader while auth is checking OR while first fetch is in flight
-    if (authLoading || (loading && !initialized)) {
+    // Show loader only while the first timer fetch is in flight.
+    // We don't block on authLoading: userId always resolves (real session or
+    // dev fallback), so the timer query can proceed without waiting on auth.
+    if (loading && !initialized) {
         return (
             <DashboardLayout title="Timer" description="Precision time tracking">
                 <div className="flex items-center justify-center min-h-[60vh]">

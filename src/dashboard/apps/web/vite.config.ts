@@ -39,7 +39,15 @@ const config = defineConfig({
         }),
     ],
     resolve: {
-        dedupe: ["react", "react-dom"],
+        dedupe: [
+            "react",
+            "react-dom",
+            "@tanstack/react-query",
+            "@tanstack/query-core",
+            "@tanstack/react-router",
+            "@tanstack/react-start",
+            "@tanstack/router-core",
+        ],
         alias: [
             { find: "@ui", replacement: new URL("../../../utils/ui", import.meta.url).pathname },
             {
@@ -61,9 +69,18 @@ const config = defineConfig({
     // SSR config - mark nitro internals as external
     ssr: {
         external: ["nitro/database", "#nitro-internal-virtual/database"],
-        noExternal: [/^@radix-ui\//],
+        noExternal: [/^@radix-ui\//, /^@tanstack\//],
     },
     optimizeDeps: {
+        include: [
+            "react",
+            "react-dom",
+            "react/jsx-runtime",
+            "react/jsx-dev-runtime",
+            "react-dom/client",
+            "@tanstack/react-query",
+            "@tanstack/query-core",
+        ],
         exclude: ["nitro", "nitro/database"],
     },
 });
