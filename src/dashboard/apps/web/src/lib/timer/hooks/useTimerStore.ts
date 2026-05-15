@@ -1,155 +1,89 @@
-import type { LapEntry, Timer, TimerInput, TimerUpdate } from "@dashboard/shared";
-import { useStore } from "@tanstack/react-store";
-import { Store } from "@tanstack/store";
-
 /**
- * Timer store state
+ * useTimerStore — TanStack Query wrapper for the timer list.
+ *
+ * Replaces the old in-memory TanStack Store that was never seeded from the server
+ * (causing the "Loading timers..." forever bug). This hook fetches from SQLite via
+ * server functions and caches with TanStack Query.
  */
-interface TimerStoreState {
-    timers: Timer[];
-    loading: boolean;
-    error: string | null;
-    initialized: boolean;
-}
 
-/**
- * Create the timer store
- */
-export const timerStore = new Store<TimerStoreState>({
-    timers: [],
-    loading: false,
-    error: null,
-    initialized: false,
-});
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { Timer } from "@/drizzle";
+import { broadcastInvalidate, CHRONO_SYNC_CHANNEL } from "@/lib/sync/useBroadcastInvalidation";
+import { createTimerOnServer, deleteTimerFromServer, getTimersFromServer } from "@/lib/timer/timer-sync.server";
 
-/**
- * Hook to use the timer store with in-memory state management.
- * Timer persistence is handled by the server via TanStack Query / server functions.
- */
+/** Dev fallback userId when no WorkOS session is present. */
+const DEV_USER_ID = "dev-user";
+
 export function useTimerStore(userId: string | null) {
-    const state = useStore(timerStore);
+    const effectiveUserId = userId ?? (import.meta.env.DEV ? DEV_USER_ID : null);
+    const qc = useQueryClient();
 
-    // Create timer (in-memory only — caller is responsible for server persistence)
-    function createTimer(input: TimerInput): Timer | null {
-        if (!userId) {
+    const query = useQuery({
+        queryKey: ["timers", effectiveUserId],
+        queryFn: () => getTimersFromServer({ data: effectiveUserId! }),
+        enabled: !!effectiveUserId,
+        staleTime: 10_000,
+        refetchOnWindowFocus: true,
+    });
+
+    const createMutation = useMutation({
+        mutationFn: (input: { name: string; timerType: "stopwatch" | "countdown" | "pomodoro"; duration?: number }) =>
+            createTimerOnServer({
+                data: {
+                    userId: effectiveUserId!,
+                    name: input.name,
+                    timerType: input.timerType,
+                    duration: input.duration,
+                },
+            }),
+        onSuccess: (newTimer) => {
+            qc.setQueryData(["timers", effectiveUserId], (old: Timer[] | undefined) => [newTimer, ...(old ?? [])]);
+            broadcastInvalidate(CHRONO_SYNC_CHANNEL, ["timers", effectiveUserId]);
+        },
+    });
+
+    const deleteMutation = useMutation({
+        mutationFn: (timerId: string) => deleteTimerFromServer({ data: { timerId, userId: effectiveUserId! } }),
+        onSuccess: (_, timerId) => {
+            qc.setQueryData(["timers", effectiveUserId], (old: Timer[] | undefined) =>
+                (old ?? []).filter((t) => t.id !== timerId)
+            );
+            broadcastInvalidate(CHRONO_SYNC_CHANNEL, ["timers", effectiveUserId]);
+        },
+    });
+
+    async function createTimer(input: {
+        name: string;
+        timerType: "stopwatch" | "countdown" | "pomodoro";
+        duration?: number;
+    }): Promise<Timer | null> {
+        if (!effectiveUserId) {
             return null;
         }
 
-        const now = new Date();
-        const timer: Timer = {
-            id: crypto.randomUUID(),
-            userId,
-            name: input.name ?? "Timer",
-            timerType: input.timerType ?? "stopwatch",
-            isRunning: false,
-            elapsedTime: 0,
-            duration: input.duration,
-            laps: [],
-            startTime: null,
-            firstStartTime: null,
-            showTotal: false,
-            pomodoroSessionCount: 0,
-            createdAt: now,
-            updatedAt: now,
-        };
-
-        timerStore.setState((s) => ({
-            ...s,
-            timers: [...s.timers, timer],
-            initialized: true,
-        }));
-
-        return timer;
+        return createMutation.mutateAsync(input);
     }
 
-    // Update timer with optimistic update
-    function updateTimer(id: string, updates: TimerUpdate): Timer | null {
-        let updatedTimer: Timer | null = null;
+    async function deleteTimer(timerId: string): Promise<boolean> {
+        if (!effectiveUserId) {
+            return false;
+        }
 
-        timerStore.setState((s) => {
-            const timers = s.timers.map((t) => {
-                if (t.id !== id) {
-                    return t;
-                }
-                const updated = { ...t, ...updates, updatedAt: new Date() };
-                updatedTimer = updated;
-                return updated;
-            });
-            return { ...s, timers };
-        });
-
-        return updatedTimer;
+        const result = await deleteMutation.mutateAsync(timerId);
+        return result.success;
     }
 
-    // Delete timer
-    function deleteTimer(id: string): boolean {
-        timerStore.setState((s) => ({
-            ...s,
-            timers: s.timers.filter((t) => t.id !== id),
-        }));
-        return true;
-    }
-
-    // Get single timer from state
     function getTimer(id: string): Timer | undefined {
-        return state.timers.find((t) => t.id === id);
-    }
-
-    // Add lap to timer
-    function addLap(timerId: string, elapsedMs: number): LapEntry | null {
-        const timer = state.timers.find((t) => t.id === timerId);
-        if (!timer) {
-            return null;
-        }
-
-        const lapNumber = (timer.laps?.length ?? 0) + 1;
-        const previousLap = timer.laps?.[timer.laps.length - 1];
-        const lapTime = previousLap ? elapsedMs - previousLap.splitTime : elapsedMs;
-
-        const newLap: LapEntry = {
-            number: lapNumber,
-            lapTime,
-            splitTime: elapsedMs,
-            timestamp: new Date(),
-        };
-
-        const updatedLaps = [...(timer.laps ?? []), newLap];
-        updateTimer(timerId, { laps: updatedLaps });
-        return newLap;
-    }
-
-    // Clear laps
-    function clearLaps(timerId: string): void {
-        updateTimer(timerId, { laps: [] });
-    }
-
-    // Load timers into store (called by parent with server data)
-    function loadTimers(serverTimers: Timer[]): void {
-        timerStore.setState((s) => ({
-            ...s,
-            timers: serverTimers,
-            initialized: true,
-            loading: false,
-        }));
-    }
-
-    // Clear error
-    function clearError() {
-        timerStore.setState((s) => ({ ...s, error: null }));
+        return (query.data ?? []).find((t) => t.id === id);
     }
 
     return {
-        timers: state.timers,
-        loading: state.loading,
-        error: state.error,
-        initialized: state.initialized,
+        timers: query.data ?? [],
+        loading: query.isLoading,
+        error: query.error ? String(query.error) : null,
+        initialized: query.isFetched,
         createTimer,
-        updateTimer,
         deleteTimer,
         getTimer,
-        addLap,
-        clearLaps,
-        loadTimers,
-        clearError,
     };
 }

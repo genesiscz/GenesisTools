@@ -1,4 +1,3 @@
-import type { TimerInput } from "@dashboard/shared";
 import { createFileRoute } from "@tanstack/react-router";
 import { Button } from "@ui/components/button";
 import { useAuth } from "@workos/authkit-tanstack-react-start/client";
@@ -7,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { DashboardLayout } from "@/components/dashboard";
 import { CHRONO_SYNC_CHANNEL, useBroadcastInvalidation } from "@/lib/sync/useBroadcastInvalidation";
 import { ActivityLogSidebar, TimerCard } from "@/lib/timer/components";
+import { useTimerSSE } from "@/lib/timer/hooks/useTimerSSE";
 import { useTimerStore } from "@/lib/timer/hooks/useTimerStore";
 import { cn } from "@/lib/utils";
 import "@/components/auth/cyberpunk.css";
@@ -15,30 +15,34 @@ export const Route = createFileRoute("/timer/")({
     component: TimerPage,
 });
 
+const DEV_USER_ID = "dev-user";
+
 function TimerPage() {
-    // Subscribe to timer query invalidations from other tabs (ready for Plan 08 TanStack Query migration)
+    const { user, loading: authLoading } = useAuth();
+    const userId = user?.id ?? (import.meta.env.DEV ? DEV_USER_ID : null);
+
+    // 3-channel sync: SSE (primary), BroadcastChannel (same-origin), refetchOnWindowFocus (safety net)
+    useTimerSSE(userId);
     useBroadcastInvalidation(CHRONO_SYNC_CHANNEL);
 
-    const { user, loading: authLoading } = useAuth();
-    const userId = user?.id ?? null;
     const [activityLogOpen, setActivityLogOpen] = useState(false);
 
-    const { timers, initialized, createTimer, deleteTimer } = useTimerStore(userId);
+    const { timers, initialized, loading, createTimer, deleteTimer } = useTimerStore(userId);
 
-    // Count running timers
+    // Count running timers (isRunning is 0/1 integer from drizzle)
     const runningCount = timers.filter((t) => t.isRunning).length;
 
     // Track running state changes to refresh activity stats
     const [statsRefreshTrigger, setStatsRefreshTrigger] = useState(0);
-    const prevRunningRef = useRef<Record<string, boolean>>({});
+    const prevRunningRef = useRef<Record<string, number>>({});
 
     useEffect(() => {
-        // Check if any timer's running state changed
-        const currentRunning: Record<string, boolean> = {};
+        const currentRunning: Record<string, number> = {};
         let changed = false;
 
         for (const timer of timers) {
             currentRunning[timer.id] = timer.isRunning;
+
             if (
                 prevRunningRef.current[timer.id] !== undefined &&
                 prevRunningRef.current[timer.id] !== timer.isRunning
@@ -50,34 +54,22 @@ function TimerPage() {
         prevRunningRef.current = currentRunning;
 
         if (changed) {
-            // Trigger stats refresh when any timer starts or pauses
             setStatsRefreshTrigger((prev) => prev + 1);
         }
     }, [timers]);
 
-    // Add new timer
     async function handleAddTimer() {
-        const input: TimerInput = {
+        await createTimer({
             name: `Timer ${timers.length + 1}`,
             timerType: "stopwatch",
-            isRunning: false,
-            elapsedTime: 0,
-            duration: 5 * 60 * 1000, // 5 minutes default for countdown
-            laps: [],
-            showTotal: true, // Default to visible
-            firstStartTime: null,
-            startTime: null,
-            pomodoroSessionCount: 0,
-        };
-        await createTimer(input);
+            duration: 5 * 60 * 1000,
+        });
     }
 
-    // Delete timer
     async function handleDeleteTimer(id: string) {
         await deleteTimer(id);
     }
 
-    // Pop out timer (Phase 2)
     function handlePopoutTimer(id: string) {
         const width = 400;
         const height = 500;
@@ -90,8 +82,8 @@ function TimerPage() {
         );
     }
 
-    // Loading state - show until fully initialized
-    if (authLoading || !initialized) {
+    // Show loader while auth is checking OR while first fetch is in flight
+    if (authLoading || (loading && !initialized)) {
         return (
             <DashboardLayout title="Timer" description="Precision time tracking">
                 <div className="flex items-center justify-center min-h-[60vh]">
@@ -170,13 +162,9 @@ function TimerPage() {
     );
 }
 
-/**
- * Empty state with call to action
- */
 function EmptyState({ onAddTimer }: { onAddTimer: () => void }) {
     return (
         <div className="flex flex-col items-center justify-center py-24 px-6">
-            {/* Decorative element */}
             <div
                 className={cn(
                     "relative w-32 h-32 mb-8",
@@ -187,7 +175,6 @@ function EmptyState({ onAddTimer }: { onAddTimer: () => void }) {
                     "animate-pulse-glow"
                 )}
             >
-                {/* Ripple effects */}
                 <div className="absolute inset-0 rounded-full border border-primary/20 animate-ripple" />
                 <div className="absolute inset-0 rounded-full border border-primary/20 animate-ripple-delayed" />
                 <div className="absolute inset-0 rounded-full border border-primary/20 animate-ripple-delayed-2" />
@@ -200,14 +187,12 @@ function EmptyState({ onAddTimer }: { onAddTimer: () => void }) {
                 </span>
             </div>
 
-            {/* Text */}
             <h2 className="text-xl font-semibold text-foreground/70 mb-2">No timers yet</h2>
             <p className="text-muted-foreground text-center max-w-md mb-8">
                 Create your first timer to start tracking time. Stopwatch, countdown, or pomodoro - choose what works
                 for you.
             </p>
 
-            {/* CTA Button */}
             <Button onClick={onAddTimer} size="lg" className="gap-3 bg-primary hover:bg-primary/90">
                 <Plus className="h-5 w-5" />
                 Create your first timer

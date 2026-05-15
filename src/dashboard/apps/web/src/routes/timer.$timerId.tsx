@@ -1,7 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useAuth } from "@workos/authkit-tanstack-react-start/client";
 import { Loader2 } from "lucide-react";
+import { CHRONO_SYNC_CHANNEL, useBroadcastInvalidation } from "@/lib/sync/useBroadcastInvalidation";
 import { TimerCard } from "@/lib/timer/components";
+import { useTimerSSE } from "@/lib/timer/hooks/useTimerSSE";
 import { cn } from "@/lib/utils";
 import "@/components/auth/cyberpunk.css";
 
@@ -13,10 +15,16 @@ export const Route = createFileRoute("/timer/$timerId")({
  * Minimal popup page for a single timer
  * Opens in a new window without sidebar/header
  */
+const DEV_USER_ID = "dev-user";
+
 function TimerPopupPage() {
     const { timerId } = Route.useParams();
     const { user, loading: authLoading } = useAuth();
-    const userId = user?.id ?? null;
+    const userId = user?.id ?? (import.meta.env.DEV ? DEV_USER_ID : null);
+
+    // 3-channel sync: SSE (primary), BroadcastChannel (same-origin), refetchOnWindowFocus (safety net)
+    useTimerSSE(userId);
+    useBroadcastInvalidation(CHRONO_SYNC_CHANNEL);
 
     // Loading state
     if (authLoading) {
