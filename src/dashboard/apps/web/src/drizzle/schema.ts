@@ -48,6 +48,9 @@ export const timers = sqliteTable(
         }>(),
         pomodoroPhase: text("pomodoro_phase").$type<"work" | "short_break" | "long_break">(),
         pomodoroSessionCount: integer("pomodoro_session_count").default(0),
+
+        // Optimistic concurrency — incremented on every mutation
+        version: integer("version").notNull().default(0),
     },
     (table) => ({
         userIdIdx: index("idx_timers_user_id").on(table.userId),
