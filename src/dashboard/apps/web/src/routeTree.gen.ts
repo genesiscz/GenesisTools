@@ -35,6 +35,7 @@ import { Route as AssistantCommunicationRouteImport } from './routes/assistant/c
 import { Route as AssistantAnalyticsRouteImport } from './routes/assistant/analytics'
 import { Route as ApiTimerEventsRouteImport } from './routes/api.timer-events'
 import { Route as ApiEventsRouteImport } from './routes/api.events'
+import { Route as ApiAiChatRouteImport } from './routes/api.ai-chat'
 import { Route as AssistantTasksIndexRouteImport } from './routes/assistant/tasks/index'
 import { Route as AssistantTasksTaskIdRouteImport } from './routes/assistant/tasks/$taskId'
 import { Route as ApiAvatarUserIdRouteImport } from './routes/api.avatar.$userId'
@@ -169,6 +170,11 @@ const ApiEventsRoute = ApiEventsRouteImport.update({
   path: '/api/events',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiAiChatRoute = ApiAiChatRouteImport.update({
+  id: '/api/ai-chat',
+  path: '/api/ai-chat',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AssistantTasksIndexRoute = AssistantTasksIndexRouteImport.update({
   id: '/assistant/tasks/',
   path: '/assistant/tasks/',
@@ -190,6 +196,7 @@ export interface FileRoutesByFullPath {
   '/mcp': typeof McpRoute
   '/profile': typeof ProfileRoute
   '/settings': typeof SettingsRoute
+  '/api/ai-chat': typeof ApiAiChatRoute
   '/api/events': typeof ApiEventsRoute
   '/api/timer-events': typeof ApiTimerEventsRoute
   '/assistant/analytics': typeof AssistantAnalyticsRoute
@@ -221,6 +228,7 @@ export interface FileRoutesByTo {
   '/mcp': typeof McpRoute
   '/profile': typeof ProfileRoute
   '/settings': typeof SettingsRoute
+  '/api/ai-chat': typeof ApiAiChatRoute
   '/api/events': typeof ApiEventsRoute
   '/api/timer-events': typeof ApiTimerEventsRoute
   '/assistant/analytics': typeof AssistantAnalyticsRoute
@@ -253,6 +261,7 @@ export interface FileRoutesById {
   '/mcp': typeof McpRoute
   '/profile': typeof ProfileRoute
   '/settings': typeof SettingsRoute
+  '/api/ai-chat': typeof ApiAiChatRoute
   '/api/events': typeof ApiEventsRoute
   '/api/timer-events': typeof ApiTimerEventsRoute
   '/assistant/analytics': typeof AssistantAnalyticsRoute
@@ -286,6 +295,7 @@ export interface FileRouteTypes {
     | '/mcp'
     | '/profile'
     | '/settings'
+    | '/api/ai-chat'
     | '/api/events'
     | '/api/timer-events'
     | '/assistant/analytics'
@@ -317,6 +327,7 @@ export interface FileRouteTypes {
     | '/mcp'
     | '/profile'
     | '/settings'
+    | '/api/ai-chat'
     | '/api/events'
     | '/api/timer-events'
     | '/assistant/analytics'
@@ -348,6 +359,7 @@ export interface FileRouteTypes {
     | '/mcp'
     | '/profile'
     | '/settings'
+    | '/api/ai-chat'
     | '/api/events'
     | '/api/timer-events'
     | '/assistant/analytics'
@@ -380,6 +392,7 @@ export interface RootRouteChildren {
   McpRoute: typeof McpRoute
   ProfileRoute: typeof ProfileRoute
   SettingsRoute: typeof SettingsRoute
+  ApiAiChatRoute: typeof ApiAiChatRoute
   ApiEventsRoute: typeof ApiEventsRoute
   ApiTimerEventsRoute: typeof ApiTimerEventsRoute
   AssistantAnalyticsRoute: typeof AssistantAnalyticsRoute
@@ -591,6 +604,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiEventsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/ai-chat': {
+      id: '/api/ai-chat'
+      path: '/api/ai-chat'
+      fullPath: '/api/ai-chat'
+      preLoaderRoute: typeof ApiAiChatRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/assistant/tasks/': {
       id: '/assistant/tasks/'
       path: '/assistant/tasks'
@@ -620,6 +640,7 @@ const rootRouteChildren: RootRouteChildren = {
   McpRoute: McpRoute,
   ProfileRoute: ProfileRoute,
   SettingsRoute: SettingsRoute,
+  ApiAiChatRoute: ApiAiChatRoute,
   ApiEventsRoute: ApiEventsRoute,
   ApiTimerEventsRoute: ApiTimerEventsRoute,
   AssistantAnalyticsRoute: AssistantAnalyticsRoute,
