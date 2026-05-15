@@ -53,6 +53,7 @@ export function useTimerSSE(userId: string | null) {
                 // Every action-based mutation persists an activity-log row and
                 // emits an SSE event — keep the activity log live in lockstep.
                 qc.invalidateQueries({ queryKey: ["activity-logs", userId] });
+                qc.invalidateQueries({ queryKey: ["focus-stats-today", userId] });
             } catch {
                 // malformed event — ignore
             }
