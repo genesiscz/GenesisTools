@@ -5,8 +5,3 @@ export {
     type EscalationResolutionData,
 } from "./EscalationOptions";
 export { EscalationWidget, RiskSummaryBadge } from "./EscalationWidget";
-export {
-    RiskBadge,
-    RiskIndicator,
-    TaskCardRiskIndicator,
-} from "./RiskIndicator";
