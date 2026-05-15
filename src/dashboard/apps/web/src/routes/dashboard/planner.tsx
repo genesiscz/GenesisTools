@@ -29,7 +29,17 @@ function PlannerRoot() {
     const [view, setView] = useState<PlannerView>("day");
     const navigate = useNavigate();
 
-    const { scheduledTasks, unscheduledTasks, allActiveTasks, scheduleTask, isLoading, error } = usePlannerData();
+    const {
+        scheduledTasks,
+        unscheduledTasks,
+        allActiveTasks,
+        scheduleTask,
+        isLoading,
+        error,
+        focusSessions,
+        completedToday,
+        deferredToTomorrow,
+    } = usePlannerData();
 
     const { activeDragId, sensors, handleDragStart, handleDragEnd } = usePlannerDnd({
         onSchedule: scheduleTask,
@@ -67,8 +77,16 @@ function PlannerRoot() {
             {view === "day" ? (
                 <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
                     <div className="flex gap-3" style={{ minHeight: "calc(100vh - 220px)" }}>
-                        <PlannerTimeline scheduledTasks={scheduledTasks} activeDragId={activeDragId} />
-                        <PlannerInbox tasks={unscheduledTasks} />
+                        <PlannerTimeline
+                            scheduledTasks={scheduledTasks}
+                            activeDragId={activeDragId}
+                            focusSessions={focusSessions}
+                        />
+                        <PlannerInbox
+                            tasks={unscheduledTasks}
+                            completedToday={completedToday}
+                            deferredToTomorrow={deferredToTomorrow}
+                        />
                     </div>
 
                     {/* Drag overlay: ghost of active dragged item */}
