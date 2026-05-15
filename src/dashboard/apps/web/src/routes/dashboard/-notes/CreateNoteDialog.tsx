@@ -66,7 +66,6 @@ export function CreateNoteDialog({ open, onOpenChange, userId, onCreated }: Crea
                         value={title}
                         onChange={(e) => setTitle(e.target.value)}
                         placeholder="Note title…"
-                        // biome-ignore lint/a11y/noAutofocus: dialog title field is the primary action target
                         autoFocus
                         className={[
                             "w-full rounded-lg border border-white/10 bg-zinc-900/80 px-3 py-2",
