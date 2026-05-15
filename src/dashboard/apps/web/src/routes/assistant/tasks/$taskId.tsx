@@ -42,7 +42,7 @@ import type {
 import { formatFocusTime } from "@/lib/assistant/utils";
 import { cn } from "@/lib/utils";
 import { BlockerModal } from "../-components/blockers";
-import { BottleneckAlert, DependencySelector } from "../-components/critical-path";
+import { BottleneckAlert, CriticalPathGraph, DependencySelector } from "../-components/critical-path";
 import { HandoffBanner, HandoffEditor, HandoffHistory, HandoffHistoryWidget } from "../-components/handoff";
 
 export const Route = createFileRoute("/assistant/tasks/$taskId")({
@@ -483,6 +483,27 @@ function TaskDetailPage() {
                             />
                         </FeatureCardHeader>
                     </FeatureCard>
+
+                    {/* Critical Path Graph */}
+                    {tasks.length > 1 && (
+                        <FeatureCard color="blue">
+                            <FeatureCardHeader>
+                                <div className="flex items-center gap-2 mb-3">
+                                    <GitBranch className="h-5 w-5 text-purple-400" />
+                                    <Label className="text-sm font-medium">Dependency Graph</Label>
+                                </div>
+                                <CriticalPathGraph
+                                    tasks={tasks}
+                                    height={280}
+                                    onTaskSelect={(id) => {
+                                        if (id !== taskId) {
+                                            navigate({ to: "/assistant/tasks/$taskId", params: { taskId: id } });
+                                        }
+                                    }}
+                                />
+                            </FeatureCardHeader>
+                        </FeatureCard>
+                    )}
 
                     {/* Blocker Section */}
                     <FeatureCard color="rose">
