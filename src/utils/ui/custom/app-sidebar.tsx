@@ -22,6 +22,8 @@ export interface SidebarNavItem {
     title: string;
     url: string;
     icon: IconComponent;
+    /** Optional label rendered after the title (e.g. live timer "25:00") */
+    accessoryLabel?: string;
 }
 
 export interface SidebarNavGroup {
@@ -105,6 +107,11 @@ export function AppSidebar({ brand, navGroups, activePath, user, onSignOut, Link
                                                 <LinkComponent to={item.url}>
                                                     <Icon className="h-4 w-4" />
                                                     <span>{item.title}</span>
+                                                    {item.accessoryLabel && (
+                                                        <span className="ml-auto text-[10px] font-mono text-amber-500/70">
+                                                            {item.accessoryLabel}
+                                                        </span>
+                                                    )}
                                                 </LinkComponent>
                                             </SidebarMenuButton>
                                         </SidebarMenuItem>

@@ -1,6 +1,7 @@
 import { Link, useLocation } from "@tanstack/react-router";
 import { AppSidebar as SharedAppSidebar, type SidebarNavGroup } from "@ui/custom";
 import { useAuth } from "@workos/authkit-tanstack-react-start/client";
+import { useFocusSession } from "@/routes/dashboard/-focus";
 import {
     BarChart3,
     Bookmark,
@@ -106,14 +107,28 @@ const settingsNavItems = [
     },
 ];
 
+function formatMMSS(ms: number): string {
+    const total = Math.max(0, Math.floor(ms / 1000));
+    const m = Math.floor(total / 60);
+    const s = total % 60;
+    return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+}
+
 export function AppSidebar() {
     const location = useLocation();
     const { user, signOut } = useAuth();
+    const focus = useFocusSession();
+
+    const focusAccessory = focus.isRunning ? formatMMSS(focus.remainingMs) : undefined;
+
+    const appsNavItemsWithBadge = appsNavItems.map((item) =>
+        item.url === "/dashboard/focus" ? { ...item, accessoryLabel: focusAccessory } : item
+    );
 
     const navGroups: SidebarNavGroup[] = [
         { label: "Main", theme: "primary", items: mainNavItems },
         { label: "Assistant", theme: "purple", items: assistantNavItems },
-        { label: "Apps", theme: "accent", items: appsNavItems },
+        { label: "Apps", theme: "accent", items: appsNavItemsWithBadge },
         { label: "System", theme: "neutral", items: settingsNavItems },
     ];
 
