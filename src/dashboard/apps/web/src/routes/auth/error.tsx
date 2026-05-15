@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { Button } from "@ui/components/button";
 import { AlertTriangle, ArrowLeft, RefreshCw } from "lucide-react";
 import { AuthLayout } from "@/components/auth";
-import { Button } from "@ui/components/button";
 
 export const Route = createFileRoute("/auth/error")({
     component: AuthErrorPage,
