@@ -3,6 +3,14 @@ import { focusCmuxPane } from "@app/cmux/lib/controls";
 import { getConfig, getOrCreateDashboardAuth } from "@app/dev-dashboard/config";
 import { isCompleteAuthConfig, verifyBasicAuthHeader } from "@app/dev-dashboard/lib/auth";
 import { getCachedSnapshot, startPolling } from "@app/dev-dashboard/lib/cmux/poller";
+import { getCurrentUsage, getUsageHistory } from "@app/dev-dashboard/lib/claude-usage/aggregator";
+import { listContainers } from "@app/dev-dashboard/lib/containers/docker";
+import {
+    getAllRecentRuns,
+    getDaemonOverview,
+    getRecentRuns,
+    getRunLog,
+} from "@app/dev-dashboard/lib/daemon-view/aggregator";
 import { renderMarkdown } from "@app/dev-dashboard/lib/obsidian/markdown";
 import {
     findPublishedBySlug,
@@ -12,7 +20,10 @@ import {
 } from "@app/dev-dashboard/lib/obsidian/publish";
 import { listVault, readNote } from "@app/dev-dashboard/lib/obsidian/reader";
 import { renderSharePage } from "@app/dev-dashboard/lib/obsidian/share-template";
+import { configureRetention, getCachedPulse, getSeries, startPulsePolling } from "@app/dev-dashboard/lib/system/poller";
+import { addTodo, completeTodo, deleteTodo, listTodos } from "@app/dev-dashboard/lib/todos/service";
 import { killTtyd, listTtyd, spawnTtyd } from "@app/dev-dashboard/lib/ttyd/manager";
+import { fetchWeather } from "@app/dev-dashboard/lib/weather/client";
 import logger from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import type { Connect } from "vite";
@@ -22,6 +33,13 @@ let loggedGeneratedPassword = false;
 getConfig()
     .then(({ cmuxPollIntervalMs }) => startPolling(cmuxPollIntervalMs))
     .catch(() => startPolling(2000));
+
+getConfig()
+    .then(({ pulse }) => {
+        configureRetention(pulse.retentionHours);
+        startPulsePolling(pulse.pollIntervalMs);
+    })
+    .catch(() => startPulsePolling(5000));
 
 async function readJson<T>(req: IncomingMessage): Promise<T> {
     const chunks: Buffer[] = [];
@@ -128,6 +146,175 @@ export function attachDevDashboardMiddleware(middlewares: Connect.Server): void 
             try {
                 const body = await readJson<{ workspaceId: string; paneId: string }>(req);
                 await focusCmuxPane(body);
+                sendJson(res, 200, { ok: true });
+            } catch (err) {
+                sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
+            }
+
+            return;
+        }
+
+        if (req.method === "GET" && url.pathname === "/api/system/pulse") {
+            sendJson(res, 200, getCachedPulse() ?? { capturedAt: null });
+            return;
+        }
+
+        if (req.method === "GET" && url.pathname === "/api/system/pulse/history") {
+            const metric = url.searchParams.get("metric") ?? "cpu";
+            const minutes = Number.parseInt(url.searchParams.get("minutes") ?? "30", 10);
+            sendJson(res, 200, getSeries(metric, Number.isFinite(minutes) ? minutes : 30));
+            return;
+        }
+
+        if (req.method === "GET" && url.pathname === "/api/weather") {
+            try {
+                const { weatherCoords } = await getConfig();
+                sendJson(res, 200, await fetchWeather(weatherCoords));
+            } catch (err) {
+                sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
+            }
+
+            return;
+        }
+
+        if (req.method === "GET" && url.pathname === "/api/claude/usage") {
+            try {
+                sendJson(res, 200, await getCurrentUsage());
+            } catch (err) {
+                sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
+            }
+
+            return;
+        }
+
+        if (req.method === "GET" && url.pathname === "/api/claude/usage/history") {
+            const account = url.searchParams.get("account") ?? "";
+            const bucket = url.searchParams.get("bucket") ?? "five_hour";
+            const minutes = Number.parseInt(url.searchParams.get("minutes") ?? "1440", 10);
+
+            try {
+                sendJson(
+                    res,
+                    200,
+                    getUsageHistory({ account, bucket, minutes: Number.isFinite(minutes) ? minutes : 1440 })
+                );
+            } catch (err) {
+                sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
+            }
+
+            return;
+        }
+
+        if (req.method === "GET" && url.pathname === "/api/daemon/status") {
+            try {
+                sendJson(res, 200, await getDaemonOverview());
+            } catch (err) {
+                sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
+            }
+
+            return;
+        }
+
+        if (req.method === "GET" && url.pathname === "/api/daemon/runs") {
+            const task = url.searchParams.get("task");
+            const limit = Number.parseInt(url.searchParams.get("limit") ?? "20", 10);
+            const safeLimit = Number.isFinite(limit) ? limit : 20;
+
+            try {
+                const runs = task ? getRecentRuns({ task, limit: safeLimit }) : getAllRecentRuns(safeLimit);
+                sendJson(res, 200, runs);
+            } catch (err) {
+                sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
+            }
+
+            return;
+        }
+
+        if (req.method === "GET" && url.pathname === "/api/daemon/runs/log") {
+            const logFile = url.searchParams.get("logFile");
+
+            if (!logFile) {
+                sendJson(res, 400, { error: "missing ?logFile=" });
+                return;
+            }
+
+            try {
+                sendJson(res, 200, getRunLog(logFile));
+            } catch (err) {
+                sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
+            }
+
+            return;
+        }
+
+        if (req.method === "GET" && url.pathname === "/api/containers") {
+            try {
+                sendJson(res, 200, await listContainers());
+            } catch (err) {
+                sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
+            }
+
+            return;
+        }
+
+        if (req.method === "GET" && url.pathname === "/api/todos") {
+            const list = url.searchParams.get("list") ?? "GenesisTools";
+
+            try {
+                sendJson(res, 200, await listTodos(list));
+            } catch (err) {
+                const message = err instanceof Error ? err.message : String(err);
+                const denied = /permission|privacy|reminders|authoriz/i.test(message);
+                sendJson(res, denied ? 503 : 500, {
+                    error: denied
+                        ? "Reminders permission denied. Grant in System Settings → Privacy & Security → Reminders."
+                        : message,
+                });
+            }
+
+            return;
+        }
+
+        if (req.method === "POST" && url.pathname === "/api/todos") {
+            try {
+                const body = await readJson<{
+                    title: string;
+                    listName?: string;
+                    due?: string;
+                    priority?: "none" | "low" | "medium" | "high";
+                    notes?: string;
+                }>(req);
+                const result = await addTodo({
+                    title: body.title,
+                    listName: body.listName ?? "GenesisTools",
+                    due: body.due,
+                    priority: body.priority,
+                    notes: body.notes,
+                });
+                sendJson(res, 200, result);
+            } catch (err) {
+                sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
+            }
+
+            return;
+        }
+
+        if (req.method === "POST" && url.pathname === "/api/todos/complete") {
+            try {
+                const body = await readJson<{ reminderId: string }>(req);
+                await completeTodo(body.reminderId);
+                sendJson(res, 200, { ok: true });
+            } catch (err) {
+                sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
+            }
+
+            return;
+        }
+
+        if (req.method === "DELETE" && url.pathname === "/api/todos") {
+            try {
+                const body = await readJson<{ reminderId: string }>(req);
+                await deleteTodo(body.reminderId);
                 sendJson(res, 200, { ok: true });
             } catch (err) {
                 sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });

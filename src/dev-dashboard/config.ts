@@ -31,6 +31,17 @@ const TtydSessionSchema = z.object({
     tmuxSessionName: z.string().optional(),
 });
 
+const WeatherCoordsSchema = z.object({
+    latitude: z.number().default(50.0755),
+    longitude: z.number().default(14.4378),
+    label: z.string().default("Prague"),
+});
+
+const PulseConfigSchema = z.object({
+    retentionHours: z.number().int().min(1).default(24),
+    pollIntervalMs: z.number().int().min(1000).default(5000),
+});
+
 const DevDashboardConfigSchema = z.object({
     port: z.number().int().min(1).max(65535).default(3042),
     obsidianVault: z.string().default("/Users/Martin/Tresors/Projects/GenesisBrain"),
@@ -38,9 +49,14 @@ const DevDashboardConfigSchema = z.object({
     cmuxPollIntervalMs: z.number().int().min(250).default(2000),
     auth: DashboardAuthSchema.default({}),
     ttydSessions: z.array(TtydSessionSchema).default([]),
+    weatherCoords: WeatherCoordsSchema.default({}),
+    pulse: PulseConfigSchema.default({}),
+    todoListName: z.string().default("GenesisTools"),
 });
 
 export type PublishedNote = z.infer<typeof PublishedNoteSchema>;
+export type WeatherCoords = z.infer<typeof WeatherCoordsSchema>;
+export type PulseConfig = z.infer<typeof PulseConfigSchema>;
 export type DevDashboardConfig = z.infer<typeof DevDashboardConfigSchema>;
 export interface DashboardAuthProvision {
     auth: DashboardAuthConfig;
