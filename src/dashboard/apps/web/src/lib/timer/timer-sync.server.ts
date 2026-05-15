@@ -6,9 +6,9 @@
  * Optimistic concurrency via `version` column: UPDATE ... WHERE id=? AND version=?
  */
 
-import type { PomodoroSettings } from "@dashboard/shared";
+import type { PomodoroSettings, ProductivityStats } from "@dashboard/shared";
 import { createServerFn } from "@tanstack/react-start";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, gte, lt } from "drizzle-orm";
 import { type ActivityLog, activityLogs, db, type NewTimer, type Timer, timers } from "@/drizzle";
 import { emitTimerEvent } from "./timer-events.server";
 import { applyAction } from "./timer-state-machine";
@@ -404,4 +404,71 @@ export const clearActivityLogs = createServerFn({ method: "POST" })
             console.error("[Server] clearActivityLogs error:", error);
             return { success: false, deleted: 0 };
         }
+    });
+
+// ============================================
+// Productivity Stats Aggregation
+// ============================================
+
+export const getProductivityStats = createServerFn({ method: "GET" })
+    .inputValidator((d: { userId: string; startIso: string; endIso: string }) => d)
+    .handler(({ data }): ProductivityStats => {
+        const rows = db
+            .select()
+            .from(activityLogs)
+            .where(
+                and(
+                    eq(activityLogs.userId, data.userId),
+                    gte(activityLogs.timestamp, data.startIso),
+                    lt(activityLogs.timestamp, data.endIso)
+                )
+            )
+            .orderBy(desc(activityLogs.timestamp))
+            .all();
+
+        const timerBreakdown: Record<string, number> = {};
+        const dailyBreakdown: Record<string, number> = {};
+        let pomodoroCompleted = 0;
+        const sessionDurations: number[] = [];
+
+        for (const row of rows) {
+            // Completed pomodoro = phase_change where fromPhase was "work"
+            if (row.eventType === "pomodoro_phase_change") {
+                const meta = row.metadata as { fromPhase?: string } | null;
+
+                if (meta?.fromPhase === "work") {
+                    pomodoroCompleted += 1;
+                }
+            }
+
+            // Derive session duration from pause rows (see D1)
+            if (
+                row.eventType === "pause" &&
+                row.newValue !== null &&
+                row.previousValue !== null &&
+                row.newValue > row.previousValue
+            ) {
+                const duration = row.newValue - row.previousValue;
+                sessionDurations.push(duration);
+
+                const day = row.timestamp.slice(0, 10);
+                dailyBreakdown[day] = (dailyBreakdown[day] ?? 0) + duration;
+                timerBreakdown[row.timerId] = (timerBreakdown[row.timerId] ?? 0) + duration;
+            }
+        }
+
+        const totalTimeTracked = sessionDurations.reduce((a, b) => a + b, 0);
+        const sessionCount = sessionDurations.length;
+        const averageSessionDuration = sessionCount > 0 ? totalTimeTracked / sessionCount : 0;
+        const longestSession = sessionDurations.length > 0 ? Math.max(...sessionDurations) : 0;
+
+        return {
+            totalTimeTracked,
+            sessionCount,
+            averageSessionDuration,
+            longestSession,
+            timerBreakdown,
+            dailyBreakdown,
+            pomodoroCompleted,
+        };
     });
