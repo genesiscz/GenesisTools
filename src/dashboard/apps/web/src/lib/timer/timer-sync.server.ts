@@ -510,3 +510,58 @@ export const aggregateFocusStats = createServerFn({ method: "GET" })
 
         return { timeFocusedTodayMs, sessionsToday };
     });
+
+export interface FocusSessionBlock {
+    timerId: string;
+    startIso: string;
+    endIso: string;
+}
+
+export const aggregateFocusSessions = createServerFn({ method: "GET" })
+    .inputValidator((d: { userId: string }) => d)
+    .handler(({ data }): FocusSessionBlock[] => {
+        const now = new Date();
+        const startOfToday = new Date(now);
+        startOfToday.setUTCHours(0, 0, 0, 0);
+        const startOfTomorrow = new Date(startOfToday);
+        startOfTomorrow.setUTCDate(startOfTomorrow.getUTCDate() + 1);
+
+        const rows = db
+            .select()
+            .from(activityLogs)
+            .where(
+                and(
+                    eq(activityLogs.userId, data.userId),
+                    eq(activityLogs.eventType, "pomodoro_phase_change"),
+                    gte(activityLogs.timestamp, startOfToday.toISOString()),
+                    lt(activityLogs.timestamp, startOfTomorrow.toISOString())
+                )
+            )
+            .all();
+
+        const sessions: FocusSessionBlock[] = [];
+
+        for (const row of rows) {
+            const meta = row.metadata as { fromPhase?: string } | null;
+
+            if (meta?.fromPhase !== "work") {
+                continue;
+            }
+
+            const endMs = new Date(row.timestamp).getTime();
+            const workDurationMs = row.elapsedAtEvent - (row.previousValue ?? 0);
+
+            if (workDurationMs <= 0) {
+                continue;
+            }
+
+            const startMs = endMs - workDurationMs;
+            sessions.push({
+                timerId: row.timerId,
+                startIso: new Date(startMs).toISOString(),
+                endIso: row.timestamp,
+            });
+        }
+
+        return sessions;
+    });
