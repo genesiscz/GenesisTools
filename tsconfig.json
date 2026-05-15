@@ -2,6 +2,7 @@
     "exclude": [
         "src/mcp-tsc/test-dummy*.ts",
         "src/claude-history-dashboard",
+        "src/dashboard",
         "src/debugging-master/dashboard",
         "src/fsevents-profile",
         "src/clarity/ui",

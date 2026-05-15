@@ -1,10 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { FeatureCard, FeatureCardContent, FeatureCardHeader } from "@ui/custom/feature-card-nexus";
-import { useAuth } from "@workos/authkit-tanstack-react-start/client";
-import { Archive, ArrowRight, CheckCircle, Clock, Filter, Loader2, ParkingCircle } from "lucide-react";
-import { useEffect, useState } from "react";
-import { DashboardLayout } from "@/components/dashboard";
-import { Button } from "@/components/ui/button";
+import { Button } from "@ui/components/button";
 import {
     DropdownMenu,
     DropdownMenuContent,
@@ -12,10 +7,16 @@ import {
     DropdownMenuLabel,
     DropdownMenuSeparator,
     DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+} from "@ui/components/dropdown-menu";
+import { KbdShortcut, PageLoadingSpinner, EmptyState as SharedEmptyState, StatusBadge } from "@ui/custom";
+import { FeatureCard, FeatureCardContent, FeatureCardHeader } from "@ui/custom/feature-card-nexus";
+import { useAuth } from "@workos/authkit-tanstack-react-start/client";
+import { Archive, ArrowRight, CheckCircle, Clock, Filter, ParkingCircle } from "lucide-react";
+import { useEffect, useState } from "react";
+import { DashboardLayout } from "@/components/dashboard";
 import { useTaskStore } from "@/lib/assistant/hooks";
 import type { ContextParking, ParkingStatus } from "@/lib/assistant/types";
-import { cn } from "@/lib/utils";
+import { formatParkingRelativeTime } from "@/lib/assistant/utils";
 
 export const Route = createFileRoute("/assistant/parking")({
     component: ParkingPage,
@@ -38,9 +39,17 @@ function ParkingPage() {
         let mounted = true;
 
         async function loadHistory() {
-            if (!userId || !initialized) {
+            if (!userId) {
+                setParkingHistory([]);
+                setHistoryLoading(false);
                 return;
             }
+
+            if (!initialized) {
+                setHistoryLoading(true);
+                return;
+            }
+
             setHistoryLoading(true);
             try {
                 const history = await getParkingHistory();
@@ -59,8 +68,10 @@ function ParkingPage() {
         return () => {
             mounted = false;
         };
+        // getParkingHistory intentionally omitted: it's a non-memoized closure
+        // over parkingsQuery.data and would re-fire this effect every render.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [userId, initialized, getParkingHistory]);
+    }, [userId, initialized]);
 
     // Filter parking entries
     const filteredHistory = parkingHistory.filter((p) => {
@@ -89,32 +100,6 @@ function ParkingPage() {
         return task?.title ?? "Unknown Task";
     }
 
-    // Format relative time
-    function formatRelativeTime(date: Date): string {
-        const now = new Date();
-        const diff = now.getTime() - new Date(date).getTime();
-        const minutes = Math.floor(diff / (1000 * 60));
-        const hours = Math.floor(diff / (1000 * 60 * 60));
-        const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-
-        if (minutes < 1) {
-            return "Just now";
-        }
-        if (minutes < 60) {
-            return `${minutes}m ago`;
-        }
-        if (hours < 24) {
-            return `${hours}h ago`;
-        }
-        if (days === 1) {
-            return "Yesterday";
-        }
-        if (days < 7) {
-            return `${days} days ago`;
-        }
-        return new Date(date).toLocaleDateString();
-    }
-
     // Handle resume
     async function handleResume(parkingId: string) {
         await resumeParking(parkingId);
@@ -135,12 +120,7 @@ function ParkingPage() {
     if (authLoading || (!initialized && loading) || historyLoading) {
         return (
             <DashboardLayout title="Context Parking" description="Your parked contexts">
-                <div className="flex items-center justify-center min-h-[60vh]">
-                    <div className="flex flex-col items-center gap-4">
-                        <Loader2 className="h-8 w-8 text-purple-400 animate-spin" />
-                        <span className="text-muted-foreground text-sm font-mono">Loading history...</span>
-                    </div>
-                </div>
+                <PageLoadingSpinner label="Loading history..." />
             </DashboardLayout>
         );
     }
@@ -193,7 +173,7 @@ function ParkingPage() {
 
             {/* Content */}
             {filteredHistory.length === 0 ? (
-                <EmptyState filterMode={filterMode} />
+                <ParkingEmptyState filterMode={filterMode} />
             ) : (
                 <div className="space-y-6">
                     {Object.entries(groupedByTask).map(([taskId, entries]) => (
@@ -219,7 +199,7 @@ function ParkingPage() {
                                         key={parking.id}
                                         parking={parking}
                                         onResume={() => handleResume(parking.id)}
-                                        formatRelativeTime={formatRelativeTime}
+                                        formatRelativeTime={formatParkingRelativeTime}
                                     />
                                 ))}
                             </div>
@@ -275,16 +255,15 @@ function ParkingCard({
                         <Clock className="h-3 w-3" />
                         {formatRelativeTime(new Date(parking.parkedAt))}
                     </div>
-                    <span
-                        className={cn(
-                            "flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded",
-                            status.color,
-                            status.bg
-                        )}
+                    <StatusBadge
+                        bgClass={status.bg}
+                        textClass={status.color}
+                        shape="flat"
+                        className="gap-1 tracking-wider"
+                        icon={<StatusIcon className="h-3 w-3" />}
                     >
-                        <StatusIcon className="h-3 w-3" />
                         {status.label}
-                    </span>
+                    </StatusBadge>
                 </div>
 
                 <p className="text-sm leading-relaxed">{parking.content}</p>
@@ -299,7 +278,7 @@ function ParkingCard({
 
             {parking.status === "active" && (
                 <FeatureCardContent className="pt-0">
-                    <Button size="sm" onClick={onResume} className="w-full gap-2 bg-purple-600 hover:bg-purple-700">
+                    <Button size="sm" onClick={onResume} variant="brand" className="w-full gap-2">
                         Resume
                         <ArrowRight className="h-4 w-4" />
                     </Button>
@@ -312,7 +291,7 @@ function ParkingCard({
 /**
  * Empty state
  */
-function EmptyState({ filterMode }: { filterMode: FilterMode }) {
+function ParkingEmptyState({ filterMode }: { filterMode: FilterMode }) {
     const getMessage = () => {
         switch (filterMode) {
             case "active":
@@ -341,28 +320,18 @@ function EmptyState({ filterMode }: { filterMode: FilterMode }) {
     const message = getMessage();
 
     return (
-        <div className="flex flex-col items-center justify-center py-24 px-6">
-            <div
-                className={cn(
-                    "relative w-32 h-32 mb-8",
-                    "flex items-center justify-center",
-                    "rounded-full",
-                    "bg-gradient-to-br from-purple-500/10 to-purple-500/5",
-                    "border border-purple-500/20"
-                )}
-            >
-                <ParkingCircle className="h-12 w-12 text-purple-400/50" />
-            </div>
-
-            <h2 className="text-xl font-semibold text-foreground/70 mb-2">{message.title}</h2>
-            <p className="text-muted-foreground text-center max-w-md mb-4">{message.description}</p>
-
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <kbd className="px-2 py-1 rounded bg-muted text-xs font-mono">Cmd</kbd>
-                <span>+</span>
-                <kbd className="px-2 py-1 rounded bg-muted text-xs font-mono">P</kbd>
-                <span>to park context</span>
-            </div>
-        </div>
+        <SharedEmptyState
+            icon={ParkingCircle}
+            title={message.title}
+            description={message.description}
+            descriptionClassName="mb-4"
+            rings={false}
+            cta={
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <KbdShortcut keys={["Cmd", "P"]} />
+                    <span>to park context</span>
+                </div>
+            }
+        />
     );
 }

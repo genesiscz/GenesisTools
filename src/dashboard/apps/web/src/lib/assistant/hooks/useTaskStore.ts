@@ -75,6 +75,12 @@ export function useTaskStore(userId: string | null) {
     const completionsQuery = useAssistantCompletionsQuery(userId);
     const parkingsQuery = useAssistantContextParkingsQuery(userId);
 
+    // Stable aliases so React Compiler can memoize closures over query data.
+    // (The query object itself changes ref each render; .data is stable when
+    // unchanged, so closures depending on these aliases become stable too.)
+    const parkingsData = parkingsQuery.data;
+    const completionsData = completionsQuery.data;
+
     // Server mutations
     const createTaskMutation = useCreateAssistantTaskMutation();
     const updateTaskMutation = useUpdateAssistantTaskMutation();
@@ -598,7 +604,7 @@ export function useTaskStore(userId: string | null) {
     }
 
     async function getActiveParking(taskId: string): Promise<ContextParking | null> {
-        const parkings = parkingsQuery.data ?? [];
+        const parkings = parkingsData ?? [];
         const active = parkings.find((p) => p.taskId === taskId && p.status === "active");
         if (!active) {
             return null;
@@ -624,7 +630,7 @@ export function useTaskStore(userId: string | null) {
             return [];
         }
 
-        const parkings = parkingsQuery.data ?? [];
+        const parkings = parkingsData ?? [];
         const filtered = taskId ? parkings.filter((p) => p.taskId === taskId) : parkings;
 
         return filtered.map((p) => ({
@@ -660,7 +666,7 @@ export function useTaskStore(userId: string | null) {
             // Invalidate to refetch
             queryClient.invalidateQueries({ queryKey: assistantKeys.parkingList(userId) });
 
-            const parking = parkingsQuery.data?.find((p) => p.id === parkingId);
+            const parking = parkingsData?.find((p) => p.id === parkingId);
             if (!parking) {
                 return null;
             }
@@ -697,7 +703,7 @@ export function useTaskStore(userId: string | null) {
         }
 
         const completedTasks = tasks.filter((t) => t.status === "completed");
-        const _completions = completionsQuery.data ?? [];
+        const _completions = completionsData ?? [];
 
         // Calculate stats from data
         const today = new Date();
