@@ -1,15 +1,10 @@
+import { Button } from "@ui/components/button";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@ui/components/dialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@ui/components/dropdown-menu";
+import { Label } from "@ui/components/label";
+import { Textarea } from "@ui/components/textarea";
 import { ChevronDown, Loader2, ParkingCircle } from "lucide-react";
 import { useEffect, useState } from "react";
-import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import {
-    DropdownMenu,
-    DropdownMenuContent,
-    DropdownMenuItem,
-    DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import type { ContextParkingInput, Task } from "@/lib/assistant/types";
 import { cn } from "@/lib/utils";
 
@@ -166,7 +161,8 @@ export function ContextParkingModal({ open, onOpenChange, tasks, currentTaskId, 
                     <Button
                         onClick={handleSubmit}
                         disabled={!selectedTaskId || !content.trim() || isSubmitting}
-                        className="gap-2 bg-purple-600 hover:bg-purple-700"
+                        variant="brand"
+                        className="gap-2"
                     >
                         {isSubmitting ? (
                             <>

@@ -1,4 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { Button } from "@ui/components/button";
+import { ContextParkingBadge, EmptyState, MetaItem, MetaRow, PageLoadingSpinner, StreakBadge } from "@ui/custom";
 import { FeatureCard, FeatureCardContent, FeatureCardHeader } from "@ui/custom/feature-card-nexus";
 import { useAuth } from "@workos/authkit-tanstack-react-start/client";
 import {
@@ -8,19 +10,16 @@ import {
     ChevronRight,
     Clock,
     Compass,
-    Flame,
-    Loader2,
-    ParkingCircle,
     Play,
     RefreshCw,
     Sparkles,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { DashboardLayout } from "@/components/dashboard";
-import { Button } from "@/components/ui/button";
 import { useTaskStore } from "@/lib/assistant/hooks";
 import type { ContextParking, Task } from "@/lib/assistant/types";
 import { getUrgencyColor } from "@/lib/assistant/types";
+import { formatFocusTime } from "@/lib/assistant/utils";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/assistant/next")({
@@ -195,12 +194,7 @@ function WhatsNextPage() {
     if (authLoading || (!initialized && loading)) {
         return (
             <DashboardLayout title="What's Next" description="Your priority recommendation">
-                <div className="flex items-center justify-center min-h-[60vh]">
-                    <div className="flex flex-col items-center gap-4">
-                        <Loader2 className="h-8 w-8 text-purple-400 animate-spin" />
-                        <span className="text-muted-foreground text-sm font-mono">Calculating priorities...</span>
-                    </div>
-                </div>
+                <PageLoadingSpinner label="Calculating priorities..." />
             </DashboardLayout>
         );
     }
@@ -213,12 +207,7 @@ function WhatsNextPage() {
             {/* Header with streak and refresh */}
             <div className="flex items-center justify-between mb-6">
                 <div className="flex items-center gap-4">
-                    {streak && streak.currentStreakDays > 0 && (
-                        <div className="flex items-center gap-1.5 text-sm text-orange-400">
-                            <Flame className="h-4 w-4" />
-                            <span className="font-semibold">{streak.currentStreakDays} day streak</span>
-                        </div>
-                    )}
+                    {streak && streak.currentStreakDays > 0 && <StreakBadge days={streak.currentStreakDays} />}
                 </div>
 
                 <Button
@@ -235,7 +224,7 @@ function WhatsNextPage() {
 
             {/* No tasks state */}
             {activeTasks.length === 0 ? (
-                <EmptyState />
+                <NoTasksEmptyState />
             ) : (
                 <div className="grid gap-6 lg:grid-cols-3">
                     {/* Main recommendation - 2 columns */}
@@ -353,41 +342,29 @@ function RecommendationCard({
                 </div>
 
                 {/* Metadata row */}
-                <div className="flex items-center gap-4 mt-4 text-xs text-muted-foreground">
+                <MetaRow className="mt-4">
                     {task.deadline && (
-                        <div className="flex items-center gap-1.5">
-                            <Calendar className="h-3.5 w-3.5" />
-                            <span>{formatDeadline(new Date(task.deadline))}</span>
-                        </div>
+                        <MetaItem icon={<Calendar />}>{formatDeadline(new Date(task.deadline))}</MetaItem>
                     )}
                     {task.focusTimeLogged > 0 && (
-                        <div className="flex items-center gap-1.5">
-                            <Clock className="h-3.5 w-3.5" />
-                            <span>{formatFocusTime(task.focusTimeLogged)}</span>
-                        </div>
+                        <MetaItem icon={<Clock />}>{formatFocusTime(task.focusTimeLogged)}</MetaItem>
                     )}
-                </div>
+                </MetaRow>
 
                 {/* Context parking preview */}
                 {isPrimary && parkingContext && (
-                    <div className="mt-4 p-3 rounded-lg bg-purple-500/10 border border-purple-500/20">
-                        <div className="flex items-center gap-2 mb-1.5">
-                            <ParkingCircle className="h-3.5 w-3.5 text-purple-400" />
-                            <span className="text-xs font-medium text-purple-300">Where you left off:</span>
-                        </div>
-                        <p className="text-sm text-foreground/80 line-clamp-2">{parkingContext.content}</p>
-                    </div>
+                    <ContextParkingBadge content={parkingContext.content} label="Where you left off" size="preview" />
                 )}
             </FeatureCardHeader>
 
             <FeatureCardContent className={cn(!isPrimary && "pt-0")}>
                 <Button
                     onClick={onStartWork}
+                    variant={isPrimary ? "brand" : "ghost"}
                     className={cn(
                         "w-full gap-2",
-                        isPrimary
-                            ? "bg-purple-600 hover:bg-purple-700"
-                            : "bg-transparent border border-purple-500/30 text-purple-400 hover:bg-purple-500/10"
+                        !isPrimary &&
+                            "bg-transparent border border-purple-500/30 text-purple-400 hover:bg-purple-500/10"
                     )}
                     size={isPrimary ? "default" : "sm"}
                 >
@@ -402,33 +379,22 @@ function RecommendationCard({
 /**
  * Empty state when no tasks
  */
-function EmptyState() {
+function NoTasksEmptyState() {
     return (
-        <div className="flex flex-col items-center justify-center py-24 px-6">
-            <div
-                className={cn(
-                    "relative w-32 h-32 mb-8",
-                    "flex items-center justify-center",
-                    "rounded-full",
-                    "bg-gradient-to-br from-purple-500/10 to-purple-500/5",
-                    "border border-purple-500/20"
-                )}
-            >
-                <Compass className="h-12 w-12 text-purple-400/50" />
-            </div>
-
-            <h2 className="text-xl font-semibold text-foreground/70 mb-2">All caught up!</h2>
-            <p className="text-muted-foreground text-center max-w-md mb-8">
-                You have no active tasks. Great job! Add some tasks to get recommendations.
-            </p>
-
-            <Button asChild className="gap-2 bg-purple-600 hover:bg-purple-700">
-                <Link to="/assistant/tasks">
-                    Go to Tasks
-                    <ChevronRight className="h-4 w-4" />
-                </Link>
-            </Button>
-        </div>
+        <EmptyState
+            icon={Compass}
+            title="All caught up!"
+            description="You have no active tasks. Great job! Add some tasks to get recommendations."
+            rings={false}
+            cta={
+                <Button asChild variant="brand" className="gap-2">
+                    <Link to="/assistant/tasks">
+                        Go to Tasks
+                        <ChevronRight className="h-4 w-4" />
+                    </Link>
+                </Button>
+            }
+        />
     );
 }
 
@@ -449,20 +415,4 @@ function formatDeadline(deadline: Date): string {
         return "Due tomorrow";
     }
     return `${days} days left`;
-}
-
-function formatFocusTime(minutes: number): string {
-    if (minutes === 0) {
-        return "0m";
-    }
-    const hours = Math.floor(minutes / 60);
-    const mins = minutes % 60;
-
-    if (hours === 0) {
-        return `${mins}m`;
-    }
-    if (mins === 0) {
-        return `${hours}h`;
-    }
-    return `${hours}h ${mins}m`;
 }

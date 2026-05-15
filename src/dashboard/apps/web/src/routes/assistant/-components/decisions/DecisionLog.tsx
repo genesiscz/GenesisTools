@@ -1,18 +1,5 @@
-import {
-    ArrowRightCircle,
-    CheckCircle,
-    Clock,
-    Filter,
-    List,
-    Loader2,
-    Plus,
-    Scale,
-    Search,
-    XCircle,
-} from "lucide-react";
-import { useState } from "react";
-import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Button } from "@ui/components/button";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@ui/components/dialog";
 import {
     DropdownMenu,
     DropdownMenuContent,
@@ -20,10 +7,19 @@ import {
     DropdownMenuLabel,
     DropdownMenuSeparator,
     DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
+} from "@ui/components/dropdown-menu";
+import { Label } from "@ui/components/label";
+import { Textarea } from "@ui/components/textarea";
+import {
+    AlertBlock,
+    AnimatedCard,
+    PageLoadingSpinner,
+    PrefixedInput,
+    EmptyState as SharedEmptyState,
+    TabBar,
+} from "@ui/custom";
+import { ArrowRightCircle, CheckCircle, Clock, Filter, List, Plus, Scale, Search, XCircle } from "lucide-react";
+import { useState } from "react";
 import type { Decision, DecisionImpactArea, DecisionInput, Task } from "@/lib/assistant/types";
 import { cn } from "@/lib/utils";
 import { DecisionCard } from "./DecisionCard";
@@ -199,14 +195,7 @@ export function DecisionLog({
 
     // Loading state
     if (!initialized && loading) {
-        return (
-            <div className="flex items-center justify-center min-h-[60vh]">
-                <div className="flex flex-col items-center gap-4">
-                    <Loader2 className="h-8 w-8 text-purple-400 animate-spin" />
-                    <span className="text-muted-foreground text-sm font-mono">Loading decisions...</span>
-                </div>
-            </div>
-        );
+        return <PageLoadingSpinner label="Loading decisions..." />;
     }
 
     return (
@@ -214,50 +203,19 @@ export function DecisionLog({
             {/* Toolbar */}
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                 {/* Tabs */}
-                <div className="flex items-center gap-1 p-1 rounded-lg bg-white/5 border border-white/10">
-                    {tabs.map((tab) => {
-                        const Icon = tab.icon;
-                        const isActive = activeTab === tab.value;
-
-                        return (
-                            <button
-                                key={tab.value}
-                                type="button"
-                                onClick={() => setActiveTab(tab.value)}
-                                className={cn(
-                                    "flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors",
-                                    isActive
-                                        ? "bg-purple-500/20 text-purple-300"
-                                        : "text-muted-foreground hover:text-foreground hover:bg-white/5"
-                                )}
-                            >
-                                <Icon className="h-4 w-4" />
-                                <span className="hidden sm:inline">{tab.label}</span>
-                                <span
-                                    className={cn(
-                                        "text-xs px-1.5 rounded-full",
-                                        isActive ? "bg-purple-500/30 text-purple-200" : "bg-white/10"
-                                    )}
-                                >
-                                    {counts[tab.value]}
-                                </span>
-                            </button>
-                        );
-                    })}
-                </div>
+                <TabBar tabs={tabs} activeTab={activeTab} onTabChange={setActiveTab} counts={counts} />
 
                 {/* Actions */}
                 <div className="flex items-center gap-2">
                     {/* Search */}
-                    <div className="relative">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                        <Input
-                            value={searchQuery}
-                            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearchQuery(e.target.value)}
-                            placeholder="Search decisions..."
-                            className="pl-9 w-[200px] bg-background/50"
-                        />
-                    </div>
+                    <PrefixedInput
+                        icon={<Search />}
+                        iconSpacing="tight"
+                        value={searchQuery}
+                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearchQuery(e.target.value)}
+                        placeholder="Search decisions..."
+                        className="w-[200px] bg-background/50"
+                    />
 
                     {/* Impact area filter */}
                     <DropdownMenu>
@@ -305,11 +263,7 @@ export function DecisionLog({
                     </Button>
 
                     {/* Create button */}
-                    <Button
-                        onClick={() => setCreateDialogOpen(true)}
-                        size="sm"
-                        className="gap-2 bg-purple-600 hover:bg-purple-700"
-                    >
+                    <Button onClick={() => setCreateDialogOpen(true)} size="sm" variant="brand" className="gap-2">
                         <Plus className="h-4 w-4" />
                         <span className="hidden sm:inline">Add Decision</span>
                     </Button>
@@ -318,7 +272,7 @@ export function DecisionLog({
 
             {/* Content */}
             {sortedDecisions.length === 0 ? (
-                <EmptyState
+                <DecisionEmptyState
                     activeTab={activeTab}
                     hasSearch={!!searchQuery}
                     hasFilter={impactAreaFilter !== "all"}
@@ -327,11 +281,7 @@ export function DecisionLog({
             ) : viewMode === "grid" ? (
                 <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 auto-rows-fr">
                     {sortedDecisions.map((decision, index) => (
-                        <div
-                            key={decision.id}
-                            className="animate-fade-in-up h-full"
-                            style={{ animationDelay: `${index * 50}ms` }}
-                        >
+                        <AnimatedCard key={decision.id} index={index} className="h-full">
                             <DecisionCard
                                 decision={decision}
                                 onSupersede={
@@ -359,7 +309,7 @@ export function DecisionLog({
                                 onViewChain={getDecisionChain ? handleViewChain : undefined}
                                 className="h-full"
                             />
-                        </div>
+                        </AnimatedCard>
                     ))}
                 </div>
             ) : (
@@ -427,9 +377,9 @@ export function DecisionLog({
                     </DialogHeader>
 
                     <div className="space-y-4">
-                        <div className="p-3 rounded-lg bg-rose-500/10 border border-rose-500/20">
+                        <AlertBlock color="rose">
                             <p className="text-sm font-medium">{reversingDecision?.title}</p>
-                        </div>
+                        </AlertBlock>
 
                         <div className="space-y-2">
                             <Label htmlFor="reversal-reason" className="text-sm font-medium">
@@ -500,7 +450,7 @@ export function DecisionLog({
 /**
  * Empty state component
  */
-function EmptyState({
+function DecisionEmptyState({
     activeTab,
     hasSearch,
     hasFilter,
@@ -546,34 +496,18 @@ function EmptyState({
     const message = getMessage();
 
     return (
-        <div className="flex flex-col items-center justify-center py-24 px-6">
-            {/* Decorative element */}
-            <div
-                className={cn(
-                    "relative w-32 h-32 mb-8",
-                    "flex items-center justify-center",
-                    "rounded-full",
-                    "bg-gradient-to-br from-purple-500/10 to-purple-500/5",
-                    "border border-purple-500/20",
-                    "animate-pulse-glow"
-                )}
-            >
-                <div className="absolute inset-0 rounded-full border border-purple-500/20 animate-ripple" />
-                <div className="absolute inset-0 rounded-full border border-purple-500/20 animate-ripple-delayed" />
-                <Scale className="h-12 w-12 text-purple-400/50" />
-            </div>
-
-            {/* Text */}
-            <h2 className="text-xl font-semibold text-foreground/70 mb-2">{message.title}</h2>
-            <p className="text-muted-foreground text-center max-w-md mb-8">{message.description}</p>
-
-            {/* CTA Button */}
-            {!hasSearch && !hasFilter && activeTab !== "superseded" && activeTab !== "reversed" && (
-                <Button onClick={onAddDecision} size="lg" className="gap-3 bg-purple-600 hover:bg-purple-700">
-                    <Plus className="h-5 w-5" />
-                    Record your first decision
-                </Button>
-            )}
-        </div>
+        <SharedEmptyState
+            icon={Scale}
+            title={message.title}
+            description={message.description}
+            cta={
+                !hasSearch && !hasFilter && activeTab !== "superseded" && activeTab !== "reversed" ? (
+                    <Button onClick={onAddDecision} size="lg" variant="brand" className="gap-3">
+                        <Plus className="h-5 w-5" />
+                        Record your first decision
+                    </Button>
+                ) : null
+            }
+        />
     );
 }

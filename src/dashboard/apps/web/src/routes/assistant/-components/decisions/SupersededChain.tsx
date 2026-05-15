@@ -1,3 +1,4 @@
+import { StatusBadge } from "@ui/custom";
 import { ArrowRight, Scale } from "lucide-react";
 import type { Decision, DecisionStatus } from "@/lib/assistant/types";
 import { cn } from "@/lib/utils";
@@ -81,14 +82,28 @@ function ChainNode({
                     {decision.status}
                 </span>
                 {isFirst && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-400 font-medium ml-auto">
+                    <StatusBadge
+                        bgClass="bg-purple-500/10"
+                        textClass="text-purple-400"
+                        shape="flat"
+                        size="xs"
+                        uppercase={false}
+                        className="font-medium ml-auto"
+                    >
                         Original
-                    </span>
+                    </StatusBadge>
                 )}
                 {isLast && decision.status === "active" && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 font-medium ml-auto">
+                    <StatusBadge
+                        bgClass="bg-emerald-500/10"
+                        textClass="text-emerald-400"
+                        shape="flat"
+                        size="xs"
+                        uppercase={false}
+                        className="font-medium ml-auto"
+                    >
                         Current
-                    </span>
+                    </StatusBadge>
                 )}
             </div>
 

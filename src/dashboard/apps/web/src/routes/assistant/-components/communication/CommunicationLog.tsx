@@ -1,7 +1,7 @@
+import { ScrollArea } from "@ui/components/scroll-area";
+import { PrefixedInput } from "@ui/custom";
 import { Search, X } from "lucide-react";
 import { useMemo, useState } from "react";
-import { Input } from "@/components/ui/input";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import type { CommunicationEntry, CommunicationSource } from "@/lib/assistant/types";
 import { cn } from "@/lib/utils";
 import { LogEntry } from "./LogEntry";
@@ -93,8 +93,9 @@ export function CommunicationLog({ entries, onEdit, onDelete, onLinkTask, classN
         <div className={cn("flex flex-col", className)}>
             {/* Search bar */}
             <div className="relative mb-4">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input
+                <PrefixedInput
+                    icon={<Search />}
+                    iconSpacing="wide"
                     value={searchQuery}
                     onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearchQuery(e.target.value)}
                     placeholder="Search communications..."

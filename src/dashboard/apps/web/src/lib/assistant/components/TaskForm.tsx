@@ -1,10 +1,10 @@
+import { Button } from "@ui/components/button";
+import { Input } from "@ui/components/input";
+import { Label } from "@ui/components/label";
+import { Textarea } from "@ui/components/textarea";
+import { AlertBlock, FormDialog, FormField, PrefixedInput, SelectorButton } from "@ui/custom";
 import { AlertCircle, AlertTriangle, Calendar, Sparkles, X } from "lucide-react";
 import { useState } from "react";
-import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import type { TaskInput, UrgencyLevel } from "@/lib/assistant/types";
 import { cn } from "@/lib/utils";
 
@@ -65,26 +65,23 @@ function UrgencyButton({
     const Icon = c.icon;
 
     return (
-        <button
-            type="button"
+        <SelectorButton
+            selected={selected}
             onClick={onClick}
+            icon={<Icon className={cn("h-4 w-4", c.color)} />}
+            title={<span className={cn("font-semibold text-sm", c.color)}>{c.label}</span>}
+            description={c.description}
+            selectedClassName={cn(c.activeBorder, "ring-2 ring-offset-2 ring-offset-background")}
             className={cn(
                 "flex-1 p-3 rounded-lg border-2 transition-all text-left",
                 c.bg,
                 selected ? c.activeBorder : c.border,
                 c.hoverBg,
-                selected && "ring-2 ring-offset-2 ring-offset-background",
                 urgency === "critical" && selected && "ring-red-500/50",
                 urgency === "important" && selected && "ring-orange-500/50",
                 urgency === "nice-to-have" && selected && "ring-yellow-500/50"
             )}
-        >
-            <div className="flex items-center gap-2 mb-1">
-                <Icon className={cn("h-4 w-4", c.color)} />
-                <span className={cn("font-semibold text-sm", c.color)}>{c.label}</span>
-            </div>
-            <p className="text-[11px] text-muted-foreground">{c.description}</p>
-        </button>
+        />
     );
 }
 
@@ -146,129 +143,104 @@ export function TaskForm({ open, onOpenChange, onSubmit, initialValues, isEdit =
     }
 
     return (
-        <Dialog open={open} onOpenChange={handleOpenChange}>
-            <DialogContent className="sm:max-w-[500px] bg-card border-border/50">
-                <DialogHeader>
-                    <DialogTitle className="text-xl">{isEdit ? "Edit Task" : "Create New Task"}</DialogTitle>
-                </DialogHeader>
+        <FormDialog
+            open={open}
+            onOpenChange={handleOpenChange}
+            title={isEdit ? "Edit Task" : "Create New Task"}
+            onSubmit={handleSubmit}
+            submitLabel={isSubmitting ? "Saving..." : isEdit ? "Save Changes" : "Create Task"}
+            submitDisabled={!title.trim()}
+            isSubmitting={isSubmitting}
+            maxWidth="sm:max-w-[500px]"
+        >
+            <div className="space-y-5">
+                {/* Title */}
+                <FormField id="title" label="Task Title" required>
+                    <Input
+                        id="title"
+                        value={title}
+                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setTitle(e.target.value)}
+                        placeholder="What needs to be done?"
+                        className="bg-background/50"
+                        autoFocus
+                    />
+                </FormField>
 
-                <form onSubmit={handleSubmit} className="space-y-5">
-                    {/* Title */}
-                    <div className="space-y-2">
-                        <Label htmlFor="title" className="text-sm font-medium">
-                            Task Title <span className="text-red-400">*</span>
-                        </Label>
-                        <Input
-                            id="title"
-                            value={title}
-                            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setTitle(e.target.value)}
-                            placeholder="What needs to be done?"
+                {/* Description */}
+                <FormField id="description" label="Description">
+                    <Textarea
+                        id="description"
+                        value={description}
+                        onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setDescription(e.target.value)}
+                        placeholder="Add more details (optional)"
+                        className="bg-background/50 min-h-[80px] resize-none"
+                    />
+                </FormField>
+
+                {/* Urgency selector */}
+                <FormField label="How urgent is this?">
+                    <div className="flex gap-2">
+                        <UrgencyButton
+                            urgency="critical"
+                            selected={urgency === "critical"}
+                            onClick={() => setUrgency("critical")}
+                        />
+                        <UrgencyButton
+                            urgency="important"
+                            selected={urgency === "important"}
+                            onClick={() => setUrgency("important")}
+                        />
+                        <UrgencyButton
+                            urgency="nice-to-have"
+                            selected={urgency === "nice-to-have"}
+                            onClick={() => setUrgency("nice-to-have")}
+                        />
+                    </div>
+                </FormField>
+
+                {/* Deadline */}
+                <FormField id="deadline" label="Deadline">
+                    <div className="relative">
+                        <PrefixedInput
+                            icon={<Calendar />}
+                            id="deadline"
+                            type="date"
+                            value={deadline}
+                            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setDeadline(e.target.value)}
                             className="bg-background/50"
-                            autoFocus
                         />
+                        {deadline && (
+                            <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7 p-0"
+                                onClick={() => setDeadline("")}
+                            >
+                                <X className="h-3 w-3" />
+                            </Button>
+                        )}
                     </div>
+                </FormField>
 
-                    {/* Description */}
-                    <div className="space-y-2">
-                        <Label htmlFor="description" className="text-sm font-medium">
-                            Description
-                        </Label>
-                        <Textarea
-                            id="description"
-                            value={description}
-                            onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setDescription(e.target.value)}
-                            placeholder="Add more details (optional)"
-                            className="bg-background/50 min-h-[80px] resize-none"
+                {/* Shipping blocker toggle */}
+                {urgency === "critical" && (
+                    <AlertBlock color="rose" className="flex items-center gap-3">
+                        <input
+                            type="checkbox"
+                            id="shipping-blocker"
+                            checked={isShippingBlocker}
+                            onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                                setIsShippingBlocker(e.target.checked)
+                            }
+                            className="h-4 w-4 rounded border-red-500/50 bg-transparent text-red-500 focus:ring-red-500/50"
                         />
-                    </div>
-
-                    {/* Urgency selector */}
-                    <div className="space-y-3">
-                        <Label className="text-sm font-medium">How urgent is this?</Label>
-                        <div className="flex gap-2">
-                            <UrgencyButton
-                                urgency="critical"
-                                selected={urgency === "critical"}
-                                onClick={() => setUrgency("critical")}
-                            />
-                            <UrgencyButton
-                                urgency="important"
-                                selected={urgency === "important"}
-                                onClick={() => setUrgency("important")}
-                            />
-                            <UrgencyButton
-                                urgency="nice-to-have"
-                                selected={urgency === "nice-to-have"}
-                                onClick={() => setUrgency("nice-to-have")}
-                            />
-                        </div>
-                    </div>
-
-                    {/* Deadline */}
-                    <div className="space-y-2">
-                        <Label htmlFor="deadline" className="text-sm font-medium">
-                            Deadline
+                        <Label htmlFor="shipping-blocker" className="text-sm text-red-300 cursor-pointer">
+                            This blocks shipping / deployment
                         </Label>
-                        <div className="relative">
-                            <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                            <Input
-                                id="deadline"
-                                type="date"
-                                value={deadline}
-                                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setDeadline(e.target.value)}
-                                className="bg-background/50 pl-10"
-                            />
-                            {deadline && (
-                                <Button
-                                    type="button"
-                                    variant="ghost"
-                                    size="sm"
-                                    className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7 p-0"
-                                    onClick={() => setDeadline("")}
-                                >
-                                    <X className="h-3 w-3" />
-                                </Button>
-                            )}
-                        </div>
-                    </div>
-
-                    {/* Shipping blocker toggle */}
-                    {urgency === "critical" && (
-                        <div className="flex items-center gap-3 p-3 rounded-lg bg-red-500/10 border border-red-500/20">
-                            <input
-                                type="checkbox"
-                                id="shipping-blocker"
-                                checked={isShippingBlocker}
-                                onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                                    setIsShippingBlocker(e.target.checked)
-                                }
-                                className="h-4 w-4 rounded border-red-500/50 bg-transparent text-red-500 focus:ring-red-500/50"
-                            />
-                            <Label htmlFor="shipping-blocker" className="text-sm text-red-300 cursor-pointer">
-                                This blocks shipping / deployment
-                            </Label>
-                        </div>
-                    )}
-
-                    <DialogFooter className="pt-2">
-                        <Button
-                            type="button"
-                            variant="outline"
-                            onClick={() => handleOpenChange(false)}
-                            disabled={isSubmitting}
-                        >
-                            Cancel
-                        </Button>
-                        <Button
-                            type="submit"
-                            disabled={!title.trim() || isSubmitting}
-                            className="bg-purple-600 hover:bg-purple-700"
-                        >
-                            {isSubmitting ? "Saving..." : isEdit ? "Save Changes" : "Create Task"}
-                        </Button>
-                    </DialogFooter>
-                </form>
-            </DialogContent>
-        </Dialog>
+                    </AlertBlock>
+                )}
+            </div>
+        </FormDialog>
     );
 }

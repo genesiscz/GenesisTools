@@ -1,7 +1,7 @@
+import { Button } from "@ui/components/button";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@ui/components/tooltip";
 import { Zap } from "lucide-react";
 import { useEffect, useState } from "react";
-import { Button } from "@/components/ui/button";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import type { DistractionSource, Task } from "@/lib/assistant/types";
 import { cn } from "@/lib/utils";
 import { DistractionLogModal } from "./DistractionLogModal";

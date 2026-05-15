@@ -1,7 +1,7 @@
+import { Button } from "@ui/components/button";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@ui/components/dialog";
 import * as Icons from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import type { Badge, BadgeRarity } from "@/lib/assistant/types";
 import { BADGE_DEFINITIONS } from "@/lib/assistant/types";
 import { cn } from "@/lib/utils";

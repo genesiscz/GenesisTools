@@ -1,5 +1,5 @@
+import { Tooltip, TooltipContent, TooltipTrigger } from "@ui/components/tooltip";
 import * as Icons from "lucide-react";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { Badge, BadgeRarity, BadgeType } from "@/lib/assistant/types";
 import { BADGE_DEFINITIONS } from "@/lib/assistant/types";
 import { cn } from "@/lib/utils";

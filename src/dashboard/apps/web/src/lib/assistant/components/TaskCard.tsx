@@ -1,16 +1,18 @@
 import { Link } from "@tanstack/react-router";
-import { FeatureCard, FeatureCardContent, FeatureCardHeader } from "@ui/custom/feature-card-nexus";
-import { AlertTriangle, Ban, Calendar, CheckCircle, Circle, Clock, MoreVertical, Play, Trash2 } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Button } from "@ui/components/button";
 import {
     DropdownMenu,
     DropdownMenuContent,
     DropdownMenuItem,
     DropdownMenuSeparator,
     DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+} from "@ui/components/dropdown-menu";
+import { AlertBlock, RiskIndicator, TaskMetaRow } from "@ui/custom";
+import { FeatureCard, FeatureCardContent, FeatureCardHeader } from "@ui/custom/feature-card-nexus";
+import { AlertTriangle, Ban, CheckCircle, Circle, MoreVertical, Play, Trash2 } from "lucide-react";
 import type { DeadlineRiskLevel, Task, TaskStatus, UrgencyLevel } from "@/lib/assistant/types";
 import { getUrgencyColor } from "@/lib/assistant/types";
+import { formatFocusTime } from "@/lib/assistant/utils";
 import { cn } from "@/lib/utils";
 
 interface TaskCardProps {
@@ -107,25 +109,6 @@ function formatDeadlineRelative(deadline: Date): string {
 }
 
 /**
- * Format focus time (e.g., "2h 30m")
- */
-function formatFocusTime(minutes: number): string {
-    if (minutes === 0) {
-        return "--";
-    }
-    const hours = Math.floor(minutes / 60);
-    const mins = minutes % 60;
-
-    if (hours === 0) {
-        return `${mins}m`;
-    }
-    if (mins === 0) {
-        return `${hours}h`;
-    }
-    return `${hours}h ${mins}m`;
-}
-
-/**
  * Map urgency to FeatureCard color
  */
 function getCardColor(urgency: UrgencyLevel): "rose" | "amber" | "primary" {
@@ -138,46 +121,6 @@ function getCardColor(urgency: UrgencyLevel): "rose" | "amber" | "primary" {
             return "primary";
     }
 }
-
-/**
- * Risk indicator configuration
- */
-const riskConfig: Record<
-    DeadlineRiskLevel,
-    {
-        label: string;
-        colorClass: string;
-        bgClass: string;
-        borderClass: string;
-        dotColor: string;
-        glowColor: string;
-    }
-> = {
-    green: {
-        label: "On Track",
-        colorClass: "text-green-400",
-        bgClass: "bg-green-500/10",
-        borderClass: "border-green-500/30",
-        dotColor: "bg-green-500",
-        glowColor: "",
-    },
-    yellow: {
-        label: "At Risk",
-        colorClass: "text-yellow-400",
-        bgClass: "bg-yellow-500/10",
-        borderClass: "border-yellow-500/30",
-        dotColor: "bg-yellow-500",
-        glowColor: "rgba(234, 179, 8, 0.4)",
-    },
-    red: {
-        label: "Critical",
-        colorClass: "text-red-400",
-        bgClass: "bg-red-500/10",
-        borderClass: "border-red-500/30",
-        dotColor: "bg-red-500",
-        glowColor: "rgba(239, 68, 68, 0.5)",
-    },
-};
 
 /**
  * TaskCard component - Displays a task with urgency color coding
@@ -199,8 +142,11 @@ export function TaskCard({
     const cardColor = getCardColor(task.urgencyLevel);
 
     // Show risk indicator for yellow and red risks
-    const showRiskIndicator = riskLevel && riskLevel !== "green";
-    const riskInfo = riskLevel ? riskConfig[riskLevel] : null;
+    const visibleRiskLevel = riskLevel && riskLevel !== "green" ? riskLevel : null;
+    const showRiskIndicator = Boolean(visibleRiskLevel);
+    const riskMenuColor = riskLevel === "red" ? "text-red-400" : "text-yellow-400";
+    const deadlineLabel = task.deadline ? formatDeadlineRelative(new Date(task.deadline)) : "No deadline";
+    const deadlineOverdue = Boolean(task.deadline && new Date(task.deadline) < new Date());
 
     return (
         <FeatureCard
@@ -217,46 +163,16 @@ export function TaskCard({
 
                     <div className="flex items-center gap-2">
                         {/* Risk indicator */}
-                        {showRiskIndicator && riskInfo && (
-                            <button
-                                onClick={() => onRiskClick?.(task.id)}
-                                className={cn(
-                                    "flex items-center gap-1.5 px-2 py-0.5 rounded-full",
-                                    "transition-all duration-200",
-                                    "border",
-                                    riskInfo.bgClass,
-                                    riskInfo.borderClass,
-                                    onRiskClick && "cursor-pointer hover:scale-105",
-                                    riskLevel === "red" && "hover:shadow-lg hover:shadow-red-500/20",
-                                    riskLevel === "yellow" && "hover:shadow-lg hover:shadow-yellow-500/20"
-                                )}
-                            >
-                                {/* Animated dot */}
-                                <span className="relative">
-                                    <span
-                                        className={cn(
-                                            "block h-1.5 w-1.5 rounded-full",
-                                            riskInfo.dotColor,
-                                            riskLevel === "red" && "animate-pulse"
-                                        )}
-                                        style={{
-                                            boxShadow: riskInfo.glowColor ? `0 0 8px ${riskInfo.glowColor}` : undefined,
-                                        }}
-                                    />
-                                    {riskLevel === "red" && (
-                                        <span
-                                            className="absolute inset-0 rounded-full border border-red-400 animate-ping"
-                                            style={{ animationDuration: "2s" }}
-                                        />
-                                    )}
-                                </span>
-                                <span className={cn("text-[10px] font-medium", riskInfo.colorClass)}>
-                                    {riskInfo.label}
-                                </span>
-                                {daysLate > 0 && (
-                                    <span className="text-[10px] text-red-400 font-semibold">+{daysLate}d</span>
-                                )}
-                            </button>
+                        {visibleRiskLevel && (
+                            <RiskIndicator
+                                level={visibleRiskLevel}
+                                label={
+                                    daysLate > 0
+                                        ? `${visibleRiskLevel === "red" ? "Critical" : "At Risk"} +${daysLate}d`
+                                        : undefined
+                                }
+                                onClick={onRiskClick ? () => onRiskClick(task.id) : undefined}
+                            />
                         )}
 
                         {/* Urgency badge */}
@@ -296,7 +212,7 @@ export function TaskCard({
                                     <>
                                         <DropdownMenuSeparator />
                                         <DropdownMenuItem onClick={() => onRiskClick(task.id)}>
-                                            <AlertTriangle className={cn("mr-2 h-4 w-4", riskInfo?.colorClass)} />
+                                            <AlertTriangle className={cn("mr-2 h-4 w-4", riskMenuColor)} />
                                             Handle Risk
                                         </DropdownMenuItem>
                                     </>
@@ -338,32 +254,21 @@ export function TaskCard({
             <FeatureCardContent className="pt-2">
                 {/* Footer: Deadline + Focus time */}
                 <div className="flex items-center justify-between text-xs text-muted-foreground">
-                    {/* Deadline */}
-                    <div className="flex items-center gap-1.5">
-                        <Calendar className="h-3.5 w-3.5" />
-                        {task.deadline ? (
-                            <span className={cn(new Date(task.deadline) < new Date() && "text-red-400 font-medium")}>
-                                {formatDeadlineRelative(new Date(task.deadline))}
-                            </span>
-                        ) : (
-                            <span>No deadline</span>
-                        )}
-                    </div>
-
-                    {/* Focus time */}
-                    <div className="flex items-center gap-1.5">
-                        <Clock className="h-3.5 w-3.5" />
-                        <span>{formatFocusTime(task.focusTimeLogged)}</span>
-                    </div>
+                    <TaskMetaRow
+                        deadline={deadlineLabel}
+                        deadlineClassName={cn(deadlineOverdue && "text-red-400 font-medium")}
+                        focusTimeLabel={formatFocusTime(task.focusTimeLogged, "--")}
+                        className="w-full justify-between"
+                    />
                 </div>
 
                 {/* Context parking indicator */}
                 {task.contextParkingLot && (
-                    <div className="mt-3 p-2 rounded-lg bg-purple-500/10 border border-purple-500/20">
+                    <AlertBlock color="purple" size="sm" className="mt-3 p-2">
                         <p className="text-[11px] text-purple-300 line-clamp-2">
                             <span className="font-semibold">Parked:</span> {task.contextParkingLot}
                         </p>
-                    </div>
+                    </AlertBlock>
                 )}
             </FeatureCardContent>
         </FeatureCard>

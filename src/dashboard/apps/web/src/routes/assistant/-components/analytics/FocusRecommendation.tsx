@@ -1,7 +1,7 @@
 import { Link } from "@tanstack/react-router";
+import { Button } from "@ui/components/button";
 import { ArrowRight, Brain, Coffee, X, Zap } from "lucide-react";
 import { useState } from "react";
-import { Button } from "@/components/ui/button";
 import type { EnergyHeatmapData } from "@/lib/assistant/lib/storage/types";
 import type { Task } from "@/lib/assistant/types";
 import { cn } from "@/lib/utils";

@@ -1,4 +1,9 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { Button } from "@ui/components/button";
+import { Input } from "@ui/components/input";
+import { Label } from "@ui/components/label";
+import { Textarea } from "@ui/components/textarea";
+import { PageLoadingSpinner, StatusBadge as SharedStatusBadge } from "@ui/custom";
 import { FeatureCard, FeatureCardHeader } from "@ui/custom/feature-card-nexus";
 import { useAuth } from "@workos/authkit-tanstack-react-start/client";
 import {
@@ -15,7 +20,6 @@ import {
     FileText,
     GitBranch,
     Github,
-    Loader2,
     ParkingCircle,
     Play,
     Save,
@@ -25,10 +29,6 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { DashboardLayout } from "@/components/dashboard";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { useBlockers, useDecisionLog, useHandoff, useTaskStore } from "@/lib/assistant/hooks";
 import type {
     ContextParking,
@@ -40,6 +40,7 @@ import type {
     UrgencyLevel,
 } from "@/lib/assistant/types";
 import { getUrgencyColor } from "@/lib/assistant/types";
+import { formatFocusTime } from "@/lib/assistant/utils";
 import { cn } from "@/lib/utils";
 import { BlockerModal } from "../-components/blockers";
 import { BottleneckAlert, DependencySelector } from "../-components/critical-path";
@@ -268,12 +269,7 @@ function TaskDetailPage() {
     if (authLoading || (!initialized && loading)) {
         return (
             <DashboardLayout title="Task" description="Loading...">
-                <div className="flex items-center justify-center min-h-[60vh]">
-                    <div className="flex flex-col items-center gap-4">
-                        <Loader2 className="h-8 w-8 text-purple-400 animate-spin" />
-                        <span className="text-muted-foreground text-sm font-mono">Loading task...</span>
-                    </div>
-                </div>
+                <PageLoadingSpinner label="Loading task..." />
             </DashboardLayout>
         );
     }
@@ -363,7 +359,8 @@ function TaskDetailPage() {
                         size="sm"
                         onClick={handleSave}
                         disabled={!hasChanges || isSaving}
-                        className="gap-2 bg-purple-600 hover:bg-purple-700"
+                        variant="brand"
+                        className="gap-2"
                     >
                         <Save className="h-4 w-4" />
                         {isSaving ? "Saving..." : "Save"}
@@ -929,20 +926,25 @@ function StatusButton({ status, selected, onClick }: { status: TaskStatus; selec
 
 function StatusBadge({ status }: { status: TaskStatus }) {
     const config = {
-        backlog: { label: "Backlog", icon: Circle, color: "text-gray-400 bg-gray-500/20" },
-        "in-progress": { label: "In Progress", icon: Play, color: "text-blue-400 bg-blue-500/20" },
-        blocked: { label: "Blocked", icon: Ban, color: "text-red-400 bg-red-500/20" },
-        completed: { label: "Completed", icon: CheckCircle, color: "text-green-400 bg-green-500/20" },
+        backlog: { label: "Backlog", icon: Circle, text: "text-gray-400", bg: "bg-gray-500/20" },
+        "in-progress": { label: "In Progress", icon: Play, text: "text-blue-400", bg: "bg-blue-500/20" },
+        blocked: { label: "Blocked", icon: Ban, text: "text-red-400", bg: "bg-red-500/20" },
+        completed: { label: "Completed", icon: CheckCircle, text: "text-green-400", bg: "bg-green-500/20" },
     };
 
     const c = config[status];
     const Icon = c.icon;
 
     return (
-        <span className={cn("flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium", c.color)}>
-            <Icon className="h-3.5 w-3.5" />
+        <SharedStatusBadge
+            bgClass={c.bg}
+            textClass={c.text}
+            uppercase={false}
+            icon={<Icon className="h-3.5 w-3.5" />}
+            className="px-2.5 py-1 text-xs font-medium"
+        >
             {c.label}
-        </span>
+        </SharedStatusBadge>
     );
 }
 
@@ -1014,20 +1016,4 @@ function BlockedDuration({ blockedSince }: { blockedSince: Date }) {
             {message}
         </span>
     );
-}
-
-function formatFocusTime(minutes: number): string {
-    if (minutes === 0) {
-        return "0m";
-    }
-    const hours = Math.floor(minutes / 60);
-    const mins = minutes % 60;
-
-    if (hours === 0) {
-        return `${mins}m`;
-    }
-    if (mins === 0) {
-        return `${hours}h`;
-    }
-    return `${hours}h ${mins}m`;
 }

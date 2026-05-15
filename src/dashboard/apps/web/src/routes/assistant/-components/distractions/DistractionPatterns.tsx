@@ -1,3 +1,4 @@
+import { InsightRow } from "@ui/custom";
 import { FeatureCard, FeatureCardContent, FeatureCardHeader } from "@ui/custom/feature-card-nexus";
 import { AlertTriangle, Calendar, Clock } from "lucide-react";
 import { useMemo } from "react";
@@ -236,40 +237,31 @@ export function DistractionPatterns({ distractions, loading = false, className }
                         <div className="space-y-3">
                             {/* Peak day */}
                             {analysis.peakDay && (
-                                <div className="flex items-start gap-3 p-3 rounded-lg bg-purple-500/10 border border-purple-500/20">
-                                    <Calendar className="h-5 w-5 text-purple-400 flex-shrink-0 mt-0.5" />
-                                    <div>
-                                        <p className="text-sm font-medium text-purple-300">
-                                            {analysis.peakDay} is your busiest day
-                                        </p>
-                                        <p className="text-xs text-muted-foreground mt-0.5">
-                                            Consider protecting focus blocks on this day
-                                        </p>
-                                    </div>
-                                </div>
+                                <InsightRow
+                                    icon={<Calendar className="text-purple-400" />}
+                                    title={`${analysis.peakDay} is your busiest day`}
+                                    description="Consider protecting focus blocks on this day"
+                                    color="purple"
+                                />
                             )}
 
                             {/* Peak time */}
                             {analysis.peakTimeRange && (
-                                <div className="flex items-start gap-3 p-3 rounded-lg bg-orange-500/10 border border-orange-500/20">
-                                    <Clock className="h-5 w-5 text-orange-400 flex-shrink-0 mt-0.5" />
-                                    <div>
-                                        <p className="text-sm font-medium text-orange-300">
-                                            {analysis.peakTimeRange} is peak distraction time
-                                        </p>
-                                        <p className="text-xs text-muted-foreground mt-0.5">
-                                            Avoid scheduling deep work during this window
-                                        </p>
-                                    </div>
-                                </div>
+                                <InsightRow
+                                    icon={<Clock className="text-orange-400" />}
+                                    title={`${analysis.peakTimeRange} is peak distraction time`}
+                                    description="Avoid scheduling deep work during this window"
+                                    color="orange"
+                                />
                             )}
 
                             {/* Chaos windows */}
                             {analysis.chaosWindows.length > 0 && (
-                                <div className="flex items-start gap-3 p-3 rounded-lg bg-red-500/10 border border-red-500/20">
-                                    <AlertTriangle className="h-5 w-5 text-red-400 flex-shrink-0 mt-0.5" />
-                                    <div>
-                                        <p className="text-sm font-medium text-red-300">Chaos Window Detected</p>
+                                <InsightRow
+                                    icon={<AlertTriangle className="text-red-400" />}
+                                    title="Chaos Window Detected"
+                                    color="red"
+                                    description={
                                         <div className="flex flex-wrap gap-2 mt-2">
                                             {analysis.chaosWindows.map((window, i) => (
                                                 <span
@@ -280,8 +272,8 @@ export function DistractionPatterns({ distractions, loading = false, className }
                                                 </span>
                                             ))}
                                         </div>
-                                    </div>
-                                </div>
+                                    }
+                                />
                             )}
                         </div>
                     </>

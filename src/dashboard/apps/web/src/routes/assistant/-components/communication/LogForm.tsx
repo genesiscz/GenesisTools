@@ -1,11 +1,9 @@
-import { Calendar, Github, Link, Mail, MessageSquare, Pencil, Plus, Tag, Users, X } from "lucide-react";
+import { Button } from "@ui/components/button";
+import { Input } from "@ui/components/input";
+import { Textarea } from "@ui/components/textarea";
+import { FormDialog, FormField, PrefixedInput, SelectorButton, TagChip } from "@ui/custom";
+import { Calendar, Github, Link, Mail, MessageSquare, Pencil, Plus, Tag, Users } from "lucide-react";
 import { useEffect, useState } from "react";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import type {
     CommunicationEntry,
     CommunicationEntryInput,
@@ -98,20 +96,20 @@ function SourceButton({
     const Icon = c.icon;
 
     return (
-        <button
-            type="button"
+        <SelectorButton
+            selected={selected}
             onClick={onClick}
+            icon={<Icon className={cn("h-5 w-5", c.color)} />}
+            title={<span className={cn("text-xs font-medium", c.color)}>{c.label}</span>}
+            layout="column"
+            selectedClassName={cn(c.activeBorder, "ring-2 ring-offset-2 ring-offset-background ring-white/10")}
             className={cn(
                 "flex flex-col items-center justify-center p-3 rounded-lg border-2 transition-all",
                 c.bg,
                 selected ? c.activeBorder : c.border,
-                c.hoverBg,
-                selected && "ring-2 ring-offset-2 ring-offset-background ring-white/10"
+                c.hoverBg
             )}
-        >
-            <Icon className={cn("h-5 w-5 mb-1", c.color)} />
-            <span className={cn("text-xs font-medium", c.color)}>{c.label}</span>
-        </button>
+        />
     );
 }
 
@@ -175,20 +173,19 @@ function SentimentButton({
     const c = config[sentiment];
 
     return (
-        <button
-            type="button"
+        <SelectorButton
+            selected={selected}
             onClick={onClick}
+            title={<span className={cn("text-xs font-semibold", c.color)}>{c.label}</span>}
+            description={c.description}
+            selectedClassName={cn(c.activeBorder, "ring-1 ring-offset-1 ring-offset-background ring-white/10")}
             className={cn(
                 "flex-1 p-2 rounded-lg border-2 transition-all text-left",
                 c.bg,
                 selected ? c.activeBorder : c.border,
-                "hover:opacity-80",
-                selected && "ring-1 ring-offset-1 ring-offset-background ring-white/10"
+                "hover:opacity-80"
             )}
-        >
-            <span className={cn("text-xs font-semibold", c.color)}>{c.label}</span>
-            <p className="text-[10px] text-muted-foreground mt-0.5">{c.description}</p>
-        </button>
+        />
     );
 }
 
@@ -289,224 +286,172 @@ export function LogForm({
         .slice(0, 5);
 
     return (
-        <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="sm:max-w-[550px] bg-card border-border/50 max-h-[90vh] overflow-y-auto">
-                <DialogHeader>
-                    <DialogTitle className="text-xl">{isEdit ? "Edit Entry" : "Log Communication"}</DialogTitle>
-                </DialogHeader>
-
-                <form onSubmit={handleSubmit} className="space-y-5">
-                    {/* Source selector */}
-                    <div className="space-y-2">
-                        <Label className="text-sm font-medium">Source</Label>
-                        <div className="grid grid-cols-5 gap-2">
-                            <SourceButton
-                                source="slack"
-                                selected={source === "slack"}
-                                onClick={() => setSource("slack")}
-                            />
-                            <SourceButton
-                                source="github"
-                                selected={source === "github"}
-                                onClick={() => setSource("github")}
-                            />
-                            <SourceButton
-                                source="email"
-                                selected={source === "email"}
-                                onClick={() => setSource("email")}
-                            />
-                            <SourceButton
-                                source="meeting"
-                                selected={source === "meeting"}
-                                onClick={() => setSource("meeting")}
-                            />
-                            <SourceButton
-                                source="manual"
-                                selected={source === "manual"}
-                                onClick={() => setSource("manual")}
-                            />
-                        </div>
-                    </div>
-
-                    {/* Title */}
-                    <div className="space-y-2">
-                        <Label htmlFor="title" className="text-sm font-medium">
-                            Title <span className="text-red-400">*</span>
-                        </Label>
-                        <Input
-                            id="title"
-                            value={title}
-                            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setTitle(e.target.value)}
-                            placeholder="Brief summary of the communication"
-                            className="bg-background/50"
-                            autoFocus
+        <FormDialog
+            open={open}
+            onOpenChange={onOpenChange}
+            title={isEdit ? "Edit Entry" : "Log Communication"}
+            onSubmit={handleSubmit}
+            submitLabel={isSubmitting ? "Saving..." : isEdit ? "Save Changes" : "Log Entry"}
+            submitDisabled={!title.trim() || !content.trim()}
+            isSubmitting={isSubmitting}
+            maxWidth="sm:max-w-[550px] max-h-[90vh] overflow-y-auto"
+        >
+            <div className="space-y-5">
+                {/* Source selector */}
+                <FormField label="Source">
+                    <div className="grid grid-cols-5 gap-2">
+                        <SourceButton source="slack" selected={source === "slack"} onClick={() => setSource("slack")} />
+                        <SourceButton
+                            source="github"
+                            selected={source === "github"}
+                            onClick={() => setSource("github")}
+                        />
+                        <SourceButton source="email" selected={source === "email"} onClick={() => setSource("email")} />
+                        <SourceButton
+                            source="meeting"
+                            selected={source === "meeting"}
+                            onClick={() => setSource("meeting")}
+                        />
+                        <SourceButton
+                            source="manual"
+                            selected={source === "manual"}
+                            onClick={() => setSource("manual")}
                         />
                     </div>
+                </FormField>
 
-                    {/* Content */}
-                    <div className="space-y-2">
-                        <Label htmlFor="content" className="text-sm font-medium">
-                            Content <span className="text-red-400">*</span>
-                        </Label>
-                        <Textarea
-                            id="content"
-                            value={content}
-                            onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setContent(e.target.value)}
-                            placeholder="Key points, quotes, or details worth remembering..."
-                            className="bg-background/50 min-h-[100px] resize-none"
+                {/* Title */}
+                <FormField id="title" label="Title" required>
+                    <Input
+                        id="title"
+                        value={title}
+                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setTitle(e.target.value)}
+                        placeholder="Brief summary of the communication"
+                        className="bg-background/50"
+                        autoFocus
+                    />
+                </FormField>
+
+                {/* Content */}
+                <FormField id="content" label="Content" required>
+                    <Textarea
+                        id="content"
+                        value={content}
+                        onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setContent(e.target.value)}
+                        placeholder="Key points, quotes, or details worth remembering..."
+                        className="bg-background/50 min-h-[100px] resize-none"
+                    />
+                </FormField>
+
+                {/* Sentiment selector */}
+                <FormField label="Type">
+                    <div className="grid grid-cols-4 gap-2">
+                        <SentimentButton
+                            sentiment="decision"
+                            selected={sentiment === "decision"}
+                            onClick={() => setSentiment("decision")}
+                        />
+                        <SentimentButton
+                            sentiment="discussion"
+                            selected={sentiment === "discussion"}
+                            onClick={() => setSentiment("discussion")}
+                        />
+                        <SentimentButton
+                            sentiment="blocker"
+                            selected={sentiment === "blocker"}
+                            onClick={() => setSentiment("blocker")}
+                        />
+                        <SentimentButton
+                            sentiment="context"
+                            selected={sentiment === "context"}
+                            onClick={() => setSentiment("context")}
                         />
                     </div>
+                </FormField>
 
-                    {/* Sentiment selector */}
-                    <div className="space-y-2">
-                        <Label className="text-sm font-medium">Type</Label>
-                        <div className="grid grid-cols-4 gap-2">
-                            <SentimentButton
-                                sentiment="decision"
-                                selected={sentiment === "decision"}
-                                onClick={() => setSentiment("decision")}
-                            />
-                            <SentimentButton
-                                sentiment="discussion"
-                                selected={sentiment === "discussion"}
-                                onClick={() => setSentiment("discussion")}
-                            />
-                            <SentimentButton
-                                sentiment="blocker"
-                                selected={sentiment === "blocker"}
-                                onClick={() => setSentiment("blocker")}
-                            />
-                            <SentimentButton
-                                sentiment="context"
-                                selected={sentiment === "context"}
-                                onClick={() => setSentiment("context")}
-                            />
-                        </div>
+                {/* Source URL */}
+                <FormField id="sourceUrl" label="Source Link">
+                    <PrefixedInput
+                        icon={<Link />}
+                        id="sourceUrl"
+                        value={sourceUrl}
+                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSourceUrl(e.target.value)}
+                        placeholder="https://..."
+                        className="bg-background/50"
+                    />
+                </FormField>
+
+                {/* Date */}
+                <FormField id="discussedAt" label="Date">
+                    <PrefixedInput
+                        icon={<Calendar />}
+                        id="discussedAt"
+                        type="date"
+                        value={discussedAt}
+                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setDiscussedAt(e.target.value)}
+                        className="bg-background/50"
+                    />
+                </FormField>
+
+                {/* Tags */}
+                <FormField id="tags" label="Tags">
+                    <div className="relative">
+                        <PrefixedInput
+                            icon={<Tag />}
+                            id="tags"
+                            value={tagInput}
+                            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setTagInput(e.target.value)}
+                            onKeyDown={handleTagKeyDown}
+                            placeholder="Add tags (press Enter)"
+                            className="bg-background/50 pr-10"
+                        />
+                        {tagInput.trim() && (
+                            <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={handleAddTag}
+                                className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7 p-0"
+                            >
+                                <Plus className="h-4 w-4" />
+                            </Button>
+                        )}
                     </div>
 
-                    {/* Source URL */}
-                    <div className="space-y-2">
-                        <Label htmlFor="sourceUrl" className="text-sm font-medium">
-                            Source Link
-                        </Label>
-                        <div className="relative">
-                            <Link className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                            <Input
-                                id="sourceUrl"
-                                value={sourceUrl}
-                                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSourceUrl(e.target.value)}
-                                placeholder="https://..."
-                                className="bg-background/50 pl-10"
-                            />
-                        </div>
-                    </div>
-
-                    {/* Date */}
-                    <div className="space-y-2">
-                        <Label htmlFor="discussedAt" className="text-sm font-medium">
-                            Date
-                        </Label>
-                        <div className="relative">
-                            <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                            <Input
-                                id="discussedAt"
-                                type="date"
-                                value={discussedAt}
-                                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setDiscussedAt(e.target.value)}
-                                className="bg-background/50 pl-10"
-                            />
-                        </div>
-                    </div>
-
-                    {/* Tags */}
-                    <div className="space-y-2">
-                        <Label htmlFor="tags" className="text-sm font-medium">
-                            Tags
-                        </Label>
-                        <div className="relative">
-                            <Tag className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                            <Input
-                                id="tags"
-                                value={tagInput}
-                                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setTagInput(e.target.value)}
-                                onKeyDown={handleTagKeyDown}
-                                placeholder="Add tags (press Enter)"
-                                className="bg-background/50 pl-10 pr-10"
-                            />
-                            {tagInput.trim() && (
-                                <Button
+                    {/* Tag suggestions */}
+                    {tagSuggestions.length > 0 && tagInput.trim() && (
+                        <div className="flex flex-wrap gap-1">
+                            {tagSuggestions.map((tag) => (
+                                <button
+                                    key={tag}
                                     type="button"
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={handleAddTag}
-                                    className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7 p-0"
+                                    onClick={() => {
+                                        setTags([...tags, tag]);
+                                        setTagInput("");
+                                    }}
                                 >
-                                    <Plus className="h-4 w-4" />
-                                </Button>
-                            )}
+                                    <TagChip className="rounded hover:bg-white/10 transition-colors">+ {tag}</TagChip>
+                                </button>
+                            ))}
                         </div>
+                    )}
 
-                        {/* Tag suggestions */}
-                        {tagSuggestions.length > 0 && tagInput.trim() && (
-                            <div className="flex flex-wrap gap-1">
-                                {tagSuggestions.map((tag) => (
-                                    <button
-                                        key={tag}
-                                        type="button"
-                                        onClick={() => {
-                                            setTags([...tags, tag]);
-                                            setTagInput("");
-                                        }}
-                                        className="text-[10px] px-2 py-0.5 rounded bg-white/5 border border-white/10 text-muted-foreground hover:bg-white/10 transition-colors"
-                                    >
-                                        + {tag}
-                                    </button>
-                                ))}
-                            </div>
-                        )}
-
-                        {/* Selected tags */}
-                        {tags.length > 0 && (
-                            <div className="flex flex-wrap gap-1.5 mt-2">
-                                {tags.map((tag) => (
-                                    <Badge
-                                        key={tag}
-                                        variant="outline"
-                                        className="text-xs px-2 py-0.5 bg-white/5 border-white/20 gap-1"
-                                    >
-                                        {tag}
-                                        <button
-                                            type="button"
-                                            onClick={() => handleRemoveTag(tag)}
-                                            className="hover:text-red-400 transition-colors"
-                                        >
-                                            <X className="h-3 w-3" />
-                                        </button>
-                                    </Badge>
-                                ))}
-                            </div>
-                        )}
-                    </div>
-
-                    <DialogFooter className="pt-2">
-                        <Button
-                            type="button"
-                            variant="outline"
-                            onClick={() => onOpenChange(false)}
-                            disabled={isSubmitting}
-                        >
-                            Cancel
-                        </Button>
-                        <Button
-                            type="submit"
-                            disabled={!title.trim() || !content.trim() || isSubmitting}
-                            className="bg-purple-600 hover:bg-purple-700"
-                        >
-                            {isSubmitting ? "Saving..." : isEdit ? "Save Changes" : "Log Entry"}
-                        </Button>
-                    </DialogFooter>
-                </form>
-            </DialogContent>
-        </Dialog>
+                    {/* Selected tags */}
+                    {tags.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5 mt-2">
+                            {tags.map((tag) => (
+                                <TagChip
+                                    key={tag}
+                                    onRemove={() => handleRemoveTag(tag)}
+                                    className="text-xs border-white/20"
+                                >
+                                    {tag}
+                                </TagChip>
+                            ))}
+                        </div>
+                    )}
+                </FormField>
+            </div>
+        </FormDialog>
     );
 }

@@ -11,10 +11,10 @@
  */
 
 import { useNavigate } from "@tanstack/react-router";
+import { Button } from "@ui/components/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@ui/components/tooltip";
 import { Home, Maximize2, ZoomIn, ZoomOut } from "lucide-react";
 import { useRef, useState } from "react";
-import { Button } from "@/components/ui/button";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { Task } from "@/lib/assistant/types";
 import { cn } from "@/lib/utils";
 import { DependencyNode, NodeTooltip } from "./DependencyNode";

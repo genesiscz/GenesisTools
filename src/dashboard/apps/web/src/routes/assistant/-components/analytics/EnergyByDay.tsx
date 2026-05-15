@@ -1,3 +1,4 @@
+import { ChartSkeleton } from "@ui/custom";
 import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import type { WeeklyReview } from "@/lib/assistant/types";
 
@@ -155,24 +156,4 @@ function getQualityLabel(value: number): string {
         return "Poor";
     }
     return "Very Poor";
-}
-
-function ChartSkeleton() {
-    return (
-        <div className="relative overflow-hidden rounded-xl bg-[#0a0a14]/80 backdrop-blur-sm border border-white/5 p-4 h-full">
-            <div className="mb-4">
-                <div className="h-4 w-28 bg-white/5 rounded animate-pulse mb-1" />
-                <div className="h-3 w-32 bg-white/5 rounded animate-pulse" />
-            </div>
-            <div className="h-[180px] flex items-end gap-2 px-4">
-                {[40, 70, 55, 30, 80, 65, 45].map((height, i) => (
-                    <div
-                        key={i}
-                        className="flex-1 bg-white/5 rounded-t animate-pulse"
-                        style={{ height: `${height}%` }}
-                    />
-                ))}
-            </div>
-        </div>
-    );
 }

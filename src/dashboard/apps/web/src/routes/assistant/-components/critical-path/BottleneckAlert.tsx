@@ -6,8 +6,8 @@
  */
 
 import { Link } from "@tanstack/react-router";
+import { Button } from "@ui/components/button";
 import { AlertTriangle, ArrowRight, ChevronRight, Zap } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import type { Task } from "@/lib/assistant/types";
 import { cn } from "@/lib/utils";
 

@@ -1,9 +1,9 @@
+import { Button } from "@ui/components/button";
+import { Input } from "@ui/components/input";
+import { Label } from "@ui/components/label";
+import { Textarea } from "@ui/components/textarea";
 import { AlertTriangle, CalendarClock, Check, ChevronRight, Scissors, Users } from "lucide-react";
 import { useState } from "react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import type { DeadlineRiskOption } from "@/lib/assistant/types";
 import { cn } from "@/lib/utils";
 
@@ -189,10 +189,10 @@ export function EscalationOptions({
 
                     <Button
                         onClick={handleConfirm}
+                        variant={selectedOption === "help" ? "brand" : undefined}
                         className={cn(
                             "w-full mt-4 gap-2",
                             selectedOption === "extend" && "bg-blue-600 hover:bg-blue-700",
-                            selectedOption === "help" && "bg-purple-600 hover:bg-purple-700",
                             selectedOption === "scope" && "bg-amber-600 hover:bg-amber-700",
                             selectedOption === "accept" && "bg-red-600 hover:bg-red-700"
                         )}

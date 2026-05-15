@@ -1,7 +1,7 @@
+import { Button } from "@ui/components/button";
+import { Dialog, DialogContent } from "@ui/components/dialog";
 import { ArrowRight, Coffee, Flame, Sparkles, Star, Trophy } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
 import type { Badge, Streak, Task } from "@/lib/assistant/types";
 import { cn } from "@/lib/utils";
 
@@ -259,7 +259,8 @@ export function CelebrationModal({
                                     onOpenChange(false);
                                     onNextTask();
                                 }}
-                                className="gap-2 bg-purple-600 hover:bg-purple-700"
+                                variant="brand"
+                                className="gap-2"
                             >
                                 Next task
                                 <ArrowRight className="h-4 w-4" />

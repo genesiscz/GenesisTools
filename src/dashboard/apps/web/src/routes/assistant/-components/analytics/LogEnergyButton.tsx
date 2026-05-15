@@ -1,6 +1,4 @@
-import { Brain, FileText, MessageSquare, Plus, Users, Zap } from "lucide-react";
-import { useState } from "react";
-import { Button } from "@/components/ui/button";
+import { Button } from "@ui/components/button";
 import {
     Dialog,
     DialogContent,
@@ -8,8 +6,10 @@ import {
     DialogFooter,
     DialogHeader,
     DialogTitle,
-} from "@/components/ui/dialog";
-import { Textarea } from "@/components/ui/textarea";
+} from "@ui/components/dialog";
+import { Textarea } from "@ui/components/textarea";
+import { Brain, FileText, MessageSquare, Plus, Users, Zap } from "lucide-react";
+import { useState } from "react";
 import type { EnergySnapshotInput, FocusQuality, WorkType } from "@/lib/assistant/types";
 import { cn } from "@/lib/utils";
 

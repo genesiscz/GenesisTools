@@ -1,3 +1,5 @@
+import { Button } from "@ui/components/button";
+import { TabBar, type TabDef } from "@ui/custom";
 import {
     AlertTriangle,
     CheckCircle,
@@ -9,7 +11,6 @@ import {
     Pencil,
     Users,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import type { CommunicationSentiment, CommunicationSource } from "@/lib/assistant/types";
 import { cn } from "@/lib/utils";
 
@@ -84,11 +85,11 @@ export function LogFilters({
     sourceCounts,
     className,
 }: LogFiltersProps) {
-    const tabs: { id: FilterTab; label: string; icon: typeof CheckCircle; color: string }[] = [
-        { id: "all", label: "All", icon: MessageCircle, color: "text-foreground" },
-        { id: "decision", label: "Decisions", icon: CheckCircle, color: "text-purple-400" },
-        { id: "blocker", label: "Blockers", icon: AlertTriangle, color: "text-red-400" },
-        { id: "context", label: "Context", icon: Info, color: "text-gray-400" },
+    const tabs: TabDef<FilterTab>[] = [
+        { value: "all", label: "All", icon: MessageCircle, activeColor: "text-foreground" },
+        { value: "decision", label: "Decisions", icon: CheckCircle, activeColor: "text-purple-400" },
+        { value: "blocker", label: "Blockers", icon: AlertTriangle, activeColor: "text-red-400" },
+        { value: "context", label: "Context", icon: Info, activeColor: "text-gray-400" },
     ];
 
     const sources: { id: CommunicationSource | "all"; label: string }[] = [
@@ -103,39 +104,7 @@ export function LogFilters({
     return (
         <div className={cn("space-y-4", className)}>
             {/* Tab filters */}
-            <div className="flex items-center gap-1 p-1 bg-white/5 rounded-lg border border-white/10">
-                {tabs.map((tab) => {
-                    const isActive = activeTab === tab.id;
-                    const Icon = tab.icon;
-                    const count = tabCounts[tab.id];
-
-                    return (
-                        <button
-                            key={tab.id}
-                            onClick={() => onTabChange(tab.id)}
-                            className={cn(
-                                "flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-all",
-                                isActive
-                                    ? "bg-white/10 shadow-sm"
-                                    : "hover:bg-white/5 text-muted-foreground hover:text-foreground"
-                            )}
-                        >
-                            <Icon className={cn("h-4 w-4", isActive ? tab.color : "text-muted-foreground")} />
-                            <span className={isActive ? tab.color : undefined}>{tab.label}</span>
-                            {count > 0 && (
-                                <span
-                                    className={cn(
-                                        "min-w-[1.25rem] h-5 px-1 rounded-full text-xs font-semibold flex items-center justify-center",
-                                        isActive ? "bg-white/10 text-foreground" : "bg-white/5 text-muted-foreground"
-                                    )}
-                                >
-                                    {count}
-                                </span>
-                            )}
-                        </button>
-                    );
-                })}
-            </div>
+            <TabBar tabs={tabs} activeTab={activeTab} onTabChange={onTabChange} counts={tabCounts} theme="tinted" />
 
             {/* Source filters */}
             <div className="flex items-center gap-2 flex-wrap">

@@ -1,6 +1,6 @@
+import { InsightRow as SharedInsightRow } from "@ui/custom";
 import { AlertTriangle, Clock, Terminal, TrendingDown, TrendingUp, Zap } from "lucide-react";
 import type { WeeklyReview } from "@/lib/assistant/types";
-import { cn } from "@/lib/utils";
 
 interface WeeklyInsightsProps {
     review: WeeklyReview | null;
@@ -56,7 +56,7 @@ export function WeeklyInsights({ review, comparison, loading }: WeeklyInsightsPr
                         {">"} Complete more tasks to unlock insights
                     </div>
                 ) : (
-                    insights.map((insight, index) => <InsightRow key={index} insight={insight} index={index} />)
+                    insights.map((insight) => <WeeklyInsightRow key={insight.text} insight={insight} />)
                 )}
             </div>
 
@@ -71,24 +71,17 @@ export function WeeklyInsights({ review, comparison, loading }: WeeklyInsightsPr
     );
 }
 
-function InsightRow({ insight, index }: { insight: Insight; index: number }) {
+function WeeklyInsightRow({ insight }: { insight: Insight }) {
     const Icon = insight.icon;
+    const color = insight.type === "positive" ? "emerald" : insight.type === "warning" ? "amber" : "purple";
 
     return (
-        <div
-            className={cn(
-                "flex items-start gap-3 p-2 rounded-lg transition-colors",
-                insight.type === "positive" && "bg-emerald-500/5 hover:bg-emerald-500/10",
-                insight.type === "warning" && "bg-amber-500/5 hover:bg-amber-500/10",
-                insight.type === "neutral" && "bg-white/5 hover:bg-white/10"
-            )}
-            style={{
-                animationDelay: `${index * 100}ms`,
-            }}
-        >
-            <Icon className={cn("h-4 w-4 mt-0.5 flex-shrink-0", insight.iconColor)} />
-            <p className="text-sm text-foreground/90 font-mono leading-relaxed">{insight.text}</p>
-        </div>
+        <SharedInsightRow
+            icon={<Icon className={insight.iconColor} />}
+            title={<span className="font-mono text-foreground/90">{insight.text}</span>}
+            color={color}
+            className="p-2 transition-colors"
+        />
     );
 }
 

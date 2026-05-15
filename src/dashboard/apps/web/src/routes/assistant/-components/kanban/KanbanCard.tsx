@@ -1,8 +1,10 @@
 import { useDraggable } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
 import { Link } from "@tanstack/react-router";
-import { AlertCircle, AlertTriangle, Calendar, Clock, GripVertical, Sparkles } from "lucide-react";
+import { AlertBlock, TaskMetaRow } from "@ui/custom";
+import { AlertCircle, AlertTriangle, GripVertical, Sparkles } from "lucide-react";
 import type { Task, UrgencyLevel } from "@/lib/assistant/types";
+import { formatFocusTime } from "@/lib/assistant/utils";
 import { cn } from "@/lib/utils";
 
 interface KanbanCardProps {
@@ -79,21 +81,6 @@ function formatDeadlineRelative(deadline: Date): { text: string; isOverdue: bool
 /**
  * Format focus time
  */
-function formatFocusTime(minutes: number): string {
-    if (minutes === 0) {
-        return "--";
-    }
-    const hours = Math.floor(minutes / 60);
-    const mins = minutes % 60;
-    if (hours === 0) {
-        return `${mins}m`;
-    }
-    if (mins === 0) {
-        return `${hours}h`;
-    }
-    return `${hours}h ${mins}m`;
-}
-
 /**
  * KanbanCard - Draggable task card for Kanban board
  */
@@ -206,33 +193,21 @@ export function KanbanCard({ task, isDragOverlay = false, className }: KanbanCar
                 )}
 
                 {/* Footer: Deadline + Focus time */}
-                <div className="flex items-center justify-between mt-3 text-[10px] text-muted-foreground">
-                    {/* Deadline */}
-                    <div className="flex items-center gap-1">
-                        <Calendar className="h-3 w-3" />
-                        {deadlineInfo ? (
-                            <span className={cn(deadlineInfo.isOverdue && "text-red-400 font-medium")}>
-                                {deadlineInfo.text}
-                            </span>
-                        ) : (
-                            <span>No deadline</span>
-                        )}
-                    </div>
-
-                    {/* Focus time */}
-                    <div className="flex items-center gap-1">
-                        <Clock className="h-3 w-3" />
-                        <span>{formatFocusTime(task.focusTimeLogged)}</span>
-                    </div>
-                </div>
+                <TaskMetaRow
+                    deadline={deadlineInfo?.text ?? "No deadline"}
+                    deadlineClassName={cn(deadlineInfo?.isOverdue && "text-red-400 font-medium")}
+                    focusTimeLabel={formatFocusTime(task.focusTimeLogged, "--")}
+                    size="xs"
+                    className="justify-between mt-3 text-muted-foreground"
+                />
 
                 {/* Context parking indicator */}
                 {task.contextParkingLot && (
-                    <div className="mt-2 p-1.5 rounded bg-purple-500/10 border border-purple-500/20">
+                    <AlertBlock color="purple" size="sm" className="mt-2 p-1.5 rounded">
                         <p className="text-[9px] text-purple-300 line-clamp-1">
                             <span className="font-semibold">Parked:</span> {task.contextParkingLot}
                         </p>
-                    </div>
+                    </AlertBlock>
                 )}
             </div>
         </div>

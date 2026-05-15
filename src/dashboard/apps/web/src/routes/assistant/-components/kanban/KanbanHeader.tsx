@@ -1,5 +1,5 @@
+import { Button } from "@ui/components/button";
 import { Plus } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import type { TaskStatus } from "@/lib/assistant/types";
 import { cn } from "@/lib/utils";
 

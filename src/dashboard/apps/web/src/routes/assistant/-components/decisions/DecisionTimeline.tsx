@@ -1,3 +1,4 @@
+import { StatusBadge } from "@ui/custom";
 import { Calendar, ChevronDown, ChevronRight, Scale } from "lucide-react";
 import { useState } from "react";
 import type { Decision, DecisionImpactArea, DecisionStatus } from "@/lib/assistant/types";
@@ -115,11 +116,14 @@ function TimelineNode({ decision, isLast, onClick }: { decision: Decision; isLas
                     <span className="text-xs text-muted-foreground font-mono">
                         {dateInfo.month} {dateInfo.day}, {dateInfo.year}
                     </span>
-                    <span
-                        className={cn("text-[10px] px-2 py-0.5 rounded-full border", impactColors[decision.impactArea])}
+                    <StatusBadge
+                        bgClass={impactColors[decision.impactArea]}
+                        textClass=""
+                        uppercase={false}
+                        className="border"
                     >
                         {decision.impactArea}
-                    </span>
+                    </StatusBadge>
                 </div>
 
                 {/* Decision card */}

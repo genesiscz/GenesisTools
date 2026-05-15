@@ -1,6 +1,6 @@
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@ui/components/dialog";
 import { AlertTriangle, Calendar, ChevronRight, Clock, Percent, TrendingDown } from "lucide-react";
 import { useState } from "react";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import type { DeadlineRisk, DeadlineRiskOption, Task } from "@/lib/assistant/types";
 import { cn } from "@/lib/utils";
 import { EscalationOptions, type EscalationResolutionData } from "./EscalationOptions";

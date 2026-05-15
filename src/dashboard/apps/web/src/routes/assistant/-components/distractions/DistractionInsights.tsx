@@ -1,3 +1,4 @@
+import { Button } from "@ui/components/button";
 import { FeatureCard, FeatureCardContent, FeatureCardHeader } from "@ui/custom/feature-card-nexus";
 import {
     BellOff,
@@ -11,7 +12,6 @@ import {
     Shield,
 } from "lucide-react";
 import { useMemo, useState } from "react";
-import { Button } from "@/components/ui/button";
 import type { DistractionStats } from "@/lib/assistant/lib/storage/types";
 import type { Distraction } from "@/lib/assistant/types";
 import { cn } from "@/lib/utils";
@@ -166,28 +166,24 @@ const colorConfig = {
         border: "border-cyan-500/20",
         iconBg: "bg-cyan-500/20",
         iconColor: "text-cyan-400",
-        buttonBg: "bg-cyan-600 hover:bg-cyan-700",
     },
     purple: {
         bg: "bg-purple-500/10",
         border: "border-purple-500/20",
         iconBg: "bg-purple-500/20",
         iconColor: "text-purple-400",
-        buttonBg: "bg-purple-600 hover:bg-purple-700",
     },
     amber: {
         bg: "bg-amber-500/10",
         border: "border-amber-500/20",
         iconBg: "bg-amber-500/20",
         iconColor: "text-amber-400",
-        buttonBg: "bg-amber-600 hover:bg-amber-700",
     },
     green: {
         bg: "bg-green-500/10",
         border: "border-green-500/20",
         iconBg: "bg-green-500/20",
         iconColor: "text-green-400",
-        buttonBg: "bg-green-600 hover:bg-green-700",
     },
 };
 

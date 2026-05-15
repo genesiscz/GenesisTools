@@ -1,6 +1,6 @@
+import { Button } from "@ui/components/button";
 import { ArrowRight, Calendar, Check, ChevronDown, ChevronUp, Eye, FileText, X } from "lucide-react";
 import { useState } from "react";
-import { Button } from "@/components/ui/button";
 import type { Decision, HandoffDocument, TaskBlocker } from "@/lib/assistant/types";
 import { cn } from "@/lib/utils";
 import { HandoffDocument as HandoffDocumentView } from "./HandoffDocument";

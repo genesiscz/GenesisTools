@@ -1,9 +1,17 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { Button } from "@ui/components/button";
+import {
+    AnimatedCard,
+    KbdShortcut,
+    PageLoadingSpinner,
+    EmptyState as SharedEmptyState,
+    StreakBadge,
+    ViewModeToggle,
+} from "@ui/custom";
 import { useAuth } from "@workos/authkit-tanstack-react-start/client";
-import { Flame, Kanban, LayoutGrid, ListTodo, Loader2, ParkingCircle, Plus } from "lucide-react";
+import { Kanban, LayoutGrid, ListTodo, ParkingCircle, Plus } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { DashboardLayout } from "@/components/dashboard";
-import { Button } from "@/components/ui/button";
 import { ContextParkingModal, TaskCard, TaskForm } from "@/lib/assistant/components";
 import { useContextParking, useDeadlineRisk, useTaskStore } from "@/lib/assistant/hooks";
 import type {
@@ -14,7 +22,6 @@ import type {
     TaskStatus,
     UrgencyLevel,
 } from "@/lib/assistant/types";
-import { cn } from "@/lib/utils";
 import { CelebrationManagerProvider, useCelebrationManager } from "../-components/celebrations";
 import type { EscalationResolutionData } from "../-components/escalation";
 import { EscalationAlert, EscalationWidget } from "../-components/escalation";
@@ -233,12 +240,7 @@ function TasksPage() {
     if (authLoading || (!initialized && loading)) {
         return (
             <DashboardLayout title="Tasks" description="Manage your tasks">
-                <div className="flex items-center justify-center min-h-[60vh]">
-                    <div className="flex flex-col items-center gap-4">
-                        <Loader2 className="h-8 w-8 text-purple-400 animate-spin" />
-                        <span className="text-muted-foreground text-sm font-mono">Loading tasks...</span>
-                    </div>
-                </div>
+                <PageLoadingSpinner label="Loading tasks..." />
             </DashboardLayout>
         );
     }
@@ -268,12 +270,7 @@ function TasksPage() {
                     </div>
 
                     {/* Streak indicator */}
-                    {streak && streak.currentStreakDays > 0 && (
-                        <div className="flex items-center gap-1.5 text-sm text-orange-400">
-                            <Flame className="h-4 w-4" />
-                            <span className="font-semibold">{streak.currentStreakDays} day streak</span>
-                        </div>
-                    )}
+                    {streak && streak.currentStreakDays > 0 && <StreakBadge days={streak.currentStreakDays} />}
 
                     {/* Escalation widget - shows deadline risks */}
                     <EscalationWidget userId={userId} tasks={tasks} onResolve={handleEscalationResolve} />
@@ -290,38 +287,18 @@ function TasksPage() {
                     >
                         <ParkingCircle className="h-4 w-4" />
                         <span className="hidden sm:inline">Park</span>
-                        <kbd className="hidden lg:inline-flex h-5 items-center gap-1 rounded border bg-muted px-1.5 text-[10px] font-medium text-muted-foreground">
-                            <span className="text-xs">Cmd</span>P
-                        </kbd>
+                        <KbdShortcut keys={["Cmd P"]} className="hidden lg:inline-flex" />
                     </Button>
 
                     {/* View mode toggle */}
-                    <div className="flex items-center border rounded-lg overflow-hidden">
-                        <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => setViewMode("kanban")}
-                            className={cn(
-                                "h-8 px-3 rounded-none",
-                                viewMode === "kanban" && "bg-purple-500/20 text-purple-400"
-                            )}
-                            title="Kanban view"
-                        >
-                            <Kanban className="h-4 w-4" />
-                        </Button>
-                        <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => setViewMode("grid")}
-                            className={cn(
-                                "h-8 px-3 rounded-none",
-                                viewMode === "grid" && "bg-purple-500/20 text-purple-400"
-                            )}
-                            title="Grid view"
-                        >
-                            <LayoutGrid className="h-4 w-4" />
-                        </Button>
-                    </div>
+                    <ViewModeToggle
+                        modes={[
+                            { value: "kanban", label: "Kanban", icon: Kanban },
+                            { value: "grid", label: "Grid", icon: LayoutGrid },
+                        ]}
+                        value={viewMode}
+                        onChange={setViewMode}
+                    />
 
                     {/* Create button */}
                     <Button
@@ -330,7 +307,8 @@ function TasksPage() {
                             setCreateDialogOpen(true);
                         }}
                         size="sm"
-                        className="gap-2 bg-purple-600 hover:bg-purple-700"
+                        variant="brand"
+                        className="gap-2"
                     >
                         <Plus className="h-4 w-4" />
                         <span className="hidden sm:inline">Add Task</span>
@@ -340,7 +318,7 @@ function TasksPage() {
 
             {/* Board/Grid content */}
             {tasks.length === 0 ? (
-                <EmptyState onAddTask={() => setCreateDialogOpen(true)} />
+                <TasksEmptyState onAddTask={() => setCreateDialogOpen(true)} />
             ) : viewMode === "kanban" ? (
                 <KanbanBoard
                     tasks={tasks}
@@ -443,11 +421,7 @@ function GridView({
             {sortedTasks.map((task, index) => {
                 const risk = getRiskForTask(task.id);
                 return (
-                    <div
-                        key={task.id}
-                        className="animate-fade-in-up h-full"
-                        style={{ animationDelay: `${index * 50}ms` }}
-                    >
+                    <AnimatedCard key={task.id} index={index}>
                         <TaskCard
                             task={task}
                             riskLevel={risk?.riskLevel}
@@ -456,7 +430,7 @@ function GridView({
                             onComplete={onComplete}
                             className="h-full"
                         />
-                    </div>
+                    </AnimatedCard>
                 );
             })}
         </div>
@@ -466,37 +440,18 @@ function GridView({
 /**
  * Empty state component
  */
-function EmptyState({ onAddTask }: { onAddTask: () => void }) {
+function TasksEmptyState({ onAddTask }: { onAddTask: () => void }) {
     return (
-        <div className="flex flex-col items-center justify-center py-24 px-6">
-            {/* Decorative element */}
-            <div
-                className={cn(
-                    "relative w-32 h-32 mb-8",
-                    "flex items-center justify-center",
-                    "rounded-full",
-                    "bg-gradient-to-br from-purple-500/10 to-purple-500/5",
-                    "border border-purple-500/20",
-                    "animate-pulse-glow"
-                )}
-            >
-                <div className="absolute inset-0 rounded-full border border-purple-500/20 animate-ripple" />
-                <div className="absolute inset-0 rounded-full border border-purple-500/20 animate-ripple-delayed" />
-                <ListTodo className="h-12 w-12 text-purple-400/50" />
-            </div>
-
-            {/* Text */}
-            <h2 className="text-xl font-semibold text-foreground/70 mb-2">No tasks yet</h2>
-            <p className="text-muted-foreground text-center max-w-md mb-8">
-                Create your first task to get started with the Kanban board. Drag tasks between columns to update their
-                status.
-            </p>
-
-            {/* CTA Button */}
-            <Button onClick={onAddTask} size="lg" className="gap-3 bg-purple-600 hover:bg-purple-700">
-                <Plus className="h-5 w-5" />
-                Create your first task
-            </Button>
-        </div>
+        <SharedEmptyState
+            icon={ListTodo}
+            title="No tasks yet"
+            description="Create your first task to get started with the Kanban board. Drag tasks between columns to update their status."
+            cta={
+                <Button onClick={onAddTask} size="lg" variant="brand" className="gap-3">
+                    <Plus className="h-5 w-5" />
+                    Create your first task
+                </Button>
+            }
+        />
     );
 }

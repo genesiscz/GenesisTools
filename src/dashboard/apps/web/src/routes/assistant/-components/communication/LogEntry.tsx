@@ -1,3 +1,13 @@
+import { Badge } from "@ui/components/badge";
+import { Button } from "@ui/components/button";
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuSeparator,
+    DropdownMenuTrigger,
+} from "@ui/components/dropdown-menu";
+import { IconBox, MetaItem, StatusBadge } from "@ui/custom";
 import {
     Calendar,
     ChevronDown,
@@ -14,16 +24,8 @@ import {
     Users,
 } from "lucide-react";
 import { useState } from "react";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import {
-    DropdownMenu,
-    DropdownMenuContent,
-    DropdownMenuItem,
-    DropdownMenuSeparator,
-    DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import type { CommunicationEntry, CommunicationSentiment, CommunicationSource } from "@/lib/assistant/types";
+import { formatCompactRelativeTime } from "@/lib/assistant/utils";
 import { cn } from "@/lib/utils";
 
 interface LogEntryProps {
@@ -134,32 +136,6 @@ function getSentimentConfig(sentiment: CommunicationSentiment): {
 /**
  * Format relative time
  */
-function formatRelativeTime(date: Date): string {
-    const now = new Date();
-    const diff = now.getTime() - new Date(date).getTime();
-    const minutes = Math.floor(diff / (1000 * 60));
-    const hours = Math.floor(diff / (1000 * 60 * 60));
-    const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-
-    if (minutes < 1) {
-        return "Just now";
-    }
-    if (minutes < 60) {
-        return `${minutes}m ago`;
-    }
-    if (hours < 24) {
-        return `${hours}h ago`;
-    }
-    if (days < 7) {
-        return `${days}d ago`;
-    }
-
-    return new Date(date).toLocaleDateString("en-US", {
-        month: "short",
-        day: "numeric",
-    });
-}
-
 /**
  * LogEntry component - Single communication log entry card
  */
@@ -232,37 +208,34 @@ export function LogEntry({ entry, onEdit, onDelete, onLinkTask, animationDelay =
                 <div className="flex items-start justify-between gap-3 mb-3">
                     {/* Source icon and label */}
                     <div className="flex items-center gap-3">
-                        <div
-                            className={cn(
-                                "flex items-center justify-center w-9 h-9 rounded-lg",
-                                sourceConfig.bgColor,
-                                "border",
-                                sourceConfig.borderColor
-                            )}
-                        >
-                            <SourceIcon className={cn("h-4 w-4", sourceConfig.color)} />
-                        </div>
+                        <IconBox
+                            icon={<SourceIcon />}
+                            size="md"
+                            bgClass={sourceConfig.bgColor}
+                            borderClass={sourceConfig.borderColor}
+                            iconClass={sourceConfig.color}
+                        />
                         <div>
                             <span className={cn("text-xs font-medium", sourceConfig.color)}>{sourceConfig.label}</span>
-                            <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                                <Calendar className="h-3 w-3" />
-                                <span>{formatRelativeTime(entry.discussedAt)}</span>
-                            </div>
+                            <MetaItem
+                                icon={<Calendar />}
+                                className="text-[11px] text-muted-foreground [&_svg]:h-3 [&_svg]:w-3"
+                            >
+                                {formatCompactRelativeTime(entry.discussedAt)}
+                            </MetaItem>
                         </div>
                     </div>
 
                     {/* Actions */}
                     <div className="flex items-center gap-2">
                         {/* Sentiment badge */}
-                        <span
-                            className={cn(
-                                "text-[10px] font-semibold px-2 py-0.5 rounded-full uppercase tracking-wide border",
-                                sentimentConfig.bgColor,
-                                sentimentConfig.color
-                            )}
+                        <StatusBadge
+                            bgClass={sentimentConfig.bgColor}
+                            textClass={sentimentConfig.color}
+                            className="border"
                         >
                             {sentimentConfig.label}
-                        </span>
+                        </StatusBadge>
 
                         {/* Menu */}
                         <DropdownMenu>

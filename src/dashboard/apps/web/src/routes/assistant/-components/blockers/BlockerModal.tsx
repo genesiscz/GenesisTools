@@ -1,6 +1,4 @@
-import { AlertTriangle, ArrowRight, Ban, Bell, Timer, User } from "lucide-react";
-import { useState } from "react";
-import { Button } from "@/components/ui/button";
+import { Button } from "@ui/components/button";
 import {
     Dialog,
     DialogContent,
@@ -8,10 +6,12 @@ import {
     DialogFooter,
     DialogHeader,
     DialogTitle,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
+} from "@ui/components/dialog";
+import { Input } from "@ui/components/input";
+import { Label } from "@ui/components/label";
+import { Textarea } from "@ui/components/textarea";
+import { AlertTriangle, ArrowRight, Ban, Bell, Timer, User } from "lucide-react";
+import { useState } from "react";
 import type { BlockerFollowUpAction, Task, TaskBlockerInput } from "@/lib/assistant/types";
 import { cn } from "@/lib/utils";
 

@@ -1,3 +1,4 @@
+import { ChartSkeleton } from "@ui/custom";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import type { WeeklyReview } from "@/lib/assistant/types";
 
@@ -140,20 +141,6 @@ function CustomTooltip({
                     <span className="text-white font-medium">{data.focus}h</span> focus time
                 </p>
             </div>
-        </div>
-    );
-}
-
-function ChartSkeleton() {
-    return (
-        <div className="relative overflow-hidden rounded-xl bg-[#0a0a14]/80 backdrop-blur-sm border border-white/5 p-4">
-            <div className="flex items-center justify-between mb-4">
-                <div>
-                    <div className="h-4 w-32 bg-white/5 rounded animate-pulse mb-1" />
-                    <div className="h-3 w-40 bg-white/5 rounded animate-pulse" />
-                </div>
-            </div>
-            <div className="h-[200px] bg-white/5 rounded animate-pulse" />
         </div>
     );
 }

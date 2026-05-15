@@ -1,7 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { IconSectionHeader, PageLoadingSpinner } from "@ui/custom";
 import { FeatureCard } from "@ui/custom/feature-card-nexus";
 import { useAuth } from "@workos/authkit-tanstack-react-start/client";
-import { Activity, Loader2, Zap } from "lucide-react";
+import { Activity, Zap } from "lucide-react";
 import { useEffect, useState } from "react";
 import { DashboardLayout } from "@/components/dashboard";
 import { useDistractions, useEnergyData, useTaskStore } from "@/lib/assistant/hooks";
@@ -145,12 +146,7 @@ function AnalyticsPage() {
     if (authLoading || (!initialized && tasksLoading)) {
         return (
             <DashboardLayout title="Analytics" description="Productivity insights and patterns">
-                <div className="flex items-center justify-center min-h-[60vh]">
-                    <div className="flex flex-col items-center gap-4">
-                        <Loader2 className="h-8 w-8 text-purple-400 animate-spin" />
-                        <span className="text-muted-foreground text-sm font-mono">Loading analytics...</span>
-                    </div>
-                </div>
+                <PageLoadingSpinner label="Loading analytics..." />
             </DashboardLayout>
         );
     }
@@ -179,20 +175,15 @@ function AnalyticsPage() {
 
                 {/* Energy Heatmap Section */}
                 <section className="space-y-4">
-                    <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                            <div className="p-2 rounded-lg bg-cyan-500/10 border border-cyan-500/20">
-                                <Activity className="h-5 w-5 text-cyan-400" />
-                            </div>
-                            <div>
-                                <h2 className="text-xl font-semibold text-slate-100">Energy Heatmap</h2>
-                                <p className="text-sm text-slate-500">
-                                    Your productivity patterns over the last 30 days
-                                </p>
-                            </div>
-                        </div>
-                        <LogEnergyButton onLogEnergy={handleLogEnergy} loading={energyData.loading} />
-                    </div>
+                    <IconSectionHeader
+                        icon={<Activity />}
+                        title="Energy Heatmap"
+                        subtitle="Your productivity patterns over the last 30 days"
+                        iconBgClass="bg-cyan-500/10"
+                        iconBorderClass="border-cyan-500/20"
+                        iconColorClass="text-cyan-400"
+                        actions={<LogEnergyButton onLogEnergy={handleLogEnergy} loading={energyData.loading} />}
+                    />
 
                     <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
                         {/* Heatmap Grid */}
@@ -219,15 +210,14 @@ function AnalyticsPage() {
 
                 {/* Distraction Tracker Section */}
                 <section className="space-y-4">
-                    <div className="flex items-center gap-3">
-                        <div className="p-2 rounded-lg bg-cyan-500/10 border border-cyan-500/20">
-                            <Zap className="h-5 w-5 text-cyan-400" />
-                        </div>
-                        <div>
-                            <h2 className="text-xl font-semibold text-slate-100">Distraction Tracker</h2>
-                            <p className="text-sm text-slate-500">Understand and reduce interruptions (Last 7 days)</p>
-                        </div>
-                    </div>
+                    <IconSectionHeader
+                        icon={<Zap />}
+                        title="Distraction Tracker"
+                        subtitle="Understand and reduce interruptions (Last 7 days)"
+                        iconBgClass="bg-cyan-500/10"
+                        iconBorderClass="border-cyan-500/20"
+                        iconColorClass="text-cyan-400"
+                    />
 
                     <div className="grid gap-6 lg:grid-cols-2">
                         {/* Distribution chart */}

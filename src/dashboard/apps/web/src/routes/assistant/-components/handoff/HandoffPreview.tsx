@@ -1,5 +1,4 @@
-import { AlertTriangle, Ban, Edit2, Eye, ListChecks, Phone, Scale, Send, Terminal } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Button } from "@ui/components/button";
 import {
     Dialog,
     DialogContent,
@@ -7,7 +6,8 @@ import {
     DialogFooter,
     DialogHeader,
     DialogTitle,
-} from "@/components/ui/dialog";
+} from "@ui/components/dialog";
+import { AlertTriangle, Ban, Edit2, Eye, ListChecks, Phone, Scale, Send, Terminal } from "lucide-react";
 import type { Decision, Task, TaskBlocker } from "@/lib/assistant/types";
 import { cn } from "@/lib/utils";
 

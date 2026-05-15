@@ -1,13 +1,13 @@
-import { Check, Copy, Download, Share2 } from "lucide-react";
-import { useState } from "react";
-import { Button } from "@/components/ui/button";
+import { Button } from "@ui/components/button";
 import {
     DropdownMenu,
     DropdownMenuContent,
     DropdownMenuItem,
     DropdownMenuSeparator,
     DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+} from "@ui/components/dropdown-menu";
+import { Check, Copy, Download, Share2 } from "lucide-react";
+import { useState } from "react";
 import type { Streak, WeeklyReview } from "@/lib/assistant/types";
 
 interface ReviewExportProps {

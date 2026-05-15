@@ -1,9 +1,10 @@
+import { Button } from "@ui/components/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@ui/components/select";
 import { FeatureCard, FeatureCardContent, FeatureCardHeader } from "@ui/custom/feature-card-nexus";
 import { ArrowRight, Calendar, Check, ChevronRight, Clock, FileText, Filter, History, User } from "lucide-react";
 import { useState } from "react";
-import { Button } from "@/components/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { Decision, HandoffDocument, TaskBlocker } from "@/lib/assistant/types";
+import { formatHandoffRelativeTime } from "@/lib/assistant/utils";
 import { cn } from "@/lib/utils";
 import { HandoffDocument as HandoffDocumentView } from "./HandoffDocument";
 
@@ -21,34 +22,6 @@ type FilterStatus = "all" | "pending" | "reviewed";
  * Compact handoff card for list view
  */
 function HandoffCard({ handoff, onClick }: { handoff: HandoffDocument; onClick: () => void }) {
-    function formatDate(date: Date): string {
-        return new Date(date).toLocaleDateString(undefined, {
-            month: "short",
-            day: "numeric",
-            year: "numeric",
-        });
-    }
-
-    function formatRelativeTime(date: Date): string {
-        const now = new Date();
-        const diff = now.getTime() - new Date(date).getTime();
-        const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-
-        if (days === 0) {
-            return "Today";
-        }
-        if (days === 1) {
-            return "Yesterday";
-        }
-        if (days < 7) {
-            return `${days} days ago`;
-        }
-        if (days < 30) {
-            return `${Math.floor(days / 7)} weeks ago`;
-        }
-        return formatDate(date);
-    }
-
     return (
         <button
             type="button"
@@ -77,7 +50,7 @@ function HandoffCard({ handoff, onClick }: { handoff: HandoffDocument; onClick: 
                         </div>
                         <div className="flex items-center gap-1">
                             <Calendar className="h-3 w-3" />
-                            <span>{formatRelativeTime(new Date(handoff.handoffAt))}</span>
+                            <span>{formatHandoffRelativeTime(new Date(handoff.handoffAt))}</span>
                         </div>
                     </div>
 

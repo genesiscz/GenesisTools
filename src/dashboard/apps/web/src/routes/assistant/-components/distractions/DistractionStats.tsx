@@ -1,3 +1,4 @@
+import { StatTile, StatusBadge } from "@ui/custom";
 import { FeatureCard, FeatureCardContent, FeatureCardHeader } from "@ui/custom/feature-card-nexus";
 import {
     AlertCircle,
@@ -15,7 +16,6 @@ import { useEffect, useState } from "react";
 import { Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 import type { DistractionStats as DistractionStatsType } from "@/lib/assistant/lib/storage/types";
 import type { DistractionSource } from "@/lib/assistant/types";
-import { cn } from "@/lib/utils";
 
 interface DistractionStatsProps {
     stats: DistractionStatsType | null;
@@ -138,6 +138,11 @@ export function DistractionStats({ stats, trend, loading = false, className }: D
     }, [stats]);
 
     const TrendIcon = trend === "improving" ? TrendingDown : trend === "worsening" ? TrendingUp : Minus;
+    const trendConfig = {
+        improving: { bg: "bg-green-500/10", text: "text-green-400", border: "border-green-500/20", label: "Improving" },
+        worsening: { bg: "bg-red-500/10", text: "text-red-400", border: "border-red-500/20", label: "Worsening" },
+        stable: { bg: "bg-gray-500/10", text: "text-gray-400", border: "border-gray-500/20", label: "Stable" },
+    }[trend];
 
     if (loading) {
         return (
@@ -176,45 +181,40 @@ export function DistractionStats({ stats, trend, loading = false, className }: D
             <FeatureCardHeader>
                 <div className="flex items-center justify-between">
                     <h3 className="text-lg font-semibold">Distraction Sources</h3>
-                    <div
-                        className={cn(
-                            "flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium",
-                            trend === "improving"
-                                ? "bg-green-500/10 text-green-400 border border-green-500/20"
-                                : trend === "worsening"
-                                  ? "bg-red-500/10 text-red-400 border border-red-500/20"
-                                  : "bg-gray-500/10 text-gray-400 border border-gray-500/20"
-                        )}
+                    <StatusBadge
+                        bgClass={trendConfig.bg}
+                        textClass={trendConfig.text}
+                        borderClass={trendConfig.border}
+                        uppercase={false}
+                        icon={<TrendIcon className="h-3 w-3" />}
+                        className="py-1 text-xs font-medium"
                     >
-                        <TrendIcon className="h-3 w-3" />
-                        {trend === "improving" ? "Improving" : trend === "worsening" ? "Worsening" : "Stable"}
-                    </div>
+                        {trendConfig.label}
+                    </StatusBadge>
                 </div>
             </FeatureCardHeader>
 
             <FeatureCardContent>
                 {/* Summary stats */}
                 <div className="grid grid-cols-2 gap-4 mb-6">
-                    <div className="p-3 rounded-lg bg-white/5 border border-white/10">
-                        <div className="flex items-center gap-2 text-muted-foreground mb-1">
-                            <AlertCircle className="h-4 w-4" />
-                            <span className="text-xs">Total Interruptions</span>
-                        </div>
-                        <p className="text-2xl font-bold text-cyan-400">{stats?.totalDistractions ?? 0}</p>
-                    </div>
-                    <div className="p-3 rounded-lg bg-white/5 border border-white/10">
-                        <div className="flex items-center gap-2 text-muted-foreground mb-1">
-                            <Clock className="h-4 w-4" />
-                            <span className="text-xs">Time Lost</span>
-                        </div>
-                        <p className="text-2xl font-bold text-orange-400">
-                            {stats?.totalDurationMinutes
+                    <StatTile
+                        icon={<AlertCircle />}
+                        label="Total Interruptions"
+                        value={stats?.totalDistractions ?? 0}
+                        valueColor="text-cyan-400"
+                    />
+                    <StatTile
+                        icon={<Clock />}
+                        label="Time Lost"
+                        value={
+                            stats?.totalDurationMinutes
                                 ? stats.totalDurationMinutes < 60
                                     ? `${stats.totalDurationMinutes}m`
                                     : `${Math.floor(stats.totalDurationMinutes / 60)}h ${stats.totalDurationMinutes % 60}m`
-                                : "0m"}
-                        </p>
-                    </div>
+                                : "0m"
+                        }
+                        valueColor="text-orange-400"
+                    />
                 </div>
 
                 {/* Pie chart */}

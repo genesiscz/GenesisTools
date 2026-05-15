@@ -1,3 +1,4 @@
+import { ChartSkeleton } from "@ui/custom";
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 import type { WeeklyReview } from "@/lib/assistant/types";
 
@@ -142,20 +143,6 @@ function CustomTooltip({
                 <span className="text-white font-medium">{data.value}</span> deadline
                 {data.value !== 1 ? "s" : ""} ({percent}%)
             </p>
-        </div>
-    );
-}
-
-function ChartSkeleton() {
-    return (
-        <div className="relative overflow-hidden rounded-xl bg-[#0a0a14]/80 backdrop-blur-sm border border-white/5 p-4 h-full">
-            <div className="mb-4">
-                <div className="h-4 w-36 bg-white/5 rounded animate-pulse mb-1" />
-                <div className="h-3 w-24 bg-white/5 rounded animate-pulse" />
-            </div>
-            <div className="h-[180px] flex items-center justify-center">
-                <div className="h-[140px] w-[140px] rounded-full bg-white/5 animate-pulse" />
-            </div>
         </div>
     );
 }

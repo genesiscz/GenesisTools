@@ -1,3 +1,12 @@
+import { Button } from "@ui/components/button";
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuSeparator,
+    DropdownMenuTrigger,
+} from "@ui/components/dropdown-menu";
+import { AlertBlock, MetaItem, MetaRow, StatusBadge, TagChip } from "@ui/custom";
 import { FeatureCard, FeatureCardContent, FeatureCardHeader } from "@ui/custom/feature-card-nexus";
 import {
     ArrowRightCircle,
@@ -14,14 +23,6 @@ import {
     User,
 } from "lucide-react";
 import { useState } from "react";
-import { Button } from "@/components/ui/button";
-import {
-    DropdownMenu,
-    DropdownMenuContent,
-    DropdownMenuItem,
-    DropdownMenuSeparator,
-    DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import type { Decision, DecisionImpactArea, DecisionStatus } from "@/lib/assistant/types";
 import { cn } from "@/lib/utils";
 
@@ -160,38 +161,33 @@ export function DecisionCard({
                 <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center gap-2">
                         {/* Status badge */}
-                        <span
-                            className={cn(
-                                "text-[10px] font-semibold px-2 py-0.5 rounded-full uppercase tracking-wide",
-                                statusInfo.bgClass,
-                                statusInfo.colorClass,
-                                "border",
-                                statusInfo.borderClass
-                            )}
+                        <StatusBadge
+                            bgClass={statusInfo.bgClass}
+                            textClass={statusInfo.colorClass}
+                            borderClass={statusInfo.borderClass}
+                            icon={
+                                <span
+                                    className={cn(
+                                        "inline-block h-1.5 w-1.5 rounded-full",
+                                        decision.status === "active" && "bg-emerald-400",
+                                        decision.status === "superseded" && "bg-gray-400",
+                                        decision.status === "reversed" && "bg-rose-400"
+                                    )}
+                                />
+                            }
                         >
-                            <span
-                                className={cn(
-                                    "inline-block h-1.5 w-1.5 rounded-full mr-1.5",
-                                    decision.status === "active" && "bg-emerald-400",
-                                    decision.status === "superseded" && "bg-gray-400",
-                                    decision.status === "reversed" && "bg-rose-400"
-                                )}
-                            />
                             {statusInfo.label}
-                        </span>
+                        </StatusBadge>
 
                         {/* Impact area badge */}
-                        <span
-                            className={cn(
-                                "text-[10px] font-medium px-2 py-0.5 rounded-full",
-                                impactInfo.bgClass,
-                                impactInfo.colorClass,
-                                "border",
-                                impactInfo.borderClass
-                            )}
+                        <StatusBadge
+                            bgClass={impactInfo.bgClass}
+                            textClass={impactInfo.colorClass}
+                            borderClass={impactInfo.borderClass}
+                            uppercase={false}
                         >
                             {impactInfo.label}
-                        </span>
+                        </StatusBadge>
                     </div>
 
                     {/* Actions menu */}
@@ -254,16 +250,10 @@ export function DecisionCard({
                 </div>
 
                 {/* Meta info row */}
-                <div className="flex items-center gap-4 mt-3 text-xs text-muted-foreground">
-                    <div className="flex items-center gap-1.5">
-                        <Calendar className="h-3.5 w-3.5" />
-                        <span>{formatDate(decision.decidedAt)}</span>
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                        <User className="h-3.5 w-3.5" />
-                        <span>{decision.decidedBy}</span>
-                    </div>
-                </div>
+                <MetaRow className="mt-3">
+                    <MetaItem icon={<Calendar />}>{formatDate(decision.decidedAt)}</MetaItem>
+                    <MetaItem icon={<User />}>{decision.decidedBy}</MetaItem>
+                </MetaRow>
             </FeatureCardHeader>
 
             <FeatureCardContent className="pt-2">
@@ -311,12 +301,12 @@ export function DecisionCard({
 
                     {/* Reversal reason (if reversed) */}
                     {decision.status === "reversed" && decision.reversalReason && (
-                        <div className="space-y-2 mt-4 p-3 rounded-lg bg-rose-500/10 border border-rose-500/20">
+                        <AlertBlock color="rose" className="space-y-2 mt-4">
                             <h4 className="text-xs font-semibold text-rose-400 uppercase tracking-wide">
                                 Reversal Reason
                             </h4>
                             <p className="text-sm text-rose-300">{decision.reversalReason}</p>
-                        </div>
+                        </AlertBlock>
                     )}
 
                     {/* Tags */}
@@ -324,12 +314,7 @@ export function DecisionCard({
                         <div className="flex items-center gap-2 mt-4 flex-wrap">
                             <Tag className="h-3.5 w-3.5 text-muted-foreground" />
                             {decision.tags.map((tag) => (
-                                <span
-                                    key={tag}
-                                    className="text-[10px] px-2 py-0.5 rounded-full bg-white/5 border border-white/10 text-muted-foreground"
-                                >
-                                    {tag}
-                                </span>
+                                <TagChip key={tag}>{tag}</TagChip>
                             ))}
                         </div>
                     )}

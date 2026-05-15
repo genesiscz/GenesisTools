@@ -1,3 +1,4 @@
+import { Button } from "@ui/components/button";
 import {
     AlertTriangle,
     ArrowRight,
@@ -15,7 +16,6 @@ import {
     User,
 } from "lucide-react";
 import { useState } from "react";
-import { Button } from "@/components/ui/button";
 import type { Decision, HandoffDocument as HandoffDocumentType, TaskBlocker } from "@/lib/assistant/types";
 import { cn } from "@/lib/utils";
 
