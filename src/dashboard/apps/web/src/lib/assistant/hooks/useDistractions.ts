@@ -6,7 +6,7 @@
  */
 
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { getAssistantStorageAdapter, initializeAssistantStorage } from "@/lib/assistant/lib/storage";
 import type { DistractionQueryOptions, DistractionStats } from "@/lib/assistant/lib/storage/types";
 import type { Distraction, DistractionInput } from "@/lib/assistant/types";
@@ -198,79 +198,82 @@ export function useDistractions(userId: string | null) {
     /**
      * Get distraction statistics
      */
-    async function getStats(startDate: Date, endDate: Date): Promise<DistractionStats | null> {
-        if (!userId) {
-            return null;
-        }
+    const getStats = useCallback(
+        async (startDate: Date, endDate: Date): Promise<DistractionStats | null> => {
+            if (!userId) {
+                return null;
+            }
 
-        const filtered = distractions.filter((d) => d.timestamp >= startDate && d.timestamp <= endDate);
+            const filtered = distractions.filter((d) => d.timestamp >= startDate && d.timestamp <= endDate);
 
-        if (filtered.length === 0) {
+            if (filtered.length === 0) {
+                return {
+                    totalDistractions: 0,
+                    totalDurationMinutes: 0,
+                    bySource: {},
+                    averagePerDay: 0,
+                    resumptionRate: 0,
+                    mostCommonSource: "",
+                    mostDisruptiveSource: "",
+                };
+            }
+
+            // Compute stats
+            const bySource: Record<string, { count: number; duration: number }> = {};
+            let totalDuration = 0;
+            let resumedCount = 0;
+
+            for (const d of filtered) {
+                if (!bySource[d.source]) {
+                    bySource[d.source] = { count: 0, duration: 0 };
+                }
+                bySource[d.source].count += 1;
+                bySource[d.source].duration += d.duration ?? 0;
+
+                if (d.duration) {
+                    totalDuration += d.duration;
+                }
+
+                if (d.resumedTask) {
+                    resumedCount++;
+                }
+            }
+
+            // Calculate days in range for averagePerDay
+            const daysDiff = Math.max(1, Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)));
+
+            // Find most common source (by count)
+            let mostCommonSource = "";
+            let maxCount = 0;
+            for (const [source, stats] of Object.entries(bySource)) {
+                if (stats.count > maxCount) {
+                    maxCount = stats.count;
+                    mostCommonSource = source;
+                }
+            }
+
+            // Find most disruptive source (by duration)
+            let mostDisruptiveSource = "";
+            let maxDuration = 0;
+            for (const [source, stats] of Object.entries(bySource)) {
+                if (stats.duration > maxDuration) {
+                    maxDuration = stats.duration;
+                    mostDisruptiveSource = source;
+                }
+            }
+
             return {
-                totalDistractions: 0,
-                totalDurationMinutes: 0,
-                bySource: {},
-                averagePerDay: 0,
-                resumptionRate: 0,
-                mostCommonSource: "",
-                mostDisruptiveSource: "",
+                totalDistractions: filtered.length,
+                totalDurationMinutes: totalDuration,
+                bySource,
+                averagePerDay: filtered.length / daysDiff,
+                resumptionRate: (resumedCount / filtered.length) * 100,
+                mostCommonSource,
+                mostDisruptiveSource,
             };
-        }
-
-        // Compute stats
-        const bySource: Record<string, { count: number; duration: number }> = {};
-        let totalDuration = 0;
-        let resumedCount = 0;
-
-        for (const d of filtered) {
-            if (!bySource[d.source]) {
-                bySource[d.source] = { count: 0, duration: 0 };
-            }
-            bySource[d.source].count += 1;
-            bySource[d.source].duration += d.duration ?? 0;
-
-            if (d.duration) {
-                totalDuration += d.duration;
-            }
-
-            if (d.resumedTask) {
-                resumedCount++;
-            }
-        }
-
-        // Calculate days in range for averagePerDay
-        const daysDiff = Math.max(1, Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)));
-
-        // Find most common source (by count)
-        let mostCommonSource = "";
-        let maxCount = 0;
-        for (const [source, stats] of Object.entries(bySource)) {
-            if (stats.count > maxCount) {
-                maxCount = stats.count;
-                mostCommonSource = source;
-            }
-        }
-
-        // Find most disruptive source (by duration)
-        let mostDisruptiveSource = "";
-        let maxDuration = 0;
-        for (const [source, stats] of Object.entries(bySource)) {
-            if (stats.duration > maxDuration) {
-                maxDuration = stats.duration;
-                mostDisruptiveSource = source;
-            }
-        }
-
-        return {
-            totalDistractions: filtered.length,
-            totalDurationMinutes: totalDuration,
-            bySource,
-            averagePerDay: filtered.length / daysDiff,
-            resumptionRate: (resumedCount / filtered.length) * 100,
-            mostCommonSource,
-            mostDisruptiveSource,
-        };
-    }
+        },
+        [distractions, userId]
+    );
 
     /**
      * Get today's distractions
@@ -403,7 +406,7 @@ export function useDistractions(userId: string | null) {
     /**
      * Get distraction trend (improving, worsening, stable)
      */
-    async function getDistractionTrend(): Promise<"improving" | "worsening" | "stable"> {
+    const getDistractionTrend = useCallback(async (): Promise<"improving" | "worsening" | "stable"> => {
         if (!userId) {
             return "stable";
         }
@@ -433,7 +436,7 @@ export function useDistractions(userId: string | null) {
             return "worsening";
         }
         return "stable";
-    }
+    }, [distractions, userId]);
 
     /**
      * Clear error
