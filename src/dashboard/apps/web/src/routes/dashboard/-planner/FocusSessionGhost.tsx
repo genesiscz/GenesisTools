@@ -3,13 +3,12 @@
  * pomodoro focus session on the day timeline.
  *
  * Data source: activity_log rows with eventType = "pomodoro_phase_change" where
- * the phase transitioned work→break (i.e. a work session completed).
- * Currently stubbed to render nothing; will be wired once log queries expose
- * per-task phase-change events with timestamps.
+ * metadata.fromPhase === "work" (a work session completed).
+ * Provided by aggregateFocusSessions server fn via usePlannerData.
  */
 
 export interface FocusSession {
-    taskId: string;
+    timerId: string;
     startIso: string;
     endIso: string;
 }
