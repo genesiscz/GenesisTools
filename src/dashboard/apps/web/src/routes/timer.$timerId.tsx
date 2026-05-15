@@ -1,8 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useAuth } from "@workos/authkit-tanstack-react-start/client";
 import { Loader2 } from "lucide-react";
+import { TimerCard } from "@/lib/timer/components";
 import { cn } from "@/lib/utils";
-import { TimerCard } from "./timer/components";
 import "@/components/auth/cyberpunk.css";
 
 export const Route = createFileRoute("/timer/$timerId")({
