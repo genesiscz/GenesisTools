@@ -1,0 +1,304 @@
+:root {
+    --dd-bg-base: #0c0e10;
+    --dd-bg-panel: #101316;
+    --dd-border: #1e2428;
+    --dd-grid: rgba(52, 211, 153, 0.04);
+    --dd-accent-from: #34d399;
+    --dd-accent-to: #2dd4bf;
+    --dd-accent-gradient: linear-gradient(135deg, var(--dd-accent-from), var(--dd-accent-to));
+    --dd-text-primary: #e6edf3;
+    --dd-text-secondary: #8b96a0;
+    --dd-text-muted: #5b6670;
+}
+
+.dd-grid-bg {
+    background-image:
+        linear-gradient(var(--dd-grid) 1px, transparent 1px),
+        linear-gradient(90deg, var(--dd-grid) 1px, transparent 1px);
+    background-size: 20px 20px;
+}
+
+.dd-panel {
+    background: var(--dd-bg-panel);
+    border: 1px solid var(--dd-border);
+    border-radius: 8px;
+}
+
+.dd-accent-text {
+    background: var(--dd-accent-gradient);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+}
+
+.dd-mosaic .mosaic-window {
+    background: var(--dd-bg-panel);
+    border: 1px solid var(--dd-border);
+    box-shadow: 0 12px 35px rgba(0, 0, 0, 0.28);
+}
+
+.dd-mosaic .mosaic-window-toolbar {
+    background: #0b0e11;
+    color: var(--dd-text-secondary);
+    border-bottom: 1px solid var(--dd-border);
+    min-height: 34px;
+    font-family: "JetBrains Mono", source-code-pro, Menlo, Monaco, Consolas, monospace;
+}
+
+.dd-mosaic .mosaic-split {
+    background: var(--dd-border);
+}
+
+.dd-mosaic .mosaic-split:hover {
+    background: var(--dd-accent-from);
+}
+
+.dd-cmux-tile {
+    background:
+        linear-gradient(180deg, rgba(52, 211, 153, 0.045), transparent 40%),
+        #07090b;
+}
+
+.dd-cmux-meta {
+    color: var(--dd-text-secondary);
+    font-size: 11px;
+    line-height: 1.25;
+}
+
+.dd-cmux-tabs {
+    display: flex;
+    min-height: 24px;
+    gap: 4px;
+    overflow-x: auto;
+    padding-bottom: 2px;
+}
+
+.dd-cmux-tab {
+    flex: 0 0 auto;
+    max-width: 220px;
+    min-width: 42px;
+    overflow: hidden;
+    border: 1px solid #20262b;
+    border-radius: 6px;
+    background: #101418;
+    color: var(--dd-text-muted);
+    padding: 3px 8px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 10px;
+    line-height: 1.2;
+    cursor: pointer;
+    transition:
+        background 120ms ease,
+        border-color 120ms ease,
+        color 120ms ease;
+}
+
+.dd-cmux-tab:hover {
+    border-color: #314047;
+    background: #151b20;
+    color: var(--dd-text-secondary);
+}
+
+.dd-cmux-tab.is-selected {
+    border-color: rgba(52, 211, 153, 0.5);
+    background: rgba(52, 211, 153, 0.1);
+    color: #baf7dc;
+    box-shadow: inset 0 -1px 0 rgba(52, 211, 153, 0.3);
+}
+
+.dd-cmux-tab.is-viewed:not(.is-selected) {
+    border-color: rgba(45, 212, 191, 0.34);
+    color: #87dccc;
+    box-shadow: inset 0 0 0 1px rgba(45, 212, 191, 0.12);
+}
+
+.dd-cmux-tab:focus-visible {
+    outline: 1px solid var(--dd-accent-from);
+    outline-offset: 2px;
+}
+
+.dd-cmux-preview {
+    margin: 0;
+    border: 1px solid #20262b;
+    border-radius: 8px;
+    background: #050607;
+    color: #aab4bd;
+    padding: 10px;
+    font-family: "JetBrains Mono", source-code-pro, Menlo, Monaco, Consolas, monospace;
+    font-size: 11px;
+    line-height: 1.55;
+    text-shadow: 0 0 10px rgba(52, 211, 153, 0.05);
+    white-space: pre-wrap;
+}
+
+.dd-terminal-line {
+    min-height: 1.55em;
+}
+
+.dd-terminal-line--plain {
+    color: #aab4bd;
+}
+
+.dd-terminal-line--muted {
+    color: #58636f;
+}
+
+.dd-terminal-line--activity {
+    color: #9aa7ff;
+}
+
+.dd-terminal-line--prompt {
+    color: #5eead4;
+    text-shadow: 0 0 12px rgba(45, 212, 191, 0.2);
+}
+
+.dd-terminal-line--success,
+.dd-terminal-line--diff-add {
+    color: #86efac;
+}
+
+.dd-terminal-line--warning {
+    color: #fbbf24;
+}
+
+.dd-terminal-line--error,
+.dd-terminal-line--diff-remove {
+    color: #fb7185;
+}
+
+.dd-markdown {
+    color: var(--dd-text-primary);
+    font-size: 14px;
+    line-height: 1.72;
+}
+
+.dd-markdown > * {
+    max-width: 1080px;
+}
+
+.dd-markdown h1,
+.dd-markdown h2,
+.dd-markdown h3,
+.dd-markdown h4 {
+    color: #f4f7f8;
+    font-weight: 800;
+    line-height: 1.15;
+    letter-spacing: 0;
+}
+
+.dd-markdown h1 {
+    margin: 0 0 0.75rem;
+    font-size: 1.85rem;
+}
+
+.dd-markdown h2 {
+    margin: 1.5rem 0 0.65rem;
+    font-size: 1.35rem;
+}
+
+.dd-markdown h3 {
+    margin: 1.15rem 0 0.45rem;
+    font-size: 1.05rem;
+}
+
+.dd-markdown p,
+.dd-markdown ul,
+.dd-markdown ol,
+.dd-markdown blockquote,
+.dd-markdown table,
+.dd-markdown pre {
+    margin: 0.7rem 0;
+}
+
+.dd-markdown ul,
+.dd-markdown ol {
+    padding-left: 1.4rem;
+}
+
+.dd-markdown li {
+    margin: 0.25rem 0;
+}
+
+.dd-markdown a,
+.dd-markdown .dd-wikilink {
+    color: var(--dd-accent-from);
+    text-decoration: underline;
+    text-decoration-style: dotted;
+    text-underline-offset: 3px;
+}
+
+.dd-markdown .dd-wikilink-unresolved {
+    color: var(--dd-text-secondary);
+}
+
+.dd-markdown code {
+    border: 1px solid var(--dd-border);
+    border-radius: 6px;
+    background: #171b1f;
+    color: #d8dee5;
+    padding: 0.12rem 0.34rem;
+    font-size: 0.88em;
+}
+
+.dd-markdown pre {
+    overflow: auto;
+    border: 1px solid var(--dd-border);
+    border-radius: 8px;
+    background: #090b0d;
+    padding: 0.9rem;
+}
+
+.dd-markdown pre code {
+    border: 0;
+    background: transparent;
+    padding: 0;
+}
+
+.dd-markdown blockquote {
+    border-left: 3px solid var(--dd-accent-from);
+    background: rgba(52, 211, 153, 0.05);
+    color: var(--dd-text-secondary);
+    padding: 0.2rem 0.9rem;
+}
+
+.dd-markdown table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.92em;
+}
+
+.dd-markdown th,
+.dd-markdown td {
+    border: 1px solid var(--dd-border);
+    padding: 0.45rem 0.6rem;
+    text-align: left;
+    vertical-align: top;
+}
+
+.dd-markdown th {
+    background: #15191d;
+    color: var(--dd-text-primary);
+}
+
+.dd-markdown input[type="checkbox"] {
+    margin-right: 0.45rem;
+    accent-color: var(--dd-accent-from);
+}
+
+.dd-md-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    margin-bottom: 0.85rem;
+}
+
+.dd-md-tag {
+    border: 1px solid rgba(52, 211, 153, 0.28);
+    border-radius: 999px;
+    background: rgba(52, 211, 153, 0.08);
+    color: #86efac;
+    padding: 0.16rem 0.5rem;
+    font-family: "JetBrains Mono", source-code-pro, Menlo, Monaco, Consolas, monospace;
+    font-size: 0.72rem;
+}
