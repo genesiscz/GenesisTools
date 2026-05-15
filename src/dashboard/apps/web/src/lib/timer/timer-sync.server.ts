@@ -140,8 +140,6 @@ export const getTimersFromServer = createServerFn({
     .inputValidator((d: string) => d) // userId
     .handler(({ data: userId }) => {
         try {
-            console.log("[Server] getTimersFromServer called for user:", userId);
-
             const results: Timer[] = db
                 .select()
                 .from(timers)
@@ -149,7 +147,6 @@ export const getTimersFromServer = createServerFn({
                 .orderBy(desc(timers.createdAt))
                 .all();
 
-            console.log("[Server] Returning", results.length, "timers");
             return results;
         } catch (error) {
             console.error("[Server] getTimersFromServer error:", error);
@@ -169,8 +166,6 @@ export const getActivityLogsFromServer = createServerFn({
     .inputValidator((d: string) => d) // userId
     .handler(({ data: userId }): ParsedActivityLog[] => {
         try {
-            console.log("[Server] getActivityLogsFromServer called for user:", userId);
-
             const rawResults = db
                 .select()
                 .from(activityLogs)
@@ -178,8 +173,6 @@ export const getActivityLogsFromServer = createServerFn({
                 .orderBy(desc(activityLogs.timestamp))
                 .limit(1000)
                 .all();
-
-            console.log("[Server] Returning", rawResults.length, "activity logs");
 
             return rawResults.map((log) => ({
                 ...log,
