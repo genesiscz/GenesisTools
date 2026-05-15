@@ -68,9 +68,11 @@ function DraggableInboxItem({ task, onFocus }: DraggableInboxItemProps) {
 
 interface PlannerInboxProps {
     tasks: AssistantTask[];
+    completedToday: number;
+    deferredToTomorrow: number;
 }
 
-export function PlannerInbox({ tasks }: PlannerInboxProps) {
+export function PlannerInbox({ tasks, completedToday, deferredToTomorrow }: PlannerInboxProps) {
     const navigate = useNavigate();
 
     function handleFocus(taskId: string) {
@@ -97,6 +99,28 @@ export function PlannerInbox({ tasks }: PlannerInboxProps) {
             )}
 
             <p className="mt-1 px-1 text-[10px] text-zinc-600">Drag a task onto the timeline to schedule it.</p>
+
+            {/* Footer stats */}
+            <div className="mt-2 grid grid-cols-2 gap-1.5">
+                <div className="flex flex-col items-center rounded-lg border border-white/5 bg-zinc-800/60 py-2 px-1">
+                    <span
+                        className="text-lg font-bold text-emerald-400"
+                        style={{ fontFamily: "'JetBrains Mono', monospace" }}
+                    >
+                        {completedToday}
+                    </span>
+                    <span className="text-[9px] uppercase tracking-widest text-zinc-500">done today</span>
+                </div>
+                <div className="flex flex-col items-center rounded-lg border border-white/5 bg-zinc-800/60 py-2 px-1">
+                    <span
+                        className="text-lg font-bold text-amber-400"
+                        style={{ fontFamily: "'JetBrains Mono', monospace" }}
+                    >
+                        {deferredToTomorrow}
+                    </span>
+                    <span className="text-[9px] uppercase tracking-widest text-zinc-500">for tomorrow</span>
+                </div>
+            </div>
         </div>
     );
 }
