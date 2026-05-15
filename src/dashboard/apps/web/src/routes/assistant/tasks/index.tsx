@@ -13,7 +13,7 @@ import { Kanban, LayoutGrid, ListTodo, ParkingCircle, Plus } from "lucide-react"
 import { useEffect, useRef, useState } from "react";
 import { DashboardLayout } from "@/components/dashboard";
 import { ContextParkingModal, TaskCard, TaskForm } from "@/lib/assistant/components";
-import { useContextParking, useDeadlineRisk, useTaskStore } from "@/lib/assistant/hooks";
+import { useCommunicationLog, useContextParking, useDeadlineRisk, useTaskStore } from "@/lib/assistant/hooks";
 import type {
     ContextParkingInput,
     DeadlineRisk,
@@ -65,6 +65,8 @@ function TasksPage() {
     } = useTaskStore(userId);
 
     const { risks, calculateAllRisks } = useDeadlineRisk(userId);
+
+    const { createEntry } = useCommunicationLog(userId);
 
     const celebrations = useCelebrationManager();
 
@@ -212,11 +214,19 @@ function TasksPage() {
                     await updateTask(taskId, { deadline: data.newDeadline });
                 }
                 break;
-            case "help":
-                // Could log a communication entry here
-                // For now, just log to console
-                console.log("Help requested:", data.helperName, data.helperNotes);
+            case "help": {
+                const task = tasks.find((t) => t.id === taskId);
+                if (task && userId) {
+                    await createEntry({
+                        source: "manual",
+                        title: `Help requested: ${task.title}`,
+                        content: `Asked ${data.helperName ?? "team"} for help.\n\n${data.helperNotes ?? ""}`.trim(),
+                        relatedTaskIds: [taskId],
+                        sentiment: "context",
+                    });
+                }
                 break;
+            }
             case "scope":
                 // Could update task description with cut scope items
                 if (data.scopeItems && data.scopeItems.length > 0) {
@@ -229,10 +239,16 @@ function TasksPage() {
                     }
                 }
                 break;
-            case "accept":
-                // Log acceptance
-                console.log("Risk accepted:", data.acceptanceNote);
+            case "accept": {
+                const task = tasks.find((t) => t.id === taskId);
+                if (task) {
+                    const acceptSuffix = `\n\n[Risk Accepted]\n${data.acceptanceNote ?? ""}`.trim();
+                    await updateTask(taskId, {
+                        description: (task.description || "") + acceptSuffix,
+                    });
+                }
                 break;
+            }
         }
 
         // Recalculate risks
