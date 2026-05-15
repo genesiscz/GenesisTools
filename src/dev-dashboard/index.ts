@@ -4,6 +4,8 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { getConfig, saveConfig } from "@app/dev-dashboard/config";
 import { createBasicAuthCredentials } from "@app/dev-dashboard/lib/auth";
+import { startFrontProxy } from "@app/dev-dashboard/lib/front-proxy";
+import { findFreePort } from "@app/dev-dashboard/lib/ttyd/free-port";
 import logger from "@app/logger";
 import { PROJECT_ROOT } from "@app/utils/paths";
 import { Command } from "commander";
@@ -31,24 +33,75 @@ async function runUiServer(): Promise<void> {
 
     const { port } = await getConfig();
     const url = `http://localhost:${port}`;
+    // Vite runs on a private loopback port; a Bun.serve front proxy owns the
+    // public port so WebSockets (ttyd + Vite HMR) work — Bun's node:http
+    // upgrade socket is broken (oven-sh/bun#28396).
+    const internalPort = await findFreePort();
 
     console.log(`Starting dev-dashboard at ${url} ...`);
     console.log("(first start can take a few seconds; output below comes from Vite)\n");
 
     const child = spawn(
         "bun",
-        ["--bun", viteEntry, "dev", "--config", configPath, "--strictPort", "--port", String(port)],
+        [
+            "--bun",
+            viteEntry,
+            "dev",
+            "--config",
+            configPath,
+            "--strictPort",
+            "--port",
+            String(internalPort),
+            "--host",
+            "127.0.0.1",
+        ],
         {
             cwd: PROJECT_ROOT,
             stdio: "inherit",
-            env: { ...process.env, FORCE_COLOR: "1", GENESIS_TOOLS_ROOT: PROJECT_ROOT },
+            env: {
+                ...process.env,
+                FORCE_COLOR: "1",
+                GENESIS_TOOLS_ROOT: PROJECT_ROOT,
+                DEV_DASHBOARD_PUBLIC_PORT: String(port),
+            },
             shell: process.platform === "win32",
         }
     );
 
+    const frontProxy = startFrontProxy({ publicPort: port, internalPort });
+    const stopFrontProxy = () => {
+        try {
+            frontProxy.stop(true);
+        } catch {
+            // already stopped
+        }
+    };
+
     child.on("error", (err) => {
         logger.error({ err }, "failed to start Vite");
+        stopFrontProxy();
         process.exit(1);
+    });
+
+    const killChild = () => {
+        try {
+            child.kill("SIGTERM");
+        } catch {
+            // already gone
+        }
+    };
+
+    const shutdown = (signal: NodeJS.Signals) => {
+        stopFrontProxy();
+        killChild();
+        process.exit(signal === "SIGTERM" || signal === "SIGINT" ? 0 : 1);
+    };
+
+    process.on("SIGINT", () => shutdown("SIGINT"));
+    process.on("SIGTERM", () => shutdown("SIGTERM"));
+    process.on("SIGHUP", () => shutdown("SIGHUP"));
+    process.on("exit", () => {
+        killChild();
     });
 
     setTimeout(() => {

@@ -23,9 +23,15 @@ const config = createDashboardViteConfig({
     tanstackStartOptions: false,
 });
 
+// Vite runs on a private port behind the Bun.serve front proxy. Tell the HMR
+// client to connect to the public port so the proxy can bridge the HMR socket
+// (Bun's node:http upgrade is broken; the proxy owns all WebSockets).
+const publicPort = Number(process.env.DEV_DASHBOARD_PUBLIC_PORT) || 3042;
+
 config.server = {
     ...config.server,
     allowedHosts: ["mac.foltyn.dev"],
+    hmr: { clientPort: publicPort },
 };
 
 config.plugins = [

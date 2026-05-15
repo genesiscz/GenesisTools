@@ -118,11 +118,31 @@ export async function spawnTtyd(opts: SpawnOptions = {}): Promise<TtydSession> {
     const id = randomUUID();
     const tmuxSessionName = makeTmuxSessionName(id);
     createTmuxSession(tmuxSessionName, cwd, command);
-    const child = spawn(TTYD_BIN, ["-W", "-p", String(port), TMUX_BIN, "attach-session", "-t", tmuxSessionName], {
-        cwd,
-        detached: true,
-        stdio: "ignore",
-    });
+    // Bind loopback-only and serve under /ttyd/<id> so the Bun.serve front
+    // proxy can reverse-proxy it same-origin (HTTPS tunnel + mobile, where a
+    // bare http://localhost:<port> iframe is unreachable). The base-path makes
+    // ttyd emit correctly-prefixed asset/ws URLs so no path rewriting needed.
+    const child = spawn(
+        TTYD_BIN,
+        [
+            "-i",
+            "127.0.0.1",
+            "-b",
+            `/ttyd/${id}`,
+            "-W",
+            "-p",
+            String(port),
+            TMUX_BIN,
+            "attach-session",
+            "-t",
+            tmuxSessionName,
+        ],
+        {
+            cwd,
+            detached: true,
+            stdio: "ignore",
+        }
+    );
     child.unref();
 
     child.on("error", (err) => logger.error({ err, id, port }, "ttyd child error"));
