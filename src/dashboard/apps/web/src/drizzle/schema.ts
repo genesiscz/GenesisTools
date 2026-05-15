@@ -504,6 +504,30 @@ export const assistantCelebrations = sqliteTable(
 );
 
 // ============================================
+// Quick Notes
+// ============================================
+
+/**
+ * Notes table — quick markdown notes with tagging and pinning
+ */
+export const notes = sqliteTable(
+    "notes",
+    {
+        id: text("id").primaryKey(),
+        userId: text("user_id").notNull(),
+        title: text("title").notNull(),
+        body: text("body").notNull().default(""),
+        tags: text("tags", { mode: "json" }).$type<string[]>().default([]),
+        pinned: integer("pinned").notNull().default(0),
+        createdAt: text("created_at").notNull(),
+        updatedAt: text("updated_at").notNull(),
+    },
+    (table) => ({
+        userIdIdx: index("idx_notes_user_id").on(table.userId),
+    })
+);
+
+// ============================================
 // Inferred Types
 // ============================================
 
@@ -574,3 +598,7 @@ export type NewAssistantWeeklyReview = typeof assistantWeeklyReviews.$inferInser
 // Celebration types
 export type AssistantCelebration = typeof assistantCelebrations.$inferSelect;
 export type NewAssistantCelebration = typeof assistantCelebrations.$inferInsert;
+
+// Notes types
+export type Note = typeof notes.$inferSelect;
+export type NewNote = typeof notes.$inferInsert;
