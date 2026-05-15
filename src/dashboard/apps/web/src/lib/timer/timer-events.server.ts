@@ -1,12 +1,13 @@
 /**
- * Server-side SSE event emitter for timer events.
- * Per-user EventEmitter map — server push for real-time cross-tab/device sync.
+ * Timer SSE compat layer — delegates to the generic domain bus
+ * (src/lib/events/event-bus.server.ts) with domain="timer".
  *
- * NOTE: in-memory only; events are lost on server restart.
- * EventSource auto-reconnects — clients will re-fetch on reconnect.
+ * Kept as a thin shim so existing timer call sites (timer-sync.server.ts)
+ * and the /api/timer-events route need ZERO changes while timer events now
+ * also flow through the shared bus that /api/events exposes.
  */
 
-import { EventEmitter } from "node:events";
+import { type DomainEvent, emitDomainEvent, subscribeEvents } from "@/lib/events/event-bus.server";
 
 export interface TimerEvent {
     type: string;
@@ -15,33 +16,28 @@ export interface TimerEvent {
     payload?: unknown;
 }
 
-const emitters = new Map<string, EventEmitter>();
-
-function getEmitter(userId: string): EventEmitter {
-    let e = emitters.get(userId);
-
-    if (!e) {
-        e = new EventEmitter();
-        e.setMaxListeners(50);
-        emitters.set(userId, e);
-    }
-
-    return e;
-}
-
 /**
  * Subscribe to timer events for a user.
  * Returns an unsubscribe function — call it when the SSE connection closes.
  */
 export function subscribeTimerEvents(userId: string, listener: (event: TimerEvent) => void): () => void {
-    const e = getEmitter(userId);
-    e.on("event", listener);
-    return () => e.off("event", listener);
+    return subscribeEvents(userId, (event: DomainEvent) => {
+        if (event.domain !== "timer") {
+            return;
+        }
+
+        listener({
+            type: event.type,
+            timerId: typeof event.timerId === "string" ? event.timerId : undefined,
+            snapshot: event.snapshot,
+            payload: event.payload,
+        });
+    });
 }
 
 /**
  * Emit a timer event for a user (called from server mutations).
  */
 export function emitTimerEvent(userId: string, event: TimerEvent): void {
-    getEmitter(userId).emit("event", event);
+    emitDomainEvent(userId, "timer", event);
 }
