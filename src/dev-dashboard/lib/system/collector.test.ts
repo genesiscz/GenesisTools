@@ -88,9 +88,7 @@ describe("parseWifiSsid", () => {
 
 describe("friendlyProcessName", () => {
     test("extracts the .app bundle name", () => {
-        expect(friendlyProcessName("/Applications/Android Studio.app/Contents/MacOS/studio")).toBe(
-            "Android Studio"
-        );
+        expect(friendlyProcessName("/Applications/Android Studio.app/Contents/MacOS/studio")).toBe("Android Studio");
     });
 
     test("falls back to the binary basename", () => {
