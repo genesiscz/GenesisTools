@@ -228,7 +228,7 @@ export const TimerCard = memo(function TimerCard({ timerId, userId, onDelete, on
                 {timer.firstStartTime && (
                     <TotalTimeBadge
                         totalTimeMs={totalTimeElapsed}
-                        showTotal={timer.showTotal ?? false}
+                        showTotal={Boolean(timer.showTotal)}
                         onToggle={toggleShowTotal}
                     />
                 )}
@@ -299,7 +299,7 @@ export const TimerCard = memo(function TimerCard({ timerId, userId, onDelete, on
                         return (
                             <PomodoroSteps
                                 settings={pomodoroSettings}
-                                currentPhase={timer.pomodoroPhase}
+                                currentPhase={timer.pomodoroPhase ?? undefined}
                                 sessionCount={timer.pomodoroSessionCount ?? 0}
                                 progress={progress}
                             />
@@ -318,7 +318,13 @@ export const TimerCard = memo(function TimerCard({ timerId, userId, onDelete, on
 
                 {/* Laps list (stopwatch only) - compact with max height */}
                 {timer.timerType === "stopwatch" && timer.laps && timer.laps.length > 0 && (
-                    <LapsList laps={timer.laps} onClear={clearLaps} className="mt-2" />
+                    <LapsList
+                        laps={(timer.laps as { number: number; lapTime: number; splitTime: number; timestamp: string }[]).map(
+                            (l) => ({ ...l, timestamp: new Date(l.timestamp) })
+                        )}
+                        onClear={clearLaps}
+                        className="mt-2"
+                    />
                 )}
             </div>
         </div>

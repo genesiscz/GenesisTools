@@ -6,7 +6,6 @@ import {
     lapTimer,
     pauseTimer,
     resetTimer,
-    setPomodoroSettings,
     startTimer,
     updateTimerMetadata,
 } from "@/lib/timer/timer-sync.server";
@@ -55,8 +54,6 @@ export function useTimer({ userId, timerId }: UseTimerOptions): UseTimerReturn {
     const { getTimer } = useTimerStore(userId);
     const timer = getTimer(timerId);
 
-    const { displayTime, isRunning } = useTimerEngine(timer ?? null);
-
     function onSuccess(updated: Timer) {
         qc.setQueryData(["timers", effectiveUserId], (old: Timer[] | undefined) =>
             (old ?? []).map((t) => (t.id === updated.id ? updated : t))
@@ -65,7 +62,6 @@ export function useTimer({ userId, timerId }: UseTimerOptions): UseTimerReturn {
     }
 
     function onConflict() {
-        // Refetch to get the latest state
         qc.invalidateQueries({ queryKey: ["timers", effectiveUserId] });
     }
 
@@ -116,7 +112,7 @@ export function useTimer({ userId, timerId }: UseTimerOptions): UseTimerReturn {
         onSuccess,
     });
 
-    const _advanceMutation = useMutation({
+    const advanceMutation = useMutation({
         mutationFn: () =>
             advancePomodoroPhase({
                 data: { id: timerId, userId: effectiveUserId!, expectedVersion: timer?.version },
@@ -125,7 +121,7 @@ export function useTimer({ userId, timerId }: UseTimerOptions): UseTimerReturn {
     });
 
     const metadataMutation = useMutation({
-        mutationFn: (patch: Partial<Pick<Timer, "name" | "showTotal" | "duration">>) =>
+        mutationFn: (patch: Partial<Pick<Timer, "name" | "showTotal" | "duration" | "elapsedTime" | "timerType">>) =>
             updateTimerMetadata({
                 data: {
                     id: timerId,
@@ -137,22 +133,18 @@ export function useTimer({ userId, timerId }: UseTimerOptions): UseTimerReturn {
         onSuccess,
     });
 
-    const _pomodoroSettingsMutation = useMutation({
-        mutationFn: (settings: {
-            workDuration: number;
-            shortBreakDuration: number;
-            longBreakDuration: number;
-            sessionsBeforeLongBreak: number;
-        }) =>
-            setPomodoroSettings({
-                data: {
-                    id: timerId,
-                    userId: effectiveUserId!,
-                    expectedVersion: timer?.version,
-                    settings,
-                },
-            }),
-        onSuccess,
+    const { displayTime, isRunning } = useTimerEngine(timer ?? null, {
+        onTargetReached: () => {
+            if (!timer) {
+                return;
+            }
+
+            if (timer.timerType === "pomodoro") {
+                advanceMutation.mutate();
+            } else if (timer.timerType === "countdown") {
+                pauseMutation.mutate();
+            }
+        },
     });
 
     function start() {
@@ -196,14 +188,12 @@ export function useTimer({ userId, timerId }: UseTimerOptions): UseTimerReturn {
     }
 
     function clearLaps() {
-        if (!timer) {
+        if (!effectiveUserId || !timer) {
             return;
         }
 
-        metadataMutation.mutate({ name: timer.name }); // no-op metadata; use resetTimer for laps
-        // Actually call resetTimer to clear laps — it also resets elapsed, so instead
-        // we do a metadata update that's a no-op and rely on reset for lap clearing.
-        // For now, laps are cleared only on reset (by design in the state machine).
+        // Laps are cleared only on full reset (state machine design).
+        resetMutation.mutate();
     }
 
     function setName(name: string) {
@@ -219,18 +209,11 @@ export function useTimer({ userId, timerId }: UseTimerOptions): UseTimerReturn {
     }
 
     function setType(type: "stopwatch" | "countdown" | "pomodoro") {
-        metadataMutation.mutate({ name: timer?.name ?? "" });
-        // Type change requires a more sophisticated migration — for now update via metadata
-        // The timerType isn't in the metadata patch so we use a workaround:
-        // This is intentionally minimal — type switching isn't a common action.
-        void updateTimerMetadata({
-            data: {
-                id: timerId,
-                userId: effectiveUserId!,
-                patch: { name: timer?.name ?? "" },
-            },
-        });
-        void type; // timerType switching is not yet in the state machine API
+        if (timer?.isRunning) {
+            return;
+        }
+
+        metadataMutation.mutate({ timerType: type, elapsedTime: 0 });
     }
 
     function editElapsedTime(newElapsedMs: number) {
@@ -238,12 +221,7 @@ export function useTimer({ userId, timerId }: UseTimerOptions): UseTimerReturn {
             return;
         }
 
-        // Direct elapsed edit — send as metadata update
-        // The state machine update_metadata handles name/showTotal/duration;
-        // elapsed edits go through a dedicated path not yet in state machine.
-        // For now we bypass via a direct timer update (no version check — this is
-        // only triggered when paused and user manually edits the time display).
-        void newElapsedMs;
+        metadataMutation.mutate({ elapsedTime: newElapsedMs });
     }
 
     function toggleShowTotal() {

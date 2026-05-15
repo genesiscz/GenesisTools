@@ -300,7 +300,7 @@ export const updateTimerMetadata = createServerFn({ method: "POST" })
             id: string;
             userId: string;
             expectedVersion?: number;
-            patch: Partial<Pick<Timer, "name" | "showTotal" | "duration">>;
+            patch: Partial<Pick<Timer, "name" | "showTotal" | "duration" | "elapsedTime" | "timerType">>;
         }) => d
     )
     .handler(({ data }) =>

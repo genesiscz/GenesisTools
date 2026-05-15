@@ -1,4 +1,3 @@
-import type { Timer } from "@dashboard/shared";
 import { Activity, BarChart3, Calendar, ChevronDown, Clock, Filter, RefreshCw, Trash2, X } from "lucide-react";
 import { useState } from "react";
 import { getMonthRange, getTodayRange, getWeekRange, useActivityLog } from "@/lib/timer/hooks/useActivityLog";
@@ -8,7 +7,7 @@ import { ProductivityStats } from "./ProductivityStats";
 
 interface ActivityLogSidebarProps {
     userId: string | null;
-    timers: Timer[];
+    timers: { id: string; name: string }[];
     isOpen: boolean;
     onClose: () => void;
     className?: string;

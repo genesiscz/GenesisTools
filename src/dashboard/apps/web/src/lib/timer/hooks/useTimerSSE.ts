@@ -33,7 +33,7 @@ export function useTimerSSE(userId: string | null) {
 
         es.onmessage = (msg) => {
             try {
-                const event = SafeJSON.parse(msg.data, { strict: true }) as TimerSSEEvent;
+                const event = SafeJSON.parse<TimerSSEEvent>(msg.data);
 
                 if (event.type === "timer_changed" && event.snapshot) {
                     // Patch the specific timer in the list cache

@@ -8,9 +8,9 @@
  * Time is passed in as `now` (ms since epoch) to keep functions pure + testable.
  */
 
-import type { Timer } from "@/drizzle";
-import { DEFAULT_POMODORO_SETTINGS } from "@dashboard/shared";
 import type { PomodoroPhase, PomodoroSettings } from "@dashboard/shared";
+import { DEFAULT_POMODORO_SETTINGS } from "@dashboard/shared";
+import type { Timer } from "@/drizzle";
 
 export type LapRow = {
     number: number;
@@ -26,7 +26,10 @@ export type TimerAction =
     | { type: "lap"; nowMs: number }
     | { type: "advance_pomodoro_phase" }
     | { type: "set_pomodoro_settings"; settings: PomodoroSettings }
-    | { type: "update_metadata"; patch: Partial<Pick<Timer, "name" | "showTotal" | "duration">> };
+    | {
+          type: "update_metadata";
+          patch: Partial<Pick<Timer, "name" | "showTotal" | "duration" | "elapsedTime" | "timerType">>;
+      };
 
 export interface TransitionResult {
     next: Timer;
@@ -58,14 +61,10 @@ export function applyAction(current: Timer, action: TimerAction): TransitionResu
                 return { next: current }; // idempotent
             }
 
-            const sessionElapsed = current.startTime
-                ? action.nowMs - new Date(current.startTime).getTime()
-                : 0;
+            const sessionElapsed = current.startTime ? action.nowMs - new Date(current.startTime).getTime() : 0;
             const newElapsed = current.elapsedTime + sessionElapsed;
             const countdownComplete =
-                current.timerType === "countdown" &&
-                current.duration != null &&
-                newElapsed >= current.duration;
+                current.timerType === "countdown" && current.duration != null && newElapsed >= current.duration;
 
             return {
                 next: {
@@ -87,18 +86,14 @@ export function applyAction(current: Timer, action: TimerAction): TransitionResu
                     startTime: null,
                     firstStartTime: null,
                     laps: [],
-                    pomodoroPhase:
-                        current.timerType === "pomodoro" ? "work" : current.pomodoroPhase,
-                    pomodoroSessionCount:
-                        current.timerType === "pomodoro" ? 0 : (current.pomodoroSessionCount ?? 0),
+                    pomodoroPhase: current.timerType === "pomodoro" ? "work" : current.pomodoroPhase,
+                    pomodoroSessionCount: current.timerType === "pomodoro" ? 0 : (current.pomodoroSessionCount ?? 0),
                 },
             };
         }
 
         case "lap": {
-            const sessionElapsed = current.startTime
-                ? action.nowMs - new Date(current.startTime).getTime()
-                : 0;
+            const sessionElapsed = current.startTime ? action.nowMs - new Date(current.startTime).getTime() : 0;
             const splitTime = current.elapsedTime + sessionElapsed;
             const existingLaps = (current.laps as LapRow[]) ?? [];
             const previousSplitTotal = existingLaps.reduce((acc, l) => acc + l.lapTime, 0);
@@ -130,10 +125,7 @@ export function applyAction(current: Timer, action: TimerAction): TransitionResu
 
             if (phase === "work") {
                 newSessionCount += 1;
-                toPhase =
-                    newSessionCount % settings.sessionsBeforeLongBreak === 0
-                        ? "long_break"
-                        : "short_break";
+                toPhase = newSessionCount % settings.sessionsBeforeLongBreak === 0 ? "long_break" : "short_break";
             } else {
                 toPhase = "work";
             }
@@ -172,8 +164,7 @@ export function computePomodoroTarget(timer: Timer): number | null {
         return timer.duration ?? null;
     }
 
-    const settings =
-        (timer.pomodoroSettings as PomodoroSettings | null) ?? DEFAULT_POMODORO_SETTINGS;
+    const settings = (timer.pomodoroSettings as PomodoroSettings | null) ?? DEFAULT_POMODORO_SETTINGS;
     const phase: PomodoroPhase = (timer.pomodoroPhase as PomodoroPhase) ?? "work";
 
     if (phase === "work") {
