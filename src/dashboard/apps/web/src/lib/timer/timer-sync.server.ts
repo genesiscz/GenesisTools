@@ -24,6 +24,24 @@ class TimerConflict extends Error {
 }
 
 // ============================================
+// Activity-log event mapping
+// ============================================
+
+type ActivityEventType = ActivityLog["eventType"];
+
+// Internal state-machine event names → persisted activity_logs.event_type.
+// Events not in this map (e.g. the internal "timer_changed" sync ping) are
+// SSE-only and intentionally not written to the activity log.
+const EVENT_TO_ACTIVITY: Record<string, ActivityEventType> = {
+    started: "start",
+    paused: "pause",
+    reset: "reset",
+    lapped: "lap",
+    countdown_complete: "complete",
+    phase_changed: "pomodoro_phase_change",
+};
+
+// ============================================
 // Internal: atomic read-transform-write
 // ============================================
 
@@ -73,6 +91,35 @@ function mutate({ id, userId, expectedVersion, transform }: MutateOptions): Time
 
     if (!final) {
         throw new Error("Timer not found after update");
+    }
+
+    // Persist meaningful events to the activity log (timeline + stats). This
+    // is the single write site for every action-based mutation — secondary to
+    // the timer write, so a failure here must not fail the mutation.
+    const loggable = (events ?? []).filter((ev) => ev.type in EVENT_TO_ACTIVITY);
+
+    if (loggable.length > 0) {
+        try {
+            const nowIso = new Date().toISOString();
+            db.insert(activityLogs)
+                .values(
+                    loggable.map((ev) => ({
+                        id: crypto.randomUUID(),
+                        timerId: id,
+                        timerName: final.name,
+                        userId,
+                        eventType: EVENT_TO_ACTIVITY[ev.type],
+                        timestamp: nowIso,
+                        elapsedAtEvent: final.elapsedTime ?? 0,
+                        previousValue: current.elapsedTime ?? 0,
+                        newValue: final.elapsedTime ?? 0,
+                        metadata: (ev.payload as Record<string, unknown> | undefined) ?? {},
+                    }))
+                )
+                .run();
+        } catch (err) {
+            console.error("[Server] failed to persist activity log for timer", id, err);
+        }
     }
 
     for (const ev of events ?? []) {
@@ -343,5 +390,18 @@ export const getActivityLogsForTimer = createServerFn({
         } catch (error) {
             console.error("[Server] getActivityLogsForTimer error:", error);
             return [];
+        }
+    });
+
+export const clearActivityLogs = createServerFn({ method: "POST" })
+    .inputValidator((d: { userId: string }) => d)
+    .handler(({ data }): { success: boolean; deleted: number } => {
+        try {
+            const result = db.delete(activityLogs).where(eq(activityLogs.userId, data.userId)).run();
+            console.log("[Server] cleared", result.changes, "activity logs for user:", data.userId);
+            return { success: true, deleted: result.changes };
+        } catch (error) {
+            console.error("[Server] clearActivityLogs error:", error);
+            return { success: false, deleted: 0 };
         }
     });

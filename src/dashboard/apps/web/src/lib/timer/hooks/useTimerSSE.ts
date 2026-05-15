@@ -49,6 +49,10 @@ export function useTimerSSE(userId: string | null) {
                     // just invalidate so the next render re-fetches
                     qc.invalidateQueries({ queryKey: ["timers", userId] });
                 }
+
+                // Every action-based mutation persists an activity-log row and
+                // emits an SSE event — keep the activity log live in lockstep.
+                qc.invalidateQueries({ queryKey: ["activity-logs", userId] });
             } catch {
                 // malformed event — ignore
             }
