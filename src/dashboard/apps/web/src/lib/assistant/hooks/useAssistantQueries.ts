@@ -9,10 +9,6 @@
  */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-    ASSISTANT_SYNC_CHANNEL,
-    useInvalidateAndBroadcast,
-} from "@/lib/sync/useBroadcastInvalidation";
 import type {
     NewAssistantBadge,
     NewAssistantBlocker,
@@ -29,6 +25,7 @@ import type {
     NewAssistantTask,
     NewAssistantWeeklyReview,
 } from "@/drizzle";
+import { ASSISTANT_SYNC_CHANNEL, useInvalidateAndBroadcast } from "@/lib/sync/useBroadcastInvalidation";
 import {
     createAssistantBadge,
     createAssistantBlocker,

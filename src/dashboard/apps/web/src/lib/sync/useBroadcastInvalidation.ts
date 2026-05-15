@@ -49,7 +49,7 @@ export function useInvalidateAndBroadcast(channelName: string) {
             queryClient.invalidateQueries({ queryKey: Array.from(queryKey) });
             broadcastInvalidate(channelName, queryKey);
         },
-        [channelName, queryClient],
+        [channelName, queryClient]
     );
 }
 

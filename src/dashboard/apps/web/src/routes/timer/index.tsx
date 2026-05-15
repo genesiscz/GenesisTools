@@ -1,11 +1,11 @@
 import type { TimerInput } from "@dashboard/shared";
 import { createFileRoute } from "@tanstack/react-router";
+import { Button } from "@ui/components/button";
 import { useAuth } from "@workos/authkit-tanstack-react-start/client";
 import { Activity, Loader2, Plus } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { DashboardLayout } from "@/components/dashboard";
 import { CHRONO_SYNC_CHANNEL, useBroadcastInvalidation } from "@/lib/sync/useBroadcastInvalidation";
-import { Button } from "@ui/components/button";
 import { ActivityLogSidebar, TimerCard } from "@/lib/timer/components";
 import { useTimerStore } from "@/lib/timer/hooks/useTimerStore";
 import { cn } from "@/lib/utils";
