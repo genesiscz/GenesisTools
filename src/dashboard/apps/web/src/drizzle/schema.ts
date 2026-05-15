@@ -558,6 +558,44 @@ export const bookmarks = sqliteTable(
 );
 
 // ============================================
+// AI Chat Tables
+// ============================================
+
+/**
+ * AI Conversations — one row per conversation thread.
+ */
+export const aiConversations = sqliteTable(
+    "ai_conversations",
+    {
+        id: text("id").primaryKey(),
+        userId: text("user_id").notNull(),
+        title: text("title").notNull(),
+        createdAt: text("created_at").notNull(),
+        updatedAt: text("updated_at").notNull(),
+    },
+    (table) => ({
+        userIdIdx: index("idx_ai_conv_user_id").on(table.userId),
+    })
+);
+
+/**
+ * AI Messages — messages within a conversation.
+ */
+export const aiMessages = sqliteTable(
+    "ai_messages",
+    {
+        id: text("id").primaryKey(),
+        conversationId: text("conversation_id").notNull(),
+        role: text("role").notNull().$type<"user" | "assistant" | "system">(),
+        content: text("content").notNull(),
+        createdAt: text("created_at").notNull(),
+    },
+    (table) => ({
+        conversationIdIdx: index("idx_ai_msg_conv_id").on(table.conversationId),
+    })
+);
+
+// ============================================
 // Inferred Types
 // ============================================
 
@@ -636,3 +674,10 @@ export type NewNote = typeof notes.$inferInsert;
 // Bookmark types
 export type Bookmark = typeof bookmarks.$inferSelect;
 export type NewBookmark = typeof bookmarks.$inferInsert;
+
+// AI Chat types
+export type AiConversation = typeof aiConversations.$inferSelect;
+export type NewAiConversation = typeof aiConversations.$inferInsert;
+
+export type AiMessage = typeof aiMessages.$inferSelect;
+export type NewAiMessage = typeof aiMessages.$inferInsert;
