@@ -3,9 +3,9 @@
     "ui": "stream",
     "tasks": {
         "build": {
-            "dependsOn": ["^build"],
+            "dependsOn": ["^build", "check-types"],
             "inputs": ["$TURBO_DEFAULT$", ".env*"],
-            "outputs": ["dist/**", ".next/**", "!.next/cache/**"]
+            "outputs": [".output/**", "dist/**", ".next/**", "!.next/cache/**"]
         },
         "lint": {
             "dependsOn": ["^lint"]

@@ -14,7 +14,14 @@ export const env = createEnv({
     server: {
         NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
         SQLITE_PATH: z.string().optional(),
+        MIGRATIONS_DIR: z.string().optional(),
         ANTHROPIC_API_KEY: z.string().optional(),
+        // WorkOS AuthKit — required for auth to work. Validated at startup so a
+        // misconfigured deploy fails fast instead of silently running auth-broken.
+        WORKOS_API_KEY: z.string().min(1),
+        WORKOS_CLIENT_ID: z.string().min(1),
+        WORKOS_REDIRECT_URI: z.string().url(),
+        WORKOS_COOKIE_PASSWORD: z.string().min(32),
     },
     runtimeEnv: process.env,
     emptyStringAsUndefined: true,
