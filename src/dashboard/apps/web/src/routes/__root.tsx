@@ -2,6 +2,7 @@ import { TanStackDevtools } from "@tanstack/react-devtools";
 import type { QueryClient } from "@tanstack/react-query";
 import { createRootRouteWithContext, HeadContent, Scripts } from "@tanstack/react-router";
 import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools";
+import { useEffect } from "react";
 import { Toaster } from "sonner";
 import TanStackQueryDevtools from "@/integrations/tanstack-query/devtools";
 import WorkOSProvider from "@/integrations/workos/provider";
@@ -38,6 +39,20 @@ export const Route = createRootRouteWithContext<MyRouterContext>()({
 });
 
 function RootDocument({ children }: { children: React.ReactNode }) {
+    // Cmd/Ctrl+P is repurposed as the "Park context" shortcut across the
+    // dashboard. Suppress the browser's native print dialog globally so it
+    // never hijacks the shortcut on routes that don't mount the parking hook.
+    useEffect(() => {
+        function blockPrintShortcut(e: KeyboardEvent) {
+            if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "p") {
+                e.preventDefault();
+            }
+        }
+
+        window.addEventListener("keydown", blockPrintShortcut);
+        return () => window.removeEventListener("keydown", blockPrintShortcut);
+    }, []);
+
     return (
         <html lang="en">
             <head>
