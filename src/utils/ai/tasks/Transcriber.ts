@@ -8,7 +8,9 @@ import { rateLimitAwareDelay, retry } from "@app/utils/async";
 import { CLOUD_PROVIDER_TYPES } from "@app/utils/config/ai.types";
 import { AIConfig } from "../AIConfig";
 import { getProviderForTask } from "../providers";
+import { assignSpeakers } from "../transcription/align-speakers";
 import { cleanRepetitions } from "../transcription/repetition-cleanup";
+import { diarizeLocal } from "@app/utils/audio/diarize-local";
 import type {
     AIProviderType,
     AITranscriptionProvider,
@@ -97,7 +99,8 @@ export class Transcriber {
             shouldRetry: shouldRetryTransient,
         });
 
-        return this.maybeClean(result, options);
+        const cleaned = this.maybeClean(result, options);
+        return this.maybeDiarizeLocal(cleaned, audio, options);
     }
 
     private maybeClean(r: TranscriptionResult, options?: TranscribeOptions): TranscriptionResult {
@@ -107,6 +110,31 @@ export class Transcriber {
 
         const c = cleanRepetitions({ text: r.text, segments: r.segments });
         return { ...r, text: c.text, segments: c.segments };
+    }
+
+    /**
+     * Local speaker diarization for providers that don't return speakers
+     * natively (Whisper/gpt-4o/local). Runs on the FULL original audio buffer
+     * (never a chunk) so the label space is global — the cross-chunk-remap
+     * problem is designed out, not patched. Deepgram-with-utterances already
+     * has per-segment speakers, so this is a no-op there.
+     */
+    private async maybeDiarizeLocal(
+        r: TranscriptionResult,
+        audio: Buffer,
+        options?: TranscribeOptions
+    ): Promise<TranscriptionResult> {
+        if (!options?.diarize || !r.segments?.length || r.segments.some((s) => s.speaker)) {
+            return r;
+        }
+
+        const turns = await diarizeLocal(audio, { speakers: options.speakers });
+
+        if (turns.length === 0) {
+            return r;
+        }
+
+        return { ...r, segments: assignSpeakers(r.segments, turns) };
     }
 
     private async transcribeChunked(
@@ -165,7 +193,7 @@ export class Transcriber {
                 }
             }
 
-            return this.maybeClean(
+            const stitched = this.maybeClean(
                 {
                     text: texts.join(" "),
                     segments: allSegments.length > 0 ? allSegments : undefined,
@@ -174,6 +202,10 @@ export class Transcriber {
                 },
                 options,
             );
+
+            // `audio` here is the full original buffer (never a chunk) — the
+            // designed-out invariant: diarization always sees the whole file.
+            return this.maybeDiarizeLocal(stitched, audio, options);
         } finally {
             if (!sourcePath && inputPath && existsSync(inputPath)) {
                 await rm(inputPath, { force: true }).catch(() => {});
