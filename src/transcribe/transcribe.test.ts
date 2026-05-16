@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { TranscriptionResult } from "@app/utils/ai/types";
-import { formatTimestamp, toSRT, toVTT } from "./index";
+import { formatOutput, formatTimestamp, toSRT, toVTT } from "./index";
 
 describe("formatTimestamp", () => {
     it("formats zero with comma separator", () => {
@@ -74,5 +74,60 @@ describe("toVTT", () => {
         const vtt = toVTT(result);
         expect(vtt).toStartWith("WEBVTT");
         expect(vtt).toContain("00:00:00.000 --> 00:00:01.500");
+    });
+});
+
+describe("speaker-aware rendering", () => {
+    it("never merges cues across a speaker change and prefixes SRT with SPEAKER", () => {
+        const result: TranscriptionResult = {
+            text: "x",
+            segments: [
+                { text: "Dobrý den.", start: 0, end: 1, speaker: "SPEAKER_00" },
+                { text: "Zdravím.", start: 1.1, end: 2, speaker: "SPEAKER_01" },
+            ],
+        };
+        const srt = toSRT(result);
+        expect(srt).toContain("1\n00:00:00,000 --> 00:00:01,000\nSPEAKER_00: Dobrý den.");
+        expect(srt).toContain("2\n00:00:01,100 --> 00:00:02,000\nSPEAKER_01: Zdravím.");
+    });
+
+    it("does not merge same-speaker fragments across a speaker boundary", () => {
+        const result: TranscriptionResult = {
+            text: "x",
+            segments: [
+                { text: "ano", start: 0, end: 0.5, speaker: "SPEAKER_00" },
+                { text: "ne", start: 0.6, end: 1.0, speaker: "SPEAKER_01" },
+            ],
+        };
+        const srt = toSRT(result);
+        expect(srt).toContain("SPEAKER_00: ano");
+        expect(srt).toContain("SPEAKER_01: ne");
+    });
+
+    it("VTT uses <v SPEAKER_NN> voice spans", () => {
+        const result: TranscriptionResult = {
+            text: "x",
+            segments: [{ text: "Ahoj.", start: 0, end: 1, speaker: "SPEAKER_00" }],
+        };
+        expect(toVTT(result)).toContain("<v SPEAKER_00>Ahoj.");
+    });
+
+    it("text format prefixes each speaker turn", () => {
+        const result: TranscriptionResult = {
+            text: "x",
+            segments: [
+                { text: "A.", start: 0, end: 1, speaker: "SPEAKER_00" },
+                { text: "B.", start: 1, end: 2, speaker: "SPEAKER_01" },
+            ],
+        };
+        expect(formatOutput(result, "text")).toBe("SPEAKER_00: A.\nSPEAKER_01: B.");
+    });
+
+    it("text format unchanged when no segment has a speaker", () => {
+        const result: TranscriptionResult = {
+            text: "plain transcript",
+            segments: [{ text: "plain transcript", start: 0, end: 1 }],
+        };
+        expect(formatOutput(result, "text")).toBe("plain transcript");
     });
 });

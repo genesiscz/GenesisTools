@@ -1,4 +1,5 @@
 import { SafeJSON } from "@app/utils/json";
+import { normalizeSpeakerLabel } from "./transcription/speaker-label";
 import type { TranscriptionResult, TranscriptionSegment } from "./types";
 
 export type OutputFormat = "text" | "json" | "srt" | "vtt";
@@ -45,15 +46,16 @@ function coalesceSegmentsForSubtitles(segments: TranscriptionSegment[]): Transcr
         }
 
         if (!cur) {
-            cur = { text: piece, start: seg.start, end: seg.end };
+            cur = { text: piece, start: seg.start, end: seg.end, speaker: seg.speaker };
         } else {
             const merged = `${cur.text} ${piece}`;
             const tooLong = merged.length > MAX_CUE_CHARS;
             const tooSlow = seg.end - cur.start > MAX_CUE_SECONDS;
+            const speakerChanged = cur.speaker !== seg.speaker;
 
-            if (tooLong || tooSlow) {
+            if (tooLong || tooSlow || speakerChanged) {
                 cues.push(cur);
-                cur = { text: piece, start: seg.start, end: seg.end };
+                cur = { text: piece, start: seg.start, end: seg.end, speaker: seg.speaker };
             } else {
                 cur.text = merged;
                 cur.end = seg.end;
@@ -88,7 +90,9 @@ export function toSRT(result: TranscriptionResult): string {
         .map((seg, i) => {
             const start = formatTimestamp(seg.start, ",");
             const end = formatTimestamp(seg.end, ",");
-            return `${i + 1}\n${start} --> ${end}\n${seg.text.trim()}`;
+            const spk = normalizeSpeakerLabel(seg.speaker);
+            const prefix = spk ? `${spk}: ` : "";
+            return `${i + 1}\n${start} --> ${end}\n${prefix}${seg.text.trim()}`;
         })
         .join("\n\n");
 }
@@ -108,17 +112,52 @@ export function toVTT(result: TranscriptionResult): string {
         .map((seg) => {
             const start = formatTimestamp(seg.start, ".");
             const end = formatTimestamp(seg.end, ".");
-            return `${start} --> ${end}\n${seg.text.trim()}`;
+            const spk = normalizeSpeakerLabel(seg.speaker);
+            const body = spk ? `<v ${spk}>${seg.text.trim()}` : seg.text.trim();
+            return `${start} --> ${end}\n${body}`;
         })
         .join("\n\n");
 
     return `WEBVTT\n\n${cues}`;
 }
 
+/** Render speaker-grouped turns (`SPEAKER_NN: …`) when the transcript carries
+ *  speaker labels; plain `result.text` otherwise. Consecutive same-speaker
+ *  segments are merged into one turn line. */
+function toSpeakerText(result: TranscriptionResult): string {
+    const segs = result.segments;
+
+    if (!segs?.length || !segs.some((s) => s.speaker)) {
+        return result.text;
+    }
+
+    const lines: string[] = [];
+    let curSpk: string | undefined;
+
+    for (const seg of segs) {
+        const piece = seg.text.trim();
+
+        if (!piece) {
+            continue;
+        }
+
+        const spk = normalizeSpeakerLabel(seg.speaker) ?? "SPEAKER_00";
+
+        if (spk !== curSpk) {
+            lines.push(`${spk}: ${piece}`);
+            curSpk = spk;
+        } else {
+            lines[lines.length - 1] += ` ${piece}`;
+        }
+    }
+
+    return lines.join("\n");
+}
+
 export function formatOutput(result: TranscriptionResult, format: OutputFormat): string {
     switch (format) {
         case "text":
-            return result.text;
+            return toSpeakerText(result);
         case "json":
             return SafeJSON.stringify(result, null, 2);
         case "srt":
