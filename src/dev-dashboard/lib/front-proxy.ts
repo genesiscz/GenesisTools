@@ -1,6 +1,6 @@
-import type { Server, ServerWebSocket } from "bun";
 import { getConfig } from "@app/dev-dashboard/config";
 import logger from "@app/logger";
+import type { Server, ServerWebSocket } from "bun";
 
 // Bun's node:http upgrade socket is a no-op (oven-sh/bun#28396 / PR #28347),
 // so a Vite-middleware reverse proxy can't relay WebSockets. This front proxy
@@ -80,7 +80,24 @@ export function startFrontProxy(opts: { publicPort: number; internalPort: number
                 return new Response("WebSocket upgrade failed", { status: 426 });
             }
 
-            return fetch(new Request(httpTarget, req), { redirect: "manual" });
+            const upstream = await fetch(new Request(httpTarget, req), { redirect: "manual" });
+
+            // Bun's fetch transparently decodes the upstream body (ttyd gzips its
+            // big inline bundle) but leaves Content-Encoding/Content-Length on the
+            // headers. Relaying those verbatim makes the browser try to gunzip
+            // already-plain bytes → ERR_CONTENT_DECODING_FAILED (blank iframe).
+            // Cloudflare re-normalizes encoding in transit, which is why it only
+            // reproduced on a direct localhost hit. Strip the now-stale headers.
+            const headers = new Headers(upstream.headers);
+            headers.delete("content-encoding");
+            headers.delete("content-length");
+            headers.delete("transfer-encoding");
+
+            return new Response(upstream.body, {
+                status: upstream.status,
+                statusText: upstream.statusText,
+                headers,
+            });
         },
         websocket: {
             idleTimeout: 960,
