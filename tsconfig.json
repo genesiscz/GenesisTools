@@ -5,6 +5,7 @@
         "src/debugging-master/dashboard",
         "src/fsevents-profile",
         "src/clarity/ui",
+        "src/dev-dashboard/ui",
         "src/Internal/commands/reas/ui"
     ],
     "compilerOptions": {

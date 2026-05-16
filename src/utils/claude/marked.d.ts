@@ -1,3 +1,5 @@
+export {};
+
 declare module "marked" {
     export class Renderer {
         parser: {
