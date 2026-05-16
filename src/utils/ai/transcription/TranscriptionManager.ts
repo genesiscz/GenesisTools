@@ -308,8 +308,9 @@ export class TranscriptionManager {
                     if (!process.env.DEEPGRAM_API_KEY) {
                         return null;
                     }
-                    // @ts-expect-error - Optional dependency, may not be installed
-                    const { deepgram } = await import("@ai-sdk/deepgram");
+                    // Optional dependency — string-typed specifier so tsc skips
+                    // module resolution whether or not @ai-sdk/deepgram is installed.
+                    const { deepgram } = await import("@ai-sdk/deepgram" as string);
                     return {
                         provider: "deepgram",
                         model: modelName,
