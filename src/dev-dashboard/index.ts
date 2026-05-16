@@ -68,7 +68,21 @@ async function runUiServer(): Promise<void> {
         }
     );
 
-    const frontProxy = startFrontProxy({ publicPort: port, internalPort });
+    // Teardown hooks below are registered after this line; if startFrontProxy
+    // throws, the already-spawned Vite child would be orphaned. Kill it here.
+    let frontProxy: ReturnType<typeof startFrontProxy>;
+
+    try {
+        frontProxy = startFrontProxy({ publicPort: port, internalPort });
+    } catch (err) {
+        try {
+            child.kill("SIGTERM");
+        } catch (killErr) {
+            logger.debug({ err: killErr }, "failed terminating Vite after front-proxy startup failure");
+        }
+
+        throw err;
+    }
     const stopFrontProxy = () => {
         try {
             frontProxy.stop(true);
@@ -105,13 +119,18 @@ async function runUiServer(): Promise<void> {
     });
 
     setTimeout(() => {
-        if (process.platform === "darwin") {
-            spawn("open", [url], { stdio: "ignore", detached: true }).unref();
-        } else if (process.platform === "win32") {
-            spawn("cmd", ["/c", "start", "", url], { stdio: "ignore", detached: true }).unref();
-        } else {
-            spawn("xdg-open", [url], { stdio: "ignore", detached: true }).unref();
-        }
+        // Best-effort browser open. Detached spawns have no "error" listener by
+        // default; an unhandled "error" (opener binary missing) would crash the
+        // dashboard ~2s post-startup, so swallow it.
+        const [cmd, args] =
+            process.platform === "darwin"
+                ? (["open", [url]] as const)
+                : process.platform === "win32"
+                  ? (["cmd", ["/c", "start", "", url]] as const)
+                  : (["xdg-open", [url]] as const);
+        const opener = spawn(cmd, args, { stdio: "ignore", detached: true });
+        opener.on("error", (err) => logger.debug({ err, cmd }, "failed to auto-open browser"));
+        opener.unref();
     }, 2000);
 
     const exitCode: number = await new Promise((resolveExit) => {
