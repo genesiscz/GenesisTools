@@ -209,5 +209,7 @@ vercel-skills
 
 .claude/skills/hf-cli
 .claude/plans/
+.claude/scheduled_tasks.lock
 
 .tanstack/
+.superpowers/
