@@ -98,6 +98,21 @@ export interface TranscriptionResult {
     duration?: number;
 }
 
+/**
+ * Structural type for any AI SDK transcription provider instance.
+ *
+ * Every provider (openai, groq, deepgram, assemblyai, gladia,
+ * openrouter-via-openai) exposes a `transcription(modelId)` factory;
+ * `transcriptionModel` is the older `ProviderV2` spec name kept as a
+ * fallback. This avoids pinning to `ProviderV2`, which `ProviderV3`
+ * providers (deepgram, groq) are not assignable to even though their
+ * models are interop-compatible with `ai@5`'s `transcribe()` at runtime.
+ */
+export interface TranscriptionCapableProvider {
+    transcription?: (modelId: string) => unknown;
+    transcriptionModel?: (modelId: string) => unknown;
+}
+
 /** Chunk emitted by transformers.js chunk_callback during ASR pipeline processing */
 export interface TranscriptionChunk {
     text: string;

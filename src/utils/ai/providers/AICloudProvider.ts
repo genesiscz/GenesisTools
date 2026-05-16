@@ -3,6 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import logger from "@app/logger";
 import { TranscriptionManager } from "@app/utils/ai/transcription/TranscriptionManager";
+import { convertFileToMonoMp3 } from "@app/utils/audio/converter";
+import { sniffAudioExt } from "@app/utils/audio/detect-format";
 import type {
     AIEmbeddingProvider,
     AISummarizationProvider,
@@ -90,25 +92,51 @@ export class AICloudProvider
     }
 
     async transcribe(audio: Buffer, options?: TranscribeOptions): Promise<TranscriptionResult> {
-        const tempPath = join(tmpdir(), `ai-transcribe-${Date.now()}.wav`);
-        await Bun.write(tempPath, audio);
+        const stamp = Date.now();
+        const ext = sniffAudioExt(audio);
+        const rawPath = join(tmpdir(), `ai-transcribe-${stamp}.${ext}`);
+        await Bun.write(rawPath, audio);
+
+        // Normalize to 16kHz mono MP3 for upload. whisper-1 tolerates most
+        // containers, but gpt-4o-transcribe rejects many ("does not support
+        // the format"); MP3 is the universal, smallest, STT-transparent input.
+        // Already-MP3 input (e.g. a split chunk) is uploaded as-is.
+        let uploadPath = rawPath;
+        let normalizedPath: string | undefined;
 
         try {
-            const result = await this.transcriptionManager.transcribeAudio(tempPath, {
+            if (ext !== "mp3") {
+                normalizedPath = join(tmpdir(), `ai-transcribe-${stamp}-norm.mp3`);
+                await convertFileToMonoMp3(rawPath, normalizedPath);
+                uploadPath = normalizedPath;
+            }
+
+            const result = await this.transcriptionManager.transcribeAudio(uploadPath, {
                 language: options?.language,
                 model: options?.model,
                 provider: this.cloudType === "auto" ? undefined : this.cloudType,
+                diarize: options?.diarize,
+                wordTimestamps: options?.wordTimestamps,
+                smartFormat: options?.smartFormat,
             });
 
             return {
                 text: result.text,
+                segments: result.segments,
+                language: result.language,
                 duration: result.duration,
             };
         } finally {
-            try {
-                unlinkSync(tempPath);
-            } catch {
-                logger.debug(`Failed to clean up temp file: ${tempPath}`);
+            for (const p of [rawPath, normalizedPath]) {
+                if (!p) {
+                    continue;
+                }
+
+                try {
+                    unlinkSync(p);
+                } catch {
+                    logger.debug(`Failed to clean up temp file: ${p}`);
+                }
             }
         }
     }

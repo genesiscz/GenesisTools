@@ -91,8 +91,42 @@ When creating a new tool and writing helper functions, check if the utility is *
 - `src/utils/async.ts` - Async helpers (concurrency, retry, etc.)
 - `src/utils/json-schema.ts` - JSON schema inference: `inferSchema()`, `formatSchema(value, "skeleton"|"typescript"|"schema")`
 - `src/utils/ai/device.ts` - ONNX Runtime device detection: `detectDevice()`, `resolveDevice()` (CoreML/CUDA/DML/CPU)
+- `src/utils/audio/converter.ts` - Audio transcode helpers: `convertToWhisperWav()`, `convertFileToMonoMp3()`, `MONO_MP3_BITRATE_KBPS`, `toFloat32Audio()`
+- `src/utils/audio/detect-format.ts` - Magic-byte audio sniffing: `detectAudioFormat()`, `sniffAudioExt()`
+- `src/utils/cli/quiet-spinner.ts` - No-op spinner for non-TTY (`createQuietSpinner()`); pair with `isQuietOutput()` from `src/utils/cli/output-mode.ts`
 
 Tool-specific logic stays in the tool directory (e.g., `src/har-analyzer/core/`).
+
+### Audio transcription gotchas (`tools transcribe`, `ask --sst`)
+
+Hard-won; do not relearn these by trial:
+
+- **Audio transcode/convert utils belong in `src/utils/audio/`**, never tied
+  into a tool (e.g. NOT new methods on `src/ask/audio/AudioProcessor.ts`).
+  Reuse/extend `converter.ts`.
+- **AI SDK `transcribe()` has no top-level `language`.** A language hint
+  ONLY works via `providerOptions.<providerId>.language`. Passed anywhere
+  else it is silently dropped → Whisper auto-detects per-30s and
+  hallucination-loops on Czech/non-English. Provider-option keys are
+  **camelCase** (`language`, `temperature`, `timestampGranularities`,
+  `smartFormat`, `detectLanguage`).
+- **`ai@5`'s `transcribe()` only accepts spec-v2 transcription models.**
+  `@ai-sdk/deepgram@2.x` and latest `@ai-sdk/groq` are spec-v3 →
+  `AI_UnsupportedModelVersionError`. Pin **`@ai-sdk/deepgram@^1.0.28`**
+  (latest v2). Don't "fix" by upgrading `ai`.
+- **Deepgram via AI SDK exposes only raw lowercase per-word segments**;
+  the smart-formatted transcript is solely in `result.text`. SRT/VTT need
+  word→sentence realignment (see `mapResultSegments` in
+  `TranscriptionManager.ts`).
+- **`gpt-4o-transcribe`/`gpt-4o-mini-transcribe` reject many containers**
+  ("does not support the format") and return **no segment timestamps**.
+  Cloud uploads are normalized to 16kHz-mono MP3 (`convertFileToMonoMp3`)
+  in `AICloudProvider.transcribe`; for these models SRT degrades to text.
+- **`whisper-1` still loops on some audio even configured correctly** —
+  it's a model limitation, not a bug. Offer `gpt-4o-transcribe` or
+  Deepgram nova-3 (robust + ~5× faster) as the alternative.
+- Non-TTY transcribe must use the quiet spinner (no clack frames),
+  transcript → stdout, status → stderr.
 
 ### Tool Patterns
 

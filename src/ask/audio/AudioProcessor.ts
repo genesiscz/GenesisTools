@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { dirname, join, parse } from "node:path";
 import logger from "@app/logger";
+import { MONO_MP3_BITRATE_KBPS } from "@app/utils/audio/converter";
 import { SafeJSON } from "@app/utils/json";
 import { spawn } from "bun";
 
@@ -20,6 +21,8 @@ export type FFProbeResult = {
 
 export class AudioProcessor {
     private readonly CHUNK_SIZE = 24 * 1024 * 1024; // 24MB chunks (under 25MB limit)
+    private readonly SEGMENT_BITRATE_KBPS = MONO_MP3_BITRATE_KBPS; // shared with cloud-normalize util
+    private readonly SEGMENT_BYTES_PER_SEC = (this.SEGMENT_BITRATE_KBPS * 1000) / 8; // constant after re-encode
 
     async validateAudioFile(filePath: string): Promise<{
         isValid: boolean;
@@ -113,16 +116,21 @@ export class AudioProcessor {
                     "ffmpeg",
                     "-i",
                     inputPath,
+                    "-vn",
+                    "-map",
+                    "0:a:0",
+                    "-c:a",
+                    "libmp3lame",
+                    "-b:a",
+                    `${this.SEGMENT_BITRATE_KBPS}k`,
                     "-f",
                     "segment",
                     "-segment_time",
                     chunkDurationSeconds.toString(),
-                    "-c",
-                    "copy",
-                    "-map",
-                    "0",
                     "-segment_format",
                     "mp3",
+                    "-reset_timestamps",
+                    "1",
                     "-y",
                     segmentTemplate,
                 ],
@@ -166,7 +174,6 @@ export class AudioProcessor {
                 await mkdir(outputDir, { recursive: true });
             }
 
-            const audioInfo = await this.getAudioInfo(inputPath);
             const fileSize = Bun.file(inputPath).size;
 
             if (fileSize <= maxChunkSizeBytes) {
@@ -176,9 +183,9 @@ export class AudioProcessor {
             const _baseName = parse(inputPath).name || "audio";
             const _outputFiles: string[] = [];
 
-            // Estimate duration per chunk based on file size
-            const bytesPerSecond = fileSize / (audioInfo.duration || 1);
-            const chunkDurationSeconds = Math.floor((maxChunkSizeBytes * 0.9) / bytesPerSecond); // 90% to be safe
+            // Segments are re-encoded to a fixed-bitrate MP3, so chunk size is
+            // governed by the encoded byte rate, not the source file's.
+            const chunkDurationSeconds = Math.floor((maxChunkSizeBytes * 0.9) / this.SEGMENT_BYTES_PER_SEC); // 90% to be safe
 
             logger.info(`Splitting audio by size (~${maxChunkSizeBytes / 1024 / 1024}MB chunks)...`);
 

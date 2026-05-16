@@ -8,6 +8,8 @@ import { getAllProviders } from "@app/utils/ai/providers/index.ts";
 import { formatOutput, formatTimestamp, type OutputFormat, toSRT, toVTT } from "@app/utils/ai/transcription-format.ts";
 import type { AIProviderType } from "@app/utils/ai/types.ts";
 import { isInteractive, suggestCommand } from "@app/utils/cli/executor.ts";
+import { isQuietOutput } from "@app/utils/cli/output-mode.ts";
+import { createQuietSpinner } from "@app/utils/cli/quiet-spinner.ts";
 import { copyToClipboard } from "@app/utils/clipboard.ts";
 import { formatBytes, formatDuration } from "@app/utils/format.ts";
 import * as p from "@clack/prompts";
@@ -94,7 +96,11 @@ async function runTranscription(filePath: string, opts: TranscribeFlags): Promis
         : (opts.provider as AIProviderType | undefined);
     const format = opts.format ?? "text";
 
-    const s = p.spinner();
+    // In a non-TTY / structured-output context the clack spinner floods the
+    // pipe with animation frames. Use a no-op spinner and route only milestone
+    // status to stderr (never stdout — that carries the transcript).
+    const quiet = isQuietOutput(format);
+    const s = quiet ? createQuietSpinner() : p.spinner();
     s.start("Transcribing...");
 
     try {
@@ -110,15 +116,32 @@ async function runTranscription(filePath: string, opts: TranscribeFlags): Promis
                 format,
                 model: opts.model,
                 onProgress: (info) => {
+                    if (quiet) {
+                        // Drop per-chunk churn; keep coarse phase milestones.
+                        if (!info.message.startsWith("Transcribing chunk")) {
+                            process.stderr.write(`${pc.dim(info.message)}\n`);
+                        }
+
+                        return;
+                    }
+
                     s.message(info.message);
                 },
                 onSegment: (seg) => {
+                    if (quiet) {
+                        return;
+                    }
+
                     const ts = formatDuration(seg.start * 1000, "ms", "tiered");
                     s.message(`[${ts}] ${seg.text.trim()}`);
                 },
             });
 
-            s.stop(pc.green("Transcription complete"));
+            if (quiet) {
+                process.stderr.write(`${pc.green("Transcription complete")}\n`);
+            } else {
+                s.stop(pc.green("Transcription complete"));
+            }
 
             // Show metadata
             if (result.language) {
@@ -149,7 +172,12 @@ async function runTranscription(filePath: string, opts: TranscribeFlags): Promis
             transcriber.dispose();
         }
     } catch (error) {
-        s.stop(pc.red("Transcription failed"));
+        if (quiet) {
+            process.stderr.write(`${pc.red("Transcription failed")}\n`);
+        } else {
+            s.stop(pc.red("Transcription failed"));
+        }
+
         console.error(pc.red(error instanceof Error ? error.message : String(error)));
         process.exit(1);
     }

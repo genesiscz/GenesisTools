@@ -30,6 +30,11 @@ function shouldRetryTransient(error: unknown): boolean {
         return false;
     }
 
+    // Permanent capability/format mismatches — retrying just repeats the error.
+    if (/unsupported.model.version|does not support the format|unsupported.format/i.test(msg)) {
+        return false;
+    }
+
     return true;
 }
 
