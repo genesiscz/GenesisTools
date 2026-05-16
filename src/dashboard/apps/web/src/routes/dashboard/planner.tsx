@@ -3,6 +3,8 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { DashboardLayout } from "@/components/dashboard";
 import type { AssistantTask } from "@/drizzle";
+import { TaskForm } from "@/lib/assistant/components";
+import type { TaskInput } from "@/lib/assistant/types";
 import { ASSISTANT_SYNC_CHANNEL, useBroadcastInvalidation } from "@/lib/sync/useBroadcastInvalidation";
 import type { PlannerView } from "./-planner/PlannerHeader";
 import { PlannerHeader } from "./-planner/PlannerHeader";
@@ -27,6 +29,11 @@ function PlannerRoot() {
     useBroadcastInvalidation(ASSISTANT_SYNC_CHANNEL);
 
     const [view, setView] = useState<PlannerView>("day");
+    const [createOpen, setCreateOpen] = useState(false);
+    const [pendingSchedule, setPendingSchedule] = useState<{
+        scheduledStart: string;
+        scheduledEnd: string;
+    } | null>(null);
     const navigate = useNavigate();
 
     const {
@@ -34,12 +41,30 @@ function PlannerRoot() {
         unscheduledTasks,
         allActiveTasks,
         scheduleTask,
+        createTask,
         isLoading,
         error,
         focusSessions,
         completedToday,
         deferredToTomorrow,
     } = usePlannerData();
+
+    function handleTimelineCreate(scheduledStart: string, scheduledEnd: string) {
+        setPendingSchedule({ scheduledStart, scheduledEnd });
+        setCreateOpen(true);
+    }
+
+    function handleCreateOpenChange(open: boolean) {
+        setCreateOpen(open);
+        if (!open) {
+            setPendingSchedule(null);
+        }
+    }
+
+    async function handleCreateSubmit(input: TaskInput) {
+        await createTask(input, pendingSchedule ?? undefined);
+        setPendingSchedule(null);
+    }
 
     const { activeDragId, sensors, handleDragStart, handleDragEnd } = usePlannerDnd({
         onSchedule: scheduleTask,
@@ -81,6 +106,7 @@ function PlannerRoot() {
                             scheduledTasks={scheduledTasks}
                             activeDragId={activeDragId}
                             focusSessions={focusSessions}
+                            onCreateAt={handleTimelineCreate}
                         />
                         <PlannerInbox
                             tasks={unscheduledTasks}
@@ -104,6 +130,8 @@ function PlannerRoot() {
                     onFocus={(id) => navigate({ to: "/dashboard/focus", search: { taskId: id } })}
                 />
             )}
+
+            <TaskForm open={createOpen} onOpenChange={handleCreateOpenChange} onSubmit={handleCreateSubmit} />
         </div>
     );
 }

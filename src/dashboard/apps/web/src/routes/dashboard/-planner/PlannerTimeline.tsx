@@ -1,4 +1,5 @@
 import { useDroppable } from "@dnd-kit/core";
+import { useState } from "react";
 import type { FocusSessionBlock } from "@/lib/timer/timer-sync.server";
 import { FocusSessionGhost } from "./FocusSessionGhost";
 import { NowMarker } from "./NowMarker";
@@ -33,6 +34,20 @@ function nowTopPx(): number {
     return hourToPx(clamped);
 }
 
+/** Local Y px → fractional hour, clamped and snapped to 15-minute steps. */
+function pxToHour(px: number): number {
+    const raw = START_HOUR + px / PX_PER_HOUR;
+    const clamped = Math.max(START_HOUR, Math.min(END_HOUR, raw));
+    return Math.round(clamped * 4) / 4;
+}
+
+/** Fractional hour on today's date → ISO datetime. */
+function hourToIso(hour: number): string {
+    const d = new Date();
+    d.setHours(Math.floor(hour), Math.round((hour % 1) * 60), 0, 0);
+    return d.toISOString();
+}
+
 interface PlannerTimelineProps {
     scheduledTasks: ScheduledTask[];
     /** Active drag task id, from usePlannerDnd */
@@ -41,23 +56,90 @@ interface PlannerTimelineProps {
     dragAttributes?: Record<string, unknown>;
     /** Completed pomodoro focus sessions to render as ghost blocks */
     focusSessions: FocusSessionBlock[];
+    /** Draw a time block on empty timeline space to create a scheduled task. */
+    onCreateAt?: (scheduledStart: string, scheduledEnd: string) => void;
 }
 
-function DroppableTimeline({ children }: { children: React.ReactNode }) {
+function DroppableTimeline({
+    children,
+    onCreateAt,
+}: {
+    children: React.ReactNode;
+    onCreateAt?: (scheduledStart: string, scheduledEnd: string) => void;
+}) {
     const { setNodeRef, isOver } = useDroppable({ id: "timeline" });
+    const [draw, setDraw] = useState<{ startPx: number; currentPx: number } | null>(null);
+
+    function localY(e: React.PointerEvent<HTMLDivElement>): number {
+        const rect = e.currentTarget.getBoundingClientRect();
+        return e.clientY - rect.top;
+    }
+
+    function handlePointerDown(e: React.PointerEvent<HTMLDivElement>) {
+        // Only the empty background starts a create-gesture; task blocks and
+        // markers are absolutely-positioned children, so a pointerdown on them
+        // does not match currentTarget and is left to dnd-kit / their handlers.
+        if (!onCreateAt || e.target !== e.currentTarget || e.button !== 0) {
+            return;
+        }
+
+        const y = localY(e);
+        setDraw({ startPx: y, currentPx: y });
+        e.currentTarget.setPointerCapture(e.pointerId);
+    }
+
+    function handlePointerMove(e: React.PointerEvent<HTMLDivElement>) {
+        if (!draw) {
+            return;
+        }
+
+        setDraw({ startPx: draw.startPx, currentPx: localY(e) });
+    }
+
+    function handlePointerUp() {
+        if (!draw || !onCreateAt) {
+            setDraw(null);
+            return;
+        }
+
+        const a = pxToHour(Math.min(draw.startPx, draw.currentPx));
+        const b = pxToHour(Math.max(draw.startPx, draw.currentPx));
+        // A click (no meaningful drag) defaults to a 1-hour block.
+        const startHour = a;
+        const endHour = b - a < 0.25 ? Math.min(END_HOUR, a + 1) : b;
+        setDraw(null);
+        onCreateAt(hourToIso(startHour), hourToIso(endHour));
+    }
+
+    const previewTop = draw ? Math.min(draw.startPx, draw.currentPx) : 0;
+    const previewHeight = draw ? Math.max(8, Math.abs(draw.currentPx - draw.startPx)) : 0;
 
     return (
         <div
             ref={setNodeRef}
             className={["relative transition-colors duration-150", isOver ? "bg-white/5" : ""].join(" ")}
-            style={{ height: TIMELINE_HEIGHT }}
+            style={{ height: TIMELINE_HEIGHT, touchAction: "none" }}
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={handlePointerUp}
         >
             {children}
+            {draw && (
+                <div
+                    className="pointer-events-none absolute inset-x-1 z-10 rounded-md border border-amber-400/60 bg-amber-400/15"
+                    style={{ top: previewTop, height: previewHeight }}
+                />
+            )}
         </div>
     );
 }
 
-export function PlannerTimeline({ scheduledTasks, activeDragId, focusSessions }: PlannerTimelineProps) {
+export function PlannerTimeline({
+    scheduledTasks,
+    activeDragId,
+    focusSessions,
+    onCreateAt,
+}: PlannerTimelineProps) {
     const topPx = nowTopPx();
 
     return (
@@ -96,7 +178,7 @@ export function PlannerTimeline({ scheduledTasks, activeDragId, focusSessions }:
                         />
                     ))}
 
-                    <DroppableTimeline>
+                    <DroppableTimeline onCreateAt={onCreateAt}>
                         {/* Now marker */}
                         <NowMarker topPx={topPx} />
 

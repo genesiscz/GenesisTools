@@ -1,7 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@workos/authkit-tanstack-react-start/client";
 import type { AssistantTask } from "@/drizzle";
-import { assistantKeys, useAssistantTasksQuery } from "@/lib/assistant/hooks/useAssistantQueries";
+import {
+    assistantKeys,
+    useAssistantTasksQuery,
+    useCreateAssistantTaskMutation,
+} from "@/lib/assistant/hooks/useAssistantQueries";
+import type { TaskInput } from "@/lib/assistant/types";
 import { rescheduleTask } from "@/lib/assistant/planner.server";
 import { ASSISTANT_SYNC_CHANNEL, broadcastInvalidate } from "@/lib/sync/useBroadcastInvalidation";
 import type { FocusSessionBlock } from "@/lib/timer/timer-sync.server";
@@ -52,6 +57,32 @@ export function usePlannerData() {
         return rescheduleMutation.mutateAsync({ id, scheduledStart: null, scheduledEnd: null });
     }
 
+    const createMutation = useCreateAssistantTaskMutation();
+
+    function createTask(input: TaskInput, schedule?: { scheduledStart: string; scheduledEnd: string }) {
+        if (!userId) {
+            return Promise.reject(new Error("No user"));
+        }
+
+        const now = new Date().toISOString();
+
+        return createMutation.mutateAsync({
+            id: crypto.randomUUID(),
+            userId,
+            title: input.title,
+            description: input.description ?? "",
+            deadline: input.deadline ? input.deadline.toISOString() : null,
+            urgencyLevel: input.urgencyLevel ?? "nice-to-have",
+            isShippingBlocker: input.isShippingBlocker ? 1 : 0,
+            linkedGitHub: input.linkedGitHub ?? null,
+            status: "backlog",
+            scheduledStart: schedule?.scheduledStart ?? null,
+            scheduledEnd: schedule?.scheduledEnd ?? null,
+            createdAt: now,
+            updatedAt: now,
+        });
+    }
+
     // ── Focus session ghost blocks (today's completed pomodoros) ─────────────
     const focusSessionsQuery = useQuery({
         queryKey: ["focus-sessions-today", userId],
@@ -93,6 +124,8 @@ export function usePlannerData() {
         allActiveTasks: rawTasks.filter((t) => t.status !== "completed"),
         scheduleTask,
         unscheduleTask,
+        createTask,
+        isCreating: createMutation.isPending,
         isRescheduling: rescheduleMutation.isPending,
         // New
         focusSessions,

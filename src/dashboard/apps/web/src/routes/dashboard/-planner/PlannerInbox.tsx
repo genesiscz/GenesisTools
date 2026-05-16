@@ -89,7 +89,9 @@ export function PlannerInbox({ tasks, completedToday, deferredToTomorrow }: Plan
             </div>
 
             {tasks.length === 0 ? (
-                <p className="px-1 py-4 text-center text-xs text-zinc-600">All tasks scheduled ✓</p>
+                <p className="px-1 py-4 text-center text-xs text-zinc-600">
+                    Inbox empty — drag on the timeline to create a task
+                </p>
             ) : (
                 <div className="flex flex-col gap-1.5 overflow-y-auto">
                     {tasks.map((task) => (
@@ -98,7 +100,9 @@ export function PlannerInbox({ tasks, completedToday, deferredToTomorrow }: Plan
                 </div>
             )}
 
-            <p className="mt-1 px-1 text-[10px] text-zinc-600">Drag a task onto the timeline to schedule it.</p>
+            <p className="mt-1 px-1 text-[10px] text-zinc-600">
+                Drag a task onto the timeline to schedule it, or drag on empty timeline space to create one.
+            </p>
 
             {/* Footer stats */}
             <div className="mt-2 grid grid-cols-2 gap-1.5">
