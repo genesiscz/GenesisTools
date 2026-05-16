@@ -74,52 +74,137 @@ function overlap(a: Cue, b: Cue): number {
     return Math.max(0, Math.min(a.end, b.end) - Math.max(a.start, b.start));
 }
 
+function permutations<T>(arr: T[]): T[][] {
+    if (arr.length <= 1) {
+        return [arr.slice()];
+    }
+
+    const out: T[][] = [];
+
+    for (let i = 0; i < arr.length; i++) {
+        const rest = [...arr.slice(0, i), ...arr.slice(i + 1)];
+
+        for (const p of permutations(rest)) {
+            out.push([arr[i], ...p]);
+        }
+    }
+
+    return out;
+}
+
+/**
+ * Diarization speaker labels are arbitrary identifiers — `SPEAKER_00` from one
+ * tool is not meant to equal `SPEAKER_00` from another. The only honest
+ * agreement score is invariant under any bijection candidate-label →
+ * reference-label, so brute-force every relabeling and take the best (speaker
+ * counts are tiny — ≤3 in practice; cap at 7 to keep n! bounded). This is the
+ * standard DER-style optimal label assignment.
+ */
+function bestSpeakerAgreement(pairs: Array<{ cand: string; ref: string }>): number {
+    if (pairs.length === 0) {
+        return 1;
+    }
+
+    const candSpk = [...new Set(pairs.map((p) => p.cand))];
+    const refSpk = [...new Set(pairs.map((p) => p.ref))];
+
+    if (candSpk.length > 7 || refSpk.length > 7) {
+        const direct = pairs.filter((p) => p.cand === p.ref).length;
+
+        return direct / pairs.length;
+    }
+
+    let best = 0;
+
+    for (const perm of permutations(refSpk)) {
+        const map = new Map<string, string>();
+        candSpk.forEach((c, i) => {
+            if (i < perm.length) {
+                map.set(c, perm[i]);
+            }
+        });
+
+        let matched = 0;
+
+        for (const p of pairs) {
+            if (map.get(p.cand) === p.ref) {
+                matched++;
+            }
+        }
+
+        if (matched > best) {
+            best = matched;
+        }
+    }
+
+    return best / pairs.length;
+}
+
 export function scoreAgainstReference(
     candSrt: string,
     refSrt: string,
 ): { werProxy: number; speakerAgreement: number } {
     const cand = parseSrt(candSrt);
     const ref = parseSrt(refSrt);
-    let werSum = 0;
-    let werN = 0;
-    let spkMatch = 0;
-    let spkBoth = 0;
+
+    // Each candidate cue → the reference cue it overlaps most (pure
+    // max-overlap, NO start-distance gate: reference cues are long/
+    // utterance-level, candidate cues short/segment-level; a start gate would
+    // drop most candidates and skew the metric).
+    const grouped = new Map<number, Cue[]>();
+    const pairs: Array<{ cand: string; ref: string }> = [];
 
     for (const c of cand) {
-        let best: Cue | undefined;
+        let bestIdx = -1;
         let bestOv = 0;
 
-        for (const r of ref) {
-            // Pure max-overlap — NO start-distance gate (reference cues are
-            // long/utterance-level, candidate cues short/segment-level; a
-            // start gate would drop most candidates and skew the metric).
-            const ov = overlap(c, r);
+        for (let ri = 0; ri < ref.length; ri++) {
+            const ov = overlap(c, ref[ri]);
 
             if (ov > bestOv) {
                 bestOv = ov;
-                best = r;
+                bestIdx = ri;
             }
         }
 
-        if (!best || bestOv <= 0) {
+        if (bestIdx < 0 || bestOv <= 0) {
             continue;
         }
 
-        werSum += lev(c.text, best.text) / Math.max(1, best.text.length);
-        werN++;
+        const list = grouped.get(bestIdx) ?? [];
+        list.push(c);
+        grouped.set(bestIdx, list);
 
-        if (c.speaker && best.speaker) {
-            spkBoth++;
+        const r = ref[bestIdx];
 
-            if (c.speaker === best.speaker) {
-                spkMatch++;
-            }
+        if (c.speaker && r.speaker) {
+            pairs.push({ cand: c.speaker, ref: r.speaker });
         }
+    }
+
+    // WER-proxy aggregated PER REFERENCE CUE, not per candidate cue: collect
+    // every candidate cue that matched this ref cue, concatenate in time
+    // order, score the concatenation against the ref text. This decouples the
+    // score from candidate cue granularity — one long cue and five short cues
+    // over the same span with the same words now score identically.
+    let werSum = 0;
+    let werN = 0;
+
+    for (const [refIdx, list] of grouped) {
+        const r = ref[refIdx];
+        const concat = list
+            .slice()
+            .sort((a, b) => a.start - b.start)
+            .map((x) => x.text)
+            .join(" ")
+            .trim();
+        werSum += lev(concat, r.text) / Math.max(1, r.text.length);
+        werN++;
     }
 
     return {
         werProxy: werN ? werSum / werN : 1,
-        speakerAgreement: spkBoth ? spkMatch / spkBoth : 1,
+        speakerAgreement: bestSpeakerAgreement(pairs),
     };
 }
 
