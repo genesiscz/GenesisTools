@@ -179,6 +179,17 @@ export async function listTtyd(): Promise<TtydSession[]> {
     return Array.from(registry.values()).map((tracked) => tracked.session);
 }
 
+/**
+ * Resolve a session's port from the in-process registry. The front-proxy hits
+ * this for every /ttyd/<id>/* asset request, so it must not do per-request disk
+ * I/O — the registry is hydrated once, then served from memory.
+ */
+export async function getTtydPort(id: string): Promise<number | null> {
+    await hydrateRegistry();
+
+    return registry.get(id)?.session.port ?? null;
+}
+
 export async function killTtyd(id: string): Promise<boolean> {
     await hydrateRegistry();
 

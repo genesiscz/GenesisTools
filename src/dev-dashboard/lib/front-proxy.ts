@@ -1,4 +1,4 @@
-import { getConfig } from "@app/dev-dashboard/config";
+import { getTtydPort } from "@app/dev-dashboard/lib/ttyd/manager";
 import logger from "@app/logger";
 import type { Server, ServerWebSocket } from "bun";
 
@@ -19,12 +19,9 @@ interface BridgeData {
     closed: boolean;
 }
 
-async function resolveTtydPort(id: string): Promise<number | null> {
-    const config = await getConfig();
-    const session = config.ttydSessions.find((s) => s.id === id);
-
-    return session ? session.port : null;
-}
+// In-process registry lookup (hydrated once) — no per-request disk I/O, since
+// this runs for every /ttyd/<id>/* asset request, not just the WS upgrade.
+const resolveTtydPort = getTtydPort;
 
 function normalizeCloseCode(code: number): number {
     return code >= 1000 && code < 5000 && code !== 1005 && code !== 1006 ? code : 1000;
