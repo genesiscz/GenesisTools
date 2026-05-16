@@ -91,6 +91,10 @@ async function pruneDeadSessions(): Promise<void> {
 
     for (const [id, tracked] of registry.entries()) {
         if (!isSessionAlive(tracked.session)) {
+            if (tracked.session.tmuxSessionName) {
+                killTmuxSession(tracked.session.tmuxSessionName);
+            }
+
             registry.delete(id);
             changed = true;
         }
@@ -205,6 +209,10 @@ export async function killTtyd(id: string): Promise<boolean> {
 }
 
 export async function killAllTtyd(): Promise<void> {
+    // After a dashboard restart the in-memory registry is empty but sessions
+    // persist in config; hydrate first so they're actually terminated.
+    await hydrateRegistry();
+
     for (const { child, session } of registry.values()) {
         if (child) {
             child.kill("SIGTERM");

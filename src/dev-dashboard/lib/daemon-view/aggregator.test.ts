@@ -37,7 +37,7 @@ describe("getRunLog", () => {
         ];
         writeFileSync(logFile, `${lines.join("\n")}\n`);
 
-        const entries = getRunLog(logFile);
+        const entries = getRunLog(logFile, tmpDir);
 
         expect(entries).toHaveLength(3);
         expect(entries[0]?.type).toBe("meta");
@@ -60,5 +60,12 @@ describe("getRunLog", () => {
             expect(exit.code).toBe(0);
             expect(exit.duration_ms).toBe(12);
         }
+    });
+
+    test("rejects a logFile that escapes the base dir", () => {
+        expect(() => getRunLog("/etc/passwd", tmpDir)).toThrow("escapes the daemon logs directory");
+        expect(() => getRunLog(join(tmpDir, "../../../../etc/passwd"), tmpDir)).toThrow(
+            "escapes the daemon logs directory"
+        );
     });
 });

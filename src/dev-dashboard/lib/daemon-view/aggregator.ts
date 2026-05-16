@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { getLogsBaseDir, loadConfig } from "@app/daemon/lib/config";
 import { getDaemonStatus } from "@app/daemon/lib/launchd";
 import { listRunsForTask, listTasksWithLogs, parseLogFile } from "@app/daemon/lib/log-reader";
@@ -29,6 +30,15 @@ export function getAllRecentRuns(limit: number): RunSummary[] {
     return all.slice(0, limit);
 }
 
-export function getRunLog(logFile: string): LogEntry[] {
-    return parseLogFile(logFile);
+export function getRunLog(logFile: string, baseDir: string = getLogsBaseDir()): LogEntry[] {
+    // logFile arrives straight from the ?logFile= query param. Contain it to the
+    // daemon logs dir so a crafted value can't read arbitrary files.
+    const root = resolve(baseDir);
+    const resolved = resolve(logFile);
+
+    if (resolved !== root && !resolved.startsWith(`${root}/`)) {
+        throw new Error("logFile escapes the daemon logs directory");
+    }
+
+    return parseLogFile(resolved);
 }

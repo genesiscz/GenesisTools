@@ -72,8 +72,8 @@ async function runUiServer(): Promise<void> {
     const stopFrontProxy = () => {
         try {
             frontProxy.stop(true);
-        } catch {
-            // already stopped
+        } catch (err) {
+            logger.debug({ err }, "front proxy stop failed (already stopped?)");
         }
     };
 
@@ -86,8 +86,8 @@ async function runUiServer(): Promise<void> {
     const killChild = () => {
         try {
             child.kill("SIGTERM");
-        } catch {
-            // already gone
+        } catch (err) {
+            logger.debug({ err }, "Vite child kill failed (already gone?)");
         }
     };
 

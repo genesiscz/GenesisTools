@@ -17,6 +17,10 @@ async function fetchTodos(list: string): Promise<TodosResult> {
         throw new PermissionError("Reminders permission needed");
     }
 
+    if (!res.ok) {
+        throw new Error(`Failed to load todos: ${res.status}`);
+    }
+
     return res.json() as Promise<TodosResult>;
 }
 

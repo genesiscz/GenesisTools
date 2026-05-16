@@ -281,6 +281,13 @@ function highlightCode(code: string, language: string): string {
 function buildMarked(opts: RenderOptions): Marked {
     return new Marked(
         { gfm: true, breaks: false },
+        // The rendered HTML is served on the public, auth-bypassed /share/:slug
+        // page. marked passes raw HTML in a note through verbatim, so a note
+        // containing <script>/<img onerror> would execute in a visitor's
+        // browser. Escape raw-HTML tokens so they render as inert text; marked's
+        // own element output and the trusted KaTeX/mermaid/wikilink extensions
+        // are unaffected.
+        { renderer: { html: ({ text }) => escapeHtml(text) } },
         markedHighlight({
             langPrefix: "hljs language-",
             highlight: highlightCode,

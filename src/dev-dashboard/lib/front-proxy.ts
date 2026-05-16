@@ -80,7 +80,17 @@ export function startFrontProxy(opts: { publicPort: number; internalPort: number
                 return new Response("WebSocket upgrade failed", { status: 426 });
             }
 
-            const upstream = await fetch(new Request(httpTarget, req), { redirect: "manual" });
+            let upstream: Response;
+
+            try {
+                upstream = await fetch(new Request(httpTarget, req), {
+                    redirect: "manual",
+                    signal: AbortSignal.timeout(15_000),
+                });
+            } catch (err) {
+                logger.warn({ err, httpTarget }, "front proxy: upstream fetch failed");
+                return new Response("Bad Gateway: upstream unavailable", { status: 502 });
+            }
 
             // Bun's fetch transparently decodes the upstream body (ttyd gzips its
             // big inline bundle) but leaves Content-Encoding/Content-Length on the
@@ -103,10 +113,27 @@ export function startFrontProxy(opts: { publicPort: number; internalPort: number
             idleTimeout: 960,
             open(ws: ServerWebSocket<BridgeData>) {
                 const data = ws.data;
-                const out =
-                    data.protocols.length > 0
-                        ? new WebSocket(data.targetWsUrl, data.protocols)
-                        : new WebSocket(data.targetWsUrl);
+
+                let out: WebSocket;
+
+                try {
+                    out =
+                        data.protocols.length > 0
+                            ? new WebSocket(data.targetWsUrl, data.protocols)
+                            : new WebSocket(data.targetWsUrl);
+                } catch (err) {
+                    logger.warn({ err, target: data.targetWsUrl }, "front proxy: outbound WS construct failed");
+                    data.closed = true;
+
+                    try {
+                        ws.close(1011);
+                    } catch {
+                        // client already gone
+                    }
+
+                    return;
+                }
+
                 out.binaryType = "arraybuffer";
                 data.out = out;
 
