@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { ClientOnly, createFileRoute } from "@tanstack/react-router";
 import { Avatar, AvatarFallback, AvatarImage } from "@ui/components/avatar";
 import { Badge } from "@ui/components/badge";
 import { Button } from "@ui/components/button";
@@ -164,12 +164,25 @@ function ProfilePage() {
                     {/* Avatar Section */}
                     <div className="flex items-center gap-6">
                         <div className="relative group">
-                            <Avatar className="h-20 w-20 border-2 border-primary/30">
-                                <AvatarImage src={displayAvatarSrc} alt={displayName} />
-                                <AvatarFallback className="bg-primary/20 text-primary text-xl font-bold">
-                                    {userInitials}
-                                </AvatarFallback>
-                            </Avatar>
+                            {/* radix-ui Avatar runs hooks during render; under
+                                the dev SSR graph it resolves a second react
+                                instance (null dispatcher). The avatar is a
+                                profile picture with no meaningful SSR HTML, so
+                                render it client-only with a sized placeholder. */}
+                            <ClientOnly
+                                fallback={
+                                    <div className="flex h-20 w-20 items-center justify-center rounded-full border-2 border-primary/30 bg-primary/20 text-primary text-xl font-bold">
+                                        {userInitials}
+                                    </div>
+                                }
+                            >
+                                <Avatar className="h-20 w-20 border-2 border-primary/30">
+                                    <AvatarImage src={displayAvatarSrc} alt={displayName} />
+                                    <AvatarFallback className="bg-primary/20 text-primary text-xl font-bold">
+                                        {userInitials}
+                                    </AvatarFallback>
+                                </Avatar>
+                            </ClientOnly>
                             <button
                                 type="button"
                                 disabled={avatarLoading}
