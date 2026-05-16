@@ -14,7 +14,12 @@ mkdirSync(taskDir, { recursive: true });
 for (let i = 0; i < 50; i++) {
     const stamp = `2026-05-15T10-${String(i).padStart(2, "0")}-00`;
     const lines = [
-        SafeJSON.stringify({ type: "meta", runId: `r${i}`, attempt: 1, startedAt: `2026-05-15T10:${String(i).padStart(2, "0")}:00.000Z` }),
+        SafeJSON.stringify({
+            type: "meta",
+            runId: `r${i}`,
+            attempt: 1,
+            startedAt: `2026-05-15T10:${String(i).padStart(2, "0")}:00.000Z`,
+        }),
         SafeJSON.stringify({ type: "exit", code: 0, duration_ms: i }),
     ];
     writeFileSync(join(taskDir, `${stamp}-r${i}.jsonl`), `${lines.join("\n")}\n`);

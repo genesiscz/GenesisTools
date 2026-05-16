@@ -1,7 +1,7 @@
 import { loadDashboardConfig } from "@app/claude/lib/usage/dashboard-config";
 import { UsageHistoryDb } from "@app/claude/lib/usage/history-db";
-import { getSharedAccountsUsage } from "@app/claude/lib/usage/shared-cache";
 import { NotificationManager } from "@app/claude/lib/usage/notification-manager";
+import { getSharedAccountsUsage } from "@app/claude/lib/usage/shared-cache";
 import { Storage } from "@app/utils/storage/storage";
 
 async function main(): Promise<void> {

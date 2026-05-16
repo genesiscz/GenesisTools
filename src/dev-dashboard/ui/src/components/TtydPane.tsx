@@ -11,11 +11,7 @@ export function TtydPane({ session }: Props) {
                 <span className="font-mono">ttyd · {session.command}</span>
                 <span className="font-mono text-[var(--dd-text-muted)]">:{session.port}</span>
             </div>
-            <iframe
-                src={`/ttyd/${session.id}/`}
-                title={`ttyd-${session.id}`}
-                className="flex-1 border-0 bg-black"
-            />
+            <iframe src={`/ttyd/${session.id}/`} title={`ttyd-${session.id}`} className="flex-1 border-0 bg-black" />
         </div>
     );
 }
