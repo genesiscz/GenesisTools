@@ -45,6 +45,7 @@ export interface TranscriptionSegment {
     text: string;
     start: number;
     end: number;
+    speaker?: string;
 }
 
 export type OnSegment = (segment: TranscriptionSegment) => void;

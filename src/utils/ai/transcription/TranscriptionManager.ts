@@ -490,6 +490,7 @@ export class TranscriptionManager {
 
             if (options.diarize) {
                 deepgramOpts.diarize = true;
+                deepgramOpts.utterances = true; // gives speaker-grouped sentence segments
             }
 
             result.deepgram = deepgramOpts;
