@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import logger from "@app/logger";
 import { audioProcessor } from "@app/ask/audio/AudioProcessor";
 import { rateLimitAwareDelay, retry } from "@app/utils/async";
 import { CLOUD_PROVIDER_TYPES } from "@app/utils/config/ai.types";
@@ -77,7 +78,17 @@ export class Transcriber {
         }
 
         if (CLOUD_PROVIDER_TYPES.has(this.provider.type) && audio.length > MAX_CLOUD_BYTES) {
-            return this.transcribeChunked(audio, typeof audioOrPath === "string" ? audioOrPath : undefined, options);
+            if (options?.diarize) {
+                logger.info(
+                    "Diarization requested — bypassing size-split so the whole file is one request and speaker labels share a single global space"
+                );
+            } else {
+                return this.transcribeChunked(
+                    audio,
+                    typeof audioOrPath === "string" ? audioOrPath : undefined,
+                    options
+                );
+            }
         }
 
         const result = await retry(() => this.provider.transcribe(audio, options), {

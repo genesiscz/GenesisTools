@@ -49,6 +49,8 @@ interface TranscribeFlags {
     clipboard?: boolean;
     clean?: boolean;
     raw?: boolean;
+    diarize?: boolean;
+    speakers?: number;
 }
 
 async function runTranscription(filePath: string, opts: TranscribeFlags): Promise<void> {
@@ -118,6 +120,8 @@ async function runTranscription(filePath: string, opts: TranscribeFlags): Promis
                 format,
                 model: opts.model,
                 clean: opts.raw ? false : opts.clean,
+                diarize: opts.diarize,
+                speakers: opts.speakers,
                 onProgress: (info) => {
                     if (quiet) {
                         // Drop per-chunk churn; keep coarse phase milestones.
@@ -238,6 +242,37 @@ async function interactiveMode(): Promise<void> {
         return;
     }
 
+    const diarize = await p.confirm({
+        message: "Identify speakers (diarization)?",
+        initialValue: false,
+    });
+
+    if (p.isCancel(diarize)) {
+        p.cancel("Cancelled");
+        return;
+    }
+
+    let speakers: number | undefined;
+
+    if (diarize) {
+        const spk = await p.text({
+            message: "Expected speaker count (blank = auto-detect):",
+            placeholder: "auto",
+            validate(value) {
+                if (value && !/^\d+$/.test(value.trim())) {
+                    return "Enter a whole number or leave blank";
+                }
+            },
+        });
+
+        if (p.isCancel(spk)) {
+            p.cancel("Cancelled");
+            return;
+        }
+
+        speakers = spk?.trim() ? Number.parseInt(spk.trim(), 10) : undefined;
+    }
+
     const format = await p.select<OutputFormat>({
         message: "Output format:",
         options: [
@@ -292,6 +327,8 @@ async function interactiveMode(): Promise<void> {
         format,
         output: outputFile,
         clipboard: destination === "clipboard",
+        diarize,
+        speakers,
     });
 
     p.outro(pc.green("Done"));
@@ -314,6 +351,8 @@ const program = new Command()
     .option("-c, --clipboard", "Copy output to clipboard")
     .option("--no-clean", "Disable repetition-loop cleanup (alias: --raw)")
     .option("--raw", "Alias for --no-clean")
+    .option("--diarize", "Identify speakers (speaker diarization)")
+    .option("--speakers <n>", "Expected speaker count (0/omit = auto-detect)", (v) => Number.parseInt(v, 10))
     .action(async (file: string | undefined, opts: TranscribeFlags) => {
         if (!file) {
             await interactiveMode();
