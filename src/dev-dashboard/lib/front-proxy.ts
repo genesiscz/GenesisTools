@@ -30,6 +30,10 @@ function normalizeCloseCode(code: number): number {
     return code >= 1000 && code < 5000 && code !== 1005 && code !== 1006 ? code : 1000;
 }
 
+// Cap frames buffered before the upstream WS opens, so a flooding client
+// can't grow the queue unbounded while the upstream is slow/stalled.
+const MAX_WS_QUEUE = 256;
+
 export function startFrontProxy(opts: { publicPort: number; internalPort: number }): Server<BridgeData> {
     const { publicPort, internalPort } = opts;
     const viteHttp = `http://127.0.0.1:${internalPort}`;
@@ -150,7 +154,11 @@ export function startFrontProxy(opts: { publicPort: number; internalPort: number
                         return;
                     }
 
-                    ws.send(event.data);
+                    try {
+                        ws.send(event.data);
+                    } catch {
+                        // client closed between the check and the send
+                    }
                 };
 
                 out.onclose = (event: CloseEvent) => {
@@ -175,11 +183,21 @@ export function startFrontProxy(opts: { publicPort: number; internalPort: number
                 const out = ws.data.out;
 
                 if (!out || out.readyState !== WebSocket.OPEN) {
+                    if (ws.data.queue.length >= MAX_WS_QUEUE) {
+                        // Upstream stalled while the client floods; cap memory.
+                        ws.close(1013, "upstream not ready");
+                        return;
+                    }
+
                     ws.data.queue.push(message);
                     return;
                 }
 
-                out.send(message);
+                try {
+                    out.send(message);
+                } catch {
+                    // upstream closed between the readyState check and the send
+                }
             },
             close(ws: ServerWebSocket<BridgeData>, code, reason) {
                 const data = ws.data;

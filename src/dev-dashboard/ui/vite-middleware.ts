@@ -59,8 +59,13 @@ function sendJson(res: ServerResponse, status: number, body: object): void {
     res.end(SafeJSON.stringify(body));
 }
 
+// Only an exact single-segment /share/<slug> GET bypasses auth. URL already
+// normalizes "..", but matching the precise shape (not a startsWith prefix)
+// makes the bypass intent explicit and refactor-proof.
+const SHARE_BYPASS_RE = /^\/share\/[^/]+$/;
+
 async function requireDashboardAuth(req: IncomingMessage, res: ServerResponse, url: URL): Promise<boolean> {
-    if (req.method === "GET" && url.pathname.startsWith("/share/")) {
+    if (req.method === "GET" && SHARE_BYPASS_RE.test(url.pathname)) {
         return true;
     }
 

@@ -16,4 +16,4 @@ When tunneled via `foltyn-home`:
 
 - `https://mac.foltyn.dev/` -> Cloudflare Access gate (email OTP for `martin@foltyn.dev`).
 - `https://mac.foltyn.dev/telegram-webhook` -> bypass (OpenClaw secret-token auth).
-- `https://mac.foltyn.dev/share/<slug>` -> bypass (slug is the credential; `unpublish` revokes).
+- `https://mac.foltyn.dev/share/<slug>` -> bypass (the slug is a cryptographically-random 96-bit token and is the only credential; `unpublish` revokes it).
