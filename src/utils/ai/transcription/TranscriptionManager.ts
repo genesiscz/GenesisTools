@@ -5,6 +5,7 @@ import { experimental_transcribe as transcribe } from "ai";
 import pc from "picocolors";
 import type { TranscriptionCapableProvider, TranscriptionSegment } from "../types";
 import { cleanRepetitions } from "./repetition-cleanup";
+import { normalizeSpeakerLabel } from "./speaker-label";
 
 function getTranscriptionModel(provider: TranscriptionCapableProvider, modelId: string): TranscriptionModel {
     const factory = provider.transcription ?? provider.transcriptionModel;
@@ -24,6 +25,42 @@ interface SdkTranscriptionResult {
     segments?: ReadonlyArray<{ text: string; startSecond: number; endSecond: number }>;
     language?: string;
     durationInSeconds?: number;
+    responses?: ReadonlyArray<unknown>;
+}
+
+interface DeepgramUtterance {
+    speaker: number;
+    transcript: string;
+    start: number;
+    end: number;
+}
+
+interface DeepgramRawResponse {
+    body?: { results?: { utterances?: DeepgramUtterance[] } };
+}
+
+/**
+ * Deepgram's `diarize+utterances` puts speaker-grouped sentence segments in
+ * the *raw* provider response (`responses[0].body.results.utterances`) — the
+ * AI SDK does not surface them. Pull them out with narrow typed access (no
+ * `any`); speaker ids are normalized through the single label source.
+ */
+export function deepgramUtteranceSegments(result: {
+    responses?: ReadonlyArray<unknown>;
+}): TranscriptionSegment[] | undefined {
+    const first = result.responses?.[0] as DeepgramRawResponse | undefined;
+    const utts = first?.body?.results?.utterances;
+
+    if (!utts?.length) {
+        return undefined;
+    }
+
+    return utts.map((u) => ({
+        text: u.transcript,
+        start: u.start,
+        end: u.end,
+        speaker: normalizeSpeakerLabel(u.speaker),
+    }));
 }
 
 /**
@@ -172,7 +209,10 @@ export class TranscriptionManager {
 
             const processingTime = Date.now() - startTime;
 
-            const mapped = mapResultSegments(result);
+            const mapped =
+                transcriptionModel.provider === "deepgram" && options.diarize
+                    ? (deepgramUtteranceSegments(result) ?? mapResultSegments(result))
+                    : mapResultSegments(result);
             const cleaned =
                 options.clean === false
                     ? { text: result.text, segments: mapped }
