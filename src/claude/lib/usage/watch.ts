@@ -1,7 +1,8 @@
 import type { NotificationConfig } from "@app/claude/lib/config";
 import { dispatchNotification } from "@app/utils/notifications";
-import { type AccountUsage, fetchAllAccountsUsage } from "./api";
+import type { AccountUsage } from "./api";
 import { renderAllAccounts } from "./display";
+import { getSharedAccountsUsage } from "./shared-cache";
 
 const BUCKET_THRESHOLD_MAP: Record<string, "sessionThresholds" | "weeklyThresholds"> = {
     five_hour: "sessionThresholds",
@@ -173,7 +174,7 @@ export async function watchUsage(accountFilter?: string, notifications?: Notific
 
     while (true) {
         // Fetch while showing old data, then clear and render
-        const results = await fetchAllAccountsUsage(accountFilter);
+        const results = await getSharedAccountsUsage({ accountFilter });
 
         // Clear and render fresh data
         process.stdout.write("\x1B[2J\x1B[H");

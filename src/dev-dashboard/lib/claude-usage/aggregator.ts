@@ -1,10 +1,10 @@
 import type { AccountUsage } from "@app/claude/lib/usage/api";
-import { fetchAllAccountsUsage } from "@app/claude/lib/usage/api";
 import { UsageHistoryDb } from "@app/claude/lib/usage/history-db";
+import { getSharedAccountsUsage } from "@app/claude/lib/usage/shared-cache";
 import type { UsageHistoryResult } from "./types";
 
 export function getCurrentUsage(): Promise<AccountUsage[]> {
-    return fetchAllAccountsUsage();
+    return getSharedAccountsUsage();
 }
 
 export function getUsageHistory(
