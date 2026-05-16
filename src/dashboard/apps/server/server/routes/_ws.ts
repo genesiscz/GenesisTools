@@ -1,10 +1,10 @@
 import { SafeJSON, WS_EVENTS } from "@dashboard/shared";
-import { defineWebSocketHandler } from "h3";
+import { defineWebSocketHandler, type Peer } from "h3";
 
 interface Client {
     id: string;
     userId?: string;
-    peer: unknown;
+    peer: Peer;
 }
 
 const clients = new Map<string, Client>();
@@ -76,13 +76,13 @@ export default defineWebSocketHandler({
     },
 });
 
-function broadcastToOthers(sender: unknown, message: unknown) {
+function broadcastToOthers(sender: Peer, message: unknown) {
     const messageStr = SafeJSON.stringify(message);
 
     for (const client of clients.values()) {
         if (client.peer !== sender) {
             try {
-                (client.peer as { send: (msg: string) => void }).send(messageStr);
+                client.peer.send(messageStr);
             } catch (error) {
                 console.error(`[WebSocket] Failed to send to client ${client.id}:`, error);
             }

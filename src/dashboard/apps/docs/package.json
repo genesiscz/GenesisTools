@@ -17,7 +17,7 @@
     "react-dom": "19.2.5"
   },
   "devDependencies": {
-    "@next/eslint-plugin-next": "^15.4.6",
+    "@next/eslint-plugin-next": "^16.0.0",
     "@repo/eslint-config": "*",
     "@repo/tailwind-config": "*",
     "@repo/typescript-config": "*",

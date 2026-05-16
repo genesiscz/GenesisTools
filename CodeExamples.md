@@ -101,7 +101,6 @@ async function main() {
       type: 'string'
     })
     .alias('help', 'h')
-    .alias('version', 'v')
     .version('1.0.0')
     .strict()
     .parse();
@@ -371,7 +370,7 @@ async function exampleWithContext() {
   mainLogger.info("Application initialized", {
     version: "1.0.0",
     environment: "development",
-    bun_version: Bun.version,
+    runtime_version: typeof Bun !== "undefined" ? Bun.version : process.version,
     platform: process.platform,
     timestamp: new Date().toISOString()
   });

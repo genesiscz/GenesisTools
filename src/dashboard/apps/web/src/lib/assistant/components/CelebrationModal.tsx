@@ -25,6 +25,11 @@ function useConfetti(canvasRef: React.RefObject<HTMLCanvasElement | null>, isAct
             return;
         }
 
+        // Respect reduced-motion: skip the confetti animation entirely.
+        if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+            return;
+        }
+
         const canvas = canvasRef.current;
         const ctx = canvas.getContext("2d");
         if (!ctx) {
@@ -58,8 +63,15 @@ function useConfetti(canvasRef: React.RefObject<HTMLCanvasElement | null>, isAct
             "#f472b6", // pink-400
         ];
 
+        // Scale particle count to viewport area so low-end / small screens
+        // do less work (≈150 on a 1280×720+ viewport, fewer when smaller).
+        const particleCount = Math.max(
+            40,
+            Math.min(150, Math.round((canvas.width * canvas.height) / 6144))
+        );
+
         // Create particles
-        for (let i = 0; i < 150; i++) {
+        for (let i = 0; i < particleCount; i++) {
             particles.push({
                 x: Math.random() * canvas.width,
                 y: -20 - Math.random() * 100,

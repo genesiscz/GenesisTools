@@ -12,13 +12,11 @@ export default eventHandler(async (event) => {
         });
     }
 
-    // TODO: Verify WorkOS token and return user info
-    // For now, return a placeholder
-    return {
-        id: "user_placeholder",
-        email: "user@example.com",
-        name: "Dashboard User",
-        authenticated: false,
-        message: "WorkOS token verification not yet implemented",
-    };
+    // Fail closed until WorkOS token verification is implemented — never
+    // return a placeholder user for an unverified Bearer token.
+    throw createError({
+        statusCode: 501,
+        statusMessage: "Not Implemented",
+        message: "WorkOS token verification is not implemented yet",
+    });
 });
