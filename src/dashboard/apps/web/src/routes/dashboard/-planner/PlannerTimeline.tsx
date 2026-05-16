@@ -134,12 +134,7 @@ function DroppableTimeline({
     );
 }
 
-export function PlannerTimeline({
-    scheduledTasks,
-    activeDragId,
-    focusSessions,
-    onCreateAt,
-}: PlannerTimelineProps) {
+export function PlannerTimeline({ scheduledTasks, activeDragId, focusSessions, onCreateAt }: PlannerTimelineProps) {
     const topPx = nowTopPx();
 
     return (
