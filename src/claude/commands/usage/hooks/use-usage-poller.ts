@@ -1,10 +1,9 @@
-import { join } from "node:path";
 import { refreshAccountLabels } from "@app/claude/lib/config";
-import { type AccountUsage, fetchAllAccountsUsage } from "@app/claude/lib/usage/api";
+import type { AccountUsage } from "@app/claude/lib/usage/api";
 import type { UsageDashboardConfig } from "@app/claude/lib/usage/dashboard-config";
 import { UsageHistoryDb } from "@app/claude/lib/usage/history-db";
 import { NotificationManager } from "@app/claude/lib/usage/notification-manager";
-import { Storage } from "@app/utils/storage/storage";
+import { getSharedAccountsUsage } from "@app/claude/lib/usage/shared-cache";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { PollResult } from "../types";
 
@@ -14,9 +13,6 @@ interface PollerOptions {
     paused: boolean;
     pollIntervalSeconds: number;
 }
-
-// Shared across all instances of the tool process — storage is per-user on disk
-const storage = new Storage("claude-usage");
 
 export function useUsagePoller({ config, accountFilter, paused, pollIntervalSeconds }: PollerOptions) {
     const [results, setResults] = useState<PollResult | null>(null);
@@ -104,8 +100,6 @@ export function useUsagePoller({ config, accountFilter, paused, pollIntervalSeco
         setPollingLabel("...");
 
         try {
-            const ttlSeconds = Math.max(3, pollIntervalSeconds - 2);
-
             // Resolve which accounts to poll from AIConfig
             const { AIConfig } = await import("@app/utils/ai/AIConfig");
             const aiConfig = await AIConfig.load();
@@ -119,56 +113,10 @@ export function useUsagePoller({ config, accountFilter, paused, pollIntervalSeco
             accountNamesRef.current = accountNames;
             setPollingLabel(accountNames.join(", ") || "...");
 
-            // Per-account locking: each account gets its own cache + lock
-            // This ensures "tools claude usage" and "tools claude usage --filter foo"
-            // share the same lock for account "foo" instead of racing.
-            const accountUsages: (AccountUsage | null)[] = new Array(allAccounts.length).fill(null);
-
-            await Promise.all(
-                allAccounts.map(async (account, index) => {
-                    const cacheKey = `poll-account-${account.name}.json`;
-
-                    // Fast path: check cache without lock
-                    const cached = await storage.getCacheFile<AccountUsage>(cacheKey, `${ttlSeconds} seconds`);
-
-                    if (cached) {
-                        accountUsages[index] = cached;
-                        return;
-                    }
-
-                    // Cache stale — acquire per-account lock
-                    const cacheFilePath = join(storage.getCacheDir(), cacheKey);
-                    const result = await storage.withFileLock({
-                        file: cacheFilePath,
-                        fn: async (): Promise<AccountUsage | null> => {
-                            const freshCached = await storage.getCacheFile<AccountUsage>(
-                                cacheKey,
-                                `${ttlSeconds} seconds`
-                            );
-
-                            if (freshCached) {
-                                return freshCached;
-                            }
-
-                            const [usage] = await fetchAllAccountsUsage(account.name);
-
-                            try {
-                                await storage.putCacheFile(cacheKey, usage, `${pollIntervalSeconds} seconds`);
-                            } catch {
-                                // Cache write is best-effort
-                            }
-
-                            return usage;
-                        },
-                        timeout: 10_000,
-                        onTimeout: () => null,
-                    });
-
-                    accountUsages[index] = result;
-                })
-            );
-
-            const resolvedUsages = accountUsages.filter((u): u is AccountUsage => u !== null);
+            // All consumers (daemon, dashboard, this TUI, watch) share one cache
+            // bucket: Anthropic is hit at most once per 30s and every live fetch
+            // write-throughs to history.
+            const resolvedUsages = await getSharedAccountsUsage({ accountFilter });
 
             if (resolvedUsages.length > 0) {
                 processAccountUsages(resolvedUsages, new Date());

@@ -13,11 +13,13 @@ export function registerUsageCommand(program: Command): void {
         .option("--json", "Output as JSON")
         .option("--watch", "Watch mode (legacy)")
         .option("--interval <seconds>", "Poll interval override")
+        .option("--fresh", "Force a live Anthropic fetch, bypassing the shared cache")
         .action(async (opts: Record<string, string | boolean | undefined>) => {
             const accountFilter = typeof opts.filter === "string" ? opts.filter : undefined;
 
             if (opts.tui === false || opts.json || opts.token || opts.watch) {
-                const { fetchAllAccountsUsage, fetchUsage } = await import("@app/claude/lib/usage/api");
+                const { fetchUsage } = await import("@app/claude/lib/usage/api");
+                const { getSharedAccountsUsage } = await import("@app/claude/lib/usage/shared-cache");
                 const { renderAllAccounts, renderAccountUsage } = await import("@app/claude/lib/usage/display");
 
                 if (opts.token && typeof opts.token === "string") {
@@ -53,7 +55,7 @@ export function registerUsageCommand(program: Command): void {
                     return;
                 }
 
-                const results = await fetchAllAccountsUsage(accountFilter);
+                const results = await getSharedAccountsUsage({ accountFilter, force: opts.fresh === true });
 
                 if (opts.json) {
                     console.log(SafeJSON.stringify(results, null, 2));
