@@ -47,6 +47,8 @@ interface TranscribeFlags {
     model?: string;
     output?: string;
     clipboard?: boolean;
+    clean?: boolean;
+    raw?: boolean;
 }
 
 async function runTranscription(filePath: string, opts: TranscribeFlags): Promise<void> {
@@ -115,6 +117,7 @@ async function runTranscription(filePath: string, opts: TranscribeFlags): Promis
                 language: opts.lang,
                 format,
                 model: opts.model,
+                clean: opts.raw ? false : opts.clean,
                 onProgress: (info) => {
                     if (quiet) {
                         // Drop per-chunk churn; keep coarse phase milestones.
@@ -309,6 +312,8 @@ const program = new Command()
     .option("--model <model>", "Model name/id to use")
     .option("-o, --output <path>", "Write output to file")
     .option("-c, --clipboard", "Copy output to clipboard")
+    .option("--no-clean", "Disable repetition-loop cleanup (alias: --raw)")
+    .option("--raw", "Alias for --no-clean")
     .action(async (file: string | undefined, opts: TranscribeFlags) => {
         if (!file) {
             await interactiveMode();
