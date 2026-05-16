@@ -95,12 +95,14 @@ export interface TranscriptionOptions {
     model?: string;
     timestamp?: boolean;
     verbose?: boolean;
-    /** Enable speaker diarization (AssemblyAI, Deepgram). */
+    /** Enable speaker diarization (Deepgram native; local pyannote otherwise). */
     diarize?: boolean;
-    /** Request word-level timestamps (Whisper, Deepgram). */
-    wordTimestamps?: boolean;
+    /** Expected speaker count for diarization clustering; omit/0 = auto-detect. */
+    speakers?: number;
     /** Enable smart formatting/punctuation (Deepgram). */
     smartFormat?: boolean;
+    /** Post-process repetition-loop cleanup. Default true; --no-clean disables. */
+    clean?: boolean;
 }
 
 export interface TranscriptionResult {

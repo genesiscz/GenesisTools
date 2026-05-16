@@ -116,8 +116,9 @@ export class AICloudProvider
                 model: options?.model,
                 provider: this.cloudType === "auto" ? undefined : this.cloudType,
                 diarize: options?.diarize,
-                wordTimestamps: options?.wordTimestamps,
+                speakers: options?.speakers,
                 smartFormat: options?.smartFormat,
+                clean: options?.clean,
             });
 
             return {
