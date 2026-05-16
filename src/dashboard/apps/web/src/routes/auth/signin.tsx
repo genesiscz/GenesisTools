@@ -57,12 +57,7 @@ function SignInPage() {
             });
 
             if (result && typeof result === "object" && "success" in result && result.success) {
-                const sessionData = result as { success: true; session: string; user: unknown };
-
-                if (typeof window !== "undefined") {
-                    localStorage.setItem("wos-session", sessionData.session);
-                }
-
+                // Session cookie is set server-side by AuthKit; nothing to persist client-side.
                 await navigate({ to: "/dashboard" });
             } else {
                 setAuthState(result as AuthError);

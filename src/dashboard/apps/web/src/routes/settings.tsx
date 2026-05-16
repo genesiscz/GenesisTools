@@ -7,9 +7,11 @@ import { Bell, Database, Globe, Monitor, Moon, Palette, Shield, Sun } from "luci
 import { toast } from "sonner";
 import { DashboardLayout } from "@/components/dashboard";
 import { SettingCard, SettingRow } from "@/components/settings";
+import { requireAuthBeforeLoad } from "@/lib/auth/requireUser";
 import { useSettings } from "@/lib/hooks/useSettings";
 
 export const Route = createFileRoute("/settings")({
+    beforeLoad: ({ location }) => requireAuthBeforeLoad(location.href),
     component: SettingsPage,
 });
 

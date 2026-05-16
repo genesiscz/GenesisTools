@@ -11,9 +11,11 @@ import { useRef, useState } from "react";
 import { AuthAlertBanner } from "@/components/auth";
 import { DashboardLayout } from "@/components/dashboard";
 import { SettingCard, SettingRow } from "@/components/settings";
+import { requireAuthBeforeLoad } from "@/lib/auth/requireUser";
 import { removeAvatarFn, updateAvatarFn } from "@/lib/profile-actions";
 
 export const Route = createFileRoute("/profile")({
+    beforeLoad: ({ location }) => requireAuthBeforeLoad(location.href),
     component: ProfilePage,
 });
 

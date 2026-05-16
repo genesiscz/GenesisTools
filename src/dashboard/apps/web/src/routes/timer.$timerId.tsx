@@ -4,10 +4,12 @@ import { Loader2 } from "lucide-react";
 import { CHRONO_SYNC_CHANNEL, useBroadcastInvalidation } from "@/lib/sync/useBroadcastInvalidation";
 import { TimerCard } from "@/lib/timer/components";
 import { useTimerSSE } from "@/lib/timer/hooks/useTimerSSE";
+import { requireAuthBeforeLoad } from "@/lib/auth/requireUser";
 import { cn } from "@/lib/utils";
 import "@/components/auth/cyberpunk.css";
 
 export const Route = createFileRoute("/timer/$timerId")({
+    beforeLoad: ({ location }) => requireAuthBeforeLoad(location.href),
     component: TimerPopupPage,
 });
 

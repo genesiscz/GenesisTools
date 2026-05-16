@@ -8,10 +8,12 @@ import { CHRONO_SYNC_CHANNEL, useBroadcastInvalidation } from "@/lib/sync/useBro
 import { ActivityLogSidebar, TimerCard } from "@/lib/timer/components";
 import { useTimerSSE } from "@/lib/timer/hooks/useTimerSSE";
 import { useTimerStore } from "@/lib/timer/hooks/useTimerStore";
+import { requireAuthBeforeLoad } from "@/lib/auth/requireUser";
 import { cn } from "@/lib/utils";
 import "@/components/auth/cyberpunk.css";
 
 export const Route = createFileRoute("/timer/")({
+    beforeLoad: ({ location }) => requireAuthBeforeLoad(location.href),
     component: TimerPage,
 });
 

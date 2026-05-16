@@ -1,7 +1,7 @@
-import { SafeJSON } from "@dashboard/shared";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
-import { encryptSession, workos } from "./auth-server";
+import { establishAuthSession } from "./auth/session";
+import { workos } from "./auth-server";
 
 // Error response type
 export type AuthError = {
@@ -33,7 +33,10 @@ const verifyEmailSchema = z.object({
 
 // Handle WorkOS errors
 function handleWorkOSError(error: unknown, email?: string): AuthError {
-    console.log("WorkOS Error:", SafeJSON.stringify(error, null, 2));
+    // Never dump the full error (carries tokens / PII into PM2 logs).
+    const code =
+        error && typeof error === "object" && "code" in error ? String((error as { code: unknown }).code) : "unknown";
+    console.warn(`[auth] WorkOS auth failed (code=${code})`);
 
     // Check for email verification required via rawData
     if (
@@ -126,11 +129,9 @@ export const signInFn = createServerFn({ method: "POST" })
                 password,
             });
 
-            // Encrypt and return session (to be set as cookie on client)
-            const encryptedSession = await encryptSession(authResult);
+            await establishAuthSession(authResult);
             return {
                 success: true,
-                session: encryptedSession,
                 user: authResult.user,
             };
         } catch (error) {
@@ -179,11 +180,9 @@ export const signUpFn = createServerFn({ method: "POST" })
                 password,
             });
 
-            // Encrypt and return session
-            const encryptedSession = await encryptSession(authResult);
+            await establishAuthSession(authResult);
             return {
                 success: true,
-                session: encryptedSession,
                 user: authResult.user,
             };
         } catch (error) {
@@ -223,11 +222,9 @@ export const verifyEmailFn = createServerFn({ method: "POST" })
                 pendingAuthenticationToken,
             });
 
-            // Encrypt and return session
-            const encryptedSession = await encryptSession(authResult);
+            await establishAuthSession(authResult);
             return {
                 success: true,
-                session: encryptedSession,
                 user: authResult.user,
             };
         } catch (error) {
