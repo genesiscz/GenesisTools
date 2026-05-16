@@ -1,3 +1,11 @@
+export interface RunLogRetention {
+    /** Delete run logs older than this many days … */
+    maxAgeDays: number;
+    /** …but only when more than this many run logs exist, and never
+     *  delete one of the newest `minRuns`. Both conditions must hold. */
+    minRuns: number;
+}
+
 export interface DaemonTask {
     name: string;
     command: string;
@@ -7,6 +15,8 @@ export interface DaemonTask {
     description?: string;
     /** Send macOS notifications on start/complete/fail. Default: true */
     notify?: boolean;
+    /** Optional run-log retention; the daemon prunes post-run. Absent = keep all. */
+    retention?: RunLogRetention;
 }
 
 export interface DaemonConfig {
