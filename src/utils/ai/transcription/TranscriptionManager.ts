@@ -4,6 +4,7 @@ import type { TranscriptionModel } from "ai";
 import { experimental_transcribe as transcribe } from "ai";
 import pc from "picocolors";
 import type { TranscriptionCapableProvider, TranscriptionSegment } from "../types";
+import { cleanRepetitions } from "./repetition-cleanup";
 
 function getTranscriptionModel(provider: TranscriptionCapableProvider, modelId: string): TranscriptionModel {
     const factory = provider.transcription ?? provider.transcriptionModel;
@@ -171,12 +172,18 @@ export class TranscriptionManager {
 
             const processingTime = Date.now() - startTime;
 
+            const mapped = mapResultSegments(result);
+            const cleaned =
+                options.clean === false
+                    ? { text: result.text, segments: mapped }
+                    : cleanRepetitions({ text: result.text, segments: mapped });
+
             const transcriptionResult: TranscriptionResult = {
-                text: result.text,
+                text: cleaned.text,
                 provider: transcriptionModel.provider,
                 model: transcriptionModel.model,
                 processingTime,
-                segments: mapResultSegments(result),
+                segments: cleaned.segments,
                 language: result.language ?? options.language,
                 duration: result.durationInSeconds,
             };
@@ -246,11 +253,17 @@ export class TranscriptionManager {
                     ...(Object.keys(providerOptions).length > 0 && { providerOptions }),
                 });
 
+                const fbMapped = mapResultSegments(result);
+                const fbCleaned =
+                    options.clean === false
+                        ? { text: result.text, segments: fbMapped }
+                        : cleanRepetitions({ text: result.text, segments: fbMapped });
+
                 return {
-                    text: result.text,
+                    text: fbCleaned.text,
                     provider,
                     model: transcriptionModel.model,
-                    segments: mapResultSegments(result),
+                    segments: fbCleaned.segments,
                     language: result.language ?? options.language,
                     duration: result.durationInSeconds,
                     processingTime: Date.now() - initialTime,

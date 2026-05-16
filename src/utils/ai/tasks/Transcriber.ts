@@ -7,6 +7,7 @@ import { rateLimitAwareDelay, retry } from "@app/utils/async";
 import { CLOUD_PROVIDER_TYPES } from "@app/utils/config/ai.types";
 import { AIConfig } from "../AIConfig";
 import { getProviderForTask } from "../providers";
+import { cleanRepetitions } from "../transcription/repetition-cleanup";
 import type {
     AIProviderType,
     AITranscriptionProvider,
@@ -79,11 +80,22 @@ export class Transcriber {
             return this.transcribeChunked(audio, typeof audioOrPath === "string" ? audioOrPath : undefined, options);
         }
 
-        return retry(() => this.provider.transcribe(audio, options), {
+        const result = await retry(() => this.provider.transcribe(audio, options), {
             maxAttempts: 3,
             getDelay: RETRY_DELAY,
             shouldRetry: shouldRetryTransient,
         });
+
+        return this.maybeClean(result, options);
+    }
+
+    private maybeClean(r: TranscriptionResult, options?: TranscribeOptions): TranscriptionResult {
+        if (options?.clean === false) {
+            return r;
+        }
+
+        const c = cleanRepetitions({ text: r.text, segments: r.segments });
+        return { ...r, text: c.text, segments: c.segments };
     }
 
     private async transcribeChunked(
@@ -142,12 +154,15 @@ export class Transcriber {
                 }
             }
 
-            return {
-                text: texts.join(" "),
-                segments: allSegments.length > 0 ? allSegments : undefined,
-                language: options?.language,
-                duration: timeOffset > 0 ? timeOffset : undefined,
-            };
+            return this.maybeClean(
+                {
+                    text: texts.join(" "),
+                    segments: allSegments.length > 0 ? allSegments : undefined,
+                    language: options?.language,
+                    duration: timeOffset > 0 ? timeOffset : undefined,
+                },
+                options,
+            );
         } finally {
             if (!sourcePath && inputPath && existsSync(inputPath)) {
                 await rm(inputPath, { force: true }).catch(() => {});
