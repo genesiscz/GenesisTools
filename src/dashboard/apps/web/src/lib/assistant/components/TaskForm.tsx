@@ -179,7 +179,7 @@ export function TaskForm({ open, onOpenChange, onSubmit, initialValues, isEdit =
 
                 {/* Urgency selector */}
                 <FormField label="How urgent is this?">
-                    <div className="flex gap-2">
+                    <div className="grid grid-cols-3 gap-2">
                         <UrgencyButton
                             urgency="critical"
                             selected={urgency === "critical"}

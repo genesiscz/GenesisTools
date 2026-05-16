@@ -29,7 +29,7 @@ export function SelectorButton({
             variant="outline"
             onClick={onClick}
             className={cn(
-                "h-auto gap-3 p-3 border-white/10 hover:bg-white/5",
+                "h-auto gap-3 p-3 border-white/10 hover:bg-white/5 whitespace-normal",
                 layout === "row" ? "justify-start text-left" : "flex-col items-center justify-center text-center",
                 selected && selectedClassName,
                 className
