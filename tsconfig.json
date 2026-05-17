@@ -7,6 +7,7 @@
         "src/fsevents-profile",
         "src/clarity/ui",
         "src/dev-dashboard/ui",
+        "src/shops/ui",
         "src/Internal/commands/reas/ui"
     ],
     "compilerOptions": {
