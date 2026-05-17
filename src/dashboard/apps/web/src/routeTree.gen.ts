@@ -36,6 +36,7 @@ import { Route as AssistantDecisionsRouteImport } from './routes/assistant/decis
 import { Route as AssistantCommunicationRouteImport } from './routes/assistant/communication'
 import { Route as AssistantAnalyticsRouteImport } from './routes/assistant/analytics'
 import { Route as ApiTimerEventsRouteImport } from './routes/api.timer-events'
+import { Route as ApiHealthRouteImport } from './routes/api.health'
 import { Route as ApiEventsRouteImport } from './routes/api.events'
 import { Route as ApiAiChatRouteImport } from './routes/api.ai-chat'
 import { Route as AssistantTasksIndexRouteImport } from './routes/assistant/tasks/index'
@@ -177,6 +178,11 @@ const ApiTimerEventsRoute = ApiTimerEventsRouteImport.update({
   path: '/api/timer-events',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiHealthRoute = ApiHealthRouteImport.update({
+  id: '/api/health',
+  path: '/api/health',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiEventsRoute = ApiEventsRouteImport.update({
   id: '/api/events',
   path: '/api/events',
@@ -212,6 +218,7 @@ export interface FileRoutesByFullPath {
   '/settings': typeof SettingsRoute
   '/api/ai-chat': typeof ApiAiChatRoute
   '/api/events': typeof ApiEventsRoute
+  '/api/health': typeof ApiHealthRoute
   '/api/timer-events': typeof ApiTimerEventsRoute
   '/assistant/analytics': typeof AssistantAnalyticsRoute
   '/assistant/communication': typeof AssistantCommunicationRoute
@@ -244,6 +251,7 @@ export interface FileRoutesByTo {
   '/settings': typeof SettingsRoute
   '/api/ai-chat': typeof ApiAiChatRoute
   '/api/events': typeof ApiEventsRoute
+  '/api/health': typeof ApiHealthRoute
   '/api/timer-events': typeof ApiTimerEventsRoute
   '/assistant/analytics': typeof AssistantAnalyticsRoute
   '/assistant/communication': typeof AssistantCommunicationRoute
@@ -279,6 +287,7 @@ export interface FileRoutesById {
   '/settings': typeof SettingsRoute
   '/api/ai-chat': typeof ApiAiChatRoute
   '/api/events': typeof ApiEventsRoute
+  '/api/health': typeof ApiHealthRoute
   '/api/timer-events': typeof ApiTimerEventsRoute
   '/assistant/analytics': typeof AssistantAnalyticsRoute
   '/assistant/communication': typeof AssistantCommunicationRoute
@@ -315,6 +324,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/api/ai-chat'
     | '/api/events'
+    | '/api/health'
     | '/api/timer-events'
     | '/assistant/analytics'
     | '/assistant/communication'
@@ -347,6 +357,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/api/ai-chat'
     | '/api/events'
+    | '/api/health'
     | '/api/timer-events'
     | '/assistant/analytics'
     | '/assistant/communication'
@@ -381,6 +392,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/api/ai-chat'
     | '/api/events'
+    | '/api/health'
     | '/api/timer-events'
     | '/assistant/analytics'
     | '/assistant/communication'
@@ -416,6 +428,7 @@ export interface RootRouteChildren {
   SettingsRoute: typeof SettingsRoute
   ApiAiChatRoute: typeof ApiAiChatRoute
   ApiEventsRoute: typeof ApiEventsRoute
+  ApiHealthRoute: typeof ApiHealthRoute
   ApiTimerEventsRoute: typeof ApiTimerEventsRoute
   AuthCallbackRoute: typeof AuthCallbackRoute
   AuthErrorRoute: typeof AuthErrorRoute
@@ -619,6 +632,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiTimerEventsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/health': {
+      id: '/api/health'
+      path: '/api/health'
+      fullPath: '/api/health'
+      preLoaderRoute: typeof ApiHealthRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/events': {
       id: '/api/events'
       path: '/api/events'
@@ -714,6 +734,7 @@ const rootRouteChildren: RootRouteChildren = {
   SettingsRoute: SettingsRoute,
   ApiAiChatRoute: ApiAiChatRoute,
   ApiEventsRoute: ApiEventsRoute,
+  ApiHealthRoute: ApiHealthRoute,
   ApiTimerEventsRoute: ApiTimerEventsRoute,
   AuthCallbackRoute: AuthCallbackRoute,
   AuthErrorRoute: AuthErrorRoute,

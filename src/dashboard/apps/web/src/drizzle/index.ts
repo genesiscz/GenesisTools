@@ -63,7 +63,10 @@ const closeOnce = (() => {
     };
 })();
 
-process.once("SIGTERM", closeOnce);
+// SIGTERM = PM2 reload: give in-flight requests / SSE ~3s to drain before
+// closing the sqlite handle (well inside PM2 kill_timeout 8000ms).
+// SIGINT = Ctrl-C in dev: close immediately.
+process.once("SIGTERM", () => setTimeout(closeOnce, 3000));
 process.once("SIGINT", closeOnce);
 
 export { sqlite };

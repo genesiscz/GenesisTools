@@ -25,6 +25,9 @@ module.exports = {
             instances: 1,
             time: true,
             max_memory_restart: "512M",
+            // SIGTERM handler drains ~3s before closing sqlite; give PM2 reload
+            // headroom past its 1.6s default before it SIGKILLs.
+            kill_timeout: 8000,
             env_production: {
                 NODE_ENV: "production",
                 PORT: "3000",
@@ -37,6 +40,10 @@ module.exports = {
                 WORKOS_REDIRECT_URI: "https://your.domain/auth/callback",
                 WORKOS_COOKIE_PASSWORD: "",
                 ANTHROPIC_API_KEY: "",
+                // Optional: both must be set to enable the /mcp endpoint
+                // (else /mcp returns 501). MCP_BEARER_TOKEN must be >= 16 chars.
+                MCP_BEARER_TOKEN: "",
+                MCP_USER_ID: "",
             },
             error_file: "/var/log/dashboard/web-error.log",
             out_file: "/var/log/dashboard/web-out.log",

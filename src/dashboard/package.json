@@ -3,6 +3,7 @@
   "private": true,
   "scripts": {
     "build": "turbo run build",
+    "build:prod": "turbo run build --filter=@dashboard/web",
     "dev": "turbo run dev --filter=@dashboard/web",
     "lint": "turbo run lint",
     "check-types": "turbo run check-types",

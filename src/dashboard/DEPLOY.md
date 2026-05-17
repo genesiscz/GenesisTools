@@ -21,16 +21,31 @@ if any is missing/invalid, instead of silently running auth-broken.
 DB — indistinguishable from total data loss. The app throws at boot if
 `NODE_ENV=production` and `SQLITE_PATH` is relative.
 
+## Pre-production secret rotation (REQUIRED — do before first prod deploy)
+
+The development `apps/web/.env` (gitignored, NOT in this branch's worktree)
+contained a **live** WorkOS API key and stale Neon Postgres credentials. The
+app is SQLite-only now — the Neon `DATABASE_URL` lines are dead config that
+mislead operators. Plaintext-on-disk secrets must be treated as compromised.
+
+- [ ] Rotate the WorkOS API key: https://dashboard.workos.com → API Keys → roll. Put the new key in the secrets store / PM2 ecosystem env, never in git.
+- [ ] Delete the stale `DATABASE_URL` / Neon lines from `apps/web/.env` (SQLite-only).
+- [ ] If a Neon project still exists, disable that role (the password was on disk).
+- [ ] Confirm no env file is tracked: `git ls-files | grep 'apps/web/\.env'` → only `.env.example`.
+
 ## Build
 
 ```bash
 cd /opt/dashboard/src/dashboard
 bun install
-turbo run build --filter=@dashboard/web    # vite build → apps/web/.output/
+bun run build:prod    # = turbo run build --filter=@dashboard/web → apps/web/.output/
 ```
 
-`check-types` is a build dependency in `turbo.json`, so a type-broken tree fails
-the build instead of shipping.
+`check-types` is a `turbo.json` build dependency AND `apps/web`/`apps/server`
+now define it (`tsc --noEmit`; web uses `tsconfig.build.json` which excludes
+tests), so a type-broken tree fails the build instead of shipping. Use
+`bun run build:prod` (not bare `bun run build`) so `apps/docs` + `apps/server`
+are not built for a web-only deploy.
 
 ## Migrations
 
@@ -94,7 +109,9 @@ Use it for PM2 / uptime monitoring (distinguishes "process up" from "DB ok").
 ## Graceful shutdown
 
 `drizzle/index.ts` registers SIGTERM/SIGINT handlers that close the SQLite
-handle before exit (PM2 sends SIGTERM on reload/stop).
+handle before exit (PM2 sends SIGTERM on reload/stop). SIGTERM waits ~3s for
+in-flight requests / SSE to drain before closing; `ecosystem.config.cjs` sets
+`kill_timeout: 8000` so PM2 does not SIGKILL during that drain.
 
 ## Accepted risks (explicit product decisions — NOT bugs)
 

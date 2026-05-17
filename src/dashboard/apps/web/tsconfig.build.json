@@ -1,0 +1,9 @@
+{
+  // Production type gate (turbo `check-types`). Extends the editor tsconfig but
+  // excludes test files: tests are typechecked by vitest, are not shipped, and
+  // a test's transitive-only import (@workos/authkit-session) does not resolve
+  // under tsc in a fresh worktree (resolves fine in a full install). The build
+  // gate must validate SHIPPED code; test types are the test runner's job.
+  "extends": "./tsconfig.json",
+  "exclude": ["**/*.test.ts", "**/*.test.tsx", "**/__tests__/**"]
+}
