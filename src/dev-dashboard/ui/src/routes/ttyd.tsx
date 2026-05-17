@@ -60,8 +60,13 @@ export function TtydRoute() {
 
     const spawn = useMutation({
         mutationFn: () => ttydApi.spawn(),
-        onSuccess: () => {
+        onSuccess: (data) => {
             queryClient.invalidateQueries({ queryKey: ["ttyd", "list"] });
+            // Focus the freshly-spawned terminal (＋ / "New terminal") instead
+            // of leaving the view on the previously-active tab.
+            if (data?.session?.id) {
+                setActiveId(data.session.id);
+            }
         },
     });
 
