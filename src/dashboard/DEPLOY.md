@@ -44,8 +44,8 @@ bun run build:prod    # = turbo run build --filter=@dashboard/web → apps/web/.
 `check-types` is a `turbo.json` build dependency AND `apps/web`/`apps/server`
 now define it (`tsc --noEmit`; web uses `tsconfig.build.json` which excludes
 tests), so a type-broken tree fails the build instead of shipping. Use
-`bun run build:prod` (not bare `bun run build`) so `apps/docs` + `apps/server`
-are not built for a web-only deploy.
+`bun run build:prod` (not bare `bun run build`) so `apps/server`
+is not built for a web-only deploy.
 
 ## Migrations
 
