@@ -5,6 +5,7 @@ import { getConfig, saveTtydSessions } from "@app/dev-dashboard/config";
 import { findFreePort } from "@app/dev-dashboard/lib/ttyd/free-port";
 import type { TtydSession } from "@app/dev-dashboard/lib/ttyd/types";
 import logger from "@app/logger";
+export { ttydLabel } from "@app/dev-dashboard/lib/ttyd/label";
 
 interface Tracked {
     session: TtydSession;
@@ -213,15 +214,6 @@ export async function getTtydPort(id: string): Promise<number | null> {
     await hydrateRegistry();
 
     return registry.get(id)?.session.port ?? null;
-}
-
-export function ttydLabel(session: TtydSession): string {
-    const name = session.name?.trim();
-    if (name) {
-        return name;
-    }
-
-    return `${session.command.split("/").pop()} :${session.port}`;
 }
 
 export async function renameTtyd(id: string, name: string): Promise<boolean> {

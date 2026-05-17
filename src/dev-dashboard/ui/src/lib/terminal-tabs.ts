@@ -1,4 +1,4 @@
-import { ttydLabel } from "@app/dev-dashboard/lib/ttyd/manager";
+import { ttydLabel } from "@app/dev-dashboard/lib/ttyd/label";
 import type { TtydSession } from "@app/dev-dashboard/lib/ttyd/types";
 
 export interface TermTab {
