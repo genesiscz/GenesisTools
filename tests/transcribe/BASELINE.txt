@@ -1,3 +1,2 @@
 base-gth.srt: WER-proxy 0.147, speaker-agreement 1.00
-base-gth.srt: WER-proxy 0.147, speaker-agreement 1.00
 base-xyf.srt: WER-proxy 0.209, speaker-agreement 1.00

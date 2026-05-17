@@ -70,6 +70,12 @@ async function provisionModels(): Promise<{ segmentation: string; embedding: str
         if (extractFailed) {
             throw new Error(`Failed to extract segmentation model: ${stderr}`);
         }
+
+        if (!existsSync(SEGMENTATION_MODEL.file)) {
+            throw new Error(
+                `Segmentation model missing after extraction (archive layout may have changed): ${SEGMENTATION_MODEL.file}`
+            );
+        }
     }
 
     return { segmentation: SEGMENTATION_MODEL.file, embedding: EMBEDDING_MODEL.file };
