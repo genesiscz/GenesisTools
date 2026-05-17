@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -18,6 +19,8 @@ import type {
     TranslateOptions,
     TranslationResult,
 } from "@app/utils/ai/types";
+import { convertFileToMonoMp3 } from "@app/utils/audio/converter";
+import { sniffAudioExt } from "@app/utils/audio/detect-format";
 import type { AIProviderType } from "@app/utils/config/ai.types";
 
 type LlmCloudType = "openai" | "groq" | "openrouter";
@@ -90,25 +93,58 @@ export class AICloudProvider
     }
 
     async transcribe(audio: Buffer, options?: TranscribeOptions): Promise<TranscriptionResult> {
-        const tempPath = join(tmpdir(), `ai-transcribe-${Date.now()}.wav`);
-        await Bun.write(tempPath, audio);
+        const stamp = `${Date.now()}-${randomUUID()}`;
+        const ext = sniffAudioExt(audio);
+        const rawPath = join(tmpdir(), `ai-transcribe-${stamp}.${ext}`);
+        await Bun.write(rawPath, audio);
+
+        // Normalize to 16kHz mono MP3 for upload. whisper-1 tolerates most
+        // containers, but gpt-4o-transcribe rejects many ("does not support
+        // the format"); MP3 is the universal, smallest, STT-transparent input.
+        // Already-MP3 input (e.g. a split chunk) is uploaded as-is.
+        let uploadPath = rawPath;
+        let normalizedPath: string | undefined;
 
         try {
-            const result = await this.transcriptionManager.transcribeAudio(tempPath, {
+            if (ext !== "mp3") {
+                normalizedPath = join(tmpdir(), `ai-transcribe-${stamp}-norm.mp3`);
+                await convertFileToMonoMp3(rawPath, normalizedPath);
+                uploadPath = normalizedPath;
+            }
+
+            const uploadBytes = Bun.file(uploadPath).size;
+            logger.info(
+                { ext, rawBytes: audio.length, uploadBytes, normalized: ext !== "mp3" },
+                "Cloud transcription upload prepared"
+            );
+
+            const result = await this.transcriptionManager.transcribeAudio(uploadPath, {
                 language: options?.language,
                 model: options?.model,
                 provider: this.cloudType === "auto" ? undefined : this.cloudType,
+                diarize: options?.diarize,
+                speakers: options?.speakers,
+                smartFormat: options?.smartFormat,
+                clean: options?.clean,
             });
 
             return {
                 text: result.text,
+                segments: result.segments,
+                language: result.language,
                 duration: result.duration,
             };
         } finally {
-            try {
-                unlinkSync(tempPath);
-            } catch {
-                logger.debug(`Failed to clean up temp file: ${tempPath}`);
+            for (const p of [rawPath, normalizedPath]) {
+                if (!p) {
+                    continue;
+                }
+
+                try {
+                    unlinkSync(p);
+                } catch {
+                    logger.debug(`Failed to clean up temp file: ${p}`);
+                }
             }
         }
     }

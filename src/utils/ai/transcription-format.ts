@@ -1,5 +1,6 @@
 import { SafeJSON } from "@app/utils/json";
-import type { TranscriptionResult } from "./types";
+import { normalizeSpeakerLabel } from "./transcription/speaker-label";
+import type { TranscriptionResult, TranscriptionSegment } from "./types";
 
 export type OutputFormat = "text" | "json" | "srt" | "vtt";
 
@@ -21,16 +22,85 @@ function pad3(n: number): string {
     return String(n).padStart(3, "0");
 }
 
+const MAX_CUE_SECONDS = 6;
+const MAX_CUE_CHARS = 84;
+
+/**
+ * Group raw transcription segments into readable subtitle cues.
+ *
+ * Providers differ wildly in segment granularity: OpenAI Whisper returns
+ * sentence-ish segments, Deepgram returns one segment *per word* (a 14-min
+ * file → ~1250 one-word cues, useless as subtitles). Accumulate consecutive
+ * segments into a cue, flushing on sentence-final punctuation or when the cue
+ * would get too long/slow to read. Idempotent-ish for already-coarse input.
+ */
+function coalesceSegmentsForSubtitles(segments: TranscriptionSegment[]): TranscriptionSegment[] {
+    const cues: TranscriptionSegment[] = [];
+    let cur: TranscriptionSegment | undefined;
+
+    for (const seg of segments) {
+        const piece = seg.text.trim();
+
+        if (!piece) {
+            continue;
+        }
+
+        if (!cur) {
+            cur = { text: piece, start: seg.start, end: seg.end, speaker: seg.speaker };
+        } else {
+            const merged = `${cur.text} ${piece}`;
+            const tooLong = merged.length > MAX_CUE_CHARS;
+            // For diarized output a speaker's turn legitimately spans pauses;
+            // the 6s gap-flush would shatter one turn into single-word cues
+            // (mis-grouping it under the metric and reading badly). Keep the
+            // time flush only for non-diarized subtitles; a speaker change or
+            // the char cap still bound diarized cues.
+            const diarized = cur.speaker !== undefined;
+            const tooSlow = !diarized && seg.end - cur.start > MAX_CUE_SECONDS;
+            // Compare normalized labels so equivalent ids in different formats
+            // (raw `speaker_0` vs `SPEAKER_00`) don't force a spurious split.
+            const speakerChanged = normalizeSpeakerLabel(cur.speaker) !== normalizeSpeakerLabel(seg.speaker);
+
+            if (tooLong || tooSlow || speakerChanged) {
+                cues.push(cur);
+                cur = { text: piece, start: seg.start, end: seg.end, speaker: seg.speaker };
+            } else {
+                cur.text = merged;
+                cur.end = seg.end;
+            }
+        }
+
+        if (/[.!?…]["')\]]?$/.test(cur.text)) {
+            cues.push(cur);
+            cur = undefined;
+        }
+    }
+
+    if (cur) {
+        cues.push(cur);
+    }
+
+    return cues;
+}
+
 export function toSRT(result: TranscriptionResult): string {
     if (!result.segments?.length) {
         return result.text;
     }
 
-    return result.segments
+    const cues = coalesceSegmentsForSubtitles(result.segments);
+
+    if (cues.length === 0) {
+        return result.text;
+    }
+
+    return cues
         .map((seg, i) => {
             const start = formatTimestamp(seg.start, ",");
             const end = formatTimestamp(seg.end, ",");
-            return `${i + 1}\n${start} --> ${end}\n${seg.text.trim()}`;
+            const spk = normalizeSpeakerLabel(seg.speaker);
+            const prefix = spk ? `${spk}: ` : "";
+            return `${i + 1}\n${start} --> ${end}\n${prefix}${seg.text.trim()}`;
         })
         .join("\n\n");
 }
@@ -40,21 +110,64 @@ export function toVTT(result: TranscriptionResult): string {
         return `WEBVTT\n\n${result.text}`;
     }
 
-    const cues = result.segments
+    const coalesced = coalesceSegmentsForSubtitles(result.segments);
+
+    if (coalesced.length === 0) {
+        return `WEBVTT\n\n${result.text}`;
+    }
+
+    const cues = coalesced
         .map((seg) => {
             const start = formatTimestamp(seg.start, ".");
             const end = formatTimestamp(seg.end, ".");
-            return `${start} --> ${end}\n${seg.text.trim()}`;
+            const spk = normalizeSpeakerLabel(seg.speaker);
+            const body = spk ? `<v ${spk}>${seg.text.trim()}` : seg.text.trim();
+            return `${start} --> ${end}\n${body}`;
         })
         .join("\n\n");
 
     return `WEBVTT\n\n${cues}`;
 }
 
+/** Render speaker-grouped turns (`SPEAKER_NN: …`) when the transcript carries
+ *  speaker labels; plain `result.text` otherwise. Consecutive same-speaker
+ *  segments are merged into one turn line. */
+function toSpeakerText(result: TranscriptionResult): string {
+    const segs = result.segments;
+
+    if (!segs?.length || !segs.some((s) => s.speaker)) {
+        return result.text;
+    }
+
+    const lines: string[] = [];
+    let curSpk: string | undefined;
+
+    for (const seg of segs) {
+        const piece = seg.text.trim();
+
+        if (!piece) {
+            continue;
+        }
+
+        // Don't fabricate a speaker for unlabeled segments — render them
+        // plain so unknown turns aren't silently attributed to SPEAKER_00.
+        const spk = normalizeSpeakerLabel(seg.speaker);
+
+        if (spk !== curSpk || lines.length === 0) {
+            lines.push(spk ? `${spk}: ${piece}` : piece);
+            curSpk = spk;
+        } else {
+            lines[lines.length - 1] += ` ${piece}`;
+        }
+    }
+
+    return lines.join("\n");
+}
+
 export function formatOutput(result: TranscriptionResult, format: OutputFormat): string {
     switch (format) {
         case "text":
-            return result.text;
+            return toSpeakerText(result);
         case "json":
             return SafeJSON.stringify(result, null, 2);
         case "srt":
