@@ -118,7 +118,7 @@ function AIAssistantPage() {
             title="AI Assistant"
             description="Your personal AI companion for tasks, research, and creativity"
         >
-            <div className="flex h-[calc(100vh-8rem)] overflow-hidden rounded-xl border border-white/10 bg-black/20 shadow-2xl backdrop-blur-sm">
+            <div className="flex h-[calc(100dvh-8rem)] overflow-hidden rounded-xl border border-white/10 bg-black/20 shadow-2xl backdrop-blur-sm">
                 <ConversationSidebar
                     conversations={conversations}
                     activeId={activeConversationId}
@@ -131,7 +131,7 @@ function AIAssistantPage() {
                     onDelete={handleDeleteConversation}
                 />
 
-                <div className="flex flex-1 flex-col overflow-hidden">
+                <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
                     <div className="flex items-center gap-2.5 border-b border-white/10 px-4 py-3">
                         <Brain className="h-4 w-4 text-violet-400" />
                         <span className="text-sm font-mono font-semibold text-white/80">

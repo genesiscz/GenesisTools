@@ -106,7 +106,7 @@ function PlannerRoot() {
 
             {view === "day" ? (
                 <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
-                    <div className="flex gap-3" style={{ minHeight: "calc(100vh - 220px)" }}>
+                    <div className="flex flex-col gap-3 md:min-h-[calc(100vh-220px)] md:flex-row">
                         <PlannerTimeline
                             scheduledTasks={scheduledTasks}
                             activeDragId={activeDragId}

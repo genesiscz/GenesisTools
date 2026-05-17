@@ -80,7 +80,7 @@ export function PlannerInbox({ tasks, completedToday, deferredToTomorrow }: Plan
     }
 
     return (
-        <div className="flex w-72 shrink-0 flex-col gap-2 rounded-xl border border-white/5 bg-zinc-900/60 p-3 backdrop-blur-sm">
+        <div className="flex w-full shrink-0 flex-col gap-2 rounded-xl border border-white/5 bg-zinc-900/60 p-3 backdrop-blur-sm md:w-72">
             <div className="flex items-center justify-between px-1">
                 <h3 className="text-xs font-semibold uppercase tracking-widest text-zinc-400">Inbox</h3>
                 <span className="text-[10px] text-zinc-600" style={{ fontFamily: "'JetBrains Mono', monospace" }}>

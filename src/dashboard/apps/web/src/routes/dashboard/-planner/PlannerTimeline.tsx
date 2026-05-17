@@ -118,7 +118,7 @@ function DroppableTimeline({
         <div
             ref={setNodeRef}
             className={["relative transition-colors duration-150", isOver ? "bg-white/5" : ""].join(" ")}
-            style={{ height: TIMELINE_HEIGHT, touchAction: "none" }}
+            style={{ height: TIMELINE_HEIGHT, touchAction: "pan-y" }}
             onPointerDown={handlePointerDown}
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}

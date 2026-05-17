@@ -1,8 +1,9 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Button } from "@ui/components/button";
 import { useAuth } from "@workos/authkit-tanstack-react-start/client";
 import { Activity, Loader2, Plus } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import { DashboardLayout } from "@/components/dashboard";
 import { RouteError } from "@/components/RouteError";
 import { RouteSkeleton } from "@/components/RouteSkeleton";
@@ -25,6 +26,7 @@ const DEV_USER_ID = "dev-user";
 
 function TimerPage() {
     const { user } = useAuth();
+    const navigate = useNavigate();
     const userId = user?.id ?? (import.meta.env.DEV ? DEV_USER_ID : null);
 
     // 3-channel sync: SSE (primary), BroadcastChannel (same-origin), refetchOnWindowFocus (safety net)
@@ -81,11 +83,18 @@ function TimerPage() {
         const height = 500;
         const left = window.screen.width / 2 - width / 2;
         const top = window.screen.height / 2 - height / 2;
-        window.open(
+        const popup = window.open(
             `/timer/${id}`,
             `timer-${id}`,
             `width=${width},height=${height},left=${left},top=${top},toolbar=no,menubar=no`
         );
+
+        // Popup blockers (the default on mobile) return null — fall back to
+        // in-tab navigation instead of failing silently.
+        if (!popup) {
+            toast.info("Popup blocked — opening the timer here instead");
+            navigate({ to: "/timer/$timerId", params: { timerId: id } });
+        }
     }
 
     // Show loader only while the first timer fetch is in flight.
