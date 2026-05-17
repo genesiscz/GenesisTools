@@ -126,7 +126,6 @@ export class AICloudProvider
                 segments: result.segments,
                 language: result.language,
                 duration: result.duration,
-                words: result.words,
             };
         } finally {
             for (const p of [rawPath, normalizedPath]) {

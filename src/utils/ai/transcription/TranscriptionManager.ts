@@ -63,35 +63,6 @@ export function deepgramUtteranceSegments(result: {
     }));
 }
 
-interface WhisperWord {
-    word: string;
-    start: number;
-    end: number;
-}
-
-interface WhisperRawResponse {
-    body?: { words?: WhisperWord[] };
-}
-
-/**
- * whisper-1 returns per-word timings at `responses[0].body.words` when
- * `timestampGranularities` includes `"word"`. The AI SDK does not surface
- * them on the typed result, so read them with narrow typed access (no
- * `any`). Returns undefined for any provider/model that didn't emit words.
- */
-export function mapResultWords(result: {
-    responses?: ReadonlyArray<unknown>;
-}): WhisperWord[] | undefined {
-    const first = result.responses?.[0] as WhisperRawResponse | undefined;
-    const words = first?.body?.words;
-
-    if (!words?.length) {
-        return undefined;
-    }
-
-    return words.map((w) => ({ word: w.word, start: w.start, end: w.end }));
-}
-
 /**
  * Rebuild sentence-level segments from a formatted transcript + word timings.
  *
@@ -182,9 +153,6 @@ export interface TranscriptionResult {
     processingTime: number;
     segments?: TranscriptionSegment[];
     language?: string;
-    /** Per-word timings (whisper-1 + diarize) for word-level speaker
-     *  re-segmentation; structurally compatible with `TimedWord`. */
-    words?: { word: string; start: number; end: number }[];
 }
 
 export class TranscriptionManager {
@@ -258,7 +226,6 @@ export class TranscriptionManager {
                 segments: cleaned.segments,
                 language: result.language ?? options.language,
                 duration: result.durationInSeconds,
-                words: mapResultWords(result),
             };
 
             logger.info(`Transcription completed in ${pc.green((processingTime / 1000).toFixed(1))}s`);
@@ -533,13 +500,9 @@ export class TranscriptionManager {
         if (provider === "openai" || provider === "openrouter" || provider === "groq") {
             // whisper-based; keys are camelCase per AI SDK. temperature:0 is the
             // documented anti-hallucination setting; segment timestamps power SRT/VTT.
-            // Word timestamps only for whisper-1 when diarizing — they power
-            // word-level speaker re-segmentation. gpt-4o-transcribe returns no
-            // segments at all (let alone words), so it must stay segment-only.
-            const wordLevel = options.diarize === true && options.model === "whisper-1";
             const opts: Record<string, import("@ai-sdk/provider").JSONValue> = {
                 temperature: 0,
-                timestampGranularities: wordLevel ? ["segment", "word"] : ["segment"],
+                timestampGranularities: ["segment"],
             };
 
             if (lang) {
