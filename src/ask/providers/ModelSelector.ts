@@ -1,5 +1,5 @@
-import type { ProviderV2 } from "@ai-sdk/provider";
 import logger from "@app/logger";
+import type { TranscriptionCapableProvider } from "@app/utils/ai/types";
 import type { SearchItem } from "@app/utils/prompts/clack";
 import { searchSelect, searchSelectCancelSymbol } from "@app/utils/prompts/clack";
 import { providerManager } from "@ask/providers/ProviderManager";
@@ -235,7 +235,7 @@ export class ModelSelector {
 
     async selectTranscriptionModel(
         fileSize?: number
-    ): Promise<{ provider: string; model: string; providerInstance: ProviderV2 } | null> {
+    ): Promise<{ provider: string; model: string; providerInstance: TranscriptionCapableProvider } | null> {
         const transcriptionProviders = [
             { name: "groq", envKey: "GROQ_API_KEY", model: "whisper-large-v3", maxFileSize: 25 * 1024 * 1024 },
             {
@@ -268,7 +268,7 @@ export class ModelSelector {
         const selectedProvider = availableProviders[0];
 
         try {
-            let providerInstance: ProviderV2;
+            let providerInstance: TranscriptionCapableProvider;
 
             switch (selectedProvider.name) {
                 case "groq": {
