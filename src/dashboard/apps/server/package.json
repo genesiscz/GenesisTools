@@ -1,0 +1,20 @@
+{
+  "name": "@dashboard/server",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "nitro build",
+    "dev": "nitro dev --port 4000",
+    "preview": "node .output/server/index.mjs"
+  },
+  "dependencies": {
+    "@workos-inc/node": "8.0.0-rc.10",
+    "@dashboard/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@repo/typescript-config": "workspace:*",
+    "h3": "^1.15.4",
+    "nitropack": "^2.12.4",
+    "typescript": "^5.9.2"
+  }
+}
