@@ -1,5 +1,5 @@
 {
-  "name": "with-tailwind",
+  "name": "@genesis-tools/dashboard",
   "private": true,
   "scripts": {
     "build": "turbo run build",
