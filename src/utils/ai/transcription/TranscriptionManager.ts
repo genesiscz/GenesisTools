@@ -1,16 +1,130 @@
 import { statSync } from "node:fs";
-import type { ProviderV2 } from "@ai-sdk/provider";
 import logger from "@app/logger";
 import type { TranscriptionModel } from "ai";
 import { experimental_transcribe as transcribe } from "ai";
 import pc from "picocolors";
+import type { TranscriptionCapableProvider, TranscriptionSegment } from "../types";
+import { cleanRepetitions } from "./repetition-cleanup";
+import { normalizeSpeakerLabel } from "./speaker-label";
 
-// Helper to get transcription model from ProviderV2
-function getTranscriptionModel(provider: ProviderV2, modelId: string): TranscriptionModel {
-    if (!provider.transcriptionModel) {
-        throw new Error(`Provider does not support transcription models`);
+function getTranscriptionModel(provider: TranscriptionCapableProvider, modelId: string): TranscriptionModel {
+    const factory = provider.transcription ?? provider.transcriptionModel;
+
+    if (!factory) {
+        throw new Error("Provider does not support transcription models");
     }
-    return provider.transcriptionModel(modelId);
+
+    // SDK version skew: deepgram/groq return TranscriptionModelV3 while ai@5's
+    // transcribe() is typed for V2. They are interop-compatible at runtime;
+    // bridge the model type here at the single boundary (no `any`).
+    return factory.call(provider, modelId) as TranscriptionModel;
+}
+
+interface SdkTranscriptionResult {
+    text: string;
+    segments?: ReadonlyArray<{ text: string; startSecond: number; endSecond: number }>;
+    language?: string;
+    durationInSeconds?: number;
+    responses?: ReadonlyArray<unknown>;
+}
+
+interface DeepgramUtterance {
+    speaker: number;
+    transcript: string;
+    start: number;
+    end: number;
+}
+
+interface DeepgramRawResponse {
+    body?: { results?: { utterances?: DeepgramUtterance[] } };
+}
+
+/**
+ * Deepgram's `diarize+utterances` puts speaker-grouped sentence segments in
+ * the *raw* provider response (`responses[0].body.results.utterances`) — the
+ * AI SDK does not surface them. Pull them out with narrow typed access (no
+ * `any`); speaker ids are normalized through the single label source.
+ */
+export function deepgramUtteranceSegments(result: {
+    responses?: ReadonlyArray<unknown>;
+}): TranscriptionSegment[] | undefined {
+    const first = result.responses?.[0] as DeepgramRawResponse | undefined;
+    const utts = first?.body?.results?.utterances;
+
+    if (!utts?.length) {
+        return undefined;
+    }
+
+    return utts.map((u) => ({
+        text: u.transcript,
+        start: u.start,
+        end: u.end,
+        speaker: normalizeSpeakerLabel(u.speaker),
+    }));
+}
+
+/**
+ * Rebuild sentence-level segments from a formatted transcript + word timings.
+ *
+ * Some providers (Deepgram via `@ai-sdk/deepgram`) only expose per-word
+ * segments containing the *raw, lowercase, unpunctuated* token — the
+ * smart-formatted text exists solely as `result.text`. We recover usable
+ * subtitle cues by splitting `result.text` into sentences and distributing
+ * them across the word timings proportionally (robust to token-count drift
+ * from smart-formatting, since it never assumes a 1:1 word↔segment match).
+ */
+function rebuildSentenceSegments(text: string, wordSegments: TranscriptionSegment[]): TranscriptionSegment[] {
+    const sentences =
+        text
+            .match(/[^.!?…]+[.!?…]+["')\]]*|\S[^.!?…]*$/g)
+            ?.map((s) => s.trim())
+            .filter(Boolean) ?? [];
+
+    const wordCounts = sentences.map((s) => s.split(/\s+/).filter(Boolean).length);
+    const totalWords = wordCounts.reduce((a, b) => a + b, 0);
+    const n = wordSegments.length;
+
+    if (sentences.length === 0 || totalWords === 0 || n === 0) {
+        return wordSegments;
+    }
+
+    const out: TranscriptionSegment[] = [];
+    let cum = 0;
+
+    for (let i = 0; i < sentences.length; i++) {
+        const startIdx = Math.min(n - 1, Math.floor((cum / totalWords) * n));
+        cum += wordCounts[i];
+        const endIdx = Math.min(n - 1, Math.max(startIdx, Math.ceil((cum / totalWords) * n) - 1));
+        out.push({
+            text: sentences[i],
+            start: wordSegments[startIdx].start,
+            end: wordSegments[endIdx].end,
+        });
+    }
+
+    return out;
+}
+
+/** Map an AI SDK transcription result to our segment shape, recovering
+ * sentence cues for word-level providers. */
+function mapResultSegments(result: SdkTranscriptionResult): TranscriptionSegment[] | undefined {
+    if (!result.segments?.length) {
+        return undefined;
+    }
+
+    const segments: TranscriptionSegment[] = result.segments.map((seg) => ({
+        text: seg.text,
+        start: seg.startSecond,
+        end: seg.endSecond,
+    }));
+
+    const singleWord = segments.filter((s) => !/\s/.test(s.text.trim())).length;
+
+    if (result.text && segments.length > 1 && singleWord / segments.length > 0.7) {
+        return rebuildSentenceSegments(result.text, segments);
+    }
+
+    return segments;
 }
 
 export interface TranscriptionOptions {
@@ -19,12 +133,14 @@ export interface TranscriptionOptions {
     model?: string;
     timestamp?: boolean;
     verbose?: boolean;
-    /** Enable speaker diarization (AssemblyAI, Deepgram). */
+    /** Enable speaker diarization (Deepgram native; local pyannote otherwise). */
     diarize?: boolean;
-    /** Request word-level timestamps (Whisper, Deepgram). */
-    wordTimestamps?: boolean;
+    /** Expected speaker count for diarization clustering; omit/0 = auto-detect. */
+    speakers?: number;
     /** Enable smart formatting/punctuation (Deepgram). */
     smartFormat?: boolean;
+    /** Post-process repetition-loop cleanup. Default true; --no-clean disables. */
+    clean?: boolean;
 }
 
 export interface TranscriptionResult {
@@ -35,6 +151,8 @@ export interface TranscriptionResult {
     confidence?: number;
     cost?: number;
     processingTime: number;
+    segments?: TranscriptionSegment[];
+    language?: string;
 }
 
 export class TranscriptionManager {
@@ -83,34 +201,68 @@ export class TranscriptionManager {
             // Perform transcription
             const model = getTranscriptionModel(transcriptionModel.providerInstance, transcriptionModel.model);
             const providerOptions = this.buildProviderOptions(transcriptionModel.provider, options);
+            const requestStart = Date.now();
+            logger.info(
+                {
+                    provider: transcriptionModel.provider,
+                    model: transcriptionModel.model,
+                    audioBytes: audioBuffer.byteLength,
+                    diarize: options.diarize === true,
+                    language: options.language,
+                },
+                "Transcription request → cloud (this upload can be slow on a degraded uplink)"
+            );
             const result = await transcribe({
                 model,
                 audio: audioBuffer,
-                ...(options.language && { language: options.language }),
                 ...(Object.keys(providerOptions).length > 0 && { providerOptions }),
             });
 
             const processingTime = Date.now() - startTime;
+            logger.info(
+                {
+                    provider: transcriptionModel.provider,
+                    audioBytes: audioBuffer.byteLength,
+                    requestMs: Date.now() - requestStart,
+                },
+                "Transcription request ← cloud (response received)"
+            );
+
+            const mapped =
+                transcriptionModel.provider === "deepgram" && options.diarize
+                    ? (deepgramUtteranceSegments(result) ?? mapResultSegments(result))
+                    : mapResultSegments(result);
+            const cleaned =
+                options.clean === false
+                    ? { text: result.text, segments: mapped }
+                    : cleanRepetitions({ text: result.text, segments: mapped });
 
             const transcriptionResult: TranscriptionResult = {
-                text: result.text,
+                text: cleaned.text,
                 provider: transcriptionModel.provider,
                 model: transcriptionModel.model,
                 processingTime,
+                segments: cleaned.segments,
+                language: result.language ?? options.language,
+                duration: result.durationInSeconds,
             };
-
-            // Note: result from experimental_transcribe doesn't have duration property
-            // Duration would need to be calculated separately if needed
 
             logger.info(`Transcription completed in ${pc.green((processingTime / 1000).toFixed(1))}s`);
 
             return transcriptionResult;
         } catch (error) {
             const processingTime = Date.now() - startTime;
-            logger.error(`Transcription failed after ${(processingTime / 1000).toFixed(1)}s: ${error}`);
+            logger.error(
+                { error, provider: options.provider, model: options.model, elapsedMs: processingTime },
+                `Transcription failed after ${(processingTime / 1000).toFixed(1)}s (timeouts here usually mean a slow/degraded upload, not a code fault)`
+            );
 
-            // Try fallback providers if primary failed
-            if (options.provider !== "fallback") {
+            // Only auto-fall-back when no provider was explicitly requested.
+            // If the caller asked for a specific provider, fail loudly instead
+            // of silently producing output from a different one.
+            const explicitProvider = options.provider && options.provider !== "auto";
+
+            if (!explicitProvider && options.provider !== "fallback") {
                 logger.info("Trying fallback providers...");
                 return await this.transcribeWithFallback(filePath, options, processingTime);
             }
@@ -156,16 +308,26 @@ export class TranscriptionManager {
 
                 const audioBuffer = await Bun.file(filePath).arrayBuffer();
                 const model = getTranscriptionModel(transcriptionModel.providerInstance, transcriptionModel.model);
+                const providerOptions = this.buildProviderOptions(transcriptionModel.provider, options);
                 const result = await transcribe({
                     model,
                     audio: audioBuffer,
-                    ...(options.language && { language: options.language }),
+                    ...(Object.keys(providerOptions).length > 0 && { providerOptions }),
                 });
 
+                const fbMapped = mapResultSegments(result);
+                const fbCleaned =
+                    options.clean === false
+                        ? { text: result.text, segments: fbMapped }
+                        : cleanRepetitions({ text: result.text, segments: fbMapped });
+
                 return {
-                    text: result.text,
+                    text: fbCleaned.text,
                     provider,
                     model: transcriptionModel.model,
+                    segments: fbCleaned.segments,
+                    language: result.language ?? options.language,
+                    duration: result.durationInSeconds,
                     processingTime: Date.now() - initialTime,
                 };
             } catch (error) {
@@ -180,7 +342,7 @@ export class TranscriptionManager {
         fileSize: number,
         preferredProvider?: string,
         preferredModel?: string
-    ): Promise<{ provider: string; model: string; providerInstance: ProviderV2 } | null> {
+    ): Promise<{ provider: string; model: string; providerInstance: TranscriptionCapableProvider } | null> {
         // If provider and model are explicitly requested, try to use them
         if (preferredProvider && preferredModel) {
             return await this.getSpecificTranscriptionModel(preferredProvider, preferredModel);
@@ -248,7 +410,7 @@ export class TranscriptionManager {
     private async getSpecificTranscriptionModel(
         providerName: string,
         modelName: string
-    ): Promise<{ provider: string; model: string; providerInstance: ProviderV2 } | null> {
+    ): Promise<{ provider: string; model: string; providerInstance: TranscriptionCapableProvider } | null> {
         try {
             switch (providerName) {
                 case "groq": {
@@ -340,45 +502,77 @@ export class TranscriptionManager {
         }
     }
 
+    /**
+     * Build provider-specific options for the AI SDK `transcribe()` call.
+     *
+     * The AI SDK has NO top-level `language` parameter — a language hint only
+     * reaches the model through `providerOptions.<providerId>.language`.
+     * Passing it anywhere else is silently dropped, which makes Whisper
+     * auto-detect per 30s window and hallucinate/loop on non-English audio.
+     * So `language` MUST be threaded here for every provider.
+     *
+     * The outer key is the AI SDK *provider id*, not our internal name:
+     * `openrouter` is created via `createOpenAI(...)` so its id is `openai`.
+     */
     private buildProviderOptions(
         provider: string,
         options: TranscriptionOptions
     ): Record<string, Record<string, import("@ai-sdk/provider").JSONValue>> {
         const result: Record<string, Record<string, import("@ai-sdk/provider").JSONValue>> = {};
+        const lang = options.language;
+
+        if (provider === "openai" || provider === "openrouter" || provider === "groq") {
+            // whisper-based; keys are camelCase per AI SDK. temperature:0 is the
+            // documented anti-hallucination setting; segment timestamps power SRT/VTT.
+            const opts: Record<string, import("@ai-sdk/provider").JSONValue> = {
+                temperature: 0,
+                timestampGranularities: ["segment"],
+            };
+
+            if (lang) {
+                opts.language = lang;
+            }
+
+            // openrouter uses the openai-compatible provider instance → id "openai"
+            const key = provider === "groq" ? "groq" : "openai";
+            result[key] = opts;
+        }
+
+        if (provider === "deepgram") {
+            const deepgramOpts: Record<string, import("@ai-sdk/provider").JSONValue> = {
+                // Smart Format implies punctuation + capitalization + numerals;
+                // without it Deepgram returns lowercase unpunctuated text.
+                smartFormat: true,
+                punctuate: true,
+            };
+
+            if (lang) {
+                deepgramOpts.language = lang;
+            } else {
+                deepgramOpts.detectLanguage = true;
+            }
+
+            if (options.diarize) {
+                deepgramOpts.diarize = true;
+                deepgramOpts.utterances = true; // gives speaker-grouped sentence segments
+            }
+
+            result.deepgram = deepgramOpts;
+        }
 
         if (provider === "assemblyai") {
             const assemblyaiOpts: Record<string, import("@ai-sdk/provider").JSONValue> = {};
 
-            if (options.diarize) {
-                assemblyaiOpts.speaker_labels = true;
+            if (lang) {
+                assemblyaiOpts.languageCode = lang;
             }
 
-            if (options.wordTimestamps) {
-                assemblyaiOpts.word_boost = [];
+            if (options.diarize) {
+                assemblyaiOpts.speakerLabels = true;
             }
 
             if (Object.keys(assemblyaiOpts).length > 0) {
                 result.assemblyai = assemblyaiOpts;
-            }
-        }
-
-        if (provider === "deepgram") {
-            const deepgramOpts: Record<string, import("@ai-sdk/provider").JSONValue> = {};
-
-            if (options.diarize) {
-                deepgramOpts.diarize = true;
-            }
-
-            if (options.smartFormat) {
-                deepgramOpts.smart_format = true;
-            }
-
-            if (options.wordTimestamps) {
-                deepgramOpts.timestamps = true;
-            }
-
-            if (Object.keys(deepgramOpts).length > 0) {
-                result.deepgram = deepgramOpts;
             }
         }
 
