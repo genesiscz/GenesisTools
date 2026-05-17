@@ -1,0 +1,300 @@
+import logger from "@app/logger";
+import { HlidacShopuClient } from "@app/shops/api/HlidacShopuClient";
+import {
+    type AddFavoriteArgs,
+    type EditFavoriteArgs,
+    type Favorite,
+    FavoritesRepository,
+    type FavoriteWithState,
+} from "@app/shops/db/FavoritesRepository";
+import {
+    type Notification,
+    type NotificationReason,
+    NotificationsRepository,
+} from "@app/shops/db/NotificationsRepository";
+import { getShopsDatabase } from "@app/shops/db/ShopsDatabase";
+import { ingestFromHlidacResult } from "@app/shops/lib/ingest";
+// @ts-expect-error -- @hlidac-shopu/lib ships ESM with no .d.ts coverage
+import { shopOrigin as deriveShopOrigin } from "@hlidac-shopu/lib/shops.mjs";
+
+const log = logger.child({ component: "shops:watchlist-api" });
+
+export interface WatchInput {
+    url: string;
+    target_price?: number | null;
+    drop_percent?: number | null;
+    drop_absolute?: number | null;
+    restricted_to_shop?: string | null;
+    label?: string | null;
+    cooldown_hours?: number;
+    notify_back_in_stock?: boolean;
+}
+
+export interface AddFavoriteResult {
+    favorite_id: number;
+    master_product_id: number;
+    auto_ingested: boolean;
+    /** True when the helper returned an existing favorite instead of inserting a new row. */
+    already_exists?: boolean;
+}
+
+function repos() {
+    const db = getShopsDatabase();
+    return {
+        db,
+        favorites: new FavoritesRepository(db),
+        notifications: new NotificationsRepository(db),
+    };
+}
+
+async function resolveProductByUrl(url: string): Promise<{
+    masterId: number;
+    productId: number;
+    shopOrigin: string;
+    autoIngested: boolean;
+}> {
+    const { db } = repos();
+    const origin = deriveShopOrigin(url);
+    if (!origin) {
+        throw new Error(`Cannot derive shop origin from URL: ${url}`);
+    }
+
+    const existing = await db
+        .kysely()
+        .selectFrom("products")
+        .select(["id", "master_product_id", "shop_origin"])
+        .where("url", "=", url)
+        .executeTakeFirst();
+    if (existing && existing.master_product_id !== null) {
+        return {
+            masterId: existing.master_product_id,
+            productId: existing.id,
+            shopOrigin: existing.shop_origin,
+            autoIngested: false,
+        };
+    }
+
+    const hlidac = new HlidacShopuClient();
+    const data = await hlidac.getByUrl(url);
+    const ingest = await ingestFromHlidacResult({ db, url, data });
+    if (ingest.product.master_product_id === null) {
+        throw new Error(`Ingest produced product without master_product_id for ${url}`);
+    }
+
+    return {
+        masterId: ingest.product.master_product_id,
+        productId: ingest.product.id,
+        shopOrigin: ingest.product.shop_origin,
+        autoIngested: true,
+    };
+}
+
+export async function addFavorite(userId: number, input: WatchInput): Promise<AddFavoriteResult> {
+    const { favorites, db } = repos();
+    const resolved = await resolveProductByUrl(input.url);
+
+    const existing = await favorites.findFavoriteByMaster(userId, resolved.masterId, input.restricted_to_shop ?? null);
+    if (existing) {
+        log.info(
+            { favoriteId: existing.id, userId, masterId: resolved.masterId },
+            "favorite already exists — skipping insert"
+        );
+        return {
+            favorite_id: existing.id,
+            master_product_id: resolved.masterId,
+            auto_ingested: resolved.autoIngested,
+            already_exists: true,
+        };
+    }
+
+    let referencePrice: number | null = null;
+    let priceQuery = db
+        .kysely()
+        .selectFrom("current_offers")
+        .select(["current_price"])
+        .where("master_product_id", "=", resolved.masterId)
+        .orderBy("current_price", "asc")
+        .limit(1);
+    if (input.restricted_to_shop) {
+        priceQuery = priceQuery.where("shop_origin", "=", input.restricted_to_shop);
+    }
+
+    const lastPrice = await priceQuery.executeTakeFirst();
+    if (lastPrice?.current_price !== undefined && lastPrice.current_price !== null) {
+        referencePrice = lastPrice.current_price;
+    }
+
+    let label = input.label ?? null;
+    if (label === null) {
+        const master = await db
+            .kysely()
+            .selectFrom("master_products")
+            .select("canonical_name")
+            .where("id", "=", resolved.masterId)
+            .executeTakeFirst();
+        label = master?.canonical_name ?? null;
+    }
+
+    const args: AddFavoriteArgs = {
+        master_product_id: resolved.masterId,
+        restricted_to_shop: input.restricted_to_shop ?? null,
+        target_price: input.target_price ?? null,
+        drop_percent: input.drop_percent ?? null,
+        drop_absolute: input.drop_absolute ?? null,
+        reference_price: referencePrice,
+        label,
+        cooldown_hours: input.cooldown_hours ?? 24,
+        notify_back_in_stock: input.notify_back_in_stock,
+    };
+    const id = await favorites.addFavorite(userId, args);
+    log.info(
+        { favoriteId: id, userId, masterId: resolved.masterId, autoIngested: resolved.autoIngested },
+        "favorite added"
+    );
+    return { favorite_id: id, master_product_id: resolved.masterId, auto_ingested: resolved.autoIngested };
+}
+
+export interface AddFavoriteByMasterInput {
+    master_product_id: number;
+    target_price?: number | null;
+    drop_percent?: number | null;
+    drop_absolute?: number | null;
+    restricted_to_shop?: string | null;
+    label?: string | null;
+    cooldown_hours?: number;
+    notify_back_in_stock?: boolean;
+}
+
+export async function addFavoriteByMaster(userId: number, input: AddFavoriteByMasterInput): Promise<AddFavoriteResult> {
+    const { favorites, db } = repos();
+
+    const existing = await favorites.findFavoriteByMaster(
+        userId,
+        input.master_product_id,
+        input.restricted_to_shop ?? null
+    );
+    if (existing) {
+        log.info(
+            { favoriteId: existing.id, userId, masterId: input.master_product_id },
+            "favorite already exists — skipping insert"
+        );
+        return {
+            favorite_id: existing.id,
+            master_product_id: input.master_product_id,
+            auto_ingested: false,
+            already_exists: true,
+        };
+    }
+
+    let referencePrice: number | null = null;
+    let priceQuery = db
+        .kysely()
+        .selectFrom("current_offers")
+        .select(["current_price"])
+        .where("master_product_id", "=", input.master_product_id)
+        .orderBy("current_price", "asc")
+        .limit(1);
+    if (input.restricted_to_shop) {
+        priceQuery = priceQuery.where("shop_origin", "=", input.restricted_to_shop);
+    }
+
+    const lastPrice = await priceQuery.executeTakeFirst();
+    if (lastPrice?.current_price !== undefined && lastPrice.current_price !== null) {
+        referencePrice = lastPrice.current_price;
+    }
+
+    let label = input.label ?? null;
+    if (label === null) {
+        const master = await db
+            .kysely()
+            .selectFrom("master_products")
+            .select("canonical_name")
+            .where("id", "=", input.master_product_id)
+            .executeTakeFirst();
+        label = master?.canonical_name ?? null;
+    }
+
+    const id = await favorites.addFavorite(userId, {
+        master_product_id: input.master_product_id,
+        restricted_to_shop: input.restricted_to_shop ?? null,
+        target_price: input.target_price ?? null,
+        drop_percent: input.drop_percent ?? null,
+        drop_absolute: input.drop_absolute ?? null,
+        reference_price: referencePrice,
+        label,
+        cooldown_hours: input.cooldown_hours ?? 24,
+        notify_back_in_stock: input.notify_back_in_stock,
+    });
+    log.info({ favoriteId: id, userId, masterId: input.master_product_id }, "favorite added by master");
+    return { favorite_id: id, master_product_id: input.master_product_id, auto_ingested: false };
+}
+
+export async function removeFavorite(userId: number, id: number): Promise<void> {
+    const { favorites } = repos();
+    await favorites.removeFavorite(userId, id);
+}
+
+export async function editFavorite(userId: number, id: number, patch: EditFavoriteArgs): Promise<Favorite | undefined> {
+    const { favorites } = repos();
+    await favorites.editFavorite(userId, id, patch);
+    return favorites.getFavorite(userId, id);
+}
+
+export async function getWatchlist(userId: number): Promise<FavoriteWithState[]> {
+    const { favorites } = repos();
+    return favorites.listWithCurrentState(userId);
+}
+
+export const VALID_NOTIFICATION_REASONS: ReadonlySet<NotificationReason> = new Set<NotificationReason>([
+    "target-price",
+    "drop-percent",
+    "drop-absolute",
+    "back-in-stock",
+]);
+
+export function assertValidReason(reason: string | undefined): NotificationReason | undefined {
+    if (reason === undefined) {
+        return undefined;
+    }
+
+    if (!VALID_NOTIFICATION_REASONS.has(reason as NotificationReason)) {
+        throw new Error(
+            `Invalid reason "${reason}". Use one of: target-price, drop-percent, drop-absolute, back-in-stock.`
+        );
+    }
+
+    return reason as NotificationReason;
+}
+
+export interface RecentNotificationsArgs {
+    limit?: number;
+    reason?: NotificationReason;
+    shop_origin?: string;
+    onlyUnacked?: boolean;
+}
+
+export async function getRecentNotifications(
+    userId: number,
+    args: RecentNotificationsArgs = {}
+): Promise<Notification[]> {
+    const { notifications } = repos();
+    if (args.onlyUnacked) {
+        return notifications.listUnacked(userId);
+    }
+
+    return notifications.listAll(userId, {
+        limit: args.limit ?? 100,
+        reason: args.reason,
+        shop_origin: args.shop_origin,
+    });
+}
+
+export async function ackNotification(userId: number, id: number): Promise<void> {
+    const { notifications } = repos();
+    await notifications.ack(userId, id);
+}
+
+export async function ackAllNotifications(userId: number): Promise<void> {
+    const { notifications } = repos();
+    await notifications.ackAll(userId);
+}
