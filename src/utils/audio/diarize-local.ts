@@ -51,7 +51,15 @@ export async function diarizeLocal(audio: Buffer, opts?: { speakers?: number }):
         const { segmentation, embedding } = await ensureDiarizationModels();
         const sherpa = require("sherpa-onnx-node") as SherpaModule;
 
-        const numClusters = opts?.speakers && opts.speakers > 0 ? opts.speakers : -1;
+        // Default to 2 clusters when the caller doesn't specify. Pure
+        // auto-detect (numClusters:-1) over-splits long Czech interview audio
+        // badly (gth → 5 spurious speakers) because WeSpeaker embeddings drift
+        // over a 14-min phone recording; raising the merge threshold instead
+        // is fragile (over-merges short segments to 1). Interview/meeting
+        // audio is overwhelmingly 2-party, so a fixed 2 is the robust default
+        // and converges to the 2-speaker reference SRTs; `--speakers N`
+        // overrides for N-party calls.
+        const numClusters = opts?.speakers && opts.speakers > 0 ? opts.speakers : 2;
         const sd = new sherpa.OfflineSpeakerDiarization({
             segmentation: { pyannote: { model: segmentation } },
             embedding: { model: embedding },
