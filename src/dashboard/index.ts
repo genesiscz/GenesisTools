@@ -1,19 +1,60 @@
 #!/usr/bin/env bun
 
 import { spawn } from "node:child_process";
-import { dirname } from "node:path";
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import logger from "@app/logger";
 import { Command } from "commander";
 import pc from "picocolors";
 
 const DASHBOARD_DIR = dirname(fileURLToPath(import.meta.url));
+const NODE_MODULES = join(DASHBOARD_DIR, "node_modules");
 const DEFAULT_PORT = 3000;
 
 interface LaunchOptions {
     prod: boolean;
     open: boolean;
+    install: boolean;
+    reinstall: boolean;
     port: number;
+}
+
+function runToCompletion(cmd: string, args: string[]): Promise<number> {
+    const child = spawn(cmd, args, { cwd: DASHBOARD_DIR, stdio: "inherit" });
+    return new Promise((res) => child.on("exit", (code) => res(code ?? 1)));
+}
+
+async function ensureDeps(install: boolean, reinstall: boolean): Promise<void> {
+    const present = existsSync(NODE_MODULES);
+
+    if (present && !reinstall) {
+        return;
+    }
+
+    if (!present && !install) {
+        logger.error(
+            `src/dashboard/node_modules is missing and --no-install was passed. Run ${pc.bold(
+                "bun install"
+            )} in src/dashboard first.`
+        );
+        process.exit(1);
+    }
+
+    logger.info(
+        pc.cyan(
+            `▶ ${reinstall ? "Reinstalling" : "Installing"} dashboard dependencies — ${pc.bold(
+                "bun install"
+            )} (src/dashboard)`
+        )
+    );
+    const code = await runToCompletion("bun", ["install"]);
+    if (code !== 0) {
+        logger.error(`bun install failed (exit ${code}).`);
+        process.exit(code);
+    }
+
+    logger.info(pc.green("✓ Dependencies ready"));
 }
 
 async function waitForServer(port: number, deadlineMs: number): Promise<boolean> {
@@ -46,8 +87,10 @@ function openBrowser(url: string): void {
 }
 
 async function launch(options: LaunchOptions): Promise<void> {
-    const { prod, open, port } = options;
+    const { prod, open, install, reinstall, port } = options;
     const url = `http://localhost:${port}/`;
+
+    await ensureDeps(install, reinstall);
 
     logger.info(
         pc.cyan(
@@ -58,8 +101,7 @@ async function launch(options: LaunchOptions): Promise<void> {
     );
 
     if (prod) {
-        const build = spawn("bun", ["run", "build:prod"], { cwd: DASHBOARD_DIR, stdio: "inherit" });
-        const buildCode: number = await new Promise((res) => build.on("exit", (c) => res(c ?? 1)));
+        const buildCode = await runToCompletion("bun", ["run", "build:prod"]);
         if (buildCode !== 0) {
             logger.error(`Production build failed (exit ${buildCode}).`);
             process.exit(buildCode);
@@ -90,18 +132,26 @@ const program = new Command();
 
 program
     .name("tools dashboard")
-    .description("Start the personal productivity dashboard and open it in the browser")
+    .description("Start the personal productivity dashboard (auto-installs deps) and open it")
     .option("--prod", "production build + PM2 (ecosystem.config.cjs) instead of the dev server", false)
     .option("--no-open", "do not auto-open the browser")
+    .option("--no-install", "do not auto-install when src/dashboard/node_modules is missing")
+    .option("--reinstall", "force a fresh bun install before starting", false)
     .option("-p, --port <number>", "port to wait on / open", String(DEFAULT_PORT))
-    .action(async (opts: { prod: boolean; open: boolean; port: string }) => {
+    .action(async (opts: { prod: boolean; open: boolean; install: boolean; reinstall: boolean; port: string }) => {
         const port = Number.parseInt(opts.port, 10);
         if (Number.isNaN(port)) {
             logger.error(`Invalid --port "${opts.port}".`);
             process.exit(1);
         }
 
-        await launch({ prod: opts.prod, open: opts.open, port });
+        await launch({
+            prod: opts.prod,
+            open: opts.open,
+            install: opts.install,
+            reinstall: opts.reinstall,
+            port,
+        });
     });
 
 program.parseAsync(process.argv).catch((err: unknown) => {
