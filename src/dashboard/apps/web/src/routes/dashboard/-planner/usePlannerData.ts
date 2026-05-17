@@ -86,7 +86,7 @@ export function usePlannerData() {
     // ── Focus session ghost blocks (today's completed pomodoros) ─────────────
     const focusSessionsQuery = useQuery({
         queryKey: ["focus-sessions-today", userId],
-        queryFn: () => aggregateFocusSessions({ data: { userId: userId! } }),
+        queryFn: () => aggregateFocusSessions(),
         enabled: !!userId,
         staleTime: 10_000,
         refetchOnWindowFocus: true,

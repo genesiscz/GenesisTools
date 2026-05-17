@@ -2,19 +2,21 @@ import { createServerFn } from "@tanstack/react-start";
 import { and, asc, desc, eq } from "drizzle-orm";
 import { type AiConversation, type AiMessage, aiConversations, aiMessages, db } from "@/drizzle";
 import { emitDomainEvent } from "@/lib/events/event-bus.server";
+import { requireUserId } from "@/lib/auth/requireUser";
 
 // ============================================
 // Conversations
 // ============================================
 
 export const listConversations = createServerFn({ method: "GET" })
-    .inputValidator((d: { userId: string }) => d)
-    .handler(({ data }): AiConversation[] => {
+    .handler(async (): Promise<AiConversation[]> => {
+        const userId = await requireUserId();
+
         try {
             return db
                 .select()
                 .from(aiConversations)
-                .where(eq(aiConversations.userId, data.userId))
+                .where(eq(aiConversations.userId, userId))
                 .orderBy(desc(aiConversations.updatedAt))
                 .all();
         } catch (error) {
@@ -24,15 +26,16 @@ export const listConversations = createServerFn({ method: "GET" })
     });
 
 export const createConversation = createServerFn({ method: "POST" })
-    .inputValidator((d: { id: string; userId: string; title: string }) => d)
-    .handler(({ data }): AiConversation => {
+    .inputValidator((d: { id: string; title: string }) => d)
+    .handler(async ({ data }): Promise<AiConversation> => {
+        const userId = await requireUserId();
         const now = new Date().toISOString();
 
         try {
             db.insert(aiConversations)
                 .values({
                     id: data.id,
-                    userId: data.userId,
+                    userId,
                     title: data.title,
                     createdAt: now,
                     updatedAt: now,
@@ -45,7 +48,7 @@ export const createConversation = createServerFn({ method: "POST" })
                 throw new Error("Row not found after insert");
             }
 
-            emitDomainEvent(data.userId, "ai", { type: "conversation_changed" });
+            emitDomainEvent(userId, "ai", { type: "conversation_changed" });
 
             return row;
         } catch (error) {
@@ -55,16 +58,18 @@ export const createConversation = createServerFn({ method: "POST" })
     });
 
 export const deleteConversation = createServerFn({ method: "POST" })
-    .inputValidator((d: { id: string; userId: string }) => d)
-    .handler(({ data }): { success: true } => {
+    .inputValidator((d: { id: string }) => d)
+    .handler(async ({ data }): Promise<{ success: true }> => {
+        const userId = await requireUserId();
+
         try {
             db.delete(aiMessages).where(eq(aiMessages.conversationId, data.id)).run();
 
             db.delete(aiConversations)
-                .where(and(eq(aiConversations.id, data.id), eq(aiConversations.userId, data.userId)))
+                .where(and(eq(aiConversations.id, data.id), eq(aiConversations.userId, userId)))
                 .run();
 
-            emitDomainEvent(data.userId, "ai", { type: "conversation_changed" });
+            emitDomainEvent(userId, "ai", { type: "conversation_changed" });
 
             return { success: true };
         } catch (error) {
@@ -74,15 +79,17 @@ export const deleteConversation = createServerFn({ method: "POST" })
     });
 
 export const updateConversationTitle = createServerFn({ method: "POST" })
-    .inputValidator((d: { id: string; userId: string; title: string }) => d)
-    .handler(({ data }): { success: true } => {
+    .inputValidator((d: { id: string; title: string }) => d)
+    .handler(async ({ data }): Promise<{ success: true }> => {
+        const userId = await requireUserId();
+
         try {
             db.update(aiConversations)
                 .set({ title: data.title, updatedAt: new Date().toISOString() })
-                .where(and(eq(aiConversations.id, data.id), eq(aiConversations.userId, data.userId)))
+                .where(and(eq(aiConversations.id, data.id), eq(aiConversations.userId, userId)))
                 .run();
 
-            emitDomainEvent(data.userId, "ai", { type: "conversation_changed" });
+            emitDomainEvent(userId, "ai", { type: "conversation_changed" });
 
             return { success: true };
         } catch (error) {
@@ -97,7 +104,19 @@ export const updateConversationTitle = createServerFn({ method: "POST" })
 
 export const listMessages = createServerFn({ method: "GET" })
     .inputValidator((d: { conversationId: string }) => d)
-    .handler(({ data }): AiMessage[] => {
+    .handler(async ({ data }): Promise<AiMessage[]> => {
+        const userId = await requireUserId();
+
+        const conv = db
+            .select({ userId: aiConversations.userId })
+            .from(aiConversations)
+            .where(eq(aiConversations.id, data.conversationId))
+            .get();
+
+        if (!conv || conv.userId !== userId) {
+            throw new Response("Forbidden", { status: 403 });
+        }
+
         try {
             return db
                 .select()
@@ -115,7 +134,19 @@ export const appendMessage = createServerFn({ method: "POST" })
     .inputValidator(
         (d: { id: string; conversationId: string; role: "user" | "assistant" | "system"; content: string }) => d
     )
-    .handler(({ data }): AiMessage => {
+    .handler(async ({ data }): Promise<AiMessage> => {
+        const userId = await requireUserId();
+
+        const conv = db
+            .select({ userId: aiConversations.userId })
+            .from(aiConversations)
+            .where(eq(aiConversations.id, data.conversationId))
+            .get();
+
+        if (!conv || conv.userId !== userId) {
+            throw new Response("Forbidden", { status: 403 });
+        }
+
         const now = new Date().toISOString();
 
         try {
@@ -130,7 +161,10 @@ export const appendMessage = createServerFn({ method: "POST" })
                 .run();
 
             // Bump conversation updatedAt so it floats to top of list
-            db.update(aiConversations).set({ updatedAt: now }).where(eq(aiConversations.id, data.conversationId)).run();
+            db.update(aiConversations)
+                .set({ updatedAt: now })
+                .where(and(eq(aiConversations.id, data.conversationId), eq(aiConversations.userId, userId)))
+                .run();
 
             const row = db.select().from(aiMessages).where(eq(aiMessages.id, data.id)).get();
 
@@ -138,15 +172,7 @@ export const appendMessage = createServerFn({ method: "POST" })
                 throw new Error("Row not found after insert");
             }
 
-            const conv = db
-                .select({ userId: aiConversations.userId })
-                .from(aiConversations)
-                .where(eq(aiConversations.id, data.conversationId))
-                .get();
-
-            if (conv) {
-                emitDomainEvent(conv.userId, "ai", { type: "conversation_changed" });
-            }
+            emitDomainEvent(userId, "ai", { type: "conversation_changed" });
 
             return row;
         } catch (error) {

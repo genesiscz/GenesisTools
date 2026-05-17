@@ -24,7 +24,7 @@ export const aiQueryKeys = {
 export function useConversations(userId: string | null) {
     return useQuery({
         queryKey: aiQueryKeys.conversations(userId ?? ""),
-        queryFn: () => listConversations({ data: { userId: userId ?? "" } }),
+        queryFn: () => listConversations(),
         enabled: Boolean(userId),
     });
 }
@@ -34,7 +34,7 @@ export function useCreateConversation(userId: string | null) {
 
     return useMutation({
         mutationFn: (vars: { id: string; title: string }) =>
-            createConversation({ data: { id: vars.id, userId: userId ?? "", title: vars.title } }),
+            createConversation({ data: { id: vars.id, title: vars.title } }),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: aiQueryKeys.conversations(userId ?? "") });
         },
@@ -49,7 +49,7 @@ export function useDeleteConversation(userId: string | null) {
 
     return useMutation({
         mutationFn: (conversationId: string) =>
-            deleteConversation({ data: { id: conversationId, userId: userId ?? "" } }),
+            deleteConversation({ data: { id: conversationId } }),
         onSuccess: (_data, conversationId) => {
             queryClient.invalidateQueries({ queryKey: aiQueryKeys.conversations(userId ?? "") });
             queryClient.removeQueries({ queryKey: aiQueryKeys.messages(conversationId) });
@@ -65,7 +65,7 @@ export function useUpdateConversationTitle(userId: string | null) {
 
     return useMutation({
         mutationFn: (vars: { id: string; title: string }) =>
-            updateConversationTitle({ data: { id: vars.id, userId: userId ?? "", title: vars.title } }),
+            updateConversationTitle({ data: { id: vars.id, title: vars.title } }),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: aiQueryKeys.conversations(userId ?? "") });
         },

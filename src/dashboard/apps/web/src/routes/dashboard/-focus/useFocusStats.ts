@@ -19,7 +19,7 @@ export interface AggregatedFocusStats {
 export function useAggregatedFocusStats(userId: string | null): AggregatedFocusStats {
     const focusQuery = useQuery({
         queryKey: ["focus-stats-today", userId],
-        queryFn: () => aggregateFocusStats({ data: { userId: userId! } }),
+        queryFn: () => aggregateFocusStats(),
         enabled: !!userId,
         staleTime: 10_000,
         refetchOnWindowFocus: true,

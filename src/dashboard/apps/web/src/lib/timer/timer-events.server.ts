@@ -14,6 +14,8 @@ export interface TimerEvent {
     timerId?: string;
     snapshot?: unknown;
     payload?: unknown;
+    // Event bag — assignable to the generic bus's `{ type; [k]: unknown }`.
+    [key: string]: unknown;
 }
 
 /**

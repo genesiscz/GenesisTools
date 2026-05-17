@@ -11,7 +11,7 @@ const queryConfig = {
 export function useNotesQuery(userId: string | null) {
     return useQuery({
         queryKey: notesKeys.list(userId ?? ""),
-        queryFn: () => listNotes({ data: { userId: userId! } }),
+        queryFn: () => listNotes(),
         enabled: !!userId,
         ...queryConfig,
     });
@@ -51,7 +51,7 @@ export function useDeleteNoteMutation() {
     const queryClient = useQueryClient();
 
     return useMutation({
-        mutationFn: ({ id, userId }: { id: string; userId: string }) => deleteNote({ data: { id, userId } }),
+        mutationFn: ({ id }: { id: string; userId: string }) => deleteNote({ data: { id } }),
         onSuccess: (_, { userId }) => {
             queryClient.invalidateQueries({ queryKey: notesKeys.list(userId) });
         },

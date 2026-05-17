@@ -125,7 +125,7 @@ function BookmarksPage() {
             <BookmarkForm
                 open={formOpen}
                 onOpenChange={setFormOpen}
-                onSubmit={addBookmark}
+                onSubmit={async (input) => { await addBookmark(input); }}
                 existingTags={getAllTags()}
             />
         </DashboardLayout>

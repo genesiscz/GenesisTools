@@ -2,6 +2,9 @@ import { access, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { SafeJSON } from "@dashboard/shared";
 import { createFileRoute } from "@tanstack/react-router";
+import { getUserIdFromRequest } from "@/lib/auth/requireUser";
+
+const SAFE_ID = /^[A-Za-z0-9_-]+$/;
 
 const AVATAR_DIR = join(process.cwd(), ".data", "avatars");
 
@@ -16,10 +19,18 @@ const MIME_BY_EXT: Record<string, string> = {
 export const Route = createFileRoute("/api/avatar/$userId")({
     server: {
         handlers: {
-            GET: async ({ params }) => {
+            GET: async ({ params, request }) => {
+                const viewer = await getUserIdFromRequest(request);
+                if (!viewer) {
+                    return new Response(SafeJSON.stringify({ error: "Unauthorized" }), {
+                        status: 401,
+                        headers: { "Content-Type": "application/json" },
+                    });
+                }
+
                 const { userId } = params;
 
-                if (userId.includes("..") || userId.includes("/") || userId.includes("\\")) {
+                if (!SAFE_ID.test(userId)) {
                     return new Response(SafeJSON.stringify({ error: "Invalid userId" }), {
                         status: 400,
                         headers: { "Content-Type": "application/json" },

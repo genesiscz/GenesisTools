@@ -3,10 +3,15 @@ import { join } from "node:path";
 import { SafeJSON } from "@dashboard/shared";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
+import { requireUserId } from "@/lib/auth/requireUser";
 
 const AVATAR_DIR = join(process.cwd(), ".data", "avatars");
 
 const ALLOWED_EXTS = new Set([".jpg", ".jpeg", ".png", ".webp", ".gif"]);
+
+// WorkOS user ids are URL/path-safe; defence-in-depth against path traversal
+// in the `${userId}${ext}` avatar filename.
+const SAFE_USER_ID = /^[A-Za-z0-9_-]+$/;
 
 interface WorkOSUserResponse {
     id: string;
@@ -39,14 +44,9 @@ async function setWorkOSProfilePicture(userId: string, profilePictureUrl: string
 }
 
 const updateAvatarSchema = z.object({
-    userId: z.string().min(1, "User ID is required"),
     fileBase64: z.string().min(1, "File data is required"),
     mimeType: z.enum(["image/jpeg", "image/png", "image/webp", "image/gif"]),
     origin: z.string().url("Origin URL is required"),
-});
-
-const removeAvatarSchema = z.object({
-    userId: z.string().min(1, "User ID is required"),
 });
 
 const MIME_TO_EXT: Record<string, string> = {
@@ -74,7 +74,12 @@ export const updateAvatarFn = createServerFn({ method: "POST" })
             return data;
         }
 
-        const { userId, fileBase64, mimeType, origin } = data;
+        const userId = await requireUserId();
+        if (!SAFE_USER_ID.test(userId)) {
+            return { code: "invalid_user" as const, message: "Invalid user id" };
+        }
+
+        const { fileBase64, mimeType, origin } = data;
         const ext = MIME_TO_EXT[mimeType];
 
         if (!ext || !ALLOWED_EXTS.has(ext)) {
@@ -113,27 +118,13 @@ export const updateAvatarFn = createServerFn({ method: "POST" })
         }
     });
 
-export const removeAvatarFn = createServerFn({ method: "POST" })
-    .inputValidator((data: unknown) => {
-        const parsed = removeAvatarSchema.safeParse(data);
+export const removeAvatarFn = createServerFn({ method: "POST" }).handler(async () => {
+    const userId = await requireUserId();
+    if (!SAFE_USER_ID.test(userId)) {
+        return { code: "invalid_user" as const, message: "Invalid user id" };
+    }
 
-        if (!parsed.success) {
-            return {
-                code: "validation_error" as const,
-                message: parsed.error.issues[0]?.message ?? "Validation failed",
-            };
-        }
-
-        return parsed.data;
-    })
-    .handler(async ({ data }) => {
-        if ("code" in data) {
-            return data;
-        }
-
-        const { userId } = data;
-
-        try {
+    try {
             for (const ext of ALLOWED_EXTS) {
                 const filePath = join(AVATAR_DIR, `${userId}${ext}`);
                 const exists = await access(filePath)

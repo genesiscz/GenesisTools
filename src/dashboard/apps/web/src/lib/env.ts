@@ -22,6 +22,11 @@ export const env = createEnv({
         WORKOS_CLIENT_ID: z.string().min(1),
         WORKOS_REDIRECT_URI: z.string().url(),
         WORKOS_COOKIE_PASSWORD: z.string().min(32),
+        // MCP endpoint auth. Both must be set to enable /mcp; otherwise /mcp
+        // is disabled (501). MCP has no browser session, so it is bound to a
+        // single configured owner user and gated by a bearer token.
+        MCP_BEARER_TOKEN: z.string().min(16).optional(),
+        MCP_USER_ID: z.string().min(1).optional(),
     },
     runtimeEnv: process.env,
     emptyStringAsUndefined: true,

@@ -10,6 +10,7 @@ import type { PomodoroSettings, ProductivityStats } from "@dashboard/shared";
 import { createServerFn } from "@tanstack/react-start";
 import { and, desc, eq, gte, lt } from "drizzle-orm";
 import { type ActivityLog, activityLogs, db, type NewTimer, type Timer, timers } from "@/drizzle";
+import { requireUserId } from "@/lib/auth/requireUser";
 import { emitTimerEvent } from "./timer-events.server";
 import { applyAction } from "./timer-state-machine";
 
@@ -137,8 +138,9 @@ function mutate({ id, userId, expectedVersion, transform }: MutateOptions): Time
 export const getTimersFromServer = createServerFn({
     method: "GET",
 })
-    .inputValidator((d: string) => d) // userId
-    .handler(({ data: userId }) => {
+    .handler(async (): Promise<Timer[]> => {
+        const userId = await requireUserId();
+
         try {
             const results: Timer[] = db
                 .select()
@@ -163,8 +165,9 @@ type ParsedActivityLog = Omit<ActivityLog, "metadata"> & {
 export const getActivityLogsFromServer = createServerFn({
     method: "GET",
 })
-    .inputValidator((d: string) => d) // userId
-    .handler(({ data: userId }): ParsedActivityLog[] => {
+    .handler(async (): Promise<ParsedActivityLog[]> => {
+        const userId = await requireUserId();
+
         try {
             const rawResults = db
                 .select()
@@ -192,13 +195,14 @@ export const createTimerOnServer = createServerFn({
     method: "POST",
 })
     .inputValidator(
-        (d: { userId: string; name: string; timerType: "stopwatch" | "countdown" | "pomodoro"; duration?: number }) => d
+        (d: { name: string; timerType: "stopwatch" | "countdown" | "pomodoro"; duration?: number }) => d
     )
-    .handler(({ data }): Timer => {
+    .handler(async ({ data }): Promise<Timer> => {
+        const userId = await requireUserId();
         const now = new Date().toISOString();
         const newTimer: NewTimer = {
             id: crypto.randomUUID(),
-            userId: data.userId,
+            userId,
             name: data.name,
             timerType: data.timerType,
             isRunning: 0,
@@ -224,10 +228,12 @@ export const createTimerOnServer = createServerFn({
 export const deleteTimerFromServer = createServerFn({
     method: "POST",
 })
-    .inputValidator((d: { timerId: string; userId: string }) => d)
-    .handler(({ data }): { success: boolean } => {
+    .inputValidator((d: { timerId: string }) => d)
+    .handler(async ({ data }): Promise<{ success: boolean }> => {
+        const userId = await requireUserId();
+
         try {
-            db.delete(timers).where(eq(timers.id, data.timerId)).run();
+            db.delete(timers).where(and(eq(timers.id, data.timerId), eq(timers.userId, userId))).run();
             return { success: true };
         } catch (error) {
             console.error("[Server] deleteTimerFromServer error:", error);
@@ -240,25 +246,29 @@ export const deleteTimerFromServer = createServerFn({
 // ============================================
 
 export const startTimer = createServerFn({ method: "POST" })
-    .inputValidator((d: { id: string; userId: string; expectedVersion?: number }) => d)
-    .handler(({ data }) =>
-        mutate({
+    .inputValidator((d: { id: string; expectedVersion?: number }) => d)
+    .handler(async ({ data }) => {
+        const userId = await requireUserId();
+
+        return mutate({
             id: data.id,
-            userId: data.userId,
+            userId,
             expectedVersion: data.expectedVersion,
             transform: (current) => {
                 const r = applyAction(current, { type: "start", nowMs: Date.now() });
                 return { next: r.next, events: [{ type: "started" }] };
             },
-        })
-    );
+        });
+    });
 
 export const pauseTimer = createServerFn({ method: "POST" })
-    .inputValidator((d: { id: string; userId: string; expectedVersion?: number }) => d)
-    .handler(({ data }) =>
-        mutate({
+    .inputValidator((d: { id: string; expectedVersion?: number }) => d)
+    .handler(async ({ data }) => {
+        const userId = await requireUserId();
+
+        return mutate({
             id: data.id,
-            userId: data.userId,
+            userId,
             expectedVersion: data.expectedVersion,
             transform: (current) => {
                 const r = applyAction(current, { type: "pause", nowMs: Date.now() });
@@ -270,43 +280,49 @@ export const pauseTimer = createServerFn({ method: "POST" })
 
                 return { next: r.next, events };
             },
-        })
-    );
+        });
+    });
 
 export const resetTimer = createServerFn({ method: "POST" })
-    .inputValidator((d: { id: string; userId: string; expectedVersion?: number }) => d)
-    .handler(({ data }) =>
-        mutate({
+    .inputValidator((d: { id: string; expectedVersion?: number }) => d)
+    .handler(async ({ data }) => {
+        const userId = await requireUserId();
+
+        return mutate({
             id: data.id,
-            userId: data.userId,
+            userId,
             expectedVersion: data.expectedVersion,
             transform: (current) => ({
                 next: applyAction(current, { type: "reset" }).next,
                 events: [{ type: "reset" }],
             }),
-        })
-    );
+        });
+    });
 
 export const lapTimer = createServerFn({ method: "POST" })
-    .inputValidator((d: { id: string; userId: string; expectedVersion?: number }) => d)
-    .handler(({ data }) =>
-        mutate({
+    .inputValidator((d: { id: string; expectedVersion?: number }) => d)
+    .handler(async ({ data }) => {
+        const userId = await requireUserId();
+
+        return mutate({
             id: data.id,
-            userId: data.userId,
+            userId,
             expectedVersion: data.expectedVersion,
             transform: (current) => ({
                 next: applyAction(current, { type: "lap", nowMs: Date.now() }).next,
                 events: [{ type: "lapped" }],
             }),
-        })
-    );
+        });
+    });
 
 export const advancePomodoroPhase = createServerFn({ method: "POST" })
-    .inputValidator((d: { id: string; userId: string; expectedVersion?: number }) => d)
-    .handler(({ data }) =>
-        mutate({
+    .inputValidator((d: { id: string; expectedVersion?: number }) => d)
+    .handler(async ({ data }) => {
+        const userId = await requireUserId();
+
+        return mutate({
             id: data.id,
-            userId: data.userId,
+            userId,
             expectedVersion: data.expectedVersion,
             transform: (current) => {
                 const r = applyAction(current, { type: "advance_pomodoro_phase" });
@@ -315,15 +331,17 @@ export const advancePomodoroPhase = createServerFn({ method: "POST" })
                     events: r.phaseTransition ? [{ type: "phase_changed", payload: r.phaseTransition }] : [],
                 };
             },
-        })
-    );
+        });
+    });
 
 export const setPomodoroSettings = createServerFn({ method: "POST" })
-    .inputValidator((d: { id: string; userId: string; expectedVersion?: number; settings: PomodoroSettings }) => d)
-    .handler(({ data }) =>
-        mutate({
+    .inputValidator((d: { id: string; expectedVersion?: number; settings: PomodoroSettings }) => d)
+    .handler(async ({ data }) => {
+        const userId = await requireUserId();
+
+        return mutate({
             id: data.id,
-            userId: data.userId,
+            userId,
             expectedVersion: data.expectedVersion,
             transform: (current) => ({
                 next: applyAction(current, {
@@ -331,28 +349,29 @@ export const setPomodoroSettings = createServerFn({ method: "POST" })
                     settings: data.settings,
                 }).next,
             }),
-        })
-    );
+        });
+    });
 
 export const updateTimerMetadata = createServerFn({ method: "POST" })
     .inputValidator(
         (d: {
             id: string;
-            userId: string;
             expectedVersion?: number;
             patch: Partial<Pick<Timer, "name" | "showTotal" | "duration" | "elapsedTime" | "timerType">>;
         }) => d
     )
-    .handler(({ data }) =>
-        mutate({
+    .handler(async ({ data }) => {
+        const userId = await requireUserId();
+
+        return mutate({
             id: data.id,
-            userId: data.userId,
+            userId,
             expectedVersion: data.expectedVersion,
             transform: (current) => ({
                 next: applyAction(current, { type: "update_metadata", patch: data.patch }).next,
             }),
-        })
-    );
+        });
+    });
 
 // ============================================
 // Activity log helper (used by useActivityLog)
@@ -361,16 +380,18 @@ export const updateTimerMetadata = createServerFn({ method: "POST" })
 export const getActivityLogsForTimer = createServerFn({
     method: "GET",
 })
-    .inputValidator((d: { userId: string; timerId?: string }) => d)
-    .handler(({ data }): ParsedActivityLog[] => {
+    .inputValidator((d: { timerId?: string }) => d)
+    .handler(async ({ data }): Promise<ParsedActivityLog[]> => {
+        const userId = await requireUserId();
+
         try {
             const query = db
                 .select()
                 .from(activityLogs)
                 .where(
                     data.timerId
-                        ? and(eq(activityLogs.userId, data.userId), eq(activityLogs.timerId, data.timerId))
-                        : eq(activityLogs.userId, data.userId)
+                        ? and(eq(activityLogs.userId, userId), eq(activityLogs.timerId, data.timerId))
+                        : eq(activityLogs.userId, userId)
                 )
                 .orderBy(desc(activityLogs.timestamp))
                 .limit(500)
@@ -387,11 +408,12 @@ export const getActivityLogsForTimer = createServerFn({
     });
 
 export const clearActivityLogs = createServerFn({ method: "POST" })
-    .inputValidator((d: { userId: string }) => d)
-    .handler(({ data }): { success: boolean; deleted: number } => {
+    .handler(async (): Promise<{ success: boolean; deleted: number }> => {
+        const userId = await requireUserId();
+
         try {
-            const result = db.delete(activityLogs).where(eq(activityLogs.userId, data.userId)).run();
-            console.log("[Server] cleared", result.changes, "activity logs for user:", data.userId);
+            const result = db.delete(activityLogs).where(eq(activityLogs.userId, userId)).run();
+            console.log("[Server] cleared", result.changes, "activity logs for user:", userId);
             return { success: true, deleted: result.changes };
         } catch (error) {
             console.error("[Server] clearActivityLogs error:", error);
@@ -404,14 +426,16 @@ export const clearActivityLogs = createServerFn({ method: "POST" })
 // ============================================
 
 export const getProductivityStats = createServerFn({ method: "GET" })
-    .inputValidator((d: { userId: string; startIso: string; endIso: string }) => d)
-    .handler(({ data }): ProductivityStats => {
+    .inputValidator((d: { startIso: string; endIso: string }) => d)
+    .handler(async ({ data }): Promise<ProductivityStats> => {
+        const userId = await requireUserId();
+
         const rows = db
             .select()
             .from(activityLogs)
             .where(
                 and(
-                    eq(activityLogs.userId, data.userId),
+                    eq(activityLogs.userId, userId),
                     gte(activityLogs.timestamp, data.startIso),
                     lt(activityLogs.timestamp, data.endIso)
                 )
@@ -472,8 +496,9 @@ export interface FocusStatsForToday {
 }
 
 export const aggregateFocusStats = createServerFn({ method: "GET" })
-    .inputValidator((d: { userId: string }) => d)
-    .handler(({ data }): FocusStatsForToday => {
+    .handler(async (): Promise<FocusStatsForToday> => {
+        const userId = await requireUserId();
+
         // UTC start of today and start of tomorrow for lexicographic ISO comparison
         const now = new Date();
         const startOfToday = new Date(now);
@@ -486,7 +511,7 @@ export const aggregateFocusStats = createServerFn({ method: "GET" })
             .from(activityLogs)
             .where(
                 and(
-                    eq(activityLogs.userId, data.userId),
+                    eq(activityLogs.userId, userId),
                     gte(activityLogs.timestamp, startOfToday.toISOString()),
                     lt(activityLogs.timestamp, startOfTomorrow.toISOString())
                 )
@@ -518,8 +543,9 @@ export interface FocusSessionBlock {
 }
 
 export const aggregateFocusSessions = createServerFn({ method: "GET" })
-    .inputValidator((d: { userId: string }) => d)
-    .handler(({ data }): FocusSessionBlock[] => {
+    .handler(async (): Promise<FocusSessionBlock[]> => {
+        const userId = await requireUserId();
+
         const now = new Date();
         const startOfToday = new Date(now);
         startOfToday.setUTCHours(0, 0, 0, 0);
@@ -531,7 +557,7 @@ export const aggregateFocusSessions = createServerFn({ method: "GET" })
             .from(activityLogs)
             .where(
                 and(
-                    eq(activityLogs.userId, data.userId),
+                    eq(activityLogs.userId, userId),
                     eq(activityLogs.eventType, "pomodoro_phase_change"),
                     gte(activityLogs.timestamp, startOfToday.toISOString()),
                     lt(activityLogs.timestamp, startOfTomorrow.toISOString())

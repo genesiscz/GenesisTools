@@ -1,24 +1,24 @@
 import { SafeJSON } from "@dashboard/shared";
 import { createFileRoute } from "@tanstack/react-router";
+import { getUserIdFromRequest } from "@/lib/auth/requireUser";
 import { subscribeEvents } from "@/lib/events/event-bus.server";
 
 /**
- * Generic SSE bus endpoint. `?userId=` is required; `?domain=` is optional
- * (omit to receive every domain — useful for a dashboard root that wants
- * all updates). Mirrors the /api/timer-events stream/keepalive/abort
- * lifecycle exactly.
+ * Generic SSE bus endpoint. The subscriber is the authenticated session user;
+ * `?domain=` is optional (omit to receive every domain). Mirrors the
+ * /api/timer-events stream/keepalive/abort lifecycle exactly.
  */
 export const Route = createFileRoute("/api/events")({
     server: {
         handlers: {
-            GET: ({ request }) => {
+            GET: async ({ request }) => {
                 const url = new URL(request.url);
-                const userId = url.searchParams.get("userId");
                 const wantDomain = url.searchParams.get("domain");
 
+                const userId = await getUserIdFromRequest(request);
                 if (!userId) {
-                    return new Response(SafeJSON.stringify({ error: "Missing userId parameter" }), {
-                        status: 400,
+                    return new Response(SafeJSON.stringify({ error: "Unauthorized" }), {
+                        status: 401,
                         headers: { "Content-Type": "application/json" },
                     });
                 }

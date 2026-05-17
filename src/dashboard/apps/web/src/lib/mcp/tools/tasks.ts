@@ -1,20 +1,18 @@
 import { SafeJSON } from "@dashboard/shared";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
-import {
-    createAssistantTask,
-    deleteAssistantTask,
-    getAssistantTasks,
-    updateAssistantTask,
-} from "@/lib/assistant/assistant.server";
+import { assistantTasks, db } from "@/drizzle";
 
-export function registerTaskTools(server: McpServer) {
+// Bound to a single owner user (resolved from MCP_USER_ID in the route).
+// Queries hit the DB directly, scoped to `userId` — the session-guarded
+// server functions cannot be used here (MCP has no browser session).
+export function registerTaskTools(server: McpServer, userId: string) {
     server.registerTool(
         "list_tasks",
         {
-            description: "List assistant tasks for a user. Optionally filter by status.",
+            description: "List the owner's assistant tasks. Optionally filter by status.",
             inputSchema: {
-                userId: z.string().describe("The user's WorkOS ID"),
                 status: z
                     .enum(["backlog", "in-progress", "blocked", "completed"])
                     .optional()
@@ -22,8 +20,13 @@ export function registerTaskTools(server: McpServer) {
                 limit: z.number().min(1).max(200).default(50),
             },
         },
-        async ({ userId, status, limit }) => {
-            const tasks = await getAssistantTasks({ data: { userId } });
+        async ({ status, limit }) => {
+            const tasks = db
+                .select()
+                .from(assistantTasks)
+                .where(eq(assistantTasks.userId, userId))
+                .orderBy(desc(assistantTasks.updatedAt))
+                .all();
             const filtered = status ? tasks.filter((t) => t.status === status) : tasks;
 
             return {
@@ -40,20 +43,21 @@ export function registerTaskTools(server: McpServer) {
     server.registerTool(
         "create_task",
         {
-            description: "Create a new assistant task for a user.",
+            description: "Create a new assistant task for the owner.",
             inputSchema: {
-                userId: z.string().describe("The user's WorkOS ID"),
                 title: z.string().describe("Task title"),
                 description: z.string().optional().describe("Task description"),
                 status: z.enum(["backlog", "in-progress", "blocked", "completed"]).default("backlog"),
                 urgencyLevel: z.enum(["critical", "important", "nice-to-have"]).default("nice-to-have"),
             },
         },
-        async ({ userId, title, description, status, urgencyLevel }) => {
+        async ({ title, description, status, urgencyLevel }) => {
             const now = new Date().toISOString();
-            const created = await createAssistantTask({
-                data: {
-                    id: crypto.randomUUID(),
+            const id = crypto.randomUUID();
+
+            db.insert(assistantTasks)
+                .values({
+                    id,
                     userId,
                     title,
                     description: description ?? "",
@@ -63,15 +67,11 @@ export function registerTaskTools(server: McpServer) {
                     updatedAt: now,
                     focusTimeLogged: 0,
                     isShippingBlocker: 0,
-                },
-            });
-
-            if (!created) {
-                return { content: [{ type: "text", text: "Failed to create task." }] };
-            }
+                })
+                .run();
 
             return {
-                content: [{ type: "text", text: `Created task ${created.id}: ${created.title}` }],
+                content: [{ type: "text", text: `Created task ${id}: ${title}` }],
             };
         }
     );
@@ -79,7 +79,7 @@ export function registerTaskTools(server: McpServer) {
     server.registerTool(
         "update_task",
         {
-            description: "Update an existing assistant task.",
+            description: "Update one of the owner's assistant tasks.",
             inputSchema: {
                 id: z.string().describe("Task ID to update"),
                 title: z.string().optional(),
@@ -89,9 +89,13 @@ export function registerTaskTools(server: McpServer) {
             },
         },
         async ({ id, ...patch }) => {
-            const updated = await updateAssistantTask({ data: { id, data: patch } });
+            const result = db
+                .update(assistantTasks)
+                .set({ ...patch, updatedAt: new Date().toISOString() })
+                .where(and(eq(assistantTasks.id, id), eq(assistantTasks.userId, userId)))
+                .run();
 
-            if (!updated) {
+            if (result.changes === 0) {
                 return { content: [{ type: "text", text: `Task ${id} not found.` }] };
             }
 
@@ -102,17 +106,23 @@ export function registerTaskTools(server: McpServer) {
     server.registerTool(
         "delete_task",
         {
-            description: "Delete an assistant task by ID.",
+            description: "Delete one of the owner's assistant tasks by ID.",
             inputSchema: {
                 id: z.string().describe("Task ID to delete"),
             },
         },
         async ({ id }) => {
-            const result = await deleteAssistantTask({ data: { id } });
+            const result = db
+                .delete(assistantTasks)
+                .where(and(eq(assistantTasks.id, id), eq(assistantTasks.userId, userId)))
+                .run();
 
             return {
                 content: [
-                    { type: "text", text: result.success ? `Deleted task ${id}` : `Failed to delete task ${id}` },
+                    {
+                        type: "text",
+                        text: result.changes > 0 ? `Deleted task ${id}` : `Failed to delete task ${id}`,
+                    },
                 ],
             };
         }

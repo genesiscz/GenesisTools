@@ -75,7 +75,7 @@ export function useActivityLog({ userId, refreshInterval }: UseActivityLogOption
     const query = useQuery({
         queryKey: ["activity-logs", userId],
         queryFn: async () => {
-            const rows = await getActivityLogsFromServer({ data: userId! });
+            const rows = await getActivityLogsFromServer();
             return rows.map(toEntry);
         },
         enabled: !!userId,
@@ -88,7 +88,7 @@ export function useActivityLog({ userId, refreshInterval }: UseActivityLogOption
     const entries = applyFilter(allEntries, filter);
 
     const clearMutation = useMutation({
-        mutationFn: () => clearActivityLogs({ data: { userId: userId! } }),
+        mutationFn: () => clearActivityLogs(),
         onSuccess: () => {
             qc.setQueryData(["activity-logs", userId], []);
         },
@@ -97,7 +97,7 @@ export function useActivityLog({ userId, refreshInterval }: UseActivityLogOption
     async function getEntries(options?: ActivityLogQueryOptions): Promise<ActivityLogEntry[]> {
         const rows = await qc.ensureQueryData({
             queryKey: ["activity-logs", userId],
-            queryFn: async () => (await getActivityLogsFromServer({ data: userId! })).map(toEntry),
+            queryFn: async () => (await getActivityLogsFromServer()).map(toEntry),
         });
 
         return applyFilter(rows, { ...filter, ...options });

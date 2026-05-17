@@ -1,17 +1,17 @@
 import { SafeJSON } from "@dashboard/shared";
 import { createFileRoute } from "@tanstack/react-router";
+import { getUserIdFromRequest } from "@/lib/auth/requireUser";
 import { subscribeTimerEvents } from "@/lib/timer/timer-events.server";
 
 export const Route = createFileRoute("/api/timer-events")({
     server: {
         handlers: {
-            GET: ({ request }) => {
-                const url = new URL(request.url);
-                const userId = url.searchParams.get("userId");
+            GET: async ({ request }) => {
+                const userId = await getUserIdFromRequest(request);
 
                 if (!userId) {
-                    return new Response(SafeJSON.stringify({ error: "Missing userId parameter" }), {
-                        status: 400,
+                    return new Response(SafeJSON.stringify({ error: "Unauthorized" }), {
+                        status: 401,
                         headers: { "Content-Type": "application/json" },
                     });
                 }

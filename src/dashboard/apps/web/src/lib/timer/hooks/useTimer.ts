@@ -72,7 +72,7 @@ export function useTimer({ userId, timerId }: UseTimerOptions): UseTimerReturn {
     const startMutation = useMutation({
         mutationFn: () =>
             startTimer({
-                data: { id: timerId, userId: effectiveUserId!, expectedVersion: timer?.version },
+                data: { id: timerId, expectedVersion: timer?.version },
             }),
         onSuccess,
         onError: (err) => {
@@ -85,7 +85,7 @@ export function useTimer({ userId, timerId }: UseTimerOptions): UseTimerReturn {
     const pauseMutation = useMutation({
         mutationFn: () =>
             pauseTimer({
-                data: { id: timerId, userId: effectiveUserId!, expectedVersion: timer?.version },
+                data: { id: timerId, expectedVersion: timer?.version },
             }),
         onSuccess,
         onError: (err) => {
@@ -98,7 +98,7 @@ export function useTimer({ userId, timerId }: UseTimerOptions): UseTimerReturn {
     const resetMutation = useMutation({
         mutationFn: () =>
             resetTimer({
-                data: { id: timerId, userId: effectiveUserId!, expectedVersion: timer?.version },
+                data: { id: timerId, expectedVersion: timer?.version },
             }),
         onSuccess,
         onError: (err) => {
@@ -111,7 +111,7 @@ export function useTimer({ userId, timerId }: UseTimerOptions): UseTimerReturn {
     const lapMutation = useMutation({
         mutationFn: () =>
             lapTimer({
-                data: { id: timerId, userId: effectiveUserId!, expectedVersion: timer?.version },
+                data: { id: timerId, expectedVersion: timer?.version },
             }),
         onSuccess,
     });
@@ -119,7 +119,7 @@ export function useTimer({ userId, timerId }: UseTimerOptions): UseTimerReturn {
     const advanceMutation = useMutation({
         mutationFn: () =>
             advancePomodoroPhase({
-                data: { id: timerId, userId: effectiveUserId!, expectedVersion: timer?.version },
+                data: { id: timerId, expectedVersion: timer?.version },
             }),
         onSuccess,
     });
@@ -127,7 +127,7 @@ export function useTimer({ userId, timerId }: UseTimerOptions): UseTimerReturn {
     const settingsMutation = useMutation({
         mutationFn: (settings: PomodoroSettings) =>
             setPomodoroSettings({
-                data: { id: timerId, userId: effectiveUserId!, expectedVersion: timer?.version, settings },
+                data: { id: timerId, expectedVersion: timer?.version, settings },
             }),
         onSuccess,
     });
@@ -137,7 +137,6 @@ export function useTimer({ userId, timerId }: UseTimerOptions): UseTimerReturn {
             updateTimerMetadata({
                 data: {
                     id: timerId,
-                    userId: effectiveUserId!,
                     expectedVersion: timer?.version,
                     patch,
                 },

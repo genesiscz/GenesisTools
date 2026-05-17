@@ -12,6 +12,7 @@
 
 import { createServerFn } from "@tanstack/react-start";
 import { and, desc, eq } from "drizzle-orm";
+import { requireUserId } from "@/lib/auth/requireUser";
 import {
     type AssistantBadge,
     type AssistantBlocker,
@@ -64,31 +65,37 @@ import {
 
 export const getAssistantTasks = createServerFn({
     method: "GET",
-})
-    .inputValidator((d: { userId: string }) => d)
-    .handler(({ data }): AssistantTask[] => {
-        try {
-            const results = db
-                .select()
-                .from(assistantTasks)
-                .where(eq(assistantTasks.userId, data.userId))
-                .orderBy(desc(assistantTasks.updatedAt))
-                .all();
+}).handler(async (): Promise<AssistantTask[]> => {
+    const userId = await requireUserId();
 
-            return results;
-        } catch (error) {
-            console.error("[Assistant] getAssistantTasks error:", error);
-            throw error;
-        }
-    });
+    try {
+        const results = db
+            .select()
+            .from(assistantTasks)
+            .where(eq(assistantTasks.userId, userId))
+            .orderBy(desc(assistantTasks.updatedAt))
+            .all();
+
+        return results;
+    } catch (error) {
+        console.error("[Assistant] getAssistantTasks error:", error);
+        throw error;
+    }
+});
 
 export const getAssistantTask = createServerFn({
     method: "GET",
 })
     .inputValidator((d: { id: string }) => d)
-    .handler(({ data }): AssistantTask | null => {
+    .handler(async ({ data }): Promise<AssistantTask | null> => {
+        const userId = await requireUserId();
+
         try {
-            const result = db.select().from(assistantTasks).where(eq(assistantTasks.id, data.id)).get();
+            const result = db
+                .select()
+                .from(assistantTasks)
+                .where(and(eq(assistantTasks.id, data.id), eq(assistantTasks.userId, userId)))
+                .get();
 
             if (!result) {
                 return null;
@@ -106,10 +113,16 @@ export const getAssistantTask = createServerFn({
 export const createAssistantTask = createServerFn({
     method: "POST",
 })
-    .inputValidator((d: NewAssistantTask) => d)
-    .handler(({ data }): AssistantTask | null => {
+    .inputValidator((d: Omit<NewAssistantTask, "userId">) => d)
+    .handler(async ({ data }): Promise<AssistantTask | null> => {
+        const userId = await requireUserId();
+
         try {
-            const result = db.insert(assistantTasks).values(data).returning().get();
+            const result = db
+                .insert(assistantTasks)
+                .values({ ...data, userId })
+                .returning()
+                .get();
             return result ?? null;
         } catch (error) {
             console.error("[Assistant] createAssistantTask error:", error);
@@ -121,7 +134,9 @@ export const updateAssistantTask = createServerFn({
     method: "POST",
 })
     .inputValidator((d: { id: string; data: Partial<NewAssistantTask> }) => d)
-    .handler(({ data: input }): AssistantTask | null => {
+    .handler(async ({ data: input }): Promise<AssistantTask | null> => {
+        const userId = await requireUserId();
+
         try {
             const result = db
                 .update(assistantTasks)
@@ -129,7 +144,7 @@ export const updateAssistantTask = createServerFn({
                     ...input.data,
                     updatedAt: new Date().toISOString(),
                 })
-                .where(eq(assistantTasks.id, input.id))
+                .where(and(eq(assistantTasks.id, input.id), eq(assistantTasks.userId, userId)))
                 .returning()
                 .get();
 
@@ -144,9 +159,13 @@ export const deleteAssistantTask = createServerFn({
     method: "POST",
 })
     .inputValidator((d: { id: string }) => d)
-    .handler(({ data }): { success: boolean } => {
+    .handler(async ({ data }): Promise<{ success: boolean }> => {
+        const userId = await requireUserId();
+
         try {
-            db.delete(assistantTasks).where(eq(assistantTasks.id, data.id)).run();
+            db.delete(assistantTasks)
+                .where(and(eq(assistantTasks.id, data.id), eq(assistantTasks.userId, userId)))
+                .run();
             return { success: true };
         } catch (error) {
             console.error("[Assistant] deleteAssistantTask error:", error);
@@ -160,31 +179,37 @@ export const deleteAssistantTask = createServerFn({
 
 export const getAssistantContextParkings = createServerFn({
     method: "GET",
-})
-    .inputValidator((d: { userId: string }) => d)
-    .handler(({ data }): AssistantContextParking[] => {
-        try {
-            const results = db
-                .select()
-                .from(assistantContextParking)
-                .where(eq(assistantContextParking.userId, data.userId))
-                .orderBy(desc(assistantContextParking.parkedAt))
-                .all();
+}).handler(async (): Promise<AssistantContextParking[]> => {
+    const userId = await requireUserId();
 
-            return results;
-        } catch (error) {
-            console.error("[Assistant] getAssistantContextParkings error:", error);
-            throw error;
-        }
-    });
+    try {
+        const results = db
+            .select()
+            .from(assistantContextParking)
+            .where(eq(assistantContextParking.userId, userId))
+            .orderBy(desc(assistantContextParking.parkedAt))
+            .all();
+
+        return results;
+    } catch (error) {
+        console.error("[Assistant] getAssistantContextParkings error:", error);
+        throw error;
+    }
+});
 
 export const createAssistantContextParking = createServerFn({
     method: "POST",
 })
-    .inputValidator((d: NewAssistantContextParking) => d)
-    .handler(({ data }): AssistantContextParking | null => {
+    .inputValidator((d: Omit<NewAssistantContextParking, "userId">) => d)
+    .handler(async ({ data }): Promise<AssistantContextParking | null> => {
+        const userId = await requireUserId();
+
         try {
-            const result = db.insert(assistantContextParking).values(data).returning().get();
+            const result = db
+                .insert(assistantContextParking)
+                .values({ ...data, userId })
+                .returning()
+                .get();
             return result ?? null;
         } catch (error) {
             console.error("[Assistant] createAssistantContextParking error:", error);
@@ -196,12 +221,19 @@ export const updateAssistantContextParking = createServerFn({
     method: "POST",
 })
     .inputValidator((d: { id: string; data: Partial<NewAssistantContextParking> }) => d)
-    .handler(({ data: input }): AssistantContextParking | null => {
+    .handler(async ({ data: input }): Promise<AssistantContextParking | null> => {
+        const userId = await requireUserId();
+
         try {
             const result = db
                 .update(assistantContextParking)
                 .set(input.data)
-                .where(eq(assistantContextParking.id, input.id))
+                .where(
+                    and(
+                        eq(assistantContextParking.id, input.id),
+                        eq(assistantContextParking.userId, userId)
+                    )
+                )
                 .returning()
                 .get();
 
@@ -219,13 +251,15 @@ export const updateAssistantContextParking = createServerFn({
 export const getAssistantCompletions = createServerFn({
     method: "GET",
 })
-    .inputValidator((d: { userId: string; limit?: number }) => d)
-    .handler(({ data }): AssistantCompletion[] => {
+    .inputValidator((d: { limit?: number }) => d)
+    .handler(async ({ data }): Promise<AssistantCompletion[]> => {
+        const userId = await requireUserId();
+
         try {
             const results = db
                 .select()
                 .from(assistantCompletions)
-                .where(eq(assistantCompletions.userId, data.userId))
+                .where(eq(assistantCompletions.userId, userId))
                 .orderBy(desc(assistantCompletions.completedAt))
                 .limit(data.limit ?? 100)
                 .all();
@@ -240,10 +274,16 @@ export const getAssistantCompletions = createServerFn({
 export const createAssistantCompletion = createServerFn({
     method: "POST",
 })
-    .inputValidator((d: NewAssistantCompletion) => d)
-    .handler(({ data }): AssistantCompletion | null => {
+    .inputValidator((d: Omit<NewAssistantCompletion, "userId">) => d)
+    .handler(async ({ data }): Promise<AssistantCompletion | null> => {
+        const userId = await requireUserId();
+
         try {
-            const result = db.insert(assistantCompletions).values(data).returning().get();
+            const result = db
+                .insert(assistantCompletions)
+                .values({ ...data, userId })
+                .returning()
+                .get();
             return result ?? null;
         } catch (error) {
             console.error("[Assistant] createAssistantCompletion error:", error);
@@ -257,33 +297,35 @@ export const createAssistantCompletion = createServerFn({
 
 export const getAssistantStreak = createServerFn({
     method: "GET",
-})
-    .inputValidator((d: { userId: string }) => d)
-    .handler(({ data }): AssistantStreak | null => {
-        try {
-            const result = db
-                .select()
-                .from(assistantStreaks)
-                .where(eq(assistantStreaks.userId, data.userId))
-                .limit(1)
-                .get();
+}).handler(async (): Promise<AssistantStreak | null> => {
+    const userId = await requireUserId();
 
-            return result ?? null;
-        } catch (error) {
-            console.error("[Assistant] getAssistantStreak error:", error);
-            throw error;
-        }
-    });
+    try {
+        const result = db
+            .select()
+            .from(assistantStreaks)
+            .where(eq(assistantStreaks.userId, userId))
+            .limit(1)
+            .get();
+
+        return result ?? null;
+    } catch (error) {
+        console.error("[Assistant] getAssistantStreak error:", error);
+        throw error;
+    }
+});
 
 export const upsertAssistantStreak = createServerFn({
     method: "POST",
 })
-    .inputValidator((d: NewAssistantStreak) => d)
-    .handler(({ data }): AssistantStreak | null => {
+    .inputValidator((d: Omit<NewAssistantStreak, "userId">) => d)
+    .handler(async ({ data }): Promise<AssistantStreak | null> => {
+        const userId = await requireUserId();
+
         try {
             const result = db
                 .insert(assistantStreaks)
-                .values(data)
+                .values({ ...data, userId })
                 .onConflictDoUpdate({
                     target: assistantStreaks.userId,
                     set: {
@@ -309,29 +351,35 @@ export const upsertAssistantStreak = createServerFn({
 
 export const getAssistantBadges = createServerFn({
     method: "GET",
-})
-    .inputValidator((d: { userId: string }) => d)
-    .handler(({ data }): AssistantBadge[] => {
-        try {
-            return db
-                .select()
-                .from(assistantBadges)
-                .where(eq(assistantBadges.userId, data.userId))
-                .orderBy(desc(assistantBadges.earnedAt))
-                .all();
-        } catch (error) {
-            console.error("[Assistant] getAssistantBadges error:", error);
-            throw error;
-        }
-    });
+}).handler(async (): Promise<AssistantBadge[]> => {
+    const userId = await requireUserId();
+
+    try {
+        return db
+            .select()
+            .from(assistantBadges)
+            .where(eq(assistantBadges.userId, userId))
+            .orderBy(desc(assistantBadges.earnedAt))
+            .all();
+    } catch (error) {
+        console.error("[Assistant] getAssistantBadges error:", error);
+        throw error;
+    }
+});
 
 export const createAssistantBadge = createServerFn({
     method: "POST",
 })
-    .inputValidator((d: NewAssistantBadge) => d)
-    .handler(({ data }): AssistantBadge | null => {
+    .inputValidator((d: Omit<NewAssistantBadge, "userId">) => d)
+    .handler(async ({ data }): Promise<AssistantBadge | null> => {
+        const userId = await requireUserId();
+
         try {
-            const result = db.insert(assistantBadges).values(data).returning().get();
+            const result = db
+                .insert(assistantBadges)
+                .values({ ...data, userId })
+                .returning()
+                .get();
             return result ?? null;
         } catch (error) {
             console.error("[Assistant] createAssistantBadge error:", error);
@@ -346,13 +394,15 @@ export const createAssistantBadge = createServerFn({
 export const getAssistantCommunications = createServerFn({
     method: "GET",
 })
-    .inputValidator((d: { userId: string; limit?: number }) => d)
-    .handler(({ data }): AssistantCommunication[] => {
+    .inputValidator((d: { limit?: number }) => d)
+    .handler(async ({ data }): Promise<AssistantCommunication[]> => {
+        const userId = await requireUserId();
+
         try {
             const results = db
                 .select()
                 .from(assistantCommunications)
-                .where(eq(assistantCommunications.userId, data.userId))
+                .where(eq(assistantCommunications.userId, userId))
                 .orderBy(desc(assistantCommunications.discussedAt))
                 .limit(data.limit ?? 100)
                 .all();
@@ -367,10 +417,16 @@ export const getAssistantCommunications = createServerFn({
 export const createAssistantCommunication = createServerFn({
     method: "POST",
 })
-    .inputValidator((d: NewAssistantCommunication) => d)
-    .handler(({ data }): AssistantCommunication | null => {
+    .inputValidator((d: Omit<NewAssistantCommunication, "userId">) => d)
+    .handler(async ({ data }): Promise<AssistantCommunication | null> => {
+        const userId = await requireUserId();
+
         try {
-            const result = db.insert(assistantCommunications).values(data).returning().get();
+            const result = db
+                .insert(assistantCommunications)
+                .values({ ...data, userId })
+                .returning()
+                .get();
             return result ?? null;
         } catch (error) {
             console.error("[Assistant] createAssistantCommunication error:", error);
@@ -382,7 +438,9 @@ export const updateAssistantCommunication = createServerFn({
     method: "POST",
 })
     .inputValidator((d: { id: string; data: Partial<NewAssistantCommunication> }) => d)
-    .handler(({ data: input }): AssistantCommunication | null => {
+    .handler(async ({ data: input }): Promise<AssistantCommunication | null> => {
+        const userId = await requireUserId();
+
         try {
             const result = db
                 .update(assistantCommunications)
@@ -390,7 +448,12 @@ export const updateAssistantCommunication = createServerFn({
                     ...input.data,
                     updatedAt: new Date().toISOString(),
                 })
-                .where(eq(assistantCommunications.id, input.id))
+                .where(
+                    and(
+                        eq(assistantCommunications.id, input.id),
+                        eq(assistantCommunications.userId, userId)
+                    )
+                )
                 .returning()
                 .get();
 
@@ -405,9 +468,18 @@ export const deleteAssistantCommunication = createServerFn({
     method: "POST",
 })
     .inputValidator((d: { id: string }) => d)
-    .handler(({ data }): { success: boolean } => {
+    .handler(async ({ data }): Promise<{ success: boolean }> => {
+        const userId = await requireUserId();
+
         try {
-            db.delete(assistantCommunications).where(eq(assistantCommunications.id, data.id)).run();
+            db.delete(assistantCommunications)
+                .where(
+                    and(
+                        eq(assistantCommunications.id, data.id),
+                        eq(assistantCommunications.userId, userId)
+                    )
+                )
+                .run();
             return { success: true };
         } catch (error) {
             console.error("[Assistant] deleteAssistantCommunication error:", error);
@@ -422,13 +494,15 @@ export const deleteAssistantCommunication = createServerFn({
 export const getAssistantDecisions = createServerFn({
     method: "GET",
 })
-    .inputValidator((d: { userId: string; limit?: number }) => d)
-    .handler(({ data }): AssistantDecision[] => {
+    .inputValidator((d: { limit?: number }) => d)
+    .handler(async ({ data }): Promise<AssistantDecision[]> => {
+        const userId = await requireUserId();
+
         try {
             const results = db
                 .select()
                 .from(assistantDecisions)
-                .where(eq(assistantDecisions.userId, data.userId))
+                .where(eq(assistantDecisions.userId, userId))
                 .orderBy(desc(assistantDecisions.decidedAt))
                 .limit(data.limit ?? 100)
                 .all();
@@ -443,10 +517,16 @@ export const getAssistantDecisions = createServerFn({
 export const createAssistantDecision = createServerFn({
     method: "POST",
 })
-    .inputValidator((d: NewAssistantDecision) => d)
-    .handler(({ data }): AssistantDecision | null => {
+    .inputValidator((d: Omit<NewAssistantDecision, "userId">) => d)
+    .handler(async ({ data }): Promise<AssistantDecision | null> => {
+        const userId = await requireUserId();
+
         try {
-            const result = db.insert(assistantDecisions).values(data).returning().get();
+            const result = db
+                .insert(assistantDecisions)
+                .values({ ...data, userId })
+                .returning()
+                .get();
             return result ?? null;
         } catch (error) {
             console.error("[Assistant] createAssistantDecision error:", error);
@@ -458,7 +538,9 @@ export const updateAssistantDecision = createServerFn({
     method: "POST",
 })
     .inputValidator((d: { id: string; data: Partial<NewAssistantDecision> }) => d)
-    .handler(({ data: input }): AssistantDecision | null => {
+    .handler(async ({ data: input }): Promise<AssistantDecision | null> => {
+        const userId = await requireUserId();
+
         try {
             const result = db
                 .update(assistantDecisions)
@@ -466,7 +548,9 @@ export const updateAssistantDecision = createServerFn({
                     ...input.data,
                     updatedAt: new Date().toISOString(),
                 })
-                .where(eq(assistantDecisions.id, input.id))
+                .where(
+                    and(eq(assistantDecisions.id, input.id), eq(assistantDecisions.userId, userId))
+                )
                 .returning()
                 .get();
 
@@ -481,9 +565,15 @@ export const deleteAssistantDecision = createServerFn({
     method: "POST",
 })
     .inputValidator((d: { id: string }) => d)
-    .handler(({ data }): { success: boolean } => {
+    .handler(async ({ data }): Promise<{ success: boolean }> => {
+        const userId = await requireUserId();
+
         try {
-            db.delete(assistantDecisions).where(eq(assistantDecisions.id, data.id)).run();
+            db.delete(assistantDecisions)
+                .where(
+                    and(eq(assistantDecisions.id, data.id), eq(assistantDecisions.userId, userId))
+                )
+                .run();
             return { success: true };
         } catch (error) {
             console.error("[Assistant] deleteAssistantDecision error:", error);
@@ -498,13 +588,15 @@ export const deleteAssistantDecision = createServerFn({
 export const getAssistantBlockers = createServerFn({
     method: "GET",
 })
-    .inputValidator((d: { userId: string; activeOnly?: boolean }) => d)
-    .handler(({ data }): AssistantBlocker[] => {
+    .inputValidator((d: { activeOnly?: boolean }) => d)
+    .handler(async ({ data }): Promise<AssistantBlocker[]> => {
+        const userId = await requireUserId();
+
         try {
             const results = db
                 .select()
                 .from(assistantBlockers)
-                .where(eq(assistantBlockers.userId, data.userId))
+                .where(eq(assistantBlockers.userId, userId))
                 .orderBy(desc(assistantBlockers.blockedSince))
                 .all();
 
@@ -523,12 +615,19 @@ export const getAssistantBlockersByTask = createServerFn({
     method: "GET",
 })
     .inputValidator((d: { taskId: string }) => d)
-    .handler(({ data }): AssistantBlocker[] => {
+    .handler(async ({ data }): Promise<AssistantBlocker[]> => {
+        const userId = await requireUserId();
+
         try {
             return db
                 .select()
                 .from(assistantBlockers)
-                .where(eq(assistantBlockers.taskId, data.taskId))
+                .where(
+                    and(
+                        eq(assistantBlockers.taskId, data.taskId),
+                        eq(assistantBlockers.userId, userId)
+                    )
+                )
                 .orderBy(desc(assistantBlockers.blockedSince))
                 .all();
         } catch (error) {
@@ -540,10 +639,16 @@ export const getAssistantBlockersByTask = createServerFn({
 export const createAssistantBlocker = createServerFn({
     method: "POST",
 })
-    .inputValidator((d: NewAssistantBlocker) => d)
-    .handler(({ data }): AssistantBlocker | null => {
+    .inputValidator((d: Omit<NewAssistantBlocker, "userId">) => d)
+    .handler(async ({ data }): Promise<AssistantBlocker | null> => {
+        const userId = await requireUserId();
+
         try {
-            const result = db.insert(assistantBlockers).values(data).returning().get();
+            const result = db
+                .insert(assistantBlockers)
+                .values({ ...data, userId })
+                .returning()
+                .get();
             return result ?? null;
         } catch (error) {
             console.error("[Assistant] createAssistantBlocker error:", error);
@@ -555,7 +660,9 @@ export const updateAssistantBlocker = createServerFn({
     method: "POST",
 })
     .inputValidator((d: { id: string; data: Partial<NewAssistantBlocker> }) => d)
-    .handler(({ data: input }): AssistantBlocker | null => {
+    .handler(async ({ data: input }): Promise<AssistantBlocker | null> => {
+        const userId = await requireUserId();
+
         try {
             const result = db
                 .update(assistantBlockers)
@@ -563,7 +670,7 @@ export const updateAssistantBlocker = createServerFn({
                     ...input.data,
                     updatedAt: new Date().toISOString(),
                 })
-                .where(eq(assistantBlockers.id, input.id))
+                .where(and(eq(assistantBlockers.id, input.id), eq(assistantBlockers.userId, userId)))
                 .returning()
                 .get();
 
@@ -578,7 +685,9 @@ export const resolveAssistantBlocker = createServerFn({
     method: "POST",
 })
     .inputValidator((d: { id: string }) => d)
-    .handler(({ data }): AssistantBlocker | null => {
+    .handler(async ({ data }): Promise<AssistantBlocker | null> => {
+        const userId = await requireUserId();
+
         try {
             const result = db
                 .update(assistantBlockers)
@@ -586,7 +695,7 @@ export const resolveAssistantBlocker = createServerFn({
                     unblockedAt: new Date().toISOString(),
                     updatedAt: new Date().toISOString(),
                 })
-                .where(eq(assistantBlockers.id, data.id))
+                .where(and(eq(assistantBlockers.id, data.id), eq(assistantBlockers.userId, userId)))
                 .returning()
                 .get();
 
@@ -604,13 +713,15 @@ export const resolveAssistantBlocker = createServerFn({
 export const getAssistantHandoffs = createServerFn({
     method: "GET",
 })
-    .inputValidator((d: { userId: string; limit?: number }) => d)
-    .handler(({ data }): AssistantHandoff[] => {
+    .inputValidator((d: { limit?: number }) => d)
+    .handler(async ({ data }): Promise<AssistantHandoff[]> => {
+        const userId = await requireUserId();
+
         try {
             const results = db
                 .select()
                 .from(assistantHandoffs)
-                .where(eq(assistantHandoffs.userId, data.userId))
+                .where(eq(assistantHandoffs.userId, userId))
                 .orderBy(desc(assistantHandoffs.handoffAt))
                 .limit(data.limit ?? 50)
                 .all();
@@ -626,12 +737,19 @@ export const getAssistantHandoffsByTask = createServerFn({
     method: "GET",
 })
     .inputValidator((d: { taskId: string }) => d)
-    .handler(({ data }): AssistantHandoff[] => {
+    .handler(async ({ data }): Promise<AssistantHandoff[]> => {
+        const userId = await requireUserId();
+
         try {
             const results = db
                 .select()
                 .from(assistantHandoffs)
-                .where(eq(assistantHandoffs.taskId, data.taskId))
+                .where(
+                    and(
+                        eq(assistantHandoffs.taskId, data.taskId),
+                        eq(assistantHandoffs.userId, userId)
+                    )
+                )
                 .orderBy(desc(assistantHandoffs.handoffAt))
                 .all();
 
@@ -645,10 +763,16 @@ export const getAssistantHandoffsByTask = createServerFn({
 export const createAssistantHandoff = createServerFn({
     method: "POST",
 })
-    .inputValidator((d: NewAssistantHandoff) => d)
-    .handler(({ data }): AssistantHandoff | null => {
+    .inputValidator((d: Omit<NewAssistantHandoff, "userId">) => d)
+    .handler(async ({ data }): Promise<AssistantHandoff | null> => {
+        const userId = await requireUserId();
+
         try {
-            const result = db.insert(assistantHandoffs).values(data).returning().get();
+            const result = db
+                .insert(assistantHandoffs)
+                .values({ ...data, userId })
+                .returning()
+                .get();
             return result ?? null;
         } catch (error) {
             console.error("[Assistant] createAssistantHandoff error:", error);
@@ -660,7 +784,9 @@ export const updateAssistantHandoff = createServerFn({
     method: "POST",
 })
     .inputValidator((d: { id: string; data: Partial<NewAssistantHandoff> }) => d)
-    .handler(({ data: input }): AssistantHandoff | null => {
+    .handler(async ({ data: input }): Promise<AssistantHandoff | null> => {
+        const userId = await requireUserId();
+
         try {
             const result = db
                 .update(assistantHandoffs)
@@ -668,7 +794,7 @@ export const updateAssistantHandoff = createServerFn({
                     ...input.data,
                     updatedAt: new Date().toISOString(),
                 })
-                .where(eq(assistantHandoffs.id, input.id))
+                .where(and(eq(assistantHandoffs.id, input.id), eq(assistantHandoffs.userId, userId)))
                 .returning()
                 .get();
 
@@ -685,32 +811,39 @@ export const updateAssistantHandoff = createServerFn({
 
 export const getAssistantDeadlineRisks = createServerFn({
     method: "GET",
-})
-    .inputValidator((d: { userId: string }) => d)
-    .handler(({ data }): AssistantDeadlineRisk[] => {
-        try {
-            return db
-                .select()
-                .from(assistantDeadlineRisks)
-                .where(eq(assistantDeadlineRisks.userId, data.userId))
-                .orderBy(desc(assistantDeadlineRisks.calculatedAt))
-                .all();
-        } catch (error) {
-            console.error("[Assistant] getAssistantDeadlineRisks error:", error);
-            throw error;
-        }
-    });
+}).handler(async (): Promise<AssistantDeadlineRisk[]> => {
+    const userId = await requireUserId();
+
+    try {
+        return db
+            .select()
+            .from(assistantDeadlineRisks)
+            .where(eq(assistantDeadlineRisks.userId, userId))
+            .orderBy(desc(assistantDeadlineRisks.calculatedAt))
+            .all();
+    } catch (error) {
+        console.error("[Assistant] getAssistantDeadlineRisks error:", error);
+        throw error;
+    }
+});
 
 export const getAssistantDeadlineRiskByTask = createServerFn({
     method: "GET",
 })
     .inputValidator((d: { taskId: string }) => d)
-    .handler(({ data }): AssistantDeadlineRisk | null => {
+    .handler(async ({ data }): Promise<AssistantDeadlineRisk | null> => {
+        const userId = await requireUserId();
+
         try {
             const result = db
                 .select()
                 .from(assistantDeadlineRisks)
-                .where(eq(assistantDeadlineRisks.taskId, data.taskId))
+                .where(
+                    and(
+                        eq(assistantDeadlineRisks.taskId, data.taskId),
+                        eq(assistantDeadlineRisks.userId, userId)
+                    )
+                )
                 .orderBy(desc(assistantDeadlineRisks.calculatedAt))
                 .limit(1)
                 .get();
@@ -725,10 +858,16 @@ export const getAssistantDeadlineRiskByTask = createServerFn({
 export const createAssistantDeadlineRisk = createServerFn({
     method: "POST",
 })
-    .inputValidator((d: NewAssistantDeadlineRisk) => d)
-    .handler(({ data }): AssistantDeadlineRisk | null => {
+    .inputValidator((d: Omit<NewAssistantDeadlineRisk, "userId">) => d)
+    .handler(async ({ data }): Promise<AssistantDeadlineRisk | null> => {
+        const userId = await requireUserId();
+
         try {
-            const result = db.insert(assistantDeadlineRisks).values(data).returning().get();
+            const result = db
+                .insert(assistantDeadlineRisks)
+                .values({ ...data, userId })
+                .returning()
+                .get();
             return result ?? null;
         } catch (error) {
             console.error("[Assistant] createAssistantDeadlineRisk error:", error);
@@ -743,13 +882,15 @@ export const createAssistantDeadlineRisk = createServerFn({
 export const getAssistantEnergySnapshots = createServerFn({
     method: "GET",
 })
-    .inputValidator((d: { userId: string; limit?: number }) => d)
-    .handler(({ data }): AssistantEnergySnapshot[] => {
+    .inputValidator((d: { limit?: number }) => d)
+    .handler(async ({ data }): Promise<AssistantEnergySnapshot[]> => {
+        const userId = await requireUserId();
+
         try {
             return db
                 .select()
                 .from(assistantEnergySnapshots)
-                .where(eq(assistantEnergySnapshots.userId, data.userId))
+                .where(eq(assistantEnergySnapshots.userId, userId))
                 .orderBy(desc(assistantEnergySnapshots.timestamp))
                 .limit(data.limit ?? 168) // Default to 1 week of hourly data
                 .all();
@@ -762,10 +903,16 @@ export const getAssistantEnergySnapshots = createServerFn({
 export const createAssistantEnergySnapshot = createServerFn({
     method: "POST",
 })
-    .inputValidator((d: NewAssistantEnergySnapshot) => d)
-    .handler(({ data }): AssistantEnergySnapshot | null => {
+    .inputValidator((d: Omit<NewAssistantEnergySnapshot, "userId">) => d)
+    .handler(async ({ data }): Promise<AssistantEnergySnapshot | null> => {
+        const userId = await requireUserId();
+
         try {
-            const result = db.insert(assistantEnergySnapshots).values(data).returning().get();
+            const result = db
+                .insert(assistantEnergySnapshots)
+                .values({ ...data, userId })
+                .returning()
+                .get();
             return result ?? null;
         } catch (error) {
             console.error("[Assistant] createAssistantEnergySnapshot error:", error);
@@ -780,13 +927,15 @@ export const createAssistantEnergySnapshot = createServerFn({
 export const getAssistantDistractions = createServerFn({
     method: "GET",
 })
-    .inputValidator((d: { userId: string; limit?: number }) => d)
-    .handler(({ data }): AssistantDistraction[] => {
+    .inputValidator((d: { limit?: number }) => d)
+    .handler(async ({ data }): Promise<AssistantDistraction[]> => {
+        const userId = await requireUserId();
+
         try {
             return db
                 .select()
                 .from(assistantDistractions)
-                .where(eq(assistantDistractions.userId, data.userId))
+                .where(eq(assistantDistractions.userId, userId))
                 .orderBy(desc(assistantDistractions.timestamp))
                 .limit(data.limit ?? 100)
                 .all();
@@ -799,10 +948,16 @@ export const getAssistantDistractions = createServerFn({
 export const createAssistantDistraction = createServerFn({
     method: "POST",
 })
-    .inputValidator((d: NewAssistantDistraction) => d)
-    .handler(({ data }): AssistantDistraction | null => {
+    .inputValidator((d: Omit<NewAssistantDistraction, "userId">) => d)
+    .handler(async ({ data }): Promise<AssistantDistraction | null> => {
+        const userId = await requireUserId();
+
         try {
-            const result = db.insert(assistantDistractions).values(data).returning().get();
+            const result = db
+                .insert(assistantDistractions)
+                .values({ ...data, userId })
+                .returning()
+                .get();
             return result ?? null;
         } catch (error) {
             console.error("[Assistant] createAssistantDistraction error:", error);
@@ -817,13 +972,15 @@ export const createAssistantDistraction = createServerFn({
 export const getAssistantWeeklyReviews = createServerFn({
     method: "GET",
 })
-    .inputValidator((d: { userId: string; limit?: number }) => d)
-    .handler(({ data }): AssistantWeeklyReview[] => {
+    .inputValidator((d: { limit?: number }) => d)
+    .handler(async ({ data }): Promise<AssistantWeeklyReview[]> => {
+        const userId = await requireUserId();
+
         try {
             return db
                 .select()
                 .from(assistantWeeklyReviews)
-                .where(eq(assistantWeeklyReviews.userId, data.userId))
+                .where(eq(assistantWeeklyReviews.userId, userId))
                 .orderBy(desc(assistantWeeklyReviews.weekStart))
                 .limit(data.limit ?? 10)
                 .all();
@@ -835,42 +992,48 @@ export const getAssistantWeeklyReviews = createServerFn({
 
 export const getAssistantCurrentWeekReview = createServerFn({
     method: "GET",
-})
-    .inputValidator((d: { userId: string }) => d)
-    .handler(({ data }): AssistantWeeklyReview | null => {
-        try {
-            // Calculate start of current week (Sunday)
-            const now = new Date();
-            const startOfWeek = new Date(now);
-            startOfWeek.setDate(now.getDate() - now.getDay());
-            startOfWeek.setHours(0, 0, 0, 0);
+}).handler(async (): Promise<AssistantWeeklyReview | null> => {
+    const userId = await requireUserId();
 
-            const result = db
-                .select()
-                .from(assistantWeeklyReviews)
-                .where(
-                    and(
-                        eq(assistantWeeklyReviews.userId, data.userId),
-                        eq(assistantWeeklyReviews.weekStart, startOfWeek.toISOString())
-                    )
+    try {
+        // Calculate start of current week (Sunday)
+        const now = new Date();
+        const startOfWeek = new Date(now);
+        startOfWeek.setDate(now.getDate() - now.getDay());
+        startOfWeek.setHours(0, 0, 0, 0);
+
+        const result = db
+            .select()
+            .from(assistantWeeklyReviews)
+            .where(
+                and(
+                    eq(assistantWeeklyReviews.userId, userId),
+                    eq(assistantWeeklyReviews.weekStart, startOfWeek.toISOString())
                 )
-                .limit(1)
-                .get();
+            )
+            .limit(1)
+            .get();
 
-            return result ?? null;
-        } catch (error) {
-            console.error("[Assistant] getAssistantCurrentWeekReview error:", error);
-            throw error;
-        }
-    });
+        return result ?? null;
+    } catch (error) {
+        console.error("[Assistant] getAssistantCurrentWeekReview error:", error);
+        throw error;
+    }
+});
 
 export const createAssistantWeeklyReview = createServerFn({
     method: "POST",
 })
-    .inputValidator((d: NewAssistantWeeklyReview) => d)
-    .handler(({ data }): AssistantWeeklyReview | null => {
+    .inputValidator((d: Omit<NewAssistantWeeklyReview, "userId">) => d)
+    .handler(async ({ data }): Promise<AssistantWeeklyReview | null> => {
+        const userId = await requireUserId();
+
         try {
-            const result = db.insert(assistantWeeklyReviews).values(data).returning().get();
+            const result = db
+                .insert(assistantWeeklyReviews)
+                .values({ ...data, userId })
+                .returning()
+                .get();
             return result ?? null;
         } catch (error) {
             console.error("[Assistant] createAssistantWeeklyReview error:", error);
@@ -885,13 +1048,15 @@ export const createAssistantWeeklyReview = createServerFn({
 export const getAssistantCelebrations = createServerFn({
     method: "GET",
 })
-    .inputValidator((d: { userId: string; unshownOnly?: boolean }) => d)
-    .handler(({ data }): AssistantCelebration[] => {
+    .inputValidator((d: { unshownOnly?: boolean }) => d)
+    .handler(async ({ data }): Promise<AssistantCelebration[]> => {
+        const userId = await requireUserId();
+
         try {
             const results = db
                 .select()
                 .from(assistantCelebrations)
-                .where(eq(assistantCelebrations.userId, data.userId))
+                .where(eq(assistantCelebrations.userId, userId))
                 .orderBy(desc(assistantCelebrations.createdAt))
                 .limit(50)
                 .all();
@@ -910,10 +1075,16 @@ export const getAssistantCelebrations = createServerFn({
 export const createAssistantCelebration = createServerFn({
     method: "POST",
 })
-    .inputValidator((d: NewAssistantCelebration) => d)
-    .handler(({ data }): AssistantCelebration | null => {
+    .inputValidator((d: Omit<NewAssistantCelebration, "userId">) => d)
+    .handler(async ({ data }): Promise<AssistantCelebration | null> => {
+        const userId = await requireUserId();
+
         try {
-            const result = db.insert(assistantCelebrations).values(data).returning().get();
+            const result = db
+                .insert(assistantCelebrations)
+                .values({ ...data, userId })
+                .returning()
+                .get();
             return result ?? null;
         } catch (error) {
             console.error("[Assistant] createAssistantCelebration error:", error);
@@ -925,12 +1096,19 @@ export const markAssistantCelebrationShown = createServerFn({
     method: "POST",
 })
     .inputValidator((d: { id: string }) => d)
-    .handler(({ data }): AssistantCelebration | null => {
+    .handler(async ({ data }): Promise<AssistantCelebration | null> => {
+        const userId = await requireUserId();
+
         try {
             const result = db
                 .update(assistantCelebrations)
                 .set({ shownAt: new Date().toISOString() })
-                .where(eq(assistantCelebrations.id, data.id))
+                .where(
+                    and(
+                        eq(assistantCelebrations.id, data.id),
+                        eq(assistantCelebrations.userId, userId)
+                    )
+                )
                 .returning()
                 .get();
 
@@ -945,12 +1123,19 @@ export const dismissAssistantCelebration = createServerFn({
     method: "POST",
 })
     .inputValidator((d: { id: string }) => d)
-    .handler(({ data }): AssistantCelebration | null => {
+    .handler(async ({ data }): Promise<AssistantCelebration | null> => {
+        const userId = await requireUserId();
+
         try {
             const result = db
                 .update(assistantCelebrations)
                 .set({ dismissed: 1 })
-                .where(eq(assistantCelebrations.id, data.id))
+                .where(
+                    and(
+                        eq(assistantCelebrations.id, data.id),
+                        eq(assistantCelebrations.userId, userId)
+                    )
+                )
                 .returning()
                 .get();
 

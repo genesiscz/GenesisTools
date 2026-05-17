@@ -38,7 +38,7 @@ export function ProductivityStats({
         error: queryError,
     } = useQuery({
         queryKey: ["productivity-stats", userId, startIso, endIso, refreshTrigger],
-        queryFn: () => getProductivityStats({ data: { userId: userId!, startIso, endIso } }),
+        queryFn: () => getProductivityStats({ data: { startIso, endIso } }),
         enabled: !!userId,
         staleTime: 10_000,
     });

@@ -173,7 +173,7 @@ const queryConfig = {
 export function useAssistantTasksQuery(userId: string | null) {
     return useQuery({
         queryKey: assistantKeys.taskList(userId ?? ""),
-        queryFn: () => getAssistantTasks({ data: { userId: userId! } }),
+        queryFn: () => getAssistantTasks(),
         enabled: !!userId,
         ...queryConfig,
     });
@@ -233,7 +233,7 @@ export function useDeleteAssistantTaskMutation() {
 export function useAssistantContextParkingsQuery(userId: string | null) {
     return useQuery({
         queryKey: assistantKeys.parkingList(userId ?? ""),
-        queryFn: () => getAssistantContextParkings({ data: { userId: userId! } }),
+        queryFn: () => getAssistantContextParkings(),
         enabled: !!userId,
         ...queryConfig,
     });
@@ -276,7 +276,7 @@ export function useUpdateAssistantContextParkingMutation() {
 export function useAssistantCompletionsQuery(userId: string | null, limit?: number) {
     return useQuery({
         queryKey: assistantKeys.completionList(userId ?? ""),
-        queryFn: () => getAssistantCompletions({ data: { userId: userId!, limit } }),
+        queryFn: () => getAssistantCompletions({ data: { limit } }),
         enabled: !!userId,
         ...queryConfig,
     });
@@ -300,7 +300,7 @@ export function useCreateAssistantCompletionMutation() {
 export function useAssistantStreakQuery(userId: string | null) {
     return useQuery({
         queryKey: assistantKeys.streak(userId ?? ""),
-        queryFn: () => getAssistantStreak({ data: { userId: userId! } }),
+        queryFn: () => getAssistantStreak(),
         enabled: !!userId,
         ...queryConfig,
     });
@@ -324,7 +324,7 @@ export function useUpsertAssistantStreakMutation() {
 export function useAssistantBadgesQuery(userId: string | null) {
     return useQuery({
         queryKey: assistantKeys.badgeList(userId ?? ""),
-        queryFn: () => getAssistantBadges({ data: { userId: userId! } }),
+        queryFn: () => getAssistantBadges(),
         enabled: !!userId,
         ...queryConfig,
     });
@@ -348,7 +348,7 @@ export function useCreateAssistantBadgeMutation() {
 export function useAssistantCommunicationsQuery(userId: string | null, limit?: number) {
     return useQuery({
         queryKey: assistantKeys.communicationList(userId ?? ""),
-        queryFn: () => getAssistantCommunications({ data: { userId: userId!, limit } }),
+        queryFn: () => getAssistantCommunications({ data: { limit } }),
         enabled: !!userId,
         ...queryConfig,
     });
@@ -403,7 +403,7 @@ export function useDeleteAssistantCommunicationMutation() {
 export function useAssistantDecisionsQuery(userId: string | null, limit?: number) {
     return useQuery({
         queryKey: assistantKeys.decisionList(userId ?? ""),
-        queryFn: () => getAssistantDecisions({ data: { userId: userId!, limit } }),
+        queryFn: () => getAssistantDecisions({ data: { limit } }),
         enabled: !!userId,
         ...queryConfig,
     });
@@ -458,7 +458,7 @@ export function useDeleteAssistantDecisionMutation() {
 export function useAssistantBlockersQuery(userId: string | null, activeOnly?: boolean) {
     return useQuery({
         queryKey: assistantKeys.blockerList(userId ?? ""),
-        queryFn: () => getAssistantBlockers({ data: { userId: userId!, activeOnly } }),
+        queryFn: () => getAssistantBlockers({ data: { activeOnly } }),
         enabled: !!userId,
         ...queryConfig,
     });
@@ -536,7 +536,7 @@ export function useResolveAssistantBlockerMutation() {
 export function useAssistantHandoffsQuery(userId: string | null, limit?: number) {
     return useQuery({
         queryKey: assistantKeys.handoffList(userId ?? ""),
-        queryFn: () => getAssistantHandoffs({ data: { userId: userId!, limit } }),
+        queryFn: () => getAssistantHandoffs({ data: { limit } }),
         enabled: !!userId,
         ...queryConfig,
     });
@@ -598,7 +598,7 @@ export function useUpdateAssistantHandoffMutation() {
 export function useAssistantDeadlineRisksQuery(userId: string | null) {
     return useQuery({
         queryKey: assistantKeys.deadlineRiskList(userId ?? ""),
-        queryFn: () => getAssistantDeadlineRisks({ data: { userId: userId! } }),
+        queryFn: () => getAssistantDeadlineRisks(),
         enabled: !!userId,
         ...queryConfig,
     });
@@ -635,7 +635,7 @@ export function useCreateAssistantDeadlineRiskMutation() {
 export function useAssistantEnergySnapshotsQuery(userId: string | null, limit?: number) {
     return useQuery({
         queryKey: assistantKeys.energySnapshotList(userId ?? ""),
-        queryFn: () => getAssistantEnergySnapshots({ data: { userId: userId!, limit } }),
+        queryFn: () => getAssistantEnergySnapshots({ data: { limit } }),
         enabled: !!userId,
         ...queryConfig,
     });
@@ -659,7 +659,7 @@ export function useCreateAssistantEnergySnapshotMutation() {
 export function useAssistantDistractionsQuery(userId: string | null, limit?: number) {
     return useQuery({
         queryKey: assistantKeys.distractionList(userId ?? ""),
-        queryFn: () => getAssistantDistractions({ data: { userId: userId!, limit } }),
+        queryFn: () => getAssistantDistractions({ data: { limit } }),
         enabled: !!userId,
         ...queryConfig,
     });
@@ -683,7 +683,7 @@ export function useCreateAssistantDistractionMutation() {
 export function useAssistantWeeklyReviewsQuery(userId: string | null, limit?: number) {
     return useQuery({
         queryKey: assistantKeys.weeklyReviewList(userId ?? ""),
-        queryFn: () => getAssistantWeeklyReviews({ data: { userId: userId!, limit } }),
+        queryFn: () => getAssistantWeeklyReviews({ data: { limit } }),
         enabled: !!userId,
         ...queryConfig,
     });
@@ -692,7 +692,7 @@ export function useAssistantWeeklyReviewsQuery(userId: string | null, limit?: nu
 export function useAssistantCurrentWeekReviewQuery(userId: string | null) {
     return useQuery({
         queryKey: assistantKeys.currentWeekReview(userId ?? ""),
-        queryFn: () => getAssistantCurrentWeekReview({ data: { userId: userId! } }),
+        queryFn: () => getAssistantCurrentWeekReview(),
         enabled: !!userId,
         ...queryConfig,
     });
@@ -720,7 +720,7 @@ export function useCreateAssistantWeeklyReviewMutation() {
 export function useAssistantCelebrationsQuery(userId: string | null, unshownOnly?: boolean) {
     return useQuery({
         queryKey: assistantKeys.celebrationList(userId ?? ""),
-        queryFn: () => getAssistantCelebrations({ data: { userId: userId!, unshownOnly } }),
+        queryFn: () => getAssistantCelebrations({ data: { unshownOnly } }),
         enabled: !!userId,
         ...queryConfig,
     });

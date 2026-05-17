@@ -4,6 +4,7 @@ import { createAnthropicChat } from "@tanstack/ai-anthropic";
 import { createFileRoute } from "@tanstack/react-router";
 import { and, eq } from "drizzle-orm";
 import { aiConversations, aiMessages, db } from "@/drizzle";
+import { getUserIdFromRequest, isSameOrigin } from "@/lib/auth/requireUser";
 import { env } from "@/lib/env";
 import { emitDomainEvent } from "@/lib/events/event-bus.server";
 
@@ -25,15 +26,29 @@ export const Route = createFileRoute("/api/ai-chat")({
                     );
                 }
 
+                if (!isSameOrigin(request)) {
+                    return new Response(SafeJSON.stringify({ error: "Cross-origin request rejected" }), {
+                        status: 403,
+                        headers: { "Content-Type": "application/json" },
+                    });
+                }
+
+                const userId = await getUserIdFromRequest(request);
+                if (!userId) {
+                    return new Response(SafeJSON.stringify({ error: "Unauthorized" }), {
+                        status: 401,
+                        headers: { "Content-Type": "application/json" },
+                    });
+                }
+
                 const url = new URL(request.url);
                 const conversationId = url.searchParams.get("conversationId");
-                const userId = url.searchParams.get("userId");
 
-                if (!conversationId || !userId) {
-                    return new Response(
-                        SafeJSON.stringify({ error: "Missing conversationId or userId query parameter" }),
-                        { status: 400, headers: { "Content-Type": "application/json" } }
-                    );
+                if (!conversationId) {
+                    return new Response(SafeJSON.stringify({ error: "Missing conversationId query parameter" }), {
+                        status: 400,
+                        headers: { "Content-Type": "application/json" },
+                    });
                 }
 
                 // Verify conversation belongs to user

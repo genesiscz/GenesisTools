@@ -85,7 +85,6 @@ function ProfilePage() {
             try {
                 const result = await updateAvatarFn({
                     data: {
-                        userId: user.id,
                         fileBase64,
                         mimeType,
                         origin: window.location.origin,
@@ -125,7 +124,7 @@ function ProfilePage() {
         setAvatarError(null);
 
         try {
-            const result = await removeAvatarFn({ data: { userId: user.id } });
+            const result = await removeAvatarFn();
 
             if ("success" in result && result.success) {
                 setAvatarUrl(null);

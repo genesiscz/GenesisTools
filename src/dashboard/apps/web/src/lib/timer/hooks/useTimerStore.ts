@@ -20,7 +20,7 @@ export function useTimerStore(userId: string | null) {
 
     const query = useQuery({
         queryKey: ["timers", effectiveUserId],
-        queryFn: () => getTimersFromServer({ data: effectiveUserId! }),
+        queryFn: () => getTimersFromServer(),
         enabled: !!effectiveUserId,
         staleTime: 10_000,
         refetchOnWindowFocus: true,
@@ -30,7 +30,6 @@ export function useTimerStore(userId: string | null) {
         mutationFn: (input: { name: string; timerType: "stopwatch" | "countdown" | "pomodoro"; duration?: number }) =>
             createTimerOnServer({
                 data: {
-                    userId: effectiveUserId!,
                     name: input.name,
                     timerType: input.timerType,
                     duration: input.duration,
@@ -43,7 +42,7 @@ export function useTimerStore(userId: string | null) {
     });
 
     const deleteMutation = useMutation({
-        mutationFn: (timerId: string) => deleteTimerFromServer({ data: { timerId, userId: effectiveUserId! } }),
+        mutationFn: (timerId: string) => deleteTimerFromServer({ data: { timerId } }),
         onSuccess: (_, timerId) => {
             qc.setQueryData(["timers", effectiveUserId], (old: Timer[] | undefined) =>
                 (old ?? []).filter((t) => t.id !== timerId)

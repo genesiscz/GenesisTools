@@ -15,7 +15,7 @@ const queryConfig = {
 export function useBookmarksQuery(userId: string | null) {
     return useQuery({
         queryKey: bookmarkKeys.list(userId ?? ""),
-        queryFn: () => listBookmarks({ data: { userId: userId! } }),
+        queryFn: () => listBookmarks(),
         enabled: !!userId,
         ...queryConfig,
     });
