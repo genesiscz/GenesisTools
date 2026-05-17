@@ -215,14 +215,28 @@ export async function listTtyd(): Promise<TtydSession[]> {
 }
 
 /**
- * Resolve a session's port from the in-process registry. The front-proxy hits
- * this for every /ttyd/<id>/* asset request, so it must not do per-request disk
- * I/O — the registry is hydrated once, then served from memory.
+ * Resolve a session's port. The front-proxy (a *separate* process from the
+ * vite-middleware that runs `spawnTtyd`) hits this for every /ttyd/<id>/*
+ * request, so the hit path stays in-memory — no per-request disk I/O.
+ *
+ * But `hydrateRegistry()` latches `hydrated` for the process lifetime and the
+ * registry Map is per-process: a terminal spawned by the vite-middleware
+ * process *after* the proxy process hydrated is in config but absent from the
+ * proxy's registry, so a pure in-memory lookup 502s ("session not found")
+ * forever — even across hard refreshes. On a miss, fall back to one fresh
+ * config read so cross-process / post-hydrate sessions resolve. Hits never
+ * touch disk; only the (rare, first-load) miss does.
  */
 export async function getTtydPort(id: string): Promise<number | null> {
     await hydrateRegistry();
 
-    return registry.get(id)?.session.port ?? null;
+    const cachedPort = registry.get(id)?.session.port;
+    if (cachedPort !== undefined) {
+        return cachedPort;
+    }
+
+    const config = await getConfig();
+    return config.ttydSessions.find((session) => session.id === id)?.port ?? null;
 }
 
 export async function renameTtyd(id: string, name: string): Promise<boolean> {
