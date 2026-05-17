@@ -124,16 +124,17 @@ export function MobileTerminalShell(props: MobileTerminalShellProps) {
                 <div className="absolute inset-0 z-40 flex bg-black/55" onClick={() => setNavOpen(false)}>
                     {/* biome-ignore lint/a11y/noStaticElementInteractions: stop scrim-close when tapping inside the panel */}
                     <nav className="dd-nav-panel" onClick={(e) => e.stopPropagation()}>
-                        {NAV_ROUTES.map((r) => (
+                        {NAV_ROUTES.map(({ to, label, Icon, exact }) => (
                             <Link
-                                key={r.to}
-                                to={r.to}
+                                key={to}
+                                to={to}
                                 onClick={() => setNavOpen(false)}
-                                className="dd-nav-item"
-                                activeProps={{ className: "dd-nav-item active" }}
-                                activeOptions={{ exact: r.exact }}
+                                className="dd-nav-item flex items-center gap-3"
+                                activeProps={{ className: "dd-nav-item active flex items-center gap-3" }}
+                                activeOptions={{ exact }}
                             >
-                                {r.label}
+                                <Icon size={16} />
+                                <span>{label}</span>
                             </Link>
                         ))}
                     </nav>

@@ -106,8 +106,23 @@ export function TtydRoute() {
                         }}
                     >
                         {sessions.map((s) => (
-                            <div key={s.id} className={s.id === active ? "absolute inset-0" : "hidden"}>
-                                <TtydPane session={s} />
+                            // Every iframe stays mounted AND full-size (never display:none — that
+                            // collapses ttyd's xterm fit to ~0 and it never recovers). Toggle
+                            // visibility with opacity/z-index so the websocket + correct fit survive.
+                            <div
+                                key={s.id}
+                                className="absolute inset-0"
+                                style={{
+                                    opacity: s.id === active ? 1 : 0,
+                                    pointerEvents: s.id === active ? "auto" : "none",
+                                    zIndex: s.id === active ? 1 : 0,
+                                }}
+                            >
+                                <iframe
+                                    src={`/ttyd/${encodeURIComponent(s.id)}/`}
+                                    title={`ttyd-${s.id}`}
+                                    className="h-full w-full border-0 bg-black"
+                                />
                             </div>
                         ))}
                     </MobileTerminalShell>
