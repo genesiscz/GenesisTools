@@ -1,197 +1,140 @@
 # Event System (Real-Time Sync)
 
-> Generic SSE-based event broadcasting for server-to-client push notifications
+> Two complementary layers: a **server→client SSE domain bus** (cross-device,
+> cross-process push) and **BroadcastChannel** (same-device, tab-to-tab).
+> Both just tell TanStack Query to refetch — the server stays source of truth.
+
+The old generic `broadcastToUser`/`broadcastToScope` SSE API and
+`lib/events/server.ts` / `client.ts` no longer exist. This is the current
+(generalized, plan-08) implementation — verified against the code.
 
 ## Find It Fast
 
-| Looking for...         | Go to                           |
-| ---------------------- | ------------------------------- |
-| Server broadcaster     | `src/lib/events/server.ts`      |
-| Client subscriber      | `src/lib/events/client.ts`      |
-| SSE endpoint           | `src/routes/api.events.ts`      |
-| Usage example          | `src/lib/timer/timer-sync.server.ts` |
+| Looking for...        | Go to                                          |
+| --------------------- | ---------------------------------------------- |
+| Server event bus      | `src/lib/events/event-bus.server.ts`           |
+| Client SSE hook       | `src/lib/events/useServerEvents.ts`            |
+| Generic SSE endpoint  | `src/routes/api.events.ts`                      |
+| Timer SSE endpoint    | `src/routes/api.timer-events.ts`                |
+| Timer compat shim     | `src/lib/timer/timer-events.server.ts`          |
+| Cross-tab (same device)| `src/lib/sync/useBroadcastInvalidation.ts`     |
 
-## Architecture
+## Layer 1 — SSE Domain Bus (server → client)
 
-```
-Server Event                    SSE Connection               Client Handler
-┌────────────────┐             ┌──────────────┐             ┌──────────────┐
-│ broadcastToUser│ ───emit────▶│ /api/events  │ ───SSE────▶│ EventClient  │
-│ ('timer', id)  │             │ (per-user)   │             │ .subscribe() │
-└────────────────┘             └──────────────┘             └──────────────┘
-```
+### Server (`lib/events/event-bus.server.ts`)
 
-## Server-Side Broadcasting
-
-### Import
+One `EventEmitter` **per user**, events tagged with a `domain` so a single SSE
+connection can be server-filtered. **In-memory only** — events are lost on
+server restart; that's fine because EventSource auto-reconnects and clients
+re-fetch on reconnect.
 
 ```ts
-import { broadcast, broadcastToUser, broadcastToScope } from '@/lib/events/server'
+export interface DomainEvent { domain: string; type: string; [k: string]: unknown }
+
+emitDomainEvent(userId, "notes", { type: "sync", noteId });   // from a server mutation
+const unsub = subscribeEvents(userId, (e) => { /* … */ });    // from the SSE route
 ```
 
-### Channel Patterns
+Emit a domain event from a `.server.ts` mutation **after** the DB write.
+Domains in use today: `timer`, `notes`, `bookmarks`, `ai`.
 
-| Pattern            | Function           | Example                              |
-| ------------------ | ------------------ | ------------------------------------ |
-| `{feature}:{userId}` | `broadcastToUser()` | `timer:user123`                     |
-| `{feature}:{scope}:{id}` | `broadcastToScope()` | `chat:room:room456`             |
-| `{feature}:*`      | `broadcastToFeature()` | `notification:*`                 |
-| Custom             | `broadcast()`      | Any channel name                     |
+### Timer compat shim (`lib/timer/timer-events.server.ts`)
 
-### Usage
+A thin wrapper so timer call sites need zero changes — `emitTimerEvent` /
+`subscribeTimerEvents` just delegate to the bus with `domain="timer"`. Don't
+add per-domain shims for new domains; call `emitDomainEvent` directly.
 
-```ts
-// After database mutation, notify the user
-import { broadcastToUser } from '@/lib/events/server'
+### Endpoints
 
-await db.update(timers).set({ ... }).where(eq(timers.id, id))
+| Route | Purpose |
+| ----- | ------- |
+| `GET /api/events?userId=<id>&domain=<d>` | Generic. `domain` optional — omit to receive every domain. |
+| `GET /api/timer-events`                  | Timer-only compat stream (same lifecycle). |
 
-// Push update to client
-broadcastToUser('timer', userId, {
-  type: 'sync',
-  timestamp: Date.now()
-})
-```
+Both routes are identical in shape: auth via `getUserIdFromRequest` (401 if
+absent), a `ReadableStream` emitting `data: <SafeJSON>\n\n`, a `: ping\n\n`
+**keep-alive every 30s** (defeats proxy idle timeouts), and `request.signal`
+`abort` → clear keepalive + unsubscribe + close. Headers:
+`text/event-stream`, `Cache-Control: no-cache, no-transform`,
+`X-Accel-Buffering: no` (critical behind the front-proxy/tunnel).
 
-### Scoped Broadcasting
-
-```ts
-// Chat room message
-broadcastToScope('chat', 'room', 'room456', {
-  type: 'message',
-  content: 'Hello!',
-  userId: 'user123'
-})
-// -> Broadcasts to channel: chat:room:room456
-```
-
-## Client-Side Subscription
-
-### Import
-
-```ts
-import { getEventClient } from '@/lib/events/client'
-```
-
-### Connect and Subscribe
-
-```ts
-const client = getEventClient()
-
-// Connect with specific channels
-client.connect('user123', ['timer:user123', 'notification:user123'])
-
-// Subscribe to events
-const unsubscribe = client.subscribe('timer:user123', (data) => {
-  console.log('Timer event:', data)
-  // Trigger refetch, update state, etc.
-})
-
-// Cleanup on unmount
-return () => unsubscribe()
-```
-
-### React Hook Pattern
+### Client (`lib/events/useServerEvents.ts`)
 
 ```tsx
-function useTimerSync(userId: string) {
-  const queryClient = useQueryClient()
-
-  useEffect(() => {
-    const client = getEventClient()
-    client.connect(userId, [`timer:${userId}`])
-
-    const unsubscribe = client.subscribe(`timer:${userId}`, () => {
-      // Invalidate queries to refetch fresh data
-      queryClient.invalidateQueries({ queryKey: ['timers'] })
-    })
-
-    return () => {
-      unsubscribe()
-      client.disconnect()
-    }
-  }, [userId, queryClient])
-}
+useServerEvents({
+    userId,                       // null until known; "dev-user" in no-auth dev
+    domain: "notes",
+    onEvent: (e) => {
+        if (e.type === "sync") queryClient.invalidateQueries({ queryKey: ["notes"] });
+    },
+});
 ```
 
-## SSE Endpoint (`/api/events`)
+- Opens one `EventSource` to `/api/events?userId&domain`; closes on unmount.
+- `onEvent` is held in a **ref** — an inline callback won't churn the
+  connection every render.
+- SSR-guarded (`typeof EventSource === "undefined"`); browser auto-reconnects
+  on drop (handled — don't add manual retry).
+- Payload parsed with `SafeJSON.parse` (never bare `JSON`).
 
-### Query Parameters
+## Layer 2 — BroadcastChannel (same device, tab→tab)
 
-| Param      | Required | Description                              |
-| ---------- | -------- | ---------------------------------------- |
-| `userId`   | Yes      | User ID for authentication               |
-| `channels` | No       | Comma-separated list of channels         |
-
-### Request
-
-```
-GET /api/events?userId=user123&channels=timer:user123,notification:user123
-```
-
-### Response Format
-
-```json
-// Connection confirmation
-{ "type": "connected", "userId": "user123", "channels": [...], "timestamp": 1234567890 }
-
-// Event message
-{ "channel": "timer:user123", "data": { "type": "sync" }, "timestamp": 1234567890 }
-```
-
-## Full Integration Example
-
-### Server Function (after DB write)
+`lib/sync/useBroadcastInvalidation.ts` — instant same-origin tab sync without a
+round-trip. Channels: `CHRONO_SYNC_CHANNEL`, `ASSISTANT_SYNC_CHANNEL`.
 
 ```ts
-// src/lib/timer/timer-sync.server.ts
-export const deleteTimerFromServer = createServerFn({ method: 'POST' })
-  .inputValidator((d: { timerId: string; userId: string }) => d)
-  .handler(async ({ data }) => {
-    // 1. Delete from database
-    await db.delete(timers).where(eq(timers.id, data.timerId))
+// feature root: receive invalidations from sibling tabs
+useBroadcastInvalidation(ASSISTANT_SYNC_CHANNEL);
 
-    // 2. Broadcast event to user's clients
-    broadcastToUser('timer', data.userId, {
-      type: 'sync',
-      timestamp: Date.now()
-    })
-
-    return { success: true }
-  })
+// mutation onSuccess: invalidate locally AND notify sibling tabs
+const invalidate = useInvalidateAndBroadcast(ASSISTANT_SYNC_CHANNEL);
+invalidate(["assistant-tasks"]);
 ```
 
-### Client Component
+`broadcastInvalidate()` notifies other tabs **only** (no local invalidation) —
+prefer `useInvalidateAndBroadcast()` which does both. SSR-safe (silently skips
+when `BroadcastChannel` is undefined).
+
+## Which layer do I use?
+
+| Need | Use |
+| ---- | --- |
+| Other tabs in the **same browser** react instantly to a mutation | BroadcastChannel (`useInvalidateAndBroadcast`) |
+| Another **device / process** (background tab, phone, server-side change) must see it | SSE bus (`emitDomainEvent` + `useServerEvents`) |
+| Robust real-time for a domain | Both — they're complementary, not exclusive |
+
+## Full Example (server mutation → both layers)
+
+```ts
+// notes.server.ts
+export const deleteNote = createServerFn({ method: "POST" })
+    .inputValidator((d: { noteId: string; userId: string }) => d)
+    .handler(({ data }) => {                       // sync — better-sqlite3
+        db.delete(notes).where(eq(notes.id, data.noteId)).run();
+        emitDomainEvent(data.userId, "notes", { type: "sync", noteId: data.noteId });
+        return { success: true };
+    });
+```
 
 ```tsx
-function TimerList({ userId }: { userId: string }) {
-  const queryClient = useQueryClient()
-
-  // Subscribe to sync events
-  useEffect(() => {
-    const client = getEventClient()
-    client.connect(userId, [`timer:${userId}`])
-
-    const unsubscribe = client.subscribe(`timer:${userId}`, () => {
-      // Refetch when server says data changed
-      queryClient.invalidateQueries({ queryKey: ['timers'] })
-    })
-
-    return () => unsubscribe()
-  }, [userId])
-
-  // ... render timers
-}
+// notes route component
+useBroadcastInvalidation(ASSISTANT_SYNC_CHANNEL);
+useServerEvents({ userId, domain: "notes",
+    onEvent: () => queryClient.invalidateQueries({ queryKey: ["notes"] }) });
+const invalidate = useInvalidateAndBroadcast(ASSISTANT_SYNC_CHANNEL);
+useMutation({ mutationFn: deleteNote, onSuccess: () => invalidate(["notes"]) });
 ```
 
 ## Gotchas
 
-- **One connection per app**: `getEventClient()` returns a singleton
-- **Auto-reconnect**: Browser's EventSource handles reconnection automatically
-- **Keepalive**: Server sends keepalive every 30s to prevent timeout
-- **Channel matching**: Client only receives events for subscribed channels
+- **Bus is in-memory.** No persistence/replay. Don't treat events as a
+  durable log — they're "something changed, refetch" nudges.
+- **Always emit *after* the DB write succeeds**, never before.
+- **`X-Accel-Buffering: no` is load-bearing** behind the front-proxy/tunnel —
+  without it SSE buffers and updates arrive in bursts or never.
+- **One EventSource per `{userId,domain}`** via the hook; don't hand-roll a
+  second connection.
 
 ## Related Docs
 
-- [Database](./database.md) - Drizzle ORM for DB operations
-- [Type Sharing](../patterns/type-sharing.md) - Consistent types across stack
+- [Database](./database.md) — Drizzle + better-sqlite3 (emit events after writes)

@@ -25,9 +25,12 @@ bunx drizzle-kit studio    # Open Drizzle Studio
 | State      | TanStack Query + Drizzle                | `src/lib/*/hooks/`                          |
 | Server     | Drizzle ORM (better-sqlite3)            | `src/drizzle/`                              |
 | Database   | SQLite (file: `.data/dashboard.sqlite`) | local / persistent volume                   |
-| Cross-tab  | BroadcastChannel API                    | `src/lib/sync/`                             |
+| Cross-tab  | BroadcastChannel (same device)          | `src/lib/sync/`                             |
+| Realtime   | SSE domain event bus (cross-device)     | `src/lib/events/`                           |
 
-> Note: PowerSync / Neon Postgres / Convex / SSE removed in plan 06.
+> Note: PowerSync / Neon Postgres / Convex / **client-side DB** removed.
+> SSE was **not** removed — it was generalized into a per-user domain event
+> bus (`src/lib/events/event-bus.server.ts`, `/api/events`). See `docs/systems/events.md`.
 
 ## Key Patterns
 
@@ -45,10 +48,10 @@ bunx drizzle-kit studio    # Open Drizzle Studio
 **Quick:** Drizzle ORM + better-sqlite3. Define schema in `src/drizzle/schema.ts` using `sqliteTable`. JSON fields are `text` columns + SafeJSON parse/stringify in server functions. Migrations: `bunx drizzle-kit generate` then `bunx drizzle-kit migrate`.
 </context_trigger>
 
-<context_trigger keywords="sync,broadcast,cross-tab,realtime">
-**Load:** src/lib/sync/useBroadcastInvalidation.ts
-**Files:** src/lib/sync/useBroadcastInvalidation.ts
-**Quick:** Use `broadcastInvalidate(channel, queryKey)` after mutations. Subscribe with `useBroadcastInvalidation(channel)` in feature root.
+<context_trigger keywords="sync,broadcast,cross-tab,realtime,sse,events">
+**Load:** src/lib/sync/useBroadcastInvalidation.ts, src/lib/events/useServerEvents.ts
+**Files:** src/lib/sync/useBroadcastInvalidation.ts, src/lib/events/event-bus.server.ts, src/lib/events/useServerEvents.ts
+**Quick:** Two layers. Same-device tabs: `useInvalidateAndBroadcast(channel)` in mutations + `useBroadcastInvalidation(channel)` in feature root. Cross-device/process: `emitDomainEvent(userId, domain, e)` after a server write + `useServerEvents({userId, domain, onEvent})` client-side. Both just trigger TanStack Query refetch. Full detail: docs/systems/events.md.
 </context_trigger>
 
 <context_trigger keywords="env,environment,config">
@@ -82,13 +85,12 @@ bunx drizzle-kit studio    # Open Drizzle Studio
 ### Broadcast Across Tabs After Mutation
 
 ```ts
-import { broadcastInvalidate } from "@/lib/sync/useBroadcastInvalidation";
+import { useInvalidateAndBroadcast, ASSISTANT_SYNC_CHANNEL } from "@/lib/sync/useBroadcastInvalidation";
+// invalidates locally AND notifies sibling tabs in one call:
+const invalidate = useInvalidateAndBroadcast(ASSISTANT_SYNC_CHANNEL);
 const mutation = useMutation({
     mutationFn: createTask,
-    onSuccess: () => {
-        queryClient.invalidateQueries({ queryKey: ["tasks"] });
-        broadcastInvalidate("assistant_sync_channel", ["tasks"]);
-    },
+    onSuccess: () => invalidate(["tasks"]),
 });
 ```
 
