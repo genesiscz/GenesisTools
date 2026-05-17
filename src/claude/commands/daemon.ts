@@ -19,7 +19,22 @@ export function registerDaemonCommand(program: Command): void {
         .command("register")
         .description("Register usage polling as a daemon task")
         .option("-i, --interval <interval>", "Polling interval", "every 1 minute")
-        .action(async (opts: { interval: string }) => {
+        .option("--retention-days <days>", "Delete run logs older than N days (with --retention-min)", "3")
+        .option("--retention-min <count>", "Always keep at least N newest run logs", "100")
+        .action(async (opts: { interval: string; retentionDays: string; retentionMin: string }) => {
+            const maxAgeDays = Number(opts.retentionDays);
+            const minRuns = Number(opts.retentionMin);
+
+            if (!Number.isFinite(maxAgeDays) || maxAgeDays < 0) {
+                p.log.error(`Invalid --retention-days: "${opts.retentionDays}" (expected a non-negative number)`);
+                process.exit(1);
+            }
+
+            if (!Number.isInteger(minRuns) || minRuns < 0) {
+                p.log.error(`Invalid --retention-min: "${opts.retentionMin}" (expected a non-negative integer)`);
+                process.exit(1);
+            }
+
             const created = await registerTask({
                 name: TASK_NAME,
                 command: `${bunPath()} run ${POLL_SCRIPT}`,
@@ -29,6 +44,10 @@ export function registerDaemonCommand(program: Command): void {
                 description: "Poll Claude usage API and record to history DB",
                 overwrite: true,
                 notify: false,
+                retention: {
+                    maxAgeDays,
+                    minRuns,
+                },
             });
 
             if (created) {

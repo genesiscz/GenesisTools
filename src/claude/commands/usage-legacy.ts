@@ -1,6 +1,7 @@
 import { loadConfig } from "@app/claude/lib/config";
-import { fetchAllAccountsUsage, fetchUsage } from "@app/claude/lib/usage/api";
+import { fetchUsage } from "@app/claude/lib/usage/api";
 import { renderAccountUsage, renderAllAccounts } from "@app/claude/lib/usage/display";
+import { getSharedAccountsUsage } from "@app/claude/lib/usage/shared-cache";
 import { watchUsage } from "@app/claude/lib/usage/watch";
 import { AIConfig } from "@app/utils/ai/AIConfig";
 import { SafeJSON } from "@app/utils/json";
@@ -16,6 +17,7 @@ export function registerUsageLegacyCommand(program: Command): void {
         .option("--watch", "Watch mode: poll periodically and notify at thresholds")
         .option("--interval <seconds>", "Poll interval in seconds (default: from config)")
         .option("--json", "Output as JSON")
+        .option("--fresh", "Force a live Anthropic fetch, bypassing the shared cache")
         .action(async (accountArg: string | undefined, opts) => {
             // If --token provided, use it directly
             if (opts.token) {
@@ -72,7 +74,7 @@ export function registerUsageLegacyCommand(program: Command): void {
             }
 
             // One-shot
-            const results = await fetchAllAccountsUsage(accountArg);
+            const results = await getSharedAccountsUsage({ accountFilter: accountArg, force: opts.fresh === true });
 
             if (opts.json) {
                 console.log(SafeJSON.stringify(results, null, 2));
