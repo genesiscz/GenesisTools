@@ -21,6 +21,12 @@ async function fetchModel(url: string): Promise<ArrayBuffer> {
         }
 
         return await res.arrayBuffer();
+    } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+            throw new Error(`Failed to download ${url}: timed out after ${DOWNLOAD_TIMEOUT_MS}ms`);
+        }
+
+        throw error;
     } finally {
         clearTimeout(timer);
     }
