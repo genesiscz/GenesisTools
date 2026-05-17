@@ -41,4 +41,18 @@ describe("cleanRepetitions", () => {
             { text: "Jak se máte?", start: 5, end: 6 },
         ]);
     });
+
+    it("does NOT cross-segment-dedup identical text from different speakers within < 2s gap", () => {
+        const segments: TranscriptionSegment[] = [
+            { text: "Dobrý den.", start: 0, end: 1, speaker: "SPEAKER_00" },
+            { text: "dobrý den", start: 1.5, end: 2.4, speaker: "SPEAKER_01" },
+            { text: "Jak se máte?", start: 5, end: 6, speaker: "SPEAKER_00" },
+        ];
+        const r = cleanRepetitions({ text: "x", segments });
+        expect(r.segments).toEqual([
+            { text: "Dobrý den.", start: 0, end: 1, speaker: "SPEAKER_00" },
+            { text: "dobrý den", start: 1.5, end: 2.4, speaker: "SPEAKER_01" },
+            { text: "Jak se máte?", start: 5, end: 6, speaker: "SPEAKER_00" },
+        ]);
+    });
 });
