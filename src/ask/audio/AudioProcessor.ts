@@ -3,7 +3,7 @@ import { mkdir } from "node:fs/promises";
 import { dirname, join, parse } from "node:path";
 import logger from "@app/logger";
 import { MONO_MP3_BITRATE_KBPS } from "@app/utils/audio/converter";
-import { SafeJSON } from "@app/utils/json";
+import { getAudioInfo, validateAudioFile } from "@app/utils/audio/probe";
 import { spawn } from "bun";
 
 export type FFProbeResult = {
@@ -24,36 +24,8 @@ export class AudioProcessor {
     private readonly SEGMENT_BITRATE_KBPS = MONO_MP3_BITRATE_KBPS; // shared with cloud-normalize util
     private readonly SEGMENT_BYTES_PER_SEC = (this.SEGMENT_BITRATE_KBPS * 1000) / 8; // constant after re-encode
 
-    async validateAudioFile(filePath: string): Promise<{
-        isValid: boolean;
-        format?: string;
-        duration?: number;
-        size?: number;
-        error?: string;
-    }> {
-        try {
-            if (!existsSync(filePath)) {
-                return { isValid: false, error: "File not found" };
-            }
-
-            const file = Bun.file(filePath);
-            const size = file.size;
-
-            // Get basic file info using ffprobe if available
-            const audioInfo = await this.getAudioInfo(filePath);
-
-            return {
-                isValid: true,
-                format: audioInfo.format,
-                duration: audioInfo.duration,
-                size,
-            };
-        } catch (error) {
-            return {
-                isValid: false,
-                error: error instanceof Error ? error.message : "Failed to validate audio file",
-            };
-        }
+    async validateAudioFile(filePath: string): ReturnType<typeof validateAudioFile> {
+        return validateAudioFile(filePath);
     }
 
     async convertAudioFormat(inputPath: string, outputPath: string, targetFormat: string = "mp3"): Promise<string> {
@@ -196,66 +168,8 @@ export class AudioProcessor {
         }
     }
 
-    async getAudioInfo(filePath: string): Promise<{
-        format: string;
-        duration: number;
-        bitrate?: number;
-        sampleRate?: number;
-        channels?: number;
-    }> {
-        try {
-            // Use ffprobe to get audio information
-            const proc = spawn(
-                ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", filePath],
-                {
-                    stdio: ["ignore", "pipe", "pipe"],
-                }
-            );
-
-            const stdout = await new Response(proc.stdout).text();
-            const stderr = await new Response(proc.stderr).text();
-            const exitCode = await proc.exited;
-
-            if (exitCode !== 0) {
-                throw new Error(`FFprobe failed: ${stderr}`);
-            }
-
-            interface FFprobeStream {
-                codec_type?: string;
-                codec_name?: string;
-                sample_rate?: string;
-                channels?: number;
-                bit_rate?: string;
-                duration?: string;
-            }
-
-            const probeData = SafeJSON.parse(stdout) as {
-                streams?: FFprobeStream[];
-                format?: { duration?: string; size?: string; bit_rate?: string };
-            };
-
-            // Find audio stream
-            const audioStream = probeData.streams?.find((stream) => stream.codec_type === "audio");
-
-            if (!audioStream) {
-                throw new Error("No audio stream found in file");
-            }
-
-            return {
-                format: audioStream.codec_name || "unknown",
-                duration: parseFloat(String(audioStream.duration || probeData.format?.duration || "0")),
-                bitrate: audioStream.bit_rate ? parseInt(String(audioStream.bit_rate), 10) : undefined,
-                sampleRate: audioStream.sample_rate ? parseInt(String(audioStream.sample_rate), 10) : undefined,
-                channels: audioStream.channels ? parseInt(String(audioStream.channels), 10) : undefined,
-            };
-        } catch (error) {
-            logger.warn(`Failed to get audio info for ${filePath}: ${error}`);
-            // Return default values if ffprobe fails
-            return {
-                format: "unknown",
-                duration: 0,
-            };
-        }
+    async getAudioInfo(filePath: string): ReturnType<typeof getAudioInfo> {
+        return getAudioInfo(filePath);
     }
 
     async optimizeForTranscription(inputPath: string, outputPath: string): Promise<string> {
