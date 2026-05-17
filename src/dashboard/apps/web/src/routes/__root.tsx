@@ -5,6 +5,7 @@ import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools";
 import { useEffect } from "react";
 import { Toaster } from "sonner";
 import { RouteError } from "@/components/RouteError";
+import { RouteNotFound } from "@/components/RouteNotFound";
 import TanStackQueryDevtools from "@/integrations/tanstack-query/devtools";
 import WorkOSProvider from "@/integrations/workos/provider";
 import AiDevtools from "@/lib/ai-example/ai-devtools";
@@ -40,7 +41,7 @@ export const Route = createRootRouteWithContext<MyRouterContext>()({
 
     shellComponent: RootDocument,
     errorComponent: ({ error, reset }) => <RouteError error={error} reset={reset} />,
-    notFoundComponent: () => <RouteError error={new Error("Page not found")} />,
+    notFoundComponent: () => <RouteNotFound />,
 });
 
 function RootDocument({ children }: { children: React.ReactNode }) {

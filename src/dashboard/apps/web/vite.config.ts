@@ -11,6 +11,9 @@ const nitroConfig: NitroConfig = {
     experimental: {
         websocket: false,
     },
+    // Quieter in prod (warn+), verbose in dev. Server-side console.* lines are
+    // subsystem-prefixed ([db]/[ai]/[bookmarks]/[events]) for greppable triage.
+    logLevel: process.env.NODE_ENV === "production" ? 3 : 0,
     // Scan server/routes directory for API and WebSocket handlers
     scanDirs: ["./server"],
 };
