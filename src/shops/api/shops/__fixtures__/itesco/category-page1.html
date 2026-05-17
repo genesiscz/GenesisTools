@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+<title>Pekárna | Tesco</title>
+</head>
+<body>
+<main>
+<div data-plp-breadcrumb='[{"text":"Online nákupy","current":false,"children":[{"text":"Pekárna","current":true}]}]'>
+</div>
+
+<h1>Pekárna</h1>
+
+<div id="plp-grid">
+  <div data-product-id="100100">Chléb šumavský</div>
+  <div data-product-id="100200">Rohlík tukový</div>
+  <div data-product-id="100300">Bageta francouzská</div>
+</div>
+
+<script type="application/discover+json">
+{
+  "mfe-orchestrator": {
+    "props": {
+      "apolloCache": {
+        "ROOT_QUERY": {
+          "category({\"page\":1,\"includeRestrictions\":true,\"superDepartment\":\"pekarna\"})": {
+            "info": {
+              "total": 48,
+              "count": 24
+            }
+          }
+        },
+        "ProductType:100100": {
+          "id": "100100",
+          "title": "Chléb šumavský",
+          "defaultImageUrl": "https://img.tesco.com/100100.jpg",
+          "status": "AvailableForSale",
+          "displayType": "ProductTile",
+          "productType": "Standard",
+          "price": {
+            "actual": 35.90,
+            "unitPrice": 89.75
+          },
+          "promotions": []
+        },
+        "ProductType:100200": {
+          "id": "100200",
+          "title": "Rohlík tukový",
+          "defaultImageUrl": "https://img.tesco.com/100200.jpg",
+          "status": "AvailableForSale",
+          "displayType": "ProductTile",
+          "productType": "Standard",
+          "price": {
+            "actual": 3.50,
+            "unitPrice": 70.00
+          },
+          "promotions": [
+            { "__ref": "PromotionType:promo-rohlik-1" }
+          ]
+        },
+        "ProductType:100300": {
+          "id": "100300",
+          "title": "Bageta francouzská",
+          "defaultImageUrl": "https://img.tesco.com/100300.jpg",
+          "status": "OutOfStock",
+          "displayType": "QuantityOrWeight",
+          "productType": "LooseProduce",
+          "price": {
+            "actual": 250.00,
+            "unitPrice": 250.00
+          },
+          "promotions": []
+        },
+        "PromotionType:promo-rohlik-1": {
+          "description": "20%, předtím 4,40 Kč"
+        }
+      }
+    }
+  }
+}
+</script>
+
+</main>
+</body>
+</html>

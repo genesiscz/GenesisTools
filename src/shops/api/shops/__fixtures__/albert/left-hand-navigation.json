@@ -1,0 +1,24 @@
+{
+    "data": {
+        "leftHandNavigationBar": {
+            "categoryTreeList": [
+                {
+                    "categoryCode": "ROOT01",
+                    "categoryName": "Pekařství a cukrářství",
+                    "categoriesInfo": [
+                        { "categoryCode": "PEK01", "categoryName": "Pečivo" },
+                        { "categoryCode": "PEK02", "categoryName": "Sladké pečivo" }
+                    ]
+                },
+                {
+                    "categoryCode": "ROOT02",
+                    "categoryName": "Mléčné výrobky",
+                    "categoriesInfo": [
+                        { "categoryCode": "MLE01", "categoryName": "Mléko" },
+                        { "categoryCode": "MLE02", "categoryName": "Jogurty" }
+                    ]
+                }
+            ]
+        }
+    }
+}

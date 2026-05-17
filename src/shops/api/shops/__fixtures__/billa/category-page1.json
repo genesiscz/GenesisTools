@@ -1,0 +1,31 @@
+{
+    "total": 5,
+    "count": 2,
+    "page": 1,
+    "products": [
+        {
+            "sku": "00-4444444",
+            "name": "Houska bílá 60g",
+            "slug": "houska-bila",
+            "parentCategories": [{ "name": "Pekárna" }],
+            "images": ["https://shop.billa.cz/img/sku-4444444.jpg"],
+            "price": {
+                "regular": { "value": 690 }
+            },
+            "baseUnitShort": "ks",
+            "weightPieceArticle": "60 g"
+        },
+        {
+            "sku": "00-5555555",
+            "name": "Rohlík 50g",
+            "slug": "rohlik-50g",
+            "parentCategories": [{ "name": "Pekárna" }],
+            "images": ["https://shop.billa.cz/img/sku-5555555.jpg"],
+            "price": {
+                "regular": { "value": 290 }
+            },
+            "baseUnitShort": "ks",
+            "weightPieceArticle": "50 g"
+        }
+    ]
+}

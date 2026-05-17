@@ -1,0 +1,25 @@
+{
+    "totalPages": 1,
+    "products": [
+        {
+            "gtin": 4001234567890,
+            "dan": 1234567,
+            "brandName": "balea",
+            "title": "telový krém s mandľovým olejom",
+            "tileData": {
+                "self": "/p/d/1234567/balea-telovy-krem-mandle",
+                "title": {
+                    "tileHeadline": "telový krém s mandľovým olejom",
+                    "tileHeadlineLong": "balea telový krém s mandľovým olejom 250 ml"
+                },
+                "price": {
+                    "price": {
+                        "current": { "value": "3,99 €" },
+                        "previous": { "value": "4,99 €" }
+                    }
+                },
+                "images": [{ "tileSrc": "https://products.dm-static.com/balea-mandle.jpg" }]
+            }
+        }
+    ]
+}

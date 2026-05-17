@@ -1,0 +1,24 @@
+{
+    "categoryId": "18842782",
+    "categoryName": "Notebooky",
+    "items": [
+        {
+            "id": "d10221687",
+            "name": "Lenovo ThinkPad T14 Gen 5",
+            "url": "https://www.alza.cz/EN/lenovo-thinkpad-t14-gen5-d10221687.htm",
+            "currentPrice": 39990,
+            "originalPrice": 44990,
+            "availability": "InStock",
+            "imageUrl": "https://image.alza.cz/products/NTLN0xxx/NTLN0xxx.jpg"
+        },
+        {
+            "id": "d10221688",
+            "name": "Dell Latitude 5450",
+            "url": "https://www.alza.cz/EN/dell-latitude-5450-d10221688.htm",
+            "currentPrice": 35990,
+            "availability": "InStock"
+        }
+    ],
+    "hasMore": false,
+    "page": 1
+}
