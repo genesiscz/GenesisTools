@@ -51,7 +51,10 @@ export async function listContainers(): Promise<ContainersResult> {
 
         if (proc.exitCode !== 0) {
             const stderr = await new Response(proc.stderr).text();
-            logger.warn({ exitCode: proc.exitCode, stderr }, "docker ps exited non-zero; treating Docker as unavailable");
+            logger.warn(
+                { exitCode: proc.exitCode, stderr },
+                "docker ps exited non-zero; treating Docker as unavailable"
+            );
             return { dockerAvailable: false, containers: [] };
         }
 

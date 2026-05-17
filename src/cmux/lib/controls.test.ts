@@ -8,11 +8,13 @@ import {
     renameCmuxWorkspace,
 } from "@app/cmux/lib/controls";
 
-const okRunner = (calls: string[][]) => async (args: string[]): Promise<CmuxRunResult> => {
-    calls.push(args);
+const okRunner =
+    (calls: string[][]) =>
+    async (args: string[]): Promise<CmuxRunResult> => {
+        calls.push(args);
 
-    return { code: 0, stdout: "", stderr: "" };
-};
+        return { code: 0, stdout: "", stderr: "" };
+    };
 
 describe("cmux controls", () => {
     test("focusCmuxPane selects workspace and focuses pane", async () => {
@@ -60,7 +62,10 @@ describe("cmux rename", () => {
 
     test("renameCmuxSurface runs rename-tab", async () => {
         const calls: string[][] = [];
-        await renameCmuxSurface({ workspaceId: "workspace:1", surfaceId: "surface:3", title: "build" }, okRunner(calls));
+        await renameCmuxSurface(
+            { workspaceId: "workspace:1", surfaceId: "surface:3", title: "build" },
+            okRunner(calls)
+        );
         expect(calls).toEqual([["rename-tab", "--workspace", "workspace:1", "--surface", "surface:3", "build"]]);
     });
 

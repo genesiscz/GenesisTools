@@ -42,7 +42,6 @@ export function MobileTerminalShell(props: MobileTerminalShellProps) {
             return (
                 <input
                     key={tab.id}
-                    // biome-ignore lint/a11y/noAutofocus: rename input must take focus the instant it replaces the tab
                     autoFocus
                     defaultValue={tab.label}
                     onFocus={(e) => e.currentTarget.select()}
@@ -120,9 +119,7 @@ export function MobileTerminalShell(props: MobileTerminalShellProps) {
             <div className="relative min-h-0 flex-1">{props.children}</div>
 
             {navOpen ? (
-                // biome-ignore lint/a11y/noStaticElementInteractions: scrim dismiss is an established overlay pattern
                 <div className="absolute inset-0 z-40 flex bg-black/55" onClick={() => setNavOpen(false)}>
-                    {/* biome-ignore lint/a11y/noStaticElementInteractions: stop scrim-close when tapping inside the panel */}
                     <nav className="dd-nav-panel" onClick={(e) => e.stopPropagation()}>
                         {NAV_ROUTES.map(({ to, label, Icon, exact }) => (
                             <Link
@@ -142,9 +139,7 @@ export function MobileTerminalShell(props: MobileTerminalShellProps) {
             ) : null}
 
             {overviewOpen ? (
-                // biome-ignore lint/a11y/noStaticElementInteractions: scrim dismiss is an established overlay pattern
                 <div className="absolute inset-0 z-40 bg-black/55" onClick={() => setOverviewOpen(false)}>
-                    {/* biome-ignore lint/a11y/noStaticElementInteractions: stop scrim-close when tapping inside the sheet */}
                     <div className="dd-sheet" onClick={(e) => e.stopPropagation()}>
                         {props.tabs.map((t) => (
                             <div key={t.id}>

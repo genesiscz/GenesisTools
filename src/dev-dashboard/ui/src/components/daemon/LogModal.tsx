@@ -48,7 +48,6 @@ export function LogModal({ logFile, onClose }: Props) {
     }
 
     return (
-        // biome-ignore lint/a11y/useKeyWithClickEvents: backdrop dismiss
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6" onClick={onClose}>
             <div
                 role="dialog"
