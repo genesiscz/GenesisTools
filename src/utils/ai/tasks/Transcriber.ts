@@ -8,7 +8,7 @@ import { rateLimitAwareDelay, retry } from "@app/utils/async";
 import { CLOUD_PROVIDER_TYPES } from "@app/utils/config/ai.types";
 import { AIConfig } from "../AIConfig";
 import { getProviderForTask } from "../providers";
-import { assignSpeakers } from "../transcription/align-speakers";
+import { assignSpeakers, assignSpeakersByWords } from "../transcription/align-speakers";
 import { cleanRepetitions } from "../transcription/repetition-cleanup";
 import { diarizeLocal } from "@app/utils/audio/diarize-local";
 import type {
@@ -132,6 +132,15 @@ export class Transcriber {
 
         if (turns.length === 0) {
             return r;
+        }
+
+        // Word-level re-segmentation when the provider exposed word timings
+        // (whisper-1 only) — splits a segment at mid-segment speaker changes
+        // and recovers short backchannels; otherwise segment-level alignment.
+        const words = r.words;
+
+        if (words?.length) {
+            return { ...r, segments: r.segments.flatMap((s) => assignSpeakersByWords(s, words, turns)) };
         }
 
         return { ...r, segments: assignSpeakers(r.segments, turns) };

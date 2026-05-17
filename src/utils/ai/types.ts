@@ -99,6 +99,9 @@ export interface TranscriptionResult {
     segments?: TranscriptionSegment[];
     language?: string;
     duration?: number;
+    /** Per-word timings (whisper-1 only, when diarizing) for word-level
+     *  speaker re-segmentation. Structurally compatible with `TimedWord`. */
+    words?: { word: string; start: number; end: number }[];
 }
 
 /**
