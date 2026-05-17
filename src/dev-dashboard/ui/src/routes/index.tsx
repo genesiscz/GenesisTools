@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
 import { KpiCard } from "@/components/pulse/KpiCard";
 import { NetworkInfo } from "@/components/pulse/NetworkInfo";
 import { ProcessTable } from "@/components/pulse/ProcessTable";
@@ -51,6 +52,13 @@ interface WeatherSnapshot {
 
 const DASH = "—";
 
+const HISTORY_RANGES = [
+    { label: "30m", minutes: 30 },
+    { label: "2h", minutes: 120 },
+    { label: "6h", minutes: 360 },
+    { label: "24h", minutes: 1440 },
+] as const;
+
 function pct(value: number | null): string {
     if (value === null) {
         return DASH;
@@ -82,15 +90,17 @@ export function IndexRoute() {
         refetchInterval: 2000,
     });
 
+    const [rangeMinutes, setRangeMinutes] = useState<number>(HISTORY_RANGES[0].minutes);
+
     const cpuHistory = useQuery<PulseSeries>({
-        queryKey: ["pulse", "history", "cpu"],
-        queryFn: () => fetchJson<PulseSeries>("/api/system/pulse/history?metric=cpu&minutes=30"),
+        queryKey: ["pulse", "history", "cpu", rangeMinutes],
+        queryFn: () => fetchJson<PulseSeries>(`/api/system/pulse/history?metric=cpu&minutes=${rangeMinutes}`),
         refetchInterval: 10000,
     });
 
     const memHistory = useQuery<PulseSeries>({
-        queryKey: ["pulse", "history", "mem"],
-        queryFn: () => fetchJson<PulseSeries>("/api/system/pulse/history?metric=mem&minutes=30"),
+        queryKey: ["pulse", "history", "mem", rangeMinutes],
+        queryFn: () => fetchJson<PulseSeries>(`/api/system/pulse/history?metric=mem&minutes=${rangeMinutes}`),
         refetchInterval: 10000,
     });
 
@@ -135,6 +145,28 @@ export function IndexRoute() {
 
             <div className="grid gap-4 lg:grid-cols-3">
                 <div className="flex flex-col gap-4 lg:col-span-2">
+                    <div className="flex justify-end gap-1" role="group" aria-label="History time range">
+                        {HISTORY_RANGES.map(({ label, minutes }) => {
+                            const active = rangeMinutes === minutes;
+
+                            return (
+                                <button
+                                    key={minutes}
+                                    type="button"
+                                    onClick={() => setRangeMinutes(minutes)}
+                                    aria-pressed={active}
+                                    className="rounded-[6px] border px-2 py-1 text-xs transition"
+                                    style={{
+                                        background: active ? "var(--dd-accent-gradient)" : "transparent",
+                                        borderColor: active ? "transparent" : "var(--dd-border)",
+                                        color: active ? "#0c0e10" : "var(--dd-text-secondary)",
+                                    }}
+                                >
+                                    {label}
+                                </button>
+                            );
+                        })}
+                    </div>
                     <PulseGraph title="CPU" points={cpuHistory.data?.points ?? []} unit="%" />
                     <PulseGraph title="MEMORY" points={memHistory.data?.points ?? []} unit="%" />
                 </div>
