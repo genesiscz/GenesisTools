@@ -1,29 +1,28 @@
 import { createServerFn } from "@tanstack/react-start";
 import { and, desc, eq } from "drizzle-orm";
 import { db, type NewNote, type Note, notes } from "@/drizzle";
-import { emitDomainEvent } from "@/lib/events/event-bus.server";
 import { requireUserId } from "@/lib/auth/requireUser";
+import { emitDomainEvent } from "@/lib/events/event-bus.server";
 
 // ============================================
 // List
 // ============================================
 
-export const listNotes = createServerFn({ method: "GET" })
-    .handler(async (): Promise<Note[]> => {
-        const userId = await requireUserId();
+export const listNotes = createServerFn({ method: "GET" }).handler(async (): Promise<Note[]> => {
+    const userId = await requireUserId();
 
-        try {
-            return db
-                .select()
-                .from(notes)
-                .where(eq(notes.userId, userId))
-                .orderBy(desc(notes.pinned), desc(notes.updatedAt))
-                .all();
-        } catch (err) {
-            console.error("[notes] listNotes failed:", err);
-            throw err;
-        }
-    });
+    try {
+        return db
+            .select()
+            .from(notes)
+            .where(eq(notes.userId, userId))
+            .orderBy(desc(notes.pinned), desc(notes.updatedAt))
+            .all();
+    } catch (err) {
+        console.error("[notes] listNotes failed:", err);
+        throw err;
+    }
+});
 
 // ============================================
 // Get single
@@ -53,9 +52,7 @@ export const getNote = createServerFn({ method: "GET" })
 // ============================================
 
 export const createNote = createServerFn({ method: "POST" })
-    .inputValidator(
-        (d: { title: string; body?: string; tags?: string[]; pinned?: number }) => d,
-    )
+    .inputValidator((d: { title: string; body?: string; tags?: string[]; pinned?: number }) => d)
     .handler(async ({ data }): Promise<Note> => {
         const userId = await requireUserId();
 
@@ -92,9 +89,7 @@ export const createNote = createServerFn({ method: "POST" })
 // ============================================
 
 export const updateNote = createServerFn({ method: "POST" })
-    .inputValidator(
-        (d: { id: string; patch: Partial<Pick<NewNote, "title" | "body" | "tags" | "pinned">> }) => d,
-    )
+    .inputValidator((d: { id: string; patch: Partial<Pick<NewNote, "title" | "body" | "tags" | "pinned">> }) => d)
     .handler(async ({ data }): Promise<Note> => {
         const userId = await requireUserId();
 

@@ -48,8 +48,7 @@ export function useDeleteConversation(userId: string | null) {
     const queryClient = useQueryClient();
 
     return useMutation({
-        mutationFn: (conversationId: string) =>
-            deleteConversation({ data: { id: conversationId } }),
+        mutationFn: (conversationId: string) => deleteConversation({ data: { id: conversationId } }),
         onSuccess: (_data, conversationId) => {
             queryClient.invalidateQueries({ queryKey: aiQueryKeys.conversations(userId ?? "") });
             queryClient.removeQueries({ queryKey: aiQueryKeys.messages(conversationId) });

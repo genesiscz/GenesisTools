@@ -1,5 +1,5 @@
-import type { AuthenticationResponse } from "@workos-inc/node";
 import { getAuthkit } from "@workos/authkit-tanstack-react-start";
+import type { AuthenticationResponse } from "@workos-inc/node";
 import { encryptSession, type Session } from "../auth-server";
 
 /**

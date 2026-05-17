@@ -3,8 +3,9 @@
  *
  * Tests for type-safe database operations with Drizzle
  */
-import { afterAll, describe, expect, test } from "vitest";
+
 import { desc, eq } from "drizzle-orm";
+import { afterAll, describe, expect, test } from "vitest";
 import { activityLogs, db, timers } from "@/drizzle";
 
 describe("Drizzle ORM - Timers", () => {

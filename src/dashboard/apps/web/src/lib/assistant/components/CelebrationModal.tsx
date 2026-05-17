@@ -65,10 +65,7 @@ function useConfetti(canvasRef: React.RefObject<HTMLCanvasElement | null>, isAct
 
         // Scale particle count to viewport area so low-end / small screens
         // do less work (≈150 on a 1280×720+ viewport, fewer when smaller).
-        const particleCount = Math.max(
-            40,
-            Math.min(150, Math.round((canvas.width * canvas.height) / 6144))
-        );
+        const particleCount = Math.max(40, Math.min(150, Math.round((canvas.width * canvas.height) / 6144)));
 
         // Create particles
         for (let i = 0; i < particleCount; i++) {

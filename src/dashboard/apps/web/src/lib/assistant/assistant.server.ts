@@ -12,7 +12,6 @@
 
 import { createServerFn } from "@tanstack/react-start";
 import { and, desc, eq } from "drizzle-orm";
-import { requireUserId } from "@/lib/auth/requireUser";
 import {
     type AssistantBadge,
     type AssistantBlocker,
@@ -58,6 +57,7 @@ import {
     type NewAssistantTask,
     type NewAssistantWeeklyReview,
 } from "@/drizzle";
+import { requireUserId } from "@/lib/auth/requireUser";
 
 // ============================================
 // Tasks CRUD
@@ -228,12 +228,7 @@ export const updateAssistantContextParking = createServerFn({
             const result = db
                 .update(assistantContextParking)
                 .set(input.data)
-                .where(
-                    and(
-                        eq(assistantContextParking.id, input.id),
-                        eq(assistantContextParking.userId, userId)
-                    )
-                )
+                .where(and(eq(assistantContextParking.id, input.id), eq(assistantContextParking.userId, userId)))
                 .returning()
                 .get();
 
@@ -301,12 +296,7 @@ export const getAssistantStreak = createServerFn({
     const userId = await requireUserId();
 
     try {
-        const result = db
-            .select()
-            .from(assistantStreaks)
-            .where(eq(assistantStreaks.userId, userId))
-            .limit(1)
-            .get();
+        const result = db.select().from(assistantStreaks).where(eq(assistantStreaks.userId, userId)).limit(1).get();
 
         return result ?? null;
     } catch (error) {
@@ -448,12 +438,7 @@ export const updateAssistantCommunication = createServerFn({
                     ...input.data,
                     updatedAt: new Date().toISOString(),
                 })
-                .where(
-                    and(
-                        eq(assistantCommunications.id, input.id),
-                        eq(assistantCommunications.userId, userId)
-                    )
-                )
+                .where(and(eq(assistantCommunications.id, input.id), eq(assistantCommunications.userId, userId)))
                 .returning()
                 .get();
 
@@ -473,12 +458,7 @@ export const deleteAssistantCommunication = createServerFn({
 
         try {
             db.delete(assistantCommunications)
-                .where(
-                    and(
-                        eq(assistantCommunications.id, data.id),
-                        eq(assistantCommunications.userId, userId)
-                    )
-                )
+                .where(and(eq(assistantCommunications.id, data.id), eq(assistantCommunications.userId, userId)))
                 .run();
             return { success: true };
         } catch (error) {
@@ -548,9 +528,7 @@ export const updateAssistantDecision = createServerFn({
                     ...input.data,
                     updatedAt: new Date().toISOString(),
                 })
-                .where(
-                    and(eq(assistantDecisions.id, input.id), eq(assistantDecisions.userId, userId))
-                )
+                .where(and(eq(assistantDecisions.id, input.id), eq(assistantDecisions.userId, userId)))
                 .returning()
                 .get();
 
@@ -570,9 +548,7 @@ export const deleteAssistantDecision = createServerFn({
 
         try {
             db.delete(assistantDecisions)
-                .where(
-                    and(eq(assistantDecisions.id, data.id), eq(assistantDecisions.userId, userId))
-                )
+                .where(and(eq(assistantDecisions.id, data.id), eq(assistantDecisions.userId, userId)))
                 .run();
             return { success: true };
         } catch (error) {
@@ -622,12 +598,7 @@ export const getAssistantBlockersByTask = createServerFn({
             return db
                 .select()
                 .from(assistantBlockers)
-                .where(
-                    and(
-                        eq(assistantBlockers.taskId, data.taskId),
-                        eq(assistantBlockers.userId, userId)
-                    )
-                )
+                .where(and(eq(assistantBlockers.taskId, data.taskId), eq(assistantBlockers.userId, userId)))
                 .orderBy(desc(assistantBlockers.blockedSince))
                 .all();
         } catch (error) {
@@ -744,12 +715,7 @@ export const getAssistantHandoffsByTask = createServerFn({
             const results = db
                 .select()
                 .from(assistantHandoffs)
-                .where(
-                    and(
-                        eq(assistantHandoffs.taskId, data.taskId),
-                        eq(assistantHandoffs.userId, userId)
-                    )
-                )
+                .where(and(eq(assistantHandoffs.taskId, data.taskId), eq(assistantHandoffs.userId, userId)))
                 .orderBy(desc(assistantHandoffs.handoffAt))
                 .all();
 
@@ -838,12 +804,7 @@ export const getAssistantDeadlineRiskByTask = createServerFn({
             const result = db
                 .select()
                 .from(assistantDeadlineRisks)
-                .where(
-                    and(
-                        eq(assistantDeadlineRisks.taskId, data.taskId),
-                        eq(assistantDeadlineRisks.userId, userId)
-                    )
-                )
+                .where(and(eq(assistantDeadlineRisks.taskId, data.taskId), eq(assistantDeadlineRisks.userId, userId)))
                 .orderBy(desc(assistantDeadlineRisks.calculatedAt))
                 .limit(1)
                 .get();
@@ -1103,12 +1064,7 @@ export const markAssistantCelebrationShown = createServerFn({
             const result = db
                 .update(assistantCelebrations)
                 .set({ shownAt: new Date().toISOString() })
-                .where(
-                    and(
-                        eq(assistantCelebrations.id, data.id),
-                        eq(assistantCelebrations.userId, userId)
-                    )
-                )
+                .where(and(eq(assistantCelebrations.id, data.id), eq(assistantCelebrations.userId, userId)))
                 .returning()
                 .get();
 
@@ -1130,12 +1086,7 @@ export const dismissAssistantCelebration = createServerFn({
             const result = db
                 .update(assistantCelebrations)
                 .set({ dismissed: 1 })
-                .where(
-                    and(
-                        eq(assistantCelebrations.id, data.id),
-                        eq(assistantCelebrations.userId, userId)
-                    )
-                )
+                .where(and(eq(assistantCelebrations.id, data.id), eq(assistantCelebrations.userId, userId)))
                 .returning()
                 .get();
 

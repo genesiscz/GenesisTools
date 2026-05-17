@@ -1,5 +1,12 @@
 import { Button } from "@ui/components/button";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@ui/components/dialog";
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+} from "@ui/components/dialog";
 import { createContext, useCallback, useContext, useRef, useState } from "react";
 
 interface ConfirmOptions {
@@ -59,10 +66,7 @@ export function ConfirmProvider({ children }: { children: React.ReactNode }) {
                         <Button variant="outline" onClick={() => settle(false)}>
                             {opts?.cancelText ?? "Cancel"}
                         </Button>
-                        <Button
-                            variant={opts?.destructive ? "destructive" : "brand"}
-                            onClick={() => settle(true)}
-                        >
+                        <Button variant={opts?.destructive ? "destructive" : "brand"} onClick={() => settle(true)}>
                             {opts?.confirmText ?? "Confirm"}
                         </Button>
                     </DialogFooter>
