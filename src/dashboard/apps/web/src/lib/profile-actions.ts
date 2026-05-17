@@ -125,25 +125,25 @@ export const removeAvatarFn = createServerFn({ method: "POST" }).handler(async (
     }
 
     try {
-            for (const ext of ALLOWED_EXTS) {
-                const filePath = join(AVATAR_DIR, `${userId}${ext}`);
-                const exists = await access(filePath)
-                    .then(() => true)
-                    .catch(() => false);
+        for (const ext of ALLOWED_EXTS) {
+            const filePath = join(AVATAR_DIR, `${userId}${ext}`);
+            const exists = await access(filePath)
+                .then(() => true)
+                .catch(() => false);
 
-                if (exists) {
-                    await unlink(filePath);
-                }
+            if (exists) {
+                await unlink(filePath);
             }
-
-            await setWorkOSProfilePicture(userId, null);
-
-            return { success: true as const };
-        } catch (error) {
-            console.error("[removeAvatarFn] Error:", SafeJSON.stringify(error));
-            return {
-                code: "remove_error" as const,
-                message: error instanceof Error ? error.message : "Failed to remove avatar",
-            };
         }
-    });
+
+        await setWorkOSProfilePicture(userId, null);
+
+        return { success: true as const };
+    } catch (error) {
+        console.error("[removeAvatarFn] Error:", SafeJSON.stringify(error));
+        return {
+            code: "remove_error" as const,
+            message: error instanceof Error ? error.message : "Failed to remove avatar",
+        };
+    }
+});

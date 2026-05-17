@@ -29,8 +29,7 @@ export function registerTimerTools(server: McpServer, userId: string) {
     server.registerTool(
         "upsert_timer",
         {
-            description:
-                "Create or update a timer for the owner. Omit id to let the server generate one.",
+            description: "Create or update a timer for the owner. Omit id to let the server generate one.",
             inputSchema: {
                 id: z.string().optional().describe("Timer ID (omit to create new)"),
                 label: z.string().describe("Timer label / name"),
