@@ -45,13 +45,11 @@ export interface StorageAdapter {
 }
 
 /**
- * Storage mode configuration
- *
- * Both modes sync to backend SQLite. The difference is local storage:
- * - 'localstorage': Browser localStorage + HTTP sync to backend
- * - 'powersync': PowerSync SQLite (offline-first) + automatic sync to backend
+ * Storage mode. PowerSync and the localStorage backend were removed — the
+ * server (better-sqlite3 via TanStack Start server fns) is the single source
+ * of truth. Kept as a one-member type so existing re-exports stay valid.
  */
-export type StorageMode = "localstorage" | "powersync";
+export type StorageMode = "sqlite";
 
 /**
  * Timer state for in-memory operations

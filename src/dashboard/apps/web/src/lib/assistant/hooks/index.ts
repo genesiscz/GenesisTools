@@ -1,17 +1,17 @@
-// Core Phase 1 hooks (localStorage)
+// Assistant hooks — all backed by SQLite via TanStack Start server fns (no localStorage).
 
 export { useBadgeProgress } from "./useBadgeProgress";
 export { blockersStore, useBlockers } from "./useBlockers";
 export { useCelebrations } from "./useCelebrations";
 
-// Phase 2 hooks (localStorage)
+// Phase 2 hooks
 export { communicationStore, useCommunicationLog } from "./useCommunicationLog";
 export { useContextParking } from "./useContextParking";
 export { useDeadlineRisk } from "./useDeadlineRisk";
 export { decisionStore, useDecisionLog } from "./useDecisionLog";
 export { useDistractions } from "./useDistractions";
 
-// Phase 3 hooks (localStorage)
+// Phase 3 hooks
 export { useEnergyData } from "./useEnergyData";
 export { useHandoff } from "./useHandoff";
 export { useStreak } from "./useStreak";

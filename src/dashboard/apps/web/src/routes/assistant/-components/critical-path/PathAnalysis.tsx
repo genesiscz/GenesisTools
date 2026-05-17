@@ -62,6 +62,12 @@ function getUrgencyColors(urgency: Task["urgencyLevel"]): {
     }
 }
 
+/**
+ * @deprecated UNUSED as of 2026-05-17 (prod-readiness audit). Exported but no
+ * external consumer ($taskId renders CriticalPathGraph directly, not this).
+ * Retained for a possible critical-path-v2 revival; delete if still unused at
+ * the next audit. Do not import without re-reviewing data wiring.
+ */
 export function PathAnalysis({ analysis, onTaskClick, className }: PathAnalysisProps) {
     const {
         criticalPath,

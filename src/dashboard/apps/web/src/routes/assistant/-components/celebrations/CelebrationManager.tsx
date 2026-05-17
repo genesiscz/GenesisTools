@@ -77,6 +77,13 @@ function saveSettings(settings: CelebrationSettings): void {
     }
 }
 
+/**
+ * @deprecated UNUSED as of 2026-05-17 (prod-readiness audit). No route mounts
+ * CelebrationManagerProvider — this whole manager (store + provider + hook) has
+ * zero external consumers. Retained for a possible celebrations-v2 revival;
+ * delete if still unused at the next audit. Do not import without re-reviewing
+ * how/where the provider would be mounted.
+ */
 export const celebrationManagerStore = new Store<CelebrationManagerState>({
     queue: [],
     settings: loadSettings(),

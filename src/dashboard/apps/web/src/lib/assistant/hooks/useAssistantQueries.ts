@@ -5,7 +5,8 @@
  * - refetchOnWindowFocus for sync-on-focus
  * - 30s staleTime for caching
  * - Query key factories for cache management
- * - localStorage fallback is handled in the individual feature hooks
+ * (Server SQLite via TanStack Start server fns is the only data source — no
+ * localStorage fallback exists.)
  */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
