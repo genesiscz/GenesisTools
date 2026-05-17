@@ -188,11 +188,9 @@ export function useTaskStore(userId: string | null) {
                 updatedAt: now,
             } as Task;
         } catch (err) {
-            taskStore.setState((s) => ({
-                ...s,
-                error: err instanceof Error ? err.message : "Failed to create task",
-            }));
-            return null;
+            const message = err instanceof Error ? err.message : "Failed to create task";
+            taskStore.setState((s) => ({ ...s, error: message }));
+            throw err instanceof Error ? err : new Error(message);
         }
     }
 
@@ -260,11 +258,9 @@ export function useTaskStore(userId: string | null) {
                 updatedAt: new Date(),
             };
         } catch (err) {
-            taskStore.setState((s) => ({
-                ...s,
-                error: err instanceof Error ? err.message : "Failed to update task",
-            }));
-            return null;
+            const message = err instanceof Error ? err.message : "Failed to update task";
+            taskStore.setState((s) => ({ ...s, error: message }));
+            throw err instanceof Error ? err : new Error(message);
         }
     }
 
@@ -273,11 +269,9 @@ export function useTaskStore(userId: string | null) {
             const result = await deleteTaskMutation.mutateAsync({ id, userId: userId! });
             return result.success;
         } catch (err) {
-            taskStore.setState((s) => ({
-                ...s,
-                error: err instanceof Error ? err.message : "Failed to delete task",
-            }));
-            return false;
+            const message = err instanceof Error ? err.message : "Failed to delete task";
+            taskStore.setState((s) => ({ ...s, error: message }));
+            throw err instanceof Error ? err : new Error(message);
         }
     }
 

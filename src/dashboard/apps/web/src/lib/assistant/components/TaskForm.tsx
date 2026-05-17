@@ -95,6 +95,7 @@ export function TaskForm({ open, onOpenChange, onSubmit, initialValues, isEdit =
     const [deadline, setDeadline] = useState(initialValues?.deadline ? formatDateForInput(initialValues.deadline) : "");
     const [isShippingBlocker, setIsShippingBlocker] = useState(initialValues?.isShippingBlocker ?? false);
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [submitError, setSubmitError] = useState<string | null>(null);
 
     function formatDateForInput(date: Date): string {
         const d = new Date(date);
@@ -107,6 +108,7 @@ export function TaskForm({ open, onOpenChange, onSubmit, initialValues, isEdit =
         setUrgency(initialValues?.urgencyLevel ?? "nice-to-have");
         setDeadline(initialValues?.deadline ? formatDateForInput(initialValues.deadline) : "");
         setIsShippingBlocker(initialValues?.isShippingBlocker ?? false);
+        setSubmitError(null);
     }
 
     async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
@@ -116,6 +118,7 @@ export function TaskForm({ open, onOpenChange, onSubmit, initialValues, isEdit =
             return;
         }
 
+        setSubmitError(null);
         setIsSubmitting(true);
         try {
             await onSubmit({
@@ -130,6 +133,8 @@ export function TaskForm({ open, onOpenChange, onSubmit, initialValues, isEdit =
                 resetForm();
             }
             onOpenChange(false);
+        } catch (err) {
+            setSubmitError(err instanceof Error ? err.message : "Failed to save task. Please retry.");
         } finally {
             setIsSubmitting(false);
         }
@@ -154,6 +159,12 @@ export function TaskForm({ open, onOpenChange, onSubmit, initialValues, isEdit =
             maxWidth="sm:max-w-[500px]"
         >
             <div className="space-y-5">
+                {submitError && (
+                    <AlertBlock color="rose" className="text-sm text-rose-300">
+                        {submitError}
+                    </AlertBlock>
+                )}
+
                 {/* Title */}
                 <FormField id="title" label="Task Title" required>
                     <Input
