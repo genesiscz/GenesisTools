@@ -5,20 +5,37 @@ import { Mosaic, type MosaicNode, MosaicWindow } from "react-mosaic-component";
 import "react-mosaic-component/react-mosaic-component.css";
 import { Button } from "@ui/components/button";
 import { TtydPane } from "@/components/TtydPane";
-import { useMediaQuery } from "@/hooks/useMediaQuery";
+import { MobileTerminalShell } from "@/components/terminal-shell/MobileTerminalShell";
+import { useLayoutMode } from "@/hooks/useLayoutMode";
 import { ttydApi } from "@/lib/api";
 import { buildBalancedMosaicLayout, flattenMosaicLeaves, reconcileMosaicLayout } from "@/lib/mosaic-layout";
+import { buildTtydTabs } from "@/lib/terminal-tabs";
+
+function LayoutToggle({ mode, setMode }: { mode: "mosaic" | "focused"; setMode: (m: "mosaic" | "focused") => void }) {
+    return (
+        <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setMode(mode === "mosaic" ? "focused" : "mosaic")}
+            aria-label="toggle layout"
+        >
+            {mode === "mosaic" ? "Focused" : "Mosaic"}
+        </Button>
+    );
+}
 
 export function TtydRoute() {
     const queryClient = useQueryClient();
     const { data } = useQuery({ queryKey: ["ttyd", "list"], queryFn: ttydApi.list });
     const sessions = data?.sessions ?? [];
     const [layout, setLayout] = useState<MosaicNode<string> | null>(null);
+    const { mode, isMobile, setMode } = useLayoutMode("ttyd");
+    const [activeId, setActiveId] = useState<string | null>(null);
+    const active = activeId ?? sessions[0]?.id ?? null;
 
-    // Phone-width screens stack panes vertically (maxColumns 1 → column split)
-    // instead of squeezing terminals side by side.
-    const isNarrow = useMediaQuery("(max-width: 640px)");
-    const maxColumns = isNarrow ? 1 : 3;
+    // Mosaic layout maths (desktop-mosaic only). Hooks stay unconditional;
+    // the computed `layout` is simply unused in focused mode.
+    const maxColumns = 3;
 
     useEffect(() => {
         setLayout((current) =>
@@ -28,7 +45,7 @@ export function TtydRoute() {
                 { maxColumns }
             )
         );
-    }, [sessions, maxColumns]);
+    }, [sessions]);
 
     useEffect(() => {
         setLayout((current) => {
@@ -39,7 +56,7 @@ export function TtydRoute() {
 
             return buildBalancedMosaicLayout(ids, { maxColumns });
         });
-    }, [maxColumns]);
+    }, []);
 
     const spawn = useMutation({
         mutationFn: () => ttydApi.spawn(),
@@ -55,6 +72,54 @@ export function TtydRoute() {
         },
     });
 
+    const renameMut = useMutation({
+        mutationFn: ({ id, name }: { id: string; name: string }) => ttydApi.rename(id, name),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ["ttyd", "list"] });
+        },
+    });
+
+    if (mode === "focused") {
+        return (
+            <div className="dd-focused-host relative h-[100dvh]">
+                {!isMobile ? (
+                    <div className="absolute right-2 top-1 z-30">
+                        <LayoutToggle mode={mode} setMode={setMode} />
+                    </div>
+                ) : null}
+                {sessions.length > 0 ? (
+                    <MobileTerminalShell
+                        tabs={buildTtydTabs(sessions, active).map((t) => ({ ...t, dot: "active" as const }))}
+                        onSelect={setActiveId}
+                        onRename={(id, name) => renameMut.mutate({ id, name })}
+                        primaryAction={{ label: "＋", onClick: () => spawn.mutate() }}
+                        renderPreview={(id) => {
+                            const s = sessions.find((x) => x.id === id);
+
+                            return s ? (
+                                <iframe
+                                    src={`/ttyd/${encodeURIComponent(s.id)}/`}
+                                    title={`ttyd-prev-${id}`}
+                                    className="h-full w-full border-0 bg-black"
+                                />
+                            ) : null;
+                        }}
+                    >
+                        {sessions.map((s) => (
+                            <div key={s.id} className={s.id === active ? "absolute inset-0" : "hidden"}>
+                                <TtydPane session={s} />
+                            </div>
+                        ))}
+                    </MobileTerminalShell>
+                ) : (
+                    <div className="dd-panel flex h-full items-center justify-center text-[var(--dd-text-muted)]">
+                        No terminals — tap ＋ to start one.
+                    </div>
+                )}
+            </div>
+        );
+    }
+
     return (
         <div className="flex h-[calc(100vh-2rem)] flex-col gap-2">
             <div className="flex items-center gap-2">
@@ -64,6 +129,11 @@ export function TtydRoute() {
                 <span className="text-[11px] font-mono text-[var(--dd-text-muted)]">
                     drag dividers to resize · close a window to kill the session
                 </span>
+                {!isMobile ? (
+                    <span className="ml-auto">
+                        <LayoutToggle mode={mode} setMode={setMode} />
+                    </span>
+                ) : null}
             </div>
             <div className="flex-1 overflow-hidden">
                 {layout && sessions.length > 0 ? (

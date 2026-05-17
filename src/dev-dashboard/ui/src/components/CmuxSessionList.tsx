@@ -7,6 +7,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Mosaic, type MosaicNode, MosaicWindow } from "react-mosaic-component";
 import "react-mosaic-component/react-mosaic-component.css";
 import { SemanticTerminalPreview } from "@/components/SemanticTerminalPreview";
+import { MobileTerminalShell } from "@/components/terminal-shell/MobileTerminalShell";
+import { useLayoutMode } from "@/hooks/useLayoutMode";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { cmuxApi } from "@/lib/api";
 import {
@@ -64,6 +66,12 @@ export function CmuxSessionList({ snapshot }: Props) {
     const attach = useMutation({
         mutationFn: (target: { workspaceId: string; paneId: string }) => cmuxApi.attach(target),
     });
+    const renameMut = useMutation({
+        mutationFn: (body: { workspaceId: string; surfaceId?: string; title: string }) => cmuxApi.rename(body),
+        // snapshot poll (2s, in CmuxRoute) reflects the new title — no invalidate.
+    });
+    const { mode, isMobile, setMode } = useLayoutMode("cmux");
+    const [activePaneId, setActivePaneId] = useState<string | null>(null);
     const removeGonePane = useCallback((id: string) => {
         setLayout((current) => pruneMosaicLeaves(current, new Set([id])));
     }, []);
@@ -126,12 +134,110 @@ export function CmuxSessionList({ snapshot }: Props) {
         );
     }
 
+    const surfaceFor = (paneId: string) => {
+        const pane = paneById.get(paneId);
+        if (!pane) {
+            return undefined;
+        }
+
+        const list = pane.surfaces ?? [];
+        return (
+            list.find((surface) => surface.id === surfaceSelectionByPaneId[pane.id]) ??
+            list.find((surface) => surface.selected) ??
+            list[0]
+        );
+    };
+
+    if (mode === "focused") {
+        const activePane = panes.find((p) => p.id === activePaneId) ?? panes.find((p) => p.active) ?? panes[0] ?? null;
+        const activeSurface = activePane ? surfaceFor(activePane.id) : undefined;
+
+        return (
+            <div className="dd-focused-host relative h-[100dvh]">
+                {!isMobile ? (
+                    <div className="absolute right-2 top-1 z-30">
+                        <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => setMode(mode === "focused" ? "mosaic" : "focused")}
+                            aria-label="toggle layout"
+                        >
+                            Mosaic
+                        </Button>
+                    </div>
+                ) : null}
+                {activePane ? (
+                    <MobileTerminalShell
+                        tabs={panes.map((p) => {
+                            const ws = workspaceById.get(p.workspaceId);
+
+                            return {
+                                id: p.id,
+                                label: ws?.name ? `${ws.name} · ${p.title}` : p.title,
+                                active: p.id === activePane.id,
+                                dot: p.active ? ("active" as const) : ("idle" as const),
+                                lastLine: (surfaceFor(p.id)?.preview ?? p.preview ?? "").split("\n")[0],
+                            };
+                        })}
+                        secondaryTabs={(activePane.surfaces ?? []).map((s) => ({
+                            id: s.id,
+                            label: s.title,
+                            active: s.id === activeSurface?.id,
+                        }))}
+                        onSelect={setActivePaneId}
+                        onSelectSecondary={(surfaceId) =>
+                            setSurfaceSelectionByPaneId((current) => ({ ...current, [activePane.id]: surfaceId }))
+                        }
+                        onRename={(_id, name) => renameMut.mutate({ workspaceId: activePane.workspaceId, title: name })}
+                        onRenameSecondary={(surfaceId, name) =>
+                            renameMut.mutate({ workspaceId: activePane.workspaceId, surfaceId, title: name })
+                        }
+                        primaryAction={{
+                            label: "attach",
+                            onClick: () =>
+                                attach.mutate({ workspaceId: activePane.workspaceId, paneId: activePane.id }),
+                        }}
+                        renderPreview={(paneId) => (
+                            <SemanticTerminalPreview
+                                preview={
+                                    surfaceFor(paneId)?.preview || paneById.get(paneId)?.preview || "(no snapshot text)"
+                                }
+                            />
+                        )}
+                    >
+                        <div className="absolute inset-0 overflow-hidden p-2 font-mono">
+                            <SemanticTerminalPreview
+                                preview={activeSurface?.preview || activePane.preview || "(no snapshot text)"}
+                            />
+                        </div>
+                    </MobileTerminalShell>
+                ) : (
+                    <div className="dd-panel flex h-full items-center justify-center text-[var(--dd-text-muted)]">
+                        No cmux panes in the current snapshot.
+                    </div>
+                )}
+            </div>
+        );
+    }
+
     return (
         <TooltipProvider>
             <div className="flex h-full flex-col gap-2 overflow-hidden font-mono">
                 <div className="dd-panel flex items-center justify-between px-3 py-2 text-[11px] text-[var(--dd-text-muted)]">
                     <span>snapshot · {new Date(snapshot.fetchedAt).toLocaleTimeString()}</span>
-                    <span>drag panes to reorder · drag dividers to resize · live snapshot</span>
+                    <span className="flex items-center gap-3">
+                        <span>drag panes to reorder · drag dividers to resize · live snapshot</span>
+                        {!isMobile ? (
+                            <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => setMode("focused")}
+                                aria-label="toggle layout"
+                            >
+                                Focused
+                            </Button>
+                        ) : null}
+                    </span>
                 </div>
                 <div className="min-h-0 flex-1">
                     {layout ? (
