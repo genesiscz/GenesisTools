@@ -167,56 +167,82 @@ export function CmuxSessionList({ snapshot }: Props) {
                         </Button>
                     </div>
                 ) : null}
-                {activePane ? (
-                    <MobileTerminalShell
-                        tabs={panes.map((p) => {
-                            const ws = workspaceById.get(p.workspaceId);
+                {/* Always render the shell so the edge/nav + strip are present
+                    even when there are no cmux panes (lets you navigate away). */}
+                <MobileTerminalShell
+                    tabs={panes.map((p) => {
+                        const ws = workspaceById.get(p.workspaceId);
 
-                            return {
-                                id: p.id,
-                                label: ws?.name ? `${ws.name} · ${p.title}` : p.title,
-                                active: p.id === activePane.id,
-                                dot: p.active ? ("active" as const) : ("idle" as const),
-                                lastLine: (surfaceFor(p.id)?.preview ?? p.preview ?? "").split("\n")[0],
-                            };
-                        })}
-                        secondaryTabs={(activePane.surfaces ?? []).map((s) => ({
-                            id: s.id,
-                            label: s.title,
-                            active: s.id === activeSurface?.id,
-                        }))}
-                        onSelect={setActivePaneId}
-                        onSelectSecondary={(surfaceId) =>
-                            setSurfaceSelectionByPaneId((current) => ({ ...current, [activePane.id]: surfaceId }))
-                        }
-                        onRename={(_id, name) => renameMut.mutate({ workspaceId: activePane.workspaceId, title: name })}
-                        onRenameSecondary={(surfaceId, name) =>
-                            renameMut.mutate({ workspaceId: activePane.workspaceId, surfaceId, title: name })
-                        }
-                        primaryAction={{
-                            label: "attach",
-                            onClick: () =>
-                                attach.mutate({ workspaceId: activePane.workspaceId, paneId: activePane.id }),
-                        }}
-                        renderPreview={(paneId) => (
-                            <SemanticTerminalPreview
-                                preview={
-                                    surfaceFor(paneId)?.preview || paneById.get(paneId)?.preview || "(no snapshot text)"
-                                }
-                            />
-                        )}
-                    >
+                        return {
+                            id: p.id,
+                            label: ws?.name ? `${ws.name} · ${p.title}` : p.title,
+                            active: p.id === activePane?.id,
+                            dot: p.active ? ("active" as const) : ("idle" as const),
+                            lastLine: (surfaceFor(p.id)?.preview ?? p.preview ?? "").split("\n")[0],
+                        };
+                    })}
+                    secondaryTabs={
+                        activePane
+                            ? (activePane.surfaces ?? []).map((s) => ({
+                                  id: s.id,
+                                  label: s.title,
+                                  active: s.id === activeSurface?.id,
+                              }))
+                            : undefined
+                    }
+                    onSelect={setActivePaneId}
+                    onSelectSecondary={
+                        activePane
+                            ? (surfaceId) =>
+                                  setSurfaceSelectionByPaneId((current) => ({
+                                      ...current,
+                                      [activePane.id]: surfaceId,
+                                  }))
+                            : undefined
+                    }
+                    onRename={
+                        activePane
+                            ? (_id, name) => renameMut.mutate({ workspaceId: activePane.workspaceId, title: name })
+                            : undefined
+                    }
+                    onRenameSecondary={
+                        activePane
+                            ? (surfaceId, name) =>
+                                  renameMut.mutate({ workspaceId: activePane.workspaceId, surfaceId, title: name })
+                            : undefined
+                    }
+                    primaryAction={
+                        activePane
+                            ? {
+                                  label: "attach",
+                                  onClick: () =>
+                                      attach.mutate({
+                                          workspaceId: activePane.workspaceId,
+                                          paneId: activePane.id,
+                                      }),
+                              }
+                            : undefined
+                    }
+                    renderPreview={(paneId) => (
+                        <SemanticTerminalPreview
+                            preview={
+                                surfaceFor(paneId)?.preview || paneById.get(paneId)?.preview || "(no snapshot text)"
+                            }
+                        />
+                    )}
+                >
+                    {activePane ? (
                         <div className="absolute inset-0 overflow-hidden p-2 font-mono">
                             <SemanticTerminalPreview
                                 preview={activeSurface?.preview || activePane.preview || "(no snapshot text)"}
                             />
                         </div>
-                    </MobileTerminalShell>
-                ) : (
-                    <div className="dd-panel flex h-full items-center justify-center text-[var(--dd-text-muted)]">
-                        No cmux panes in the current snapshot.
-                    </div>
-                )}
+                    ) : (
+                        <div className="flex h-full items-center justify-center text-[var(--dd-text-muted)]">
+                            No cmux panes in the current snapshot.
+                        </div>
+                    )}
+                </MobileTerminalShell>
             </div>
         );
     }

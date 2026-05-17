@@ -1,4 +1,5 @@
 import type { TtydSession } from "@app/dev-dashboard/lib/ttyd/types";
+import { TtydFrame } from "@/components/TtydFrame";
 
 interface Props {
     session: TtydSession;
@@ -11,11 +12,7 @@ export function TtydPane({ session }: Props) {
                 <span className="font-mono">ttyd · {session.command}</span>
                 <span className="font-mono text-[var(--dd-text-muted)]">:{session.port}</span>
             </div>
-            <iframe
-                src={`/ttyd/${encodeURIComponent(session.id)}/`}
-                title={`ttyd-${session.id}`}
-                className="flex-1 border-0 bg-black"
-            />
+            <TtydFrame id={session.id} title={`ttyd-${session.id}`} className="flex-1 border-0 bg-black" />
         </div>
     );
 }
