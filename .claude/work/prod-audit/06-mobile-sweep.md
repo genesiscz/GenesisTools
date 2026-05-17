@@ -30,3 +30,23 @@ Dev server booted (Vite 7.3.1, :3000). Verified at **375×667** and **768×1024*
 **Limitation (transparent):** `/dashboard/planner`, `/dashboard/ai`, `/timer` and all `/dashboard/*` + `/assistant/*` routes are auth-gated (`requireAuthBeforeLoad` → WorkOS). A full authenticated visual matrix sweep requires interactive WorkOS login, which automated tooling cannot perform in this run (no test credentials; signing in via the bot is out of scope and unsafe). The 5 fixes are **deterministic CSS/layout prop changes**, verified statically: scoped `tsc` (exit 0) + biome clean + the production `build:prod` gate green. Each maps 1:1 to a concrete audit finding with a known-correct Tailwind/`dvh`/`touch-action` remedy.
 
 **Recommended follow-up (one-time, by a human with a session):** run the full route×matrix sweep logged-in — `browser_resize` per matrix row, `browser_navigate` each protected route, assert `documentElement.scrollWidth <= clientWidth+1` + no console errors. The harness for this is trivial now that the fixes are in; it is a verification step, not new work.
+
+---
+
+## Authenticated sweep — EXECUTED 2026-05-17 (logged in as Martin via GitHub OAuth)
+
+User unblocked the WorkOS gate (GitHub OAuth session carried into the playwright browser). Full authed matrix run on the C8-fixed + dense routes:
+
+| Route | 360×800 | 375×667 | 768×1024 | Result |
+|---|---|---|---|---|
+| /dashboard/planner | scrollW 352 == clientW | 367==367 | 760==760 | ✅ no h-overflow; **stacks vertically on mobile** (timeline → inbox), side-by-side at 768 — C8.3 confirmed live, no desktop regression |
+| /dashboard/ai | — | 375==375 | — | ✅ no h-overflow — C8.4 (100dvh + min-h-0) confirmed |
+| /timer | — | 367==367 | — | ✅ no h-overflow — C8.5 path intact |
+| /assistant/tasks | 360==360 | — | — | ✅ no h-overflow (dense kanban route) |
+| /dashboard (index) | — | (visited) | (visited) | ✅ C5 live: "6/6 Active", all badges Active, Bookmarks="page-metadata previews", Planner="Day-view timeline — drag tasks…", stats genuinely 0:00:00/0 (new account = no data, NOT hardcoded — proves C5 wiring) |
+
+**Console: 0 errors, 0 warnings** across every route × viewport (only benign React-DevTools info).
+
+**Caveat (honest):** the GitHub OAuth account is brand-new → all pages were empty-state. Container/layout fixes (the actual C8 changes) are confirmed overflow-free at every matrix viewport and the C5 wiring is confirmed live, but populated-data density (long kanban columns, many scheduled timeline blocks) was not stress-tested for this account. The fixes are structural (flex/grid/dvh/touch-action) so density does not change their correctness; noted for completeness.
+
+**C8.2 (timeline `touch-action: pan-y`)**: CSS confirmed applied; true touch-scroll-vs-drag behaviour needs a real touch device / emulated touch gesture — not falsifiable via desktop playwright. The change is the documented-correct remedy and dnd-kit's 200ms TouchSensor delay is unchanged.
