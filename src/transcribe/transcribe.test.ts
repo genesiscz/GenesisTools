@@ -123,6 +123,32 @@ describe("speaker-aware rendering", () => {
         expect(formatOutput(result, "text")).toBe("SPEAKER_00: A.\nSPEAKER_01: B.");
     });
 
+    it("merges same-speaker cues across a long silence (diarized: no 6s split)", () => {
+        const result: TranscriptionResult = {
+            text: "x",
+            segments: [
+                { text: "Začátek věty", start: 0, end: 2, speaker: "SPEAKER_00" },
+                { text: "a pokračování po pauze.", start: 9, end: 11, speaker: "SPEAKER_00" },
+            ],
+        };
+        expect(toSRT(result)).toBe(
+            "1\n00:00:00,000 --> 00:00:11,000\nSPEAKER_00: Začátek věty a pokračování po pauze.",
+        );
+    });
+
+    it("still splits non-diarized cues on the 6s gap", () => {
+        const result: TranscriptionResult = {
+            text: "x",
+            segments: [
+                { text: "first part", start: 0, end: 2 },
+                { text: "after long gap.", start: 9, end: 11 },
+            ],
+        };
+        const srt = toSRT(result);
+        expect(srt).toContain("1\n00:00:00,000 --> 00:00:02,000\nfirst part");
+        expect(srt).toContain("2\n00:00:09,000 --> 00:00:11,000\nafter long gap.");
+    });
+
     it("text format unchanged when no segment has a speaker", () => {
         const result: TranscriptionResult = {
             text: "plain transcript",

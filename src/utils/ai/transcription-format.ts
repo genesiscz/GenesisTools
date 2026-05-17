@@ -50,7 +50,13 @@ function coalesceSegmentsForSubtitles(segments: TranscriptionSegment[]): Transcr
         } else {
             const merged = `${cur.text} ${piece}`;
             const tooLong = merged.length > MAX_CUE_CHARS;
-            const tooSlow = seg.end - cur.start > MAX_CUE_SECONDS;
+            // For diarized output a speaker's turn legitimately spans pauses;
+            // the 6s gap-flush would shatter one turn into single-word cues
+            // (mis-grouping it under the metric and reading badly). Keep the
+            // time flush only for non-diarized subtitles; a speaker change or
+            // the char cap still bound diarized cues.
+            const diarized = cur.speaker !== undefined;
+            const tooSlow = !diarized && seg.end - cur.start > MAX_CUE_SECONDS;
             const speakerChanged = cur.speaker !== seg.speaker;
 
             if (tooLong || tooSlow || speakerChanged) {
