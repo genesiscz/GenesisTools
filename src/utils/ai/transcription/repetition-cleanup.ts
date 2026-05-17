@@ -9,12 +9,15 @@ const ZLIB_FLAG_RATIO = 2.4;
 const ZLIB_WINDOW_WORDS = 120;
 
 function norm(s: string): string {
+    // Strip ALL non-alphanumeric (not just trailing punctuation) so repetition
+    // detection is robust to leading/internal punctuation — `(Ještě` and
+    // `Ještě,` and `Ještě` all normalize equal. Diacritics are decomposed and
+    // dropped first so Czech case/accent variants collapse together.
     return s
         .normalize("NFD")
         .replace(/[̀-ͯ]/g, "")
         .toLowerCase()
-        .replace(/["'.,?!…]+$/g, "")
-        .trim();
+        .replace(/[^\p{L}\p{N}]+/gu, "");
 }
 
 function spanEq(a: string[], s: number, e: number, t: number): boolean {

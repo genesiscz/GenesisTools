@@ -10,6 +10,10 @@ export function normalizeSpeakerLabel(raw: string | number | null | undefined): 
     }
 
     if (typeof raw === "number") {
+        if (!Number.isInteger(raw) || raw < 0) {
+            return undefined;
+        }
+
         return `SPEAKER_${String(raw).padStart(2, "0")}`;
     }
 

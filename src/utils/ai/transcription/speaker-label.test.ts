@@ -21,4 +21,11 @@ describe("normalizeSpeakerLabel", () => {
         expect(normalizeSpeakerLabel(null)).toBeUndefined();
         expect(normalizeSpeakerLabel("")).toBeUndefined();
     });
+
+    it("rejects invalid numeric ids (negative, non-integer, NaN, Infinity)", () => {
+        expect(normalizeSpeakerLabel(-1)).toBeUndefined();
+        expect(normalizeSpeakerLabel(1.5)).toBeUndefined();
+        expect(normalizeSpeakerLabel(Number.NaN)).toBeUndefined();
+        expect(normalizeSpeakerLabel(Number.POSITIVE_INFINITY)).toBeUndefined();
+    });
 });

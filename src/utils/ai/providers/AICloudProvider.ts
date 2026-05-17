@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -92,7 +93,7 @@ export class AICloudProvider
     }
 
     async transcribe(audio: Buffer, options?: TranscribeOptions): Promise<TranscriptionResult> {
-        const stamp = Date.now();
+        const stamp = `${Date.now()}-${randomUUID()}`;
         const ext = sniffAudioExt(audio);
         const rawPath = join(tmpdir(), `ai-transcribe-${stamp}.${ext}`);
         await Bun.write(rawPath, audio);

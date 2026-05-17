@@ -80,9 +80,16 @@ export class Transcriber {
         }
 
         if (CLOUD_PROVIDER_TYPES.has(this.provider.type) && audio.length > MAX_CLOUD_BYTES) {
-            if (options?.diarize) {
+            // Only Deepgram accepts large single uploads AND diarizes natively,
+            // so only it benefits from (and survives) bypassing the size-split.
+            // OpenAI/Groq reject >25 MB, so they must still chunk — local
+            // diarization runs on the full original buffer regardless
+            // (maybeDiarizeLocal), so the global-label invariant is preserved.
+            const deepgramNativeDiarize = options?.diarize === true && this.provider.type === "deepgram";
+
+            if (deepgramNativeDiarize) {
                 logger.info(
-                    "Diarization requested — bypassing size-split so the whole file is one request and speaker labels share a single global space"
+                    "Deepgram diarization — bypassing size-split (accepts large uploads; one request ⇒ one global speaker label space)"
                 );
             } else {
                 return this.transcribeChunked(
