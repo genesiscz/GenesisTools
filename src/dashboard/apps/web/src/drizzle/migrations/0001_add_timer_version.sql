@@ -1,0 +1,1 @@
+ALTER TABLE `timers` ADD `version` integer DEFAULT 0 NOT NULL;

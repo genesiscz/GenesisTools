@@ -1,0 +1,55 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1778813283939,
+      "tag": "0000_cooing_morg",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1778815917455,
+      "tag": "0001_add_timer_version",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1778818845130,
+      "tag": "0002_planner_scheduling_columns",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1778866571329,
+      "tag": "0003_absent_magik",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1778867872932,
+      "tag": "0004_previous_naoko",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1778869365812,
+      "tag": "0005_mixed_talkback",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1779022018327,
+      "tag": "0006_bored_ben_urich",
+      "breakpoints": true
+    }
+  ]
+}
