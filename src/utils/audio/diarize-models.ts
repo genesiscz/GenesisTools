@@ -33,9 +33,15 @@ export const SEGMENTATION_MODEL = {
     file: join(DIARIZE_MODEL_DIR, "sherpa-onnx-pyannote-segmentation-3-0", "model.onnx"),
 };
 
+// CAM++ multilingual (zh+en) speaker embedding. The previous model
+// (wespeaker_en_voxceleb_resnet34_LM) is an older architecture trained only
+// on English-celebrity VoxCeleb and scored ≈chance discriminating Czech
+// speakers regardless of input format (verified: .mp3/.wav/.mp4 all ~0.5).
+// Speaker embeddings encode voice timbre (largely language-independent), so a
+// modern multilingual CAM++ model transfers to Czech far better.
 export const EMBEDDING_MODEL = {
-    url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/wespeaker_en_voxceleb_resnet34_LM.onnx",
-    file: join(DIARIZE_MODEL_DIR, "wespeaker_en_voxceleb_resnet34_LM.onnx"),
+    url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx",
+    file: join(DIARIZE_MODEL_DIR, "3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx"),
 };
 
 async function provisionModels(): Promise<{ segmentation: string; embedding: string }> {
