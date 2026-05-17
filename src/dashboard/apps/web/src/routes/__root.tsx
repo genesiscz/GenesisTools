@@ -4,9 +4,11 @@ import { createRootRouteWithContext, HeadContent, Scripts } from "@tanstack/reac
 import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools";
 import { useEffect } from "react";
 import { Toaster } from "sonner";
+import { RouteError } from "@/components/RouteError";
 import TanStackQueryDevtools from "@/integrations/tanstack-query/devtools";
 import WorkOSProvider from "@/integrations/workos/provider";
 import AiDevtools from "@/lib/ai-example/ai-devtools";
+import { ConfirmProvider } from "@/lib/hooks/useConfirm";
 import appCss from "@/styles.css?url";
 
 interface MyRouterContext {
@@ -36,6 +38,8 @@ export const Route = createRootRouteWithContext<MyRouterContext>()({
     }),
 
     shellComponent: RootDocument,
+    errorComponent: ({ error, reset }) => <RouteError error={error} reset={reset} />,
+    notFoundComponent: () => <RouteError error={new Error("Page not found")} />,
 });
 
 function RootDocument({ children }: { children: React.ReactNode }) {
@@ -60,7 +64,7 @@ function RootDocument({ children }: { children: React.ReactNode }) {
             </head>
             <body>
                 <WorkOSProvider>
-                    {children}
+                    <ConfirmProvider>{children}</ConfirmProvider>
                     <Toaster
                         theme="dark"
                         position="bottom-right"
