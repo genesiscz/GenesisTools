@@ -153,8 +153,8 @@ export async function spawnTtyd(opts: SpawnOptions = {}): Promise<TtydSession> {
     // proxy can reverse-proxy it same-origin (HTTPS tunnel + mobile, where a
     // bare http://localhost:<port> iframe is unreachable). The base-path makes
     // ttyd emit correctly-prefixed asset/ws URLs so no path rewriting needed.
-    const child: TtydChild = Bun.spawn(
-        [
+    const child: TtydChild = Bun.spawn({
+        cmd: [
             TTYD_BIN,
             "-i",
             "127.0.0.1",
@@ -168,27 +168,26 @@ export async function spawnTtyd(opts: SpawnOptions = {}): Promise<TtydSession> {
             "-t",
             tmuxSessionName,
         ],
-        {
-            cwd,
-            stdio: ["ignore", "ignore", "ignore"],
-            onExit(_proc, code, signal, err) {
-                if (err) {
-                    logger.error({ err, id, port }, "ttyd child error");
-                }
+        cwd,
+        stdio: ["ignore", "ignore", "ignore"],
+        detached: true,
+        onExit(_proc, code, signal, err) {
+            if (err) {
+                logger.error({ err, id, port }, "ttyd child error");
+            }
 
-                logger.debug({ id, port, code, signal }, "ttyd child exited");
-                registry.delete(id);
-                void persistRegistry().catch((persistErr) => {
-                    logger.warn({ err: persistErr, id, port }, "failed to persist ttyd registry after child exit");
-                });
-            },
-        }
-    );
+            logger.debug({ id, port, code, signal }, "ttyd child exited");
+            registry.delete(id);
+            void persistRegistry().catch((persistErr) => {
+                logger.warn({ err: persistErr, id, port }, "failed to persist ttyd registry after child exit");
+            });
+        },
+    });
 
-    // ttyd is a detached daemon that must outlive the dashboard. Bun does not
-    // kill spawned children on parent exit, but a referenced Subprocess keeps
-    // the event loop alive — unref so the parent can exit cleanly while ttyd
-    // keeps running under tmux.
+    // ttyd must outlive the dashboard. detached: true runs setsid() so ttyd
+    // gets its own process group and does not take the SIGHUP delivered to the
+    // dashboard's group on exit; unref() additionally frees the parent event
+    // loop so the dashboard can exit cleanly while ttyd keeps running.
     child.unref();
 
     const session: TtydSession = {
