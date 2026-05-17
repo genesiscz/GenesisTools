@@ -3,10 +3,7 @@ import type { UsageHistoryResult } from "@app/dev-dashboard/lib/claude-usage/typ
 import { useQuery } from "@tanstack/react-query";
 import { AccountCard } from "@/components/claude-usage/AccountCard";
 import { UsageChart } from "@/components/claude-usage/UsageChart";
-
-function fetchJson<T>(url: string): Promise<T> {
-    return fetch(url).then((r) => r.json() as Promise<T>);
-}
+import { fetchJson } from "@/lib/api";
 
 export function ClaudeRoute() {
     const usageQuery = useQuery({

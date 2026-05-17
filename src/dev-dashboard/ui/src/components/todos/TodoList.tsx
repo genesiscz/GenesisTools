@@ -56,7 +56,7 @@ export function TodoList({ reminders, onComplete, onDelete }: TodoListProps) {
                             type="button"
                             aria-label="Delete todo"
                             onClick={() => onDelete(reminder.identifier)}
-                            className="shrink-0 px-1 text-[var(--dd-text-muted)] opacity-0 transition-opacity hover:text-amber-400 group-hover:opacity-100"
+                            className="shrink-0 px-1 text-[var(--dd-text-muted)] opacity-0 transition-opacity hover:text-amber-400 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--dd-accent-from)]"
                         >
                             ✕
                         </button>

@@ -7,8 +7,10 @@ interface ShareTemplateOptions {
 }
 
 const HLJS_CSS_URL = "https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.10.0/build/styles/atom-one-dark.min.css";
+const HLJS_CSS_SRI = "sha384-oaMLBGEzBOJx3UHwac0cVndtX5fxGQIfnAeFZ35RTgqPcYlbprH9o9PUV/F8Le07";
 const KATEX_CSS_URL = "https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css";
-const MERMAID_JS_URL = "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+const KATEX_CSS_SRI = "sha384-nB0miv6/jRmo5UMMR1wu3Gz6NLsoTkbqJghGIsx//Rlm+ZU03BU6SQNC66uf4l5+";
+const MERMAID_JS_URL = "https://cdn.jsdelivr.net/npm/mermaid@11.15.0/dist/mermaid.esm.min.mjs";
 const INTER_FONT_URL =
     "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&family=Lora:ital,wght@0,400;0,600;1,400&display=swap";
 
@@ -402,11 +404,13 @@ export function renderSharePage(options: ShareTemplateOptions): string {
         `<link rel="preconnect" href="https://fonts.googleapis.com">`,
         `<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>`,
         `<link rel="stylesheet" href="${INTER_FONT_URL}">`,
-        `<link rel="stylesheet" href="${HLJS_CSS_URL}">`,
+        `<link rel="stylesheet" href="${HLJS_CSS_URL}" integrity="${HLJS_CSS_SRI}" crossorigin="anonymous">`,
     ];
 
     if (rendered.hasMath) {
-        headExtras.push(`<link rel="stylesheet" href="${KATEX_CSS_URL}">`);
+        headExtras.push(
+            `<link rel="stylesheet" href="${KATEX_CSS_URL}" integrity="${KATEX_CSS_SRI}" crossorigin="anonymous">`,
+        );
     }
 
     const bodyExtras: string[] = [];

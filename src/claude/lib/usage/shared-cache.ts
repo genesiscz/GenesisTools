@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import logger from "@app/logger";
 import { UsageHistoryDb } from "@app/claude/lib/usage/history-db";
 import { getClaudeUsageStorage } from "@app/claude/lib/usage/storage";
 import type { AccountUsage } from "./api";
@@ -74,7 +75,13 @@ export function __makeSharedUsage(deps: Deps) {
 
             const fresh = await deps.fetchAll();
             await deps.putCache(CACHE_KEY, { fetchedAt: Date.now(), accounts: fresh });
-            deps.record(fresh);
+
+            try {
+                deps.record(fresh);
+            } catch (err) {
+                logger.warn({ err }, "usage history record failed; returning fetched usage anyway");
+            }
+
             return filterAccounts(fresh, opts.accountFilter);
         });
     };

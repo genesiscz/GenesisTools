@@ -66,7 +66,13 @@ export class PulseHistoryDb {
             return null;
         }
 
-        const age = Date.now() - new Date(row.updated_at).getTime();
+        const updatedAtMs = new Date(row.updated_at).getTime();
+
+        if (Number.isNaN(updatedAtMs)) {
+            return null;
+        }
+
+        const age = Date.now() - updatedAtMs;
 
         if (age > maxAgeMs) {
             return null;

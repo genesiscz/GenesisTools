@@ -5,19 +5,20 @@ import { DaemonHeader } from "@/components/daemon/DaemonHeader";
 import { LogModal } from "@/components/daemon/LogModal";
 import { RunsTimeline } from "@/components/daemon/RunsTimeline";
 import { TasksTable } from "@/components/daemon/TasksTable";
+import { fetchJson } from "@/lib/api";
 
 export function DaemonRoute() {
     const [selectedLogFile, setSelectedLogFile] = useState<string | null>(null);
 
     const { data: overview, isLoading } = useQuery({
         queryKey: ["daemon", "status"],
-        queryFn: (): Promise<DaemonOverview> => fetch("/api/daemon/status").then((r) => r.json()),
+        queryFn: () => fetchJson<DaemonOverview>("/api/daemon/status"),
         refetchInterval: 5000,
     });
 
     const { data: runs } = useQuery({
         queryKey: ["daemon", "runs"],
-        queryFn: (): Promise<RunSummary[]> => fetch("/api/daemon/runs?limit=20").then((r) => r.json()),
+        queryFn: () => fetchJson<RunSummary[]>("/api/daemon/runs?limit=20"),
         refetchInterval: 5000,
     });
 

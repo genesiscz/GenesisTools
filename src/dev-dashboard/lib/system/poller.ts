@@ -1,3 +1,4 @@
+import logger from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import { collectPulse } from "./collector";
 import { PulseHistoryDb } from "./history-db";
@@ -11,6 +12,7 @@ interface IpifyResponse {
 }
 
 let timer: ReturnType<typeof setInterval> | null = null;
+let polling = false;
 let db: PulseHistoryDb | null = null;
 let lastSnapshot: PulseSnapshot | null = null;
 let retentionHours = DEFAULT_RETENTION_HOURS;
@@ -39,13 +41,14 @@ async function refreshPublicIp(history: PulseHistoryDb): Promise<string | null> 
             return history.getPublicIp(Number.POSITIVE_INFINITY);
         }
 
-        const json = SafeJSON.parse(await res.text()) as IpifyResponse;
+        const json = SafeJSON.parse(await res.text(), { strict: true }) as IpifyResponse;
 
         if (json.ip) {
             history.setPublicIp(json.ip);
             return json.ip;
         }
-    } catch {
+    } catch (err) {
+        logger.debug({ err }, "ipify public IP refresh failed");
         return history.getPublicIp(Number.POSITIVE_INFINITY);
     }
 
@@ -53,6 +56,11 @@ async function refreshPublicIp(history: PulseHistoryDb): Promise<string | null> 
 }
 
 async function tick(): Promise<void> {
+    if (polling) {
+        return;
+    }
+
+    polling = true;
     const history = getDb();
 
     try {
@@ -78,8 +86,10 @@ async function tick(): Promise<void> {
         }
 
         history.pruneOlderThan(retentionHours);
-    } catch {
-        // keep last good snapshot on failure
+    } catch (err) {
+        logger.debug({ err }, "pulse tick failed; keeping last good snapshot");
+    } finally {
+        polling = false;
     }
 }
 

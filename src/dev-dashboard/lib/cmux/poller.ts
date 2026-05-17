@@ -19,6 +19,11 @@ export async function refreshOnce(): Promise<CmuxSnapshot> {
 }
 
 export function startPolling(intervalMs: number): void {
+    if (!Number.isFinite(intervalMs) || intervalMs <= 0) {
+        logger.warn({ intervalMs }, "cmux polling not started: invalid interval");
+        return;
+    }
+
     if (timer) {
         return;
     }

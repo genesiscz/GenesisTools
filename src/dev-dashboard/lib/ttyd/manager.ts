@@ -1,15 +1,17 @@
-import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { getConfig, saveTtydSessions } from "@app/dev-dashboard/config";
 import { findFreePort } from "@app/dev-dashboard/lib/ttyd/free-port";
 import type { TtydSession } from "@app/dev-dashboard/lib/ttyd/types";
 import logger from "@app/logger";
+import type { Subprocess } from "bun";
 export { ttydLabel } from "@app/dev-dashboard/lib/ttyd/label";
+
+type TtydChild = Subprocess<"ignore", "ignore", "ignore">;
 
 interface Tracked {
     session: TtydSession;
-    child: ChildProcess | null;
+    child: TtydChild | null;
 }
 
 export interface SpawnOptions {
@@ -27,16 +29,16 @@ function makeTmuxSessionName(id: string): string {
 }
 
 function killTmuxSession(sessionName: string): void {
-    spawnSync(TMUX_BIN, ["kill-session", "-t", sessionName], { stdio: "ignore" });
+    Bun.spawnSync([TMUX_BIN, "kill-session", "-t", sessionName], { stdio: ["ignore", "ignore", "ignore"] });
 }
 
 function createTmuxSession(sessionName: string, cwd: string, command: string): void {
-    const result = spawnSync(TMUX_BIN, ["new-session", "-d", "-s", sessionName, "-c", cwd, command], {
+    const result = Bun.spawnSync([TMUX_BIN, "new-session", "-d", "-s", sessionName, "-c", cwd, command], {
         cwd,
-        stdio: "ignore",
+        stdio: ["ignore", "ignore", "ignore"],
     });
 
-    if (result.status !== 0) {
+    if (result.exitCode !== 0) {
         throw new Error(`Failed to create tmux session ${sessionName}`);
     }
 }
@@ -47,16 +49,15 @@ function createTmuxSession(sessionName: string, cwd: string, command: string): v
  * `-b /ttyd/<id>` base path, so its argv carries the session id as a marker.
  */
 function processMatchesSession(session: TtydSession): boolean {
-    const result = spawnSync("/bin/ps", ["-p", String(session.pid), "-o", "command="], {
-        encoding: "utf8",
+    const result = Bun.spawnSync(["/bin/ps", "-p", String(session.pid), "-o", "command="], {
         stdio: ["ignore", "pipe", "ignore"],
     });
 
-    if (result.status !== 0 || typeof result.stdout !== "string") {
+    if (result.exitCode !== 0) {
         return false;
     }
 
-    const cmd = result.stdout.trim();
+    const cmd = result.stdout.toString().trim();
 
     return cmd.includes("ttyd") && cmd.includes(`/ttyd/${session.id}`);
 }
@@ -152,9 +153,9 @@ export async function spawnTtyd(opts: SpawnOptions = {}): Promise<TtydSession> {
     // proxy can reverse-proxy it same-origin (HTTPS tunnel + mobile, where a
     // bare http://localhost:<port> iframe is unreachable). The base-path makes
     // ttyd emit correctly-prefixed asset/ws URLs so no path rewriting needed.
-    const child = spawn(
-        TTYD_BIN,
+    const child: TtydChild = Bun.spawn(
         [
+            TTYD_BIN,
             "-i",
             "127.0.0.1",
             "-b",
@@ -169,25 +170,33 @@ export async function spawnTtyd(opts: SpawnOptions = {}): Promise<TtydSession> {
         ],
         {
             cwd,
-            detached: true,
-            stdio: "ignore",
+            stdio: ["ignore", "ignore", "ignore"],
+            onExit(_proc, code, signal, err) {
+                if (err) {
+                    logger.error({ err, id, port }, "ttyd child error");
+                }
+
+                logger.debug({ id, port, code, signal }, "ttyd child exited");
+                registry.delete(id);
+                void persistRegistry().catch((persistErr) => {
+                    logger.warn({ err: persistErr, id, port }, "failed to persist ttyd registry after child exit");
+                });
+            },
         }
     );
-    child.unref();
 
-    child.on("error", (err) => logger.error({ err, id, port }, "ttyd child error"));
-    child.on("exit", (code, signal) => {
-        logger.debug({ id, port, code, signal }, "ttyd child exited");
-        registry.delete(id);
-        void persistRegistry();
-    });
+    // ttyd is a detached daemon that must outlive the dashboard. Bun does not
+    // kill spawned children on parent exit, but a referenced Subprocess keeps
+    // the event loop alive — unref so the parent can exit cleanly while ttyd
+    // keeps running under tmux.
+    child.unref();
 
     const session: TtydSession = {
         id,
         port,
         command,
         cwd,
-        pid: child.pid ?? -1,
+        pid: child.pid,
         startedAt: new Date().toISOString(),
         tmuxSessionName,
     };

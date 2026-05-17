@@ -160,8 +160,35 @@ async function collectDisk(): Promise<{ free: number | null; total: number | nul
     return { free: freeBytes, total: totalBytes };
 }
 
+let wifiInterface: string | null = null;
+
+async function resolveWifiInterface(): Promise<string> {
+    if (wifiInterface) {
+        return wifiInterface;
+    }
+
+    const out = await runShell(["networksetup", "-listallhardwareports"]);
+
+    if (out !== null) {
+        const blocks = out.split(/\n\s*\n/);
+        for (const block of blocks) {
+            if (/Hardware Port:\s*Wi-Fi/i.test(block)) {
+                const match = block.match(/Device:\s*(\S+)/);
+                if (match) {
+                    wifiInterface = match[1];
+                    return wifiInterface;
+                }
+            }
+        }
+    }
+
+    wifiInterface = "en0";
+    return wifiInterface;
+}
+
 async function collectWifi(): Promise<string | null> {
-    const out = await runShell(["networksetup", "-getairportnetwork", "en0"]);
+    const iface = await resolveWifiInterface();
+    const out = await runShell(["networksetup", "-getairportnetwork", iface]);
 
     if (out === null) {
         return null;

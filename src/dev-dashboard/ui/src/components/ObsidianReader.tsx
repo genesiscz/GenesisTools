@@ -10,7 +10,10 @@ interface Props {
 
 export function ObsidianReader({ path }: Props) {
     const queryClient = useQueryClient();
-    const { data } = useQuery({ queryKey: ["obsidian", "note", path], queryFn: () => obsidianApi.note(path) });
+    const { data, isPending, isError } = useQuery({
+        queryKey: ["obsidian", "note", path],
+        queryFn: () => obsidianApi.note(path),
+    });
     const [copied, setCopied] = useState(false);
 
     const publish = useMutation({
@@ -22,10 +25,18 @@ export function ObsidianReader({ path }: Props) {
         onSuccess: () => queryClient.invalidateQueries({ queryKey: ["obsidian", "note", path] }),
     });
 
-    if (!data) {
+    if (isPending) {
         return (
             <div className="dd-panel flex h-full items-center justify-center text-[var(--dd-text-muted)]">
                 Loading...
+            </div>
+        );
+    }
+
+    if (isError || !data) {
+        return (
+            <div className="dd-panel flex h-full items-center justify-center text-[var(--dd-text-muted)]">
+                Failed to load note.
             </div>
         );
     }

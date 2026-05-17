@@ -41,11 +41,11 @@ function secureHexEqual(left: string, right: string): boolean {
 }
 
 function parseBasicAuthHeader(header: string | null): BasicAuthInput | null {
-    if (!header?.startsWith("Basic ")) {
+    if (!header || !/^basic\s+/i.test(header)) {
         return null;
     }
 
-    const encoded = header.slice("Basic ".length).trim();
+    const encoded = header.replace(/^basic\s+/i, "").trim();
     const decoded = Buffer.from(encoded, "base64").toString("utf8");
     const separatorIndex = decoded.indexOf(":");
 

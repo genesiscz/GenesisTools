@@ -34,6 +34,7 @@ export function AddTodoForm({ onAdd, pending }: AddTodoFormProps) {
         <form onSubmit={handleSubmit} className="flex flex-wrap items-center gap-2">
             <input
                 type="text"
+                aria-label="Todo title"
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 placeholder="Add a todo..."
@@ -41,11 +42,13 @@ export function AddTodoForm({ onAdd, pending }: AddTodoFormProps) {
             />
             <input
                 type="datetime-local"
+                aria-label="Due date and time"
                 value={due}
                 onChange={(e) => setDue(e.target.value)}
                 className="rounded-md border border-[var(--dd-border)] bg-[var(--dd-bg-panel)] px-3 py-1.5 text-sm text-[var(--dd-text-secondary)] outline-none focus:border-[var(--dd-accent-from)]"
             />
             <select
+                aria-label="Priority"
                 value={priority}
                 onChange={(e) => setPriority(e.target.value)}
                 className="rounded-md border border-[var(--dd-border)] bg-[var(--dd-bg-panel)] px-3 py-1.5 text-sm text-[var(--dd-text-secondary)] outline-none focus:border-[var(--dd-accent-from)]"

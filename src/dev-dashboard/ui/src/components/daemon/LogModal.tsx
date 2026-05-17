@@ -51,11 +51,16 @@ export function LogModal({ logFile, onClose }: Props) {
         // biome-ignore lint/a11y/useKeyWithClickEvents: backdrop dismiss
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6" onClick={onClose}>
             <div
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="daemon-run-log-title"
                 className="dd-panel flex max-h-[80vh] w-full max-w-3xl flex-col overflow-hidden p-4"
                 onClick={(e) => e.stopPropagation()}
             >
                 <div className="mb-3 flex items-center justify-between">
-                    <h2 className="dd-accent-text text-sm font-semibold">Run Log</h2>
+                    <h2 id="daemon-run-log-title" className="dd-accent-text text-sm font-semibold">
+                        Run Log
+                    </h2>
                     <button
                         type="button"
                         onClick={onClose}

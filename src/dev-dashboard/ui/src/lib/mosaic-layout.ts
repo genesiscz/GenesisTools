@@ -10,6 +10,10 @@ function equalPercentages(count: number): number[] {
 }
 
 function splitRows<T>(items: T[], { extraRowPlacement = "end", maxColumns }: BuildOptions): T[][] {
+    if (!Number.isInteger(maxColumns) || maxColumns < 1) {
+        throw new Error(`maxColumns must be an integer >= 1, got ${maxColumns}`);
+    }
+
     if (items.length <= maxColumns) {
         return [items];
     }

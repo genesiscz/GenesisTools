@@ -4,7 +4,7 @@ import logger from "@app/logger";
 import type { RunLogRetention } from "./types";
 
 // Matches `<safeTimestamp>-<runId>.jsonl`, e.g. 2026-05-15T19-02-16-a8a9c339.jsonl
-const RUN_LOG_RE = /^(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})-[0-9a-fA-F]+\.jsonl$/;
+const RUN_LOG_RE = /^(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})-[A-Za-z0-9_-]+\.jsonl$/;
 
 function runLogEpoch(filename: string): number | null {
     const m = filename.match(RUN_LOG_RE);

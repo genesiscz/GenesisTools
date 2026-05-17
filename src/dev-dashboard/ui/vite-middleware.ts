@@ -32,14 +32,20 @@ let loggedGeneratedPassword = false;
 
 getConfig()
     .then(({ cmuxPollIntervalMs }) => startPolling(cmuxPollIntervalMs))
-    .catch(() => startPolling(2000));
+    .catch((err) => {
+        logger.warn({ err }, "dev-dashboard: cmux config load failed, polling with 2000ms default");
+        startPolling(2000);
+    });
 
 getConfig()
     .then(({ pulse }) => {
         configureRetention(pulse.retentionHours);
         startPulsePolling(pulse.pollIntervalMs);
     })
-    .catch(() => startPulsePolling(5000));
+    .catch((err) => {
+        logger.warn({ err }, "dev-dashboard: pulse config load failed, polling with 5000ms default");
+        startPulsePolling(5000);
+    });
 
 async function readJson<T>(req: IncomingMessage): Promise<T> {
     const chunks: Buffer[] = [];
@@ -50,7 +56,7 @@ async function readJson<T>(req: IncomingMessage): Promise<T> {
 
     const raw = Buffer.concat(chunks).toString("utf8") || "{}";
 
-    return SafeJSON.parse(raw) as T;
+    return SafeJSON.parse(raw, { strict: true }) as T;
 }
 
 function sendJson(res: ServerResponse, status: number, body: object): void {
@@ -363,9 +369,8 @@ export function attachDevDashboardMiddleware(middlewares: Connect.Server): void 
         }
 
         if (req.method === "GET" && url.pathname === "/api/obsidian/tree") {
-            const { obsidianVault } = await getConfig();
-
             try {
+                const { obsidianVault } = await getConfig();
                 const entries = await listVault(obsidianVault);
                 sendJson(res, 200, { entries });
             } catch (err) {
@@ -383,9 +388,8 @@ export function attachDevDashboardMiddleware(middlewares: Connect.Server): void 
                 return;
             }
 
-            const { obsidianVault } = await getConfig();
-
             try {
+                const { obsidianVault } = await getConfig();
                 const source = await readNote(obsidianVault, path);
                 const published = await listPublished();
                 const publishedSlug = published.find((note) => note.vaultPath === path)?.slug ?? null;

@@ -192,21 +192,23 @@ export async function fetchCmuxLiveSnapshot(deps: SnapshotDeps = {}): Promise<Cm
                     "--pane",
                     paneId(pane),
                 ]);
-                const surfaces: CmuxLiveSurface[] = [];
+                const rawSurfaces = surfaceResponse.surfaces ?? [];
+                const surfaces: CmuxLiveSurface[] = await Promise.all(
+                    rawSurfaces.map(async (surface, index) => {
+                        const surfaceRef = surfaceId(surface);
 
-                for (const surface of surfaceResponse.surfaces ?? []) {
-                    const surfaceRef = surfaceId(surface);
-                    surfaces.push({
-                        id: surfaceRef,
-                        title: surfaceTitle(surface),
-                        type: surface.type ?? "terminal",
-                        index: surface.index_in_pane ?? surface.index ?? surfaces.length,
-                        selected: surface.selected_in_pane === true || surface.selected === true,
-                        active: surface.focused === true || surface.active === true,
-                        url: surface.url,
-                        preview: await readSurfacePreview({ run, workspace: id, surface: surfaceRef }),
-                    });
-                }
+                        return {
+                            id: surfaceRef,
+                            title: surfaceTitle(surface),
+                            type: surface.type ?? "terminal",
+                            index: surface.index_in_pane ?? surface.index ?? index,
+                            selected: surface.selected_in_pane === true || surface.selected === true,
+                            active: surface.focused === true || surface.active === true,
+                            url: surface.url,
+                            preview: await readSurfacePreview({ run, workspace: id, surface: surfaceRef }),
+                        };
+                    })
+                );
 
                 const selectedSurface = surfaces.find((surface) => surface.selected) ?? surfaces[0];
                 panes.push({
@@ -215,7 +217,7 @@ export async function fetchCmuxLiveSnapshot(deps: SnapshotDeps = {}): Promise<Cm
                     title: paneTitle(pane),
                     active: pane.selected === true || pane.focused === true,
                     cwd: pane.cwd ?? rawWorkspace.current_directory,
-                    selectedSurfaceRef,
+                    selectedSurfaceRef: selectedSurfaceRef ?? selectedSurface?.id,
                     surfaceCount: pane.surface_count ?? surfaces.length,
                     surfaces,
                     preview: selectedSurface?.preview,

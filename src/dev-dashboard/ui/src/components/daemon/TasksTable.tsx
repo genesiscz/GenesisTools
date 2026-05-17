@@ -33,6 +33,7 @@ export function TasksTable({ tasks }: Props) {
                                 <td className="py-2 pr-4">
                                     <span className="inline-flex items-center gap-1.5">
                                         <span
+                                            aria-hidden="true"
                                             className="inline-block h-2 w-2 rounded-full"
                                             style={{
                                                 backgroundColor: task.enabled
