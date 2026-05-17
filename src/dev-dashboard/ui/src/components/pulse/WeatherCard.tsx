@@ -1,3 +1,5 @@
+import { formatClock } from "@app/utils/format";
+
 interface WeatherCardProps {
     tempC: number | null;
     description: string;
@@ -12,13 +14,7 @@ function timeOnly(value: string | null): string {
         return "—";
     }
 
-    const d = new Date(value);
-
-    if (Number.isNaN(d.getTime())) {
-        return value;
-    }
-
-    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    return formatClock(value);
 }
 
 export function WeatherCard({ tempC, description, sunrise, sunset, label, error }: WeatherCardProps) {

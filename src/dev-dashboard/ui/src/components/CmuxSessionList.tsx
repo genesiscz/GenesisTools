@@ -1,4 +1,5 @@
 import type { CmuxSnapshot } from "@app/dev-dashboard/lib/cmux/types";
+import { formatClock } from "@app/utils/format";
 import { useMutation } from "@tanstack/react-query";
 import { Button } from "@ui/components/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@ui/components/tooltip";
@@ -224,7 +225,7 @@ export function CmuxSessionList({ snapshot }: Props) {
         <TooltipProvider>
             <div className="flex h-full flex-col gap-2 overflow-hidden font-mono">
                 <div className="dd-panel flex items-center justify-between px-3 py-2 text-[11px] text-[var(--dd-text-muted)]">
-                    <span>snapshot · {new Date(snapshot.fetchedAt).toLocaleTimeString()}</span>
+                    <span>snapshot · {formatClock(snapshot.fetchedAt, { seconds: true })}</span>
                     <span className="flex items-center gap-3">
                         <span>drag panes to reorder · drag dividers to resize · live snapshot</span>
                         {!isMobile ? (

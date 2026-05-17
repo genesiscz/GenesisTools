@@ -2,7 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { focusCmuxPane, renameCmuxSurface, renameCmuxWorkspace } from "@app/cmux/lib/controls";
 import { getConfig, getOrCreateDashboardAuth } from "@app/dev-dashboard/config";
 import { isCompleteAuthConfig, verifyBasicAuthHeader } from "@app/dev-dashboard/lib/auth";
-import { getCurrentUsage, getUsageHistory } from "@app/dev-dashboard/lib/claude-usage/aggregator";
+import { getCurrentUsage, getUsageHistory, getUsageHistoryMulti } from "@app/dev-dashboard/lib/claude-usage/aggregator";
 import { getCachedSnapshot, startPolling } from "@app/dev-dashboard/lib/cmux/poller";
 import { listContainers } from "@app/dev-dashboard/lib/containers/docker";
 import {
@@ -234,15 +234,21 @@ export function attachDevDashboardMiddleware(middlewares: Connect.Server): void 
 
         if (req.method === "GET" && url.pathname === "/api/claude/usage/history") {
             const account = url.searchParams.get("account") ?? "";
+            const bucketsParam = url.searchParams.get("buckets");
             const bucket = url.searchParams.get("bucket") ?? "five_hour";
             const minutes = Number.parseInt(url.searchParams.get("minutes") ?? "1440", 10);
+            const safeMinutes = Number.isFinite(minutes) ? minutes : 1440;
 
             try {
-                sendJson(
-                    res,
-                    200,
-                    getUsageHistory({ account, bucket, minutes: Number.isFinite(minutes) ? minutes : 1440 })
-                );
+                if (bucketsParam) {
+                    const buckets = bucketsParam
+                        .split(",")
+                        .map((b) => b.trim())
+                        .filter(Boolean);
+                    sendJson(res, 200, getUsageHistoryMulti({ account, buckets, minutes: safeMinutes }));
+                } else {
+                    sendJson(res, 200, getUsageHistory({ account, bucket, minutes: safeMinutes }));
+                }
             } catch (err) {
                 sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
             }

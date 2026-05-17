@@ -6,4 +6,14 @@ export interface UsageHistoryResult {
     hint?: string;
 }
 
+export interface BucketSeries {
+    bucket: string;
+    snapshots: UsageSnapshot[];
+}
+
+export interface MultiBucketHistoryResult {
+    series: BucketSeries[];
+    hint?: string;
+}
+
 export type { AccountUsage, UsageSnapshot };
