@@ -1,7 +1,8 @@
 import { cn } from "@ui/lib/utils";
+import { useTheme } from "@ui/theme/provider";
 import type * as React from "react";
 
-type CardVariant = "default" | "wow" | "wow-static" | "cyber" | "plain";
+type CardVariant = "default" | "wow" | "wow-static" | "cyber" | "plain" | "nexus";
 
 export type CardAccent = "violet" | "purple" | "orange" | "emerald" | "blue" | "cyan" | "red" | "pink" | "amber";
 
@@ -27,15 +28,19 @@ const cardVariants: Record<CardVariant, string> = {
     cyber: "glass-card neon-border bg-transparent text-card-foreground",
     // Flat, no hover effects
     plain: "bg-card text-card-foreground border shadow-sm",
+    nexus: "bg-card text-card-foreground border shadow-sm",
 };
 
-function Card({ className, variant = "default", accent, ...props }: CardProps) {
+function Card({ className, variant, accent, ...props }: CardProps) {
+    const { variant: themeVariant } = useTheme();
+    const resolvedVariant = variant ?? (themeVariant === "nexus" ? "nexus" : "default");
+
     return (
         <div
             data-slot="card"
-            data-variant={variant}
+            data-variant={resolvedVariant}
             data-accent={accent}
-            className={cn("flex flex-col gap-6 rounded-xl py-6", cardVariants[variant], className)}
+            className={cn("flex flex-col gap-6 rounded-xl py-6", cardVariants[resolvedVariant], className)}
             {...props}
         />
     );
