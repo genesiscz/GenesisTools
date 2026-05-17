@@ -1,7 +1,6 @@
 import { existsSync } from "node:fs";
-import { mkdir } from "node:fs/promises";
-import { dirname } from "node:path";
 import logger from "@app/logger";
+import { convertAudioFormat as convertAudioFormatUtil } from "@app/utils/audio/converter";
 import { getAudioInfo, validateAudioFile } from "@app/utils/audio/probe";
 import { CHUNK_SIZE, splitAudioBySize, splitAudioFile } from "@app/utils/audio/split";
 import { spawn } from "bun";
@@ -25,41 +24,10 @@ export class AudioProcessor {
     }
 
     async convertAudioFormat(inputPath: string, outputPath: string, targetFormat: string = "mp3"): Promise<string> {
-        try {
-            // Ensure output directory exists
-            const outputDir = dirname(outputPath);
-            if (!existsSync(outputDir)) {
-                await mkdir(outputDir, { recursive: true });
-            }
-
-            logger.info(`Converting ${inputPath} to ${targetFormat} format...`);
-
-            // Use ffmpeg for conversion
-            const proc = spawn(["ffmpeg", "-i", inputPath, "-f", targetFormat, "-y", outputPath], {
-                stdio: ["ignore", "pipe", "pipe"],
-            });
-
-            const _stdout = await new Response(proc.stdout).text();
-            const stderr = await new Response(proc.stderr).text();
-            const exitCode = await proc.exited;
-
-            if (exitCode !== 0) {
-                throw new Error(`FFmpeg conversion failed: ${stderr}`);
-            }
-
-            logger.info(`Audio conversion completed: ${outputPath}`);
-            return outputPath;
-        } catch (error) {
-            logger.error(`Audio conversion failed: ${error}`);
-            throw error;
-        }
+        return convertAudioFormatUtil(inputPath, outputPath, targetFormat);
     }
 
-    async splitAudioFile(
-        inputPath: string,
-        outputDir: string,
-        chunkDurationSeconds: number = 300
-    ): Promise<string[]> {
+    async splitAudioFile(inputPath: string, outputDir: string, chunkDurationSeconds: number = 300): Promise<string[]> {
         return splitAudioFile(inputPath, outputDir, chunkDurationSeconds);
     }
 

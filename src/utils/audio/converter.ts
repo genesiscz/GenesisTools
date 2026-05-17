@@ -1,6 +1,8 @@
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
+import { mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import logger from "@app/logger";
 
 /**
  * Convert any audio file/buffer to 16kHz mono 16-bit PCM Float32Array
@@ -275,5 +277,43 @@ function cleanup(path: string): void {
         unlinkSync(path);
     } catch {
         // ignore
+    }
+}
+
+/** Transcode an audio file to an arbitrary ffmpeg container/format. General
+ *  format conversion; for the STT-normalized paths prefer
+ *  `convertFileToMonoMp3` / `convertToWhisperWav`. */
+export async function convertAudioFormat(
+    inputPath: string,
+    outputPath: string,
+    targetFormat: string = "mp3"
+): Promise<string> {
+    try {
+        const outputDir = dirname(outputPath);
+
+        if (!existsSync(outputDir)) {
+            await mkdir(outputDir, { recursive: true });
+        }
+
+        logger.info(`Converting ${inputPath} to ${targetFormat} format...`);
+
+        const proc = Bun.spawn(["ffmpeg", "-i", inputPath, "-f", targetFormat, "-y", outputPath], {
+            stdio: ["ignore", "pipe", "pipe"],
+        });
+
+        const _stdout = await new Response(proc.stdout).text();
+        const stderr = await new Response(proc.stderr).text();
+        const exitCode = await proc.exited;
+
+        if (exitCode !== 0) {
+            throw new Error(`FFmpeg conversion failed: ${stderr}`);
+        }
+
+        logger.info(`Audio conversion completed: ${outputPath}`);
+
+        return outputPath;
+    } catch (error) {
+        logger.error(`Audio conversion failed: ${error}`);
+        throw error;
     }
 }
