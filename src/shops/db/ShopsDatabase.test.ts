@@ -6,7 +6,9 @@ describe("ShopsDatabase", () => {
         await withDb((db) => {
             const tables = db
                 .raw()
-                .query<{ name: string }, []>(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'products'`)
+                .query<{ name: string }, []>(
+                    `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'products'`
+                )
                 .all();
             expect(tables).toHaveLength(1);
         });

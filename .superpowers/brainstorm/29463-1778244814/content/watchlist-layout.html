@@ -1,0 +1,86 @@
+<h2>/watchlist — the headline page</h2>
+<p class="subtitle">This is what the user opens daily. Star → edit thresholds → see drops at a glance. Pick layout direction.</p>
+
+<div class="cards">
+
+  <div class="card" data-choice="dense-table" onclick="toggleSelect(this)">
+    <div class="card-image" style="font-family:ui-monospace,SFMono-Regular,monospace;font-size:10px;line-height:1.35;padding:14px;background:rgba(0,0,0,0.55);border:1px solid rgba(0,229,255,0.3);border-radius:6px;color:#9ce6ff;white-space:pre">
+┌──────────────────────────────────────────────────────────┐
+│ WATCHLIST · 12 active · 3 alerts pending                 │
+├──────────────────────────────────────────────────────────┤
+│ ★ Product            scope    target  current Δ    spark │
+│ ─────────────────────────────────────────────────── ──── │
+│ ★ Ritter S. ml. 100g [any]    39.9    49.9   ─    ▂▃▅▆▇ │
+│ ★ Nescafé Gold 200g  [any]    179     189    ─    ▆▆▅▆▇ │
+│ ★ Lindt Lindor 200g  [rohlík] 159     139  -13% ✓ ▇▆▅▃▂ │
+│ ★ Dove deo 150ml     [any]    49      52     ─    ▅▇▇▇▇ │
+│ ★ Heinz ketchup 460g [albert] 39      35   -10% ✓ ▆▅▃▂▁ │
+│ ★ Coca-Cola 1.5L     [any]    32      29   -9%      ▇▆▆▆▅│
+│ + 6 more                                                 │
+├──────────────────────────────────────────────────────────┤
+│ Add: paste URL ___________________________ [+ Watch]     │
+└──────────────────────────────────────────────────────────┘
+    </div>
+    <div class="card-body">
+      <h3>A · Dense table</h3>
+      <p>Power-user view. One row per favorite. Columns: scope tag, target, current, delta, sparkline, alert flag. ~30 visible at once. Best for many favorites; weakest for visual scanning.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="cards-grid" onclick="toggleSelect(this)">
+    <div class="card-image" style="font-family:ui-monospace,SFMono-Regular,monospace;font-size:10px;line-height:1.4;padding:14px;background:rgba(0,0,0,0.55);border:1px solid rgba(255,176,32,0.3);border-radius:6px;color:#ffd17a;white-space:pre">
+┌──────────────────────────────────────────────────────────┐
+│ WATCHLIST · 12 ★ · 3 alerts ✦                            │
+├──────────────────────────────────────────────────────────┤
+│ ┌──────────────────┐ ┌──────────────────┐               │
+│ │ ✦ Lindt Lindor   │ │ ✦ Heinz ketchup  │               │
+│ │ ▓▓▓ rohlík 159→  │ │ ▓▓▓ albert 39→   │               │
+│ │ 139 kč  -13% ↓   │ │ 35 kč  -10% ↓    │               │
+│ │ ▂▃▅▆▇█▇▆▅▃ 1y   │ │ ▆▅▃▂▁▂▃▄▅ 1y    │               │
+│ │ target 159 ✓     │ │ target 39 ✓      │               │
+│ └──────────────────┘ └──────────────────┘               │
+│ ┌──────────────────┐ ┌──────────────────┐               │
+│ │   Ritter S. 100g │ │  Nescafé Gold    │               │
+│ │ rohlík 49.9 kč   │ │ kosík 189 kč     │               │
+│ │ ▂▃▅▆▇▆▅▃▂ 1y    │ │ ▆▆▅▆▇▆▅▆▇ 1y    │               │
+│ │ target 39.9      │ │ target 179       │               │
+│ └──────────────────┘ └──────────────────┘               │
+└──────────────────────────────────────────────────────────┘
+    </div>
+    <div class="card-body">
+      <h3>B · Card grid (alerts highlighted)</h3>
+      <p>Visual-first. Cards with mini-charts. Triggered alerts get a red border + ✦ badge. ~6–8 visible at once. Best when you have ≤ 20 favorites and want an at-a-glance feel.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="alerts-first" onclick="toggleSelect(this)">
+    <div class="card-image" style="font-family:ui-monospace,SFMono-Regular,monospace;font-size:10px;line-height:1.4;padding:14px;background:rgba(0,0,0,0.55);border:1px solid rgba(255,80,80,0.4);border-radius:6px;color:#ff9b9b;white-space:pre">
+┌──────────────────────────────────────────────────────────┐
+│ WATCHLIST                                  3 ✦  · 9 ★    │
+├──────────────────────────────────────────────────────────┤
+│ ╔══════ ALERTS PENDING (3) ═════════════════════════════╗│
+│ ║ ✦ Lindt Lindor 200g                                  ║│
+│ ║   rohlík: 159 → 139 kč (-13%)  hit: 14:32 today      ║│
+│ ║   [Open] [Buy at rohlík] [Snooze 7d] [Ack]           ║│
+│ ║ ✦ Heinz ketchup 460g                                 ║│
+│ ║   albert: 39 → 35 kč (-10%)    hit: 12:08 today      ║│
+│ ║   [Open] [Buy at albert] [Snooze 7d] [Ack]           ║│
+│ ║ ✦ Coca-Cola 1.5L                                     ║│
+│ ║   tesco: 32 → 29 kč (-9%)      hit: 09:14 today      ║│
+│ ╚══════════════════════════════════════════════════════╝│
+│                                                          │
+│ Quiet — 9 favorites without recent alerts (collapsible)  │
+│ ▸ Ritter Sport ml. 100g · target 39.9 (current 49.9)    │
+│ ▸ Nescafé Gold 200g · target 179 (current 189)          │
+│ ▸ Dove deo 150ml · -10% from 56 (current 52)            │
+└──────────────────────────────────────────────────────────┘
+    </div>
+    <div class="card-body">
+      <h3>C · Alerts-first (notification-driven)</h3>
+      <p>Pending alerts dominate the page. Quiet favorites collapse to a dim list below. Each alert has direct actions (open / buy / snooze / ack). Best when alerts are the main reason users open the page.</p>
+    </div>
+  </div>
+
+</div>
+
+<p class="subtitle" style="margin-top:18px">Multi-select if you'd like a hybrid (e.g. C as default with toggle to A or B for browsing).</p>

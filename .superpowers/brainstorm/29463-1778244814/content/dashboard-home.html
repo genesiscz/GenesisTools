@@ -1,0 +1,106 @@
+<h2><code>tools shops ui</code> — Home page direction</h2>
+<p class="subtitle">Pick the macro layout for the dashboard's landing page. We'll detail product/compare/coverage pages next round. All options use the cyberpunk theme + shadcn components from <code>@app/utils/ui/</code>.</p>
+
+<div class="cards" data-multiselect>
+
+  <div class="card" data-choice="hero-search" onclick="toggleSelect(this)">
+    <div class="card-image" style="font-family:ui-monospace,SFMono-Regular,monospace;font-size:11px;line-height:1.4;padding:14px;background:rgba(0,0,0,0.55);border:1px solid rgba(0,229,255,0.25);border-radius:6px;color:#9ce6ff;white-space:pre">
+┌──────────────────────────────────────────────┐
+│ SHOPS / CATALOG                       cyber  │
+├──────────────────────────────────────────────┤
+│                                              │
+│   ╭─ Find a product ─────────────────────╮   │
+│   │ paste any rohlik/kosik/itesco URL... │   │
+│   ╰──────────────────────────────────────╯   │
+│                                              │
+│   Recent products                            │
+│   ┌────┐ ┌────┐ ┌────┐ ┌────┐ ┌────┐         │
+│   │img │ │img │ │img │ │img │ │img │         │
+│   └────┘ └────┘ └────┘ └────┘ └────┘         │
+│   [Ritter] [Nescafé] [Lindt] [Milka] [Dove]  │
+│                                              │
+│   Coverage  · 10 shops · 12,847 products     │
+│             · last crawl: 2 h ago            │
+└──────────────────────────────────────────────┘
+    </div>
+    <div class="card-body">
+      <h3>A · Hero search + recent grid</h3>
+      <p>Big central search/paste-URL field. Most-recent ingested products as a horizontal scroll. Coverage stats as a compact footer card. Familiar Amazon-y feel — works well when 80% of sessions are "look up this URL".</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="split-pane" onclick="toggleSelect(this)">
+    <div class="card-image" style="font-family:ui-monospace,SFMono-Regular,monospace;font-size:11px;line-height:1.4;padding:14px;background:rgba(0,0,0,0.55);border:1px solid rgba(255,176,32,0.25);border-radius:6px;color:#ffd17a;white-space:pre">
+┌──────────────────────────────────────────────┐
+│ SHOPS / CATALOG          [filters]   cyber   │
+├─────────────────┬────────────────────────────┤
+│ ▸ Ritter Sport  │ Ritter Sport mléčná 100g   │
+│   Nescafé Gold  │ ────────────────────────   │
+│ ▸ Lindt Lindor  │ rohlik     49.9 kč  ✓      │
+│   Milka Oreo    │ kosik      52.0 kč  ✓      │
+│   Heinz ketchup │ itesco     48.5 kč  ✓      │
+│   Coca-Cola 1.5 │ albert     54.9 kč  ─      │
+│ + 142 more      │                            │
+│                 │  ▁▂▃▅▆▇▆▅▃▂▁ price 1y      │
+│ [search bar]    │                            │
+└─────────────────┴────────────────────────────┘
+    </div>
+    <div class="card-body">
+      <h3>B · Split: list left, detail right</h3>
+      <p>Persistent product list on the left, full detail (cross-shop prices + history chart) on the right. Tmux/IDE feel. Best for power-user "browse → drill-down" sessions; one less click than A.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="live-feed" onclick="toggleSelect(this)">
+    <div class="card-image" style="font-family:ui-monospace,SFMono-Regular,monospace;font-size:11px;line-height:1.4;padding:14px;background:rgba(0,0,0,0.55);border:1px solid rgba(0,255,170,0.30);border-radius:6px;color:#9bf2c8;white-space:pre">
+┌──────────────────────────────────────────────┐
+│ SHOPS / CATALOG                       cyber  │
+├──────────────────────────────────────────────┤
+│ ◉ LIVE PRICE FEED       [search]  [crawl]    │
+│ ──────────────────────────────────────────── │
+│ 14:32  rohlik  Ritter Sport 100g  -12% ↓     │
+│ 14:32  kosik   Nescafé Gold 200   -5%  ↓     │
+│ 14:31  alza    LEGO 60360         -8%  ↓     │
+│ 14:30  itesco  Heinz ketchup       new  ✦    │
+│ 14:29  notino  Dove deo            -3%  ↓    │
+│ ──────────────────────────────────────────── │
+│ Today: 384 changes · 18 drops · 2 new        │
+│ ┌──────────┐ ┌──────────┐ ┌──────────┐       │
+│ │STAT card │ │STAT card │ │STAT card │       │
+│ └──────────┘ └──────────┘ └──────────┘       │
+└──────────────────────────────────────────────┘
+    </div>
+    <div class="card-body">
+      <h3>C · Live activity feed (cyberpunk house style)</h3>
+      <p>SSE-driven feed of price changes is the hero. Stats cards below. Search lives in the header. Matches <code>debugging-master</code>'s aesthetic. Best when you'll watch this dashboard during a crawl.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="master-grid" onclick="toggleSelect(this)">
+    <div class="card-image" style="font-family:ui-monospace,SFMono-Regular,monospace;font-size:11px;line-height:1.4;padding:14px;background:rgba(0,0,0,0.55);border:1px solid rgba(180,120,255,0.30);border-radius:6px;color:#d3b3ff;white-space:pre">
+┌──────────────────────────────────────────────┐
+│ SHOPS / MASTER LISTINGS               cyber  │
+├──────────────────────────────────────────────┤
+│ Browse · 4,212 master products    [search]   │
+│ ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐  │
+│ │  img   │ │  img   │ │  img   │ │  img   │  │
+│ │  ────  │ │  ────  │ │  ────  │ │  ────  │  │
+│ │ Ritter │ │Nescafé │ │ Lindt  │ │ Milka  │  │
+│ │ 100g   │ │  200g  │ │  300g  │ │  150g  │  │
+│ │ 5 shops│ │ 4 shops│ │ 3 shops│ │ 6 shops│  │
+│ │best:48 │ │best:99 │ │best:159│ │best:39 │  │
+│ └────────┘ └────────┘ └────────┘ └────────┘  │
+│ ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐  │
+│ │  ...   │ │  ...   │ │  ...   │ │  ...   │  │
+│ └────────┘ └────────┘ └────────┘ └────────┘  │
+└──────────────────────────────────────────────┘
+    </div>
+    <div class="card-body">
+      <h3>D · Master-listing grid (catalog browse)</h3>
+      <p>Front-and-center: the master listings — canonical products with "best price" + shop count badges. Click any card to drill into cross-shop comparison. Best when the matching engine is mature and DB is well-populated.</p>
+    </div>
+  </div>
+
+</div>
+
+<p class="subtitle" style="margin-top:18px">Multi-select enabled — pick more than one if you'd like a hybrid (e.g. C as primary nav + D as a tab). Whichever you pick, the underlying components are the same shadcn primitives; we're just choosing the macro composition.</p>

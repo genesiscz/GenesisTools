@@ -1,0 +1,20 @@
+<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:60vh;gap:14px;text-align:center">
+  <p class="subtitle" style="font-size:18px">Design decisions locked</p>
+  <pre style="font-family:ui-monospace,SFMono-Regular,monospace;font-size:11px;line-height:1.6;color:#9ce6ff;background:rgba(0,0,0,0.4);padding:18px 28px;border-radius:6px;border:1px solid rgba(0,229,255,0.25);text-align:left">
+home view : / → /watchlist  (default landing)
+nav order : Watchlist · Browse · Live · Workspace · …
+/watchlist: alerts-first hero  +  dense-table below
+variants  : same size+flavor only  → own master
+master_id : NOT NULL · auto-seeded on ingest
+matching  : EAN → fuzzy ≥0.92 → seed; gray zone → /match/review
+schedule  : on-demand + cron docs  +  daemon (opt-in)
+freshness : cache-preferred TTL  ·  --live persists
+channels  : web SSE  +  telegram  +  macOS
+cooldown  : 24h  per (favorite, reason)
+images    : upstream URLs as-is (v1)
+search    : SQLite FTS5 + diacritic-insensitive
+shops     : 11 grocery+drogerie+pharmacy (no alza in v1)
+plans     : .claude/plans/2026-05-08-Shops-{01..09}.md
+  </pre>
+  <p class="subtitle">Continuing in terminal: spec self-review → user review → /writing-plans.</p>
+</div>

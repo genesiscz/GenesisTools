@@ -49,22 +49,19 @@ describe("ShopApiClient", () => {
         expect(() => c.parseUrl("https://www.kosik.cz/p116247-nescafe-gold")).toThrow(/does not belong to rohlik.cz/);
     });
 
-    test.skipIf(!process.env.INTEGRATION)(
-        "emits an http-request event through the sink on every request",
-        async () => {
-            const sink = new TestSink();
-            const c = new FakeRohlikClient({ baseUrl: "https://data.hlidacshopu.cz", sink, retry: 0 });
-            try {
-                await c.requestRawPublic("GET", "/items/alza.cz/8023870/meta.json");
-            } catch {
-                // 404 is fine; we only care that the sink got an event.
-            }
-
-            expect(sink.events).toHaveLength(1);
-            expect(sink.events[0]?.method).toBe("GET");
-            expect(sink.events[0]?.shopOrigin).toBe("rohlik.cz");
-            expect(sink.events[0]?.source).toBe("ShopApiClient:rohlik.cz");
-            expect(typeof sink.events[0]?.durationMs).toBe("number");
+    test.skipIf(!process.env.INTEGRATION)("emits an http-request event through the sink on every request", async () => {
+        const sink = new TestSink();
+        const c = new FakeRohlikClient({ baseUrl: "https://data.hlidacshopu.cz", sink, retry: 0 });
+        try {
+            await c.requestRawPublic("GET", "/items/alza.cz/8023870/meta.json");
+        } catch {
+            // 404 is fine; we only care that the sink got an event.
         }
-    );
+
+        expect(sink.events).toHaveLength(1);
+        expect(sink.events[0]?.method).toBe("GET");
+        expect(sink.events[0]?.shopOrigin).toBe("rohlik.cz");
+        expect(sink.events[0]?.source).toBe("ShopApiClient:rohlik.cz");
+        expect(typeof sink.events[0]?.durationMs).toBe("number");
+    });
 });

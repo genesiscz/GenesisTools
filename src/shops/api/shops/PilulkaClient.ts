@@ -133,7 +133,9 @@ function parseDetail(html: string, url: string): RawProduct | undefined {
 
     // Schema.org Offer.price is "Number or Text" — normalize either to a number.
     const ldPrice =
-        typeof product.offers.price === "number" ? product.offers.price : Number.parseFloat(String(product.offers.price));
+        typeof product.offers.price === "number"
+            ? product.offers.price
+            : Number.parseFloat(String(product.offers.price));
     if (Number.isNaN(ldPrice)) {
         return undefined;
     }
