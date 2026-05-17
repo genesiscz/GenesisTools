@@ -244,4 +244,3 @@ function wordsToSegments(words: XAITranscriptionWord[] | undefined): Transcripti
 
     return words.map((w) => ({ text: w.text, start: w.start, end: w.end }));
 }
-

@@ -23,7 +23,9 @@ mock.module("@app/utils/audio/diarize-local", () => ({
 
 const { Transcriber } = await import("@app/utils/ai/tasks/Transcriber");
 
-type TranscriberCtor = new (provider: AITranscriptionProvider) => {
+type TranscriberCtor = new (
+    provider: AITranscriptionProvider
+) => {
     transcribe(audio: Buffer, options?: { diarize?: boolean; clean?: boolean }): Promise<TranscriptionResult>;
 };
 

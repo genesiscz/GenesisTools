@@ -43,7 +43,7 @@ export function assignSpeakers(segments: TranscriptionSegment[], turns: DiarTurn
         if (!speaker && turns.length > 0) {
             const mid = (seg.start + seg.end) / 2;
             speaker = turns.reduce((p, c) =>
-                Math.abs((c.start + c.end) / 2 - mid) < Math.abs((p.start + p.end) / 2 - mid) ? c : p,
+                Math.abs((c.start + c.end) / 2 - mid) < Math.abs((p.start + p.end) / 2 - mid) ? c : p
             ).speaker;
         }
 

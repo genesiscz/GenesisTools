@@ -1,5 +1,5 @@
-import { existsSync } from "node:fs";
 import { describe, expect, it } from "bun:test";
+import { existsSync } from "node:fs";
 
 describe("sherpa-onnx preflight", () => {
     it("darwin-arm64 prebuilt native addon is present (no source build)", () => {

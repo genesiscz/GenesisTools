@@ -2,15 +2,15 @@ import { existsSync } from "node:fs";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import logger from "@app/logger";
 import { audioProcessor } from "@app/ask/audio/AudioProcessor";
+import logger from "@app/logger";
 import { rateLimitAwareDelay, retry } from "@app/utils/async";
+import { diarizeLocal } from "@app/utils/audio/diarize-local";
 import { CLOUD_PROVIDER_TYPES } from "@app/utils/config/ai.types";
 import { AIConfig } from "../AIConfig";
 import { getProviderForTask } from "../providers";
 import { assignSpeakers } from "../transcription/align-speakers";
 import { cleanRepetitions } from "../transcription/repetition-cleanup";
-import { diarizeLocal } from "@app/utils/audio/diarize-local";
 import type {
     AIProviderType,
     AITranscriptionProvider,
@@ -200,7 +200,7 @@ export class Transcriber {
                     language: options?.language,
                     duration: timeOffset > 0 ? timeOffset : undefined,
                 },
-                options,
+                options
             );
 
             // `audio` here is the full original buffer (never a chunk) — the

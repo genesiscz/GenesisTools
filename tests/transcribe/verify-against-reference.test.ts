@@ -25,11 +25,9 @@ describe("scoreAgainstReference", () => {
 
     it("speakerAgreement is permutation-invariant (swapped labels still score 1)", () => {
         const cand =
-            "1\n00:00:00,000 --> 00:00:01,000\nSPEAKER_00: A\n\n" +
-            "2\n00:00:01,000 --> 00:00:02,000\nSPEAKER_01: B\n";
+            "1\n00:00:00,000 --> 00:00:01,000\nSPEAKER_00: A\n\n" + "2\n00:00:01,000 --> 00:00:02,000\nSPEAKER_01: B\n";
         const ref =
-            "1\n00:00:00,000 --> 00:00:01,000\nSPEAKER_01: A\n\n" +
-            "2\n00:00:01,000 --> 00:00:02,000\nSPEAKER_00: B\n";
+            "1\n00:00:00,000 --> 00:00:01,000\nSPEAKER_01: A\n\n" + "2\n00:00:01,000 --> 00:00:02,000\nSPEAKER_00: B\n";
         const s = scoreAgainstReference(cand, ref);
         expect(s.speakerAgreement).toBe(1);
         expect(s.werProxy).toBe(0);
@@ -39,11 +37,9 @@ describe("scoreAgainstReference", () => {
         // cand says one speaker for both cues; ref says two different ones —
         // no bijection makes both agree, so the best is 0.5.
         const cand =
-            "1\n00:00:00,000 --> 00:00:01,000\nSPEAKER_00: a\n\n" +
-            "2\n00:00:01,000 --> 00:00:02,000\nSPEAKER_00: b\n";
+            "1\n00:00:00,000 --> 00:00:01,000\nSPEAKER_00: a\n\n" + "2\n00:00:01,000 --> 00:00:02,000\nSPEAKER_00: b\n";
         const ref =
-            "1\n00:00:00,000 --> 00:00:01,000\nSPEAKER_00: a\n\n" +
-            "2\n00:00:01,000 --> 00:00:02,000\nSPEAKER_01: b\n";
+            "1\n00:00:00,000 --> 00:00:01,000\nSPEAKER_00: a\n\n" + "2\n00:00:01,000 --> 00:00:02,000\nSPEAKER_01: b\n";
         const s = scoreAgainstReference(cand, ref);
         expect(s.speakerAgreement).toBe(0.5);
         expect(s.werProxy).toBe(0);

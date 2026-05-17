@@ -3,8 +3,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import logger from "@app/logger";
 import { TranscriptionManager } from "@app/utils/ai/transcription/TranscriptionManager";
-import { convertFileToMonoMp3 } from "@app/utils/audio/converter";
-import { sniffAudioExt } from "@app/utils/audio/detect-format";
 import type {
     AIEmbeddingProvider,
     AISummarizationProvider,
@@ -20,6 +18,8 @@ import type {
     TranslateOptions,
     TranslationResult,
 } from "@app/utils/ai/types";
+import { convertFileToMonoMp3 } from "@app/utils/audio/converter";
+import { sniffAudioExt } from "@app/utils/audio/detect-format";
 import type { AIProviderType } from "@app/utils/config/ai.types";
 
 type LlmCloudType = "openai" | "groq" | "openrouter";

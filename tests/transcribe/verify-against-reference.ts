@@ -33,7 +33,10 @@ export function parseSrt(srt: string): Cue[] {
         }
 
         const [a, z] = tl.split("-->");
-        const body = lines.slice(lines.indexOf(tl) + 1).join(" ").trim();
+        const body = lines
+            .slice(lines.indexOf(tl) + 1)
+            .join(" ")
+            .trim();
         // ONLY `SPEAKER_NN:` counts as a speaker prefix — matching a generic
         // capitalized word would false-positive on any sentence like
         // "Dobrý den: ..." and corrupt the speaker-agreement denominator.
@@ -59,11 +62,7 @@ function lev(a: string, b: string): number {
 
     for (let i = 1; i <= a.length; i++) {
         for (let j = 1; j <= b.length; j++) {
-            d[i][j] = Math.min(
-                d[i - 1][j] + 1,
-                d[i][j - 1] + 1,
-                d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1),
-            );
+            d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
         }
     }
 
@@ -140,10 +139,7 @@ function bestSpeakerAgreement(pairs: Array<{ cand: string; ref: string }>): numb
     return best / pairs.length;
 }
 
-export function scoreAgainstReference(
-    candSrt: string,
-    refSrt: string,
-): { werProxy: number; speakerAgreement: number } {
+export function scoreAgainstReference(candSrt: string, refSrt: string): { werProxy: number; speakerAgreement: number } {
     const cand = parseSrt(candSrt);
     const ref = parseSrt(refSrt);
 
@@ -213,6 +209,6 @@ if (import.meta.main) {
     const [cand, ref] = process.argv.slice(2);
     const s = scoreAgainstReference(await Bun.file(cand).text(), await Bun.file(ref).text());
     console.log(
-        `${cand.split("/").pop()}: WER-proxy ${s.werProxy.toFixed(3)}, speaker-agreement ${s.speakerAgreement.toFixed(2)}`,
+        `${cand.split("/").pop()}: WER-proxy ${s.werProxy.toFixed(3)}, speaker-agreement ${s.speakerAgreement.toFixed(2)}`
     );
 }

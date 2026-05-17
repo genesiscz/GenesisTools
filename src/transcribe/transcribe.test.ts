@@ -132,7 +132,7 @@ describe("speaker-aware rendering", () => {
             ],
         };
         expect(toSRT(result)).toBe(
-            "1\n00:00:00,000 --> 00:00:11,000\nSPEAKER_00: Začátek věty a pokračování po pauze.",
+            "1\n00:00:00,000 --> 00:00:11,000\nSPEAKER_00: Začátek věty a pokračování po pauze."
         );
     });
 

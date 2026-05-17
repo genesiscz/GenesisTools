@@ -75,12 +75,11 @@ function flagHighCompression(text: string): void {
     for (let i = 0; i < words.length; i += ZLIB_WINDOW_WORDS) {
         const win = words.slice(i, i + ZLIB_WINDOW_WORDS).join(" ");
         const ratio =
-            Buffer.byteLength(win, "utf8") /
-            Math.max(1, Bun.deflateSync(Buffer.from(win), { library: "zlib" }).length);
+            Buffer.byteLength(win, "utf8") / Math.max(1, Bun.deflateSync(Buffer.from(win), { library: "zlib" }).length);
 
         if (ratio > ZLIB_FLAG_RATIO) {
             logger.warn(
-                `repetition-cleanup: window @word ${i} compression ratio ${ratio.toFixed(2)} > ${ZLIB_FLAG_RATIO} (review)`,
+                `repetition-cleanup: window @word ${i} compression ratio ${ratio.toFixed(2)} > ${ZLIB_FLAG_RATIO} (review)`
             );
         }
     }

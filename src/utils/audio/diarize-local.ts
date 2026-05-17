@@ -1,10 +1,10 @@
 import { unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import logger from "@app/logger";
 import type { DiarTurn } from "@app/utils/ai/transcription/align-speakers";
 import { convertToWhisperWav } from "@app/utils/audio/converter";
 import { ensureDiarizationModels } from "@app/utils/audio/diarize-models";
-import logger from "@app/logger";
 
 interface SherpaWave {
     samples: Float32Array;
