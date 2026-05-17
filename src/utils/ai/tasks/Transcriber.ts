@@ -104,6 +104,12 @@ export class Transcriber {
             maxAttempts: 3,
             getDelay: RETRY_DELAY,
             shouldRetry: shouldRetryTransient,
+            onRetry: (attempt, delay) => {
+                logger.warn(
+                    { attempt, maxAttempts: 3, nextDelayMs: delay, audioBytes: audio.length },
+                    "Transcription attempt failed (transient) — retrying; each retry re-uploads the full audio, slow on a degraded uplink"
+                );
+            },
         });
 
         const cleaned = this.maybeClean(result, options);

@@ -201,6 +201,17 @@ export class TranscriptionManager {
             // Perform transcription
             const model = getTranscriptionModel(transcriptionModel.providerInstance, transcriptionModel.model);
             const providerOptions = this.buildProviderOptions(transcriptionModel.provider, options);
+            const requestStart = Date.now();
+            logger.info(
+                {
+                    provider: transcriptionModel.provider,
+                    model: transcriptionModel.model,
+                    audioBytes: audioBuffer.byteLength,
+                    diarize: options.diarize === true,
+                    language: options.language,
+                },
+                "Transcription request → cloud (this upload can be slow on a degraded uplink)"
+            );
             const result = await transcribe({
                 model,
                 audio: audioBuffer,
@@ -208,6 +219,14 @@ export class TranscriptionManager {
             });
 
             const processingTime = Date.now() - startTime;
+            logger.info(
+                {
+                    provider: transcriptionModel.provider,
+                    audioBytes: audioBuffer.byteLength,
+                    requestMs: Date.now() - requestStart,
+                },
+                "Transcription request ← cloud (response received)"
+            );
 
             const mapped =
                 transcriptionModel.provider === "deepgram" && options.diarize
@@ -233,7 +252,10 @@ export class TranscriptionManager {
             return transcriptionResult;
         } catch (error) {
             const processingTime = Date.now() - startTime;
-            logger.error(`Transcription failed after ${(processingTime / 1000).toFixed(1)}s: ${error}`);
+            logger.error(
+                { error, provider: options.provider, model: options.model, elapsedMs: processingTime },
+                `Transcription failed after ${(processingTime / 1000).toFixed(1)}s (timeouts here usually mean a slow/degraded upload, not a code fault)`
+            );
 
             // Only auto-fall-back when no provider was explicitly requested.
             // If the caller asked for a specific provider, fail loudly instead

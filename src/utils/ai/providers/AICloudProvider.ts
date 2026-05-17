@@ -112,6 +112,12 @@ export class AICloudProvider
                 uploadPath = normalizedPath;
             }
 
+            const uploadBytes = Bun.file(uploadPath).size;
+            logger.info(
+                { ext, rawBytes: audio.length, uploadBytes, normalized: ext !== "mp3" },
+                "Cloud transcription upload prepared"
+            );
+
             const result = await this.transcriptionManager.transcribeAudio(uploadPath, {
                 language: options?.language,
                 model: options?.model,
