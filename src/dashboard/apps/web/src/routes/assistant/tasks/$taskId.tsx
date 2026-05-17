@@ -29,6 +29,8 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { DashboardLayout } from "@/components/dashboard";
+import { RouteError } from "@/components/RouteError";
+import { RouteSkeleton } from "@/components/RouteSkeleton";
 import { useBlockers, useDecisionLog, useHandoff, useTaskStore } from "@/lib/assistant/hooks";
 import type {
     ContextParking,
@@ -47,6 +49,8 @@ import { HandoffBanner, HandoffEditor, HandoffHistory, HandoffHistoryWidget } fr
 
 export const Route = createFileRoute("/assistant/tasks/$taskId")({
     component: TaskDetailPage,
+    errorComponent: ({ error, reset }) => <RouteError error={error} reset={reset} />,
+    pendingComponent: () => <RouteSkeleton />,
 });
 
 function TaskDetailPage() {

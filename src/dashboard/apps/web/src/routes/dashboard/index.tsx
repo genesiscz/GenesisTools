@@ -3,9 +3,13 @@ import { FeatureGrid, type FeatureGridItem, HeroBanner, SectionHeader, StatCardN
 import { useAuth } from "@workos/authkit-tanstack-react-start/client";
 import { Bookmark, Brain, CalendarDays, Clock, Sparkles, StickyNote, Target, Timer, TrendingUp } from "lucide-react";
 import { DashboardLayout } from "@/components/dashboard";
+import { RouteError } from "@/components/RouteError";
+import { RouteSkeleton } from "@/components/RouteSkeleton";
 
 export const Route = createFileRoute("/dashboard/")({
     component: DashboardPage,
+    errorComponent: ({ error, reset }) => <RouteError error={error} reset={reset} />,
+    pendingComponent: () => <RouteSkeleton />,
 });
 
 const features: FeatureGridItem[] = [

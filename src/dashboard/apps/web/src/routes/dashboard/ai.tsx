@@ -5,6 +5,8 @@ import { useAuth } from "@workos/authkit-tanstack-react-start/client";
 import { Brain } from "lucide-react";
 import { useState } from "react";
 import { DashboardLayout } from "@/components/dashboard";
+import { RouteError } from "@/components/RouteError";
+import { RouteSkeleton } from "@/components/RouteSkeleton";
 import {
     aiQueryKeys,
     useConversations,
@@ -19,6 +21,8 @@ import { MessageThread } from "./-ai/MessageThread";
 
 export const Route = createFileRoute("/dashboard/ai")({
     component: AIAssistantPage,
+    errorComponent: ({ error, reset }) => <RouteError error={error} reset={reset} />,
+    pendingComponent: () => <RouteSkeleton />,
 });
 
 const DEV_USER_ID = "dev-user";

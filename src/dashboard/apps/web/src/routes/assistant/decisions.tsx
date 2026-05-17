@@ -1,12 +1,16 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useAuth } from "@workos/authkit-tanstack-react-start/client";
 import { DashboardLayout } from "@/components/dashboard";
+import { RouteError } from "@/components/RouteError";
+import { RouteSkeleton } from "@/components/RouteSkeleton";
 import { useDecisionLog, useTaskStore } from "@/lib/assistant/hooks";
 import type { DecisionInput } from "@/lib/assistant/types";
 import { DecisionLog } from "./-components/decisions";
 
 export const Route = createFileRoute("/assistant/decisions")({
     component: DecisionsPage,
+    errorComponent: ({ error, reset }) => <RouteError error={error} reset={reset} />,
+    pendingComponent: () => <RouteSkeleton />,
 });
 
 function DecisionsPage() {

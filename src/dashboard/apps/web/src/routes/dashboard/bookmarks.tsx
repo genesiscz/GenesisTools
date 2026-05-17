@@ -6,6 +6,8 @@ import { useAuth } from "@workos/authkit-tanstack-react-start/client";
 import { Bookmark, Plus } from "lucide-react";
 import { useState } from "react";
 import { DashboardLayout } from "@/components/dashboard";
+import { RouteError } from "@/components/RouteError";
+import { RouteSkeleton } from "@/components/RouteSkeleton";
 import { bookmarkKeys } from "@/lib/bookmarks/bookmarks-keys";
 import { useBookmarks } from "@/lib/bookmarks/hooks/useBookmarks";
 import { useServerEvents } from "@/lib/events/useServerEvents";
@@ -13,6 +15,8 @@ import { BookmarkCard, BookmarkFilters, BookmarkForm } from "./-bookmarks";
 
 export const Route = createFileRoute("/dashboard/bookmarks")({
     component: BookmarksPage,
+    errorComponent: ({ error, reset }) => <RouteError error={error} reset={reset} />,
+    pendingComponent: () => <RouteSkeleton />,
 });
 
 /** Dev fallback userId when no WorkOS session is present. */
@@ -125,7 +129,9 @@ function BookmarksPage() {
             <BookmarkForm
                 open={formOpen}
                 onOpenChange={setFormOpen}
-                onSubmit={async (input) => { await addBookmark(input); }}
+                onSubmit={async (input) => {
+                    await addBookmark(input);
+                }}
                 existingTags={getAllTags()}
             />
         </DashboardLayout>

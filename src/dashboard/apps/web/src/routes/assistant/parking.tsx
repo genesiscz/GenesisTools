@@ -14,12 +14,16 @@ import { useAuth } from "@workos/authkit-tanstack-react-start/client";
 import { Archive, ArrowRight, CheckCircle, Clock, Filter, ParkingCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 import { DashboardLayout } from "@/components/dashboard";
+import { RouteError } from "@/components/RouteError";
+import { RouteSkeleton } from "@/components/RouteSkeleton";
 import { useTaskStore } from "@/lib/assistant/hooks";
 import type { ContextParking, ParkingStatus } from "@/lib/assistant/types";
 import { formatParkingRelativeTime } from "@/lib/assistant/utils";
 
 export const Route = createFileRoute("/assistant/parking")({
     component: ParkingPage,
+    errorComponent: ({ error, reset }) => <RouteError error={error} reset={reset} />,
+    pendingComponent: () => <RouteSkeleton />,
 });
 
 type FilterMode = "all" | ParkingStatus;

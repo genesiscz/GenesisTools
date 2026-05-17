@@ -5,6 +5,8 @@ import { useAuth } from "@workos/authkit-tanstack-react-start/client";
 import { Activity, Zap } from "lucide-react";
 import { useEffect, useState } from "react";
 import { DashboardLayout } from "@/components/dashboard";
+import { RouteError } from "@/components/RouteError";
+import { RouteSkeleton } from "@/components/RouteSkeleton";
 import { useDistractions, useEnergyData, useTaskStore } from "@/lib/assistant/hooks";
 import { useBadgeProgress } from "@/lib/assistant/hooks/useBadgeProgress";
 import type { DistractionStats as DistractionStatsType, EnergyHeatmapData } from "@/lib/assistant/lib/storage/types";
@@ -28,6 +30,8 @@ import { DistractionInsights, DistractionPatterns, DistractionStats, QuickLogBut
 
 export const Route = createFileRoute("/assistant/analytics")({
     component: AnalyticsPage,
+    errorComponent: ({ error, reset }) => <RouteError error={error} reset={reset} />,
+    pendingComponent: () => <RouteSkeleton />,
 });
 
 function AnalyticsPage() {

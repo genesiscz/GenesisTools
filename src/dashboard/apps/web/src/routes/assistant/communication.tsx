@@ -5,12 +5,16 @@ import { useAuth } from "@workos/authkit-tanstack-react-start/client";
 import { MessageSquare, Plus } from "lucide-react";
 import { useState } from "react";
 import { DashboardLayout } from "@/components/dashboard";
+import { RouteError } from "@/components/RouteError";
+import { RouteSkeleton } from "@/components/RouteSkeleton";
 import { useCommunicationLog } from "@/lib/assistant/hooks";
 import type { CommunicationEntry, CommunicationEntryInput, CommunicationEntryUpdate } from "@/lib/assistant/types";
 import { CommunicationLog, LogForm } from "./-components/communication";
 
 export const Route = createFileRoute("/assistant/communication")({
     component: CommunicationPage,
+    errorComponent: ({ error, reset }) => <RouteError error={error} reset={reset} />,
+    pendingComponent: () => <RouteSkeleton />,
 });
 
 function CommunicationPage() {

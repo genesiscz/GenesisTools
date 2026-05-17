@@ -4,17 +4,21 @@ import { useAuth } from "@workos/authkit-tanstack-react-start/client";
 import { Activity, Loader2, Plus } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { DashboardLayout } from "@/components/dashboard";
+import { RouteError } from "@/components/RouteError";
+import { RouteSkeleton } from "@/components/RouteSkeleton";
+import { requireAuthBeforeLoad } from "@/lib/auth/requireUser";
 import { CHRONO_SYNC_CHANNEL, useBroadcastInvalidation } from "@/lib/sync/useBroadcastInvalidation";
 import { ActivityLogSidebar, TimerCard } from "@/lib/timer/components";
 import { useTimerSSE } from "@/lib/timer/hooks/useTimerSSE";
 import { useTimerStore } from "@/lib/timer/hooks/useTimerStore";
-import { requireAuthBeforeLoad } from "@/lib/auth/requireUser";
 import { cn } from "@/lib/utils";
 import "@/components/auth/cyberpunk.css";
 
 export const Route = createFileRoute("/timer/")({
     beforeLoad: ({ location }) => requireAuthBeforeLoad(location.href),
     component: TimerPage,
+    errorComponent: ({ error, reset }) => <RouteError error={error} reset={reset} />,
+    pendingComponent: () => <RouteSkeleton />,
 });
 
 const DEV_USER_ID = "dev-user";

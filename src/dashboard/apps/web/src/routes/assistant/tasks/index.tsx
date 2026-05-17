@@ -12,6 +12,8 @@ import { useAuth } from "@workos/authkit-tanstack-react-start/client";
 import { Kanban, LayoutGrid, ListTodo, ParkingCircle, Plus } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { DashboardLayout } from "@/components/dashboard";
+import { RouteError } from "@/components/RouteError";
+import { RouteSkeleton } from "@/components/RouteSkeleton";
 import { ContextParkingModal, TaskCard, TaskForm } from "@/lib/assistant/components";
 import { useCommunicationLog, useContextParking, useDeadlineRisk, useTaskStore } from "@/lib/assistant/hooks";
 import type {
@@ -30,6 +32,8 @@ import { KanbanBoard } from "../-components/kanban";
 
 export const Route = createFileRoute("/assistant/tasks/")({
     component: TasksPageWrapper,
+    errorComponent: ({ error, reset }) => <RouteError error={error} reset={reset} />,
+    pendingComponent: () => <RouteSkeleton />,
 });
 
 /**

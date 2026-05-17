@@ -2,6 +2,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useAuth } from "@workos/authkit-tanstack-react-start/client";
 import { DashboardLayout } from "@/components/dashboard";
+import { RouteError } from "@/components/RouteError";
+import { RouteSkeleton } from "@/components/RouteSkeleton";
 import { useServerEvents } from "@/lib/events/useServerEvents";
 import { notesKeys } from "@/lib/notes/notes-keys";
 import { useNotesQuery } from "@/lib/notes/useNotesQueries";
@@ -13,6 +15,8 @@ import { useNotesState } from "./-notes/useNotesState";
 
 export const Route = createFileRoute("/dashboard/notes")({
     component: QuickNotesPage,
+    errorComponent: ({ error, reset }) => <RouteError error={error} reset={reset} />,
+    pendingComponent: () => <RouteSkeleton />,
 });
 
 /** Dev fallback userId when no WorkOS session is present. */

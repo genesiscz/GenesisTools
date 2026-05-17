@@ -2,6 +2,8 @@ import { DndContext, DragOverlay } from "@dnd-kit/core";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { DashboardLayout } from "@/components/dashboard";
+import { RouteError } from "@/components/RouteError";
+import { RouteSkeleton } from "@/components/RouteSkeleton";
 import type { AssistantTask } from "@/drizzle";
 import { TaskForm } from "@/lib/assistant/components";
 import type { TaskInput } from "@/lib/assistant/types";
@@ -15,6 +17,8 @@ import { usePlannerDnd } from "./-planner/usePlannerDnd";
 
 export const Route = createFileRoute("/dashboard/planner")({
     component: DailyPlannerPage,
+    errorComponent: ({ error, reset }) => <RouteError error={error} reset={reset} />,
+    pendingComponent: () => <RouteSkeleton />,
 });
 
 function DailyPlannerPage() {

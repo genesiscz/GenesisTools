@@ -10,6 +10,8 @@ import { AlertTriangle, Calendar, Camera, Check, Github, Link2, Mail, Trash2, Us
 import { useRef, useState } from "react";
 import { AuthAlertBanner } from "@/components/auth";
 import { DashboardLayout } from "@/components/dashboard";
+import { RouteError } from "@/components/RouteError";
+import { RouteSkeleton } from "@/components/RouteSkeleton";
 import { SettingCard, SettingRow } from "@/components/settings";
 import { requireAuthBeforeLoad } from "@/lib/auth/requireUser";
 import { removeAvatarFn, updateAvatarFn } from "@/lib/profile-actions";
@@ -17,6 +19,8 @@ import { removeAvatarFn, updateAvatarFn } from "@/lib/profile-actions";
 export const Route = createFileRoute("/profile")({
     beforeLoad: ({ location }) => requireAuthBeforeLoad(location.href),
     component: ProfilePage,
+    errorComponent: ({ error, reset }) => <RouteError error={error} reset={reset} />,
+    pendingComponent: () => <RouteSkeleton />,
 });
 
 function ProfilePage() {

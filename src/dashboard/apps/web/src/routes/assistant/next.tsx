@@ -16,6 +16,8 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { DashboardLayout } from "@/components/dashboard";
+import { RouteError } from "@/components/RouteError";
+import { RouteSkeleton } from "@/components/RouteSkeleton";
 import { useTaskStore } from "@/lib/assistant/hooks";
 import type { ContextParking, Task } from "@/lib/assistant/types";
 import { formatFocusTime } from "@/lib/assistant/utils";
@@ -23,6 +25,8 @@ import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/assistant/next")({
     component: WhatsNextPage,
+    errorComponent: ({ error, reset }) => <RouteError error={error} reset={reset} />,
+    pendingComponent: () => <RouteSkeleton />,
 });
 
 interface Recommendation {
