@@ -47,6 +47,10 @@ import { BlockerModal } from "../-components/blockers";
 import { BottleneckAlert, CriticalPathGraph, DependencySelector } from "../-components/critical-path";
 import { HandoffBanner, HandoffEditor, HandoffHistory, HandoffHistoryWidget } from "../-components/handoff";
 
+function formatDateForInput(date: Date): string {
+    return date.toISOString().split("T")[0];
+}
+
 export const Route = createFileRoute("/assistant/tasks/$taskId")({
     component: TaskDetailPage,
     errorComponent: ({ error, reset }) => <RouteError error={error} reset={reset} />,
@@ -127,7 +131,9 @@ function TaskDetailPage() {
             setIsShippingBlocker(task.isShippingBlocker);
             setHasChanges(false);
         }
-    }, [task, formatDateForInput]);
+        // formatDateForInput is a module-scope constant; task is the only real input.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [task]);
 
     // Load parking context - only run when taskId changes
     useEffect(() => {
@@ -151,8 +157,11 @@ function TaskDetailPage() {
         return () => {
             mounted = false;
         };
+        // getActiveParking/getParkingHistory are store dispatchers — re-creating
+        // each render; including them here loops (setParkingHistory always gets a
+        // fresh .slice() array). taskId/initialized are the real inputs.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [taskId, initialized, getActiveParking, getParkingHistory]);
+    }, [taskId, initialized]);
 
     // Load active blocker for this task
     useEffect(() => {
@@ -160,11 +169,10 @@ function TaskDetailPage() {
             const blocker = getActiveBlockerForTask(taskId);
             setActiveBlocker(blocker || null);
         }
-    }, [taskId, blockersInitialized, getActiveBlockerForTask]);
-
-    function formatDateForInput(date: Date): string {
-        return date.toISOString().split("T")[0];
-    }
+        // getActiveBlockerForTask is a store dispatcher re-created each render —
+        // taskId/blockersInitialized are the real inputs (matches the effect above).
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [taskId, blockersInitialized]);
 
     function formatDateTime(date: Date): string {
         return new Date(date).toLocaleString(undefined, {
