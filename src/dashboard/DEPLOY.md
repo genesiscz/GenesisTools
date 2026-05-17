@@ -1,7 +1,7 @@
 # Dashboard — Self-Hosted Deployment (Node 22 + PM2)
 
-Single web process behind a reverse proxy. `apps/server` (:4000) is **not deployed**
-(unused by the web app, websocket disabled).
+Single web process (`apps/web`, TanStack Start on its embedded Nitro server)
+behind a reverse proxy.
 
 ## Prerequisites
 
@@ -41,11 +41,10 @@ bun install
 bun run build:prod    # = turbo run build --filter=@dashboard/web → apps/web/.output/
 ```
 
-`check-types` is a `turbo.json` build dependency AND `apps/web`/`apps/server`
-now define it (`tsc --noEmit`; web uses `tsconfig.build.json` which excludes
-tests), so a type-broken tree fails the build instead of shipping. Use
-`bun run build:prod` (not bare `bun run build`) so `apps/server`
-is not built for a web-only deploy.
+`check-types` is a `turbo.json` build dependency and `apps/web` defines it
+(`tsc --noEmit`; web uses `tsconfig.build.json` which excludes tests), so a
+type-broken tree fails the build instead of shipping. Use `bun run build:prod`
+(`turbo run build --filter=@dashboard/web`) for the web-only deploy build.
 
 ## Migrations
 
