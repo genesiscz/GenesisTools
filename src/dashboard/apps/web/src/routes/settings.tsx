@@ -31,6 +31,15 @@ function SettingsPage() {
         toast.success(`${label} ${value ? "enabled" : "disabled"}`);
     };
 
+    const handleSelectChange = <K extends keyof typeof settings>(
+        key: K,
+        value: (typeof settings)[K],
+        label: string
+    ) => {
+        updateSetting(key, value);
+        toast.success(`${label} updated`);
+    };
+
     return (
         <DashboardLayout title="Settings" description="Configure your NEXUS experience">
             <div className="max-w-3xl space-y-6">
@@ -42,7 +51,10 @@ function SettingsPage() {
                     tint="primary"
                 >
                     <SettingRow label="Theme" description="Choose your preferred color scheme">
-                        <Select defaultValue="dark">
+                        <Select
+                            value={settings.theme}
+                            onValueChange={(v) => handleSelectChange("theme", v as (typeof settings)["theme"], "Theme")}
+                        >
                             <SelectTrigger className="w-32 bg-card/50 border-primary/20">
                                 <SelectValue />
                             </SelectTrigger>
@@ -190,7 +202,10 @@ function SettingsPage() {
                     tint="muted"
                 >
                     <SettingRow label="Language" description="Interface language">
-                        <Select defaultValue="en">
+                        <Select
+                            value={settings.language}
+                            onValueChange={(v) => handleSelectChange("language", v, "Language")}
+                        >
                             <SelectTrigger className="w-40 bg-card/50 border-muted/20">
                                 <SelectValue />
                             </SelectTrigger>
@@ -202,7 +217,12 @@ function SettingsPage() {
                     </SettingRow>
 
                     <SettingRow label="Time Format" description="12-hour or 24-hour">
-                        <Select defaultValue="24h">
+                        <Select
+                            value={settings.timeFormat}
+                            onValueChange={(v) =>
+                                handleSelectChange("timeFormat", v as (typeof settings)["timeFormat"], "Time format")
+                            }
+                        >
                             <SelectTrigger className="w-40 bg-card/50 border-muted/20">
                                 <SelectValue />
                             </SelectTrigger>
