@@ -47,7 +47,7 @@ export async function getAudioInfo(filePath: string): Promise<AudioInfo> {
             duration?: string;
         }
 
-        const probeData = SafeJSON.parse(stdout) as {
+        const probeData = SafeJSON.parse(stdout, { strict: true }) as {
             streams?: FFprobeStream[];
             format?: { duration?: string; size?: string; bit_rate?: string };
         };

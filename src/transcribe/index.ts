@@ -270,7 +270,8 @@ async function interactiveMode(): Promise<void> {
             return;
         }
 
-        speakers = spk?.trim() ? Number.parseInt(spk.trim(), 10) : undefined;
+        const parsedSpk = spk?.trim() ? Number.parseInt(spk.trim(), 10) : undefined;
+        speakers = parsedSpk && parsedSpk > 0 ? parsedSpk : undefined;
     }
 
     const format = await p.select<OutputFormat>({
@@ -352,7 +353,11 @@ const program = new Command()
     .option("--no-clean", "Disable repetition-loop cleanup (alias: --raw)")
     .option("--raw", "Alias for --no-clean")
     .option("--diarize", "Identify speakers (speaker diarization)")
-    .option("--speakers <n>", "Expected speaker count (0/omit = auto-detect)", (v) => Number.parseInt(v, 10))
+    .option("--speakers <n>", "Expected speaker count (0/omit = auto-detect)", (v) => {
+        const n = Number.parseInt(v, 10);
+
+        return Number.isInteger(n) && n > 0 ? n : undefined;
+    })
     .action(async (file: string | undefined, opts: TranscribeFlags) => {
         if (!file) {
             await interactiveMode();
