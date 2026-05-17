@@ -1,0 +1,35 @@
+@import 'tailwindcss';
+@import '@ui/theme/styles.css';
+@source "../../utils/ui";
+
+@custom-variant dark (&:is(.dark *));
+
+/* Cyberpunk neon accent palette — used by /live row severity, sparklines,
+   gradient titles, and ShopBadge color hashing. Layered on top of @ui/theme/styles.css
+   so .cyberpunk's base colors continue to apply. */
+.cyberpunk {
+    --color-neon-cyan: #22d3ee;
+    --color-neon-amber: #f59e0b;
+    --color-neon-emerald: #10b981;
+    --color-neon-violet: #8b5cf6;
+    --color-neon-coral: #fb7185;
+}
+
+.scan-lines {
+    background-image: repeating-linear-gradient(
+        0deg,
+        rgba(34, 211, 238, 0.04) 0,
+        rgba(34, 211, 238, 0.04) 1px,
+        transparent 1px,
+        transparent 3px
+    );
+}
+
+.theme-glow-hover {
+    transition: box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.theme-glow-hover:hover {
+    box-shadow: 0 0 18px rgba(34, 211, 238, 0.18);
+    transform: translateY(-1px);
+}
