@@ -1,5 +1,6 @@
 import { Streamdown } from "streamdown";
 import type { AiMessage } from "@/drizzle";
+import { useTimeFormat } from "@/lib/hooks/useTimeFormat";
 
 interface MessageBubbleProps {
     message: AiMessage | { id: string; role: "user" | "assistant" | "system"; content: string; createdAt: string };
@@ -28,6 +29,7 @@ const ROLE_LABEL_COLOR: Record<"user" | "assistant" | "system", string> = {
 export function MessageBubble({ message, isStreaming = false }: MessageBubbleProps) {
     const role = message.role as "user" | "assistant" | "system";
     const containerStyle = ROLE_STYLES[role];
+    const { hour12 } = useTimeFormat();
     const labelStyle = ROLE_LABEL_COLOR[role];
 
     return (
@@ -46,6 +48,7 @@ export function MessageBubble({ message, isStreaming = false }: MessageBubblePro
                     {new Date(message.createdAt).toLocaleTimeString([], {
                         hour: "2-digit",
                         minute: "2-digit",
+                        hour12,
                     })}
                 </span>
             </header>

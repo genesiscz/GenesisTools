@@ -5,6 +5,16 @@ import { Bookmark, Brain, CalendarDays, Clock, Sparkles, StickyNote, Target, Tim
 import { DashboardLayout } from "@/components/dashboard";
 import { RouteError } from "@/components/RouteError";
 import { RouteSkeleton } from "@/components/RouteSkeleton";
+import { useAssistantTasksQuery } from "@/lib/assistant/hooks/useAssistantQueries";
+import { useAggregatedFocusStats } from "./-focus/useFocusStats";
+
+function formatHms(ms: number): string {
+    const total = Math.floor(ms / 1000);
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
+    return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
 
 export const Route = createFileRoute("/dashboard/")({
     component: DashboardPage,
@@ -27,7 +37,7 @@ const features: FeatureGridItem[] = [
         icon: Brain,
         href: "/dashboard/ai",
         color: "purple",
-        badge: "Coming Soon",
+        badge: "Active",
     },
     {
         title: "Focus Mode",
@@ -35,7 +45,7 @@ const features: FeatureGridItem[] = [
         icon: Target,
         href: "/dashboard/focus",
         color: "amber",
-        badge: "Coming Soon",
+        badge: "Active",
     },
     {
         title: "Quick Notes",
@@ -43,28 +53,34 @@ const features: FeatureGridItem[] = [
         icon: StickyNote,
         href: "/dashboard/notes",
         color: "emerald",
-        badge: "Coming Soon",
+        badge: "Active",
     },
     {
         title: "Bookmarks",
-        description: "Save and organize links with AI-powered summaries and search",
+        description: "Save and organize links with page-metadata previews and search",
         icon: Bookmark,
         href: "/dashboard/bookmarks",
         color: "rose",
-        badge: "Coming Soon",
+        badge: "Active",
     },
     {
         title: "Daily Planner",
-        description: "AI-assisted daily planning with smart scheduling and reminders",
+        description: "Day-view timeline — drag tasks to schedule, with focus-session overlays",
         icon: CalendarDays,
         href: "/dashboard/planner",
         color: "blue",
-        badge: "Coming Soon",
+        badge: "Active",
     },
 ];
 
 function DashboardPage() {
     const { user } = useAuth();
+    const userId = user?.id ?? null;
+
+    const focusStats = useAggregatedFocusStats(userId);
+    const tasksQuery = useAssistantTasksQuery(userId);
+    const timeToday = userId ? formatHms(focusStats.timeFocusedTodayMs) : "—";
+    const tasksDone = tasksQuery.data ? String(tasksQuery.data.filter((t) => t.status === "completed").length) : "—";
 
     const greeting = () => {
         const hour = new Date().getHours();
@@ -93,8 +109,8 @@ function DashboardPage() {
                     description="Your NEXUS command center is online. All systems operational and ready to optimize your productivity."
                 >
                     <div className="flex gap-6 mt-8">
-                        <StatCardNexus icon={<Clock />} value="0:00:00" label="Time Today" color="accent" />
-                        <StatCardNexus icon={<TrendingUp />} value="0" label="Tasks Done" color="primary" />
+                        <StatCardNexus icon={<Clock />} value={timeToday} label="Time Today" color="accent" />
+                        <StatCardNexus icon={<TrendingUp />} value={tasksDone} label="Tasks Done" color="primary" />
                     </div>
                 </HeroBanner>
 

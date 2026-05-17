@@ -195,10 +195,8 @@ function SettingsPage() {
                                 <SelectValue />
                             </SelectTrigger>
                             <SelectContent className="bg-card border-muted/20">
+                                {/* English-only until i18n is implemented; do not advertise unsupported locales (plan 2026-05-17 area 6). */}
                                 <SelectItem value="en">English</SelectItem>
-                                <SelectItem value="cs">Čeština</SelectItem>
-                                <SelectItem value="de">Deutsch</SelectItem>
-                                <SelectItem value="ja">日本語</SelectItem>
                             </SelectContent>
                         </Select>
                     </SettingRow>

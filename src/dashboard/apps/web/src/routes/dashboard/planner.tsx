@@ -7,6 +7,7 @@ import { RouteSkeleton } from "@/components/RouteSkeleton";
 import type { AssistantTask } from "@/drizzle";
 import { TaskForm } from "@/lib/assistant/components";
 import type { TaskInput } from "@/lib/assistant/types";
+import { useTimeFormat } from "@/lib/hooks/useTimeFormat";
 import { ASSISTANT_SYNC_CHANNEL, useBroadcastInvalidation } from "@/lib/sync/useBroadcastInvalidation";
 import type { PlannerView } from "./-planner/PlannerHeader";
 import { PlannerHeader } from "./-planner/PlannerHeader";
@@ -154,6 +155,8 @@ interface PlannerListViewProps {
 }
 
 function PlannerListView({ tasks, onFocus }: PlannerListViewProps) {
+    const { hour12 } = useTimeFormat();
+
     return (
         <div className="flex flex-col gap-2">
             {tasks.length === 0 && <p className="py-12 text-center text-sm text-zinc-600">No active tasks.</p>}
@@ -180,9 +183,10 @@ function PlannerListView({ tasks, onFocus }: PlannerListViewProps) {
                                     {new Date(task.scheduledStart).toLocaleTimeString([], {
                                         hour: "2-digit",
                                         minute: "2-digit",
+                                        hour12,
                                     })}
                                     {task.scheduledEnd &&
-                                        ` – ${new Date(task.scheduledEnd).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`}
+                                        ` – ${new Date(task.scheduledEnd).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12 })}`}
                                 </p>
                             )}
                         </div>

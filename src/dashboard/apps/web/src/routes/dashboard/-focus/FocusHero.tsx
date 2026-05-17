@@ -7,6 +7,7 @@ import { useDistractions } from "@/lib/assistant/hooks";
 import { FocusSessionComplete } from "@/routes/assistant/-components/celebrations/FocusSessionComplete";
 import { DistractionLogModal } from "@/routes/assistant/-components/distractions";
 import "@/components/auth/cyberpunk.css";
+import { useAssistantTasksQuery } from "@/lib/assistant/hooks/useAssistantQueries";
 import { FocusSettingsPopover } from "./FocusSettingsPopover";
 import { FocusStatsRow } from "./FocusStatsRow";
 import { PhaseBadge } from "./PhaseBadge";
@@ -24,13 +25,15 @@ function formatMMSS(ms: number): string {
     return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
 }
 
-export function FocusHero() {
+export function FocusHero({ linkedTaskId }: { linkedTaskId?: string }) {
     const f = useFocusSession();
     const color = usePhaseColor(f.phase);
     const { user } = useAuth();
     const userId = user?.id ?? (import.meta.env.DEV ? DEV_USER_ID : null);
     const { logDistraction } = useDistractions(userId);
     const focusStats = useAggregatedFocusStats(userId);
+    const tasksQuery = useAssistantTasksQuery(userId);
+    const linkedTask = linkedTaskId ? tasksQuery.data?.find((t) => t.id === linkedTaskId) : undefined;
     const [distractionOpen, setDistractionOpen] = useState(false);
 
     // Keyboard shortcuts
@@ -146,6 +149,11 @@ export function FocusHero() {
                     <p className="text-xs font-mono tracking-widest uppercase text-muted-foreground mt-4">
                         {f.phase === "work" ? "deep focus" : f.phase === "short_break" ? "step away" : "recharge"}
                     </p>
+                    {linkedTask && (
+                        <p className="mt-3 font-mono text-xs uppercase tracking-widest text-amber-400/80">
+                            Focusing on: {linkedTask.title}
+                        </p>
+                    )}
                 </div>
 
                 {/* Controls */}

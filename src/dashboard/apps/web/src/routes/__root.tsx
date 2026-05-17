@@ -8,6 +8,7 @@ import { RouteError } from "@/components/RouteError";
 import TanStackQueryDevtools from "@/integrations/tanstack-query/devtools";
 import WorkOSProvider from "@/integrations/workos/provider";
 import AiDevtools from "@/lib/ai-example/ai-devtools";
+import { useApplyTheme } from "@/lib/hooks/useApplyTheme";
 import { ConfirmProvider } from "@/lib/hooks/useConfirm";
 import appCss from "@/styles.css?url";
 
@@ -43,6 +44,8 @@ export const Route = createRootRouteWithContext<MyRouterContext>()({
 });
 
 function RootDocument({ children }: { children: React.ReactNode }) {
+    useApplyTheme();
+
     // Cmd/Ctrl+P is repurposed as the "Park context" shortcut across the
     // dashboard. Suppress the browser's native print dialog globally so it
     // never hijacks the shortcut on routes that don't mount the parking hook.
