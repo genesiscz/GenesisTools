@@ -128,7 +128,7 @@ function isAbsoluteUrl(path: string): boolean {
     return /^https?:\/\//i.test(path);
 }
 
-function resolveUrl(baseUrl: string | undefined, path: string): string {
+export function resolveUrl(baseUrl: string | undefined, path: string): string {
     if (isAbsoluteUrl(path) || !baseUrl) {
         return path;
     }

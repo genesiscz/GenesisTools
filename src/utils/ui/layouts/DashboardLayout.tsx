@@ -4,6 +4,8 @@ export interface NavLink {
     label: string;
     href: string;
     icon?: ReactNode;
+    /** Optional decoration rendered to the right of the label (e.g. a count badge) */
+    badge?: ReactNode;
 }
 
 export interface DashboardLayoutProps {
@@ -19,6 +21,8 @@ export interface DashboardLayoutProps {
     activePath?: string;
     /** Callback when a nav link is clicked (for SPA routing) */
     onNavigate?: (href: string) => void;
+    /** Optional element rendered to the right of the nav (e.g. user chip + logout) */
+    rightSlot?: ReactNode;
     /** Main content */
     children: ReactNode;
 }
@@ -30,6 +34,7 @@ export function DashboardLayout({
     navLinks,
     activePath,
     onNavigate,
+    rightSlot,
     children,
 }: DashboardLayoutProps) {
     const displayTitle = titleAccent ? (
@@ -76,8 +81,8 @@ export function DashboardLayout({
 
                         {/* Navigation */}
                         {navLinks && navLinks.length > 0 && (
-                            <nav className="flex items-center gap-0.5 sm:gap-1">
-                                {navLinks.map(({ label, href, icon: linkIcon }) => {
+                            <nav className="flex items-center gap-0.5 sm:gap-1 overflow-x-auto flex-nowrap min-w-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                                {navLinks.map(({ label, href, icon: linkIcon, badge }) => {
                                     const isActive = activePath === href;
                                     return (
                                         <a
@@ -89,7 +94,7 @@ export function DashboardLayout({
                                                     onNavigate(href);
                                                 }
                                             }}
-                                            className={`flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1.5 rounded text-xs font-mono tracking-wider transition-all no-underline ${
+                                            className={`flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1.5 rounded text-xs font-mono tracking-wider transition-all no-underline shrink-0 ${
                                                 isActive
                                                     ? "bg-primary/10 text-primary border border-primary/30"
                                                     : "text-muted-foreground hover:text-foreground hover:bg-white/5"
@@ -98,11 +103,14 @@ export function DashboardLayout({
                                         >
                                             {linkIcon}
                                             <span className="hidden sm:inline">{label}</span>
+                                            {badge}
                                         </a>
                                     );
                                 })}
                             </nav>
                         )}
+
+                        {rightSlot}
                     </div>
                 </div>
             </header>

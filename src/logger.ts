@@ -114,11 +114,16 @@ export const createLogger = (options: LoggerOptions = {}): pino.Logger => {
 
     // Console stream
     if (process.stdout && typeof process.stdout.write === "function") {
+        // Auto-route to stderr when stdin is piped + a CLI arg of "mcp" is present, OR LOG_STDERR=1.
+        // This protects MCP stdio JSON-RPC frames on stdout from being polluted by log output.
+        const useStderr =
+            process.env.LOG_STDERR === "1" || (process.argv.some((arg) => arg === "mcp") && !process.stdin.isTTY);
         const prettyOptions: PinoPretty.PrettyOptions = {
             sync,
             colorize: isTerminal,
             translateTime: timestampFormat,
             ignore: showPid ? "hostname" : "pid,hostname",
+            ...(useStderr ? { destination: 2 as number } : {}),
         };
 
         // For minimal levels: hide level for info/debug/trace, show for warn/error

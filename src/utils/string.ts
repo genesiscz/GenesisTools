@@ -57,8 +57,16 @@ export function escapeShellArg(arg: string): string {
 /**
  * Remove diacritical marks from a string using Unicode NFD normalization.
  * Handles all Unicode combining marks, not just specific languages.
+ *
+ * Defensive: external feeds (e.g. Kos\u00edk's product API) sometimes return
+ * non-string values where TypeScript types claim string. Coerce to "" rather
+ * than crashing \u2014 callers can null-handle the empty result.
  */
 export function removeDiacritics(str: string): string {
+    if (typeof str !== "string") {
+        return "";
+    }
+
     return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 }
 
