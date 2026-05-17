@@ -149,10 +149,12 @@ function toSpeakerText(result: TranscriptionResult): string {
             continue;
         }
 
-        const spk = normalizeSpeakerLabel(seg.speaker) ?? "SPEAKER_00";
+        // Don't fabricate a speaker for unlabeled segments — render them
+        // plain so unknown turns aren't silently attributed to SPEAKER_00.
+        const spk = normalizeSpeakerLabel(seg.speaker);
 
-        if (spk !== curSpk) {
-            lines.push(`${spk}: ${piece}`);
+        if (spk !== curSpk || lines.length === 0) {
+            lines.push(spk ? `${spk}: ${piece}` : piece);
             curSpk = spk;
         } else {
             lines[lines.length - 1] += ` ${piece}`;

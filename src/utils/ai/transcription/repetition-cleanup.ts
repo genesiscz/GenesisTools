@@ -117,6 +117,7 @@ export function cleanRepetitions(input: { text: string; segments?: Transcription
 
         if (
             prev &&
+            prev.speaker === s.speaker &&
             norm(prev.text) === norm(s.text) &&
             norm(s.text).length > 0 &&
             s.start - prev.end < SEG_DEDUP_GAP_SEC

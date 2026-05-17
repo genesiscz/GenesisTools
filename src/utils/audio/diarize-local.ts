@@ -46,11 +46,15 @@ export async function diarizeLocal(audio: Buffer, opts?: { speakers?: number }):
     const wavPath = join(tmpdir(), `diar-${Date.now()}-${randomUUID()}.wav`);
 
     try {
+        // Load the native addon FIRST — it throws synchronously on an
+        // unsupported platform, so failing here avoids the ~31 MB model
+        // download and the wav transcode on machines that can't diarize.
+        const sherpa = require("sherpa-onnx-node") as SherpaModule;
+
         const wav = await convertToWhisperWav(audio); // 16 kHz mono 16-bit
         await Bun.write(wavPath, wav);
 
         const { segmentation, embedding } = await ensureDiarizationModels();
-        const sherpa = require("sherpa-onnx-node") as SherpaModule;
 
         // Default to 2 clusters when the caller doesn't specify. Pure
         // auto-detect (numClusters:-1) over-splits long Czech interview audio
@@ -81,14 +85,14 @@ export async function diarizeLocal(audio: Buffer, opts?: { speakers?: number }):
             speaker: String(s.speaker),
         }));
     } catch (err) {
-        logger.warn(`Local diarization unavailable, returning transcript without speakers: ${err}`);
+        logger.warn({ error: err, wavPath }, "Local diarization unavailable, returning transcript without speakers");
 
         return [];
     } finally {
         try {
             unlinkSync(wavPath);
         } catch (cleanupError) {
-            logger.debug(`Failed to remove diarization temp file ${wavPath}: ${cleanupError}`);
+            logger.debug({ error: cleanupError, wavPath }, "Failed to remove diarization temp file");
         }
     }
 }

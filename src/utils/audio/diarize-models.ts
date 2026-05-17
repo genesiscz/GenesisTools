@@ -38,9 +38,7 @@ export const EMBEDDING_MODEL = {
     file: join(DIARIZE_MODEL_DIR, "wespeaker_en_voxceleb_resnet34_LM.onnx"),
 };
 
-/** Ensure both ONNX models exist locally; download (+extract) on first use.
- *  Assets are ungated k2-fsa/sherpa-onnx GitHub releases — no auth needed. */
-export async function ensureDiarizationModels(): Promise<{ segmentation: string; embedding: string }> {
+async function provisionModels(): Promise<{ segmentation: string; embedding: string }> {
     await mkdir(DIARIZE_MODEL_DIR, { recursive: true });
 
     if (!existsSync(EMBEDDING_MODEL.file)) {
@@ -63,4 +61,22 @@ export async function ensureDiarizationModels(): Promise<{ segmentation: string;
     }
 
     return { segmentation: SEGMENTATION_MODEL.file, embedding: EMBEDDING_MODEL.file };
+}
+
+let inFlight: Promise<{ segmentation: string; embedding: string }> | undefined;
+
+/** Ensure both ONNX models exist locally; download (+extract) on first use.
+ *  Assets are ungated k2-fsa/sherpa-onnx GitHub releases — no auth needed.
+ *  Concurrent callers share one in-flight provisioning so two diarize calls
+ *  can't race on the same download/extract targets; a failed attempt clears
+ *  the cache so the next call retries instead of being permanently bricked. */
+export function ensureDiarizationModels(): Promise<{ segmentation: string; embedding: string }> {
+    if (!inFlight) {
+        inFlight = provisionModels().catch((err) => {
+            inFlight = undefined;
+            throw err;
+        });
+    }
+
+    return inFlight;
 }

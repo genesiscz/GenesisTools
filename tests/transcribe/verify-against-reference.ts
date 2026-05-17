@@ -116,20 +116,33 @@ function bestSpeakerAgreement(pairs: Array<{ cand: string; ref: string }>): numb
         return direct / pairs.length;
     }
 
+    // Explore ALL injective relabelings regardless of cardinality: permute
+    // the larger label set and zip it against the smaller one. (Permuting
+    // only `refSpk` and prefix-mapping `candSpk` missed optimal assignments
+    // when the candidate has more speakers than the reference — e.g. an
+    // over-split local diarization vs a 2-speaker reference.)
+    const candBigger = candSpk.length > refSpk.length;
+    const smaller = candBigger ? refSpk : candSpk;
+    const larger = candBigger ? candSpk : refSpk;
+
     let best = 0;
 
-    for (const perm of permutations(refSpk)) {
-        const map = new Map<string, string>();
-        candSpk.forEach((c, i) => {
-            if (i < perm.length) {
-                map.set(c, perm[i]);
+    for (const perm of permutations(larger)) {
+        const candToRef = new Map<string, string>();
+        smaller.forEach((s, i) => {
+            const l = perm[i];
+
+            if (candBigger) {
+                candToRef.set(l, s); // l = candidate label, s = reference label
+            } else {
+                candToRef.set(s, l); // s = candidate label, l = reference label
             }
         });
 
         let matched = 0;
 
         for (const p of pairs) {
-            if (map.get(p.cand) === p.ref) {
+            if (candToRef.get(p.cand) === p.ref) {
                 matched++;
             }
         }
