@@ -1,8 +1,30 @@
 import { existsSync } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import logger from "@app/logger";
+
+const DOWNLOAD_TIMEOUT_MS = 30_000;
+
+/** Fetch a model asset with a hard timeout so a hung connection fails fast
+ *  (the caller degrades to transcript-without-speakers) instead of blocking
+ *  the CLI forever. */
+async function fetchModel(url: string): Promise<ArrayBuffer> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT_MS);
+
+    try {
+        const res = await fetch(url, { signal: controller.signal });
+
+        if (!res.ok) {
+            throw new Error(`Failed to download ${url}: HTTP ${res.status}`);
+        }
+
+        return await res.arrayBuffer();
+    } finally {
+        clearTimeout(timer);
+    }
+}
 
 export const DIARIZE_MODEL_DIR = join(homedir(), ".genesis-tools", "transcribe", "models", "diarization");
 
@@ -23,29 +45,20 @@ export async function ensureDiarizationModels(): Promise<{ segmentation: string;
 
     if (!existsSync(EMBEDDING_MODEL.file)) {
         logger.info("Downloading diarization embedding model (~25 MB)…");
-        const res = await fetch(EMBEDDING_MODEL.url);
-
-        if (!res.ok) {
-            throw new Error(`Failed to download embedding model: HTTP ${res.status}`);
-        }
-
-        await Bun.write(EMBEDDING_MODEL.file, await res.arrayBuffer());
+        await Bun.write(EMBEDDING_MODEL.file, await fetchModel(EMBEDDING_MODEL.url));
     }
 
     if (!existsSync(SEGMENTATION_MODEL.file)) {
         logger.info("Downloading diarization segmentation model (~6 MB)…");
-        const res = await fetch(SEGMENTATION_MODEL.url);
-
-        if (!res.ok) {
-            throw new Error(`Failed to download segmentation model: HTTP ${res.status}`);
-        }
-
         const tar = join(DIARIZE_MODEL_DIR, "seg.tar.bz2");
-        await Bun.write(tar, await res.arrayBuffer());
+        await Bun.write(tar, await fetchModel(SEGMENTATION_MODEL.url));
         const proc = Bun.spawn(["tar", "xjf", tar, "-C", DIARIZE_MODEL_DIR], { stderr: "pipe" });
+        const extractFailed = (await proc.exited) !== 0;
+        const stderr = extractFailed ? await new Response(proc.stderr).text() : "";
+        await rm(tar, { force: true });
 
-        if ((await proc.exited) !== 0) {
-            throw new Error(`Failed to extract segmentation model: ${await new Response(proc.stderr).text()}`);
+        if (extractFailed) {
+            throw new Error(`Failed to extract segmentation model: ${stderr}`);
         }
     }
 

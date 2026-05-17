@@ -1,3 +1,6 @@
+import { existsSync } from "node:fs";
+import { basename } from "node:path";
+
 export interface Cue {
     start: number;
     end: number;
@@ -207,8 +210,21 @@ export function scoreAgainstReference(candSrt: string, refSrt: string): { werPro
 // CLI: bun tests/transcribe/verify-against-reference.ts <candidate.srt> <reference.srt>
 if (import.meta.main) {
     const [cand, ref] = process.argv.slice(2);
+
+    if (!cand || !ref) {
+        console.error("Usage: bun tests/transcribe/verify-against-reference.ts <candidate.srt> <reference.srt>");
+        process.exit(1);
+    }
+
+    for (const f of [cand, ref]) {
+        if (!existsSync(f)) {
+            console.error(`File not found: ${f}`);
+            process.exit(1);
+        }
+    }
+
     const s = scoreAgainstReference(await Bun.file(cand).text(), await Bun.file(ref).text());
     console.log(
-        `${cand.split("/").pop()}: WER-proxy ${s.werProxy.toFixed(3)}, speaker-agreement ${s.speakerAgreement.toFixed(2)}`
+        `${basename(cand)}: WER-proxy ${s.werProxy.toFixed(3)}, speaker-agreement ${s.speakerAgreement.toFixed(2)}`
     );
 }

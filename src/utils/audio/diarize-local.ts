@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -42,7 +43,7 @@ interface SherpaModule {
  * `SPEAKER_NN` convention.
  */
 export async function diarizeLocal(audio: Buffer, opts?: { speakers?: number }): Promise<DiarTurn[]> {
-    const wavPath = join(tmpdir(), `diar-${Date.now()}.wav`);
+    const wavPath = join(tmpdir(), `diar-${Date.now()}-${randomUUID()}.wav`);
 
     try {
         const wav = await convertToWhisperWav(audio); // 16 kHz mono 16-bit
@@ -86,8 +87,8 @@ export async function diarizeLocal(audio: Buffer, opts?: { speakers?: number }):
     } finally {
         try {
             unlinkSync(wavPath);
-        } catch {
-            /* temp file may not exist if conversion failed */
+        } catch (cleanupError) {
+            logger.debug(`Failed to remove diarization temp file ${wavPath}: ${cleanupError}`);
         }
     }
 }

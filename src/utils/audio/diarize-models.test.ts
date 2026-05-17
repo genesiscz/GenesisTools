@@ -9,6 +9,6 @@ describe("diarize-models config", () => {
         expect(EMBEDDING_MODEL.url).toBe(
             "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/wespeaker_en_voxceleb_resnet34_LM.onnx"
         );
-        expect(DIARIZE_MODEL_DIR).toContain(".genesis-tools/transcribe/models/diarization");
+        expect(DIARIZE_MODEL_DIR).toMatch(/[\\/]\.genesis-tools[\\/]transcribe[\\/]models[\\/]diarization/);
     });
 });

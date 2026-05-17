@@ -57,7 +57,9 @@ function coalesceSegmentsForSubtitles(segments: TranscriptionSegment[]): Transcr
             // the char cap still bound diarized cues.
             const diarized = cur.speaker !== undefined;
             const tooSlow = !diarized && seg.end - cur.start > MAX_CUE_SECONDS;
-            const speakerChanged = cur.speaker !== seg.speaker;
+            // Compare normalized labels so equivalent ids in different formats
+            // (raw `speaker_0` vs `SPEAKER_00`) don't force a spurious split.
+            const speakerChanged = normalizeSpeakerLabel(cur.speaker) !== normalizeSpeakerLabel(seg.speaker);
 
             if (tooLong || tooSlow || speakerChanged) {
                 cues.push(cur);
