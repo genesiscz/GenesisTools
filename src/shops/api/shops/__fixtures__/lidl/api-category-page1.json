@@ -1,0 +1,33 @@
+{
+    "type": "CategorySearchResult",
+    "version": "v2.0.0",
+    "numFound": 5,
+    "items": [
+        {
+            "code": "100012348",
+            "gridbox": {
+                "data": {
+                    "fullTitle": "Milbona Máslo 250 g",
+                    "canonicalPath": "/p/milbona-maslo/p100012348",
+                    "image": "https://www.lidl.cz/img/100012348.jpg",
+                    "price": { "price": 49.9 },
+                    "stockAvailability": { "onlineAvailable": true },
+                    "category": "potraviny/mlecne-vyrobky"
+                }
+            }
+        },
+        {
+            "code": "100012349",
+            "gridbox": {
+                "data": {
+                    "fullTitle": "Combino Špagety 500 g",
+                    "canonicalPath": "/p/combino-spagety/p100012349",
+                    "image": "https://www.lidl.cz/img/100012349.jpg",
+                    "price": { "price": 19.9 },
+                    "stockAvailability": { "onlineAvailable": true },
+                    "category": "potraviny/testoviny"
+                }
+            }
+        }
+    ]
+}

@@ -1,0 +1,10 @@
+{
+    "mainData": [
+        {
+            "query": {
+                "queryTerms": "telo",
+                "filters": "allCategories.id:030400"
+            }
+        }
+    ]
+}

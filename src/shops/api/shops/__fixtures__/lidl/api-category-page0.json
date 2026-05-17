@@ -1,0 +1,49 @@
+{
+    "type": "CategorySearchResult",
+    "version": "v2.0.0",
+    "numFound": 3,
+    "items": [
+        {
+            "code": "100012345",
+            "gridbox": {
+                "data": {
+                    "fullTitle": "Pilos Mléko 1 l",
+                    "canonicalPath": "/p/pilos-mleko-1-l/p100012345",
+                    "image": "https://www.lidl.cz/img/100012345.jpg",
+                    "price": {
+                        "price": 24.9,
+                        "discount": { "deletedPrice": 29.9 }
+                    },
+                    "stockAvailability": { "onlineAvailable": true },
+                    "category": "potraviny/napoje/mleko"
+                }
+            }
+        },
+        {
+            "code": "100012346",
+            "gridbox": {
+                "data": {
+                    "fullTitle": "Pilos Jogurt bílý 150 g",
+                    "canonicalPath": "/p/pilos-jogurt-bily-150-g/p100012346",
+                    "image": "https://www.lidl.cz/img/100012346.jpg",
+                    "price": { "price": 8.9 },
+                    "stockAvailability": { "onlineAvailable": true },
+                    "category": "potraviny/mlecne-vyrobky"
+                }
+            }
+        },
+        {
+            "code": "100012347",
+            "gridbox": {
+                "data": {
+                    "fullTitle": "Cien Sprchový gel 250 ml",
+                    "canonicalPath": "/p/cien-sprchovy-gel/p100012347",
+                    "image": "https://www.lidl.cz/img/100012347.jpg",
+                    "price": { "price": 39.9 },
+                    "stockAvailability": { "onlineAvailable": false },
+                    "category": "drogerie/kosmetika"
+                }
+            }
+        }
+    ]
+}
