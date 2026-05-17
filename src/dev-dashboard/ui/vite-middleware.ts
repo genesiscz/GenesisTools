@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { focusCmuxPane } from "@app/cmux/lib/controls";
+import { focusCmuxPane, renameCmuxSurface, renameCmuxWorkspace } from "@app/cmux/lib/controls";
 import { getConfig, getOrCreateDashboardAuth } from "@app/dev-dashboard/config";
 import { isCompleteAuthConfig, verifyBasicAuthHeader } from "@app/dev-dashboard/lib/auth";
 import { getCurrentUsage, getUsageHistory } from "@app/dev-dashboard/lib/claude-usage/aggregator";
@@ -22,7 +22,7 @@ import { listVault, readNote } from "@app/dev-dashboard/lib/obsidian/reader";
 import { renderSharePage } from "@app/dev-dashboard/lib/obsidian/share-template";
 import { configureRetention, getCachedPulse, getSeries, startPulsePolling } from "@app/dev-dashboard/lib/system/poller";
 import { addTodo, completeTodo, deleteTodo, listTodos } from "@app/dev-dashboard/lib/todos/service";
-import { killTtyd, listTtyd, spawnTtyd } from "@app/dev-dashboard/lib/ttyd/manager";
+import { killTtyd, listTtyd, renameTtyd, spawnTtyd } from "@app/dev-dashboard/lib/ttyd/manager";
 import { fetchWeather } from "@app/dev-dashboard/lib/weather/client";
 import logger from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
@@ -142,6 +142,18 @@ export function attachDevDashboardMiddleware(middlewares: Connect.Server): void 
             return;
         }
 
+        if (req.method === "POST" && url.pathname === "/api/ttyd/rename") {
+            try {
+                const body = await readJson<{ id: string; name: string }>(req);
+                const ok = await renameTtyd(body.id, body.name);
+                sendJson(res, 200, { ok });
+            } catch (err) {
+                sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
+            }
+
+            return;
+        }
+
         if (req.method === "GET" && url.pathname === "/api/cmux/snapshot") {
             sendJson(res, 200, { snapshot: getCachedSnapshot() });
             return;
@@ -151,6 +163,28 @@ export function attachDevDashboardMiddleware(middlewares: Connect.Server): void 
             try {
                 const body = await readJson<{ workspaceId: string; paneId: string }>(req);
                 await focusCmuxPane(body);
+                sendJson(res, 200, { ok: true });
+            } catch (err) {
+                sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
+            }
+
+            return;
+        }
+
+        if (req.method === "POST" && url.pathname === "/api/cmux/rename") {
+            try {
+                const body = await readJson<{ workspaceId: string; surfaceId?: string; title: string }>(req);
+
+                if (body.surfaceId) {
+                    await renameCmuxSurface({
+                        workspaceId: body.workspaceId,
+                        surfaceId: body.surfaceId,
+                        title: body.title,
+                    });
+                } else {
+                    await renameCmuxWorkspace({ workspaceId: body.workspaceId, title: body.title });
+                }
+
                 sendJson(res, 200, { ok: true });
             } catch (err) {
                 sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });

@@ -215,6 +215,31 @@ export async function getTtydPort(id: string): Promise<number | null> {
     return registry.get(id)?.session.port ?? null;
 }
 
+export function ttydLabel(session: TtydSession): string {
+    const name = session.name?.trim();
+    if (name) {
+        return name;
+    }
+
+    return `${session.command.split("/").pop()} :${session.port}`;
+}
+
+export async function renameTtyd(id: string, name: string): Promise<boolean> {
+    await hydrateRegistry();
+    const tracked = registry.get(id);
+
+    if (!tracked) {
+        return false;
+    }
+
+    const trimmed = name.trim();
+    tracked.session.name = trimmed.length > 0 ? trimmed : undefined;
+    await persistRegistry();
+    logger.info({ id, name: tracked.session.name }, "ttyd renamed");
+
+    return true;
+}
+
 export async function killTtyd(id: string): Promise<boolean> {
     await hydrateRegistry();
 

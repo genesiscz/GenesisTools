@@ -39,12 +39,22 @@ export const ttydApi = {
             method: "POST",
             body: SafeJSON.stringify({ id }),
         }),
+    rename: (id: string, name: string) =>
+        jsonFetch<{ ok: boolean }>("/api/ttyd/rename", {
+            method: "POST",
+            body: SafeJSON.stringify({ id, name }),
+        }),
 };
 
 export const cmuxApi = {
     snapshot: () => jsonFetch<{ snapshot: CmuxSnapshot }>("/api/cmux/snapshot"),
     attach: (body: { workspaceId: string; paneId: string }) =>
         jsonFetch<{ ok: boolean }>("/api/cmux/attach", {
+            method: "POST",
+            body: SafeJSON.stringify(body),
+        }),
+    rename: (body: { workspaceId: string; surfaceId?: string; title: string }) =>
+        jsonFetch<{ ok: boolean }>("/api/cmux/rename", {
             method: "POST",
             body: SafeJSON.stringify(body),
         }),

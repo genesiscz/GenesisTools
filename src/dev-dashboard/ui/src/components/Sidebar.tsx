@@ -1,24 +1,5 @@
 import { Link, useLocation } from "@tanstack/react-router";
-import { Activity, BookOpen, Bot, Boxes, Container, ListTodo, TerminalSquare, Timer } from "lucide-react";
-import type { ComponentType } from "react";
-
-interface Item {
-    to: string;
-    label: string;
-    Icon: ComponentType<{ size?: number }>;
-    exact?: boolean;
-}
-
-const ITEMS: Item[] = [
-    { to: "/", label: "pulse", Icon: Activity, exact: true },
-    { to: "/claude", label: "claude usage", Icon: Bot },
-    { to: "/daemon", label: "daemon", Icon: Timer },
-    { to: "/containers", label: "containers", Icon: Container },
-    { to: "/todos", label: "todos", Icon: ListTodo },
-    { to: "/ttyd", label: "ttyd", Icon: TerminalSquare },
-    { to: "/cmux", label: "cmux", Icon: Boxes },
-    { to: "/obsidian", label: "obsidian", Icon: BookOpen },
-];
+import { NAV_ROUTES } from "@/lib/nav-routes";
 
 export function Sidebar() {
     const { pathname } = useLocation();
@@ -30,7 +11,7 @@ export function Sidebar() {
                 style={{ background: "var(--dd-accent-gradient)", boxShadow: "0 0 14px rgba(52,211,153,0.35)" }}
                 aria-label="dev-dashboard"
             />
-            {ITEMS.map(({ to, label, Icon, exact }) => {
+            {NAV_ROUTES.map(({ to, label, Icon, exact }) => {
                 const active = exact ? pathname === to : pathname.startsWith(to);
 
                 return (

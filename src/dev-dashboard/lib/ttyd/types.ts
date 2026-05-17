@@ -6,6 +6,8 @@ export interface TtydSession {
     pid: number;
     startedAt: string;
     tmuxSessionName?: string;
+    /** User-set display name; falls back to "<command> :<port>" when unset. */
+    name?: string;
 }
 
 export type SplitNode =
