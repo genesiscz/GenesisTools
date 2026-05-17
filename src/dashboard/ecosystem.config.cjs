@@ -8,10 +8,6 @@
 // sqlite write contention rises. Horizontal scaling is NOT supported with
 // the current SQLite + in-memory-bus architecture.
 //
-// apps/server (the separate Nitro app on :4000) is intentionally NOT run in
-// production — apps/web never dials it and websocket is disabled. Do not add
-// it here.
-//
 // Start: pm2 start ecosystem.config.cjs --env production && pm2 save
 
 module.exports = {
