@@ -57,72 +57,73 @@ interface MutateOptions {
 }
 
 function mutate({ id, userId, expectedVersion, transform }: MutateOptions): Timer {
-    const current = db
-        .select()
-        .from(timers)
-        .where(and(eq(timers.id, id), eq(timers.userId, userId)))
-        .get();
+    // Atomic: the version-checked update and its activity-log row commit
+    // together or not at all. A crash between them used to leave the timer
+    // advanced with no log row → permanent drift in focus/productivity stats.
+    const { final, events } = db.transaction((tx) => {
+        const current = tx
+            .select()
+            .from(timers)
+            .where(and(eq(timers.id, id), eq(timers.userId, userId)))
+            .get();
 
-    if (!current) {
-        throw new Error("Timer not found");
-    }
+        if (!current) {
+            throw new Error("Timer not found");
+        }
 
-    if (expectedVersion !== undefined && current.version !== expectedVersion) {
-        throw new TimerConflict();
-    }
+        if (expectedVersion !== undefined && current.version !== expectedVersion) {
+            throw new TimerConflict();
+        }
 
-    const { next, events } = transform(current);
-    const newVersion = current.version + 1;
+        const { next, events } = transform(current);
+        const newVersion = current.version + 1;
 
-    const result = db
-        .update(timers)
-        .set({
-            ...next,
-            version: newVersion,
-            updatedAt: new Date().toISOString(),
-        })
-        .where(and(eq(timers.id, id), eq(timers.version, current.version)))
-        .run();
+        const result = tx
+            .update(timers)
+            .set({
+                ...next,
+                version: newVersion,
+                updatedAt: new Date().toISOString(),
+            })
+            .where(and(eq(timers.id, id), eq(timers.version, current.version)))
+            .run();
 
-    if (result.changes === 0) {
-        throw new TimerConflict();
-    }
+        if (result.changes === 0) {
+            throw new TimerConflict();
+        }
 
-    const final = db.select().from(timers).where(eq(timers.id, id)).get();
+        const updated = tx.select().from(timers).where(eq(timers.id, id)).get();
 
-    if (!final) {
-        throw new Error("Timer not found after update");
-    }
+        if (!updated) {
+            throw new Error("Timer not found after update");
+        }
 
-    // Persist meaningful events to the activity log (timeline + stats). This
-    // is the single write site for every action-based mutation — secondary to
-    // the timer write, so a failure here must not fail the mutation.
-    const loggable = (events ?? []).filter((ev) => ev.type in EVENT_TO_ACTIVITY);
+        const loggable = (events ?? []).filter((ev) => ev.type in EVENT_TO_ACTIVITY);
 
-    if (loggable.length > 0) {
-        try {
+        if (loggable.length > 0) {
             const nowIso = new Date().toISOString();
-            db.insert(activityLogs)
+            tx.insert(activityLogs)
                 .values(
                     loggable.map((ev) => ({
                         id: crypto.randomUUID(),
                         timerId: id,
-                        timerName: final.name,
+                        timerName: updated.name,
                         userId,
                         eventType: EVENT_TO_ACTIVITY[ev.type],
                         timestamp: nowIso,
-                        elapsedAtEvent: final.elapsedTime ?? 0,
+                        elapsedAtEvent: updated.elapsedTime ?? 0,
                         previousValue: current.elapsedTime ?? 0,
-                        newValue: final.elapsedTime ?? 0,
+                        newValue: updated.elapsedTime ?? 0,
                         metadata: (ev.payload as Record<string, unknown> | undefined) ?? {},
                     }))
                 )
                 .run();
-        } catch (err) {
-            console.error("[Server] failed to persist activity log for timer", id, err);
         }
-    }
 
+        return { final: updated, events };
+    });
+
+    // Side effects after commit — never roll back on an emit failure.
     for (const ev of events ?? []) {
         emitTimerEvent(userId, { ...ev, timerId: id });
     }
@@ -137,24 +138,23 @@ function mutate({ id, userId, expectedVersion, transform }: MutateOptions): Time
 
 export const getTimersFromServer = createServerFn({
     method: "GET",
-})
-    .handler(async (): Promise<Timer[]> => {
-        const userId = await requireUserId();
+}).handler(async (): Promise<Timer[]> => {
+    const userId = await requireUserId();
 
-        try {
-            const results: Timer[] = db
-                .select()
-                .from(timers)
-                .where(eq(timers.userId, userId))
-                .orderBy(desc(timers.createdAt))
-                .all();
+    try {
+        const results: Timer[] = db
+            .select()
+            .from(timers)
+            .where(eq(timers.userId, userId))
+            .orderBy(desc(timers.createdAt))
+            .all();
 
-            return results;
-        } catch (error) {
-            console.error("[Server] getTimersFromServer error:", error);
-            return [] as Timer[];
-        }
-    });
+        return results;
+    } catch (error) {
+        console.error("[Server] getTimersFromServer error:", error);
+        return [] as Timer[];
+    }
+});
 
 // Narrow metadata to primitive-only values so TanStack's serialization
 // type-checker (ValidateSerializableInput) is satisfied
@@ -164,28 +164,27 @@ type ParsedActivityLog = Omit<ActivityLog, "metadata"> & {
 
 export const getActivityLogsFromServer = createServerFn({
     method: "GET",
-})
-    .handler(async (): Promise<ParsedActivityLog[]> => {
-        const userId = await requireUserId();
+}).handler(async (): Promise<ParsedActivityLog[]> => {
+    const userId = await requireUserId();
 
-        try {
-            const rawResults = db
-                .select()
-                .from(activityLogs)
-                .where(eq(activityLogs.userId, userId))
-                .orderBy(desc(activityLogs.timestamp))
-                .limit(1000)
-                .all();
+    try {
+        const rawResults = db
+            .select()
+            .from(activityLogs)
+            .where(eq(activityLogs.userId, userId))
+            .orderBy(desc(activityLogs.timestamp))
+            .limit(1000)
+            .all();
 
-            return rawResults.map((log) => ({
-                ...log,
-                metadata: log.metadata as Record<string, string | number | boolean | null> | null,
-            }));
-        } catch (error) {
-            console.error("[Server] getActivityLogsFromServer error:", error);
-            return [];
-        }
-    });
+        return rawResults.map((log) => ({
+            ...log,
+            metadata: log.metadata as Record<string, string | number | boolean | null> | null,
+        }));
+    } catch (error) {
+        console.error("[Server] getActivityLogsFromServer error:", error);
+        return [];
+    }
+});
 
 // ============================================
 // Create / Delete
@@ -194,9 +193,7 @@ export const getActivityLogsFromServer = createServerFn({
 export const createTimerOnServer = createServerFn({
     method: "POST",
 })
-    .inputValidator(
-        (d: { name: string; timerType: "stopwatch" | "countdown" | "pomodoro"; duration?: number }) => d
-    )
+    .inputValidator((d: { name: string; timerType: "stopwatch" | "countdown" | "pomodoro"; duration?: number }) => d)
     .handler(async ({ data }): Promise<Timer> => {
         const userId = await requireUserId();
         const now = new Date().toISOString();
@@ -233,7 +230,9 @@ export const deleteTimerFromServer = createServerFn({
         const userId = await requireUserId();
 
         try {
-            db.delete(timers).where(and(eq(timers.id, data.timerId), eq(timers.userId, userId))).run();
+            db.delete(timers)
+                .where(and(eq(timers.id, data.timerId), eq(timers.userId, userId)))
+                .run();
             return { success: true };
         } catch (error) {
             console.error("[Server] deleteTimerFromServer error:", error);
@@ -407,8 +406,8 @@ export const getActivityLogsForTimer = createServerFn({
         }
     });
 
-export const clearActivityLogs = createServerFn({ method: "POST" })
-    .handler(async (): Promise<{ success: boolean; deleted: number }> => {
+export const clearActivityLogs = createServerFn({ method: "POST" }).handler(
+    async (): Promise<{ success: boolean; deleted: number }> => {
         const userId = await requireUserId();
 
         try {
@@ -419,7 +418,8 @@ export const clearActivityLogs = createServerFn({ method: "POST" })
             console.error("[Server] clearActivityLogs error:", error);
             return { success: false, deleted: 0 };
         }
-    });
+    }
+);
 
 // ============================================
 // Productivity Stats Aggregation
@@ -495,46 +495,45 @@ export interface FocusStatsForToday {
     sessionsToday: number;
 }
 
-export const aggregateFocusStats = createServerFn({ method: "GET" })
-    .handler(async (): Promise<FocusStatsForToday> => {
-        const userId = await requireUserId();
+export const aggregateFocusStats = createServerFn({ method: "GET" }).handler(async (): Promise<FocusStatsForToday> => {
+    const userId = await requireUserId();
 
-        // UTC start of today and start of tomorrow for lexicographic ISO comparison
-        const now = new Date();
-        const startOfToday = new Date(now);
-        startOfToday.setUTCHours(0, 0, 0, 0);
-        const startOfTomorrow = new Date(startOfToday);
-        startOfTomorrow.setUTCDate(startOfTomorrow.getUTCDate() + 1);
+    // UTC start of today and start of tomorrow for lexicographic ISO comparison
+    const now = new Date();
+    const startOfToday = new Date(now);
+    startOfToday.setUTCHours(0, 0, 0, 0);
+    const startOfTomorrow = new Date(startOfToday);
+    startOfTomorrow.setUTCDate(startOfTomorrow.getUTCDate() + 1);
 
-        const rows = db
-            .select()
-            .from(activityLogs)
-            .where(
-                and(
-                    eq(activityLogs.userId, userId),
-                    gte(activityLogs.timestamp, startOfToday.toISOString()),
-                    lt(activityLogs.timestamp, startOfTomorrow.toISOString())
-                )
+    const rows = db
+        .select()
+        .from(activityLogs)
+        .where(
+            and(
+                eq(activityLogs.userId, userId),
+                gte(activityLogs.timestamp, startOfToday.toISOString()),
+                lt(activityLogs.timestamp, startOfTomorrow.toISOString())
             )
-            .all();
+        )
+        .all();
 
-        let timeFocusedTodayMs = 0;
-        let sessionsToday = 0;
+    let timeFocusedTodayMs = 0;
+    let sessionsToday = 0;
 
-        for (const row of rows) {
-            if (
-                row.eventType === "pause" &&
-                row.newValue !== null &&
-                row.previousValue !== null &&
-                row.newValue > row.previousValue
-            ) {
-                timeFocusedTodayMs += row.newValue - row.previousValue;
-                sessionsToday += 1;
-            }
+    for (const row of rows) {
+        if (
+            row.eventType === "pause" &&
+            row.newValue !== null &&
+            row.previousValue !== null &&
+            row.newValue > row.previousValue
+        ) {
+            timeFocusedTodayMs += row.newValue - row.previousValue;
+            sessionsToday += 1;
         }
+    }
 
-        return { timeFocusedTodayMs, sessionsToday };
-    });
+    return { timeFocusedTodayMs, sessionsToday };
+});
 
 export interface FocusSessionBlock {
     timerId: string;
@@ -542,8 +541,8 @@ export interface FocusSessionBlock {
     endIso: string;
 }
 
-export const aggregateFocusSessions = createServerFn({ method: "GET" })
-    .handler(async (): Promise<FocusSessionBlock[]> => {
+export const aggregateFocusSessions = createServerFn({ method: "GET" }).handler(
+    async (): Promise<FocusSessionBlock[]> => {
         const userId = await requireUserId();
 
         const now = new Date();
@@ -590,4 +589,5 @@ export const aggregateFocusSessions = createServerFn({ method: "GET" })
         }
 
         return sessions;
-    });
+    }
+);

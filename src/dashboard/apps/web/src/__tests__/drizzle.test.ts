@@ -3,7 +3,7 @@
  *
  * Tests for type-safe database operations with Drizzle
  */
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "vitest";
 import { desc, eq } from "drizzle-orm";
 import { activityLogs, db, timers } from "@/drizzle";
 

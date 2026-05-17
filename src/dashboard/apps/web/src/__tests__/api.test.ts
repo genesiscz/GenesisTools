@@ -7,7 +7,7 @@
  * Note: These tests require the dev server to be running on localhost:3000
  * Run with: bun test src/__tests__/api.test.ts
  */
-import { beforeAll, describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "vitest";
 import { SafeJSON } from "@dashboard/shared";
 
 const BASE_URL = "http://localhost:3000";
