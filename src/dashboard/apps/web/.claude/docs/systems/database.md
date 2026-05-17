@@ -1,163 +1,148 @@
 # Database Architecture
 
-> Drizzle ORM + Neon PostgreSQL with offline-first sync via PowerSync
+> Drizzle ORM + **SQLite** via `better-sqlite3` (synchronous, server is source of truth)
+
+History: PowerSync / Neon Postgres / Convex / offline-first client sync were
+**all removed**. There is no client-side database, no IndexedDB, no async
+driver. The server owns a single SQLite file; clients talk to it through
+TanStack Start server functions.
 
 ## Find It Fast
 
-| Looking for...         | Go to                                |
-| ---------------------- | ------------------------------------ |
-| Drizzle schema         | `src/drizzle/schema.ts`              |
-| DB connection          | `src/drizzle/index.ts`               |
-| PowerSync schema       | `src/lib/db/powersync.ts`            |
-| PowerSync connector    | `src/lib/db/powersync-connector.ts`  |
-| Drizzle config         | `drizzle.config.ts`                  |
-| Environment vars       | `src/lib/env.ts`                     |
-| Migrations             | `src/drizzle/migrations/`            |
+| Looking for...      | Go to                                  |
+| ------------------- | -------------------------------------- |
+| Drizzle schema      | `src/drizzle/schema.ts`                |
+| DB connection       | `src/drizzle/index.ts`                 |
+| Drizzle config      | `drizzle.config.ts`                    |
+| Migrations          | `src/drizzle/migrations/`              |
+| Cross-tab sync       | `src/lib/sync/useBroadcastInvalidation.ts` |
+| Server→client push  | `../systems/events.md`                 |
 
 ## Stack Overview
 
 ```
-Frontend (Browser)          Server (TanStack Start)        Database
-┌─────────────────┐         ┌──────────────────┐          ┌─────────┐
-│ PowerSync       │ ──sync──▶│ Drizzle ORM     │ ──SQL───▶│ Neon    │
-│ (IndexedDB)     │◀──SSE───│ Server Functions │          │ Postgres│
-└─────────────────┘         └──────────────────┘          └─────────┘
+Browser (TanStack Query)        Server (TanStack Start)        Database
+┌────────────────────┐         ┌────────────────────┐        ┌──────────────┐
+│ useQuery / mutation │ ─fn──▶ │ createServerFn      │ ─SQL─▶ │ SQLite file  │
+│ (no client DB)      │ ◀──── │ Drizzle (sync, no   │        │ WAL, 1 writer│
+└────────────────────┘         │ await)              │        └──────────────┘
+                                └────────────────────┘
 ```
 
-## Key Files
-
-### Drizzle Schema (`src/drizzle/schema.ts`)
-
-Defines tables with type inference:
+## Connection (`src/drizzle/index.ts`)
 
 ```ts
-import { pgTable, text, integer, jsonb } from 'drizzle-orm/pg-core'
+import Database from "better-sqlite3";
+import { drizzle } from "drizzle-orm/better-sqlite3";
+import * as schema from "./schema";
 
-export const timers = pgTable('timers', {
-  id: text('id').primaryKey(),
-  name: text('name').notNull(),
-  timerType: text('timer_type').notNull().$type<'stopwatch' | 'countdown'>(),
-  isRunning: integer('is_running').notNull().default(0),
-  // ...
-})
+const sqlite = new Database(resolve(process.env.SQLITE_PATH ?? ".data/dashboard.sqlite"));
+sqlite.pragma("journal_mode = WAL");
+sqlite.pragma("foreign_keys = ON");
+sqlite.pragma("busy_timeout = 5000");   // wait, don't throw SQLITE_BUSY (SSE + many tabs)
+sqlite.pragma("synchronous = NORMAL");  // safe with WAL, far fewer fsyncs
 
-// Auto-inferred types
-export type Timer = typeof timers.$inferSelect
-export type NewTimer = typeof timers.$inferInsert
+export const db = drizzle(sqlite, { schema });
+export { sqlite };
+export * from "./schema";               // tables + inferred types re-exported
 ```
 
-### DB Connection (`src/drizzle/index.ts`)
+Behaviour baked into this module (don't re-implement elsewhere):
+
+- **Migrations auto-apply at import.** `migrate(db, …)` runs on module init from
+  `MIGRATIONS_DIR` (default: the bundled `./migrations`). A failed migration
+  **throws** — the app refuses to serve an unmigrated schema. You never call
+  migrate manually at runtime.
+- **Prod path safety.** In production `SQLITE_PATH` (and `MIGRATIONS_DIR`)
+  **must be absolute** — a relative path resolves against the PM2 cwd and
+  silently opens a different/empty DB. The module throws if it isn't.
+- **Graceful shutdown.** `SIGTERM` (PM2 reload) drains ~3s then closes the
+  handle; `SIGINT` (Ctrl-C) closes immediately.
+
+## Schema (`src/drizzle/schema.ts`)
+
+Dialect is **`drizzle-orm/sqlite-core`** — `sqliteTable`, `text`, `integer`,
+`index`. There is **no `pgTable`, no `jsonb`, no `pg-core`**.
 
 ```ts
-import { drizzle } from 'drizzle-orm/neon-http'
-import { neon } from '@neondatabase/serverless'
-import { env } from '@/lib/env'
-import * as schema from './schema'
+import { index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
-const sql = neon(env.DATABASE_URL)
-export const db = drizzle(sql, { schema })
+export const timers = sqliteTable("timers", {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    timerType: text("timer_type").notNull().$type<"stopwatch" | "countdown" | "pomodoro">(),
+    isRunning: integer("is_running").notNull().default(0),       // boolean = 0/1
+    elapsedTime: integer("elapsed_time").notNull().default(0),   // ms
+    laps: text("laps", { mode: "json" })                          // JSON ⇒ text + mode:"json"
+        .$type<Array<{ number: number; lapTime: number }>>()
+        .default([]),
+    userId: text("user_id").notNull(),
+    createdAt: text("created_at").notNull(),                      // ISO string, not Date
+    updatedAt: text("updated_at").notNull(),
+});
 
-// Re-export for convenience
-export * from './schema'
+export type Timer = typeof timers.$inferSelect;
+export type NewTimer = typeof timers.$inferInsert;
 ```
 
-### Environment Variables (`src/lib/env.ts`)
+**Conventions (match the existing tables):**
+
+- Booleans → `integer(...)` storing `0` / `1`.
+- JSON → `text(col, { mode: "json" }).$type<T>()`. Drizzle does the
+  serialize/parse — do **not** hand-roll `JSON.parse`/`stringify` for these
+  columns (and never use bare `JSON` elsewhere — `SafeJSON` only).
+- Timestamps → `text` ISO strings, not native date types.
+- Column names: camelCase in TS, `snake_case` in the DB string.
+- ~20 tables today: `timers`, `activityLogs`, `assistant*` (tasks, decisions,
+  blockers, handoffs, streaks, badges, …), `notes`, `bookmarks`,
+  `aiConversations`, `aiMessages`.
+
+## CRUD — synchronous, no `await`
+
+`better-sqlite3` is synchronous. Server functions are sync; **do not** `await`
+db calls or mark handlers `async` for the DB's sake.
 
 ```ts
-import { createEnv } from '@t3-oss/env-core'
-import { z } from 'zod'
+import { db, timers } from "@/drizzle";
+import { desc, eq } from "drizzle-orm";
 
-export const env = createEnv({
-  server: {
-    DATABASE_URL: z.string().min(1),
-    NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
-  },
-  runtimeEnv: process.env,
-})
+const rows = db.select().from(timers).where(eq(timers.userId, userId))
+    .orderBy(desc(timers.createdAt)).all();
+
+db.insert(timers).values({ id: crypto.randomUUID(), name: "T", timerType: "stopwatch",
+    userId, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }).run();
+
+db.insert(timers).values({ /* … */ })
+    .onConflictDoUpdate({ target: timers.id, set: { name, updatedAt: new Date().toISOString() } }).run();
+
+db.update(timers).set({ name: "New" }).where(eq(timers.id, id)).run();
+db.delete(timers).where(eq(timers.id, id)).run();
 ```
 
-## CRUD Operations
-
-### Select (Read)
-
-```ts
-import { db, timers } from '@/drizzle'
-import { eq, desc } from 'drizzle-orm'
-
-// Get all timers for user
-const results = await db.select()
-  .from(timers)
-  .where(eq(timers.userId, userId))
-  .orderBy(desc(timers.createdAt))
-```
-
-### Insert (Create)
-
-```ts
-await db.insert(timers).values({
-  id: crypto.randomUUID(),
-  name: 'My Timer',
-  timerType: 'stopwatch',
-  userId: 'user123',
-  createdAt: new Date().toISOString(),
-  updatedAt: new Date().toISOString(),
-})
-```
-
-### Upsert (Insert or Update)
-
-```ts
-await db.insert(timers)
-  .values({ id, name, ... })
-  .onConflictDoUpdate({
-    target: timers.id,
-    set: { name, updatedAt: new Date().toISOString() }
-  })
-```
-
-### Update
-
-```ts
-await db.update(timers)
-  .set({ name: 'New Name', updatedAt: new Date().toISOString() })
-  .where(eq(timers.id, timerId))
-```
-
-### Delete
-
-```ts
-await db.delete(timers)
-  .where(eq(timers.id, timerId))
-```
+Terminal verbs matter: `.all()` / `.get()` for reads, `.run()` for writes.
 
 ## Migration Workflow
 
-### Generate Migration
-
 ```bash
-bunx drizzle-kit generate
+bunx drizzle-kit generate   # diff schema.ts → new file in src/drizzle/migrations/
+bunx drizzle-kit migrate    # apply (also auto-applied at server start)
+bunx drizzle-kit studio     # browse the SQLite file
 ```
 
-### Push Schema (Development)
-
-```bash
-bunx drizzle-kit push
-```
-
-### View Database (Drizzle Studio)
-
-```bash
-bunx drizzle-kit studio
-```
+`drizzle-kit push` exists but prefer generate+migrate so the committed
+migration matches what runs at boot.
 
 ## Gotchas
 
-- **Boolean columns**: Use `integer` (0/1) for SQLite compatibility with PowerSync
-- **JSON columns**: Use `jsonb` in Drizzle, but `text` in PowerSync (JSON stringified)
-- **Timestamps**: Store as ISO strings (`text`), not native timestamps
-- **Column names**: Drizzle uses camelCase in code, snake_case in DB. PowerSync uses snake_case directly.
+- **Single writer.** SQLite allows one writer at a time; `busy_timeout = 5000`
+  makes concurrent writers wait rather than error. Keep write transactions short.
+- **Relative path in prod = wrong DB.** Always set an absolute `SQLITE_PATH`
+  in production (the module enforces this, but know why).
+- **No `DATABASE_URL`.** SQLite path is the only DB config. Auth env
+  (`@t3-oss/env-core`) is separate.
+- **Server-only.** `@/drizzle` must never be imported into client bundles —
+  it's reachable only through `createServerFn` handlers.
 
 ## Related Docs
 
-- [Type Sharing](../patterns/type-sharing.md) - Keep Drizzle and PowerSync in sync
-- [Event System](./events.md) - Real-time updates after DB changes
+- [Event System](./events.md) — server→client push + cross-tab invalidation
