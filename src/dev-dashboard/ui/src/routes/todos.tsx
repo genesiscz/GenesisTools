@@ -5,6 +5,7 @@ import { useState } from "react";
 import { AddTodoForm } from "@/components/todos/AddTodoForm";
 import { ListPicker } from "@/components/todos/ListPicker";
 import { TodoList } from "@/components/todos/TodoList";
+import { fetchJson } from "@/lib/api";
 
 const DEFAULT_LIST = "GenesisTools";
 
@@ -21,7 +22,7 @@ async function fetchTodos(list: string): Promise<TodosResult> {
         throw new Error(`Failed to load todos: ${res.status}`);
     }
 
-    return res.json() as Promise<TodosResult>;
+    return SafeJSON.parse(await res.text(), { strict: true }) as TodosResult;
 }
 
 export function TodosRoute() {
@@ -41,31 +42,31 @@ export function TodosRoute() {
 
     const addMutation = useMutation({
         mutationFn: (input: { title: string; due?: string; priority?: string }) =>
-            fetch("/api/todos", {
+            fetchJson("/api/todos", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: SafeJSON.stringify({ ...input, listName: currentList }),
-            }).then((r) => r.json()),
+            }),
         onSuccess: invalidate,
     });
 
     const completeMutation = useMutation({
         mutationFn: (reminderId: string) =>
-            fetch("/api/todos/complete", {
+            fetchJson("/api/todos/complete", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: SafeJSON.stringify({ reminderId }),
-            }).then((r) => r.json()),
+            }),
         onSuccess: invalidate,
     });
 
     const deleteMutation = useMutation({
         mutationFn: (reminderId: string) =>
-            fetch("/api/todos", {
+            fetchJson("/api/todos", {
                 method: "DELETE",
                 headers: { "Content-Type": "application/json" },
                 body: SafeJSON.stringify({ reminderId }),
-            }).then((r) => r.json()),
+            }),
         onSuccess: invalidate,
     });
 
@@ -75,6 +76,17 @@ export function TodosRoute() {
                 <p className="dd-accent-text text-lg font-bold">Reminders permission needed</p>
                 <p className="max-w-sm text-sm text-[var(--dd-text-secondary)]">
                     Grant access in System Settings → Privacy & Security → Reminders, then reload.
+                </p>
+            </div>
+        );
+    }
+
+    if (todosQuery.isError && !(todosQuery.error instanceof PermissionError)) {
+        return (
+            <div className="dd-panel flex h-[calc(100vh-2rem)] flex-col items-center justify-center gap-2 text-center">
+                <p className="text-lg font-bold text-[#f87171]">Failed to load todos</p>
+                <p className="max-w-sm text-sm text-[var(--dd-text-secondary)]">
+                    {todosQuery.error instanceof Error ? todosQuery.error.message : String(todosQuery.error)}
                 </p>
             </div>
         );

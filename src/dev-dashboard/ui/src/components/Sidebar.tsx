@@ -38,6 +38,7 @@ export function Sidebar() {
                         key={to}
                         to={to}
                         title={label}
+                        aria-label={label}
                         className="flex h-[28px] w-[28px] items-center justify-center rounded-[7px] border transition"
                         style={{
                             background: active ? "var(--dd-accent-gradient)" : "transparent",

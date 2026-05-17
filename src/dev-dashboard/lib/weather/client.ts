@@ -1,3 +1,4 @@
+import logger from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import type { WeatherSnapshot } from "./types";
 
@@ -75,9 +76,10 @@ export async function fetchWeather(coords: WeatherCoords): Promise<WeatherSnapsh
             throw new Error(`HTTP ${res.status}`);
         }
 
-        const json = SafeJSON.parse(await res.text()) as OpenMeteoResponse;
+        const json = SafeJSON.parse(await res.text(), { strict: true }) as OpenMeteoResponse;
         return parseOpenMeteo(json, coords.label);
-    } catch {
+    } catch (err) {
+        logger.debug({ err, label: coords.label }, "weather fetch failed; returning empty snapshot");
         return {
             tempC: null,
             weatherCode: null,

@@ -4,8 +4,8 @@ import {
     type DashboardAuthConfig,
     isCompleteAuthConfig,
 } from "@app/dev-dashboard/lib/auth";
+import { getDevDashboardStorage } from "@app/dev-dashboard/lib/storage";
 import type { TtydSession } from "@app/dev-dashboard/lib/ttyd/types";
-import { Storage } from "@app/utils/storage/storage";
 import { z } from "zod";
 
 const DashboardAuthSchema = z.object({
@@ -63,7 +63,7 @@ export interface DashboardAuthProvision {
     generatedPassword: string | null;
 }
 
-const storage = new Storage("dev-dashboard");
+const storage = getDevDashboardStorage();
 
 export async function getConfig(): Promise<DevDashboardConfig> {
     const raw = await storage.getConfig<Partial<DevDashboardConfig>>();

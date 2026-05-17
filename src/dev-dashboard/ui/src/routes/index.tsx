@@ -4,6 +4,7 @@ import { NetworkInfo } from "@/components/pulse/NetworkInfo";
 import { ProcessTable } from "@/components/pulse/ProcessTable";
 import { PulseGraph } from "@/components/pulse/PulseGraph";
 import { WeatherCard } from "@/components/pulse/WeatherCard";
+import { fetchJson } from "@/lib/api";
 
 interface TopProcess {
     pid: number;
@@ -77,25 +78,25 @@ function gb(bytes: number | null): string {
 export function IndexRoute() {
     const snap = useQuery<PulseSnapshot>({
         queryKey: ["pulse", "snap"],
-        queryFn: () => fetch("/api/system/pulse").then((r) => r.json()),
+        queryFn: () => fetchJson<PulseSnapshot>("/api/system/pulse"),
         refetchInterval: 2000,
     });
 
     const cpuHistory = useQuery<PulseSeries>({
         queryKey: ["pulse", "history", "cpu"],
-        queryFn: () => fetch("/api/system/pulse/history?metric=cpu&minutes=30").then((r) => r.json()),
+        queryFn: () => fetchJson<PulseSeries>("/api/system/pulse/history?metric=cpu&minutes=30"),
         refetchInterval: 10000,
     });
 
     const memHistory = useQuery<PulseSeries>({
         queryKey: ["pulse", "history", "mem"],
-        queryFn: () => fetch("/api/system/pulse/history?metric=mem&minutes=30").then((r) => r.json()),
+        queryFn: () => fetchJson<PulseSeries>("/api/system/pulse/history?metric=mem&minutes=30"),
         refetchInterval: 10000,
     });
 
     const weather = useQuery<WeatherSnapshot>({
         queryKey: ["weather"],
-        queryFn: () => fetch("/api/weather").then((r) => r.json()),
+        queryFn: () => fetchJson<WeatherSnapshot>("/api/weather"),
         refetchInterval: 600000,
     });
 

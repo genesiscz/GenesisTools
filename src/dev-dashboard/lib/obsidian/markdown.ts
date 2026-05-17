@@ -56,6 +56,22 @@ function escapeHtml(value: string): string {
     });
 }
 
+// marked (v5+) no longer strips dangerous URL schemes, so a note containing
+// [x](javascript:...) or ![y](data:text/html;...) would execute on the public,
+// auth-bypassed /share/:slug page. Allow only safe schemes + relative URLs.
+const SAFE_LINK_SCHEME_RE = /^(?:https?:|mailto:|tel:|#|\/|\.{1,2}\/|[^:]*$)/i;
+const SAFE_IMG_SRC_RE = /^(?:https?:|data:image\/(?:png|jpe?g|gif|webp|svg\+xml|avif);|#|\/|\.{1,2}\/|[^:]*$)/i;
+
+function sanitizeUrl(href: string, allow: RegExp): string {
+    // Strip ASCII control chars/whitespace that obfuscate the scheme
+    // (e.g. `java\tscript:`), then enforce the scheme allowlist.
+    const cleaned = Array.from(href)
+        .filter((ch) => (ch.codePointAt(0) ?? 0) > 0x20)
+        .join("");
+
+    return allow.test(cleaned) ? cleaned : "#";
+}
+
 function parseTagList(value: string): string[] {
     const trimmed = value.trim();
     const listValue = trimmed.startsWith("[") && trimmed.endsWith("]") ? trimmed.slice(1, -1) : trimmed;
@@ -287,7 +303,24 @@ function buildMarked(opts: RenderOptions): Marked {
         // browser. Escape raw-HTML tokens so they render as inert text; marked's
         // own element output and the trusted KaTeX/mermaid/wikilink extensions
         // are unaffected.
-        { renderer: { html: ({ text }) => escapeHtml(text) } },
+        {
+            renderer: {
+                html: ({ text }) => escapeHtml(text),
+                link(token: Tokens.Link): string {
+                    const href = escapeHtml(sanitizeUrl(token.href, SAFE_LINK_SCHEME_RE));
+                    const title = token.title ? ` title="${escapeHtml(token.title)}"` : "";
+                    const inner = this.parser.parseInline(token.tokens);
+
+                    return `<a href="${href}"${title}>${inner}</a>`;
+                },
+                image(token: Tokens.Image): string {
+                    const src = escapeHtml(sanitizeUrl(token.href, SAFE_IMG_SRC_RE));
+                    const title = token.title ? ` title="${escapeHtml(token.title)}"` : "";
+
+                    return `<img src="${src}" alt="${escapeHtml(token.text)}"${title} />`;
+                },
+            },
+        },
         markedHighlight({
             langPrefix: "hljs language-",
             highlight: highlightCode,

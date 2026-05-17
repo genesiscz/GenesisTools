@@ -22,7 +22,14 @@ export async function addTodo(opts: {
     priority?: TodoPriority;
     notes?: string;
 }): Promise<{ reminderId: string }> {
-    const dueDate = opts.due ? new Date(opts.due) : undefined;
+    let dueDate: Date | undefined;
+    if (opts.due) {
+        dueDate = new Date(opts.due);
+        if (Number.isNaN(dueDate.getTime())) {
+            throw new Error(`Invalid due date: ${opts.due}`);
+        }
+    }
+
     const priority = opts.priority ? mapPriority(opts.priority) : undefined;
     const reminderId = await MacReminders.createReminder({
         title: opts.title,

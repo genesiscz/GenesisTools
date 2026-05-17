@@ -4,18 +4,27 @@ import type { VaultEntry } from "@app/dev-dashboard/lib/obsidian/types";
 import type { TtydSession } from "@app/dev-dashboard/lib/ttyd/types";
 import { SafeJSON } from "@app/utils/json";
 
-async function jsonFetch<T>(url: string, init?: RequestInit): Promise<T> {
-    const res = await fetch(url, {
-        ...init,
-        headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
-    });
+/**
+ * Shared fetch primitive for the dashboard UI: enforces `res.ok` and parses the
+ * body through strict `SafeJSON` (responses are an external boundary). Reused by
+ * every query/mutation so JSON handling is consistent in one place.
+ */
+export async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
+    const res = await fetch(url, init);
 
     if (!res.ok) {
-        const text = await res.text();
+        const text = await res.text().catch(() => "");
         throw new Error(`${url} -> ${res.status}: ${text}`);
     }
 
-    return (await res.json()) as T;
+    return SafeJSON.parse(await res.text(), { strict: true }) as T;
+}
+
+function jsonFetch<T>(url: string, init?: RequestInit): Promise<T> {
+    return fetchJson<T>(url, {
+        ...init,
+        headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+    });
 }
 
 export const ttydApi = {

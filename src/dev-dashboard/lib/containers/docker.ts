@@ -1,3 +1,4 @@
+import logger from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import type { ContainerInfo, ContainersResult } from "./types";
 
@@ -19,7 +20,14 @@ export function parseDockerPsJsonl(stdout: string): ContainerInfo[] {
             continue;
         }
 
-        const row = SafeJSON.parse(trimmed, { unbox: true }) as DockerPsRow;
+        let row: DockerPsRow;
+        try {
+            row = SafeJSON.parse(trimmed, { jsonl: true, strict: true, unbox: true }) as DockerPsRow;
+        } catch (err) {
+            logger.warn({ err, line: trimmed }, "docker ps: skipping malformed JSONL line");
+            continue;
+        }
+
         containers.push({
             id: row.ID ?? "",
             name: row.Names ?? "",
@@ -47,7 +55,8 @@ export async function listContainers(): Promise<ContainersResult> {
 
         const stdout = await new Response(proc.stdout).text();
         return { dockerAvailable: true, containers: parseDockerPsJsonl(stdout) };
-    } catch {
+    } catch (err) {
+        logger.debug({ err }, "docker ps spawn failed; treating Docker as unavailable");
         return { dockerAvailable: false, containers: [] };
     }
 }

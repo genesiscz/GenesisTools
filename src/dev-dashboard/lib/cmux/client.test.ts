@@ -101,12 +101,12 @@ describe("cmux client", () => {
         const preview = [
             "tools dev-dashboard auth reset",
             "username: martin",
-            "password: goRmcB4-okwe7dip3yYe9mVwqV5BKUAG",
-            "curl -u 'martin:goRmcB4-okwe7dip3yYe9mVwqV5BKUAG' https://mac.foltyn.dev/",
+            "password: EXAMPLE_SECRET_PW_123",
+            "curl -u 'martin:EXAMPLE_SECRET_PW_123' https://dashboard.example.test/",
         ].join("\n");
 
         expect(redactTerminalPreview(preview)).toContain("password: [redacted]");
-        expect(redactTerminalPreview(preview)).toContain("curl -u 'martin:[redacted]' https://mac.foltyn.dev/");
-        expect(redactTerminalPreview(preview)).not.toContain("goRmcB4");
+        expect(redactTerminalPreview(preview)).toContain("curl -u 'martin:[redacted]' https://dashboard.example.test/");
+        expect(redactTerminalPreview(preview)).not.toContain("EXAMPLE_SECRET_PW");
     });
 });

@@ -1,5 +1,6 @@
 import type { LogEntry } from "@app/daemon/lib/types";
 import { useQuery } from "@tanstack/react-query";
+import { fetchJson } from "@/lib/api";
 
 interface Props {
     logFile: string | null;
@@ -35,10 +36,10 @@ function LogLineRow({ entry }: { entry: LogEntry }) {
 }
 
 export function LogModal({ logFile, onClose }: Props) {
-    const { data, isLoading } = useQuery({
+    const { data, isLoading, isError, error } = useQuery({
         queryKey: ["daemon", "runs", "log", logFile],
         queryFn: (): Promise<LogEntry[]> =>
-            fetch(`/api/daemon/runs/log?logFile=${encodeURIComponent(logFile ?? "")}`).then((r) => r.json()),
+            fetchJson<LogEntry[]>(`/api/daemon/runs/log?logFile=${encodeURIComponent(logFile ?? "")}`),
         enabled: logFile !== null,
     });
 
@@ -66,6 +67,10 @@ export function LogModal({ logFile, onClose }: Props) {
                 <div className="flex flex-col gap-1 overflow-y-auto">
                     {isLoading ? (
                         <div className="text-sm text-[var(--dd-text-muted)]">Loading log...</div>
+                    ) : isError ? (
+                        <div className="text-sm text-[#f87171]">
+                            Failed to load log: {error instanceof Error ? error.message : String(error)}
+                        </div>
                     ) : (data ?? []).length === 0 ? (
                         <div className="text-sm text-[var(--dd-text-muted)]">Empty log.</div>
                     ) : (

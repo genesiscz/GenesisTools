@@ -1,8 +1,8 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "@ui/theme/styles.css";
-@source "../../../utils/ui";
 @import "./slate-grid.css";
+@source "../../../utils/ui";
 
 @custom-variant dark (&:is(.dark *));
 

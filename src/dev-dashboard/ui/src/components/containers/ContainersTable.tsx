@@ -56,6 +56,8 @@ export function ContainersTable({ result }: ContainersTableProps) {
                                     <span
                                         className="inline-block h-2.5 w-2.5 rounded-full"
                                         style={{ backgroundColor: stateColor(c.state) }}
+                                        role="img"
+                                        aria-label={`State: ${c.state}`}
                                         title={c.state}
                                     />
                                 </td>

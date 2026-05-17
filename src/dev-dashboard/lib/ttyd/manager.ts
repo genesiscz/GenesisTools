@@ -40,6 +40,26 @@ function createTmuxSession(sessionName: string, cwd: string, command: string): v
     }
 }
 
+/**
+ * Verify the live process at `pid` is actually *this* ttyd session and not an
+ * unrelated process that reused the PID. ttyd is spawned with a unique
+ * `-b /ttyd/<id>` base path, so its argv carries the session id as a marker.
+ */
+function processMatchesSession(session: TtydSession): boolean {
+    const result = spawnSync("/bin/ps", ["-p", String(session.pid), "-o", "command="], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+    });
+
+    if (result.status !== 0 || typeof result.stdout !== "string") {
+        return false;
+    }
+
+    const cmd = result.stdout.trim();
+
+    return cmd.includes("ttyd") && cmd.includes(`/ttyd/${session.id}`);
+}
+
 function isSessionAlive(session: TtydSession): boolean {
     if (session.pid <= 0) {
         return false;
@@ -47,10 +67,13 @@ function isSessionAlive(session: TtydSession): boolean {
 
     try {
         process.kill(session.pid, 0);
-        return true;
     } catch {
         return false;
     }
+
+    // PID exists, but PIDs are reused — confirm it's still our ttyd before
+    // treating the entry as alive (and, by extension, before signalling it).
+    return processMatchesSession(session);
 }
 
 async function persistRegistry(): Promise<void> {
@@ -65,8 +88,10 @@ async function hydrateRegistry(): Promise<void> {
         return;
     }
 
-    hydrated = true;
+    // Don't latch `hydrated` until the config actually loads — a transient
+    // read error here would otherwise permanently brick hydration.
     const config = await getConfig();
+    hydrated = true;
     let changed = false;
 
     for (const session of config.ttydSessions) {
@@ -201,12 +226,14 @@ export async function killTtyd(id: string): Promise<boolean> {
 
     if (tracked.child) {
         tracked.child.kill("SIGTERM");
-    } else {
+    } else if (processMatchesSession(tracked.session)) {
         try {
             process.kill(tracked.session.pid, "SIGTERM");
         } catch (err) {
             logger.debug({ err, id }, "ttyd process already gone");
         }
+    } else {
+        logger.debug({ id, pid: tracked.session.pid }, "ttyd pid no longer ours; skipping kill");
     }
 
     if (tracked.session.tmuxSessionName) {
@@ -227,12 +254,14 @@ export async function killAllTtyd(): Promise<void> {
     for (const { child, session } of registry.values()) {
         if (child) {
             child.kill("SIGTERM");
-        } else {
+        } else if (processMatchesSession(session)) {
             try {
                 process.kill(session.pid, "SIGTERM");
             } catch (err) {
                 logger.debug({ err, id: session.id }, "ttyd process already gone");
             }
+        } else {
+            logger.debug({ id: session.id, pid: session.pid }, "ttyd pid no longer ours; skipping kill");
         }
 
         if (session.tmuxSessionName) {

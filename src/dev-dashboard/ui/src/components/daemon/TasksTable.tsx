@@ -31,14 +31,19 @@ export function TasksTable({ tasks }: Props) {
                             >
                                 <td className="py-2 pr-4">{task.name}</td>
                                 <td className="py-2 pr-4">
-                                    <span
-                                        className="inline-block h-2 w-2 rounded-full"
-                                        style={{
-                                            backgroundColor: task.enabled
-                                                ? "var(--dd-accent-from)"
-                                                : "var(--dd-text-muted)",
-                                        }}
-                                    />
+                                    <span className="inline-flex items-center gap-1.5">
+                                        <span
+                                            className="inline-block h-2 w-2 rounded-full"
+                                            style={{
+                                                backgroundColor: task.enabled
+                                                    ? "var(--dd-accent-from)"
+                                                    : "var(--dd-text-muted)",
+                                            }}
+                                        />
+                                        <span className="text-xs text-[var(--dd-text-secondary)]">
+                                            {task.enabled ? "Enabled" : "Disabled"}
+                                        </span>
+                                    </span>
                                 </td>
                                 <td className="py-2 pr-4">{task.every}</td>
                                 <td className="py-2 pr-4">{task.retries}</td>

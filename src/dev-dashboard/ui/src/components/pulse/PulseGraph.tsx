@@ -1,3 +1,4 @@
+import { useId } from "react";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 interface PulseGraphProps {
@@ -7,6 +8,7 @@ interface PulseGraphProps {
 }
 
 export function PulseGraph({ title, points, unit }: PulseGraphProps) {
+    const gradientId = `grad-${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
     const data = points.map((p) => ({
         time: new Date(p.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
         value: Math.round(p.value * 10) / 10,
@@ -19,7 +21,7 @@ export function PulseGraph({ title, points, unit }: PulseGraphProps) {
                 <ResponsiveContainer>
                     <AreaChart data={data} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
                         <defs>
-                            <linearGradient id={`grad-${title}`} x1="0" y1="0" x2="0" y2="1">
+                            <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
                                 <stop offset="0%" stopColor="#34d399" stopOpacity={0.4} />
                                 <stop offset="100%" stopColor="#34d399" stopOpacity={0} />
                             </linearGradient>
@@ -48,7 +50,7 @@ export function PulseGraph({ title, points, unit }: PulseGraphProps) {
                             dataKey="value"
                             stroke="#34d399"
                             strokeWidth={2}
-                            fill={`url(#grad-${title})`}
+                            fill={`url(#${gradientId})`}
                         />
                     </AreaChart>
                 </ResponsiveContainer>

@@ -173,8 +173,10 @@ export async function watchUsage(accountFilter?: string, notifications?: Notific
     process.on("SIGTERM", cleanup);
 
     while (true) {
-        // Fetch while showing old data, then clear and render
-        const results = await getSharedAccountsUsage({ accountFilter });
+        // Watch mode is real-time monitoring: bypass the shared-cache staleness
+        // window so each poll triggers a live fetch and threshold alerts fire
+        // reliably (the 30s cache window would otherwise serve stale data).
+        const results = await getSharedAccountsUsage({ accountFilter, force: true });
 
         // Clear and render fresh data
         process.stdout.write("\x1B[2J\x1B[H");

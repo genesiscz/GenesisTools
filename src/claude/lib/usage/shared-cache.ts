@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { UsageHistoryDb } from "@app/claude/lib/usage/history-db";
-import { Storage } from "@app/utils/storage/storage";
+import { getClaudeUsageStorage } from "@app/claude/lib/usage/storage";
 import type { AccountUsage } from "./api";
 import { fetchAllAccountsUsage } from "./api";
 
@@ -8,7 +8,7 @@ export const DB_FRESH_MS = 10_000;
 export const API_MIN_INTERVAL_MS = 30_000;
 
 const CACHE_KEY = "usage-shared";
-const storage = new Storage("claude-usage");
+const storage = getClaudeUsageStorage();
 
 interface Cached {
     fetchedAt: number;
