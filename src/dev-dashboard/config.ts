@@ -4,9 +4,9 @@ import {
     type DashboardAuthConfig,
     isCompleteAuthConfig,
 } from "@app/dev-dashboard/lib/auth";
-import logger from "@app/logger";
 import { getDevDashboardStorage } from "@app/dev-dashboard/lib/storage";
 import type { TtydSession } from "@app/dev-dashboard/lib/ttyd/types";
+import logger from "@app/logger";
 import { z } from "zod";
 
 const DashboardAuthSchema = z.object({
@@ -76,7 +76,7 @@ export async function getConfig(): Promise<DevDashboardConfig> {
 
     logger.warn(
         { issues: parsed.error.issues },
-        "dev-dashboard config failed schema validation; falling back to defaults",
+        "dev-dashboard config failed schema validation; falling back to defaults"
     );
 
     return DevDashboardConfigSchema.parse({});

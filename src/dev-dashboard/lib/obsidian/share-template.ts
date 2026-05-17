@@ -409,7 +409,7 @@ export function renderSharePage(options: ShareTemplateOptions): string {
 
     if (rendered.hasMath) {
         headExtras.push(
-            `<link rel="stylesheet" href="${KATEX_CSS_URL}" integrity="${KATEX_CSS_SRI}" crossorigin="anonymous">`,
+            `<link rel="stylesheet" href="${KATEX_CSS_URL}" integrity="${KATEX_CSS_SRI}" crossorigin="anonymous">`
         );
     }
 

@@ -1,5 +1,5 @@
-import { existsSync } from "node:fs";
 import { afterEach, describe, expect, test } from "bun:test";
+import { existsSync } from "node:fs";
 import { killAllTtyd, killTtyd, listTtyd, spawnTtyd, ttydLabel } from "@app/dev-dashboard/lib/ttyd/manager";
 import type { TtydSession } from "@app/dev-dashboard/lib/ttyd/types";
 

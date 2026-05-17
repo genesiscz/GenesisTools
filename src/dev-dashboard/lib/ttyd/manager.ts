@@ -5,6 +5,7 @@ import { findFreePort } from "@app/dev-dashboard/lib/ttyd/free-port";
 import type { TtydSession } from "@app/dev-dashboard/lib/ttyd/types";
 import logger from "@app/logger";
 import type { Subprocess } from "bun";
+
 export { ttydLabel } from "@app/dev-dashboard/lib/ttyd/label";
 
 type TtydChild = Subprocess<"ignore", "ignore", "ignore">;
