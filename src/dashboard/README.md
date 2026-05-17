@@ -1,58 +1,84 @@
-# Turborepo Tailwind CSS starter
+# Dashboard
 
-This Turborepo starter is maintained by the Turborepo core team.
+![Status](https://img.shields.io/badge/Status-Active-success?style=flat-square)
 
-## Using this example
+> **Personal productivity dashboard — timer, assistant tasks, focus, planner, and a public Obsidian share, in one local-first web app.**
 
-Run the following command:
+A TanStack Start (React 19) app backed by a single on-disk SQLite database. The server is the source of truth; the browser holds no database. Launched and managed through `tools dashboard`.
 
-```sh
-npx create-turbo@latest -e with-tailwind
+---
+
+## Key Features
+
+| Feature | Description |
+|---------|-------------|
+| **Pulse** | At-a-glance panels: System, Weather, Claude usage, Daemon, Containers, Todos |
+| **Timer** | Stopwatch / countdown / Pomodoro with cross-tab + cross-device sync |
+| **Assistant** | Tasks, decisions, context parking, blockers, handoffs, communication logs |
+| **Focus & Planner** | Pomodoro focus sessions and a day-view task timeline |
+| **Public share** | Read-only Obsidian note renderer at `/share/:slug` |
+| **ttyd tunnel** | Terminal-over-web, proxied to work over the Cloudflare tunnel / mobile |
+
+---
+
+## Quick Start
+
+```bash
+# Start the dev server and open the browser (auto-installs deps if missing)
+tools dashboard
+
+# Production build + PM2 (ecosystem.config.cjs)
+tools dashboard --prod
+
+# Force a fresh dependency install before starting
+tools dashboard --reinstall
+
+# Custom port, no auto-open
+tools dashboard --port 3001 --no-open
 ```
 
-## What's inside?
+First run with no `node_modules` triggers `bun install` automatically. Pass `--no-install` to opt out (it then errors instead of installing).
 
-This Turborepo includes the following packages/apps:
+---
 
-### Apps and Packages
+## Launcher Flags
 
-- `docs`: a [Next.js](https://nextjs.org/) app with [Tailwind CSS](https://tailwindcss.com/)
-- `web`: another [Next.js](https://nextjs.org/) app with [Tailwind CSS](https://tailwindcss.com/)
-- `ui`: a stub React component library with [Tailwind CSS](https://tailwindcss.com/) shared by both `web` and `docs` applications
-- `@repo/eslint-config`: `eslint` configurations (includes `eslint-config-next` and `eslint-config-prettier`)
-- `@repo/typescript-config`: `tsconfig.json`s used throughout the monorepo
+| Flag | Description |
+|------|-------------|
+| `--prod` | Production build, then run via PM2 instead of the Vite dev server |
+| `--reinstall` | Force `bun install` before starting |
+| `--no-install` | Do not auto-install when `node_modules` is missing (error instead) |
+| `--no-open` | Start the server but don't open a browser |
+| `-p, --port <n>` | Port to wait on / open (default `3000`) |
 
-Each package/app is 100% [TypeScript](https://www.typescriptlang.org/).
+---
 
-### Building packages/ui
+## How it works
 
-This example is set up to produce compiled styles for `ui` components into the `dist` directory. The component `.tsx` files are consumed by the Next.js apps directly using `transpilePackages` in `next.config.ts`. This was chosen for several reasons:
+- **Workspace**: a bun + Turborepo monorepo. `apps/web` is the real app (TanStack Start on an embedded Nitro server, Node 22 SSR — not Bun). `packages/shared` holds shared utilities (`SafeJSON`, …).
+- **Database**: Drizzle ORM over `better-sqlite3` — **synchronous**, WAL mode, file at `SQLITE_PATH` (default `.data/dashboard.sqlite`, absolute required in prod). Migrations auto-apply at server start; a failed migration refuses to serve. See `apps/web/.claude/docs/systems/database.md`.
+- **Realtime**: two complementary layers — a per-user in-memory **SSE domain event bus** (`/api/events`, cross-device) and **BroadcastChannel** (same-device tabs). Both just nudge TanStack Query to refetch. See `apps/web/.claude/docs/systems/events.md`.
+- **Production**: `bun run build:prod` (`vite build` → Nitro output) and PM2 via `ecosystem.config.cjs`. See `DEPLOY.md`.
+- **Auth**: WorkOS (`@workos-inc/node`); env via `@t3-oss/env-core`. No-auth dev fallback uses `dev-user`.
 
-- Make sharing one `tailwind.config.ts` to apps and packages as easy as possible.
-- Make package compilation simple by only depending on the Next.js Compiler and `tailwindcss`.
-- Ensure Tailwind classes do not overwrite each other. The `ui` package uses a `ui-` prefix for it's classes.
-- Maintain clear package export boundaries.
+---
 
-Another option is to consume `packages/ui` directly from source without building. If using this option, you will need to update the `tailwind.config.ts` in your apps to be aware of your package locations, so it can find all usages of the `tailwindcss` class names for CSS compilation.
+## Layout
 
-For example, in [tailwind.config.ts](packages/tailwind-config/tailwind.config.ts):
-
-```js
-  content: [
-    // app content
-    `src/**/*.{js,ts,jsx,tsx}`,
-    // include packages if not transpiling
-    "../../packages/ui/*.{js,ts,jsx,tsx}",
-  ],
+```
+src/dashboard/
+├─ index.ts                 # `tools dashboard` launcher (commander)
+├─ apps/web/                # the app — TanStack Start + Drizzle + SQLite
+│  └─ .claude/docs/         # architecture docs (database, events)
+├─ packages/shared/         # shared lib (SafeJSON, types)
+├─ packages/typescript-config/
+├─ ecosystem.config.cjs     # PM2 (production)
+└─ DEPLOY.md                # production build + deploy notes
 ```
 
-If you choose this strategy, you can remove the `tailwindcss` and `autoprefixer` dependencies from the `ui` package.
+---
 
-### Utilities
+## Related
 
-This Turborepo has some additional tools already setup for you:
-
-- [Tailwind CSS](https://tailwindcss.com/) for styles
-- [TypeScript](https://www.typescriptlang.org/) for static type checking
-- [ESLint](https://eslint.org/) for code linting
-- [Prettier](https://prettier.io) for code formatting
+- `tools dashboard` — the launcher (this package's entry point)
+- `apps/web/.claude/CLAUDE.md` — architecture summary + context triggers for agents
