@@ -1,9 +1,9 @@
 import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
-import { dirname, join, parse } from "node:path";
+import { dirname } from "node:path";
 import logger from "@app/logger";
-import { MONO_MP3_BITRATE_KBPS } from "@app/utils/audio/converter";
 import { getAudioInfo, validateAudioFile } from "@app/utils/audio/probe";
+import { CHUNK_SIZE, splitAudioBySize, splitAudioFile } from "@app/utils/audio/split";
 import { spawn } from "bun";
 
 export type FFProbeResult = {
@@ -20,10 +20,6 @@ export type FFProbeResult = {
 };
 
 export class AudioProcessor {
-    private readonly CHUNK_SIZE = 24 * 1024 * 1024; // 24MB chunks (under 25MB limit)
-    private readonly SEGMENT_BITRATE_KBPS = MONO_MP3_BITRATE_KBPS; // shared with cloud-normalize util
-    private readonly SEGMENT_BYTES_PER_SEC = (this.SEGMENT_BITRATE_KBPS * 1000) / 8; // constant after re-encode
-
     async validateAudioFile(filePath: string): ReturnType<typeof validateAudioFile> {
         return validateAudioFile(filePath);
     }
@@ -62,110 +58,17 @@ export class AudioProcessor {
     async splitAudioFile(
         inputPath: string,
         outputDir: string,
-        chunkDurationSeconds: number = 300 // 5 minutes chunks
+        chunkDurationSeconds: number = 300
     ): Promise<string[]> {
-        try {
-            // Ensure output directory exists
-            if (!existsSync(outputDir)) {
-                await mkdir(outputDir, { recursive: true });
-            }
-
-            const audioInfo = await this.getAudioInfo(inputPath);
-            if (!audioInfo.duration) {
-                throw new Error("Cannot determine audio duration");
-            }
-
-            const baseName = parse(inputPath).name || "audio";
-            const outputFiles: string[] = [];
-
-            logger.info(`Splitting audio into ${Math.ceil(audioInfo.duration / chunkDurationSeconds)} chunks...`);
-
-            // Create segments using ffmpeg
-            const segmentTemplate = join(outputDir, `${baseName}_%03d.mp3`);
-
-            const proc = spawn(
-                [
-                    "ffmpeg",
-                    "-i",
-                    inputPath,
-                    "-vn",
-                    "-map",
-                    "0:a:0",
-                    "-c:a",
-                    "libmp3lame",
-                    "-b:a",
-                    `${this.SEGMENT_BITRATE_KBPS}k`,
-                    "-f",
-                    "segment",
-                    "-segment_time",
-                    chunkDurationSeconds.toString(),
-                    "-segment_format",
-                    "mp3",
-                    "-reset_timestamps",
-                    "1",
-                    "-y",
-                    segmentTemplate,
-                ],
-                {
-                    stdio: ["ignore", "pipe", "pipe"],
-                }
-            );
-
-            const _stdout = await new Response(proc.stdout).text();
-            const stderr = await new Response(proc.stderr).text();
-            const exitCode = await proc.exited;
-
-            if (exitCode !== 0) {
-                throw new Error(`FFmpeg segmentation failed: ${stderr}`);
-            }
-
-            // Find all created segments
-            for (let i = 0; i < Math.ceil(audioInfo.duration / chunkDurationSeconds); i++) {
-                const segmentFile = join(outputDir, `${baseName}_${i.toString().padStart(3, "0")}.mp3`);
-                if (existsSync(segmentFile)) {
-                    outputFiles.push(segmentFile);
-                }
-            }
-
-            logger.info(`Created ${outputFiles.length} audio segments`);
-            return outputFiles;
-        } catch (error) {
-            logger.error(`Audio splitting failed: ${error}`);
-            throw error;
-        }
+        return splitAudioFile(inputPath, outputDir, chunkDurationSeconds);
     }
 
     async splitAudioBySize(
         inputPath: string,
         outputDir: string,
-        maxChunkSizeBytes: number = this.CHUNK_SIZE
+        maxChunkSizeBytes: number = CHUNK_SIZE
     ): Promise<string[]> {
-        try {
-            // Ensure output directory exists
-            if (!existsSync(outputDir)) {
-                await mkdir(outputDir, { recursive: true });
-            }
-
-            const fileSize = Bun.file(inputPath).size;
-
-            if (fileSize <= maxChunkSizeBytes) {
-                return [inputPath]; // File is small enough, no splitting needed
-            }
-
-            const _baseName = parse(inputPath).name || "audio";
-            const _outputFiles: string[] = [];
-
-            // Segments are re-encoded to a fixed-bitrate MP3, so chunk size is
-            // governed by the encoded byte rate, not the source file's.
-            const chunkDurationSeconds = Math.floor((maxChunkSizeBytes * 0.9) / this.SEGMENT_BYTES_PER_SEC); // 90% to be safe
-
-            logger.info(`Splitting audio by size (~${maxChunkSizeBytes / 1024 / 1024}MB chunks)...`);
-
-            return await this.splitAudioFile(inputPath, outputDir, chunkDurationSeconds);
-        } catch (error) {
-            logger.error(`Audio size-based splitting failed: ${error}`);
-            throw error;
-        }
+        return splitAudioBySize(inputPath, outputDir, maxChunkSizeBytes);
     }
 
     async getAudioInfo(filePath: string): ReturnType<typeof getAudioInfo> {
