@@ -1,3 +1,10 @@
+import { getDashboardAuthCached } from "@app/dev-dashboard/config";
+import {
+    type CompleteDashboardAuthConfig,
+    isCompleteAuthConfig,
+    verifyBasicAuthHeader,
+    verifySessionToken,
+} from "@app/dev-dashboard/lib/auth";
 import { getTtydPort } from "@app/dev-dashboard/lib/ttyd/manager";
 import logger from "@app/logger";
 import type { Server, ServerWebSocket } from "bun";
@@ -10,6 +17,84 @@ import type { Server, ServerWebSocket } from "bun";
 // to its upstream frame-for-frame.
 
 const TTYD_PATH = /^\/ttyd\/([0-9a-fA-F-]{36})(?:\/|$)/;
+
+// Header the front-proxy sets ONLY for genuine loopback-origin requests so the
+// Vite auth middleware can skip Basic Auth for localhost while still enforcing
+// it for the tunnel and LAN. Stripped from every inbound request first
+// (anti-spoof); Vite binds 127.0.0.1, so only this proxy can legitimately set it.
+const LOCAL_ORIGIN_HEADER = "x-dd-local-origin";
+
+const WWW_AUTHENTICATE = 'Basic realm="GenesisTools dev dashboard", charset="UTF-8"';
+
+function isLoopbackAddress(address: string | undefined): boolean {
+    if (!address) {
+        return false;
+    }
+
+    return address === "127.0.0.1" || address === "::1" || address === "::ffff:127.0.0.1";
+}
+
+// True only for a real loopback hit: loopback socket AND localhost Host AND no
+// Cloudflare/forwarded edge headers. cloudflared connects from 127.0.0.1 too,
+// so the socket alone is insufficient — the un-strippable cf-*/cdn-loop headers
+// and the original Host are what separate a local browser from tunnel/LAN.
+function isLoopbackOnlyOrigin(req: Request, clientAddress: string | undefined): boolean {
+    if (!isLoopbackAddress(clientAddress)) {
+        return false;
+    }
+
+    if (
+        req.headers.get("cf-ray") ||
+        req.headers.get("cf-connecting-ip") ||
+        req.headers.get("cf-visitor") ||
+        req.headers.get("cdn-loop") ||
+        req.headers.get("x-forwarded-for")
+    ) {
+        return false;
+    }
+
+    const hostname = (req.headers.get("host") ?? "")
+        .replace(/:\d+$/, "")
+        .replace(/^\[|\]$/g, "")
+        .toLowerCase();
+
+    return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+}
+
+type AuthDecision = "allow" | "deny" | "unconfigured";
+
+// ttyd HTTP assets and EVERY WebSocket upgrade (ttyd terminal + Vite HMR) are
+// served/bridged by this proxy and never reach the Vite auth middleware, so
+// without this gate they are an unauthenticated bypass (proven: interactive
+// shell over LAN and the public tunnel). Accept a genuine loopback origin, a
+// valid Basic header (curl/programmatic clients), or the signed session cookie
+// (browser WS handshakes cannot carry an Authorization header).
+async function authorizeProxied(req: Request, isLocal: boolean): Promise<AuthDecision> {
+    if (isLocal) {
+        return "allow";
+    }
+
+    const provision = await getDashboardAuthCached();
+
+    if (!provision.auth.enabled) {
+        return "allow";
+    }
+
+    if (!isCompleteAuthConfig(provision.auth)) {
+        return "unconfigured";
+    }
+
+    const auth: CompleteDashboardAuthConfig = provision.auth;
+
+    if (
+        verifyBasicAuthHeader(req.headers.get("authorization"), auth) ||
+        verifySessionToken(req.headers.get("cookie"), auth)
+    ) {
+        return "allow";
+    }
+
+    return "deny";
+}
 
 interface BridgeData {
     targetWsUrl: string;
@@ -43,6 +128,33 @@ export function startFrontProxy(opts: { publicPort: number; internalPort: number
         async fetch(req, srv) {
             const url = new URL(req.url);
             const ttyd = url.pathname.match(TTYD_PATH);
+            const isUpgrade = req.headers.get("upgrade")?.toLowerCase() === "websocket";
+            const clientAddress = srv.requestIP(req)?.address;
+            const isLocal = isLoopbackOnlyOrigin(req, clientAddress);
+
+            // Plain Vite-forwarded HTTP stays gated by the Vite middleware
+            // downstream; only the two paths that skip it (ttyd assets + any WS
+            // upgrade) need an auth gate here.
+            if (ttyd || isUpgrade) {
+                const decision = await authorizeProxied(req, isLocal);
+
+                if (decision === "unconfigured") {
+                    return new Response("Dashboard auth is enabled but no password hash is configured.", {
+                        status: 503,
+                        headers: { "Content-Type": "text/plain; charset=utf-8" },
+                    });
+                }
+
+                if (decision === "deny") {
+                    return new Response("Authentication required.", {
+                        status: 401,
+                        headers: {
+                            "WWW-Authenticate": WWW_AUTHENTICATE,
+                            "Content-Type": "text/plain; charset=utf-8",
+                        },
+                    });
+                }
+            }
 
             let httpTarget: string;
             let wsTarget: string;
@@ -61,7 +173,7 @@ export function startFrontProxy(opts: { publicPort: number; internalPort: number
                 wsTarget = `${viteWs}${url.pathname}${url.search}`;
             }
 
-            if (req.headers.get("upgrade")?.toLowerCase() === "websocket") {
+            if (isUpgrade) {
                 const rawProtocol = req.headers.get("sec-websocket-protocol");
                 const protocols = rawProtocol
                     ? rawProtocol
@@ -81,10 +193,21 @@ export function startFrontProxy(opts: { publicPort: number; internalPort: number
                 return new Response("WebSocket upgrade failed", { status: 426 });
             }
 
+            // Strip any inbound x-dd-local-origin first (anti-spoof), then re-add
+            // it only for a genuine loopback origin so the Vite auth middleware
+            // can skip Basic Auth for localhost. Applied to the ttyd fetch too —
+            // ttyd ignores it and the strip must cover every forwarded request.
+            const forwarded = new Request(httpTarget, req);
+            forwarded.headers.delete(LOCAL_ORIGIN_HEADER);
+
+            if (isLocal) {
+                forwarded.headers.set(LOCAL_ORIGIN_HEADER, "1");
+            }
+
             let upstream: Response;
 
             try {
-                upstream = await fetch(new Request(httpTarget, req), {
+                upstream = await fetch(forwarded, {
                     redirect: "manual",
                     signal: AbortSignal.timeout(15_000),
                 });
@@ -103,6 +226,18 @@ export function startFrontProxy(opts: { publicPort: number; internalPort: number
             headers.delete("content-encoding");
             headers.delete("content-length");
             headers.delete("transfer-encoding");
+
+            // new Headers() can fold multiple Set-Cookie into one; re-apply each
+            // so the session cookie the Vite middleware issues survives the relay.
+            const setCookies = upstream.headers.getSetCookie?.() ?? [];
+
+            if (setCookies.length > 0) {
+                headers.delete("set-cookie");
+
+                for (const cookie of setCookies) {
+                    headers.append("set-cookie", cookie);
+                }
+            }
 
             return new Response(upstream.body, {
                 status: upstream.status,
