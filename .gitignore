@@ -10,6 +10,12 @@ yarn-error.log*
 lerna-debug.log*
 .pnpm-debug.log*
 
+# Test artifacts
+
+test-results
+playwright-report
+.playwright-mcp
+
 # Caches
 
 .cache
