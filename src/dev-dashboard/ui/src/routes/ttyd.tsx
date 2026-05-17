@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Mosaic, type MosaicNode, MosaicWindow } from "react-mosaic-component";
 import "react-mosaic-component/react-mosaic-component.css";
 import { Button } from "@ui/components/button";
+import { TtydFrame } from "@/components/TtydFrame";
 import { TtydPane } from "@/components/TtydPane";
 import { MobileTerminalShell } from "@/components/terminal-shell/MobileTerminalShell";
 import { useLayoutMode } from "@/hooks/useLayoutMode";
@@ -92,25 +93,28 @@ export function TtydRoute() {
                         <LayoutToggle mode={mode} setMode={setMode} />
                     </div>
                 ) : null}
-                {sessions.length > 0 ? (
-                    <MobileTerminalShell
-                        tabs={buildTtydTabs(sessions, active).map((t) => ({ ...t, dot: "active" as const }))}
-                        onSelect={setActiveId}
-                        onRename={(id, name) => renameMut.mutate({ id, name })}
-                        primaryAction={{ label: "＋", onClick: () => spawn.mutate() }}
-                        renderPreview={(id) => {
-                            const s = sessions.find((x) => x.id === id);
+                {/* Always render the shell — even with zero sessions — so the
+                    edge/nav, sticky strip and ＋ are present (otherwise there's
+                    literally no ＋ to "tap to start one"). */}
+                <MobileTerminalShell
+                    tabs={buildTtydTabs(sessions, active).map((t) => ({ ...t, dot: "active" as const }))}
+                    onSelect={setActiveId}
+                    onRename={(id, name) => renameMut.mutate({ id, name })}
+                    primaryAction={{ label: "＋", onClick: () => spawn.mutate() }}
+                    renderPreview={(id) => {
+                        const s = sessions.find((x) => x.id === id);
 
-                            return s ? (
-                                <iframe
-                                    src={`/ttyd/${encodeURIComponent(s.id)}/`}
-                                    title={`ttyd-prev-${id}`}
-                                    className="h-full w-full border-0 bg-black"
-                                />
-                            ) : null;
-                        }}
-                    >
-                        {sessions.map((s) => (
+                        return s ? (
+                            <TtydFrame
+                                id={s.id}
+                                title={`ttyd-prev-${id}`}
+                                className="h-full w-full border-0 bg-black"
+                            />
+                        ) : null;
+                    }}
+                >
+                    {sessions.length > 0 ? (
+                        sessions.map((s) => (
                             // Every iframe stays mounted AND full-size (never display:none — that
                             // collapses ttyd's xterm fit to ~0 and it never recovers). Toggle
                             // visibility with opacity/z-index so the websocket + correct fit survive.
@@ -123,19 +127,19 @@ export function TtydRoute() {
                                     zIndex: s.id === active ? 1 : 0,
                                 }}
                             >
-                                <iframe
-                                    src={`/ttyd/${encodeURIComponent(s.id)}/`}
+                                <TtydFrame
+                                    id={s.id}
                                     title={`ttyd-${s.id}`}
                                     className="h-full w-full border-0 bg-black"
                                 />
                             </div>
-                        ))}
-                    </MobileTerminalShell>
-                ) : (
-                    <div className="dd-panel flex h-full items-center justify-center text-[var(--dd-text-muted)]">
-                        No terminals — tap ＋ to start one.
-                    </div>
-                )}
+                        ))
+                    ) : (
+                        <div className="flex h-full items-center justify-center text-[var(--dd-text-muted)]">
+                            No terminals — tap ＋ to start one.
+                        </div>
+                    )}
+                </MobileTerminalShell>
             </div>
         );
     }
