@@ -3,10 +3,14 @@ import { readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { audioProcessor } from "@app/ask/audio/AudioProcessor";
+import logger from "@app/logger";
 import { rateLimitAwareDelay, retry } from "@app/utils/async";
+import { diarizeLocal } from "@app/utils/audio/diarize-local";
 import { CLOUD_PROVIDER_TYPES } from "@app/utils/config/ai.types";
 import { AIConfig } from "../AIConfig";
 import { getProviderForTask } from "../providers";
+import { assignSpeakers } from "../transcription/align-speakers";
+import { cleanRepetitions } from "../transcription/repetition-cleanup";
 import type {
     AIProviderType,
     AITranscriptionProvider,
@@ -27,6 +31,11 @@ function shouldRetryTransient(error: unknown): boolean {
     }
 
     if (/\b(invalid.api.key|unauthorized|forbidden|model.not.found)\b/i.test(msg)) {
+        return false;
+    }
+
+    // Permanent capability/format mismatches — retrying just repeats the error.
+    if (/unsupported.model.version|does not support the format|unsupported.format/i.test(msg)) {
         return false;
     }
 
@@ -71,14 +80,74 @@ export class Transcriber {
         }
 
         if (CLOUD_PROVIDER_TYPES.has(this.provider.type) && audio.length > MAX_CLOUD_BYTES) {
-            return this.transcribeChunked(audio, typeof audioOrPath === "string" ? audioOrPath : undefined, options);
+            // Only Deepgram accepts large single uploads AND diarizes natively,
+            // so only it benefits from (and survives) bypassing the size-split.
+            // OpenAI/Groq reject >25 MB, so they must still chunk — local
+            // diarization runs on the full original buffer regardless
+            // (maybeDiarizeLocal), so the global-label invariant is preserved.
+            const deepgramNativeDiarize = options?.diarize === true && this.provider.type === "deepgram";
+
+            if (deepgramNativeDiarize) {
+                logger.info(
+                    "Deepgram diarization — bypassing size-split (accepts large uploads; one request ⇒ one global speaker label space)"
+                );
+            } else {
+                return this.transcribeChunked(
+                    audio,
+                    typeof audioOrPath === "string" ? audioOrPath : undefined,
+                    options
+                );
+            }
         }
 
-        return retry(() => this.provider.transcribe(audio, options), {
-            maxAttempts: 3,
+        const result = await retry(() => this.provider.transcribe(audio, options), {
+            maxAttempts: 1,
             getDelay: RETRY_DELAY,
             shouldRetry: shouldRetryTransient,
+            onRetry: (attempt, delay) => {
+                logger.warn(
+                    { attempt, maxAttempts: 1, nextDelayMs: delay, audioBytes: audio.length },
+                    "Transcription attempt failed (transient) — retrying; each retry re-uploads the full audio"
+                );
+            },
         });
+
+        const cleaned = this.maybeClean(result, options);
+        return this.maybeDiarizeLocal(cleaned, audio, options);
+    }
+
+    private maybeClean(r: TranscriptionResult, options?: TranscribeOptions): TranscriptionResult {
+        if (options?.clean === false) {
+            return r;
+        }
+
+        const c = cleanRepetitions({ text: r.text, segments: r.segments });
+        return { ...r, text: c.text, segments: c.segments };
+    }
+
+    /**
+     * Local speaker diarization for providers that don't return speakers
+     * natively (Whisper/gpt-4o/local). Runs on the FULL original audio buffer
+     * (never a chunk) so the label space is global — the cross-chunk-remap
+     * problem is designed out, not patched. Deepgram-with-utterances already
+     * has per-segment speakers, so this is a no-op there.
+     */
+    private async maybeDiarizeLocal(
+        r: TranscriptionResult,
+        audio: Buffer,
+        options?: TranscribeOptions
+    ): Promise<TranscriptionResult> {
+        if (!options?.diarize || !r.segments?.length || r.segments.some((s) => s.speaker)) {
+            return r;
+        }
+
+        const turns = await diarizeLocal(audio, { speakers: options.speakers });
+
+        if (turns.length === 0) {
+            return r;
+        }
+
+        return { ...r, segments: assignSpeakers(r.segments, turns) };
     }
 
     private async transcribeChunked(
@@ -137,12 +206,19 @@ export class Transcriber {
                 }
             }
 
-            return {
-                text: texts.join(" "),
-                segments: allSegments.length > 0 ? allSegments : undefined,
-                language: options?.language,
-                duration: timeOffset > 0 ? timeOffset : undefined,
-            };
+            const stitched = this.maybeClean(
+                {
+                    text: texts.join(" "),
+                    segments: allSegments.length > 0 ? allSegments : undefined,
+                    language: options?.language,
+                    duration: timeOffset > 0 ? timeOffset : undefined,
+                },
+                options
+            );
+
+            // `audio` here is the full original buffer (never a chunk) — the
+            // designed-out invariant: diarization always sees the whole file.
+            return this.maybeDiarizeLocal(stitched, audio, options);
         } finally {
             if (!sourcePath && inputPath && existsSync(inputPath)) {
                 await rm(inputPath, { force: true }).catch(() => {});
