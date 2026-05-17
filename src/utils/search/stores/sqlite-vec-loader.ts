@@ -2,9 +2,44 @@ import { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
 import logger from "@app/logger";
 
-let extensionAvailable: boolean | null = null;
-let customSqliteAttempted = false;
-let homebrewDylibFound = false;
+/**
+ * `Database.setCustomSQLite()` is a *process-global, one-shot* native call.
+ * The guard that tracks "have we already attempted it?" must therefore live
+ * at process scope too, NOT module scope.
+ *
+ * This module is loaded TWICE in a normal `tools` invocation: once via the
+ * launcher's `--preload <absolute path>` and once via bunfig.toml's relative
+ * `./src/...` preload entry. Bun keys its module cache by specifier, so the
+ * absolute and relative paths resolve to two distinct module instances. A
+ * module-level `let` guard is `false` in each, so the second instance called
+ * `setCustomSQLite()` again — the native side throws "SQLite already loaded"
+ * and we logged a spurious WARN (15-27/day) even though the first call had
+ * already swapped successfully and sqlite-vec was working fine. Hanging the
+ * state off `globalThis` makes both instances share one guard.
+ */
+interface SqliteVecGlobalState {
+    extensionAvailable: boolean | null;
+    customSqliteAttempted: boolean;
+    homebrewDylibFound: boolean;
+}
+
+const STATE_KEY = Symbol.for("genesis-tools.sqlite-vec.loader-state");
+
+function state(): SqliteVecGlobalState {
+    const g = globalThis as typeof globalThis & {
+        [STATE_KEY]?: SqliteVecGlobalState;
+    };
+
+    if (!g[STATE_KEY]) {
+        g[STATE_KEY] = {
+            extensionAvailable: null,
+            customSqliteAttempted: false,
+            homebrewDylibFound: false,
+        };
+    }
+
+    return g[STATE_KEY];
+}
 
 /** Known paths for Homebrew sqlite3 with extension support (arm64 first) */
 const HOMEBREW_SQLITE_PATHS = [
@@ -21,15 +56,17 @@ const HOMEBREW_SQLITE_PATHS = [
  * your program entry point if you plan to use sqlite-vec.
  */
 export function ensureExtensionCapableSQLite(): void {
-    if (customSqliteAttempted) {
+    const s = state();
+
+    if (s.customSqliteAttempted) {
         return;
     }
 
-    customSqliteAttempted = true;
+    s.customSqliteAttempted = true;
 
     if (process.platform !== "darwin") {
         // Linux and Windows ship Bun with extension-capable SQLite already.
-        homebrewDylibFound = true;
+        s.homebrewDylibFound = true;
         return;
     }
 
@@ -45,14 +82,31 @@ export function ensureExtensionCapableSQLite(): void {
                     return;
                 }
 
-                homebrewDylibFound = true;
+                s.homebrewDylibFound = true;
                 logger.debug(`[sqlite-vec] swapped in extension-capable SQLite: ${libPath}`);
             } catch (err) {
+                const message = err instanceof Error ? err.message : String(err);
+
+                // "SQLite already loaded" is the benign double-attempt: another
+                // module instance / duplicate preload already ran the one-shot
+                // swap in THIS process (the global guard makes that a no-op, but
+                // a path that bypasses it still lands here). If the earlier
+                // attempt succeeded, sqlite-vec works fine; if a Database loaded
+                // SQLite before any swap, loadSqliteVec() reports the real,
+                // actionable failure with its own warn. Either way THIS throw
+                // is not actionable — debug, not warn, so it stops being noise.
+                if (message.includes("SQLite already loaded")) {
+                    logger.debug(
+                        `[sqlite-vec] setCustomSQLite(${libPath}) skipped - SQLite already loaded ` +
+                            "in this process (swap attempted by an earlier module instance / preload)."
+                    );
+
+                    return;
+                }
+
                 logger.warn(
-                    `[sqlite-vec] setCustomSQLite(${libPath}) failed - a Database was created ` +
-                        "before the preload ran; sqlite-vec will be unavailable. " +
-                        "Wire sqlite-vec-preload.ts into the entry point. " +
-                        `Cause: ${err instanceof Error ? err.message : String(err)}`
+                    `[sqlite-vec] setCustomSQLite(${libPath}) failed - sqlite-vec will be unavailable. ` +
+                        `Cause: ${message}`
                 );
             }
 
@@ -72,11 +126,11 @@ export function ensureExtensionCapableSQLite(): void {
  * lookup and never touches the vec0 module itself.
  */
 export function assertVecExtensionAvailable(db: Database, tableName: string): void {
-    if (!customSqliteAttempted) {
+    if (!state().customSqliteAttempted) {
         ensureExtensionCapableSQLite();
     }
 
-    if (homebrewDylibFound) {
+    if (state().homebrewDylibFound) {
         return;
     }
 
@@ -105,24 +159,26 @@ export function assertVecExtensionAvailable(db: Database, tableName: string): vo
  * instance since extensions must be loaded per-connection.
  */
 export function loadSqliteVec(db: Database): boolean {
-    if (extensionAvailable === false) {
+    const s = state();
+
+    if (s.extensionAvailable === false) {
         return false;
     }
 
     // ensureExtensionCapableSQLite() should already have been called before
     // any Database was created. Call it here as a safety net, but it may be
     // too late if a Database instance already exists.
-    if (!customSqliteAttempted) {
+    if (!s.customSqliteAttempted) {
         ensureExtensionCapableSQLite();
     }
 
     try {
         const sqliteVec = require("sqlite-vec");
         sqliteVec.load(db);
-        extensionAvailable = true;
+        s.extensionAvailable = true;
         return true;
     } catch (err) {
-        extensionAvailable = false;
+        s.extensionAvailable = false;
         logger.warn(
             `[sqlite-vec] loadSqliteVec failed - extension unavailable: ${
                 err instanceof Error ? err.message : String(err)
@@ -136,23 +192,31 @@ export function loadSqliteVec(db: Database): boolean {
  * Check whether sqlite-vec is available without loading it.
  */
 export function isSqliteVecAvailable(): boolean {
-    if (extensionAvailable !== null) {
-        return extensionAvailable;
+    const s = state();
+
+    if (s.extensionAvailable !== null) {
+        return s.extensionAvailable;
     }
 
     try {
         require.resolve("sqlite-vec");
-        extensionAvailable = true;
+        s.extensionAvailable = true;
         return true;
     } catch {
-        extensionAvailable = false;
+        s.extensionAvailable = false;
         return false;
     }
 }
 
 /**
- * Reset the cached availability state (for testing only).
+ * Reset all cached state (for testing only) -- clears the process-global
+ * entry so a subsequent `ensureExtensionCapableSQLite()` re-attempts the
+ * one-shot swap and availability is re-probed.
  */
 export function resetSqliteVecState(): void {
-    extensionAvailable = null;
+    const g = globalThis as typeof globalThis & {
+        [STATE_KEY]?: SqliteVecGlobalState;
+    };
+
+    delete g[STATE_KEY];
 }
