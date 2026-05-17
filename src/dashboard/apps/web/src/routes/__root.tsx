@@ -1,0 +1,103 @@
+import { TanStackDevtools } from "@tanstack/react-devtools";
+import type { QueryClient } from "@tanstack/react-query";
+import { createRootRouteWithContext, HeadContent, Scripts } from "@tanstack/react-router";
+import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools";
+import { useEffect } from "react";
+import { Toaster } from "sonner";
+import { RouteError } from "@/components/RouteError";
+import { RouteNotFound } from "@/components/RouteNotFound";
+import TanStackQueryDevtools from "@/integrations/tanstack-query/devtools";
+import WorkOSProvider from "@/integrations/workos/provider";
+import AiDevtools from "@/lib/ai-example/ai-devtools";
+import { useApplyTheme } from "@/lib/hooks/useApplyTheme";
+import { ConfirmProvider } from "@/lib/hooks/useConfirm";
+import appCss from "@/styles.css?url";
+
+interface MyRouterContext {
+    queryClient: QueryClient;
+}
+
+export const Route = createRootRouteWithContext<MyRouterContext>()({
+    head: () => ({
+        meta: [
+            {
+                charSet: "utf-8",
+            },
+            {
+                name: "viewport",
+                content: "width=device-width, initial-scale=1",
+            },
+            {
+                title: "TanStack Start Starter",
+            },
+        ],
+        links: [
+            {
+                rel: "stylesheet",
+                href: appCss,
+            },
+        ],
+    }),
+
+    shellComponent: RootDocument,
+    errorComponent: ({ error, reset }) => <RouteError error={error} reset={reset} />,
+    notFoundComponent: () => <RouteNotFound />,
+});
+
+function RootDocument({ children }: { children: React.ReactNode }) {
+    useApplyTheme();
+
+    // Cmd/Ctrl+P is repurposed as the "Park context" shortcut across the
+    // dashboard. Suppress the browser's native print dialog globally so it
+    // never hijacks the shortcut on routes that don't mount the parking hook.
+    useEffect(() => {
+        function blockPrintShortcut(e: KeyboardEvent) {
+            if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "p") {
+                e.preventDefault();
+            }
+        }
+
+        window.addEventListener("keydown", blockPrintShortcut);
+        return () => window.removeEventListener("keydown", blockPrintShortcut);
+    }, []);
+
+    return (
+        <html lang="en">
+            <head>
+                <HeadContent />
+            </head>
+            <body>
+                <WorkOSProvider>
+                    <ConfirmProvider>{children}</ConfirmProvider>
+                    <Toaster
+                        theme="dark"
+                        position="bottom-right"
+                        toastOptions={{
+                            style: {
+                                background: "rgba(3, 3, 8, 0.95)",
+                                border: "1px solid rgba(245, 158, 11, 0.2)",
+                                color: "#fff",
+                            },
+                        }}
+                    />
+                    {import.meta.env.DEV && (
+                        <TanStackDevtools
+                            config={{
+                                position: "bottom-right",
+                            }}
+                            plugins={[
+                                {
+                                    name: "Tanstack Router",
+                                    render: <TanStackRouterDevtoolsPanel />,
+                                },
+                                TanStackQueryDevtools,
+                                AiDevtools,
+                            ]}
+                        />
+                    )}
+                </WorkOSProvider>
+                <Scripts />
+            </body>
+        </html>
+    );
+}
