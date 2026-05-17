@@ -1,7 +1,8 @@
+import babel from "@rolldown/plugin-babel";
 import tailwindcss from "@tailwindcss/vite";
 import { devtools } from "@tanstack/devtools-vite";
 import { tanstackStart } from "@tanstack/react-start/plugin/vite";
-import viteReact from "@vitejs/plugin-react";
+import viteReact, { reactCompilerPreset } from "@vitejs/plugin-react";
 import type { NitroConfig } from "nitro/types";
 import { nitro } from "nitro/vite";
 import { defineConfig } from "vite";
@@ -35,11 +36,12 @@ const config = defineConfig({
         }),
         tailwindcss(),
         tanstackStart(),
-        viteReact({
-            babel: {
-                plugins: ["babel-plugin-react-compiler"],
-            },
-        }),
+        viteReact(),
+        // @vitejs/plugin-react@6 dropped the inline `babel` option; React Compiler
+        // is now wired via the exported reactCompilerPreset + @rolldown/plugin-babel
+        // (vite 8 migration). Behaviour is unchanged — every component still gets
+        // babel-plugin-react-compiler.
+        babel({ presets: [reactCompilerPreset()] }),
     ],
     resolve: {
         dedupe: [

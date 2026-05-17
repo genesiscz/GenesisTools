@@ -92,13 +92,16 @@
     "@types/node": "^22.10.2",
     "@types/react": "^19.2.2",
     "@types/react-dom": "^19.2.0",
-    "@vitejs/plugin-react": "^5.0.4",
+    "@babel/core": "^7.26.0",
+    "@rolldown/plugin-babel": "^0.2.0",
+    "@types/babel__core": "^7.20.5",
+    "@vitejs/plugin-react": "^6.0.2",
     "babel-plugin-react-compiler": "^1.0.0",
     "dotenv": "^17.2.3",
     "drizzle-kit": "^0.31.8",
     "jsdom": "^27.0.0",
     "typescript": "^5.7.2",
-    "vite": "^7.1.7",
+    "vite": "^8.0.13",
     "vitest": "^3.0.5",
     "web-vitals": "^5.1.0"
   }
