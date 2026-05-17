@@ -12,6 +12,8 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as ProfileRouteImport } from './routes/profile'
 import { Route as McpRouteImport } from './routes/mcp'
+import { Route as DashboardRouteRouteImport } from './routes/dashboard/route'
+import { Route as AssistantRouteRouteImport } from './routes/assistant/route'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as TimerIndexRouteImport } from './routes/timer/index'
 import { Route as DashboardIndexRouteImport } from './routes/dashboard/index'
@@ -55,6 +57,16 @@ const McpRoute = McpRouteImport.update({
   path: '/mcp',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DashboardRouteRoute = DashboardRouteRouteImport.update({
+  id: '/dashboard',
+  path: '/dashboard',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AssistantRouteRoute = AssistantRouteRouteImport.update({
+  id: '/assistant',
+  path: '/assistant',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
@@ -66,14 +78,14 @@ const TimerIndexRoute = TimerIndexRouteImport.update({
   getParentRoute: () => rootRouteImport,
 } as any)
 const DashboardIndexRoute = DashboardIndexRouteImport.update({
-  id: '/dashboard/',
-  path: '/dashboard/',
-  getParentRoute: () => rootRouteImport,
+  id: '/',
+  path: '/',
+  getParentRoute: () => DashboardRouteRoute,
 } as any)
 const AssistantIndexRoute = AssistantIndexRouteImport.update({
-  id: '/assistant/',
-  path: '/assistant/',
-  getParentRoute: () => rootRouteImport,
+  id: '/',
+  path: '/',
+  getParentRoute: () => AssistantRouteRoute,
 } as any)
 const TimerTimerIdRoute = TimerTimerIdRouteImport.update({
   id: '/timer/$timerId',
@@ -81,29 +93,29 @@ const TimerTimerIdRoute = TimerTimerIdRouteImport.update({
   getParentRoute: () => rootRouteImport,
 } as any)
 const DashboardPlannerRoute = DashboardPlannerRouteImport.update({
-  id: '/dashboard/planner',
-  path: '/dashboard/planner',
-  getParentRoute: () => rootRouteImport,
+  id: '/planner',
+  path: '/planner',
+  getParentRoute: () => DashboardRouteRoute,
 } as any)
 const DashboardNotesRoute = DashboardNotesRouteImport.update({
-  id: '/dashboard/notes',
-  path: '/dashboard/notes',
-  getParentRoute: () => rootRouteImport,
+  id: '/notes',
+  path: '/notes',
+  getParentRoute: () => DashboardRouteRoute,
 } as any)
 const DashboardFocusRoute = DashboardFocusRouteImport.update({
-  id: '/dashboard/focus',
-  path: '/dashboard/focus',
-  getParentRoute: () => rootRouteImport,
+  id: '/focus',
+  path: '/focus',
+  getParentRoute: () => DashboardRouteRoute,
 } as any)
 const DashboardBookmarksRoute = DashboardBookmarksRouteImport.update({
-  id: '/dashboard/bookmarks',
-  path: '/dashboard/bookmarks',
-  getParentRoute: () => rootRouteImport,
+  id: '/bookmarks',
+  path: '/bookmarks',
+  getParentRoute: () => DashboardRouteRoute,
 } as any)
 const DashboardAiRoute = DashboardAiRouteImport.update({
-  id: '/dashboard/ai',
-  path: '/dashboard/ai',
-  getParentRoute: () => rootRouteImport,
+  id: '/ai',
+  path: '/ai',
+  getParentRoute: () => DashboardRouteRoute,
 } as any)
 const AuthSignupRoute = AuthSignupRouteImport.update({
   id: '/auth/signup',
@@ -136,29 +148,29 @@ const AuthCallbackRoute = AuthCallbackRouteImport.update({
   getParentRoute: () => rootRouteImport,
 } as any)
 const AssistantParkingRoute = AssistantParkingRouteImport.update({
-  id: '/assistant/parking',
-  path: '/assistant/parking',
-  getParentRoute: () => rootRouteImport,
+  id: '/parking',
+  path: '/parking',
+  getParentRoute: () => AssistantRouteRoute,
 } as any)
 const AssistantNextRoute = AssistantNextRouteImport.update({
-  id: '/assistant/next',
-  path: '/assistant/next',
-  getParentRoute: () => rootRouteImport,
+  id: '/next',
+  path: '/next',
+  getParentRoute: () => AssistantRouteRoute,
 } as any)
 const AssistantDecisionsRoute = AssistantDecisionsRouteImport.update({
-  id: '/assistant/decisions',
-  path: '/assistant/decisions',
-  getParentRoute: () => rootRouteImport,
+  id: '/decisions',
+  path: '/decisions',
+  getParentRoute: () => AssistantRouteRoute,
 } as any)
 const AssistantCommunicationRoute = AssistantCommunicationRouteImport.update({
-  id: '/assistant/communication',
-  path: '/assistant/communication',
-  getParentRoute: () => rootRouteImport,
+  id: '/communication',
+  path: '/communication',
+  getParentRoute: () => AssistantRouteRoute,
 } as any)
 const AssistantAnalyticsRoute = AssistantAnalyticsRouteImport.update({
-  id: '/assistant/analytics',
-  path: '/assistant/analytics',
-  getParentRoute: () => rootRouteImport,
+  id: '/analytics',
+  path: '/analytics',
+  getParentRoute: () => AssistantRouteRoute,
 } as any)
 const ApiTimerEventsRoute = ApiTimerEventsRouteImport.update({
   id: '/api/timer-events',
@@ -176,14 +188,14 @@ const ApiAiChatRoute = ApiAiChatRouteImport.update({
   getParentRoute: () => rootRouteImport,
 } as any)
 const AssistantTasksIndexRoute = AssistantTasksIndexRouteImport.update({
-  id: '/assistant/tasks/',
-  path: '/assistant/tasks/',
-  getParentRoute: () => rootRouteImport,
+  id: '/tasks/',
+  path: '/tasks/',
+  getParentRoute: () => AssistantRouteRoute,
 } as any)
 const AssistantTasksTaskIdRoute = AssistantTasksTaskIdRouteImport.update({
-  id: '/assistant/tasks/$taskId',
-  path: '/assistant/tasks/$taskId',
-  getParentRoute: () => rootRouteImport,
+  id: '/tasks/$taskId',
+  path: '/tasks/$taskId',
+  getParentRoute: () => AssistantRouteRoute,
 } as any)
 const ApiAvatarUserIdRoute = ApiAvatarUserIdRouteImport.update({
   id: '/api/avatar/$userId',
@@ -193,6 +205,8 @@ const ApiAvatarUserIdRoute = ApiAvatarUserIdRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/assistant': typeof AssistantRouteRouteWithChildren
+  '/dashboard': typeof DashboardRouteRouteWithChildren
   '/mcp': typeof McpRoute
   '/profile': typeof ProfileRoute
   '/settings': typeof SettingsRoute
@@ -216,8 +230,8 @@ export interface FileRoutesByFullPath {
   '/dashboard/notes': typeof DashboardNotesRoute
   '/dashboard/planner': typeof DashboardPlannerRoute
   '/timer/$timerId': typeof TimerTimerIdRoute
-  '/assistant': typeof AssistantIndexRoute
-  '/dashboard': typeof DashboardIndexRoute
+  '/assistant/': typeof AssistantIndexRoute
+  '/dashboard/': typeof DashboardIndexRoute
   '/timer': typeof TimerIndexRoute
   '/api/avatar/$userId': typeof ApiAvatarUserIdRoute
   '/assistant/tasks/$taskId': typeof AssistantTasksTaskIdRoute
@@ -258,6 +272,8 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/assistant': typeof AssistantRouteRouteWithChildren
+  '/dashboard': typeof DashboardRouteRouteWithChildren
   '/mcp': typeof McpRoute
   '/profile': typeof ProfileRoute
   '/settings': typeof SettingsRoute
@@ -292,6 +308,8 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/assistant'
+    | '/dashboard'
     | '/mcp'
     | '/profile'
     | '/settings'
@@ -315,8 +333,8 @@ export interface FileRouteTypes {
     | '/dashboard/notes'
     | '/dashboard/planner'
     | '/timer/$timerId'
-    | '/assistant'
-    | '/dashboard'
+    | '/assistant/'
+    | '/dashboard/'
     | '/timer'
     | '/api/avatar/$userId'
     | '/assistant/tasks/$taskId'
@@ -356,6 +374,8 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/assistant'
+    | '/dashboard'
     | '/mcp'
     | '/profile'
     | '/settings'
@@ -389,35 +409,23 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AssistantRouteRoute: typeof AssistantRouteRouteWithChildren
+  DashboardRouteRoute: typeof DashboardRouteRouteWithChildren
   McpRoute: typeof McpRoute
   ProfileRoute: typeof ProfileRoute
   SettingsRoute: typeof SettingsRoute
   ApiAiChatRoute: typeof ApiAiChatRoute
   ApiEventsRoute: typeof ApiEventsRoute
   ApiTimerEventsRoute: typeof ApiTimerEventsRoute
-  AssistantAnalyticsRoute: typeof AssistantAnalyticsRoute
-  AssistantCommunicationRoute: typeof AssistantCommunicationRoute
-  AssistantDecisionsRoute: typeof AssistantDecisionsRoute
-  AssistantNextRoute: typeof AssistantNextRoute
-  AssistantParkingRoute: typeof AssistantParkingRoute
   AuthCallbackRoute: typeof AuthCallbackRoute
   AuthErrorRoute: typeof AuthErrorRoute
   AuthForgotPasswordRoute: typeof AuthForgotPasswordRoute
   AuthResetPasswordRoute: typeof AuthResetPasswordRoute
   AuthSigninRoute: typeof AuthSigninRoute
   AuthSignupRoute: typeof AuthSignupRoute
-  DashboardAiRoute: typeof DashboardAiRoute
-  DashboardBookmarksRoute: typeof DashboardBookmarksRoute
-  DashboardFocusRoute: typeof DashboardFocusRoute
-  DashboardNotesRoute: typeof DashboardNotesRoute
-  DashboardPlannerRoute: typeof DashboardPlannerRoute
   TimerTimerIdRoute: typeof TimerTimerIdRoute
-  AssistantIndexRoute: typeof AssistantIndexRoute
-  DashboardIndexRoute: typeof DashboardIndexRoute
   TimerIndexRoute: typeof TimerIndexRoute
   ApiAvatarUserIdRoute: typeof ApiAvatarUserIdRoute
-  AssistantTasksTaskIdRoute: typeof AssistantTasksTaskIdRoute
-  AssistantTasksIndexRoute: typeof AssistantTasksIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -443,6 +451,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof McpRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/dashboard': {
+      id: '/dashboard'
+      path: '/dashboard'
+      fullPath: '/dashboard'
+      preLoaderRoute: typeof DashboardRouteRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/assistant': {
+      id: '/assistant'
+      path: '/assistant'
+      fullPath: '/assistant'
+      preLoaderRoute: typeof AssistantRouteRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
@@ -459,17 +481,17 @@ declare module '@tanstack/react-router' {
     }
     '/dashboard/': {
       id: '/dashboard/'
-      path: '/dashboard'
-      fullPath: '/dashboard'
+      path: '/'
+      fullPath: '/dashboard/'
       preLoaderRoute: typeof DashboardIndexRouteImport
-      parentRoute: typeof rootRouteImport
+      parentRoute: typeof DashboardRouteRoute
     }
     '/assistant/': {
       id: '/assistant/'
-      path: '/assistant'
-      fullPath: '/assistant'
+      path: '/'
+      fullPath: '/assistant/'
       preLoaderRoute: typeof AssistantIndexRouteImport
-      parentRoute: typeof rootRouteImport
+      parentRoute: typeof AssistantRouteRoute
     }
     '/timer/$timerId': {
       id: '/timer/$timerId'
@@ -480,38 +502,38 @@ declare module '@tanstack/react-router' {
     }
     '/dashboard/planner': {
       id: '/dashboard/planner'
-      path: '/dashboard/planner'
+      path: '/planner'
       fullPath: '/dashboard/planner'
       preLoaderRoute: typeof DashboardPlannerRouteImport
-      parentRoute: typeof rootRouteImport
+      parentRoute: typeof DashboardRouteRoute
     }
     '/dashboard/notes': {
       id: '/dashboard/notes'
-      path: '/dashboard/notes'
+      path: '/notes'
       fullPath: '/dashboard/notes'
       preLoaderRoute: typeof DashboardNotesRouteImport
-      parentRoute: typeof rootRouteImport
+      parentRoute: typeof DashboardRouteRoute
     }
     '/dashboard/focus': {
       id: '/dashboard/focus'
-      path: '/dashboard/focus'
+      path: '/focus'
       fullPath: '/dashboard/focus'
       preLoaderRoute: typeof DashboardFocusRouteImport
-      parentRoute: typeof rootRouteImport
+      parentRoute: typeof DashboardRouteRoute
     }
     '/dashboard/bookmarks': {
       id: '/dashboard/bookmarks'
-      path: '/dashboard/bookmarks'
+      path: '/bookmarks'
       fullPath: '/dashboard/bookmarks'
       preLoaderRoute: typeof DashboardBookmarksRouteImport
-      parentRoute: typeof rootRouteImport
+      parentRoute: typeof DashboardRouteRoute
     }
     '/dashboard/ai': {
       id: '/dashboard/ai'
-      path: '/dashboard/ai'
+      path: '/ai'
       fullPath: '/dashboard/ai'
       preLoaderRoute: typeof DashboardAiRouteImport
-      parentRoute: typeof rootRouteImport
+      parentRoute: typeof DashboardRouteRoute
     }
     '/auth/signup': {
       id: '/auth/signup'
@@ -557,38 +579,38 @@ declare module '@tanstack/react-router' {
     }
     '/assistant/parking': {
       id: '/assistant/parking'
-      path: '/assistant/parking'
+      path: '/parking'
       fullPath: '/assistant/parking'
       preLoaderRoute: typeof AssistantParkingRouteImport
-      parentRoute: typeof rootRouteImport
+      parentRoute: typeof AssistantRouteRoute
     }
     '/assistant/next': {
       id: '/assistant/next'
-      path: '/assistant/next'
+      path: '/next'
       fullPath: '/assistant/next'
       preLoaderRoute: typeof AssistantNextRouteImport
-      parentRoute: typeof rootRouteImport
+      parentRoute: typeof AssistantRouteRoute
     }
     '/assistant/decisions': {
       id: '/assistant/decisions'
-      path: '/assistant/decisions'
+      path: '/decisions'
       fullPath: '/assistant/decisions'
       preLoaderRoute: typeof AssistantDecisionsRouteImport
-      parentRoute: typeof rootRouteImport
+      parentRoute: typeof AssistantRouteRoute
     }
     '/assistant/communication': {
       id: '/assistant/communication'
-      path: '/assistant/communication'
+      path: '/communication'
       fullPath: '/assistant/communication'
       preLoaderRoute: typeof AssistantCommunicationRouteImport
-      parentRoute: typeof rootRouteImport
+      parentRoute: typeof AssistantRouteRoute
     }
     '/assistant/analytics': {
       id: '/assistant/analytics'
-      path: '/assistant/analytics'
+      path: '/analytics'
       fullPath: '/assistant/analytics'
       preLoaderRoute: typeof AssistantAnalyticsRouteImport
-      parentRoute: typeof rootRouteImport
+      parentRoute: typeof AssistantRouteRoute
     }
     '/api/timer-events': {
       id: '/api/timer-events'
@@ -613,17 +635,17 @@ declare module '@tanstack/react-router' {
     }
     '/assistant/tasks/': {
       id: '/assistant/tasks/'
-      path: '/assistant/tasks'
+      path: '/tasks'
       fullPath: '/assistant/tasks'
       preLoaderRoute: typeof AssistantTasksIndexRouteImport
-      parentRoute: typeof rootRouteImport
+      parentRoute: typeof AssistantRouteRoute
     }
     '/assistant/tasks/$taskId': {
       id: '/assistant/tasks/$taskId'
-      path: '/assistant/tasks/$taskId'
+      path: '/tasks/$taskId'
       fullPath: '/assistant/tasks/$taskId'
       preLoaderRoute: typeof AssistantTasksTaskIdRouteImport
-      parentRoute: typeof rootRouteImport
+      parentRoute: typeof AssistantRouteRoute
     }
     '/api/avatar/$userId': {
       id: '/api/avatar/$userId'
@@ -635,37 +657,73 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface AssistantRouteRouteChildren {
+  AssistantAnalyticsRoute: typeof AssistantAnalyticsRoute
+  AssistantCommunicationRoute: typeof AssistantCommunicationRoute
+  AssistantDecisionsRoute: typeof AssistantDecisionsRoute
+  AssistantNextRoute: typeof AssistantNextRoute
+  AssistantParkingRoute: typeof AssistantParkingRoute
+  AssistantIndexRoute: typeof AssistantIndexRoute
+  AssistantTasksTaskIdRoute: typeof AssistantTasksTaskIdRoute
+  AssistantTasksIndexRoute: typeof AssistantTasksIndexRoute
+}
+
+const AssistantRouteRouteChildren: AssistantRouteRouteChildren = {
+  AssistantAnalyticsRoute: AssistantAnalyticsRoute,
+  AssistantCommunicationRoute: AssistantCommunicationRoute,
+  AssistantDecisionsRoute: AssistantDecisionsRoute,
+  AssistantNextRoute: AssistantNextRoute,
+  AssistantParkingRoute: AssistantParkingRoute,
+  AssistantIndexRoute: AssistantIndexRoute,
+  AssistantTasksTaskIdRoute: AssistantTasksTaskIdRoute,
+  AssistantTasksIndexRoute: AssistantTasksIndexRoute,
+}
+
+const AssistantRouteRouteWithChildren = AssistantRouteRoute._addFileChildren(
+  AssistantRouteRouteChildren,
+)
+
+interface DashboardRouteRouteChildren {
+  DashboardAiRoute: typeof DashboardAiRoute
+  DashboardBookmarksRoute: typeof DashboardBookmarksRoute
+  DashboardFocusRoute: typeof DashboardFocusRoute
+  DashboardNotesRoute: typeof DashboardNotesRoute
+  DashboardPlannerRoute: typeof DashboardPlannerRoute
+  DashboardIndexRoute: typeof DashboardIndexRoute
+}
+
+const DashboardRouteRouteChildren: DashboardRouteRouteChildren = {
+  DashboardAiRoute: DashboardAiRoute,
+  DashboardBookmarksRoute: DashboardBookmarksRoute,
+  DashboardFocusRoute: DashboardFocusRoute,
+  DashboardNotesRoute: DashboardNotesRoute,
+  DashboardPlannerRoute: DashboardPlannerRoute,
+  DashboardIndexRoute: DashboardIndexRoute,
+}
+
+const DashboardRouteRouteWithChildren = DashboardRouteRoute._addFileChildren(
+  DashboardRouteRouteChildren,
+)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AssistantRouteRoute: AssistantRouteRouteWithChildren,
+  DashboardRouteRoute: DashboardRouteRouteWithChildren,
   McpRoute: McpRoute,
   ProfileRoute: ProfileRoute,
   SettingsRoute: SettingsRoute,
   ApiAiChatRoute: ApiAiChatRoute,
   ApiEventsRoute: ApiEventsRoute,
   ApiTimerEventsRoute: ApiTimerEventsRoute,
-  AssistantAnalyticsRoute: AssistantAnalyticsRoute,
-  AssistantCommunicationRoute: AssistantCommunicationRoute,
-  AssistantDecisionsRoute: AssistantDecisionsRoute,
-  AssistantNextRoute: AssistantNextRoute,
-  AssistantParkingRoute: AssistantParkingRoute,
   AuthCallbackRoute: AuthCallbackRoute,
   AuthErrorRoute: AuthErrorRoute,
   AuthForgotPasswordRoute: AuthForgotPasswordRoute,
   AuthResetPasswordRoute: AuthResetPasswordRoute,
   AuthSigninRoute: AuthSigninRoute,
   AuthSignupRoute: AuthSignupRoute,
-  DashboardAiRoute: DashboardAiRoute,
-  DashboardBookmarksRoute: DashboardBookmarksRoute,
-  DashboardFocusRoute: DashboardFocusRoute,
-  DashboardNotesRoute: DashboardNotesRoute,
-  DashboardPlannerRoute: DashboardPlannerRoute,
   TimerTimerIdRoute: TimerTimerIdRoute,
-  AssistantIndexRoute: AssistantIndexRoute,
-  DashboardIndexRoute: DashboardIndexRoute,
   TimerIndexRoute: TimerIndexRoute,
   ApiAvatarUserIdRoute: ApiAvatarUserIdRoute,
-  AssistantTasksTaskIdRoute: AssistantTasksTaskIdRoute,
-  AssistantTasksIndexRoute: AssistantTasksIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
