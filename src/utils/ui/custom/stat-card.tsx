@@ -25,3 +25,46 @@ export function StatCard({ value, label, trend, trendPositive = true, icon, clas
         </Card>
     );
 }
+
+const statCardNexusColors = {
+    accent: {
+        wrap: "bg-accent/10 border-accent/30",
+        iconBox: "bg-accent/20",
+        icon: "text-accent",
+        value: "text-accent",
+    },
+    primary: {
+        wrap: "bg-primary/10 border-primary/30",
+        iconBox: "bg-primary/20",
+        icon: "text-primary",
+        value: "text-primary",
+    },
+} as const;
+
+export type StatCardNexusColor = keyof typeof statCardNexusColors;
+
+interface StatCardNexusProps {
+    icon: React.ReactNode;
+    value: string;
+    label: string;
+    color: StatCardNexusColor;
+    className?: string;
+}
+
+export function StatCardNexus({ icon, value, label, color, className }: StatCardNexusProps) {
+    const c = statCardNexusColors[color];
+
+    return (
+        <div className={cn("flex items-center gap-3 p-3 rounded-lg border backdrop-blur-sm", c.wrap, className)}>
+            <div className={cn("p-2 rounded-lg", c.iconBox)}>
+                <span className={cn("[&_svg]:h-4 [&_svg]:w-4", c.icon)}>{icon}</span>
+            </div>
+            <div>
+                <div className={cn("text-2xl font-mono font-bold", c.value)}>{value}</div>
+                <div className="text-[10px] text-foreground/60 uppercase tracking-wider font-medium">{label}</div>
+            </div>
+        </div>
+    );
+}
+
+export { statCardNexusColors };

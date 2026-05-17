@@ -1,5 +1,6 @@
 import { Slot } from "@radix-ui/react-slot";
 import { cn } from "@ui/lib/utils";
+import { useTheme } from "@ui/theme/provider";
 import { cva, type VariantProps } from "class-variance-authority";
 import type * as React from "react";
 
@@ -16,6 +17,7 @@ const badgeVariants = cva(
                 cyber: "glass-card border-primary/30 text-primary bg-transparent [a&]:hover:border-primary/50 [a&]:hover:bg-primary/10",
                 "cyber-secondary":
                     "glass-card border-secondary/30 text-secondary bg-transparent [a&]:hover:border-secondary/50 [a&]:hover:bg-secondary/10",
+                nexus: "border-transparent bg-primary text-primary-foreground [a&]:hover:bg-primary/90",
             },
         },
         defaultVariants: {
@@ -31,8 +33,10 @@ function Badge({
     ...props
 }: React.ComponentProps<"span"> & VariantProps<typeof badgeVariants> & { asChild?: boolean }) {
     const Comp = asChild ? Slot : "span";
+    const { variant: themeVariant } = useTheme();
+    const resolvedVariant = variant ?? (themeVariant === "nexus" ? "nexus" : undefined);
 
-    return <Comp data-slot="badge" className={cn(badgeVariants({ variant }), className)} {...props} />;
+    return <Comp data-slot="badge" className={cn(badgeVariants({ variant: resolvedVariant }), className)} {...props} />;
 }
 
 export { Badge, badgeVariants };
