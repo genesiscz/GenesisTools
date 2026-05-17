@@ -93,6 +93,7 @@ export const Route = createFileRoute("/api/ai-chat")({
                     db.insert(aiMessages)
                         .values({
                             id: crypto.randomUUID(),
+                            userId: safeUserId,
                             conversationId: safeConversationId,
                             role: "user",
                             content,
@@ -143,6 +144,7 @@ export const Route = createFileRoute("/api/ai-chat")({
                                 db.insert(aiMessages)
                                     .values({
                                         id: crypto.randomUUID(),
+                                        userId: safeUserId,
                                         conversationId: safeConversationId,
                                         role: "assistant",
                                         content: assistantText,

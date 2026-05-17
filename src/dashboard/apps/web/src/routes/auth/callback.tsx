@@ -6,8 +6,9 @@ export const Route = createFileRoute("/auth/callback")({
     server: {
         handlers: {
             GET: handleCallbackRoute({
-                onSuccess: async ({ user, authenticationMethod }) => {
-                    console.log("Authentication successful:", user.email, authenticationMethod);
+                onSuccess: async () => {
+                    // Do not log user.email / authenticationMethod — PII in client console.
+                    console.info("[auth] authentication successful");
                 },
                 onError: ({ error }) => {
                     console.error("Authentication failed:", error);

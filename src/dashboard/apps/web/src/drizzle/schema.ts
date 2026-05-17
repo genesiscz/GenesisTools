@@ -585,6 +585,7 @@ export const aiMessages = sqliteTable(
     "ai_messages",
     {
         id: text("id").primaryKey(),
+        userId: text("user_id").notNull(),
         conversationId: text("conversation_id").notNull(),
         role: text("role").notNull().$type<"user" | "assistant" | "system">(),
         content: text("content").notNull(),
@@ -592,6 +593,7 @@ export const aiMessages = sqliteTable(
     },
     (table) => ({
         conversationIdIdx: index("idx_ai_msg_conv_id").on(table.conversationId),
+        userIdIdx: index("idx_ai_msg_user_id").on(table.userId),
     })
 );
 

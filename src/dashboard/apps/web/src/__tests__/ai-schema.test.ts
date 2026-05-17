@@ -20,6 +20,7 @@ const aiMessages = sqliteTable(
     "ai_messages",
     {
         id: text("id").primaryKey(),
+        userId: text("user_id").notNull(),
         conversationId: text("conversation_id").notNull(),
         role: text("role").notNull().$type<"user" | "assistant" | "system">(),
         content: text("content").notNull(),
@@ -27,6 +28,7 @@ const aiMessages = sqliteTable(
     },
     (t) => ({
         convIdx: index("idx_ai_msg_conv_id").on(t.conversationId),
+        userIdx: index("idx_ai_msg_user_id").on(t.userId),
     })
 );
 
@@ -46,12 +48,14 @@ beforeAll(() => {
         CREATE INDEX idx_ai_conv_user_id ON ai_conversations(user_id);
         CREATE TABLE ai_messages (
             id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
             conversation_id TEXT NOT NULL,
             role TEXT NOT NULL,
             content TEXT NOT NULL,
             created_at TEXT NOT NULL
         );
         CREATE INDEX idx_ai_msg_conv_id ON ai_messages(conversation_id);
+        CREATE INDEX idx_ai_msg_user_id ON ai_messages(user_id);
     `);
     testDb = drizzle(sqlite, { schema: { aiConversations, aiMessages } });
 });
@@ -86,8 +90,22 @@ describe("ai_messages schema", () => {
         testDb
             .insert(aiMessages)
             .values([
-                { id: "msg-1", conversationId: "conv-1", role: "user", content: "Hi", createdAt: now },
-                { id: "msg-2", conversationId: "conv-1", role: "assistant", content: "Hello!", createdAt: now },
+                {
+                    id: "msg-1",
+                    userId: "user-test",
+                    conversationId: "conv-1",
+                    role: "user",
+                    content: "Hi",
+                    createdAt: now,
+                },
+                {
+                    id: "msg-2",
+                    userId: "user-test",
+                    conversationId: "conv-1",
+                    role: "assistant",
+                    content: "Hello!",
+                    createdAt: now,
+                },
             ])
             .run();
 

@@ -23,22 +23,21 @@ function toBookmarkRow(b: Bookmark): BookmarkRow {
 // List
 // ============================================
 
-export const listBookmarks = createServerFn({ method: "GET" })
-    .handler(async (): Promise<BookmarkRow[]> => {
-        const userId = await requireUserId();
-        try {
-            const rows = db
-                .select()
-                .from(bookmarks)
-                .where(eq(bookmarks.userId, userId))
-                .orderBy(desc(bookmarks.createdAt))
-                .all();
-            return rows.map(toBookmarkRow);
-        } catch (err) {
-            console.error("[bookmarks] listBookmarks failed:", err);
-            throw err;
-        }
-    });
+export const listBookmarks = createServerFn({ method: "GET" }).handler(async (): Promise<BookmarkRow[]> => {
+    const userId = await requireUserId();
+    try {
+        const rows = db
+            .select()
+            .from(bookmarks)
+            .where(eq(bookmarks.userId, userId))
+            .orderBy(desc(bookmarks.createdAt))
+            .all();
+        return rows.map(toBookmarkRow);
+    } catch (err) {
+        console.error("[bookmarks] listBookmarks failed:", err);
+        throw err;
+    }
+});
 
 // ============================================
 // Create
@@ -49,7 +48,9 @@ export const createBookmark = createServerFn({ method: "POST" })
     .handler(async ({ data }): Promise<BookmarkRow> => {
         const userId = await requireUserId();
         try {
-            db.insert(bookmarks).values({ ...data, userId }).run();
+            db.insert(bookmarks)
+                .values({ ...data, userId })
+                .run();
             const created = db.select().from(bookmarks).where(eq(bookmarks.id, data.id)).get();
             if (!created) {
                 throw new Error("[bookmarks] createBookmark: bookmark not found after insert");
@@ -70,10 +71,8 @@ export const createBookmark = createServerFn({ method: "POST" })
 
 export const updateBookmark = createServerFn({ method: "POST" })
     .inputValidator(
-        (d: {
-            id: string;
-            patch: Partial<Pick<Bookmark, "title" | "description" | "faviconUrl" | "tags" | "url">>;
-        }) => d
+        (d: { id: string; patch: Partial<Pick<Bookmark, "title" | "description" | "faviconUrl" | "tags" | "url">> }) =>
+            d
     )
     .handler(async ({ data }): Promise<BookmarkRow> => {
         const userId = await requireUserId();
@@ -157,13 +156,38 @@ export const fetchUrlMetadata = createServerFn({ method: "POST" })
         const timer = setTimeout(() => controller.abort(), 8_000);
 
         try {
-            const response = await fetch(parsed.href, {
-                signal: controller.signal,
-                headers: {
-                    "User-Agent": "GenesisTools-Dashboard/1.0 (bookmark-metadata-fetcher)",
-                    Accept: "text/html,application/xhtml+xml",
-                },
-            });
+            // Re-validate every redirect hop: assertSafeUrl only checked the
+            // initial URL; a 30x to localhost / 169.254.169.254 would otherwise
+            // bypass the SSRF guard. redirect:"manual" + bounded hop loop.
+            let currentUrl = parsed.href;
+            let response: Response;
+            const MAX_HOPS = 5;
+            for (let hop = 0; ; hop++) {
+                response = await fetch(currentUrl, {
+                    signal: controller.signal,
+                    redirect: "manual",
+                    headers: {
+                        "User-Agent": "GenesisTools-Dashboard/1.0 (bookmark-metadata-fetcher)",
+                        Accept: "text/html,application/xhtml+xml",
+                    },
+                });
+
+                if (response.status >= 300 && response.status < 400) {
+                    const loc = response.headers.get("location");
+                    if (!loc) {
+                        break;
+                    }
+
+                    if (hop >= MAX_HOPS) {
+                        throw new Error(`Too many redirects fetching ${parsed.href}`);
+                    }
+
+                    currentUrl = assertSafeUrl(new URL(loc, currentUrl).href).href;
+                    continue;
+                }
+
+                break;
+            }
 
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status} fetching ${parsed.href}`);
