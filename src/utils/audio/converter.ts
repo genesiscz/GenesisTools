@@ -1,6 +1,8 @@
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
+import { mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import logger from "@app/logger";
 
 /**
  * Convert any audio file/buffer to 16kHz mono 16-bit PCM Float32Array
@@ -133,6 +135,54 @@ async function tryFfmpeg(inputPath: string, outputPath: string): Promise<Buffer 
     }
 }
 
+/** Bitrate for 16kHz mono MP3 — transparent for speech, small, universally accepted. */
+export const MONO_MP3_BITRATE_KBPS = 128;
+
+/**
+ * Transcode any audio file to a single 16kHz mono MP3.
+ *
+ * This is the lowest common denominator every cloud STT model accepts:
+ * `whisper-1` tolerates m4a/ogg/etc, but `gpt-4o-transcribe` rejects many
+ * containers ("does not support the format"). MP3 is transparent for speech,
+ * far smaller than WAV, and matches the split-segment encoding so a
+ * re-encode of an already-split chunk is a harmless round-trip.
+ *
+ * @returns the output path on success.
+ */
+export async function convertFileToMonoMp3(inputPath: string, outputPath: string): Promise<string> {
+    const proc = Bun.spawn(
+        [
+            "ffmpeg",
+            "-y",
+            "-i",
+            inputPath,
+            "-vn",
+            "-map",
+            "0:a:0",
+            "-ac",
+            "1",
+            "-ar",
+            "16000",
+            "-c:a",
+            "libmp3lame",
+            "-b:a",
+            `${MONO_MP3_BITRATE_KBPS}k`,
+            outputPath,
+        ],
+        { stdout: "pipe", stderr: "pipe" }
+    );
+
+    const stderr = await new Response(proc.stderr).text();
+    await proc.exited;
+
+    if (proc.exitCode !== 0 || !existsSync(outputPath)) {
+        cleanup(outputPath);
+        throw new Error(`ffmpeg mp3 transcode failed (exit ${proc.exitCode}): ${stderr.slice(-500)}`);
+    }
+
+    return outputPath;
+}
+
 /**
  * If the WAV is already 16kHz/mono/16-bit, return as-is.
  * Otherwise convert it.
@@ -227,5 +277,43 @@ function cleanup(path: string): void {
         unlinkSync(path);
     } catch {
         // ignore
+    }
+}
+
+/** Transcode an audio file to an arbitrary ffmpeg container/format. General
+ *  format conversion; for the STT-normalized paths prefer
+ *  `convertFileToMonoMp3` / `convertToWhisperWav`. */
+export async function convertAudioFormat(
+    inputPath: string,
+    outputPath: string,
+    targetFormat: string = "mp3"
+): Promise<string> {
+    try {
+        const outputDir = dirname(outputPath);
+
+        if (!existsSync(outputDir)) {
+            await mkdir(outputDir, { recursive: true });
+        }
+
+        logger.info(`Converting ${inputPath} to ${targetFormat} format...`);
+
+        const proc = Bun.spawn(["ffmpeg", "-i", inputPath, "-f", targetFormat, "-y", outputPath], {
+            stdio: ["ignore", "pipe", "pipe"],
+        });
+
+        const _stdout = await new Response(proc.stdout).text();
+        const stderr = await new Response(proc.stderr).text();
+        const exitCode = await proc.exited;
+
+        if (exitCode !== 0) {
+            throw new Error(`FFmpeg conversion failed: ${stderr}`);
+        }
+
+        logger.info(`Audio conversion completed: ${outputPath}`);
+
+        return outputPath;
+    } catch (error) {
+        logger.error(`Audio conversion failed: ${error}`);
+        throw error;
     }
 }
