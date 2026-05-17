@@ -1,4 +1,5 @@
 import type { AccountUsage } from "@app/claude/lib/usage/api";
+import { formatAccountTitle } from "./account-title";
 import { BucketBar } from "./BucketBar";
 
 interface AccountCardProps {
@@ -7,17 +8,8 @@ interface AccountCardProps {
 
 const BUCKET_ORDER = ["five_hour", "seven_day", "seven_day_sonnet", "seven_day_opus"] as const;
 
-function resolveTitle(account: AccountUsage): string {
-    const label = account.label?.trim();
-    if (label && label.toLowerCase() !== "none") {
-        return label;
-    }
-
-    return account.accountName?.trim() || "Unknown account";
-}
-
 export function AccountCard({ account }: AccountCardProps) {
-    const title = resolveTitle(account);
+    const title = formatAccountTitle(account.accountName, account.label);
     const usage = account.usage;
 
     return (

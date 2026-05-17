@@ -1,9 +1,15 @@
 import type { AccountUsage } from "@app/claude/lib/usage/api";
-import type { UsageHistoryResult } from "@app/dev-dashboard/lib/claude-usage/types";
 import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
 import { AccountCard } from "@/components/claude-usage/AccountCard";
-import { UsageChart } from "@/components/claude-usage/UsageChart";
+import { AccountUsageChart } from "@/components/claude-usage/AccountUsageChart";
 import { fetchJson } from "@/lib/api";
+
+const RANGES = [
+    { label: "1h", minutes: 60 },
+    { label: "24h", minutes: 1440 },
+    { label: "7d", minutes: 10080 },
+] as const;
 
 export function ClaudeRoute() {
     const usageQuery = useQuery({
@@ -11,19 +17,9 @@ export function ClaudeRoute() {
         queryFn: () => fetchJson<AccountUsage[]>("/api/claude/usage"),
         refetchInterval: 30000,
     });
+    const [rangeMinutes, setRangeMinutes] = useState<number>(10080);
 
     const accounts = usageQuery.data ?? [];
-    const firstAccount = accounts[0];
-
-    const historyQuery = useQuery({
-        queryKey: ["claude", "usage", "history", firstAccount?.accountName],
-        queryFn: () =>
-            fetchJson<UsageHistoryResult>(
-                `/api/claude/usage/history?account=${encodeURIComponent(firstAccount?.accountName ?? "")}&bucket=five_hour&minutes=1440`
-            ),
-        refetchInterval: 30000,
-        enabled: Boolean(firstAccount),
-    });
 
     if (usageQuery.isLoading) {
         return (
@@ -49,9 +45,40 @@ export function ClaudeRoute() {
                     <AccountCard key={account.accountName} account={account} />
                 ))}
             </div>
-            {firstAccount ? (
-                <UsageChart snapshots={historyQuery.data?.snapshots ?? []} hint={historyQuery.data?.hint} />
-            ) : null}
+
+            <div className="flex items-center justify-between">
+                <h3 className="dd-accent-text text-sm font-semibold">Utilization history</h3>
+                <div className="flex gap-1" role="group" aria-label="History time range">
+                    {RANGES.map((r) => (
+                        <button
+                            key={r.minutes}
+                            type="button"
+                            onClick={() => setRangeMinutes(r.minutes)}
+                            className="dd-tab"
+                            style={
+                                rangeMinutes === r.minutes
+                                    ? { color: "#06120d", background: "var(--dd-accent-from)", fontWeight: 700 }
+                                    : undefined
+                            }
+                            aria-pressed={rangeMinutes === r.minutes}
+                        >
+                            {r.label}
+                        </button>
+                    ))}
+                </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+                {accounts.map((account) => (
+                    <AccountUsageChart
+                        key={account.accountName}
+                        accountName={account.accountName}
+                        label={account.label}
+                        accountError={account.error}
+                        rangeMinutes={rangeMinutes}
+                    />
+                ))}
+            </div>
         </div>
     );
 }

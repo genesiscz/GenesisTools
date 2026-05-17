@@ -1,3 +1,4 @@
+import { formatClock } from "@app/utils/format";
 import type { ReminderInfo } from "@genesiscz/darwinkit";
 
 interface TodoListProps {
@@ -7,14 +8,8 @@ interface TodoListProps {
 }
 
 function formatDue(due: string): { label: string; overdue: boolean } {
-    const date = new Date(due);
-    const overdue = date.getTime() < Date.now();
-    const label = date.toLocaleString(undefined, {
-        month: "short",
-        day: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-    });
+    const overdue = new Date(due).getTime() < Date.now();
+    const label = formatClock(due, { date: "short" });
 
     return { label, overdue };
 }

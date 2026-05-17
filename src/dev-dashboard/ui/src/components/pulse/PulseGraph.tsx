@@ -1,3 +1,4 @@
+import { formatClock } from "@app/utils/format";
 import { useId } from "react";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
@@ -10,7 +11,7 @@ interface PulseGraphProps {
 export function PulseGraph({ title, points, unit }: PulseGraphProps) {
     const gradientId = `grad-${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
     const data = points.map((p) => ({
-        time: new Date(p.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        time: formatClock(p.ts),
         value: Math.round(p.value * 10) / 10,
     }));
 

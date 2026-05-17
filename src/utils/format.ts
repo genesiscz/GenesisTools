@@ -314,6 +314,43 @@ export function formatTimestamp(date: Date = new Date()): string {
 }
 
 /**
+ * Locale clock string, always 24-hour. The single source of display-time
+ * formatting for UIs (dashboard etc.) so `hour12:false` isn't repeated at
+ * every call site. Pure — safe to import in the browser.
+ *
+ * @example formatClock(ts)                       // "14:05"
+ * @example formatClock(ts, { seconds: true })    // "14:05:09"
+ * @example formatClock(ts, { date: "numeric" })  // "5/15, 14:05"
+ * @example formatClock(ts, { date: "short" })    // "May 15, 14:05"
+ */
+export function formatClock(
+    input: Date | string | number,
+    opts: { seconds?: boolean; date?: "none" | "numeric" | "short" } = {}
+): string {
+    const d = input instanceof Date ? input : new Date(input);
+    if (Number.isNaN(d.getTime())) {
+        return String(input);
+    }
+
+    const time = d.toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+        ...(opts.seconds ? { second: "2-digit" } : {}),
+        hour12: false,
+    });
+
+    if (!opts.date || opts.date === "none") {
+        return time;
+    }
+
+    const datePart = d.toLocaleDateString(
+        [],
+        opts.date === "short" ? { month: "short", day: "numeric" } : { month: "numeric", day: "numeric" }
+    );
+    return `${datePart}, ${time}`;
+}
+
+/**
  * Create a simple stopwatch function that returns formatted elapsed time.
  * For a full-featured stopwatch with laps/stamps, use Stopwatch class from @app/utils/Stopwatch.
  *
