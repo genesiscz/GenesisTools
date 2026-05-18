@@ -32,7 +32,7 @@ export function CoverageGrid({ data, isLoading }: CoverageGridProps) {
 
     return (
         <div className="space-y-5">
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 border border-zinc-800 rounded-md p-4 bg-zinc-950">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 border border-border rounded-md p-4 bg-card">
                 <div>
                     <div className="font-mono text-[10px] tracking-[0.2em] text-muted-foreground uppercase">
                         Total Products

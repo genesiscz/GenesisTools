@@ -23,7 +23,6 @@ export function DistrictPriceBarChart({
             title="District price ladder"
             description="Median CZK per m² across the selected districts with Prague average and target markers."
             height={320}
-            className="border-white/5 bg-white/[0.02]"
         >
             <BarChart data={model.rows} layout="vertical" margin={{ top: 10, right: 28, left: 8, bottom: 12 }}>
                 <CartesianGrid {...chartGridProps} horizontal={false} />

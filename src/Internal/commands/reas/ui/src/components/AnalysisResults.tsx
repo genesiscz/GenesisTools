@@ -37,17 +37,17 @@ export function AnalysisResults({ data }: AnalysisResultsProps) {
 
     return (
         <div className="space-y-4 animate-slide-up">
-            <div className="flex flex-col gap-4 rounded-2xl border border-white/5 bg-white/[0.02] p-4 sm:p-5">
+            <div className="flex flex-col gap-4 rounded-2xl border border-border/60 bg-muted/50 p-4 sm:p-5">
                 <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                     <div className="space-y-2">
                         <div className="flex flex-wrap items-center gap-2">
-                            <Badge className="border-amber-500/20 bg-amber-500/10 font-mono text-[10px] uppercase tracking-[0.24em] text-amber-200">
+                            <Badge className="border-primary/20 bg-primary/10 font-mono text-[10px] uppercase tracking-[0.24em] text-primary">
                                 Analyze
                             </Badge>
                             <StalenessIndicator generatedAt={data.meta.generatedAt} />
                         </div>
                         <h2 className="text-lg font-semibold tracking-tight text-gray-100">
-                            Results for <span className="text-amber-300">{data.meta.target.district}</span>
+                            Results for <span className="text-primary">{data.meta.target.district}</span>
                         </h2>
                         <p className="text-xs font-mono text-slate-500">
                             {data.meta.target.constructionType} · {data.meta.target.disposition} ·{" "}
@@ -79,14 +79,14 @@ export function AnalysisResults({ data }: AnalysisResultsProps) {
             </div>
 
             <Tabs defaultValue="overview" className="space-y-4">
-                <TabsList className="flex h-auto w-full flex-wrap justify-start gap-2 rounded-2xl border border-white/5 bg-white/[0.02] p-2">
+                <TabsList className="flex h-auto w-full flex-wrap justify-start gap-2 rounded-2xl border border-border/60 bg-muted/50 p-2">
                     {ANALYSIS_TABS.map((tab) => (
                         <TabsTrigger
                             key={tab.value}
                             value={tab.value}
                             className={cn(
                                 "rounded-xl px-3 py-2 font-mono text-[11px] uppercase tracking-[0.18em]",
-                                "data-[state=active]:bg-amber-500/15 data-[state=active]:text-amber-200 data-[state=active]:shadow-none"
+                                "data-[state=active]:bg-primary/15 data-[state=active]:text-primary data-[state=active]:shadow-none"
                             )}
                         >
                             {tab.label}

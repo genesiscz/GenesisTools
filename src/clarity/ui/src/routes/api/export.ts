@@ -1,6 +1,6 @@
+import { apiHandler, jsonBody } from "@app/clarity/ui/src/server/api-utils";
+import { getExportData } from "@app/clarity/ui/src/server/export";
 import { createFileRoute } from "@tanstack/react-router";
-import { apiHandler, jsonBody } from "../../server/api-utils";
-import { getExportData } from "../../server/export";
 
 export const Route = createFileRoute("/api/export")({
     server: {

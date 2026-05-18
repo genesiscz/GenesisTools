@@ -20,19 +20,19 @@ export function ProviderLinks({ district, listingUrl, providers }: ProviderLinks
     }
 
     return (
-        <div className="rounded-md border border-white/5 bg-black/20 p-3">
+        <div className="rounded-md border border-border/60 bg-card/60 p-3">
             <div className="mb-3 text-[10px] font-mono uppercase tracking-[0.18em] text-gray-500">Provider links</div>
             <div className="flex flex-col gap-2">
                 {links.map((link) => (
                     <div
                         key={`${link.provider}-${link.kind}`}
-                        className="flex flex-col gap-2 rounded-md border border-white/5 bg-white/[0.02] p-2 md:flex-row md:items-center md:justify-between"
+                        className="flex flex-col gap-2 rounded-md border border-border/60 bg-muted/50 p-2 md:flex-row md:items-center md:justify-between"
                     >
                         <div className="flex items-center gap-2">
                             <Badge
                                 variant="outline"
                                 className={cn(
-                                    "border-white/10 bg-white/[0.02] text-[10px] font-mono",
+                                    "border-border/60 bg-muted/50 text-[10px] font-mono",
                                     PROVIDER_BADGE_STYLES[link.provider] ?? "text-gray-400"
                                 )}
                             >

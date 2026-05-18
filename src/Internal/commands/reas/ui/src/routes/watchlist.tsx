@@ -60,7 +60,7 @@ function useProperties() {
 
 function SummaryMetric({ label, value, hint, tone = "default" }: SummaryMetricProps) {
     return (
-        <Card className="border-white/5 bg-white/[0.02]">
+        <Card>
             <CardHeader className="pb-2">
                 <CardTitle className="text-[10px] font-mono uppercase tracking-[0.18em] text-gray-600">
                     {label}
@@ -340,8 +340,8 @@ function WatchlistIndexPage() {
             <div className="flex flex-col gap-4 mb-6">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                     <div className="flex items-center gap-3">
-                        <div className="p-2 rounded bg-amber-500/10 border border-amber-500/30">
-                            <Star className="w-5 h-5 text-amber-400" />
+                        <div className="p-2 rounded bg-primary/10 border border-primary/30">
+                            <Star className="w-5 h-5 text-primary" />
                         </div>
                         <div>
                             <h1 className="text-xl font-mono font-bold text-gray-200">Watchlist</h1>
@@ -377,14 +377,14 @@ function WatchlistIndexPage() {
                             Bulk refresh {refreshAllProgress.completed + refreshAllProgress.failed}/
                             {refreshAllProgress.total}
                         </Badge>
-                        <Badge variant="outline" className="border-white/10 bg-white/[0.02] text-gray-400">
+                        <Badge variant="outline" className="border-border/60 bg-muted/50 text-gray-400">
                             Success {refreshAllProgress.completed}
                         </Badge>
-                        <Badge variant="outline" className="border-white/10 bg-white/[0.02] text-gray-400">
+                        <Badge variant="outline" className="border-border/60 bg-muted/50 text-gray-400">
                             Failed {refreshAllProgress.failed}
                         </Badge>
                         {refreshAllActive && (
-                            <Badge variant="outline" className="border-amber-500/20 bg-amber-500/5 text-amber-300">
+                            <Badge variant="outline" className="border-primary/20 bg-primary/5 text-primary">
                                 Refreshing property #{refreshAllProgress.propertyId}
                             </Badge>
                         )}
@@ -395,7 +395,7 @@ function WatchlistIndexPage() {
                     <Badge variant="outline" className="border-emerald-500/20 bg-emerald-500/5 text-emerald-300">
                         Compare picks {selectedCompareIds.length}/4
                     </Badge>
-                    <Badge variant="outline" className="border-white/10 bg-white/[0.02] text-gray-400">
+                    <Badge variant="outline" className="border-border/60 bg-muted/50 text-gray-400">
                         Unique districts {selectedCompareDistricts.length}
                     </Badge>
                     <Button
@@ -404,7 +404,7 @@ function WatchlistIndexPage() {
                         size="sm"
                         onClick={openCompare}
                         disabled={selectedCompareIds.length < 2}
-                        className="h-6 border-amber-500/30 px-2 text-[10px] font-mono text-amber-300 hover:bg-amber-500/10"
+                        className="h-6 border-primary/30 px-2 text-[10px] font-mono text-primary hover:bg-primary/10"
                     >
                         Open Compare
                     </Button>
@@ -436,9 +436,9 @@ function WatchlistIndexPage() {
                 </div>
             </div>
 
-            <Card className="border-white/5 bg-white/[0.02] mb-6">
+            <Card className="mb-6">
                 <CardHeader className="pb-3">
-                    <CardTitle className="text-sm font-mono text-amber-400">Screening</CardTitle>
+                    <CardTitle className="text-sm font-mono text-primary">Screening</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
                     <div className="grid grid-cols-1 lg:grid-cols-[1.4fr_repeat(6,minmax(0,1fr))] gap-3">
@@ -456,7 +456,7 @@ function WatchlistIndexPage() {
                                     value={search}
                                     onChange={(event) => setSearch(event.target.value)}
                                     placeholder="Name, district, note, listing URL"
-                                    className="h-9 pl-8 text-xs font-mono bg-black/20 border-white/10"
+                                    className="h-9 pl-8 text-xs font-mono bg-card/60 border-border/60"
                                 />
                             </div>
                         </div>
@@ -512,7 +512,7 @@ function WatchlistIndexPage() {
                                     onChange={(event) => setYieldMin(event.target.value)}
                                     placeholder="3.5"
                                     type="number"
-                                    className="h-9 text-xs font-mono bg-black/20 border-white/10"
+                                    className="h-9 text-xs font-mono bg-card/60 border-border/60"
                                 />
                             </label>
                             <label className="block">
@@ -524,7 +524,7 @@ function WatchlistIndexPage() {
                                     onChange={(event) => setYieldMax(event.target.value)}
                                     placeholder="6"
                                     type="number"
-                                    className="h-9 text-xs font-mono bg-black/20 border-white/10"
+                                    className="h-9 text-xs font-mono bg-card/60 border-border/60"
                                 />
                             </label>
                         </div>
@@ -566,7 +566,7 @@ function WatchlistIndexPage() {
                                 <button
                                     type="button"
                                     onClick={toggleSortDirection}
-                                    className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-white/10 bg-black/20 text-gray-400 hover:text-amber-400 hover:border-amber-500/30"
+                                    className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-border/60 bg-card/60 text-gray-400 hover:text-primary hover:border-primary/30"
                                     aria-label="Toggle sort direction"
                                 >
                                     {sortDirection === "asc" ? (
@@ -580,16 +580,16 @@ function WatchlistIndexPage() {
                     </div>
 
                     <div className="flex flex-wrap gap-2 text-[10px] font-mono">
-                        <Badge variant="outline" className="border-white/10 bg-white/[0.02] text-gray-400">
+                        <Badge variant="outline" className="border-border/60 bg-muted/50 text-gray-400">
                             Showing {formatNumber(filteredProperties.length)} of {formatNumber(properties.length)}
                         </Badge>
-                        <Badge variant="outline" className="border-white/10 bg-white/[0.02] text-gray-400">
+                        <Badge variant="outline" className="border-border/60 bg-muted/50 text-gray-400">
                             Target value{" "}
                             {formatCurrencyCompact(
                                 properties.reduce((sum, property) => sum + property.target_price, 0)
                             )}
                         </Badge>
-                        <Badge variant="outline" className="border-white/10 bg-white/[0.02] text-gray-400">
+                        <Badge variant="outline" className="border-border/60 bg-muted/50 text-gray-400">
                             Avg rent{" "}
                             {formatCurrencyCompact(
                                 properties.reduce((sum, property) => sum + property.monthly_rent, 0) /
@@ -603,7 +603,7 @@ function WatchlistIndexPage() {
             {propertiesLoading && (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                     {WATCHLIST_SKELETON_KEYS.map((key) => (
-                        <div key={key} className="border border-white/5 rounded-lg p-4 space-y-3">
+                        <div key={key} className="border border-border/60 rounded-lg p-4 space-y-3">
                             <Skeleton variant="default" className="h-4 w-2/3" />
                             <Skeleton variant="default" className="h-3 w-1/2" />
                             <div className="grid grid-cols-2 gap-2">
@@ -634,9 +634,9 @@ function WatchlistIndexPage() {
             )}
 
             {!propertiesLoading && properties.length === 0 && (
-                <div className="border border-white/5 rounded-xl p-12 text-center glass-card">
-                    <div className="w-14 h-14 rounded-full bg-amber-500/10 border border-amber-500/20 flex items-center justify-center mx-auto mb-4">
-                        <Star className="w-6 h-6 text-amber-500/60" />
+                <div className="border border-border/60 rounded-xl p-12 text-center glass-card">
+                    <div className="w-14 h-14 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center mx-auto mb-4">
+                        <Star className="w-6 h-6 text-primary/60" />
                     </div>
                     <p className="text-sm text-gray-400 font-mono font-semibold mb-1">No properties in watchlist</p>
                     <p className="text-xs text-gray-600 font-mono">
@@ -646,7 +646,7 @@ function WatchlistIndexPage() {
             )}
 
             {!propertiesLoading && properties.length > 0 && filteredProperties.length === 0 && (
-                <div className="border border-white/5 rounded-xl p-12 text-center glass-card">
+                <div className="border border-border/60 rounded-xl p-12 text-center glass-card">
                     <p className="text-sm text-gray-400 font-mono font-semibold mb-1">
                         No properties match the current filters
                     </p>

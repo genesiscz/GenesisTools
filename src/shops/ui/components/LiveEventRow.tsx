@@ -57,7 +57,7 @@ export function LiveEventRow({ frame }: LiveEventRowProps) {
         const hasDetail =
             failed || Boolean(frame.error) || Boolean(frame.request_excerpt) || Boolean(frame.response_excerpt);
         return (
-            <div className="border-b border-zinc-900/50 hover:bg-white/5 transition-colors">
+            <div className="border-b border-border/50 hover:bg-primary/5 transition-colors">
                 <button
                     type="button"
                     onClick={() => setExpanded((v) => !v)}
@@ -92,7 +92,7 @@ export function LiveEventRow({ frame }: LiveEventRowProps) {
 
     if (frame.event === "crawl-progress") {
         return (
-            <div className="grid grid-cols-[88px_minmax(110px,140px)_minmax(0,1fr)_140px] gap-2 py-1 px-3 font-mono text-[11px] hover:bg-white/5 transition-colors border-b border-zinc-900/50 items-center">
+            <div className="grid grid-cols-[88px_minmax(110px,140px)_minmax(0,1fr)_140px] gap-2 py-1 px-3 font-mono text-[11px] hover:bg-primary/5 transition-colors border-b border-border/50 items-center">
                 <span className="text-muted-foreground">{time}</span>
                 <span className="min-w-0 overflow-hidden">
                     <ShopBadge origin={frame.shop_origin} className="max-w-full truncate" />
@@ -120,7 +120,7 @@ export function LiveEventRow({ frame }: LiveEventRowProps) {
 
     if (frame.event === "notification-fired") {
         return (
-            <div className="grid grid-cols-[88px_minmax(110px,140px)_minmax(0,1fr)_140px] gap-2 py-1 px-3 font-mono text-[11px] hover:bg-white/5 transition-colors border-b border-zinc-900/50 items-center">
+            <div className="grid grid-cols-[88px_minmax(110px,140px)_minmax(0,1fr)_140px] gap-2 py-1 px-3 font-mono text-[11px] hover:bg-primary/5 transition-colors border-b border-border/50 items-center">
                 <span className="text-muted-foreground">{time}</span>
                 <span className="min-w-0 overflow-hidden">
                     <ShopBadge origin={frame.shop_origin} className="max-w-full truncate" />
@@ -143,29 +143,29 @@ export function LiveEventRow({ frame }: LiveEventRowProps) {
 
 function LiveHttpDetail({ frame }: { frame: LiveHttpRequestEvent }) {
     return (
-        <div className="px-3 pb-2 pt-1 font-mono text-[10px] space-y-1 bg-black/30 border-t border-zinc-900/50">
+        <div className="px-3 pb-2 pt-1 font-mono text-[10px] space-y-1 bg-card/60 border-t border-border/50">
             <div className="grid grid-cols-[90px_1fr] gap-2">
                 <span className="text-muted-foreground tracking-[0.15em] uppercase">URL</span>
-                <span className="break-all text-zinc-300">{frame.url}</span>
+                <span className="break-all text-foreground">{frame.url}</span>
                 <span className="text-muted-foreground tracking-[0.15em] uppercase">Source</span>
-                <span className="text-zinc-300">{frame.source}</span>
+                <span className="text-foreground">{frame.source}</span>
                 {frame.operation ? (
                     <>
                         <span className="text-muted-foreground tracking-[0.15em] uppercase">Operation</span>
-                        <span className="text-zinc-300">{frame.operation}</span>
+                        <span className="text-foreground">{frame.operation}</span>
                     </>
                 ) : null}
                 {frame.request_id ? (
                     <>
                         <span className="text-muted-foreground tracking-[0.15em] uppercase">Request ID</span>
-                        <span className="text-zinc-300">{frame.request_id}</span>
+                        <span className="text-foreground">{frame.request_id}</span>
                     </>
                 ) : null}
             </div>
             {frame.request_excerpt ? (
                 <div>
                     <div className="text-muted-foreground tracking-[0.15em] uppercase mb-0.5">Request Excerpt</div>
-                    <pre className="whitespace-pre-wrap break-all max-h-40 overflow-auto text-zinc-300 bg-black/40 rounded px-2 py-1">
+                    <pre className="whitespace-pre-wrap break-all max-h-40 overflow-auto text-foreground bg-card/60 rounded px-2 py-1">
                         {frame.request_excerpt}
                     </pre>
                 </div>
@@ -173,7 +173,7 @@ function LiveHttpDetail({ frame }: { frame: LiveHttpRequestEvent }) {
             {frame.response_excerpt ? (
                 <div>
                     <div className="text-muted-foreground tracking-[0.15em] uppercase mb-0.5">Response Excerpt</div>
-                    <pre className="whitespace-pre-wrap break-all max-h-40 overflow-auto text-zinc-300 bg-black/40 rounded px-2 py-1">
+                    <pre className="whitespace-pre-wrap break-all max-h-40 overflow-auto text-foreground bg-card/60 rounded px-2 py-1">
                         {frame.response_excerpt}
                     </pre>
                 </div>

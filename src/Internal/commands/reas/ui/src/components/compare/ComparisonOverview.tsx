@@ -1,8 +1,8 @@
+import { fmt, pct } from "@app/Internal/commands/reas/ui/src/lib/format";
 import { Badge } from "@ui/components/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
 import { cn } from "@ui/lib/utils";
 import { ArrowDownRight, ArrowUpRight, BarChart3, Clock3, Percent } from "lucide-react";
-import { fmt, pct } from "../../lib/format";
 import { GRADE_COLORS, getScoreCardModel } from "../analysis/display-model";
 import { ExportButton } from "../ExportButton";
 import type { DistrictComparison } from "./types";
@@ -23,7 +23,7 @@ export function ComparisonOverview({ comparisons }: ComparisonOverviewProps) {
                     latestSnapshot?.trendDirection ?? exportData.analysis.momentum?.direction ?? "stable";
 
                 return (
-                    <Card key={comparison.district} className="border-white/5 bg-white/[0.02]">
+                    <Card key={comparison.district}>
                         <CardHeader className="gap-4 sm:flex-row sm:items-start sm:justify-between">
                             <div className="space-y-2">
                                 <div className="flex items-center gap-2 flex-wrap">
@@ -38,7 +38,7 @@ export function ComparisonOverview({ comparisons }: ComparisonOverviewProps) {
                                     </Badge>
                                     <Badge
                                         variant="outline"
-                                        className="font-mono text-[10px] border-white/10 text-gray-400"
+                                        className="font-mono text-[10px] border-border/60 text-gray-400"
                                     >
                                         Score {score}
                                     </Badge>
@@ -64,7 +64,7 @@ export function ComparisonOverview({ comparisons }: ComparisonOverviewProps) {
                                 <OverviewStat
                                     label="Days on Market"
                                     value={`${Math.round(summary.daysOnMarket)}d`}
-                                    icon={<Clock3 className="w-3.5 h-3.5 text-amber-400" />}
+                                    icon={<Clock3 className="w-3.5 h-3.5 text-primary" />}
                                 />
                             </div>
 
@@ -106,7 +106,7 @@ export function ComparisonOverview({ comparisons }: ComparisonOverviewProps) {
 
 function OverviewStat({ label, value, icon }: { label: string; value: string; icon: React.ReactNode }) {
     return (
-        <div className="rounded-lg border border-white/5 bg-black/20 p-3">
+        <div className="rounded-lg border border-border/60 bg-card/60 p-3">
             <div className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-wider text-gray-500">
                 {icon}
                 {label}
@@ -118,7 +118,7 @@ function OverviewStat({ label, value, icon }: { label: string; value: string; ic
 
 function MetaBadge({ label, value }: { label: string; value: string }) {
     return (
-        <Badge variant="outline" className="font-mono text-[10px] border-white/10 text-gray-400 bg-black/20">
+        <Badge variant="outline" className="font-mono text-[10px] border-border/60 text-gray-400 bg-card/60">
             {label}: <span className="ml-1 text-gray-200">{value}</span>
         </Badge>
     );

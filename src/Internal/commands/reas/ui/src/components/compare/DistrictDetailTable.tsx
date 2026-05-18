@@ -46,9 +46,9 @@ export function DistrictDetailTable({ comparisons }: { comparisons: DistrictComp
     }
 
     return (
-        <Card className="border-white/5 bg-white/[0.02]">
+        <Card>
             <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-sm font-mono text-amber-400">
+                <CardTitle className="flex items-center gap-2 text-sm font-mono text-primary">
                     <TableProperties className="w-4 h-4" />
                     District detail table
                 </CardTitle>
@@ -56,7 +56,7 @@ export function DistrictDetailTable({ comparisons }: { comparisons: DistrictComp
             <CardContent className="px-0">
                 <Table>
                     <TableHeader>
-                        <TableRow className="border-white/5 hover:bg-transparent">
+                        <TableRow className="border-border/60 hover:bg-transparent">
                             <SortableHead label="District" onClick={() => handleSort("district")} />
                             <SortableHead label="Median CZK/m²" align="right" onClick={() => handleSort("median")} />
                             <SortableHead
@@ -73,7 +73,7 @@ export function DistrictDetailTable({ comparisons }: { comparisons: DistrictComp
                     </TableHeader>
                     <TableBody>
                         {rows.map((row) => (
-                            <TableRow key={row.district} className="border-white/5 hover:bg-white/[0.02]">
+                            <TableRow key={row.district} className="border-border/60 hover:bg-primary/5">
                                 <TableCell className="font-mono text-xs text-gray-100">{row.district}</TableCell>
                                 <TableCell className="text-right font-mono text-xs text-cyan-300">
                                     {Math.round(row.median).toLocaleString("cs-CZ")}
@@ -84,7 +84,7 @@ export function DistrictDetailTable({ comparisons }: { comparisons: DistrictComp
                                 <TableCell className="text-right font-mono text-xs text-gray-300">
                                     {Math.round(row.dom)}d
                                 </TableCell>
-                                <TableCell className="text-right font-mono text-xs text-amber-300">
+                                <TableCell className="text-right font-mono text-xs text-primary">
                                     {row.discount.toFixed(1)}%
                                 </TableCell>
                                 <TableCell className="text-right font-mono text-xs text-gray-300">

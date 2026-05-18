@@ -10,7 +10,7 @@ interface EmptyStateProps {
 
 export function EmptyState({ title, body, icon, action }: EmptyStateProps) {
     return (
-        <Card className="border-dashed border-zinc-800 bg-transparent shadow-none">
+        <Card className="border-dashed border-border bg-transparent shadow-none">
             <CardContent className="py-16 px-6 flex flex-col items-center text-center gap-3">
                 {icon && (
                     <div className="text-[var(--color-neon-cyan)] opacity-60 [&>svg]:w-10 [&>svg]:h-10">{icon}</div>

@@ -30,7 +30,7 @@ export const Route = createRootRoute({
 
 function RootDocument({ children }: { children: React.ReactNode }) {
     return (
-        <html lang="en">
+        <html lang="en" className="cyberpunk">
             <head>
                 <HeadContent />
             </head>
@@ -70,7 +70,7 @@ function ReasLayout() {
         <DashboardLayout
             title="REAS"
             titleAccent="Analyzer"
-            icon={<BarChart3 className="w-4 h-4 text-amber-400" />}
+            icon={<BarChart3 className="w-4 h-4 text-primary" />}
             navLinks={navLinks}
             activePath={currentPath}
             onNavigate={(href: string) => router.navigate({ to: href })}

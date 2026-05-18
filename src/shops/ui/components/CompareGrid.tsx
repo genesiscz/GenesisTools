@@ -16,7 +16,7 @@ export function CompareGrid({ data, isLoading }: CompareGridProps) {
 
     if (data.items.length === 0) {
         return (
-            <div className="font-mono text-xs text-muted-foreground tracking-[0.15em] uppercase border border-dashed border-zinc-800 rounded-md p-12 text-center">
+            <div className="font-mono text-xs text-muted-foreground tracking-[0.15em] uppercase border border-dashed border-border rounded-md p-12 text-center">
                 no master products match the requested ids
             </div>
         );
@@ -25,9 +25,9 @@ export function CompareGrid({ data, isLoading }: CompareGridProps) {
     return (
         <div className={`grid gap-4 ${data.items.length > 1 ? "lg:grid-cols-2" : ""}`}>
             {data.items.map((item) => (
-                <Card key={item.id} className="bg-zinc-950 border-zinc-800">
+                <Card key={item.id}>
                     <CardHeader className="flex flex-row items-start gap-3 pb-3">
-                        <div className="w-20 h-20 bg-zinc-900 border border-zinc-800 rounded overflow-hidden flex items-center justify-center shrink-0">
+                        <div className="w-20 h-20 bg-muted border border-border rounded overflow-hidden flex items-center justify-center shrink-0">
                             {item.representative_image_url ? (
                                 <img
                                     src={item.representative_image_url}
@@ -35,7 +35,7 @@ export function CompareGrid({ data, isLoading }: CompareGridProps) {
                                     className="w-full h-full object-contain"
                                 />
                             ) : (
-                                <ImageOff className="w-6 h-6 text-zinc-700" />
+                                <ImageOff className="w-6 h-6 text-muted-foreground" />
                             )}
                         </div>
                         <div className="min-w-0 flex-1">

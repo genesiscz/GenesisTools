@@ -52,7 +52,7 @@ function computeStaleness(generatedAt: string): StalenessInfo {
 
 const FRESHNESS_COLORS: Record<Freshness, string> = {
     fresh: "bg-green-500/15 border-green-500/30 text-green-400",
-    recent: "bg-amber-500/15 border-amber-500/30 text-amber-400",
+    recent: "bg-amber-500/15 border-primary/30 text-amber-400",
     stale: "bg-red-500/15 border-red-500/30 text-red-400",
 };
 

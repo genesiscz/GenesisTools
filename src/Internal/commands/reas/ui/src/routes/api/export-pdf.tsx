@@ -1,7 +1,7 @@
 import { isDashboardExport } from "@app/Internal/commands/reas/lib/api-export";
 import { exportDashboardToPdf } from "@app/Internal/commands/reas/lib/pdf-export";
+import { apiHandler, jsonBody } from "@app/Internal/commands/reas/ui/src/server/api-utils";
 import { createFileRoute } from "@tanstack/react-router";
-import { apiHandler, jsonBody } from "../../server/api-utils";
 
 export const Route = createFileRoute("/api/export-pdf")({
     server: {

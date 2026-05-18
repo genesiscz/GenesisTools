@@ -25,7 +25,7 @@ function statusColor(status: string): string {
         case "failed":
             return "bg-rose-400";
         case "cancelled":
-            return "bg-zinc-500";
+            return "bg-zinc-500"; // allow-palette: categorical "cancelled" status dot (parallels cyan/rose/amber)
         default:
             return "bg-amber-400";
     }
@@ -48,7 +48,7 @@ export function CoverageShopCard({ row }: CoverageShopCardProps) {
     const bot = botProtectionBadge(row.bot_protection);
 
     return (
-        <Card className="bg-zinc-950 border-zinc-800 hover:border-cyan-400/30 transition-colors">
+        <Card className="hover:border-cyan-400/30 transition-colors">
             <CardContent className="px-4 py-3 space-y-2">
                 <div className="flex items-center justify-between">
                     <ShopBadge origin={row.shop_origin} label={row.display_name} />

@@ -7,7 +7,7 @@ export function PropertyVerdictMini({ grade, model }: { grade: string | null; mo
     const gradeStyle = grade ? (GRADE_COLORS[grade] ?? "") : "";
 
     return (
-        <div className="rounded-md border border-white/5 bg-black/20 px-3 py-3">
+        <div className="rounded-md border border-border/60 bg-card/60 px-3 py-3">
             <div className="text-[10px] font-mono uppercase tracking-wider text-gray-600">Verdict</div>
             <div className="mt-2 flex items-center gap-2">
                 <Badge variant="outline" className={cn("text-[10px] font-mono", gradeStyle)}>
@@ -19,7 +19,7 @@ export function PropertyVerdictMini({ grade, model }: { grade: string | null; mo
                 {model.reasons.length > 0 ? (
                     model.reasons.map((reason) => (
                         <div key={reason} className="flex items-start gap-2">
-                            <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400/70" />
+                            <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-primary/70" />
                             <span>{reason}</span>
                         </div>
                     ))

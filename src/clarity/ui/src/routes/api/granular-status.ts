@@ -1,6 +1,6 @@
+import { apiHandler } from "@app/clarity/ui/src/server/api-utils";
+import { getGranularStatus } from "@app/clarity/ui/src/server/settings";
 import { createFileRoute } from "@tanstack/react-router";
-import { apiHandler } from "../../server/api-utils";
-import { getGranularStatus } from "../../server/settings";
 
 export const Route = createFileRoute("/api/granular-status")({
     server: {

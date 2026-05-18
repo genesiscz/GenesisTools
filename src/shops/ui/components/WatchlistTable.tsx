@@ -28,7 +28,7 @@ export function WatchlistTable({ rows, notifications, sparklines, onAck, onSnooz
     return (
         <Table>
             <TableHeader>
-                <TableRow className="font-mono text-[10px] uppercase tracking-wider text-zinc-500">
+                <TableRow className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
                     <TableHead className="w-8">★</TableHead>
                     <TableHead>Product</TableHead>
                     <TableHead className="text-right">Target</TableHead>

@@ -1,9 +1,9 @@
 import type { DashboardProvenance, DashboardSectionProvenance } from "@app/Internal/commands/reas/lib/api-export";
 import type { ProviderFetchSummary } from "@app/Internal/commands/reas/types";
+import { fmtDateTime } from "@app/Internal/commands/reas/ui/src/lib/format";
 import { Badge } from "@ui/components/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
 import { cn } from "@ui/lib/utils";
-import { fmtDateTime } from "../../lib/format";
 import { summarizeProviderMessage } from "./shared";
 
 function formatFetchedAt(value: string): string {
@@ -51,9 +51,9 @@ export function DataProvenance({
               }));
 
     return (
-        <Card className={cn("border-white/5 bg-white/[0.02]", compact && "bg-black/20")}>
+        <Card className={cn(compact && "bg-card/60")}>
             <CardHeader className={cn("pb-3", compact && "pb-2")}>
-                <CardTitle className="text-sm font-mono text-amber-300">{title}</CardTitle>
+                <CardTitle className="text-sm font-mono text-primary">{title}</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
                 {provenance.note ? (
@@ -64,7 +64,7 @@ export function DataProvenance({
                         <Badge
                             key={provider}
                             variant="outline"
-                            className="border-white/10 bg-white/[0.03] font-mono text-[10px] uppercase tracking-[0.2em] text-slate-300"
+                            className="border-border/60 bg-muted/50 font-mono text-[10px] uppercase tracking-[0.2em] text-slate-300"
                         >
                             {provider}
                         </Badge>
@@ -84,7 +84,7 @@ export function DataProvenance({
                             <Badge
                                 key={metric}
                                 variant="outline"
-                                className="border-amber-500/20 bg-amber-500/5 font-mono text-[10px] text-amber-200"
+                                className="border-primary/20 bg-primary/5 font-mono text-[10px] text-primary"
                             >
                                 {metric}
                             </Badge>
@@ -96,7 +96,7 @@ export function DataProvenance({
                         {providerDetails.map((detail) => (
                             <div
                                 key={`${detail.provider}-${detail.sourceContract}-${detail.fetchedAt}`}
-                                className="rounded-lg border border-white/5 bg-slate-950/50 px-3 py-2"
+                                className="rounded-lg border border-border/60 bg-slate-950/50 px-3 py-2"
                             >
                                 <div className="flex items-start justify-between gap-3">
                                     <div>
@@ -114,7 +114,7 @@ export function DataProvenance({
                                             detail.status === "error"
                                                 ? "border-red-500/20 bg-red-500/10 text-red-300"
                                                 : detail.status === "warning"
-                                                  ? "border-amber-500/20 bg-amber-500/10 text-amber-200"
+                                                  ? "border-primary/20 bg-amber-500/10 text-amber-200"
                                                   : "border-emerald-500/20 bg-emerald-500/10 text-emerald-300"
                                         )}
                                     >

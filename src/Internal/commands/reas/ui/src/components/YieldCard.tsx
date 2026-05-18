@@ -55,10 +55,10 @@ export function YieldCard({ data }: YieldCardProps) {
     const netYieldValue = toFiniteNumber(netYield);
 
     return (
-        <Card className="border-white/5">
+        <Card>
             <CardHeader className="pb-0">
                 <CardTitle className="flex items-center gap-2 text-sm font-mono">
-                    <Percent className="h-4 w-4 text-amber-400" />
+                    <Percent className="h-4 w-4 text-primary" />
                     Yield Analysis
                 </CardTitle>
             </CardHeader>
@@ -70,7 +70,7 @@ export function YieldCard({ data }: YieldCardProps) {
                 </div>
 
                 {/* Payback */}
-                <div className="flex items-center justify-between rounded-md border border-white/5 bg-white/[0.02] px-3 py-2">
+                <div className="flex items-center justify-between rounded-md border border-border/60 bg-muted/50 px-3 py-2">
                     <span className="flex items-center gap-2 text-xs font-mono text-gray-400">
                         <PiggyBank className="h-3.5 w-3.5 text-cyan-400" />
                         Payback Period
@@ -81,7 +81,7 @@ export function YieldCard({ data }: YieldCardProps) {
                 </div>
 
                 {/* At market price comparison */}
-                <div className="rounded-md border border-white/5 bg-white/[0.02] px-3 py-2 space-y-1.5">
+                <div className="rounded-md border border-border/60 bg-muted/50 px-3 py-2 space-y-1.5">
                     <span className="text-[10px] font-mono uppercase tracking-wider text-gray-600">
                         {marketPrice === null
                             ? "At Market Price"
@@ -118,7 +118,7 @@ export function YieldCard({ data }: YieldCardProps) {
                                         key={b.name}
                                         variant="outline"
                                         className={cn(
-                                            "font-mono text-[10px] border-white/10",
+                                            "font-mono text-[10px] border-border/60",
                                             diff === null
                                                 ? "text-gray-400"
                                                 : diff > 0
@@ -146,7 +146,7 @@ export function YieldCard({ data }: YieldCardProps) {
 
 function YieldMetric({ label, value }: { label: string; value: number | null | undefined }) {
     return (
-        <div className="rounded-md border border-white/5 bg-white/[0.02] p-3 text-center">
+        <div className="rounded-md border border-border/60 bg-muted/50 p-3 text-center">
             <div className={cn("text-xl font-bold font-mono", yieldColor(value))}>{formatYield(value)}</div>
             <div className="mt-1 text-[10px] font-mono text-gray-500 uppercase tracking-wider">{label}</div>
         </div>

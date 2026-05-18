@@ -1,5 +1,5 @@
 import type { ProviderName } from "@app/Internal/commands/reas/types";
-import { fmt, fmtDateTime, pct } from "../../lib/format";
+import { fmt, fmtDateTime, pct } from "@app/Internal/commands/reas/ui/src/lib/format";
 
 export { GRADE_COLORS } from "../analysis/display-model";
 
@@ -8,7 +8,7 @@ export const PROVIDER_BADGE_STYLES: Record<string, string> = {
     sreality: "text-cyan-300 border-cyan-500/30 bg-cyan-500/10",
     bezrealitky: "text-violet-300 border-violet-500/30 bg-violet-500/10",
     ereality: "text-emerald-300 border-emerald-500/30 bg-emerald-500/10",
-    mf: "text-amber-300 border-amber-500/30 bg-amber-500/10",
+    mf: "text-amber-300 border-primary/30 bg-amber-500/10",
 };
 
 export const PROVIDER_LABELS: Record<string, string> = {
@@ -59,7 +59,7 @@ export function getStalenessInfo(lastAnalyzedAt: string | null): {
     if (days < 7) {
         return {
             label: `${Math.floor(days)}d ago`,
-            color: "text-amber-400 border-amber-500/30 bg-amber-500/10",
+            color: "text-amber-400 border-primary/30 bg-amber-500/10",
             isStale: false,
         };
     }

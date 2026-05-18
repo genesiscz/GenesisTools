@@ -24,10 +24,10 @@ export function PriceTrendChart({ data }: PriceTrendChartProps) {
 
     if (isEmpty) {
         return (
-            <Card className="border-white/5">
+            <Card>
                 <CardHeader>
                     <CardTitle className="flex items-center gap-2 text-sm font-mono">
-                        <TrendingUp className="h-4 w-4 text-amber-400" />
+                        <TrendingUp className="h-4 w-4 text-primary" />
                         Price Trend
                     </CardTitle>
                 </CardHeader>
@@ -39,10 +39,10 @@ export function PriceTrendChart({ data }: PriceTrendChartProps) {
     }
 
     return (
-        <Card className="border-white/5">
+        <Card>
             <CardHeader className="pb-0">
                 <CardTitle className="flex items-center gap-2 text-sm font-mono">
-                    <TrendingUp className="h-4 w-4 text-amber-400" />
+                    <TrendingUp className="h-4 w-4 text-primary" />
                     Price Trend
                     <Badge
                         className={cn(

@@ -89,10 +89,10 @@ export function AnalysisForm({ onSubmit, isLoading }: AnalysisFormProps) {
     }, [form, onSubmit]);
 
     return (
-        <Card className="border-white/5">
+        <Card>
             <CardHeader className="pb-0">
                 <CardTitle className="flex items-center gap-2 text-sm font-mono">
-                    <Search className="h-4 w-4 text-amber-400" />
+                    <Search className="h-4 w-4 text-primary" />
                     Analysis Parameters
                 </CardTitle>
             </CardHeader>
@@ -122,8 +122,8 @@ export function AnalysisForm({ onSubmit, isLoading }: AnalysisFormProps) {
                                 className={cn(
                                     "flex-1 rounded-md border px-3 py-1.5 text-xs font-mono transition-all",
                                     form.type === pt.value
-                                        ? "border-amber-500/50 bg-amber-500/10 text-amber-400"
-                                        : "border-white/10 bg-transparent text-gray-400 hover:border-white/20 hover:text-gray-300",
+                                        ? "border-primary/50 bg-primary/10 text-primary"
+                                        : "border-border/60 bg-transparent text-gray-400 hover:border-border/60 hover:text-gray-300",
                                     errors.type && !form.type && "border-red-500/30"
                                 )}
                             >
@@ -145,7 +145,7 @@ export function AnalysisForm({ onSubmit, isLoading }: AnalysisFormProps) {
                                     "rounded-md border px-2.5 py-1 text-xs font-mono transition-all",
                                     form.disposition === d.value
                                         ? "border-cyan-500/50 bg-cyan-500/10 text-cyan-400"
-                                        : "border-white/10 bg-transparent text-gray-500 hover:border-white/20 hover:text-gray-400"
+                                        : "border-border/60 bg-transparent text-gray-500 hover:border-border/60 hover:text-gray-400"
                                 )}
                             >
                                 {d.label}
@@ -165,8 +165,8 @@ export function AnalysisForm({ onSubmit, isLoading }: AnalysisFormProps) {
                                 className={cn(
                                     "rounded-md border px-2.5 py-1 text-xs font-mono transition-all",
                                     form.periods.includes(p.value)
-                                        ? "border-amber-500/50 bg-amber-500/10 text-amber-400"
-                                        : "border-white/10 bg-transparent text-gray-500 hover:border-white/20 hover:text-gray-400"
+                                        ? "border-primary/50 bg-primary/10 text-primary"
+                                        : "border-border/60 bg-transparent text-gray-500 hover:border-border/60 hover:text-gray-400"
                                 )}
                             >
                                 {p.label}
@@ -242,7 +242,7 @@ export function AnalysisForm({ onSubmit, isLoading }: AnalysisFormProps) {
                 {/* Submit */}
                 <Button
                     variant="outline"
-                    className="w-full font-mono text-sm gap-2 h-10 bg-amber-500/10 hover:bg-amber-500/15 border-amber-500/40 text-amber-400 hover:text-amber-300 hover:border-amber-500/60 shadow-[0_0_15px_rgba(245,158,11,0.08)] hover:shadow-[0_0_20px_rgba(245,158,11,0.15)] transition-all"
+                    className="w-full font-mono text-sm gap-2 h-10 bg-primary/10 hover:bg-primary/15 border-primary/40 text-primary hover:text-primary hover:border-primary/60 shadow-[0_0_15px_rgba(245,158,11,0.08)] hover:shadow-[0_0_20px_rgba(245,158,11,0.15)] transition-all"
                     onClick={handleSubmit}
                     disabled={isLoading}
                 >
@@ -289,7 +289,7 @@ function FormField({ label, icon, required, error, suffix, children }: FormField
                         variant="outline"
                         className={cn(
                             "text-[9px] px-1 py-0 h-3.5",
-                            error ? "border-red-500/30 text-red-400" : "border-white/10 text-gray-600"
+                            error ? "border-red-500/30 text-red-400" : "border-border/60 text-gray-600"
                         )}
                     >
                         required

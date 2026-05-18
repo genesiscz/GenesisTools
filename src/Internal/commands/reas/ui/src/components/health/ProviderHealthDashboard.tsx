@@ -1,9 +1,9 @@
 import type { ProviderFetchLogRow, ProviderHealthSummary } from "@app/Internal/commands/reas/lib/store";
+import { fmtDateTime } from "@app/Internal/commands/reas/ui/src/lib/format";
 import { Badge } from "@ui/components/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@ui/components/card";
 import { cn } from "@ui/lib/utils";
 import { Activity, AlertTriangle, CheckCircle2, Clock, Database, XCircle } from "lucide-react";
-import { fmtDateTime } from "../../lib/format";
 
 interface ProviderHealthDashboardProps {
     health: ProviderHealthSummary[];
@@ -43,7 +43,7 @@ function getStatusIcon(status: string) {
         return <XCircle className="h-3.5 w-3.5 text-red-400" />;
     }
 
-    return <AlertTriangle className="h-3.5 w-3.5 text-amber-400" />;
+    return <AlertTriangle className="h-3.5 w-3.5 text-primary" />;
 }
 
 function getStatusBadgeClass(status: string): string {
@@ -55,7 +55,7 @@ function getStatusBadgeClass(status: string): string {
         return "border-red-500/20 bg-red-500/10 text-red-300";
     }
 
-    return "border-amber-500/20 bg-amber-500/10 text-amber-300";
+    return "border-primary/20 bg-primary/10 text-primary";
 }
 
 function formatDuration(ms: number | null): string {
@@ -91,13 +91,13 @@ export function ProviderHealthDashboard({ health, recentLog }: ProviderHealthDas
                     <Card
                         key={provider.provider}
                         className={cn(
-                            "border-white/5 border-b-2 bg-white/[0.02] transition-all duration-200 hover:-translate-y-0.5 hover:bg-white/[0.04]",
+                            "border-border/60 border-b-2 bg-muted/50 transition-all duration-200 hover:-translate-y-0.5 hover:bg-primary/5",
                             getSuccessRateBorderColor(provider.successRate)
                         )}
                     >
                         <CardHeader className="pb-2">
                             <div className="flex items-center justify-between gap-3">
-                                <CardTitle className="text-sm font-mono uppercase tracking-[0.2em] text-white">
+                                <CardTitle className="text-sm font-mono uppercase tracking-[0.2em] text-foreground">
                                     {provider.provider}
                                 </CardTitle>
                                 <Badge
@@ -119,7 +119,7 @@ export function ProviderHealthDashboard({ health, recentLog }: ProviderHealthDas
                                     <div className="text-[10px] font-mono uppercase tracking-[0.2em] text-slate-500">
                                         Avg count
                                     </div>
-                                    <div className="mt-0.5 text-sm font-mono text-white">
+                                    <div className="mt-0.5 text-sm font-mono text-foreground">
                                         {Math.round(provider.avgListingCount)}
                                     </div>
                                 </div>
@@ -127,20 +127,20 @@ export function ProviderHealthDashboard({ health, recentLog }: ProviderHealthDas
                                     <div className="text-[10px] font-mono uppercase tracking-[0.2em] text-slate-500">
                                         Avg speed
                                     </div>
-                                    <div className="mt-0.5 text-sm font-mono text-white">
+                                    <div className="mt-0.5 text-sm font-mono text-foreground">
                                         {formatDuration(provider.avgDurationMs)}
                                     </div>
                                 </div>
                             </div>
                             <div className="flex items-center gap-2">
-                                <div className="flex-1 h-1.5 rounded-full bg-white/5 overflow-hidden">
+                                <div className="flex-1 h-1.5 rounded-full bg-muted/50 overflow-hidden">
                                     <div
                                         className={cn(
                                             "h-full rounded-full transition-all duration-500",
                                             provider.successRate >= 90
                                                 ? "bg-emerald-500/70"
                                                 : provider.successRate >= 70
-                                                  ? "bg-amber-500/70"
+                                                  ? "bg-primary/70"
                                                   : "bg-red-500/70"
                                         )}
                                         style={{ width: `${provider.successRate}%` }}
@@ -168,7 +168,7 @@ export function ProviderHealthDashboard({ health, recentLog }: ProviderHealthDas
                     </Card>
                 ))}
                 {health.length === 0 ? (
-                    <Card className="border-white/5 bg-white/[0.02] sm:col-span-2 lg:col-span-3 xl:col-span-4">
+                    <Card className="sm:col-span-2 lg:col-span-3 xl:col-span-4">
                         <CardContent className="flex flex-col items-center gap-3 py-12 text-center">
                             <Database className="h-8 w-8 text-slate-600" />
                             <p className="font-mono text-sm text-slate-400">
@@ -179,9 +179,9 @@ export function ProviderHealthDashboard({ health, recentLog }: ProviderHealthDas
                 ) : null}
             </div>
 
-            <Card className="border-white/5 bg-white/[0.02]">
+            <Card>
                 <CardHeader className="pb-3">
-                    <CardTitle className="flex items-center gap-2 text-sm font-mono text-white">
+                    <CardTitle className="flex items-center gap-2 text-sm font-mono text-foreground">
                         <Activity className="h-4 w-4 text-cyan-300" />
                         Recent fetch log
                     </CardTitle>
@@ -193,7 +193,7 @@ export function ProviderHealthDashboard({ health, recentLog }: ProviderHealthDas
                     <div className="overflow-x-auto">
                         <table className="w-full text-xs font-mono">
                             <thead>
-                                <tr className="border-b border-white/5 text-left text-[10px] uppercase tracking-[0.2em] text-slate-500">
+                                <tr className="border-b border-border/60 text-left text-[10px] uppercase tracking-[0.2em] text-slate-500">
                                     <th className="px-4 py-2">Timestamp</th>
                                     <th className="px-4 py-2">Provider</th>
                                     <th className="px-4 py-2">Contract</th>
@@ -207,7 +207,7 @@ export function ProviderHealthDashboard({ health, recentLog }: ProviderHealthDas
                                 {recentLog.map((row) => (
                                     <tr
                                         key={row.id}
-                                        className="border-b border-white/[0.03] transition-colors hover:bg-white/[0.02]"
+                                        className="border-b border-border/60 transition-colors hover:bg-primary/5"
                                     >
                                         <td className="px-4 py-2 text-slate-400">{formatTimestamp(row.created_at)}</td>
                                         <td className="px-4 py-2 uppercase tracking-[0.15em] text-slate-200">
@@ -228,7 +228,7 @@ export function ProviderHealthDashboard({ health, recentLog }: ProviderHealthDas
                                                 </Badge>
                                             </span>
                                         </td>
-                                        <td className="px-4 py-2 text-right text-white">{row.listing_count}</td>
+                                        <td className="px-4 py-2 text-right text-foreground">{row.listing_count}</td>
                                         <td
                                             className="max-w-[240px] truncate px-4 py-2 text-red-300"
                                             title={row.error_message ?? undefined}

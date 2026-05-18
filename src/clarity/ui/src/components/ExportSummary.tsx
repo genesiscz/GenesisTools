@@ -18,7 +18,7 @@ export function ExportSummary({ totalHours, totalEntries, workItemCount, dayCoun
     return (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             {stats.map((stat) => (
-                <Card key={stat.label} className="border-white/5">
+                <Card key={stat.label} className="border-border/60">
                     <CardContent className="p-4 text-center">
                         <div
                             className={`font-mono text-2xl font-bold ${stat.accent ? "text-primary" : "text-muted-foreground"}`}

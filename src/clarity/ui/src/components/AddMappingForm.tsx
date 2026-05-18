@@ -121,7 +121,7 @@ export function AddMappingForm({ onMappingAdded }: AddMappingFormProps) {
                                 onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
                                     setManualTimesheetId(e.target.value)
                                 }
-                                className="flex-1 bg-black/30 border-white/10 font-mono text-sm text-gray-300 placeholder:text-gray-600 focus:border-primary/40"
+                                className="flex-1 bg-card/60 border-border/60 font-mono text-sm text-gray-300 placeholder:text-gray-600 focus:border-primary/40"
                             />
                             <Button
                                 onClick={() => {
@@ -183,7 +183,7 @@ export function AddMappingForm({ onMappingAdded }: AddMappingFormProps) {
                                                 ? "border-primary/50 bg-primary/10 text-primary"
                                                 : current
                                                   ? "border-primary/20 bg-primary/5 text-gray-300"
-                                                  : "border-white/5 bg-black/20 text-gray-400 hover:border-primary/20 hover:bg-primary/5"
+                                                  : "border-border/60 bg-card/60 text-gray-400 hover:border-primary/20 hover:bg-primary/5"
                                         }`}
                                     >
                                         <div className="flex items-center justify-between">
@@ -261,7 +261,7 @@ export function AddMappingForm({ onMappingAdded }: AddMappingFormProps) {
                                     className={`w-full text-left px-3 py-2 rounded border transition-colors font-mono text-xs ${
                                         selectedTask?.taskId === task.taskId
                                             ? "border-primary/50 bg-primary/10 text-primary"
-                                            : "border-white/5 bg-black/20 text-gray-400 hover:border-primary/20 hover:bg-primary/5"
+                                            : "border-border/60 bg-card/60 text-gray-400 hover:border-primary/20 hover:bg-primary/5"
                                     }`}
                                 >
                                     <div className="flex items-center justify-between">

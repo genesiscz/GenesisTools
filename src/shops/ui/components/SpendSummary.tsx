@@ -42,7 +42,7 @@ export function SpendSummary({ data, onProductClick }: Props): ReactNode {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <Card className="border-zinc-800 bg-zinc-950">
+                <Card>
                     <CardHeader>
                         <CardTitle className="font-mono text-[10px] tracking-[0.25em] uppercase text-muted-foreground">
                             MONTH-BY-MONTH SPEND
@@ -78,7 +78,7 @@ export function SpendSummary({ data, onProductClick }: Props): ReactNode {
                     </CardContent>
                 </Card>
 
-                <Card className="border-zinc-800 bg-zinc-950">
+                <Card>
                     <CardHeader>
                         <CardTitle className="font-mono text-[10px] tracking-[0.25em] uppercase text-muted-foreground">
                             PER-SHOP SPLIT
@@ -131,7 +131,7 @@ export function SpendSummary({ data, onProductClick }: Props): ReactNode {
                 </Card>
             </div>
 
-            <Card className="border-zinc-800 bg-zinc-950">
+            <Card>
                 <CardHeader>
                     <CardTitle className="font-mono text-[10px] tracking-[0.25em] uppercase text-muted-foreground">
                         TOP PRODUCTS
@@ -177,7 +177,7 @@ function renderShopPieLabel({ percent, name }: PieLabelProps): string {
 function StatCard({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
     return (
         <Card
-            className={`border-zinc-800 bg-zinc-950 transition-all duration-150 hover:-translate-y-0.5 hover:border-cyan-500/30 cursor-default ${
+            className={`transition-all duration-150 hover:-translate-y-0.5 hover:border-cyan-500/30 cursor-default ${
                 accent ? "hover:shadow-[0_0_20px_rgba(255,200,0,0.15)] hover:border-amber-400/40" : ""
             }`}
         >

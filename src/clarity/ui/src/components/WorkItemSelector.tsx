@@ -271,7 +271,7 @@ export function WorkItemSelector({ clarityTask, timesheetId, month, year, onItem
                     placeholder="Filter by #id or title..."
                     value={timelogFilter}
                     onChange={(e: React.ChangeEvent<HTMLInputElement>) => setTimelogFilter(e.target.value)}
-                    className="mb-1.5 bg-black/30 border-white/10 font-mono text-sm text-gray-300 placeholder:text-gray-600 focus:border-cyan-500/40"
+                    className="mb-1.5 bg-card/60 border-border/60 font-mono text-sm text-gray-300 placeholder:text-gray-600 focus:border-cyan-500/40"
                 />
 
                 {timelogLoading ? (
@@ -297,10 +297,10 @@ export function WorkItemSelector({ clarityTask, timesheetId, month, year, onItem
                                     key={wi.id}
                                     className={`flex items-center gap-2.5 w-full px-3 py-2 rounded border transition-colors font-mono text-xs ${
                                         isMapped
-                                            ? "border-white/5 bg-black/10 text-gray-600 cursor-not-allowed"
+                                            ? "border-border/60 bg-card/60 text-gray-600 cursor-not-allowed"
                                             : isSelected
                                               ? "border-cyan-500/50 bg-cyan-500/10 text-cyan-300 cursor-pointer"
-                                              : "border-white/5 bg-black/20 text-gray-400 hover:border-cyan-500/20 hover:bg-cyan-500/5 cursor-pointer"
+                                              : "border-border/60 bg-card/60 text-gray-400 hover:border-cyan-500/20 hover:bg-cyan-500/5 cursor-pointer"
                                     }`}
                                 >
                                     <input
@@ -352,7 +352,7 @@ export function WorkItemSelector({ clarityTask, timesheetId, month, year, onItem
                                 adoSearchMutation.mutate();
                             }
                         }}
-                        className="flex-1 bg-black/30 border-white/10 font-mono text-sm text-gray-300 placeholder:text-gray-600 focus:border-cyan-500/40"
+                        className="flex-1 bg-card/60 border-border/60 font-mono text-sm text-gray-300 placeholder:text-gray-600 focus:border-cyan-500/40"
                     />
                     <Button
                         onClick={() => adoSearchMutation.mutate()}
@@ -387,10 +387,10 @@ export function WorkItemSelector({ clarityTask, timesheetId, month, year, onItem
                                     key={wi.id}
                                     className={`flex items-center gap-2.5 w-full px-3 py-2 rounded border font-mono text-xs ${
                                         isMapped
-                                            ? "border-white/5 bg-black/10 text-gray-600"
+                                            ? "border-border/60 bg-card/60 text-gray-600"
                                             : isSelected
                                               ? "border-cyan-500/50 bg-cyan-500/10 text-cyan-300"
-                                              : "border-white/5 bg-black/20 text-gray-400"
+                                              : "border-border/60 bg-card/60 text-gray-400"
                                     }`}
                                 >
                                     <span className="text-primary/80">#{wi.id}</span>
@@ -432,7 +432,7 @@ export function WorkItemSelector({ clarityTask, timesheetId, month, year, onItem
             </div>
 
             {/* Selected summary + Add button */}
-            <div className="pt-2 border-t border-white/5">
+            <div className="pt-2 border-t border-border/60">
                 <div className="flex items-center justify-between mb-2">
                     <span className="text-xs font-mono text-gray-500">
                         Selected: <span className="text-cyan-400">{selectedWorkItems.size} items</span>

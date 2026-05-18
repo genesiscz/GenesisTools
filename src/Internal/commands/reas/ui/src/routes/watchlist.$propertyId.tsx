@@ -192,7 +192,7 @@ function WatchlistPropertyDetailPage() {
                 <Card className="border-red-500/20 bg-red-500/5">
                     <CardContent className="py-8 text-center space-y-3">
                         <p className="text-sm font-mono text-red-400">Property detail could not be loaded.</p>
-                        <Button asChild variant="outline" className="font-mono text-xs border-white/10 text-gray-300">
+                        <Button asChild variant="outline" className="font-mono text-xs border-border/60 text-gray-300">
                             <Link to="/watchlist">
                                 <ArrowLeft className="h-3.5 w-3.5" />
                                 Back to Watchlist
@@ -215,14 +215,14 @@ function WatchlistPropertyDetailPage() {
     return (
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-6">
             <div className="flex flex-col gap-4">
-                <Button asChild variant="outline" className="w-fit font-mono text-xs border-white/10 text-gray-300">
+                <Button asChild variant="outline" className="w-fit font-mono text-xs border-border/60 text-gray-300">
                     <Link to="/watchlist">
                         <ArrowLeft className="h-3.5 w-3.5" />
                         Back to Watchlist
                     </Link>
                 </Button>
 
-                <Card className="border-white/5 bg-white/[0.02]">
+                <Card>
                     <CardContent className="py-5 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                         <div className="space-y-2 min-w-0">
                             <div className="flex flex-wrap items-center gap-2">
@@ -241,10 +241,10 @@ function WatchlistPropertyDetailPage() {
                                 {formatDisposition(property.disposition)}
                             </p>
                             <div className="flex flex-wrap gap-2 text-[10px] font-mono text-gray-500">
-                                <Badge variant="outline" className="border-white/10 bg-white/[0.02] text-gray-400">
+                                <Badge variant="outline" className="border-border/60 bg-muted/50 text-gray-400">
                                     Added {formatDateTime(property.created_at)}
                                 </Badge>
-                                <Badge variant="outline" className="border-white/10 bg-white/[0.02] text-gray-400">
+                                <Badge variant="outline" className="border-border/60 bg-muted/50 text-gray-400">
                                     Last analyzed {formatDateTime(property.last_analyzed_at)}
                                 </Badge>
                                 {providers.map((provider) => (
@@ -252,7 +252,7 @@ function WatchlistPropertyDetailPage() {
                                         key={provider}
                                         variant="outline"
                                         className={cn(
-                                            "border-white/10 bg-white/[0.02] text-[10px] font-mono",
+                                            "border-border/60 bg-muted/50 text-[10px] font-mono",
                                             PROVIDER_BADGE_STYLES[provider] ?? "text-gray-400"
                                         )}
                                     >
@@ -297,39 +297,39 @@ function WatchlistPropertyDetailPage() {
                     <StatCard label="Comparable Count" value={formatNumber(property.comparable_count)} accent="green" />
                 </div>
 
-                <Card className="border-white/5 bg-white/[0.02]">
+                <Card>
                     <CardHeader className="pb-3">
-                        <CardTitle className="text-sm font-mono text-amber-400">Alert Settings</CardTitle>
+                        <CardTitle className="text-sm font-mono text-primary">Alert Settings</CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-4">
                         <div className="flex flex-wrap gap-2 text-[10px] font-mono">
-                            <Badge variant="outline" className="border-white/10 bg-white/[0.02] text-gray-400">
+                            <Badge variant="outline" className="border-border/60 bg-muted/50 text-gray-400">
                                 Current yield {formatYield(property.last_net_yield)}
                             </Badge>
                             {property.alert_yield_floor != null ? (
                                 <Badge
                                     variant="outline"
                                     className={cn(
-                                        "bg-white/[0.02]",
+                                        "bg-muted/50",
                                         alertYieldTriggered
                                             ? "border-rose-500/30 text-rose-300"
-                                            : "border-amber-500/20 text-amber-300"
+                                            : "border-primary/20 text-primary"
                                     )}
                                 >
                                     Floor {property.alert_yield_floor.toFixed(1)}%
                                 </Badge>
                             ) : (
-                                <Badge variant="outline" className="border-white/10 bg-white/[0.02] text-gray-500">
+                                <Badge variant="outline" className="border-border/60 bg-muted/50 text-gray-500">
                                     No yield floor set
                                 </Badge>
                             )}
                             <Badge
                                 variant="outline"
                                 className={cn(
-                                    "bg-white/[0.02]",
+                                    "bg-muted/50",
                                     property.alert_grade_change
-                                        ? "border-amber-500/20 text-amber-300"
-                                        : "border-white/10 text-gray-500"
+                                        ? "border-primary/20 text-primary"
+                                        : "border-border/60 text-gray-500"
                                 )}
                             >
                                 Grade change {property.alert_grade_change ? "enabled" : "off"}
@@ -350,11 +350,11 @@ function WatchlistPropertyDetailPage() {
                                     value={alertYieldFloor}
                                     onChange={(event) => setAlertYieldFloor(event.target.value)}
                                     placeholder="4.5"
-                                    className="h-8 border-white/10 bg-black/20 text-xs font-mono"
+                                    className="h-8 border-border/60 bg-card/60 text-xs font-mono"
                                 />
                             </div>
 
-                            <label className="flex items-center gap-2 rounded border border-white/10 bg-black/20 px-3 py-2 text-[11px] font-mono text-gray-300 md:self-end">
+                            <label className="flex items-center gap-2 rounded border border-border/60 bg-card/60 px-3 py-2 text-[11px] font-mono text-gray-300 md:self-end">
                                 <Checkbox
                                     id="detail-alert-grade"
                                     checked={alertGradeChange}
@@ -370,7 +370,7 @@ function WatchlistPropertyDetailPage() {
                                 variant="outline"
                                 onClick={() => updateAlertsMutation.mutate()}
                                 disabled={updateAlertsMutation.isPending}
-                                className="border-amber-500/30 text-amber-300 hover:bg-amber-500/10 font-mono text-xs"
+                                className="border-primary/30 text-primary hover:bg-primary/10 font-mono text-xs"
                             >
                                 {updateAlertsMutation.isPending ? "Saving..." : "Save Alerts"}
                             </Button>
@@ -380,7 +380,7 @@ function WatchlistPropertyDetailPage() {
             </div>
 
             <Tabs defaultValue="overview">
-                <TabsList className="bg-black/30 border-white/10">
+                <TabsList className="bg-card/60 border-border/60">
                     <TabsTrigger value="overview" className="font-mono text-xs">
                         <Layers3 className="h-3.5 w-3.5" />
                         Overview
@@ -412,13 +412,13 @@ function WatchlistPropertyDetailPage() {
                             />
 
                             <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.1fr_0.9fr]">
-                                <Card className="border-white/5 bg-white/[0.02]">
+                                <Card>
                                     <CardContent className="flex flex-col gap-4 p-5 md:flex-row md:items-center md:justify-between">
                                         <div className="space-y-3">
                                             <div className="text-xs font-mono uppercase tracking-[0.24em] text-slate-500">
                                                 Snapshot verdict
                                             </div>
-                                            <div className="text-2xl font-mono font-semibold text-white">
+                                            <div className="text-2xl font-mono font-semibold text-foreground">
                                                 {property.last_grade ? `Grade ${property.last_grade}` : "No grade yet"}
                                             </div>
                                             <InfoBox tone={alertYieldTriggered ? "warning" : "info"}>
@@ -483,7 +483,7 @@ function WatchlistPropertyDetailPage() {
                             </div>
                         </>
                     ) : (
-                        <Card className="border-white/5 bg-white/[0.02]">
+                        <Card>
                             <CardContent className="py-10 text-center">
                                 <p className="text-sm font-mono text-gray-400">
                                     This property does not have stored export data yet.
@@ -503,7 +503,7 @@ function WatchlistPropertyDetailPage() {
                             <ComparablesTable data={exportData} />
                         </>
                     ) : (
-                        <Card className="border-white/5 bg-white/[0.02]">
+                        <Card>
                             <CardContent className="py-10 text-center">
                                 <p className="text-sm font-mono text-gray-400">No sold comparables are stored yet.</p>
                             </CardContent>
@@ -543,9 +543,9 @@ function WatchlistPropertyDetailPage() {
                             </div>
 
                             <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-                                <Card className="border-white/5 bg-white/[0.02]">
+                                <Card>
                                     <CardHeader className="pb-2">
-                                        <CardTitle className="text-sm font-mono text-amber-400">
+                                        <CardTitle className="text-sm font-mono text-primary">
                                             Stored Rental Listings
                                         </CardTitle>
                                     </CardHeader>
@@ -578,11 +578,9 @@ function WatchlistPropertyDetailPage() {
                                     </CardContent>
                                 </Card>
 
-                                <Card className="border-white/5 bg-white/[0.02]">
+                                <Card>
                                     <CardHeader className="pb-2">
-                                        <CardTitle className="text-sm font-mono text-amber-400">
-                                            Yield Context
-                                        </CardTitle>
+                                        <CardTitle className="text-sm font-mono text-primary">Yield Context</CardTitle>
                                     </CardHeader>
                                     <CardContent className="space-y-4">
                                         <YieldCard data={exportData} />
@@ -591,7 +589,7 @@ function WatchlistPropertyDetailPage() {
                             </div>
                         </>
                     ) : (
-                        <Card className="border-white/5 bg-white/[0.02]">
+                        <Card>
                             <CardContent className="py-10 text-center">
                                 <p className="text-sm font-mono text-gray-400">
                                     No stored export payload is available for this property.
@@ -607,7 +605,7 @@ function WatchlistPropertyDetailPage() {
                         subtitle="Financing impact, yield breakdown, and the current score stack for this property."
                     />
                     <div className="grid grid-cols-1 xl:grid-cols-[1fr_1fr] gap-4">
-                        <Card className="border-white/5 bg-white/[0.02]">
+                        <Card>
                             <CardContent className="grid gap-4 p-5 md:grid-cols-[0.8fr_1.2fr] md:items-center">
                                 <ScoreGauge score={property.last_score ?? 0} label="Stored score" />
                                 <div className="space-y-3">
@@ -658,9 +656,9 @@ function WatchlistPropertyDetailPage() {
                         </InfoBox>
                     )}
 
-                    <Card className="border-white/5 bg-white/[0.02]">
+                    <Card>
                         <CardHeader className="pb-2">
-                            <CardTitle className="text-sm font-mono text-amber-400">Provider Fetch Summary</CardTitle>
+                            <CardTitle className="text-sm font-mono text-primary">Provider Fetch Summary</CardTitle>
                         </CardHeader>
                         <CardContent className="px-0">
                             {exportData?.meta.providerSummary && exportData.meta.providerSummary.length > 0 ? (
@@ -689,9 +687,9 @@ function WatchlistPropertyDetailPage() {
                         </CardContent>
                     </Card>
 
-                    <Card className="border-white/5 bg-white/[0.02]">
+                    <Card>
                         <CardHeader className="pb-2">
-                            <CardTitle className="text-sm font-mono text-amber-400">Analysis Snapshots</CardTitle>
+                            <CardTitle className="text-sm font-mono text-primary">Analysis Snapshots</CardTitle>
                         </CardHeader>
                         <CardContent className="px-0">
                             {historyQuery.isLoading ? (
@@ -714,7 +712,7 @@ function WatchlistPropertyDetailPage() {
                                                         className={cn(
                                                             "text-[10px] font-mono",
                                                             GRADE_COLORS[String(row.grade)] ??
-                                                                "border-white/10 text-gray-400"
+                                                                "border-border/60 text-gray-400"
                                                         )}
                                                     >
                                                         {row.gradeLabel}
@@ -727,7 +725,7 @@ function WatchlistPropertyDetailPage() {
                                             key: "scoreLabel",
                                             header: "Score",
                                             align: "right",
-                                            className: "text-amber-400",
+                                            className: "text-primary",
                                         },
                                         {
                                             key: "netYieldLabel",

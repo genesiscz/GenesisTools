@@ -4,10 +4,10 @@ import { getInvestmentSummary, getScoreTone } from "./utils";
 export const GRADE_COLORS: Record<string, string> = {
     A: "text-emerald-400 border-emerald-500/30 bg-emerald-500/10",
     B: "text-cyan-400 border-cyan-500/30 bg-cyan-500/10",
-    C: "text-amber-400 border-amber-500/30 bg-amber-500/10",
+    C: "text-amber-400 border-primary/30 bg-amber-500/10",
     D: "text-orange-400 border-orange-500/30 bg-orange-500/10",
     F: "text-red-400 border-red-500/30 bg-red-500/10",
-    "N/A": "text-slate-300 border-white/10 bg-white/5",
+    "N/A": "text-slate-300 border-border/60 bg-muted/50",
 };
 
 export const GRADE_GLOW: Record<string, string> = {
@@ -22,7 +22,7 @@ export const GRADE_GLOW: Record<string, string> = {
 export const RECOMMENDATION_COLORS: Record<string, { bg: string; text: string }> = {
     "strong-buy": { bg: "bg-green-500/15 border-green-500/30", text: "text-green-400" },
     buy: { bg: "bg-lime-500/15 border-lime-500/30", text: "text-lime-400" },
-    hold: { bg: "bg-amber-500/15 border-amber-500/30", text: "text-amber-400" },
+    hold: { bg: "bg-amber-500/15 border-primary/30", text: "text-amber-400" },
     avoid: { bg: "bg-orange-500/15 border-orange-500/30", text: "text-orange-400" },
     "strong-avoid": { bg: "bg-red-500/15 border-red-500/30", text: "text-red-400" },
 };
@@ -65,7 +65,7 @@ export function getMomentumCardModel(data: DashboardExport) {
             velocityPerPeriodLabel: "+0.0% per period",
             momentum: "linear",
             momentumLabel: "Linear",
-            momentumClassName: "text-gray-400 border-white/10 bg-white/5",
+            momentumClassName: "text-gray-400 border-border/60 bg-muted/50",
             confidencePercent: 0,
             confidenceClassName: "bg-red-500",
             interpretation: "Momentum data not available",
@@ -84,7 +84,7 @@ export function getMomentumCardModel(data: DashboardExport) {
             ? "text-cyan-400 border-cyan-500/30 bg-cyan-500/10"
             : momentum.momentum === "decelerating"
               ? "text-orange-400 border-orange-500/30 bg-orange-500/10"
-              : "text-gray-400 border-white/10 bg-white/5";
+              : "text-gray-400 border-border/60 bg-muted/50";
 
     const confidencePercent = momentum.confidence === "high" ? 85 : momentum.confidence === "medium" ? 60 : 35;
 

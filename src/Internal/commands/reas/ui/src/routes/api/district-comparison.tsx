@@ -1,7 +1,7 @@
 import { compareDistricts } from "@app/Internal/commands/reas/lib/district-comparison-service";
 import type { DistrictSnapshotResolution } from "@app/Internal/commands/reas/lib/district-snapshot";
+import { apiHandler, jsonBody } from "@app/Internal/commands/reas/ui/src/server/api-utils";
 import { createFileRoute } from "@tanstack/react-router";
-import { apiHandler, jsonBody } from "../../server/api-utils";
 
 export const Route = createFileRoute("/api/district-comparison")({
     server: {

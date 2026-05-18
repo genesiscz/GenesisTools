@@ -10,7 +10,7 @@ export function PropertyYieldBreakdown({ model }: { model: PropertyCardModel }) 
     );
 
     return (
-        <div className="rounded-md border border-white/5 bg-black/20 px-3 py-3">
+        <div className="rounded-md border border-border/60 bg-card/60 px-3 py-3">
             <div className="text-[10px] font-mono uppercase tracking-wider text-gray-600">Yield Breakdown</div>
             <div className="mt-3 grid grid-cols-2 gap-2 text-[11px] font-mono text-gray-300">
                 <span>Gross {formatYield(model.yieldBreakdown.grossYield)}</span>
@@ -23,7 +23,7 @@ export function PropertyYieldBreakdown({ model }: { model: PropertyCardModel }) 
             </div>
 
             {financedCarry != null && (
-                <div className="mt-3 text-[11px] font-mono text-amber-300">
+                <div className="mt-3 text-[11px] font-mono text-primary">
                     Financed carry {formatYield(financedCarry)}
                 </div>
             )}
@@ -37,7 +37,7 @@ export function PropertyYieldBreakdown({ model }: { model: PropertyCardModel }) 
                                 <span>{benchmark.name}</span>
                                 <span>{formatYield(benchmark.yield)}</span>
                             </div>
-                            <div className="h-1.5 overflow-hidden rounded-full bg-white/5">
+                            <div className="h-1.5 overflow-hidden rounded-full bg-muted/50">
                                 <div
                                     className="h-full rounded-full bg-cyan-400/80"
                                     style={{

@@ -161,7 +161,7 @@ export function CommentPopup({ weeks, userId }: CommentPopupProps) {
                                         }
                                         rows={Math.min(text.split("\n").length + 1, 10)}
                                         disabled={isPosted}
-                                        className="bg-black/40 border-gray-700/50 font-mono text-xs text-gray-300 resize-y focus:border-primary/40"
+                                        className="bg-card/60 border-gray-700/50 font-mono text-xs text-gray-300 resize-y focus:border-primary/40"
                                     />
                                     <Button
                                         size="sm"
