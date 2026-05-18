@@ -8,43 +8,6 @@ on:
   workflow_dispatch:
 
 jobs:
-  check:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: "1.3.13"
-
-      # Cache bun's DEFAULT global cache (~/.bun/install/cache) — already
-      # outside the checked-out repo. Do NOT redirect it into the workspace
-      # (e.g. via BUN_INSTALL_CACHE_DIR): biome check . would lint the whole
-      # package cache and bun test's fs-walk would traverse it (~27x Windows
-      # I/O slowdown observed). actions/cache expands ~ per-OS.
-      - name: Cache bun install
-        uses: actions/cache@v4
-        with:
-          path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-bun-
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Run Biome check (main)
-        timeout-minutes: 2
-        run: bun run lint
-
-      - name: Run Biome check (dashboard)
-        timeout-minutes: 2
-        run: bun run lint:dashboard
-
-      - name: TypeScript check
-        timeout-minutes: 3
-        run: bun run typecheck:all
-
   # Decide which OSes the test matrix runs on.
   # ubuntu always; windows-latest only when the PR opts in via title/label
   # containing "windows" (case-insensitive), or on manual workflow_dispatch.
@@ -63,7 +26,9 @@ jobs:
           # referenced as ${{ matrix.testTimeout }} (a plain matrix int IS
           # valid in step-level timeout-minutes; only non-matrix contexts /
           # raw ternaries are rejected there).
-          inc='{"os":"ubuntu-latest","testTimeout":2}'
+          # testTimeout from real last-20-runs data: ubuntu test discovery
+          # med 66s / max 146s -> 4m; windows med 136s / healthy ~150s -> 7m.
+          inc='{"os":"ubuntu-latest","testTimeout":4}'
           win=false
           if [ "$EVENT" = "workflow_dispatch" ]; then win=true; fi
           title_lc=$(printf '%s' "$PR_TITLE" | tr '[:upper:]' '[:lower:]')
@@ -74,18 +39,20 @@ jobs:
           echo "matrix={\"include\":[$inc]}" >> "$GITHUB_OUTPUT"
           echo "Selected matrix include: [$inc] (windows opted-in: $win)"
 
-  # IMPORTANT: `test` depends ONLY on `setup` (the trivial matrix decider) —
-  # deliberately NOT on `check`. Lint/typecheck failing must never stop the
-  # test run. Do not add `check` to `needs:` here.
+  # Single job (no separate `check` runner — cheaper). Lint/typecheck run as
+  # ubuntu-only steps AFTER test discovery + Upload logs, so they can never
+  # block or delay the test signal — the test discovery step is
+  # continue-on-error and uploads its log before lint/tsc even start.
   test:
     needs: setup
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
-    # Backstop only — must exceed the 8m test-step tripwire + install so the
-    # step times out and still runs Upload logs (partial log) before this fires.
-    timeout-minutes: 20
+    # Backstop only — must exceed the per-OS testTimeout (4m/7m) + cold
+    # install (windows ~237s) + ubuntu lint/tsc so step tripwires + Upload
+    # logs fire first. Real worst case ~12m (windows cold); 15m has margin.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -153,3 +120,24 @@ jobs:
             install-${{ runner.os }}.log
             test-${{ runner.os }}.log
           if-no-files-found: warn
+
+      # Lint/typecheck — ubuntu only (redundant + slow on Windows), and only
+      # after test discovery + Upload logs above, so they can't block the
+      # test signal. NOT continue-on-error: a real lint/tsc failure should
+      # still turn the run red (same signal the old separate `check` job
+      # gave), just without its own runner. Timeouts are fail-fast tripwires
+      # from real data (biome ~5s, dashboard ~1s, tsc ~8s) + wide headroom.
+      - name: Run Biome check (main)
+        if: runner.os == 'Linux'
+        timeout-minutes: 1
+        run: bun run lint
+
+      - name: Run Biome check (dashboard)
+        if: runner.os == 'Linux'
+        timeout-minutes: 1
+        run: bun run lint:dashboard
+
+      - name: TypeScript check
+        if: runner.os == 'Linux'
+        timeout-minutes: 2
+        run: bun run typecheck:all
