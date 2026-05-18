@@ -235,11 +235,66 @@ program.command("ui").alias("dashboard").description("Launch the dev-dashboard w
 
 program
     .command("restart")
-    .description("Stop any running dev-dashboard instance, then launch the UI (same as `ui`)")
+    .description("Stop any running dev-dashboard, relaunch it detached in the background, then exit")
     .action(async () => {
         const { port } = await getConfig();
         await stopRunningDashboard(port);
-        await runUiServer();
+
+        const url = `http://localhost:${port}`;
+        // Daemonize: the UI is Vite + an in-process front-proxy, so we can't
+        // just background Vite — we re-spawn the whole `dev-dashboard ui`
+        // command detached, echo its output until it's ready, then exit and
+        // leave it running (unlike `ui`, which stays foreground).
+        const child = spawn("tools", ["dev-dashboard", "ui"], {
+            cwd: PROJECT_ROOT,
+            detached: true,
+            stdio: ["ignore", "pipe", "pipe"],
+            env: { ...process.env, FORCE_COLOR: "1" },
+            shell: process.platform === "win32",
+        });
+
+        const READY = /ready in \d+\s*ms|Local:\s+http|press h \+ enter/i;
+        let settled = false;
+
+        const finish = (note: string): void => {
+            if (settled) {
+                return;
+            }
+
+            settled = true;
+            console.log(`\n${note}`);
+            console.log(`dev-dashboard running in background → ${url}  (pid ${child.pid})`);
+            console.log(`stop it with: tools dev-dashboard restart   (or kill ${child.pid})`);
+            child.stdout?.removeAllListeners();
+            child.stderr?.removeAllListeners();
+            child.unref();
+            process.exit(0);
+        };
+
+        const onChunk = (buf: Buffer): void => {
+            const text = buf.toString();
+            process.stdout.write(text);
+            if (READY.test(text)) {
+                finish("✓ dev-dashboard is up.");
+            }
+        };
+
+        child.stdout?.on("data", onChunk);
+        child.stderr?.on("data", onChunk);
+        child.on("error", (err) => {
+            console.error(`Failed to launch dev-dashboard: ${err.message}`);
+            process.exit(1);
+        });
+        child.on("exit", (code) => {
+            if (!settled) {
+                console.error(`dev-dashboard exited before becoming ready (code ${code ?? "?"})`);
+                process.exit(code ?? 1);
+            }
+        });
+
+        // Safety net: if the ready marker never matches, still detach and exit
+        // rather than holding the terminal forever.
+        setTimeout(() => finish("⚠ ready marker not seen in 30s — detaching anyway; check the URL."), 30_000);
     });
 
 const auth = program.command("auth").description("Manage dev-dashboard Basic Auth");
