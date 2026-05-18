@@ -293,8 +293,8 @@ function SettingsPage() {
                                         adoMutation.error.message.toLowerCase().includes("not logged in") && (
                                             <p className="font-mono text-xs text-primary/70 mt-1">
                                                 Hint: Run{" "}
-                                                <code className="px-1 py-0.5 bg-muted/50 rounded">az login</code> in your
-                                                terminal first
+                                                <code className="px-1 py-0.5 bg-muted/50 rounded">az login</code> in
+                                                your terminal first
                                             </p>
                                         )}
                                 </div>
