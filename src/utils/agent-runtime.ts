@@ -53,8 +53,7 @@ export function getAgentRuntimeContext(
         project: detectCurrentProject() ?? basename(repoRoot),
         repoRoot,
         cwd,
-        isWorktree:
-            gitDir != null && gitCommonDir != null && resolve(cwd, gitDir) !== resolve(cwd, gitCommonDir),
+        isWorktree: gitDir != null && gitCommonDir != null && resolve(cwd, gitDir) !== resolve(cwd, gitCommonDir),
         worktreePath: null,
         branch: gitSync(["rev-parse", "--abbrev-ref", "HEAD"], cwd),
         commitSha: gitSync(["rev-parse", "--short", "HEAD"], cwd),
