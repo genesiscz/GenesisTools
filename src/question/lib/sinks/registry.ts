@@ -38,7 +38,7 @@ export async function runFanOut(
     });
     return Promise.all(
         enabled.map(async (s): Promise<SinkResult> => {
-            const t = timeout(timeoutMs);
+            const t = timeout(s.timeoutMs ?? timeoutMs);
             try {
                 await Promise.race([Promise.resolve(s.emit(entry, config)), t.promise]);
                 return { name: s.name, ok: true };

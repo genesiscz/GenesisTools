@@ -2,6 +2,8 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@app/utils/json";
 import type { Command } from "commander";
+import pc from "picocolors";
+import { formatQaEntry } from "../lib/format";
 import { openReadModel, type QueryOpts, queryEntries } from "../lib/read-model";
 
 export function defaultDbPath(): string {
@@ -13,17 +15,10 @@ export function renderDigest(opts: QueryOpts & { dbPath: string }): string {
     try {
         const rows = queryEntries(db, opts);
         if (rows.length === 0) {
-            return "No questions recorded.";
+            return pc.dim("No questions recorded.");
         }
 
-        return rows
-            .map((r) => {
-                const when = new Date(r.ts).toISOString().slice(0, 16).replace("T", " ");
-                const head = `${when}  ${r.project} · ${r.branch ?? "-"}  [${r.tag}]`;
-                const preview = r.answerMd.split("\n").slice(0, 3).join("\n");
-                return `${head}\n❯ ${r.question}\n${preview}\n`;
-            })
-            .join("\n");
+        return rows.map(formatQaEntry).join("\n");
     } finally {
         db.close();
     }
