@@ -82,6 +82,46 @@ describe("renderMarkdown", () => {
         expect(html.toLowerCase()).toContain("warning");
     });
 
+    test("maps Obsidian [!check] to the success color group", () => {
+        const { html } = renderMarkdown("> [!check]\n> all green", noop);
+
+        expect(html).toContain("markdown-alert markdown-alert-success");
+        expect(html).toContain('data-callout="check"');
+        expect(html).toContain("all green");
+    });
+
+    test("uses the custom callout title and parses inline markdown in it", () => {
+        const md = "> [!check] Ověření 3 nezávislými **agenty** (2026-05-18)\n> body line";
+        const { html } = renderMarkdown(md, noop);
+
+        expect(html).toContain('class="markdown-alert-title"');
+        expect(html).toContain("Ověření 3 nezávislými <strong>agenty</strong> (2026-05-18)");
+        expect(html).not.toContain("[!check]");
+        expect(html).toContain("body line");
+    });
+
+    test("falls back to the type name when no custom title is given", () => {
+        const { html } = renderMarkdown("> [!summary]\n> x", noop);
+
+        expect(html).toContain("markdown-alert-abstract");
+        expect(html).toContain("<span>Summary</span>");
+    });
+
+    test("strips the fold marker and records fold state", () => {
+        const { html } = renderMarkdown("> [!info]- collapsed\n> hidden", noop);
+
+        expect(html).toContain('data-callout-fold="closed"');
+        expect(html).toContain("<span>collapsed</span>");
+        expect(html).not.toContain("]-");
+    });
+
+    test("leaves a plain blockquote (no [!type]) untouched", () => {
+        const { html } = renderMarkdown("> just a quote", noop);
+
+        expect(html).toContain("<blockquote>");
+        expect(html).not.toContain("markdown-alert");
+    });
+
     test("highlights fenced code blocks with hljs classes", () => {
         const md = "```ts\nconst x: number = 1;\n```";
         const { html } = renderMarkdown(md, noop);

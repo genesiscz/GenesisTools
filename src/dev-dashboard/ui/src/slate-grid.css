@@ -262,6 +262,86 @@
     padding: 0.2rem 0.9rem;
 }
 
+/* ── Obsidian callouts (rendered by obsidianCalloutExtension) ─────────── */
+.dd-markdown .markdown-alert {
+    --cal: #3c4a44;
+    margin: 1rem 0;
+    padding: 0.7rem 0.95rem 0.3rem;
+    border: 1px solid color-mix(in srgb, var(--cal) 30%, transparent);
+    border-left: 4px solid var(--cal);
+    border-radius: 0 8px 8px 0;
+    background: color-mix(in srgb, var(--cal) 9%, var(--dd-bg-panel));
+}
+
+.dd-markdown .markdown-alert-title {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin: 0 0 0.5rem;
+    color: var(--cal);
+    font-weight: 700;
+    line-height: 1.4;
+}
+
+.dd-markdown .markdown-alert-title code {
+    color: inherit;
+}
+
+.dd-markdown .markdown-alert-icon {
+    flex: none;
+    width: 16px;
+    height: 16px;
+    color: var(--cal);
+}
+
+.dd-markdown .markdown-alert-body > * {
+    margin: 0.5rem 0;
+}
+
+.dd-markdown .markdown-alert-body > :first-child {
+    margin-top: 0;
+}
+
+.dd-markdown .markdown-alert-note {
+    --cal: #4493f8;
+}
+.dd-markdown .markdown-alert-abstract {
+    --cal: #22d3ee;
+}
+.dd-markdown .markdown-alert-info {
+    --cal: #4493f8;
+}
+.dd-markdown .markdown-alert-todo {
+    --cal: #38bdf8;
+}
+.dd-markdown .markdown-alert-tip {
+    --cal: var(--dd-accent-to);
+}
+.dd-markdown .markdown-alert-success {
+    --cal: var(--dd-accent-from);
+}
+.dd-markdown .markdown-alert-question {
+    --cal: #eab308;
+}
+.dd-markdown .markdown-alert-warning {
+    --cal: #f59e0b;
+}
+.dd-markdown .markdown-alert-failure {
+    --cal: #f87171;
+}
+.dd-markdown .markdown-alert-danger {
+    --cal: #ef4444;
+}
+.dd-markdown .markdown-alert-bug {
+    --cal: #fb7185;
+}
+.dd-markdown .markdown-alert-example {
+    --cal: #a855f7;
+}
+.dd-markdown .markdown-alert-quote {
+    --cal: var(--dd-text-secondary);
+}
+
 .dd-markdown table {
     width: 100%;
     border-collapse: collapse;

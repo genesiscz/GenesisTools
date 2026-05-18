@@ -293,39 +293,53 @@ img { max-width: 100%; height: auto; border-radius: 6px; }
 .dd-md-embed-label { font-family: var(--dd-mono); }
 
 .markdown-alert {
+    --cal: var(--dd-border-strong);
     margin: 1.2em 0;
-    padding: 12px 16px;
-    border-left: 4px solid var(--dd-border-strong);
+    padding: 12px 16px 4px;
+    border: 1px solid color-mix(in srgb, var(--cal) 28%, transparent);
+    border-left: 4px solid var(--cal);
     border-radius: 0 8px 8px 0;
-    background: var(--dd-bg-panel);
+    background: color-mix(in srgb, var(--cal) 8%, var(--dd-bg-panel));
 }
 
-.markdown-alert > * { margin: 0.4em 0; }
-.markdown-alert > :first-child { margin-top: 0; }
-.markdown-alert > :last-child { margin-bottom: 0; }
+.markdown-alert-body > * { margin: 0.55em 0; }
+.markdown-alert-body > :first-child { margin-top: 0; }
+.markdown-alert-body > :last-child { margin-bottom: 0.4em; }
+.markdown-alert:not(:has(.markdown-alert-body)) { padding-bottom: 12px; }
 
 .markdown-alert-title {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 8px;
     font-weight: 600;
-    font-size: 0.95em;
-    margin-bottom: 6px;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
+    font-size: 0.97em;
+    margin: 0 0 8px;
+    color: var(--cal);
+    line-height: 1.4;
 }
 
-.markdown-alert-note { border-left-color: #3b82f6; }
-.markdown-alert-note .markdown-alert-title { color: #60a5fa; }
+.markdown-alert-title code { color: inherit; }
 
-.markdown-alert-tip, .markdown-alert-important { border-left-color: var(--dd-accent); }
-.markdown-alert-tip .markdown-alert-title, .markdown-alert-important .markdown-alert-title { color: var(--dd-accent); }
+.markdown-alert-icon {
+    flex: none;
+    width: 17px;
+    height: 17px;
+    color: var(--cal);
+}
 
-.markdown-alert-warning, .markdown-alert-caution { border-left-color: #f59e0b; }
-.markdown-alert-warning .markdown-alert-title, .markdown-alert-caution .markdown-alert-title { color: #fbbf24; }
-
-.markdown-alert-danger { border-left-color: #ef4444; }
-.markdown-alert-danger .markdown-alert-title { color: #f87171; }
+.markdown-alert-note { --cal: #4493f8; }
+.markdown-alert-abstract { --cal: #22d3ee; }
+.markdown-alert-info { --cal: #4493f8; }
+.markdown-alert-todo { --cal: #38bdf8; }
+.markdown-alert-tip { --cal: var(--dd-accent-2, #2dd4bf); }
+.markdown-alert-success { --cal: var(--dd-accent, #34d399); }
+.markdown-alert-question { --cal: #eab308; }
+.markdown-alert-warning { --cal: #f59e0b; }
+.markdown-alert-failure { --cal: #f87171; }
+.markdown-alert-danger { --cal: #ef4444; }
+.markdown-alert-bug { --cal: #fb7185; }
+.markdown-alert-example { --cal: #a855f7; }
+.markdown-alert-quote { --cal: var(--dd-text-dim); }
 
 .mermaid {
     background: var(--dd-bg-panel);
