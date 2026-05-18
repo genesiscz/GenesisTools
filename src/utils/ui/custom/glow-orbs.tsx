@@ -65,12 +65,16 @@ export function GlowOrbsNexus({ variant = "subtle" }: { variant?: "rich" | "rich
     // NOT blurred circles: a blurred solid disc always has a visible core/edge
     // on sparse content; a gradient fades to nothing by construction (and costs
     // no filter — cheap even animated).
+    // Explicit warm amber (the cyberpunk `--primary` value) — `rich` IS the
+    // warm sign-in-style ambient by definition; using the literal avoids
+    // var-resolution drift that muddied it cool over the purple-ish bg.
+    // (`subtle` stays token-adaptive for theme-neutral consumers.)
     return (
         <div
             className={`absolute inset-0${pulse}`}
             style={{
                 background:
-                    "radial-gradient(75% 60% at 0% 0%, color-mix(in oklab, var(--color-primary) 22%, transparent), transparent 62%)",
+                    "radial-gradient(75% 60% at 0% 0%, oklch(0.75 0.18 75 / 0.16), transparent 62%), radial-gradient(70% 60% at 100% 100%, oklch(0.65 0.15 195 / 0.22), transparent 60%)",
             }}
         />
     );
