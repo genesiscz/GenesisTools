@@ -3,15 +3,8 @@ import { join } from "node:path";
 import { SafeJSON } from "@app/utils/json";
 import chalk from "chalk";
 import type { Command } from "commander";
+import { formatQaEntry } from "../lib/format";
 import { openReadModel, type QueryOpts, queryEntries } from "../lib/read-model";
-
-// chalk auto-detects stdout: full color on a TTY, no-ops when piped/redirected,
-// so the digest is colorful in a terminal and clean ANSI-free for `| tools json` etc.
-const TAG_TINT: Record<string, (s: string) => string> = {
-    question: chalk.bold.blue,
-    action: chalk.bold.yellow,
-    directive: chalk.bold.green,
-};
 
 export function defaultDbPath(): string {
     return join(homedir(), ".genesis-tools", "question", "qa.db");
@@ -25,15 +18,7 @@ export function renderDigest(opts: QueryOpts & { dbPath: string }): string {
             return chalk.dim("No questions recorded.");
         }
 
-        return rows
-            .map((r) => {
-                const when = new Date(r.ts).toISOString().slice(0, 16).replace("T", " ");
-                const tint = TAG_TINT[r.tag] ?? chalk.bold.gray;
-                const head = `${chalk.dim(when)}  ${chalk.cyan.bold(r.project)} ${chalk.dim("·")} ${chalk.magenta(r.branch ?? "-")}  ${tint(`[${r.tag}]`)}`;
-                const preview = chalk.yellow(r.answerMd.split("\n").slice(0, 3).join("\n"));
-                return `${head}\n${chalk.green("❯")} ${chalk.bold(r.question)}\n${preview}\n`;
-            })
-            .join("\n");
+        return rows.map(formatQaEntry).join("\n");
     } finally {
         db.close();
     }
