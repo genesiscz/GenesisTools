@@ -49,13 +49,15 @@ export function AuthForm({ title, submitLabel, onSubmit, bottomSlot }: AuthFormP
                     type="email"
                     placeholder="Email"
                     value={email}
-                    onChange={(e) => setEmail(e.target.value)}                    autoComplete="email"
+                    onChange={(e) => setEmail(e.target.value)}
+                    autoComplete="email"
                 />
                 <Input
                     type="password"
                     placeholder="Password"
                     value={password}
-                    onChange={(e) => setPassword(e.target.value)}                    autoComplete={submitLabel.toLowerCase().includes("register") ? "new-password" : "current-password"}
+                    onChange={(e) => setPassword(e.target.value)}
+                    autoComplete={submitLabel.toLowerCase().includes("register") ? "new-password" : "current-password"}
                 />
                 {error ? <div className="text-xs text-destructive">{error}</div> : null}
                 <Button type="submit" disabled={submitting || !email || !password} className="w-full">
