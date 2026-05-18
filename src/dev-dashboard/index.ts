@@ -8,6 +8,7 @@ import { startFrontProxy } from "@app/dev-dashboard/lib/front-proxy";
 import { findFreePort } from "@app/dev-dashboard/lib/ttyd/free-port";
 import logger from "@app/logger";
 import { PROJECT_ROOT } from "@app/utils/paths";
+import { stripAnsi } from "@app/utils/string";
 import { Command } from "commander";
 
 const program = new Command()
@@ -253,7 +254,12 @@ program
             shell: process.platform === "win32",
         });
 
-        const READY = /ready in \d+\s*ms|Local:\s+http|press h \+ enter/i;
+        // Match against ANSI-stripped, ACCUMULATED output: with FORCE_COLOR the
+        // banner is colored (`Local\x1b[22m:`) and arrives split across stdout
+        // chunks, so a per-raw-chunk test never matched and we always hit the
+        // 30s fallback. Accumulate + strip first.
+        const READY = /ready in \d+\s*m?s|Local:\s*http|localhost:\d+|press h \+ enter/i;
+        let acc = "";
         let settled = false;
 
         const finish = (note: string): void => {
@@ -274,7 +280,8 @@ program
         const onChunk = (buf: Buffer): void => {
             const text = buf.toString();
             process.stdout.write(text);
-            if (READY.test(text)) {
+            acc += stripAnsi(text);
+            if (READY.test(acc)) {
                 finish("✓ dev-dashboard is up.");
             }
         };
