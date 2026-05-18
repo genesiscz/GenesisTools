@@ -1,7 +1,13 @@
 import { dirname, extname, join } from "node:path";
+import { toPosixPath } from "@app/utils/paths";
 import { getLanguageForExt, LANGUAGE_EXTENSIONS } from "./ast-languages";
 import { loadPathAliases, type PathAliases } from "./graph-aliases";
 import { extractImports } from "./graph-imports";
+
+/** join path segments and normalize to POSIX separators for identity/key use */
+function posixJoin(...parts: string[]): string {
+    return toPosixPath(join(...parts));
+}
 
 export interface CodeGraphNode {
     /** File path (relative to index base dir) */
@@ -69,7 +75,7 @@ function resolveRelativeImport(
     language?: string
 ): string | null {
     const importerDir = dirname(importerPath);
-    const basePath = join(importerDir, specifier);
+    const basePath = posixJoin(importerDir, specifier);
 
     if (fileSet.has(basePath)) {
         return basePath;
@@ -95,7 +101,7 @@ function resolveRelativeImport(
         language === "jsx"
     ) {
         for (const indexFile of INDEX_FILES) {
-            const withIndex = join(basePath, indexFile);
+            const withIndex = posixJoin(basePath, indexFile);
 
             if (fileSet.has(withIndex)) {
                 return withIndex;
@@ -105,7 +111,7 @@ function resolveRelativeImport(
 
     // Python __init__.py
     if (language === "python") {
-        const initFile = join(basePath, "__init__.py");
+        const initFile = posixJoin(basePath, "__init__.py");
 
         if (fileSet.has(initFile)) {
             return initFile;
@@ -136,7 +142,7 @@ function resolveAliasImport(
         const rest = specifier.slice(prefix.length);
 
         for (const target of targets) {
-            const basePath = join(target, rest);
+            const basePath = posixJoin(target, rest);
 
             // Direct match
             if (fileSet.has(basePath)) {
@@ -155,7 +161,7 @@ function resolveAliasImport(
 
             // Try index files
             for (const indexFile of INDEX_FILES) {
-                const withIndex = join(basePath, indexFile);
+                const withIndex = posixJoin(basePath, indexFile);
 
                 if (fileSet.has(withIndex)) {
                     return withIndex;
@@ -170,7 +176,7 @@ function resolveAliasImport(
 /** Resolve a C/C++ local include to a file path */
 function resolveCInclude(specifier: string, importerPath: string, fileSet: Set<string>): string | null {
     const importerDir = dirname(importerPath);
-    const candidate = join(importerDir, specifier);
+    const candidate = posixJoin(importerDir, specifier);
 
     if (fileSet.has(candidate)) {
         return candidate;
@@ -186,13 +192,13 @@ function resolveRustMod(specifier: string, importerPath: string, fileSet: Set<st
     }
 
     const importerDir = dirname(importerPath);
-    const asFile = join(importerDir, `${specifier}.rs`);
+    const asFile = posixJoin(importerDir, `${specifier}.rs`);
 
     if (fileSet.has(asFile)) {
         return asFile;
     }
 
-    const asDir = join(importerDir, specifier, "mod.rs");
+    const asDir = posixJoin(importerDir, specifier, "mod.rs");
 
     if (fileSet.has(asDir)) {
         return asDir;
@@ -218,7 +224,7 @@ function resolveJvmImport(specifier: string, fileSet: Set<string>, language: str
 
     for (const dir of srcDirs) {
         for (const ext of exts) {
-            const candidate = join(dir, `${filePath}${ext}`);
+            const candidate = posixJoin(dir, `${filePath}${ext}`);
 
             if (fileSet.has(candidate)) {
                 return candidate;
@@ -233,7 +239,7 @@ function resolveJvmImport(specifier: string, fileSet: Set<string>, language: str
 function resolvePhpImport(specifier: string, importerPath: string, fileSet: Set<string>): string | null {
     if (specifier.startsWith("./") || specifier.startsWith("../")) {
         const importerDir = dirname(importerPath);
-        const candidate = join(importerDir, specifier);
+        const candidate = posixJoin(importerDir, specifier);
 
         if (fileSet.has(candidate)) {
             return candidate;
@@ -279,7 +285,7 @@ function resolvePhpImport(specifier: string, importerPath: string, fileSet: Set<
 function resolveRubyImport(specifier: string, importerPath: string, fileSet: Set<string>): string | null {
     if (specifier.startsWith("./") || specifier.startsWith("../")) {
         const importerDir = dirname(importerPath);
-        const base = join(importerDir, specifier);
+        const base = posixJoin(importerDir, specifier);
 
         if (fileSet.has(base)) {
             return base;
@@ -323,7 +329,7 @@ function resolvePythonImport(specifier: string, fileSet: Set<string>): string | 
     }
 
     // Try as package (__init__.py)
-    const asInit = join(pathParts, "__init__.py");
+    const asInit = posixJoin(pathParts, "__init__.py");
 
     if (fileSet.has(asInit)) {
         return asInit;

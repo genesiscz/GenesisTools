@@ -2,6 +2,7 @@ import type { Dirent } from "node:fs";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { extname, join, relative, resolve } from "node:path";
 import { concurrentMap } from "@app/utils/async";
+import { toPosixPath } from "@app/utils/paths";
 import ignore, { type Ignore } from "ignore";
 import {
     type DetectChangesOptions,
@@ -45,7 +46,8 @@ export class FileSource implements IndexerSource {
             items: filePaths,
             fn: async (filePath) => {
                 const content = await Bun.file(filePath).text();
-                return { id: filePath, content, path: filePath } as SourceEntry;
+                const posixPath = toPosixPath(filePath);
+                return { id: posixPath, content, path: posixPath } as SourceEntry;
             },
             concurrency: 50,
         });
@@ -160,7 +162,7 @@ export class FileSource implements IndexerSource {
             return false;
         }
 
-        const rel = relative(this.absBaseDir, absolutePath);
+        const rel = toPosixPath(relative(this.absBaseDir, absolutePath));
         return this.ignoreFilter.ignores(rel);
     }
 
