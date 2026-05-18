@@ -39,11 +39,39 @@ export function GlowOrbs({ orbs = defaultOrbs }: GlowOrbsProps) {
     );
 }
 
-export function GlowOrbsNexus() {
+/**
+ * Token-driven ambient blooms (theme-adaptive: amber under `.cyberpunk`, etc.).
+ * - `subtle` (default): two quiet corner orbs — the original; dashboard /
+ *   DashboardLayout (clarity/shops/reas) safe, zero perf cost.
+ * - `rich`: large amber/accent blooms + soft center bloom, STATIC.
+ * - `rich-animated`: same, with `animate-pulse`. Opt-in ONLY for low-cost
+ *   single-purpose pages (e.g. an auth screen). Do NOT use on content shells —
+ *   pulsing viewport-scale blurred layers = continuous full-frame repaint →
+ *   100% CPU / flicker across every consumer (AppShell + DashboardLayout).
+ */
+export function GlowOrbsNexus({ variant = "subtle" }: { variant?: "rich" | "rich-animated" | "subtle" }) {
+    if (variant === "subtle") {
+        return (
+            <>
+                <div className="absolute top-0 right-0 w-96 h-96 bg-primary/15 rounded-full blur-3xl -translate-y-1/3 translate-x-1/3 opacity-50" />
+                <div className="absolute bottom-0 left-0 w-72 h-72 bg-accent/12 rounded-full blur-3xl translate-y-1/3 -translate-x-1/3 opacity-50" />
+            </>
+        );
+    }
+
+    const pulse = variant === "rich-animated" ? " animate-pulse" : "";
+
+    // Soft ambient via layered radial-gradients (theme tokens → transparent).
+    // NOT blurred circles: a blurred solid disc always has a visible core/edge
+    // on sparse content; a gradient fades to nothing by construction (and costs
+    // no filter — cheap even animated).
     return (
-        <>
-            <div className="absolute top-0 right-0 w-96 h-96 bg-primary/15 rounded-full blur-3xl -translate-y-1/3 translate-x-1/3 opacity-50" />
-            <div className="absolute bottom-0 left-0 w-72 h-72 bg-accent/12 rounded-full blur-3xl translate-y-1/3 -translate-x-1/3 opacity-50" />
-        </>
+        <div
+            className={`absolute inset-0${pulse}`}
+            style={{
+                background:
+                    "radial-gradient(75% 60% at 0% 0%, color-mix(in oklab, var(--color-primary) 22%, transparent), transparent 62%)",
+            }}
+        />
     );
 }

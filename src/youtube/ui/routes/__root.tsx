@@ -62,6 +62,7 @@ function RootLayout() {
     return (
         <AppShell
             themeClass="cyberpunk"
+            glowVariant="rich"
             sidebar={
                 <AppSidebar
                     renderBrand={() => (
