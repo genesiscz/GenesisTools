@@ -371,3 +371,32 @@ describe("paths: tmpdir", () => {
         }
     });
 });
+
+// ---------------------------------------------------------------------------
+// toPosixPath — separator normalization for keys/output
+// ---------------------------------------------------------------------------
+
+describe("paths: toPosixPath", () => {
+    let toPosixPath: typeof import("./paths").toPosixPath;
+
+    beforeEach(async () => {
+        toPosixPath = (await import("./paths")).toPosixPath;
+    });
+
+    it("converts backslashes to forward slashes", () => {
+        expect(toPosixPath("src\\a\\b.ts")).toBe("src/a/b.ts");
+    });
+
+    it("leaves already-POSIX paths unchanged", () => {
+        expect(toPosixPath("src/a/b.ts")).toBe("src/a/b.ts");
+    });
+
+    it("handles mixed separators", () => {
+        expect(toPosixPath("src\\a/b\\c.ts")).toBe("src/a/b/c.ts");
+    });
+
+    it("handles empty and separatorless strings", () => {
+        expect(toPosixPath("")).toBe("");
+        expect(toPosixPath("file.ts")).toBe("file.ts");
+    });
+});

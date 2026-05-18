@@ -95,6 +95,22 @@ export function collapsePath(p: string): string {
  */
 export { sep };
 
+/**
+ * Normalize a path to POSIX separators (`\` → `/`).
+ *
+ * Use whenever a path is compared, used as a Map/object key, hashed, or
+ * emitted as stable output (merkle trees, code graphs, file-source keys,
+ * snapshots). On Windows `path.join`/`relative` yield `src\a.ts`; without
+ * this they don't match the `src/a.ts` the rest of the code/tests assume,
+ * which is the entire path-separator failure cluster.
+ *
+ * For filesystem *access* keep the native path — only normalize the
+ * logical/string form used for identity or display.
+ */
+export function toPosixPath(p: string): string {
+    return p.replace(/\\/g, "/");
+}
+
 export interface TmpdirOptions {
     /**
      * On macOS/Linux, prefer the short, stable `/tmp` root over the per-user
