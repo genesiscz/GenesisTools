@@ -1,5 +1,5 @@
 import { FileTailer } from "@app/utils/fs/file-tailer";
-import chalk from "chalk";
+import pc from "picocolors";
 import type { Command } from "commander";
 import { formatQaEntry } from "../lib/format";
 import { logFilePathFor } from "../lib/log-store";
@@ -25,7 +25,7 @@ function watchToday(opts: { lines?: number }): void {
     }
 
     const file = logFilePathFor({ ts: Date.now() });
-    process.stdout.write(chalk.dim(`\n— live: tailing ${file} (Ctrl-C to stop) —\n`));
+    process.stdout.write(pc.dim(`\n— live: tailing ${file} (Ctrl-C to stop) —\n`));
     const t = new FileTailer<QaEntry>(file, {
         onLine: (e) => process.stdout.write(`\n${formatQaEntry(e)}`),
     });

@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@app/utils/json";
-import chalk from "chalk";
+import pc from "picocolors";
 import type { Command } from "commander";
 import { formatQaEntry } from "../lib/format";
 import { openReadModel, type QueryOpts, queryEntries } from "../lib/read-model";
@@ -15,7 +15,7 @@ export function renderDigest(opts: QueryOpts & { dbPath: string }): string {
     try {
         const rows = queryEntries(db, opts);
         if (rows.length === 0) {
-            return chalk.dim("No questions recorded.");
+            return pc.dim("No questions recorded.");
         }
 
         return rows.map(formatQaEntry).join("\n");

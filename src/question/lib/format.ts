@@ -1,12 +1,13 @@
-import chalk from "chalk";
+import pc from "picocolors";
 import type { QaEntry } from "./types";
 
-// chalk auto-detects stdout: full color on a TTY, no-ops when piped/redirected,
-// so digests are colorful in a terminal and clean ANSI-free for `| tools json`.
+// picocolors (the codebase convention over chalk) auto-detects stdout: full
+// color on a TTY, no-ops when piped/redirected — colorful in a terminal,
+// clean ANSI-free for `| tools json`.
 const TAG_TINT: Record<string, (s: string) => string> = {
-    question: chalk.bold.blue,
-    action: chalk.bold.yellow,
-    directive: chalk.bold.green,
+    question: (s) => pc.bold(pc.blue(s)),
+    action: (s) => pc.bold(pc.yellow(s)),
+    directive: (s) => pc.bold(pc.green(s)),
 };
 
 type FormattableEntry = Pick<
@@ -21,10 +22,10 @@ type FormattableEntry = Pick<
  */
 export function formatQaEntry(e: FormattableEntry): string {
     const when = new Date(e.ts).toISOString().slice(0, 16).replace("T", " ");
-    const tint = TAG_TINT[e.tag] ?? chalk.bold.gray;
-    const head = `${chalk.dim(when)}  ${chalk.cyan.bold(e.project)} ${chalk.dim("·")} ${chalk.magenta(e.branch ?? "-")}  ${tint(`[${e.tag}]`)}`;
-    const preview = chalk.yellow(e.answerMd.split("\n").slice(0, 3).join("\n"));
+    const tint = TAG_TINT[e.tag] ?? ((s: string) => pc.bold(pc.gray(s)));
+    const head = `${pc.dim(when)}  ${pc.bold(pc.cyan(e.project))} ${pc.dim("·")} ${pc.magenta(e.branch ?? "-")}  ${tint(`[${e.tag}]`)}`;
+    const preview = pc.yellow(e.answerMd.split("\n").slice(0, 3).join("\n"));
     const sid = e.sessionId && e.sessionId !== "unknown" ? e.sessionId.slice(0, 8) : null;
-    const resume = sid ? chalk.dim(`  ↩ ${sid} · tools claude resume ${sid}\n`) : "";
-    return `${head}\n${chalk.green("❯")} ${chalk.bold(e.question)}\n${preview}\n${resume}`;
+    const resume = sid ? pc.dim(`  ↩ ${sid} · tools claude resume ${sid}\n`) : "";
+    return `${head}\n${pc.green("❯")} ${pc.bold(e.question)}\n${preview}\n${resume}`;
 }
