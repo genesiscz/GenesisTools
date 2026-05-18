@@ -1,4 +1,5 @@
 import { mock } from "bun:test";
+import * as cliUtils from "@app/utils/cli";
 
 type MockResponses = Record<string, unknown>;
 
@@ -16,6 +17,16 @@ function getResponses(): MockResponses {
 export function setupInquirerMock(): void {
     // Use globalThis to store mock responses so the mock can access them
     (globalThis as Record<string, unknown>).__inquirerMockResponses = { selectedProviders: ["claude"] };
+
+    // Commands gate every interactive prompt behind isInteractive() (TTY check),
+    // which is false under `bun test`. Without forcing it true, the commands
+    // take their non-interactive `process.exit(1)` branch instead of the
+    // mocked-prompt path these tests exercise. Re-export the real module so
+    // suggestCommand/Executor/etc. keep working; only isInteractive is stubbed.
+    mock.module("@app/utils/cli", () => ({
+        ...cliUtils,
+        isInteractive: () => true,
+    }));
 
     mock.module("@inquirer/prompts", () => ({
         checkbox: async (_config: unknown) => {
