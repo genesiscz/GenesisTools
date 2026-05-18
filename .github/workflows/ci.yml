@@ -85,7 +85,9 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    # Backstop only — must exceed the 8m test-step tripwire + install so the
+    # step times out and still runs Upload logs (partial log) before this fires.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -114,12 +116,14 @@ jobs:
       # signal is the log, not the exit code. bun test continues past failing
       # files, so one log = full failure inventory for this OS.
       # Tripwire: a stuck/slow run dies fast and still uploads the partial
-      # tee'd log instead of burning the 45-min job backstop. ubuntu is ~1min
-      # healthy, windows ~5min healthy — 2/7 leaves headroom but catches hangs.
+      # tee'd log instead of burning the job backstop. Static 8m — GitHub
+      # Actions does NOT allow expressions in step-level timeout-minutes
+      # (only job-level), so no per-OS value here. Healthy: ubuntu ~1min,
+      # windows ~5min; 8m catches a hang on either without flaking.
       - name: Run tests (full suite, discovery)
         id: tests
         continue-on-error: true
-        timeout-minutes: ${{ matrix.os == 'windows-latest' && 7 || 2 }}
+        timeout-minutes: 8
         shell: bash
         run: |
           set -o pipefail
