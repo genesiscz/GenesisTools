@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { type BundledSound, BUNDLED_SOUNDS } from "./assets/manifest";
+import { BUNDLED_SOUNDS, type BundledSound } from "./assets/manifest";
 import { DING_PRESETS } from "./ding-presets";
 import type { SoundChoice } from "./runner.server";
 
@@ -57,9 +57,7 @@ export function getAudioLibrary(): AudioLibrary {
     return { bundled, synth, default: def };
 }
 
-export type ParseSoundResult =
-    | { ok: true; sound?: SoundChoice; enabled: boolean }
-    | { ok: false; error: string };
+export type ParseSoundResult = { ok: true; sound?: SoundChoice; enabled: boolean } | { ok: false; error: string };
 
 /**
  * Parse a `--sound` / dashboard spec into a validated `SoundChoice`.
@@ -112,9 +110,7 @@ export function parseSoundSpec(spec: string): ParseSoundResult {
 /** Human-readable list of every available sound (for `--list-sounds` / errors). */
 export function formatAudioLibrary(): string {
     const lib = getAudioLibrary();
-    const bundled = lib.bundled
-        .map((e) => `  ${e.id}${e.isDefault ? "  (default)" : ""}  — ${e.label}`)
-        .join("\n");
+    const bundled = lib.bundled.map((e) => `  ${e.id}${e.isDefault ? "  (default)" : ""}  — ${e.label}`).join("\n");
     const synth = lib.synth.map((e) => `  ${e.id}  — ${e.label}`).join("\n");
     return `Available sounds:\n\nBundled (Kenney CC0):\n${bundled}\n\nSynth presets:\n${synth}\n\nAlso valid:  custom:/abs/path.wav  |  off`;
 }
