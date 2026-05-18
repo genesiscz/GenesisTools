@@ -178,9 +178,9 @@ describe("searchIndexReadonly with attach", () => {
         ).rejects.toThrow();
     });
 
-    it("attaches DB paths containing URI-reserved characters", async () => {
-        const specialDir = makeTempDir("ext special#dir?");
-        const specialPath = join(specialDir, "quote'and#hash?.db");
+    it("attaches DB paths containing URI-reserved characters (#, ', space, %)", async () => {
+        const specialDir = makeTempDir("ext special#dir");
+        const specialPath = join(specialDir, "quote'and #hash%.db");
         const ext = new Database(specialPath);
         ext.run("CREATE TABLE allowed (id TEXT)");
         ext.run("INSERT INTO allowed (id) VALUES ('3')");
