@@ -25,7 +25,7 @@ function statusColor(status: string): string {
         case "failed":
             return "bg-rose-400";
         case "cancelled":
-            return "bg-zinc-500";
+            return "bg-zinc-500"; // allow-palette: categorical "cancelled" status dot (parallels cyan/rose/amber)
         default:
             return "bg-amber-400";
     }

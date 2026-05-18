@@ -146,10 +146,58 @@ clarity's/shops' **full** pages (01, 05) — a pure composition gap.
 
 ## Pre-Ship Checklist
 
-- [ ] `rg 'bg-zinc-|border-zinc-|border-white/|bg-white/|text-zinc-|bg-neutral-' src/<tool>/ui` → **0 hits**
+- [ ] `bun run check:ui-palette` → exits 0 (the guardrail; see below)
 - [ ] Every page sits inside the app shell on the ambient background
 - [ ] Auth pages use the shared auth layout (branded, glass, ambient)
 - [ ] Primary CTAs use `brand`/`cyber`, not flat `default`
 - [ ] Cards use a rich variant or unmodified themed `default`
 - [ ] Empty states have icon + glow + heading + CTA (not bare text)
 - [ ] Screenshot it next to a dashboard page — same visual family?
+
+---
+
+## Canonical Shells (use one — never hand-roll)
+
+The drift was fixed at the root (2026-05-18). Every new dashboard/tool UI MUST
+consume one of these; they wire `ThemeProvider variant="nexus"` + `cyber-grid`
+ambient bg + glow orbs + glass header automatically, so consumers get the
+design system "for free" with no per-app theme code:
+
+- **`@ui/layouts/DashboardLayout`** — top-nav apps (clarity, shops, reas).
+  Pass `title`, `navLinks`, `activePath`, `onNavigate`, optional `rightSlot`.
+  Set `<html className="cyberpunk">` in the root document.
+- **`@ui/custom/AppShell`** — sidebar apps (the dashboard). Sidebar + nexus.
+- **`@ui/layouts/AuthLayout`** — every login/register screen. Props:
+  `brand`, `icon`, `footer`. Branded glass card on ambient bg.
+- **`@ui/custom/*`** — compose pages from `FeatureCard`, `EmptyState`,
+  `GlowOrbs`, `HeroBanner`, `StatCard`, `SectionLabel`, `IconContainer`,
+  `Tag` — never hand-roll these.
+
+## Guardrail (enforced)
+
+`bun run check:ui-palette` (`scripts/check-ui-palette.ts`) — **hard-fails** on
+raw `zinc`/`neutral`/`white-opacity` surfaces/text under `src/{clarity,shops}/ui`,
+`src/Internal/commands/reas/ui`, `src/dev-dashboard/ui/src`. A deliberate
+semantic carve-out (categorical status colors, media scrims) must carry an
+inline `// allow-palette: <reason>` (or `scrim`/`overlay`) comment **on the
+same line**. Wire it into CI alongside `lint`.
+
+## New-Dashboard Checklist
+
+1. Root document: `<html className="cyberpunk">`.
+2. Wrap routes in `@ui/layouts/DashboardLayout` (or `AppShell`).
+3. Auth (if any) in `@ui/layouts/AuthLayout`.
+4. Compose pages from `@ui/components/*` + `@ui/custom/*` only.
+5. Colors = theme tokens (`bg-card`, `border-border`, `text-muted-foreground`,
+   `text-primary`…). Zero raw palette.
+6. `bun run check:ui-palette` green + screenshot beside a dashboard page.
+
+## Deferred Follow-up
+
+~679 `text-gray-*` / `text-slate-*` / `bg-slate-*` occurrences remain across
+clarity/shops/reas (same pathology, lower visual impact than the fixed
+zinc-surface drift). The guardrail **warns** (not fails) on these. Next pass:
+`text-gray-{400,500,600}`→`text-muted-foreground`, `{100,200,300}`→
+`text-foreground`, `bg-slate-9xx`→`bg-card`. Deliberate slate hero panels /
+radial-gradient backdrops in `reas/.../AnalysisSections` are intentional —
+keep, tagged.

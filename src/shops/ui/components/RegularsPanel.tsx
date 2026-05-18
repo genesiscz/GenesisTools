@@ -12,7 +12,7 @@ interface Props {
 const CONFIDENCE_CLASSES: Record<RecurringPurchase["confidence"], string> = {
     high: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30",
     medium: "bg-amber-500/15 text-amber-300 border-amber-500/30",
-    low: "bg-zinc-500/10 text-zinc-400 border-zinc-500/30",
+    low: "bg-zinc-500/10 text-zinc-400 border-zinc-500/30", // allow-palette: categorical confidence scale (parallels emerald/amber)
 };
 
 function daysUntil(iso: string): number {
