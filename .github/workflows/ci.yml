@@ -5,25 +5,139 @@ on:
     branches: [master, main]
   pull_request:
     branches: [master, main]
+  workflow_dispatch:
 
 jobs:
-  check:
+  # Decide which OSes the test matrix runs on.
+  # ubuntu always; windows-latest only when the PR opts in via title/label
+  # containing "windows" (case-insensitive), or on manual workflow_dispatch.
+  setup:
     runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.decide.outputs.matrix }}
+    steps:
+      - id: decide
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: |
+          # Emit `include` objects so each OS carries its own testTimeout —
+          # referenced as ${{ matrix.testTimeout }} (a plain matrix int IS
+          # valid in step-level timeout-minutes; only non-matrix contexts /
+          # raw ternaries are rejected there).
+          # testTimeout from real last-20-runs data: ubuntu test discovery
+          # med 66s / max 146s -> 4m; windows med 136s / healthy ~150s -> 7m.
+          inc='{"os":"ubuntu-latest","testTimeout":4}'
+          win=false
+          if [ "$EVENT" = "workflow_dispatch" ]; then win=true; fi
+          title_lc=$(printf '%s' "$PR_TITLE" | tr '[:upper:]' '[:lower:]')
+          labels_lc=$(printf '%s' "$PR_LABELS" | tr '[:upper:]' '[:lower:]')
+          case "$title_lc" in *windows*) win=true ;; esac
+          case "$labels_lc" in *windows*) win=true ;; esac
+          if [ "$win" = "true" ]; then inc="$inc, {\"os\":\"windows-latest\",\"testTimeout\":7}"; fi
+          echo "matrix={\"include\":[$inc]}" >> "$GITHUB_OUTPUT"
+          echo "Selected matrix include: [$inc] (windows opted-in: $win)"
+
+  # Single job (no separate `check` runner — cheaper). Lint/typecheck run as
+  # ubuntu-only steps AFTER test discovery + Upload logs, so they can never
+  # block or delay the test signal — the test discovery step is
+  # continue-on-error and uploads its log before lint/tsc even start.
+  test:
+    needs: setup
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
+    runs-on: ${{ matrix.os }}
+    # Backstop only — must exceed the per-OS testTimeout (4m/7m) + cold
+    # install (windows ~237s) + ubuntu lint/tsc so step tripwires + Upload
+    # logs fire first. Real worst case ~12m (windows cold); 15m has margin.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: "1.3.5"
+          bun-version: "1.3.13"
 
+      - name: Cache bun install
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
+
+      # Discovery phase: capture how far install gets on each OS too.
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        id: install
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          bun install --frozen-lockfile 2>&1 | tee "install-${{ runner.os }}.log"
 
+      # Run the WHOLE suite. Discovery only — never fail the job here; the
+      # signal is the log, not the exit code. bun test continues past failing
+      # files, so one log = full failure inventory for this OS.
+      # Tripwire: per-OS matrix.testTimeout (ubuntu 2m, windows 7m). A plain
+      # matrix int IS valid in step-level timeout-minutes (matrix resolves at
+      # job-expansion); only raw ternaries / non-matrix contexts are rejected.
+      # On timeout the partial tee'd log still uploads (continue-on-error).
+      - name: Run tests (full suite, discovery)
+        id: tests
+        continue-on-error: true
+        timeout-minutes: ${{ matrix.testTimeout }}
+        shell: bash
+        run: |
+          set -o pipefail
+          bun run test 2>&1 | tee "test-${{ runner.os }}.log"
+
+      - name: Summarize results
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## ${{ runner.os }} — test discovery"
+            echo ""
+            echo "- install step outcome: \`${{ steps.install.outcome }}\`"
+            echo "- tests step outcome: \`${{ steps.tests.outcome }}\`"
+            echo ""
+            echo '<details><summary>Last 60 lines of test log</summary>'
+            echo ""
+            echo '```'
+            tail -n 60 "test-${{ runner.os }}.log" 2>/dev/null || echo "(no test log)"
+            echo '```'
+            echo '</details>'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: discovery-logs-${{ runner.os }}
+          path: |
+            install-${{ runner.os }}.log
+            test-${{ runner.os }}.log
+          if-no-files-found: warn
+
+      # Lint/typecheck — ubuntu only (redundant + slow on Windows), and only
+      # after test discovery + Upload logs above, so they can't block the
+      # test signal. NOT continue-on-error: a real lint/tsc failure should
+      # still turn the run red (same signal the old separate `check` job
+      # gave), just without its own runner. Timeouts are fail-fast tripwires
+      # from real data (biome ~5s, dashboard ~1s, tsc ~8s) + wide headroom.
       - name: Run Biome check (main)
+        if: runner.os == 'Linux'
+        timeout-minutes: 1
         run: bun run lint
 
       - name: Run Biome check (dashboard)
+        if: runner.os == 'Linux'
+        timeout-minutes: 1
         run: bun run lint:dashboard
 
       - name: TypeScript check
+        if: runner.os == 'Linux'
+        timeout-minutes: 2
         run: bun run typecheck:all
