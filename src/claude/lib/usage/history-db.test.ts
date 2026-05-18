@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, unlinkSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { ClaudeDatabase } from "@app/utils/claude/database";
+import { removeDbFile } from "@app/utils/fs";
+import { tmpdir } from "@app/utils/paths";
 import { UsageHistoryDb } from "./history-db";
 
 let testCounter = 0;
@@ -14,15 +15,6 @@ function getTestDbPath(): string {
 /** Generate a recent ISO timestamp (minutesAgo from now) */
 function recentTimestamp(minutesAgo: number): string {
     return new Date(Date.now() - minutesAgo * 60_000).toISOString();
-}
-
-function cleanupDb(dbPath: string): void {
-    for (const suffix of ["", "-wal", "-shm"]) {
-        const file = dbPath + suffix;
-        if (existsSync(file)) {
-            unlinkSync(file);
-        }
-    }
 }
 
 describe("UsageHistoryDb", () => {
@@ -37,7 +29,7 @@ describe("UsageHistoryDb", () => {
 
     afterEach(() => {
         db.close();
-        cleanupDb(dbPath);
+        removeDbFile(dbPath);
     });
 
     test("creates database and tables on init", () => {

@@ -1,8 +1,8 @@
 import { Database } from "bun:sqlite";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { removeRecursive } from "@app/utils/fs";
+import { makeTempDir } from "@app/utils/paths";
 import { ensureExtensionCapableSQLite } from "@app/utils/search/stores/sqlite-vec-loader";
 import { getIndexerStorage } from "./storage";
 import { createIndexStore, searchIndexReadonly } from "./store";
@@ -23,7 +23,7 @@ const RUN_ID = Date.now();
 afterAll(() => {
     const storage = getIndexerStorage();
     for (const name of [`filters-test-${RUN_ID}`, `attach-test-${RUN_ID}`]) {
-        rmSync(storage.getIndexDir(name), { recursive: true, force: true });
+        removeRecursive(storage.getIndexDir(name));
     }
 });
 
@@ -122,7 +122,7 @@ describe("searchIndexReadonly with attach", () => {
     beforeAll(async () => {
         await seed(NAME);
 
-        extDir = mkdtempSync(join(tmpdir(), "ext-"));
+        extDir = makeTempDir("ext-");
         extDbPath = join(extDir, "ext.db");
         const ext = new Database(extDbPath);
         ext.run("CREATE TABLE allowed (id TEXT)");
@@ -131,7 +131,7 @@ describe("searchIndexReadonly with attach", () => {
     });
 
     afterAll(() => {
-        rmSync(extDir, { recursive: true, force: true });
+        removeRecursive(extDir);
     });
 
     it("attaches an external DB read-only and uses it inside a subquery", async () => {
@@ -179,7 +179,7 @@ describe("searchIndexReadonly with attach", () => {
     });
 
     it("attaches DB paths containing URI-reserved characters", async () => {
-        const specialDir = mkdtempSync(join(tmpdir(), "ext special#dir?"));
+        const specialDir = makeTempDir("ext special#dir?");
         const specialPath = join(specialDir, "quote'and#hash?.db");
         const ext = new Database(specialPath);
         ext.run("CREATE TABLE allowed (id TEXT)");
@@ -198,7 +198,7 @@ describe("searchIndexReadonly with attach", () => {
             const sid = results[0].doc.sourceId ?? String(results[0].doc.metadata?.source_id ?? "");
             expect(String(sid)).toBe("3");
         } finally {
-            rmSync(specialDir, { recursive: true, force: true });
+            removeRecursive(specialDir);
         }
     });
 
