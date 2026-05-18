@@ -1,0 +1,13 @@
+CC0 1.0 Universal (CC0 1.0) Public Domain Dedication
+
+The audio files in this directory are a curated subset of the Kenney
+"Interface Sounds" pack (https://kenney.nl/assets/interface-sounds),
+converted from .ogg to WAV with ffmpeg and otherwise unmodified.
+
+Kenney dedicates all assets to the public domain under CC0 1.0. To the
+extent possible under law, all copyright and related and neighboring rights
+to these files have been waived worldwide. They may be used, including for
+commercial purposes, with no attribution required, and are distributed
+without any warranty.
+
+Full deed: https://creativecommons.org/publicdomain/zero/1.0/

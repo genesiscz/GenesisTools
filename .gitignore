@@ -195,6 +195,8 @@ vercel-skills
 *.m4a
 *.qta
 *.mp3
+# Exception: bundled CC0 notification sounds shipped with the `question` sound sink
+!src/utils/audio/assets/*.wav
 *.aac
 *.ogg
 *.flac
