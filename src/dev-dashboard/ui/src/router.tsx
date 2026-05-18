@@ -7,6 +7,7 @@ import { ContainersRoute } from "@/routes/containers";
 import { DaemonRoute } from "@/routes/daemon";
 import { IndexRoute } from "@/routes/index";
 import { ObsidianRoute } from "@/routes/obsidian";
+import { QaRoute } from "@/routes/qa";
 import { TodosRoute } from "@/routes/todos";
 import { TtydRoute } from "@/routes/ttyd";
 
@@ -77,12 +78,19 @@ const todosRoute = createRoute({
     component: TodosRoute,
 });
 
+const qaRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: "/qa",
+    component: QaRoute,
+});
+
 const routeTree = rootRoute.addChildren([
     indexRoute,
     claudeRoute,
     daemonRoute,
     containersRoute,
     todosRoute,
+    qaRoute,
     ttydRoute,
     cmuxRoute,
     obsidianRoute,

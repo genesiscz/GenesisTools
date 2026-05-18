@@ -7,7 +7,18 @@ import {
 import { getDevDashboardStorage } from "@app/dev-dashboard/lib/storage";
 import type { TtydSession } from "@app/dev-dashboard/lib/ttyd/types";
 import logger from "@app/logger";
+import { resolveVaultRoot } from "@app/utils/obsidian/config";
 import { z } from "zod";
+
+/**
+ * Resolve the Obsidian vault for the dashboard. An explicit per-dashboard
+ * config value still wins (override); otherwise defer to the shared
+ * src/utils/obsidian resolver (unified config → obsidian.json discovery).
+ * No hardcoded user path.
+ */
+export function resolveDashboardVault(explicit?: string | null): string | null {
+    return explicit ?? resolveVaultRoot();
+}
 
 const DashboardAuthSchema = z.object({
     enabled: z.boolean().default(true),
@@ -45,7 +56,7 @@ const PulseConfigSchema = z.object({
 
 const DevDashboardConfigSchema = z.object({
     port: z.number().int().min(1).max(65535).default(3042),
-    obsidianVault: z.string().default("/Users/Martin/Tresors/Projects/GenesisBrain"),
+    obsidianVault: z.string().optional(),
     publishedNotes: z.array(PublishedNoteSchema).default([]),
     cmuxPollIntervalMs: z.number().int().min(250).default(2000),
     auth: DashboardAuthSchema.default({}),
@@ -71,7 +82,7 @@ export async function getConfig(): Promise<DevDashboardConfig> {
     const parsed = DevDashboardConfigSchema.safeParse(raw ?? {});
 
     if (parsed.success) {
-        return parsed.data;
+        return { ...parsed.data, obsidianVault: resolveDashboardVault(parsed.data.obsidianVault) ?? "" };
     }
 
     logger.warn(
@@ -79,7 +90,8 @@ export async function getConfig(): Promise<DevDashboardConfig> {
         "dev-dashboard config failed schema validation; falling back to defaults"
     );
 
-    return DevDashboardConfigSchema.parse({});
+    const fallback = DevDashboardConfigSchema.parse({});
+    return { ...fallback, obsidianVault: resolveDashboardVault(fallback.obsidianVault) ?? "" };
 }
 
 export async function saveConfig(config: DevDashboardConfig): Promise<void> {

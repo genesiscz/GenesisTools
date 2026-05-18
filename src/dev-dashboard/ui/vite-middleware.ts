@@ -27,11 +27,16 @@ import {
 } from "@app/dev-dashboard/lib/obsidian/publish";
 import { listVault, readNote } from "@app/dev-dashboard/lib/obsidian/reader";
 import { renderSharePage } from "@app/dev-dashboard/lib/obsidian/share-template";
+import { createQaStream, todayLogFile } from "@app/dev-dashboard/lib/qa-sse";
 import { configureRetention, getCachedPulse, getSeries, startPulsePolling } from "@app/dev-dashboard/lib/system/poller";
+import { getAudioLibrary } from "@app/utils/audio/library";
+import { resolveSoundBuffer } from "@app/utils/audio/runner.server";
 import { addTodo, completeTodo, deleteTodo, listTodos } from "@app/dev-dashboard/lib/todos/service";
 import { killTtyd, listTtyd, renameTtyd, spawnTtyd } from "@app/dev-dashboard/lib/ttyd/manager";
 import { fetchWeather } from "@app/dev-dashboard/lib/weather/client";
 import logger from "@app/logger";
+import { defaultDbPath } from "@app/question/commands/log";
+import { openReadModel, queryEntries } from "@app/question/lib/read-model";
 import { SafeJSON } from "@app/utils/json";
 import type { Connect } from "vite";
 
@@ -335,6 +340,100 @@ export function attachDevDashboardMiddleware(middlewares: Connect.Server): void 
                 sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
             }
 
+            return;
+        }
+
+        if (req.method === "GET" && url.pathname === "/api/qa/log") {
+            let db: ReturnType<typeof openReadModel> | undefined;
+            try {
+                db = openReadModel(defaultDbPath());
+                const rows = queryEntries(db, {
+                    project: url.searchParams.get("project") ?? undefined,
+                    tag: url.searchParams.get("tag") ?? undefined,
+                    unread: url.searchParams.get("unread") === "1",
+                    limit: Number.parseInt(url.searchParams.get("limit") ?? "100", 10),
+                });
+                sendJson(res, 200, { entries: rows });
+            } catch (err) {
+                sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
+            } finally {
+                db?.close(); // bun:sqlite has no GC finalizer — close every request or leak an FD (t1)
+            }
+
+            return;
+        }
+
+        if (req.method === "GET" && url.pathname === "/api/qa/audio-library") {
+            sendJson(res, 200, getAudioLibrary());
+            return;
+        }
+
+        if (req.method === "GET" && url.pathname === "/api/qa/sound") {
+            try {
+                const id = url.searchParams.get("id") ?? "";
+                const lib = getAudioLibrary();
+                const entry = [...lib.bundled, ...lib.synth].find((e) => e.id === id);
+                if (!entry) {
+                    sendJson(res, 404, { error: `unknown sound id: ${id}` });
+                    return;
+                }
+
+                const buf = resolveSoundBuffer(entry.choice);
+                res.writeHead(200, {
+                    "Content-Type": "audio/wav",
+                    "Content-Length": String(buf.length),
+                    "Cache-Control": "public, max-age=3600",
+                });
+                res.end(buf);
+            } catch (err) {
+                sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
+            }
+
+            return;
+        }
+
+        if (req.method === "POST" && url.pathname === "/api/qa/config") {
+            try {
+                const body = await readJson<{ sound?: string; soundVolume?: number }>(req);
+                const args = ["question", "config"];
+                if (body.sound) {
+                    args.push("--sound", body.sound);
+                }
+
+                if (typeof body.soundVolume === "number") {
+                    args.push("--sound-volume", String(body.soundVolume));
+                }
+
+                const proc = Bun.spawn(["tools", ...args], { stdout: "pipe", stderr: "pipe" });
+                const code = await proc.exited;
+                sendJson(res, code === 0 ? 200 : 500, {
+                    ok: code === 0,
+                    output: await new Response(proc.stdout).text(),
+                });
+            } catch (err) {
+                sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
+            }
+
+            return;
+        }
+
+        if (req.method === "GET" && url.pathname === "/api/qa/stream") {
+            res.writeHead(200, {
+                "Content-Type": "text/event-stream",
+                "Cache-Control": "no-cache",
+                Connection: "keep-alive",
+            });
+            res.write(": qa stream open\n\n");
+            const stream = createQaStream(todayLogFile(), (entry) => {
+                res.write(`data: ${SafeJSON.stringify(entry)}\n\n`);
+            });
+            const keepAlive = setInterval(() => res.write(": ping\n\n"), 25000);
+            const shutdown = (): void => {
+                clearInterval(keepAlive);
+                stream.close();
+            };
+            req.on("close", shutdown);
+            req.on("aborted", shutdown);
             return;
         }
 
