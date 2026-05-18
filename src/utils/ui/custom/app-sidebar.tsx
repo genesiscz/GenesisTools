@@ -82,7 +82,7 @@ export function AppSidebar({
     const isActive = (url: string) => activePath === url || activePath.startsWith(`${url}/`);
 
     return (
-        <Sidebar className="border-r border-sidebar-border bg-sidebar">
+        <Sidebar className="border-r border-primary/20 bg-sidebar">
             <SidebarHeader className="border-b border-sidebar-border p-4 bg-gradient-to-b from-sidebar to-sidebar/80">
                 {renderBrand
                     ? renderBrand()
