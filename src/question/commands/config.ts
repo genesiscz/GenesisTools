@@ -16,6 +16,7 @@ export function registerConfigCommand(program: Command): void {
         .option("--sound [spec]", "synth:<preset> | bundled:<file> | custom:<path> | off")
         .option("--sound-volume <n>", "0..1", (v) => Number.parseFloat(v))
         .option("--notify <onoff>", "on|off")
+        .option("--obsidian <onoff>", "on|off")
         .option("--obsidian-vault <path>", "set the Obsidian vault override")
         .option("--list-sounds", "list every available sound (bundled + synth) and exit")
         .action(
@@ -23,6 +24,7 @@ export function registerConfigCommand(program: Command): void {
                 sound?: string | boolean;
                 soundVolume?: number;
                 notify?: string;
+                obsidian?: string;
                 obsidianVault?: string;
                 listSounds?: boolean;
             }) => {
@@ -55,6 +57,10 @@ export function registerConfigCommand(program: Command): void {
 
                 if (o.notify === "on" || o.notify === "off") {
                     next = saveConfig({ sinks: { ...next.sinks, notify: o.notify === "on" } });
+                }
+
+                if (o.obsidian === "on" || o.obsidian === "off") {
+                    next = saveConfig({ sinks: { ...next.sinks, obsidian: o.obsidian === "on" } });
                 }
 
                 if (o.obsidianVault) {

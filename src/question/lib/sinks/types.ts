@@ -15,6 +15,10 @@ export interface Sink {
     name: string;
     isEnabled(config: QuestionConfig): boolean;
     emit(entry: QaEntry, config: QuestionConfig): Promise<void> | void;
+    /** Optional per-sink fan-out budget (ms). Network sinks (Telegram does a
+     *  cold dynamic import + HTTP) need more than the 2s default or they get
+     *  cut off by process.exit(0) before delivery. */
+    timeoutMs?: number;
 }
 
 // SinkResult is defined once, canonically, in ../types (Task 2 — RecordResult.sinks uses it).
