@@ -101,10 +101,25 @@ uniqueness — wire it into a test/launcher when adding a dashboard.
   is `ERR_CONNECTION_REFUSED`. (Frontend port moved 3072→3074 on
   2026-05-18 to resolve a hard `--strictPort` clash with reas; both now
   source their port from `@ui/dashboards`.)
+- **Shell debt (NOT a promote candidate):** youtube's `Sidebar`+`Topbar`
+  are *not* generic components to lift into `@ui` — they're a
+  **reinvention** of the already-shared, fully-parameterized
+  `@ui/custom/AppShell` + `@ui/custom/AppSidebar` (which `dashboard`
+  consumes correctly via `navGroups`/`activePath`/`user`/`LinkComponent`).
+  Promoting them would mean rebuilding what exists. The canonical sidebar
+  shell **is** `AppShell`+`AppSidebar`; youtube should *converge to it*
+  (own `navGroups`) — an optional future refactor, not an inventory move.
+  Component survey 2026-05-18: **nothing** in `src/youtube` or
+  `src/dashboard` warrants promotion — youtube comps are domain-coupled,
+  dashboard already consumes `@ui`, the residue (`RouteError`,
+  `RouteSkeleton`, `AuthAlertBanner`) is too trivial to be worth the churn.
 
-**Takeaway for new tools:** a bespoke shell is fine *if* you still consume
-`@ui/theme` + `@ui/components` like youtube does. Bespoke shell + correct
-theme consumption = no drift. Bespoke shell + raw palette = the drift.
+**Takeaway for new tools:** prefer `@ui/custom/AppShell`+`AppSidebar` (the
+canonical sidebar shell) or `@ui/layouts/DashboardLayout` (top-nav). A
+bespoke shell is tolerable *only if* you still consume `@ui/theme` +
+`@ui/components` like youtube does (bespoke + correct theme = no drift;
+bespoke + raw palette = the drift) — but converging on the shared shell
+beats reinventing it.
 
 ## Family D — Divergent, grandfathered (NOT a precedent)
 
