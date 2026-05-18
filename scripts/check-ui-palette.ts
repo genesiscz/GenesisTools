@@ -24,9 +24,7 @@ const EXEMPT = /allow-palette|scrim|overlay/;
 
 async function scan(pattern: string): Promise<string[]> {
     const raw = await $`rg -n ${pattern} ${SCOPE}`.nothrow().text();
-    return raw
-        .split("\n")
-        .filter((line) => line.trim().length > 0 && !EXEMPT.test(line));
+    return raw.split("\n").filter((line) => line.trim().length > 0 && !EXEMPT.test(line));
 }
 
 const hardHits = await scan(HARD);
