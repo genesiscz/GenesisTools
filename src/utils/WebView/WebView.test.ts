@@ -124,7 +124,7 @@ describe.skipIf(skip.unlessMac)("WebView -- consolePipe (integration)", () => {
     });
 });
 
-describe("WebView -- persistent profile (integration)", () => {
+describe.skipIf(skip.unlessMac)("WebView -- persistent profile (integration)", () => {
     it.skip("toolName+profileKey resolves without error (skipped: bun WebView close emits orphan exit-time error)", () => {
         const wv = new WebView({
             toolName: "test-webview",
@@ -136,7 +136,7 @@ describe("WebView -- persistent profile (integration)", () => {
     });
 });
 
-describe("WebView -- screenshot (integration)", () => {
+describe.skipIf(skip.unlessMac)("WebView -- screenshot (integration)", () => {
     maybeIt("returns base64 png data", async () => {
         await using wv = new WebView({ url: "https://example.com" });
         await wv.waitForSelector("h1", { timeoutMs: 15_000 });
@@ -212,7 +212,7 @@ describe("WebViewPool (unit -- mock factory)", () => {
 // Pool integration test creates multiple real WebViews + drains them; same Bun
 // orphan-close emission applies. Skip until Bun fixes the deferred-error
 // behaviour; the unit tests above cover the pool's semaphore/release/drain logic.
-describe("WebViewPool (integration)", () => {
+describe.skipIf(skip.unlessMac)("WebViewPool (integration)", () => {
     it.skip("runs 5 tasks with pool of size 2 (skipped: bun WebView close emits orphan exit-time error)", async () => {
         const pool = new WebViewPool({ size: 2 });
         const results = await Promise.all(
