@@ -339,10 +339,12 @@ describe("paths: tmpdir", () => {
         const { tmpdir: osTmpdir } = await import("node:os");
         const realOsTmp = osTmpdir();
         mockWindows();
-        // No literal "/tmp" on Windows regardless of preferRoot.
+        // On Windows, tmpdir() is os.tmpdir() — preferRoot must not force the
+        // hardcoded "/tmp". (Can't assert !startsWith("/tmp") here: mocking
+        // process.platform doesn't change what node's os.tmpdir() returns, and
+        // on a Linux test host that is genuinely "/tmp".)
         expect(tmpdir()).toBe(realOsTmp);
         expect(tmpdir({ preferRoot: true })).toBe(realOsTmp);
-        expect(tmpdir().startsWith("/tmp")).toBe(false);
     });
 
     it("tmpPath joins segments under the temp root", () => {
