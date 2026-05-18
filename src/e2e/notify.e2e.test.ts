@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { runTool } from "@app/utils/e2e/helpers";
+import { skip } from "@app/utils/test/skip";
 
 describe("tools notify", () => {
     describe("help & no-args", () => {
@@ -22,7 +23,10 @@ describe("tools notify", () => {
         });
     });
 
-    describe("sending notifications", () => {
+    // These spawn the real `tools notify`, which fires an actual macOS
+    // notification and can block (no GUI / notification daemon in CI &
+    // headless). Opt-in via RUN_NOTIFY_E2E=1.
+    describe.skipIf(skip.notifyE2E)("sending notifications", () => {
         it("sends basic notification", async () => {
             const r = await runTool(["notify", "e2e test", "--title", "E2E"]);
             expect(r.exitCode).toBe(0);

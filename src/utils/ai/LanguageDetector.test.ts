@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { skip } from "@app/utils/test/skip";
 import {
     createLanguageDetector,
     DarwinKitTextDriver,
@@ -14,7 +15,7 @@ import {
 const TEST_AUDIO_FILE = process.env.TEST_AUDIO_FILE;
 
 describe("LanguageDetector", () => {
-    describe("text detection (DarwinKit)", () => {
+    describe.skipIf(skip.darwinkit)("text detection (DarwinKit)", () => {
         const driver = new DarwinKitTextDriver();
 
         test("detects Czech text", async () => {

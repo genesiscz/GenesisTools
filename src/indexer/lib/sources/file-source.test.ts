@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { toPosixPath } from "@app/utils/paths";
 import { FileSource } from "./file-source";
 
 describe("FileSource", () => {
@@ -24,8 +25,8 @@ describe("FileSource", () => {
         expect(entries.length).toBe(2);
 
         const ids = entries.map((e) => e.id).sort();
-        expect(ids).toContain(join(tmpDir, "a.ts"));
-        expect(ids).toContain(join(tmpDir, "b.ts"));
+        expect(ids).toContain(toPosixPath(join(tmpDir, "a.ts")));
+        expect(ids).toContain(toPosixPath(join(tmpDir, "b.ts")));
     });
 
     it("filters by included suffixes", async () => {
@@ -100,18 +101,22 @@ describe("FileSource", () => {
 
         const previousHashes = new Map<string, string>();
         previousHashes.set(
-            join(tmpDir, "keep.ts"),
+            toPosixPath(join(tmpDir, "keep.ts")),
             source.hashEntry({
-                id: join(tmpDir, "keep.ts"),
+                id: toPosixPath(join(tmpDir, "keep.ts")),
                 content: "unchanged content",
-                path: join(tmpDir, "keep.ts"),
+                path: toPosixPath(join(tmpDir, "keep.ts")),
             })
         );
         previousHashes.set(
-            join(tmpDir, "modify.ts"),
-            source.hashEntry({ id: join(tmpDir, "modify.ts"), content: "old content", path: join(tmpDir, "modify.ts") })
+            toPosixPath(join(tmpDir, "modify.ts")),
+            source.hashEntry({
+                id: toPosixPath(join(tmpDir, "modify.ts")),
+                content: "old content",
+                path: toPosixPath(join(tmpDir, "modify.ts")),
+            })
         );
-        previousHashes.set(join(tmpDir, "deleted.ts"), "some-old-hash");
+        previousHashes.set(toPosixPath(join(tmpDir, "deleted.ts")), "some-old-hash");
 
         const changes = source.detectChanges({
             previousHashes,
@@ -125,10 +130,10 @@ describe("FileSource", () => {
         expect(changes.modified[0].id).toContain("modify.ts");
 
         expect(changes.deleted.length).toBe(1);
-        expect(changes.deleted[0]).toBe(join(tmpDir, "deleted.ts"));
+        expect(changes.deleted[0]).toBe(toPosixPath(join(tmpDir, "deleted.ts")));
 
         expect(changes.unchanged.length).toBe(1);
-        expect(changes.unchanged[0]).toBe(join(tmpDir, "keep.ts"));
+        expect(changes.unchanged[0]).toBe(toPosixPath(join(tmpDir, "keep.ts")));
     });
 
     it("detectChanges with full=true treats all entries as added", async () => {

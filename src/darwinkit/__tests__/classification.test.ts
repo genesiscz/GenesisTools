@@ -1,7 +1,8 @@
 import { describe, expect, it } from "bun:test";
+import { skip } from "@app/utils/test/skip";
 import { runDarwinKit } from "./helpers";
 
-describe("darwinkit classification commands", () => {
+describe.skipIf(skip.darwinkit)("darwinkit classification commands", () => {
     describe("classify", () => {
         it("classifies text into categories", async () => {
             const result = await runDarwinKit(

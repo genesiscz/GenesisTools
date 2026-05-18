@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, unlinkSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { removeDbFile } from "@app/utils/fs";
+import { tmpdir } from "@app/utils/paths";
 import { TelegramHistoryStore } from "../TelegramHistoryStore";
 
 function tmpDbPath() {
@@ -68,10 +68,7 @@ describe("TelegramHistoryStore.queryMessages", () => {
 
     afterEach(() => {
         store.close();
-
-        if (existsSync(dbPath)) {
-            unlinkSync(dbPath);
-        }
+        removeDbFile(dbPath);
     });
 
     it("returns all messages for a chat", () => {

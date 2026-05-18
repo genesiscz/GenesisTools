@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { isFfplayAvailable, playBuffer, playStream } from "@app/utils/audio/playback";
+import { skip } from "@app/utils/test/skip";
 
-describe("playback", () => {
+describe.skipIf(skip.audioDevice)("playback", () => {
     test("isFfplayAvailable returns boolean", () => {
         expect(typeof isFfplayAvailable()).toBe("boolean");
     });

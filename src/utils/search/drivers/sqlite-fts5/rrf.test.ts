@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { removeRecursive } from "@app/utils/fs";
+import { makeTempDir } from "@app/utils/paths";
 import { SearchEngine } from "./index";
 
 describe("RRF over-fetch", () => {
@@ -9,12 +9,12 @@ describe("RRF over-fetch", () => {
 
     afterEach(() => {
         if (tmpDir) {
-            rmSync(tmpDir, { recursive: true, force: true });
+            removeRecursive(tmpDir);
         }
     });
 
     it("bm25Search returns at most limit results", () => {
-        tmpDir = mkdtempSync(join(tmpdir(), "rrf-"));
+        tmpDir = makeTempDir("rrf-");
         const dbPath = join(tmpDir, "test.db");
 
         const engine = new SearchEngine({
@@ -43,7 +43,7 @@ describe("RRF over-fetch", () => {
     });
 
     it("returns correct number of results when over-fetching from BM25", () => {
-        tmpDir = mkdtempSync(join(tmpdir(), "rrf-"));
+        tmpDir = makeTempDir("rrf-");
         const dbPath = join(tmpDir, "test.db");
 
         const engine = new SearchEngine({

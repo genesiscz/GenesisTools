@@ -1,7 +1,8 @@
 import { describe, expect, it } from "bun:test";
+import { skip } from "@app/utils/test/skip";
 import { runDarwinKit } from "./helpers";
 
-describe("darwinkit NLP commands", () => {
+describe.skipIf(skip.darwinkit)("darwinkit NLP commands", () => {
     describe("detect-language", () => {
         it("detects English", async () => {
             const result = await runDarwinKit("detect-language", "Hello, how are you today?");

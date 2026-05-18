@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
+import { skip } from "@app/utils/test/skip";
 import { AIAccount } from "../AIAccount";
 import type { AccountResolver } from "../resolvers";
 import { ensureResolversInitialized, getResolver, registerResolver, resetResolvers } from "../resolvers";
@@ -46,7 +47,7 @@ describe("AIAccount", () => {
         });
     });
 
-    describe("listClaude()", () => {
+    describe.skipIf(skip.aiAccounts)("listClaude()", () => {
         it("returns AIAccount instances for each claude subscription account", async () => {
             const accounts = await AIAccount.listClaude();
             // Should return at least the accounts migrated from claude config
@@ -58,7 +59,7 @@ describe("AIAccount", () => {
         });
     });
 
-    describe("list()", () => {
+    describe.skipIf(skip.aiAccounts)("list()", () => {
         it("returns all accounts across providers", async () => {
             const accounts = await AIAccount.list();
             expect(accounts.length).toBeGreaterThan(0);

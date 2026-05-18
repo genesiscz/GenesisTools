@@ -1,9 +1,10 @@
 import { describe, expect, it } from "bun:test";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
+import { skip } from "@app/utils/test/skip";
 import { encodedProjectDir, PROJECTS_DIR } from "./projects";
 
-describe("discovery.ts — discoverSessionFiles", () => {
+describe.skipIf(skip.claudeData)("discovery.ts — discoverSessionFiles", () => {
     it("returns files when allProjects is true", async () => {
         const { discoverSessionFiles } = await import("./discovery");
         const files = await discoverSessionFiles({ allProjects: true });
@@ -75,7 +76,7 @@ describe("discovery.ts — discoverSessionFiles", () => {
     });
 });
 
-describe("discovery.ts — discoverSessionFilesInDir", () => {
+describe.skipIf(skip.claudeData)("discovery.ts — discoverSessionFilesInDir", () => {
     it("returns jsonl files from a specific dir", async () => {
         const { discoverSessionFilesInDir } = await import("./discovery");
         const encoded = encodedProjectDir();

@@ -1,8 +1,10 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, unlinkSync, writeFileSync } from "node:fs";
 import { getOutput, runTool } from "@app/utils/e2e/helpers";
+import { tmpPath } from "@app/utils/paths";
 
-const ZERO_BYTE_MP3 = "/tmp/e2e-empty.mp3";
+const ZERO_BYTE_MP3 = tmpPath("e2e-empty.mp3");
+const UNSUPPORTED_FILE = tmpPath("e2e-test.xyz");
 
 describe("tools transcribe", () => {
     afterAll(() => {
@@ -34,13 +36,13 @@ describe("tools transcribe", () => {
         });
 
         it("unsupported extension exits 1", async () => {
-            writeFileSync("/tmp/e2e-test.xyz", "fake");
+            writeFileSync(UNSUPPORTED_FILE, "fake");
             try {
-                const r = await runTool(["transcribe", "/tmp/e2e-test.xyz", "--provider", "local-hf"]);
+                const r = await runTool(["transcribe", UNSUPPORTED_FILE, "--provider", "local-hf"]);
                 expect(r.exitCode).toBe(1);
                 expect(getOutput(r).toLowerCase()).toContain("unsupported");
             } finally {
-                unlinkSync("/tmp/e2e-test.xyz");
+                unlinkSync(UNSUPPORTED_FILE);
             }
         });
 

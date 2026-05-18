@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { removeRecursive } from "@app/utils/fs";
+import { makeTempDir } from "@app/utils/paths";
 import { SearchEngine } from "./index";
 
 describe("Min score threshold", () => {
@@ -9,12 +9,12 @@ describe("Min score threshold", () => {
 
     afterEach(() => {
         if (tmpDir) {
-            rmSync(tmpDir, { recursive: true, force: true });
+            removeRecursive(tmpDir);
         }
     });
 
     it("filters results below minScore threshold", async () => {
-        tmpDir = mkdtempSync(join(tmpdir(), "minscore-"));
+        tmpDir = makeTempDir("minscore-");
         const dbPath = join(tmpDir, "test.db");
 
         const engine = new SearchEngine({
@@ -51,7 +51,7 @@ describe("Min score threshold", () => {
     });
 
     it("defaults to no filtering when minScore is not set", async () => {
-        tmpDir = mkdtempSync(join(tmpdir(), "minscore-"));
+        tmpDir = makeTempDir("minscore-");
         const dbPath = join(tmpDir, "test.db");
 
         const engine = new SearchEngine({
@@ -77,7 +77,7 @@ describe("Min score threshold", () => {
     });
 
     it("respects minScore of 0 (no filtering)", async () => {
-        tmpDir = mkdtempSync(join(tmpdir(), "minscore-"));
+        tmpDir = makeTempDir("minscore-");
         const dbPath = join(tmpDir, "test.db");
 
         const engine = new SearchEngine({

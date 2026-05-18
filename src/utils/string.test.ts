@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { skip } from "@app/utils/test/skip";
 import {
     escapeShellArg,
     fuzzyFind,
@@ -61,7 +62,7 @@ describe("stripAnsi", () => {
     });
 });
 
-describe("escapeShellArg (Unix)", () => {
+describe.skipIf(skip.onWindows)("escapeShellArg (Unix)", () => {
     it("wraps in single quotes", () => {
         expect(escapeShellArg("hello")).toBe("'hello'");
     });

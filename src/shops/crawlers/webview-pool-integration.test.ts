@@ -2,12 +2,13 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { detectBunCapabilities } from "@app/utils/bun";
+import { skip } from "@app/utils/test/skip";
 import { WebViewPool } from "@app/utils/WebView";
 
 const caps = detectBunCapabilities();
 const maybeIt = caps.headlessBrowser ? it : it.skip;
 
-describe("WebViewPool integration (Alza-style bulk walk)", () => {
+describe.skipIf(skip.unlessMac)("WebViewPool integration (Alza-style bulk walk)", () => {
     if (!caps.headlessBrowser) {
         it.skip("skipped: Bun lacks headless browser support — no Bun.WebView available", () => {
             // noop

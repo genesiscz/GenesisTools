@@ -1,7 +1,8 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { getOutput, runTool } from "@app/utils/e2e/helpers";
+import { skip } from "@app/utils/test/skip";
 
-describe("tools say", () => {
+describe.skipIf(skip.integration)("tools say", () => {
     afterAll(async () => {
         // Restore default + e2e-test profiles to unmuted state.
         await runTool(["say", "--unmute", "--save", "--app", "default"]);

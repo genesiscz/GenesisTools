@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, mock } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Embedder } from "@app/utils/ai/tasks/Embedder";
+import { removeRecursive } from "@app/utils/fs";
+import { makeTempDir } from "@app/utils/paths";
 import { SearchEngine } from "./index";
 
 describe("SearchEngine with QdrantVectorStore hybrid path", () => {
@@ -10,12 +10,12 @@ describe("SearchEngine with QdrantVectorStore hybrid path", () => {
 
     afterEach(() => {
         if (tmpDir) {
-            rmSync(tmpDir, { recursive: true, force: true });
+            removeRecursive(tmpDir);
         }
     });
 
     it("uses Qdrant hybrid search when vectorStore has searchHybridAsync", async () => {
-        tmpDir = mkdtempSync(join(tmpdir(), "qdrant-hybrid-"));
+        tmpDir = makeTempDir("qdrant-hybrid-");
         const dbPath = join(tmpDir, "test.db");
 
         const mockVectorStore = {
@@ -70,7 +70,7 @@ describe("SearchEngine with QdrantVectorStore hybrid path", () => {
     });
 
     it("falls back to client-side RRF when vectorStore lacks searchHybridAsync", async () => {
-        tmpDir = mkdtempSync(join(tmpdir(), "qdrant-hybrid-"));
+        tmpDir = makeTempDir("qdrant-hybrid-");
         const dbPath = join(tmpDir, "test.db");
 
         // Plain vector store without hybrid support

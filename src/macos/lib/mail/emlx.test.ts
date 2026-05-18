@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { skip } from "@app/utils/test/skip";
 import { ENVELOPE_INDEX_PATH } from "./constants";
 import { EmlxBodyExtractor } from "./emlx";
 
@@ -10,7 +11,7 @@ const MAIL_DIR = join(homedir(), "Library/Mail/V10");
 const isDarwin = process.platform === "darwin";
 const hasMailDir = isDarwin && existsSync(MAIL_DIR);
 
-describe.skipIf(!hasMailDir)("EmlxBodyExtractor", () => {
+describe.skipIf(!hasMailDir || skip.mailInfra)("EmlxBodyExtractor", () => {
     let extractor: EmlxBodyExtractor;
 
     beforeAll(async () => {
