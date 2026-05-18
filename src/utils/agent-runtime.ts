@@ -1,0 +1,64 @@
+import { basename, resolve } from "node:path";
+import { detectCurrentProject } from "@app/utils/claude/projects";
+import { type AgentRuntimeContext, resolveClaudeContext } from "@app/utils/claude/runtime-context";
+import { isCodex, resolveCodexContext } from "@app/utils/codex/runtime-context";
+import { getMainRepoRootSync } from "@app/utils/git/worktree";
+
+export type { AgentRuntimeContext } from "@app/utils/claude/runtime-context";
+
+function gitSync(args: string[], cwd: string): string | null {
+    const r = Bun.spawnSync(["git", ...args], { cwd, stdout: "pipe", stderr: "ignore" });
+    if (r.exitCode !== 0) {
+        return null;
+    }
+
+    const out = r.stdout.toString().trim();
+    return out.length > 0 ? out : null;
+}
+
+export function getAgentRuntimeContext(
+    overrides: Partial<AgentRuntimeContext> = {},
+    env: NodeJS.ProcessEnv = process.env
+): AgentRuntimeContext {
+    const cwd = overrides.cwd ?? process.cwd();
+    const repoRoot = (() => {
+        try {
+            return getMainRepoRootSync(cwd);
+        } catch {
+            return cwd;
+        }
+    })();
+
+    let agentPartial: Partial<AgentRuntimeContext> = { agent: "unknown", sessionId: null, isInAgent: false };
+    if (env.CLAUDE_CODE_SESSION_ID || env.CLAUDECODE) {
+        agentPartial = resolveClaudeContext(env);
+    } else if (isCodex(env)) {
+        agentPartial = resolveCodexContext(env);
+    }
+
+    // Canonical worktree test: in the main repo `--git-dir` and
+    // `--git-common-dir` resolve to the same path; in a linked worktree the
+    // git-dir is `.../.git/worktrees/<name>` while the common-dir is the main
+    // `.git`, so they differ. The old `endsWith(${repoRoot}/.git)` guard was
+    // always false inside a worktree because repoRoot already pointed at the
+    // main root — `isWorktree` could never be true (t23).
+    const gitDir = gitSync(["rev-parse", "--git-dir"], cwd);
+    const gitCommonDir = gitSync(["rev-parse", "--git-common-dir"], cwd);
+    const base: AgentRuntimeContext = {
+        agent: "unknown",
+        sessionId: null,
+        isInAgent: false,
+        aiAgent: env.AI_AGENT ?? null,
+        sessionTitle: null,
+        project: detectCurrentProject() ?? basename(repoRoot),
+        repoRoot,
+        cwd,
+        isWorktree:
+            gitDir != null && gitCommonDir != null && resolve(cwd, gitDir) !== resolve(cwd, gitCommonDir),
+        worktreePath: null,
+        branch: gitSync(["rev-parse", "--abbrev-ref", "HEAD"], cwd),
+        commitSha: gitSync(["rev-parse", "--short", "HEAD"], cwd),
+    };
+
+    return { ...base, ...agentPartial, ...overrides };
+}

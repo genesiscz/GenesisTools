@@ -11,6 +11,7 @@ import { resolve } from "node:path";
 import { parseDate } from "@app/claude/lib/history/search";
 import type { SummarizeOptions, SummarizeResult } from "@app/claude/lib/history/summarize/engine.ts";
 import { listTemplates, SummarizeEngine } from "@app/claude/lib/history/summarize/engine.ts";
+import { getAgentRuntimeContext } from "@app/utils/agent-runtime";
 import { encodedProjectDir } from "@app/utils/claude";
 import { ClaudeSession } from "@app/utils/claude/session";
 import { pickAppleNotesFolder } from "@app/utils/prompts/clack/apple-notes";
@@ -94,7 +95,7 @@ async function resolveSessionIds(
 
     // 3. --current flag
     if (opts.current) {
-        const envId = process.env.CLAUDE_CODE_SESSION_ID;
+        const envId = getAgentRuntimeContext().sessionId;
         if (!envId) {
             throw new Error(
                 "CLAUDE_CODE_SESSION_ID environment variable is not set. " +
