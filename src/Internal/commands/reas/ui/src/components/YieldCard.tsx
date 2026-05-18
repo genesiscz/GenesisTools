@@ -38,7 +38,7 @@ function yieldColor(v: number | null | undefined): string {
     }
 
     if (value >= 3.5) {
-        return "text-primary";
+        return "text-amber-400";
     }
 
     return "text-red-400";

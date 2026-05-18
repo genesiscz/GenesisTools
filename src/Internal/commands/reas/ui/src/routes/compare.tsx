@@ -245,7 +245,7 @@ function ComparePage() {
 
     return (
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
-            <section className="relative mb-6 overflow-hidden rounded-3xl border border-border/60 bg-[#09101b] px-5 py-6 sm:px-7 sm:py-7">
+            <section className="relative mb-6 overflow-hidden rounded-3xl border border-border/60 bg-card/60 px-5 py-6 sm:px-7 sm:py-7">
                 <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(34,211,238,0.18),_transparent_42%),radial-gradient(circle_at_bottom_right,_rgba(245,158,11,0.18),_transparent_36%)]" />
                 <div className="relative grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px] xl:items-start">
                     <div className="flex flex-col gap-4">

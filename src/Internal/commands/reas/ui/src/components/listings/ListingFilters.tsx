@@ -224,7 +224,7 @@ function FilterMultiSelect({
                         <span className="truncate">{getMultiSelectLabel({ selectedValues, emptyLabel })}</span>
                     </Button>
                 </PopoverTrigger>
-                <PopoverContent align="start" className="w-72 border-border/60 bg-[#09090d] p-3">
+                <PopoverContent align="start" className="w-72 border-border/60 bg-popover p-3">
                     <div className="flex max-h-64 flex-col gap-2 overflow-y-auto">
                         {options.map((option) => {
                             const checked = selectedValues.includes(option.value);
@@ -264,7 +264,7 @@ function SelectField<TValue extends string>({
                 <SelectTrigger className="border-border/60 bg-card/60 font-mono text-xs text-gray-200 hover:border-border/60 focus:border-primary/40">
                     <SelectValue />
                 </SelectTrigger>
-                <SelectContent className="border-border/60 bg-[#09090d] font-mono text-xs text-gray-200">
+                <SelectContent className="border-border/60 bg-popover font-mono text-xs text-gray-200">
                     {options.map((option) => (
                         <SelectItem key={option.value} value={option.value} className="font-mono text-xs text-gray-200">
                             {option.label}

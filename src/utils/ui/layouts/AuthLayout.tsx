@@ -19,7 +19,6 @@ interface AuthLayoutProps {
 export function AuthLayout({ brand, icon, footer, children }: AuthLayoutProps) {
     return (
         <div className="min-h-screen flex items-center justify-center relative overflow-hidden bg-background">
-            {/* Ambient glow orbs (theme-tinted) */}
             <div className="absolute inset-0 overflow-hidden pointer-events-none">
                 <div className="absolute top-1/4 -left-32 w-96 h-96 bg-primary/20 rounded-full blur-[128px] animate-pulse" />
                 <div
@@ -29,12 +28,10 @@ export function AuthLayout({ brand, icon, footer, children }: AuthLayoutProps) {
                 <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-primary/5 rounded-full blur-[200px]" />
             </div>
 
-            {/* Cyber grid + scan lines (shared @ui/theme utilities) */}
             <div className="absolute inset-0 cyber-grid opacity-30 pointer-events-none" />
             <div className="absolute inset-0 scan-lines opacity-[0.04] pointer-events-none" />
 
             <div className="relative z-10 w-full max-w-md px-6" suppressHydrationWarning>
-                {/* Logo + brand */}
                 <div className="text-center mb-8">
                     <div className="inline-flex items-center gap-3 group">
                         <div className="relative">
@@ -47,7 +44,6 @@ export function AuthLayout({ brand, icon, footer, children }: AuthLayoutProps) {
                     </div>
                 </div>
 
-                {/* Glass card container */}
                 <div className="relative rounded-2xl glass-card p-8 neon-border">
                     <div className="absolute inset-0 rounded-2xl bg-gradient-to-b from-primary/5 to-transparent pointer-events-none" />
                     <div className="relative">{children}</div>

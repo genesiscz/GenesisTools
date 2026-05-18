@@ -327,7 +327,7 @@ export function AddPropertyForm({ onAdd }: AddPropertyFormProps) {
                 </Button>
             </DialogTrigger>
 
-            <DialogContent className="bg-[#0a0a14] border-primary/20 max-w-lg">
+            <DialogContent className="bg-card/95 border-primary/20 max-w-lg">
                 <DialogHeader>
                     <DialogTitle className="font-mono text-primary">Add Property to Watchlist</DialogTitle>
                     <DialogDescription className="font-mono text-gray-500 text-xs">

@@ -16,7 +16,7 @@ function getSuccessRateColor(rate: number): string {
     }
 
     if (rate >= 70) {
-        return "border-primary/30 bg-primary/10 text-primary";
+        return "border-amber-500/30 bg-amber-500/10 text-amber-300";
     }
 
     return "border-red-500/30 bg-red-500/10 text-red-300";
