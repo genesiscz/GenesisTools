@@ -33,11 +33,12 @@ export interface SidebarNavGroup {
 }
 
 interface AppSidebarProps {
-    brand: { initial: string; name: string; tagline: string };
+    brand: { initial: string; name: string; tagline: string; to?: string };
     navGroups: SidebarNavGroup[];
     activePath: string;
-    user: { name: string; email?: string; avatarUrl?: string; initials: string };
-    onSignOut: () => void;
+    /** Optional account footer. Omitted entirely when not provided (e.g. tools with no auth). */
+    user?: { name: string; email?: string; avatarUrl?: string; initials: string };
+    onSignOut?: () => void;
     LinkComponent: React.ElementType;
 }
 
@@ -60,18 +61,12 @@ const groupButton: Record<SidebarGroupTheme, string> = {
 export function AppSidebar({ brand, navGroups, activePath, user, onSignOut, LinkComponent }: AppSidebarProps) {
     const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
 
-    const isActive = (url: string) => {
-        if (url === "/dashboard") {
-            return activePath === "/dashboard";
-        }
-
-        return activePath.startsWith(url);
-    };
+    const isActive = (url: string) => activePath === url || activePath.startsWith(`${url}/`);
 
     return (
         <Sidebar className="border-r border-sidebar-border bg-sidebar">
             <SidebarHeader className="border-b border-sidebar-border p-4 bg-gradient-to-b from-sidebar to-sidebar/80">
-                <LinkComponent to="/dashboard" className="flex items-center gap-3">
+                <LinkComponent to={brand.to ?? "/dashboard"} className="flex items-center gap-3">
                     <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-amber-500 to-amber-600 text-black font-bold text-sm">
                         {brand.initial}
                     </div>
@@ -123,55 +118,57 @@ export function AppSidebar({ brand, navGroups, activePath, user, onSignOut, Link
                 ))}
             </SidebarContent>
 
-            <SidebarFooter className="border-t border-sidebar-border p-2 bg-gradient-to-t from-sidebar to-sidebar/80">
-                <SidebarMenu>
-                    <SidebarMenuItem>
-                        <div className="relative">
-                            <SidebarMenuButton
-                                className="h-12 hover:bg-sidebar-accent/10 transition-colors"
-                                onClick={() => setIsUserMenuOpen((current) => !current)}
-                            >
-                                <div className="h-7 w-7 rounded-full border border-sidebar-primary/30 overflow-hidden bg-sidebar-primary/10 text-sidebar-primary text-xs font-semibold flex items-center justify-center">
-                                    {user.avatarUrl ? (
-                                        <img src={user.avatarUrl} alt="" className="h-full w-full object-cover" />
-                                    ) : (
-                                        user.initials
-                                    )}
-                                </div>
-                                <div className="flex flex-col items-start text-xs">
-                                    <span className="font-medium text-sidebar-foreground">{user.name}</span>
-                                    <span className="text-sidebar-foreground/60 text-[10px] truncate max-w-[120px]">
-                                        {user.email}
-                                    </span>
-                                </div>
-                                <ChevronUp className="ml-auto h-4 w-4 text-sidebar-foreground/50" />
-                            </SidebarMenuButton>
+            {user && (
+                <SidebarFooter className="border-t border-sidebar-border p-2 bg-gradient-to-t from-sidebar to-sidebar/80">
+                    <SidebarMenu>
+                        <SidebarMenuItem>
+                            <div className="relative">
+                                <SidebarMenuButton
+                                    className="h-12 hover:bg-sidebar-accent/10 transition-colors"
+                                    onClick={() => setIsUserMenuOpen((current) => !current)}
+                                >
+                                    <div className="h-7 w-7 rounded-full border border-sidebar-primary/30 overflow-hidden bg-sidebar-primary/10 text-sidebar-primary text-xs font-semibold flex items-center justify-center">
+                                        {user.avatarUrl ? (
+                                            <img src={user.avatarUrl} alt="" className="h-full w-full object-cover" />
+                                        ) : (
+                                            user.initials
+                                        )}
+                                    </div>
+                                    <div className="flex flex-col items-start text-xs">
+                                        <span className="font-medium text-sidebar-foreground">{user.name}</span>
+                                        <span className="text-sidebar-foreground/60 text-[10px] truncate max-w-[120px]">
+                                            {user.email}
+                                        </span>
+                                    </div>
+                                    <ChevronUp className="ml-auto h-4 w-4 text-sidebar-foreground/50" />
+                                </SidebarMenuButton>
 
-                            {isUserMenuOpen && (
-                                <div className="absolute bottom-full left-0 z-50 mb-2 w-56 rounded-md border border-border/50 bg-card p-1 shadow-lg">
-                                    <MenuLink LinkComponent={LinkComponent} to="/profile">
-                                        <UserIcon className="mr-2 h-4 w-4" />
-                                        Profile
-                                    </MenuLink>
-                                    <MenuLink LinkComponent={LinkComponent} to="/settings">
-                                        <SettingsIcon className="mr-2 h-4 w-4" />
-                                        Settings
-                                    </MenuLink>
-                                    <div className="my-1 h-px bg-amber-500/10" />
-                                    <button
-                                        type="button"
-                                        onClick={onSignOut}
-                                        className="relative flex w-full cursor-pointer select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none transition-colors text-red-400 focus:text-red-400 hover:bg-accent hover:text-accent-foreground"
-                                    >
-                                        <LogOut className="mr-2 h-4 w-4" />
-                                        Sign out
-                                    </button>
-                                </div>
-                            )}
-                        </div>
-                    </SidebarMenuItem>
-                </SidebarMenu>
-            </SidebarFooter>
+                                {isUserMenuOpen && (
+                                    <div className="absolute bottom-full left-0 z-50 mb-2 w-56 rounded-md border border-border/50 bg-card p-1 shadow-lg">
+                                        <MenuLink LinkComponent={LinkComponent} to="/profile">
+                                            <UserIcon className="mr-2 h-4 w-4" />
+                                            Profile
+                                        </MenuLink>
+                                        <MenuLink LinkComponent={LinkComponent} to="/settings">
+                                            <SettingsIcon className="mr-2 h-4 w-4" />
+                                            Settings
+                                        </MenuLink>
+                                        <div className="my-1 h-px bg-amber-500/10" />
+                                        <button
+                                            type="button"
+                                            onClick={() => onSignOut?.()}
+                                            className="relative flex w-full cursor-pointer select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none transition-colors text-red-400 focus:text-red-400 hover:bg-accent hover:text-accent-foreground"
+                                        >
+                                            <LogOut className="mr-2 h-4 w-4" />
+                                            Sign out
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+                        </SidebarMenuItem>
+                    </SidebarMenu>
+                </SidebarFooter>
+            )}
 
             <SidebarRail />
         </Sidebar>

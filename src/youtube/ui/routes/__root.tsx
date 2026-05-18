@@ -1,9 +1,11 @@
+import { AppShell, AppSidebar } from "@app/utils/ui/custom";
 import { ErrorBoundary } from "@app/yt/components/shared/error-boundary";
-import { Sidebar } from "@app/yt/components/shared/sidebar";
-import { Topbar } from "@app/yt/components/shared/topbar";
 import { fetchUiConfig } from "@app/yt/config.client";
+import { pageTitleFromPath } from "@app/yt/lib/theme";
+import { useEventStream } from "@app/yt/ws.client";
 import type { QueryClient } from "@tanstack/react-query";
-import { createRootRouteWithContext, Outlet, redirect } from "@tanstack/react-router";
+import { createRootRouteWithContext, Link, Outlet, redirect, useRouterState } from "@tanstack/react-router";
+import { BriefcaseBusiness, Settings, Youtube } from "lucide-react";
 
 interface RouterContext {
     queryClient: QueryClient;
@@ -25,19 +27,37 @@ export const Route = createRootRouteWithContext<RouterContext>()({
 });
 
 function RootLayout() {
+    const pathname = useRouterState({ select: (state) => state.location.pathname });
+    const { connected } = useEventStream({ enabled: pathname !== "/first-run" });
+
     return (
-        <div className="cyberpunk flex min-h-screen bg-background/95 text-foreground">
-            <div className="pointer-events-none fixed inset-0 cyber-grid opacity-20" />
-            <div className="pointer-events-none fixed inset-0 scan-lines opacity-20" />
-            <Sidebar />
-            <main className="relative z-10 flex min-w-0 flex-1 flex-col">
-                <Topbar />
-                <div className="flex-1 overflow-auto p-4 lg:p-6">
-                    <ErrorBoundary>
-                        <Outlet />
-                    </ErrorBoundary>
-                </div>
-            </main>
-        </div>
+        <AppShell
+            sidebar={
+                <AppSidebar
+                    brand={{ initial: "Y", name: "YouTube AI", tagline: "Genesis", to: "/" }}
+                    navGroups={[
+                        {
+                            label: "Pipeline",
+                            theme: "primary",
+                            items: [
+                                { title: "Channels", url: "/", icon: Youtube },
+                                { title: "Jobs", url: "/jobs", icon: BriefcaseBusiness },
+                                { title: "Settings", url: "/settings", icon: Settings },
+                            ],
+                        },
+                    ]}
+                    activePath={pathname}
+                    LinkComponent={Link}
+                />
+            }
+            title={pageTitleFromPath(pathname)}
+            statusLabel={connected ? "Live" : "Polling"}
+            gridBackground
+            scanLinesEffect
+        >
+            <ErrorBoundary>
+                <Outlet />
+            </ErrorBoundary>
+        </AppShell>
     );
 }
