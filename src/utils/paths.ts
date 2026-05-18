@@ -4,7 +4,8 @@
  * that work correctly on both Unix and Windows.
  */
 
-import { homedir } from "node:os";
+import { mkdtempSync } from "node:fs";
+import { homedir, tmpdir as osTmpdir } from "node:os";
 import { isAbsolute, join, resolve, sep } from "node:path";
 
 /**
@@ -93,3 +94,54 @@ export function collapsePath(p: string): string {
  * The platform's path separator (re-exported for convenience).
  */
 export { sep };
+
+export interface TmpdirOptions {
+    /**
+     * On macOS/Linux, prefer the short, stable `/tmp` root over the per-user
+     * `$TMPDIR`. On macOS `os.tmpdir()` is `/var/folders/<…>/T` — long and,
+     * under parallel test load, the source of the path-length / churn
+     * failures in the cross-platform inventory. Defaults to `true`.
+     *
+     * No-op on Windows: there is no `/tmp`, so `os.tmpdir()`
+     * (`%TEMP%`, e.g. `C:\Users\…\AppData\Local\Temp`) is always used.
+     */
+    preferRoot?: boolean;
+}
+
+/**
+ * Cross-platform temp directory root. ALWAYS get temp paths through this
+ * (or {@link tmpPath} / {@link makeTempDir}) — never `os.tmpdir()` or a
+ * literal `"/tmp"` at a callsite — so platform quirks stay in one place.
+ *
+ * - macOS/Linux, `preferRoot` (default): `/tmp`
+ * - macOS/Linux, `preferRoot: false`:   `os.tmpdir()` (`$TMPDIR`)
+ * - Windows (any value):                `os.tmpdir()` (no `/tmp` on Windows)
+ */
+export function tmpdir(options: TmpdirOptions = {}): string {
+    const { preferRoot = true } = options;
+
+    if (preferRoot && process.platform !== "win32") {
+        return "/tmp";
+    }
+
+    return osTmpdir();
+}
+
+/**
+ * Join segments under the temp root.
+ * `tmpPath("genesis", "x.db")` → `/tmp/genesis/x.db` (macOS/Linux) or
+ * `C:\…\Temp\genesis\x.db` (Windows). For `preferRoot: false`, use
+ * `join(tmpdir({ preferRoot: false }), …)`.
+ */
+export function tmpPath(...segments: string[]): string {
+    return join(tmpdir(), ...segments);
+}
+
+/**
+ * `mkdtemp` a unique temp directory under the temp root and return its
+ * absolute path. `makeTempDir("genesis-test-")` → `/tmp/genesis-test-AbC123`.
+ * The prefix should normally end with `-`.
+ */
+export function makeTempDir(prefix: string, options?: TmpdirOptions): string {
+    return mkdtempSync(join(tmpdir(options), prefix));
+}

@@ -287,3 +287,87 @@ describe("escapeShellArg: Windows (cross-spawn compatible, two-phase)", () => {
         expect(escapeShellArg("hello")).toBe("'hello'");
     });
 });
+
+// ---------------------------------------------------------------------------
+// tmpdir / tmpPath / makeTempDir — platform-dependent temp root
+// ---------------------------------------------------------------------------
+
+describe("paths: tmpdir", () => {
+    let tmpdir: typeof import("./paths").tmpdir;
+    let tmpPath: typeof import("./paths").tmpPath;
+    let makeTempDir: typeof import("./paths").makeTempDir;
+    const created: string[] = [];
+
+    beforeEach(async () => {
+        const mod = await import("./paths");
+        tmpdir = mod.tmpdir;
+        tmpPath = mod.tmpPath;
+        makeTempDir = mod.makeTempDir;
+    });
+
+    afterEach(async () => {
+        restorePlatform();
+        const { rmSync } = await import("node:fs");
+
+        for (const dir of created.splice(0)) {
+            try {
+                rmSync(dir, { recursive: true, force: true });
+            } catch {
+                // best-effort cleanup
+            }
+        }
+    });
+
+    it("defaults to /tmp on macOS (preferRoot implicit true)", () => {
+        restorePlatform();
+
+        if (process.platform === "win32") {
+            return;
+        }
+
+        expect(tmpdir()).toBe("/tmp");
+    });
+
+    it("preferRoot:false returns os.tmpdir() ($TMPDIR)", async () => {
+        restorePlatform();
+        const { tmpdir: osTmpdir } = await import("node:os");
+        expect(tmpdir({ preferRoot: false })).toBe(osTmpdir());
+    });
+
+    it("falls back to os.tmpdir() on Windows even with preferRoot", async () => {
+        const { tmpdir: osTmpdir } = await import("node:os");
+        const realOsTmp = osTmpdir();
+        mockWindows();
+        // No literal "/tmp" on Windows regardless of preferRoot.
+        expect(tmpdir()).toBe(realOsTmp);
+        expect(tmpdir({ preferRoot: true })).toBe(realOsTmp);
+        expect(tmpdir().startsWith("/tmp")).toBe(false);
+    });
+
+    it("tmpPath joins segments under the temp root", () => {
+        restorePlatform();
+
+        if (process.platform === "win32") {
+            return;
+        }
+
+        expect(tmpPath("genesis", "x.db")).toBe(join("/tmp", "genesis", "x.db"));
+    });
+
+    it("makeTempDir creates a unique existing directory under the root", async () => {
+        restorePlatform();
+        const { existsSync } = await import("node:fs");
+
+        const a = makeTempDir("genesis-paths-test-");
+        const b = makeTempDir("genesis-paths-test-");
+        created.push(a, b);
+
+        expect(existsSync(a)).toBe(true);
+        expect(existsSync(b)).toBe(true);
+        expect(a).not.toBe(b);
+
+        if (process.platform !== "win32") {
+            expect(a.startsWith("/tmp/genesis-paths-test-")).toBe(true);
+        }
+    });
+});
