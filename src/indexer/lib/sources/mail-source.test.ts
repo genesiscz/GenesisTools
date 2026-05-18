@@ -2,13 +2,14 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { skip } from "@app/utils/test/skip";
 import { MailSource } from "./mail-source";
 
 const isDarwin = process.platform === "darwin";
 const ENVELOPE = join(homedir(), "Library/Mail/V10/MailData/Envelope Index");
 const hasMailDb = isDarwin && existsSync(ENVELOPE);
 
-describe.skipIf(!hasMailDb)("MailSource", () => {
+describe.skipIf(!hasMailDb || skip.mailInfra)("MailSource", () => {
     let source: MailSource;
 
     beforeAll(async () => {

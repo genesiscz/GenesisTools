@@ -18,6 +18,10 @@
  *   RUN_NOTIFY_E2E=1 bun test            # real macOS-notification e2e
  *   RUN_E2E=1 bun test                   # heavier end-to-end suites
  *   RUN_WIP_E2E=1 bun test               # tests for in-progress features
+ *   RUN_DARWINKIT=1 bun test             # darwinkit native-binary suites (~30s)
+ *   RUN_SOLID=1 bun test                 # Solid TUI + live-machine doctor integration (~30s)
+ *   RUN_MAIL_INFRA=1 bun test            # EmlxBodyExtractor tests that scan ~/Library/Mail/V10 (~5s each)
+ *   RUN_INTEGRATION=1 bun test          # benchmark/timer/say e2e tests that spawn bun subprocesses
  *
  * Env-var names intentionally reuse the conventions already in the repo
  * (RUN_NETWORK_TESTS, RUN_LIVE, …) so existing CI/local muscle memory holds.
@@ -45,6 +49,32 @@ export const optIn = {
     notifyE2E: flag("RUN_NOTIFY_E2E"),
     /** Tests for features still being built (won't pass on a clean tree yet). */
     wip: flag("RUN_WIP_E2E"),
+    /**
+     * darwinkit native-binary suites — each test spawns `bun run darwinkit/index.ts …`
+     * which takes ~0.3s cold-start per call, adding up to ~30s across 8 files.
+     * Set RUN_DARWINKIT=1 to include them.
+     */
+    darwinkit: flag("RUN_DARWINKIT"),
+    /**
+     * Solid TUI tests (src/doctor/ui/tui) and the live-machine doctor integration
+     * smoke (src/doctor/__tests__/integration.test.ts). The integration test runs
+     * DiskSpaceAnalyzer + MemoryAnalyzer + ProcessesAnalyzer against the real machine
+     * and takes ~30s. Set RUN_SOLID=1 to include them.
+     */
+    solid: flag("RUN_SOLID"),
+    /**
+     * Tests that exercise EmlxBodyExtractor which scans ~/Library/Mail/V10 (~0.7s cold,
+     * 5s+ under parallel load with 16 workers). These tests require a macOS machine with
+     * Apple Mail set up. Set RUN_MAIL_INFRA=1 to include them.
+     */
+    mailInfra: flag("RUN_MAIL_INFRA"),
+    /**
+     * Integration e2e tests that spawn `bun run tools <cmd>` subprocesses (benchmark,
+     * timer, say). Each subprocess adds ~100–300ms cold-start, and multi-spawn tests
+     * exceed the default 5s test timeout under parallel load.
+     * Set RUN_INTEGRATION=1 to include them.
+     */
+    integration: flag("RUN_INTEGRATION"),
 } as const;
 
 /**
@@ -74,6 +104,26 @@ export const skip = {
     notifyE2E: !optIn.notifyE2E,
     /** Skip unless RUN_WIP_E2E is set (feature under construction). */
     wip: !optIn.wip,
+    /**
+     * Skip unless RUN_DARWINKIT is set.
+     * Gates darwinkit native-binary suites (~30s total, each test spawns bun run).
+     */
+    darwinkit: !optIn.darwinkit,
+    /**
+     * Skip unless RUN_SOLID is set.
+     * Gates Solid TUI view tests and the live-machine doctor integration smoke (~30s).
+     */
+    solid: !optIn.solid,
+    /**
+     * Skip unless RUN_MAIL_INFRA is set.
+     * Gates EmlxBodyExtractor tests that scan ~/Library/Mail/V10 (~5s each under load).
+     */
+    mailInfra: !optIn.mailInfra,
+    /**
+     * Skip unless RUN_INTEGRATION is set.
+     * Gates integration e2e tests that spawn bun subprocesses (benchmark, timer, say).
+     */
+    integration: !optIn.integration,
 } as const;
 
 /** Compose gates: skip if ANY condition is true. */

@@ -81,51 +81,63 @@ function collectEvents(opts?: { debounceMs?: number; filter?: (e: WatcherEvent) 
 }
 
 describe("createWatcher", () => {
-    test("detects file creation", async () => {
-        const { waitForEvents, startWatcher } = collectEvents();
-        await startWatcher();
+    test(
+        "detects file creation",
+        async () => {
+            const { waitForEvents, startWatcher } = collectEvents();
+            await startWatcher();
 
-        // Small delay to ensure watcher is fully subscribed
-        await Bun.sleep(100);
+            // Small delay to ensure watcher is fully subscribed
+            await Bun.sleep(100);
 
-        const filePath = join(tempDir, "new-file.txt");
-        await Bun.write(filePath, "hello world");
+            const filePath = join(tempDir, "new-file.txt");
+            await Bun.write(filePath, "hello world");
 
-        const events = await waitForEvents(1);
-        const createEvent = events.find((e) => e.path === filePath && e.type === "create");
-        expect(createEvent).toBeTruthy();
-    });
+            const events = await waitForEvents(1);
+            const createEvent = events.find((e) => e.path === filePath && e.type === "create");
+            expect(createEvent).toBeTruthy();
+        },
+        { timeout: 15_000 }
+    );
 
-    test("detects file modification", async () => {
-        // Create file first before starting watcher
-        const filePath = join(tempDir, "existing.txt");
-        await Bun.write(filePath, "original");
+    test(
+        "detects file modification",
+        async () => {
+            // Create file first before starting watcher
+            const filePath = join(tempDir, "existing.txt");
+            await Bun.write(filePath, "original");
 
-        const { waitForEvents, startWatcher } = collectEvents();
-        await startWatcher();
-        await Bun.sleep(100);
+            const { waitForEvents, startWatcher } = collectEvents();
+            await startWatcher();
+            await Bun.sleep(100);
 
-        await Bun.write(filePath, "modified content");
+            await Bun.write(filePath, "modified content");
 
-        const events = await waitForEvents(1);
-        const updateEvent = events.find((e) => e.path === filePath && e.type === "update");
-        expect(updateEvent).toBeTruthy();
-    });
+            const events = await waitForEvents(1);
+            const updateEvent = events.find((e) => e.path === filePath && e.type === "update");
+            expect(updateEvent).toBeTruthy();
+        },
+        { timeout: 15_000 }
+    );
 
-    test("detects file deletion", async () => {
-        const filePath = join(tempDir, "to-delete.txt");
-        await Bun.write(filePath, "temporary");
+    test(
+        "detects file deletion",
+        async () => {
+            const filePath = join(tempDir, "to-delete.txt");
+            await Bun.write(filePath, "temporary");
 
-        const { waitForEvents, startWatcher } = collectEvents();
-        await startWatcher();
-        await Bun.sleep(100);
+            const { waitForEvents, startWatcher } = collectEvents();
+            await startWatcher();
+            await Bun.sleep(100);
 
-        rmSync(filePath);
+            rmSync(filePath);
 
-        const events = await waitForEvents(1);
-        const deleteEvent = events.find((e) => e.path === filePath && e.type === "delete");
-        expect(deleteEvent).toBeTruthy();
-    });
+            const events = await waitForEvents(1);
+            const deleteEvent = events.find((e) => e.path === filePath && e.type === "delete");
+            expect(deleteEvent).toBeTruthy();
+        },
+        { timeout: 15_000 }
+    );
 
     test("debounces rapid changes into a single callback", async () => {
         let callbackCount = 0;

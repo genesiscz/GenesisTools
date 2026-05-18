@@ -1,8 +1,9 @@
 import { describe, expect, it } from "bun:test";
+import { skip } from "@app/utils/test/skip";
 import { SafeJSON } from "@app/utils/json";
 import { runDarwinKitRaw } from "./helpers";
 
-describe("darwinkit CLI flags", () => {
+describe.skipIf(skip.darwinkit)("darwinkit CLI flags", () => {
     describe("--help", () => {
         it("shows help with command list", async () => {
             const { stdout, exitCode } = await runDarwinKitRaw("--help");

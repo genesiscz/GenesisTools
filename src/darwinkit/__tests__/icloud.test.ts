@@ -1,7 +1,8 @@
 import { describe, expect, it } from "bun:test";
+import { skip } from "@app/utils/test/skip";
 import { runDarwinKit, runDarwinKitRaw } from "./helpers";
 
-describe("darwinkit iCloud commands", () => {
+describe.skipIf(skip.darwinkit)("darwinkit iCloud commands", () => {
     describe("icloud-status", () => {
         it("returns availability info", async () => {
             const result = await runDarwinKit("icloud-status");

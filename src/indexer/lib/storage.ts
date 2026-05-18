@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { readdirSync, rmSync } from "node:fs";
+import { readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { countActiveEmbeddings, countPairedEmbeddings } from "@app/utils/database/embedding-stats";
 import { Storage } from "@app/utils/storage/storage";
@@ -110,16 +110,36 @@ export class IndexerStorage extends Storage {
     /**
      * Remove stale index directories matching a prefix.
      * Used by tests and benchmarks to clean up after crashed runs.
+     *
+     * @param minAgeMs - Only remove directories older than this many ms (default: 0 = all).
+     *   Set to e.g. 120_000 (2 min) in the startup preload to avoid deleting indexes
+     *   that are currently being used by a concurrently-running parallel worker.
      */
-    cleanStaleDirs(prefix: string): number {
+    cleanStaleDirs(prefix: string, minAgeMs = 0): number {
         let cleaned = 0;
 
         try {
+            const now = Date.now();
+
             for (const entry of readdirSync(this.getBaseDir())) {
-                if (entry.startsWith(prefix)) {
-                    rmSync(join(this.getBaseDir(), entry), { recursive: true, force: true });
-                    cleaned++;
+                if (!entry.startsWith(prefix)) {
+                    continue;
                 }
+
+                if (minAgeMs > 0) {
+                    try {
+                        const { mtimeMs } = statSync(join(this.getBaseDir(), entry));
+
+                        if (now - mtimeMs < minAgeMs) {
+                            continue;
+                        }
+                    } catch {
+                        // stat failed — treat as eligible for removal
+                    }
+                }
+
+                rmSync(join(this.getBaseDir(), entry), { recursive: true, force: true });
+                cleaned++;
             }
         } catch {
             // best-effort — base dir may not exist
@@ -166,22 +186,28 @@ const TEST_INDEX_PREFIXES = [
     "gt_indexer_test_",
     "gt_integration_test_",
     "store_emb_test_",
-    "phase2-bf-",
     "dbg-phase2-",
+    // NOTE: phase2-bf- is intentionally NOT here. metadata-pushdown.e2e.test.ts
+    // generates phase2-bf-<RUN_ID> names and each run's afterAll cleans them up.
+    // Sweeping by prefix here would delete another parallel worker's live indexes.
 ] as const;
 
-const TEST_INDEX_FIXED_NAMES = ["attach-test", "filters-test", "phase2-merge", "phase2-filter", "phase2-bare"] as const;
+const TEST_INDEX_FIXED_NAMES: readonly string[] = [];
 
 /**
  * Wipe every leftover test/bench index from the real homedir. Safe to call
  * unconditionally — only matches names tests own.
+ *
+ * @param minAgeMs - When set, only wipe indexes older than this many ms.
+ *   Use this in startup preloads to avoid racing with parallel workers that
+ *   may be actively using recently-created indexes (default: 0 = wipe all).
  */
-export function wipeAllTestIndexes(): number {
+export function wipeAllTestIndexes(minAgeMs = 0): number {
     const storage = new IndexerStorage();
     let removed = 0;
 
     for (const prefix of TEST_INDEX_PREFIXES) {
-        removed += storage.cleanStaleDirs(prefix);
+        removed += storage.cleanStaleDirs(prefix, minAgeMs);
     }
 
     for (const name of TEST_INDEX_FIXED_NAMES) {

@@ -1,7 +1,8 @@
 import { afterAll, describe, expect, it } from "bun:test";
+import { skip } from "@app/utils/test/skip";
 import { getOutput, runTool } from "@app/utils/e2e/helpers";
 
-describe("tools benchmark", () => {
+describe.skipIf(skip.integration)("tools benchmark", () => {
     afterAll(async () => {
         await runTool(["benchmark", "remove", "e2e-suite"]);
     });
@@ -38,23 +39,27 @@ describe("tools benchmark", () => {
     });
 
     describe("suite CRUD lifecycle", () => {
-        it("add, list, remove suite", async () => {
-            const add = await runTool(["benchmark", "add", "e2e-suite", "a:echo hi", "b:echo bye"]);
-            expect(add.exitCode).toBe(0);
-            expect(getOutput(add).toLowerCase()).toMatch(/saved|added|created/i);
+        it(
+            "add, list, remove suite",
+            async () => {
+                const add = await runTool(["benchmark", "add", "e2e-suite", "a:echo hi", "b:echo bye"]);
+                expect(add.exitCode).toBe(0);
+                expect(getOutput(add).toLowerCase()).toMatch(/saved|added|created/i);
 
-            const list = await runTool(["benchmark", "list"]);
-            expect(list.exitCode).toBe(0);
-            expect(list.stdout).toContain("e2e-suite");
+                const list = await runTool(["benchmark", "list"]);
+                expect(list.exitCode).toBe(0);
+                expect(list.stdout).toContain("e2e-suite");
 
-            const remove = await runTool(["benchmark", "remove", "e2e-suite"]);
-            expect(remove.exitCode).toBe(0);
-            expect(getOutput(remove).toLowerCase()).toMatch(/removed|deleted/i);
+                const remove = await runTool(["benchmark", "remove", "e2e-suite"]);
+                expect(remove.exitCode).toBe(0);
+                expect(getOutput(remove).toLowerCase()).toMatch(/removed|deleted/i);
 
-            const listAfter = await runTool(["benchmark", "list"]);
-            expect(listAfter.exitCode).toBe(0);
-            expect(listAfter.stdout).not.toContain("e2e-suite");
-        });
+                const listAfter = await runTool(["benchmark", "list"]);
+                expect(listAfter.exitCode).toBe(0);
+                expect(listAfter.stdout).not.toContain("e2e-suite");
+            },
+            { timeout: 30_000 }
+        );
     });
 
     describe("remove non-existent", () => {

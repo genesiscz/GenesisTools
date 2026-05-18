@@ -1,10 +1,8 @@
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { afterAll, describe, expect, it } from "bun:test";
+import { rmSync } from "node:fs";
 import { ensureExtensionCapableSQLite } from "@app/utils/search/stores/sqlite-vec-loader";
 import type { IndexerSource, MetadataPopulateOpts, MetadataResult } from "./sources/source";
-import { _resetIndexerStorageForTesting, wipeAllTestIndexes } from "./storage";
+import { getIndexerStorage } from "./storage";
 import { createIndexStore, searchIndexReadonly } from "./store";
 
 ensureExtensionCapableSQLite();
@@ -21,31 +19,25 @@ ensureExtensionCapableSQLite();
  *
  * Mail does NOT adopt this; tests use a synthetic mock source to keep the
  * library decoupled from any concrete source.
+ *
+ * Each run generates a unique timestamp suffix so that concurrent parallel
+ * workers don't conflict on the same homedir index paths.
+ * Cleanup only removes the names created by this specific run — never a
+ * broad prefix sweep that could delete another worker's live indexes.
  */
 
-const ORIG_HOME = process.env.HOME;
-let tmpHome: string;
-
-beforeAll(() => {
-    tmpHome = mkdtempSync(join(tmpdir(), "phase2-e2e-"));
-    process.env.HOME = tmpHome;
-    _resetIndexerStorageForTesting();
-});
+const RUN_ID = Date.now();
 
 afterAll(() => {
-    if (ORIG_HOME !== undefined) {
-        process.env.HOME = ORIG_HOME;
-    } else {
-        delete process.env.HOME;
+    const storage = getIndexerStorage();
+    for (const name of [
+        `phase2-merge-${RUN_ID}`,
+        `phase2-filter-${RUN_ID}`,
+        `phase2-bf-${RUN_ID}`,
+        `phase2-bare-${RUN_ID}`,
+    ]) {
+        rmSync(storage.getIndexDir(name), { recursive: true, force: true });
     }
-
-    _resetIndexerStorageForTesting();
-
-    // Belt-and-suspenders: if HOME redirect lost the singleton race the dirs
-    // landed in the real homedir. wipeAllTestIndexes covers them.
-    wipeAllTestIndexes();
-
-    rmSync(tmpHome, { recursive: true, force: true });
 });
 
 async function* yieldBatches(
@@ -79,7 +71,8 @@ describe("Phase 2 metadata pushdown (mock source, library-only)", () => {
                 ),
         };
 
-        const store = await createIndexStore({ name: "phase2-merge", baseDir: "", source });
+        const indexName = `phase2-merge-${RUN_ID}`;
+        const store = await createIndexStore({ name: indexName, baseDir: "", source });
         await store.insertChunks([
             {
                 id: "c1",
@@ -95,7 +88,7 @@ describe("Phase 2 metadata pushdown (mock source, library-only)", () => {
         ]);
         await store.close?.();
 
-        const results = await searchIndexReadonly("phase2-merge", "hello", {
+        const results = await searchIndexReadonly(indexName, "hello", {
             mode: "fulltext",
             limit: 10,
         });
@@ -126,7 +119,8 @@ describe("Phase 2 metadata pushdown (mock source, library-only)", () => {
                 ),
         };
 
-        const store = await createIndexStore({ name: "phase2-filter", baseDir: "", source });
+        const indexName = `phase2-filter-${RUN_ID}`;
+        const store = await createIndexStore({ name: indexName, baseDir: "", source });
 
         const chunks = Array.from({ length: 100 }, (_, i) => ({
             id: `c${i}`,
@@ -142,7 +136,7 @@ describe("Phase 2 metadata pushdown (mock source, library-only)", () => {
         await store.insertChunks(chunks);
         await store.close?.();
 
-        const between = await searchIndexReadonly("phase2-filter", "alpha", {
+        const between = await searchIndexReadonly(indexName, "alpha", {
             mode: "fulltext",
             limit: 1000,
             metadataFilters: [{ column: "dateSent", op: "BETWEEN", value: [2000, 5000] }],
@@ -155,7 +149,7 @@ describe("Phase 2 metadata pushdown (mock source, library-only)", () => {
             expect(d).toBeLessThanOrEqual(5000);
         }
 
-        const equality = await searchIndexReadonly("phase2-filter", "alpha", {
+        const equality = await searchIndexReadonly(indexName, "alpha", {
             mode: "fulltext",
             limit: 1000,
             metadataFilters: [{ column: "category", op: "=", value: "blog" }],
@@ -181,7 +175,7 @@ describe("Phase 2 metadata pushdown (mock source, library-only)", () => {
                 ),
         };
 
-        const indexName = `phase2-bf-${Date.now()}`;
+        const indexName = `phase2-bf-${RUN_ID}`;
         const store1 = await createIndexStore({ name: indexName, baseDir: "", source: v1 });
         await store1.insertChunks([
             {
@@ -249,7 +243,8 @@ describe("Phase 2 metadata pushdown (mock source, library-only)", () => {
             hashEntry: () => "h",
         };
 
-        const store = await createIndexStore({ name: "phase2-bare", baseDir: "", source: bareSource });
+        const indexName = `phase2-bare-${RUN_ID}`;
+        const store = await createIndexStore({ name: indexName, baseDir: "", source: bareSource });
         await store.insertChunks([
             {
                 id: "c1",
@@ -264,7 +259,7 @@ describe("Phase 2 metadata pushdown (mock source, library-only)", () => {
         ]);
         await store.close?.();
 
-        const results = await searchIndexReadonly("phase2-bare", "alpha", {
+        const results = await searchIndexReadonly(indexName, "alpha", {
             mode: "fulltext",
             limit: 10,
         });

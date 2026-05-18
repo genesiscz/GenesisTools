@@ -1,7 +1,8 @@
 import { describe, expect, it } from "bun:test";
+import { skip } from "@app/utils/test/skip";
 import { runDarwinKit } from "./helpers";
 
-describe("darwinkit batch/text-analysis commands", () => {
+describe.skipIf(skip.darwinkit)("darwinkit batch/text-analysis commands", () => {
     describe("rank", () => {
         it("ranks texts by similarity to query", async () => {
             const result = await runDarwinKit(

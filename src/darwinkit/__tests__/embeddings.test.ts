@@ -1,7 +1,8 @@
 import { describe, expect, it } from "bun:test";
+import { skip } from "@app/utils/test/skip";
 import { runDarwinKit } from "./helpers";
 
-describe("darwinkit embedding commands", () => {
+describe.skipIf(skip.darwinkit)("darwinkit embedding commands", () => {
     describe("embed", () => {
         it("computes 512-dim sentence embedding", async () => {
             const result = await runDarwinKit("embed", "Hello world");
