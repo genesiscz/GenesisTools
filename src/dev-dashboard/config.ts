@@ -105,6 +105,44 @@ export async function getOrCreateDashboardAuth(): Promise<DashboardAuthProvision
     return { auth, generatedPassword: password };
 }
 
+// Both the Vite middleware (cookie issuer) and the front-proxy (cookie/Basic
+// verifier for ttyd + WS) resolve auth through this one 30s-TTL cache. A single
+// source of truth means a mid-session `auth reset` propagates to issuer AND
+// verifier together within the TTL — no permanent tunnel-ttyd breakage, no
+// restart needed — while collapsing what was a per-request config-file read.
+const AUTH_CACHE_TTL_MS = 30_000;
+let authCache: { provision: DashboardAuthProvision; at: number } | null = null;
+let authCacheInFlight: Promise<DashboardAuthProvision> | null = null;
+
+export async function getDashboardAuthCached(): Promise<DashboardAuthProvision> {
+    const now = Date.now();
+
+    if (authCache && now - authCache.at < AUTH_CACHE_TTL_MS) {
+        return authCache.provision;
+    }
+
+    // Coalesce concurrent cold/expired missers onto one provisioning call.
+    // Without this, a first-run incomplete config makes each concurrent caller
+    // generate and persist a *different* random password (last write wins) —
+    // some requests would then be issued/verified against credentials a later
+    // write silently replaced. Clear the in-flight ref on rejection so a
+    // failed provision can be retried.
+    if (authCacheInFlight) {
+        return authCacheInFlight;
+    }
+
+    authCacheInFlight = getOrCreateDashboardAuth()
+        .then((provision) => {
+            authCache = { provision, at: Date.now() };
+            return provision;
+        })
+        .finally(() => {
+            authCacheInFlight = null;
+        });
+
+    return authCacheInFlight;
+}
+
 export async function saveTtydSessions(ttydSessions: TtydSession[]): Promise<void> {
     const config = await getConfig();
     await saveConfig({ ...config, ttydSessions });

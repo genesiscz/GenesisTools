@@ -1,7 +1,14 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { focusCmuxPane, renameCmuxSurface, renameCmuxWorkspace } from "@app/cmux/lib/controls";
-import { getConfig, getOrCreateDashboardAuth } from "@app/dev-dashboard/config";
-import { isCompleteAuthConfig, verifyBasicAuthHeader } from "@app/dev-dashboard/lib/auth";
+import { getConfig, getDashboardAuthCached } from "@app/dev-dashboard/config";
+import {
+    buildSessionCookie,
+    isCompleteAuthConfig,
+    issueSessionToken,
+    LOCAL_ORIGIN_HEADER,
+    verifyBasicAuthHeader,
+    verifySessionToken,
+} from "@app/dev-dashboard/lib/auth";
 import { getCurrentUsage, getUsageHistory, getUsageHistoryMulti } from "@app/dev-dashboard/lib/claude-usage/aggregator";
 import { getCachedSnapshot, startPolling } from "@app/dev-dashboard/lib/cmux/poller";
 import { listContainers } from "@app/dev-dashboard/lib/containers/docker";
@@ -75,7 +82,16 @@ async function requireDashboardAuth(req: IncomingMessage, res: ServerResponse, u
         return true;
     }
 
-    const provision = await getOrCreateDashboardAuth();
+    // Loopback exemption. The front-proxy sets x-dd-local-origin ONLY for a
+    // genuine localhost hit (real loopback socket + localhost Host + no
+    // Cloudflare headers) and strips any inbound copy, so this cannot be forged
+    // over the tunnel or LAN. Vite binds 127.0.0.1, so only the local
+    // front-proxy can reach here to set it.
+    if (req.headers[LOCAL_ORIGIN_HEADER] === "1") {
+        return true;
+    }
+
+    const provision = await getDashboardAuthCached();
 
     if (provision.generatedPassword && !loggedGeneratedPassword) {
         loggedGeneratedPassword = true;
@@ -99,7 +115,21 @@ async function requireDashboardAuth(req: IncomingMessage, res: ServerResponse, u
         return false;
     }
 
-    if (verifyBasicAuthHeader(req.headers.authorization ?? null, provision.auth)) {
+    const auth = provision.auth;
+
+    // A valid session cookie authenticates without re-issuing one.
+    if (verifySessionToken(req.headers.cookie ?? null, auth)) {
+        return true;
+    }
+
+    if (verifyBasicAuthHeader(req.headers.authorization ?? null, auth)) {
+        // Mint the session cookie so browser-initiated WebSocket handshakes
+        // (ttyd terminal + Vite HMR) — which cannot send an Authorization
+        // header and are gated by the front-proxy, not this middleware — can
+        // authenticate. Secure only over the HTTPS tunnel (Cloudflare sets
+        // x-forwarded-proto); plain http://localhost must still receive it.
+        const secure = req.headers["x-forwarded-proto"] === "https";
+        res.setHeader("Set-Cookie", buildSessionCookie(issueSessionToken(auth), { secure }));
         return true;
     }
 
