@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { join } from "node:path";
+import { skip } from "@app/utils/test/skip";
 
 // We need to test with platform overrides, so we import the module fresh per test group.
 // For Windows tests, we mock process.platform before importing.
@@ -281,9 +282,124 @@ describe("escapeShellArg: Windows (cross-spawn compatible, two-phase)", () => {
         expect(escapeShellArg("foo & bar")).toBe('^"foo^ ^&^ bar^"');
     });
 
-    it("uses single quotes on Unix (default)", async () => {
+    it.skipIf(skip.onWindows)("uses single quotes on Unix (default)", async () => {
         restorePlatform();
         const { escapeShellArg } = await import("../utils/string");
         expect(escapeShellArg("hello")).toBe("'hello'");
+    });
+});
+
+// ---------------------------------------------------------------------------
+// tmpdir / tmpPath / makeTempDir — platform-dependent temp root
+// ---------------------------------------------------------------------------
+
+describe("paths: tmpdir", () => {
+    let tmpdir: typeof import("./paths").tmpdir;
+    let tmpPath: typeof import("./paths").tmpPath;
+    let makeTempDir: typeof import("./paths").makeTempDir;
+    const created: string[] = [];
+
+    beforeEach(async () => {
+        const mod = await import("./paths");
+        tmpdir = mod.tmpdir;
+        tmpPath = mod.tmpPath;
+        makeTempDir = mod.makeTempDir;
+    });
+
+    afterEach(async () => {
+        restorePlatform();
+        const { rmSync } = await import("node:fs");
+
+        for (const dir of created.splice(0)) {
+            try {
+                rmSync(dir, { recursive: true, force: true });
+            } catch {
+                // best-effort cleanup
+            }
+        }
+    });
+
+    it("defaults to /tmp on macOS (preferRoot implicit true)", () => {
+        restorePlatform();
+
+        if (process.platform === "win32") {
+            return;
+        }
+
+        expect(tmpdir()).toBe("/tmp");
+    });
+
+    it("preferRoot:false returns os.tmpdir() ($TMPDIR)", async () => {
+        restorePlatform();
+        const { tmpdir: osTmpdir } = await import("node:os");
+        expect(tmpdir({ preferRoot: false })).toBe(osTmpdir());
+    });
+
+    it("falls back to os.tmpdir() on Windows even with preferRoot", async () => {
+        const { tmpdir: osTmpdir } = await import("node:os");
+        const realOsTmp = osTmpdir();
+        mockWindows();
+        // On Windows, tmpdir() is os.tmpdir() — preferRoot must not force the
+        // hardcoded "/tmp". (Can't assert !startsWith("/tmp") here: mocking
+        // process.platform doesn't change what node's os.tmpdir() returns, and
+        // on a Linux test host that is genuinely "/tmp".)
+        expect(tmpdir()).toBe(realOsTmp);
+        expect(tmpdir({ preferRoot: true })).toBe(realOsTmp);
+    });
+
+    it("tmpPath joins segments under the temp root", () => {
+        restorePlatform();
+
+        if (process.platform === "win32") {
+            return;
+        }
+
+        expect(tmpPath("genesis", "x.db")).toBe(join("/tmp", "genesis", "x.db"));
+    });
+
+    it("makeTempDir creates a unique existing directory under the root", async () => {
+        restorePlatform();
+        const { existsSync } = await import("node:fs");
+
+        const a = makeTempDir("genesis-paths-test-");
+        const b = makeTempDir("genesis-paths-test-");
+        created.push(a, b);
+
+        expect(existsSync(a)).toBe(true);
+        expect(existsSync(b)).toBe(true);
+        expect(a).not.toBe(b);
+
+        if (process.platform !== "win32") {
+            expect(a.startsWith("/tmp/genesis-paths-test-")).toBe(true);
+        }
+    });
+});
+
+// ---------------------------------------------------------------------------
+// toPosixPath — separator normalization for keys/output
+// ---------------------------------------------------------------------------
+
+describe("paths: toPosixPath", () => {
+    let toPosixPath: typeof import("./paths").toPosixPath;
+
+    beforeEach(async () => {
+        toPosixPath = (await import("./paths")).toPosixPath;
+    });
+
+    it("converts backslashes to forward slashes", () => {
+        expect(toPosixPath("src\\a\\b.ts")).toBe("src/a/b.ts");
+    });
+
+    it("leaves already-POSIX paths unchanged", () => {
+        expect(toPosixPath("src/a/b.ts")).toBe("src/a/b.ts");
+    });
+
+    it("handles mixed separators", () => {
+        expect(toPosixPath("src\\a/b\\c.ts")).toBe("src/a/b/c.ts");
+    });
+
+    it("handles empty and separatorless strings", () => {
+        expect(toPosixPath("")).toBe("");
+        expect(toPosixPath("file.ts")).toBe("file.ts");
     });
 });
