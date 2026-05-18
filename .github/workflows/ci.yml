@@ -54,6 +54,9 @@ jobs:
           echo "matrix={\"os\":[$os]}" >> "$GITHUB_OUTPUT"
           echo "Selected OS matrix: [$os] (windows opted-in: $win)"
 
+  # IMPORTANT: `test` depends ONLY on `setup` (the trivial matrix decider) —
+  # deliberately NOT on `check`. Lint/typecheck failing must never stop the
+  # test run. Do not add `check` to `needs:` here.
   test:
     needs: setup
     strategy:

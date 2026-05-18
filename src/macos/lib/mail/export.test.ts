@@ -2,9 +2,9 @@ import { describe, expect, it } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { skip } from "@app/utils/test/skip";
 import { exportMessages, parseMailIds } from "@app/macos/lib/mail/export";
 import type { MailMessage } from "@app/macos/lib/mail/types";
+import { skip } from "@app/utils/test/skip";
 
 function msg(rowid: number, subject: string): MailMessage {
     return {
