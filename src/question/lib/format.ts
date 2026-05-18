@@ -9,7 +9,10 @@ const TAG_TINT: Record<string, (s: string) => string> = {
     directive: chalk.bold.green,
 };
 
-type FormattableEntry = Pick<QaEntry, "ts" | "project" | "branch" | "tag" | "question" | "answerMd">;
+type FormattableEntry = Pick<
+    QaEntry,
+    "ts" | "project" | "branch" | "tag" | "question" | "answerMd" | "sessionId"
+>;
 
 /**
  * Single source of truth for one Q→A entry's terminal rendering. Used by both
@@ -21,5 +24,7 @@ export function formatQaEntry(e: FormattableEntry): string {
     const tint = TAG_TINT[e.tag] ?? chalk.bold.gray;
     const head = `${chalk.dim(when)}  ${chalk.cyan.bold(e.project)} ${chalk.dim("·")} ${chalk.magenta(e.branch ?? "-")}  ${tint(`[${e.tag}]`)}`;
     const preview = chalk.yellow(e.answerMd.split("\n").slice(0, 3).join("\n"));
-    return `${head}\n${chalk.green("❯")} ${chalk.bold(e.question)}\n${preview}\n`;
+    const sid = e.sessionId && e.sessionId !== "unknown" ? e.sessionId.slice(0, 8) : null;
+    const resume = sid ? chalk.dim(`  ↩ ${sid} · tools claude resume ${sid}\n`) : "";
+    return `${head}\n${chalk.green("❯")} ${chalk.bold(e.question)}\n${preview}\n${resume}`;
 }
