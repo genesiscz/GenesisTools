@@ -20,7 +20,7 @@ export const PROJECTS_DIR = resolve(CLAUDE_DIR, "projects");
  */
 export function encodedProjectDir(cwd?: string): string {
     const p = cwd ?? getMainRepoRootSync(process.cwd());
-    return `-${p.replace(/^[/\\]/, "").replaceAll(sep, "-")}`;
+    return `-${p.replace(/^[/\\]/, "").replace(/[/\\]/g, "-")}`;
 }
 
 /**
