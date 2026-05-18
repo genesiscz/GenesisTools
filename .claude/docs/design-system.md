@@ -192,6 +192,11 @@ same line**. Wire it into CI alongside `lint`.
    `text-primary`…). Zero raw palette.
 6. `bun run check:ui-palette` green + screenshot beside a dashboard page.
 
+> Per-dashboard design lineage (which shell/theme each of the 8 dashboards
+> uses, why youtube/dev-dashboard diverge, the differ-matrix) →
+> `.claude/docs/design-system-dashboards.md`. Ports/launch/conflict-detection
+> → `src/utils/ui/dashboards.ts`.
+
 ## Deferred Follow-up
 
 ~679 `text-gray-*` / `text-slate-*` / `bg-slate-*` occurrences remain across
