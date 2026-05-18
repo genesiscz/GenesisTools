@@ -1,9 +1,13 @@
+import { AppShell, AppSidebar, type SidebarNavItem } from "@app/utils/ui/custom";
+import { cn } from "@app/utils/ui/lib/utils";
 import { ErrorBoundary } from "@app/yt/components/shared/error-boundary";
-import { Sidebar } from "@app/yt/components/shared/sidebar";
-import { Topbar } from "@app/yt/components/shared/topbar";
 import { fetchUiConfig } from "@app/yt/config.client";
+import { pageTitleFromPath } from "@app/yt/lib/theme";
+import { useEventStream } from "@app/yt/ws.client";
 import type { QueryClient } from "@tanstack/react-query";
-import { createRootRouteWithContext, Outlet, redirect } from "@tanstack/react-router";
+import { createRootRouteWithContext, Link, Outlet, redirect, useRouterState } from "@tanstack/react-router";
+import { BriefcaseBusiness, PlaySquare, Settings, Youtube } from "lucide-react";
+import type React from "react";
 
 interface RouterContext {
     queryClient: QueryClient;
@@ -24,20 +28,78 @@ export const Route = createRootRouteWithContext<RouterContext>()({
     component: RootLayout,
 });
 
-function RootLayout() {
+function YtSidebarItem({
+    item,
+    active,
+    LinkComponent,
+}: {
+    item: SidebarNavItem;
+    active: boolean;
+    LinkComponent: React.ElementType;
+}) {
+    const Icon = item.icon;
+
     return (
-        <div className="cyberpunk flex min-h-screen bg-background/95 text-foreground">
-            <div className="pointer-events-none fixed inset-0 cyber-grid opacity-20" />
-            <div className="pointer-events-none fixed inset-0 scan-lines opacity-20" />
-            <Sidebar />
-            <main className="relative z-10 flex min-w-0 flex-1 flex-col">
-                <Topbar />
-                <div className="flex-1 overflow-auto p-4 lg:p-6">
-                    <ErrorBoundary>
-                        <Outlet />
-                    </ErrorBoundary>
-                </div>
-            </main>
-        </div>
+        <LinkComponent
+            to={item.url}
+            className={cn(
+                "group flex items-center gap-3 rounded-xl border px-4 py-3 text-sm font-medium transition-all duration-200",
+                active
+                    ? "border-primary/40 bg-primary/15 text-primary shadow-[0_0_24px_rgba(245,158,11,0.12)]"
+                    : "border-transparent text-muted-foreground hover:-translate-y-0.5 hover:border-secondary/30 hover:bg-secondary/10 hover:text-secondary"
+            )}
+        >
+            <Icon className="size-4" />
+            <span>{item.title}</span>
+        </LinkComponent>
+    );
+}
+
+function RootLayout() {
+    const pathname = useRouterState({ select: (state) => state.location.pathname });
+    const { connected } = useEventStream({ enabled: pathname !== "/first-run" });
+
+    return (
+        <AppShell
+            themeClass="cyberpunk"
+            glowVariant="rich"
+            sidebar={
+                <AppSidebar
+                    renderBrand={() => (
+                        <div className="flex items-center gap-3 rounded-2xl border border-primary/25 bg-primary/10 p-4 neon-border">
+                            <div className="grid size-11 place-items-center rounded-xl bg-primary text-primary-foreground shadow-lg shadow-primary/25">
+                                <PlaySquare className="size-5" />
+                            </div>
+                            <div>
+                                <p className="text-xs font-mono uppercase tracking-[0.35em] text-primary">Genesis</p>
+                                <h1 className="text-lg font-semibold text-foreground">YouTube AI</h1>
+                            </div>
+                        </div>
+                    )}
+                    navGroups={[
+                        {
+                            label: "",
+                            theme: "primary",
+                            items: [
+                                { title: "Channels", url: "/", icon: Youtube },
+                                { title: "Jobs", url: "/jobs", icon: BriefcaseBusiness },
+                                { title: "Settings", url: "/settings", icon: Settings },
+                            ],
+                        },
+                    ]}
+                    activePath={pathname}
+                    MenuItemComponent={YtSidebarItem}
+                    LinkComponent={Link}
+                />
+            }
+            title={pageTitleFromPath(pathname)}
+            statusLabel={connected ? "Live" : "Polling"}
+            gridBackground
+            scanLinesEffect
+        >
+            <ErrorBoundary>
+                <Outlet />
+            </ErrorBoundary>
+        </AppShell>
     );
 }
