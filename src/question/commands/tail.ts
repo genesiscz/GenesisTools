@@ -41,8 +41,6 @@ export function registerTailCommand(program: Command): void {
         .command("tail")
         .alias("answers")
         .description("Live feed of Q→A as they are recorded (with last-N backlog)")
-        .option("-n, --lines <n>", "show the last N entries before tailing (0 = none)", (v) =>
-            Number.parseInt(v, 10)
-        )
+        .option("-n, --lines <n>", "show the last N entries before tailing (0 = none)", (v) => Number.parseInt(v, 10))
         .action((o: { lines?: number }) => watchToday(o));
 }

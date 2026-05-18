@@ -55,11 +55,21 @@ export function registerConfigCommand(program: Command): void {
                     next = saveConfig({ soundVolume: Math.max(0, Math.min(1, o.soundVolume)) });
                 }
 
-                if (o.notify === "on" || o.notify === "off") {
+                if (o.notify !== undefined) {
+                    if (o.notify !== "on" && o.notify !== "off") {
+                        process.stderr.write(`error: --notify expects on|off, got '${o.notify}'\n`);
+                        process.exit(1);
+                    }
+
                     next = saveConfig({ sinks: { ...next.sinks, notify: o.notify === "on" } });
                 }
 
-                if (o.obsidian === "on" || o.obsidian === "off") {
+                if (o.obsidian !== undefined) {
+                    if (o.obsidian !== "on" && o.obsidian !== "off") {
+                        process.stderr.write(`error: --obsidian expects on|off, got '${o.obsidian}'\n`);
+                        process.exit(1);
+                    }
+
                     next = saveConfig({ sinks: { ...next.sinks, obsidian: o.obsidian === "on" } });
                 }
 
