@@ -221,7 +221,13 @@ export function startFrontProxy(opts: { publicPort: number; internalPort: number
                     signal: AbortSignal.timeout(15_000),
                 });
             } catch (err) {
-                logger.warn({ err, httpTarget }, "front proxy: upstream fetch failed");
+                // A refused connection is almost always the benign startup race
+                // (upstream Vite/ttyd not listening yet) — log it at debug so it
+                // doesn't look like an error. A sustained real outage is still
+                // visible (the 502 below) and any non-refused failure stays warn.
+                const code = (err as { code?: string })?.code;
+                const refused = code === "ConnectionRefused" || code === "ECONNREFUSED";
+                logger[refused ? "debug" : "warn"]({ err, httpTarget }, "front proxy: upstream fetch failed");
                 return new Response("Bad Gateway: upstream unavailable", { status: 502 });
             }
 

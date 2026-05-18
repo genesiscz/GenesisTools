@@ -1,13 +1,15 @@
 #!/usr/bin/env bun
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { closeSync, existsSync, mkdirSync, openSync, readSync, statSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { getConfig, saveConfig } from "@app/dev-dashboard/config";
 import { createBasicAuthCredentials } from "@app/dev-dashboard/lib/auth";
 import { startFrontProxy } from "@app/dev-dashboard/lib/front-proxy";
 import { findFreePort } from "@app/dev-dashboard/lib/ttyd/free-port";
 import logger from "@app/logger";
 import { PROJECT_ROOT } from "@app/utils/paths";
+import { stripAnsi } from "@app/utils/string";
 import { Command } from "commander";
 
 const program = new Command()
@@ -118,10 +120,27 @@ async function runUiServer(): Promise<void> {
         killChild();
     });
 
-    setTimeout(() => {
+    // Open the browser only AFTER Vite is actually serving — the page load is
+    // what triggers /api/ttyd/spawn, so a blind 2s timer opened it before Vite
+    // was up and the proxy spammed ECONNREFUSED for Vite + the just-spawned
+    // ttyd. Poll the internal Vite port; ttyd is now effectively deferred until
+    // Vite is ready (no extra ttyd-lifecycle changes needed).
+    void (async () => {
+        const deadline = Date.now() + 20_000;
+        const internalUrl = `http://127.0.0.1:${internalPort}/`;
+        while (Date.now() < deadline) {
+            try {
+                await fetch(internalUrl, { signal: AbortSignal.timeout(1000) });
+                break; // any response (even 404) means Vite is listening
+            } catch (err) {
+                logger.debug({ err, internalUrl }, "vite readiness probe retry (not up yet)");
+                await new Promise((r) => setTimeout(r, 250));
+            }
+        }
+
         // Best-effort browser open. Detached spawns have no "error" listener by
         // default; an unhandled "error" (opener binary missing) would crash the
-        // dashboard ~2s post-startup, so swallow it.
+        // dashboard, so swallow it.
         const [cmd, args] =
             process.platform === "darwin"
                 ? (["open", [url]] as const)
@@ -131,7 +150,7 @@ async function runUiServer(): Promise<void> {
         const opener = spawn(cmd, args, { stdio: "ignore", detached: true });
         opener.on("error", (err) => logger.debug({ err, cmd }, "failed to auto-open browser"));
         opener.unref();
-    }, 2000);
+    })();
 
     const exitCode: number = await new Promise((resolveExit) => {
         child.on("exit", (code) => resolveExit(code ?? 1));
@@ -235,11 +254,113 @@ program.command("ui").alias("dashboard").description("Launch the dev-dashboard w
 
 program
     .command("restart")
-    .description("Stop any running dev-dashboard instance, then launch the UI (same as `ui`)")
+    .description("Stop any running dev-dashboard, relaunch it detached in the background, then exit")
     .action(async () => {
         const { port } = await getConfig();
         await stopRunningDashboard(port);
-        await runUiServer();
+
+        const url = `http://localhost:${port}`;
+        const logFile = join(homedir(), ".genesis-tools", "logs", "dev-dashboard.bg.log");
+        mkdirSync(dirname(logFile), { recursive: true });
+        const logFd = openSync(logFile, "a");
+
+        // Daemonize: the UI is Vite + an in-process front-proxy. Re-invoke THIS
+        // script via process.execPath + argv[1] so it works even when `tools`
+        // isn't on PATH (t2). Child stdout/stderr go to a LOG FILE, not pipes —
+        // the inherited fd stays valid after we exit, so the backgrounded Vite
+        // never hits EPIPE/SIGPIPE on parent exit (t1). We tail the file for
+        // readiness; output to a file is also already ANSI-free.
+        const child = spawn(process.execPath, [process.argv[1], "ui"], {
+            cwd: PROJECT_ROOT,
+            detached: true,
+            stdio: ["ignore", logFd, logFd],
+            env: process.env,
+        });
+        closeSync(logFd); // the child holds its own dup'd fd now
+
+        const READY = /ready in \d+\s*m?s|Local:\s*http|localhost:\d+|press h \+ enter/i;
+        const isTty = Boolean(process.stdout.isTTY);
+        let settled = false;
+        let pos = 0;
+        let acc = "";
+        let poll: ReturnType<typeof setInterval> | undefined;
+        let deadline: ReturnType<typeof setTimeout> | undefined;
+
+        const finish = (note: string): void => {
+            if (settled) {
+                return;
+            }
+
+            settled = true;
+            if (poll) {
+                clearInterval(poll);
+            }
+
+            if (deadline) {
+                clearTimeout(deadline);
+            }
+
+            console.log(`\n${note}`);
+            console.log(`dev-dashboard running in background → ${url}  (pid ${child.pid})`);
+            console.log(`logs → ${logFile}`);
+            console.log(`stop it with: kill ${child.pid}  (\`tools dev-dashboard restart\` relaunches a new one)`);
+            child.unref();
+            process.exit(0);
+        };
+
+        // Tail the child's log file; echo new bytes (strip ANSI when our stdout
+        // isn't a TTY — t6) and match the accumulated stripped text (t3).
+        const drain = (): void => {
+            let size: number;
+            try {
+                size = statSync(logFile).size;
+            } catch {
+                return;
+            }
+
+            if (size <= pos) {
+                return;
+            }
+
+            const fd = openSync(logFile, "r");
+            try {
+                const buf = Buffer.alloc(size - pos);
+                const read = readSync(fd, buf, 0, buf.length, pos);
+                pos += read;
+                const chunk = buf.subarray(0, read).toString();
+                process.stdout.write(isTty ? chunk : stripAnsi(chunk));
+                acc += stripAnsi(chunk);
+                if (acc.length > 4000) {
+                    acc = acc.slice(-2000);
+                }
+
+                if (READY.test(acc)) {
+                    finish("✓ dev-dashboard is up.");
+                }
+            } finally {
+                closeSync(fd);
+            }
+        };
+
+        child.on("error", (err) => {
+            console.error(`Failed to launch dev-dashboard: ${err.message}`);
+            process.exit(1);
+        });
+        child.on("exit", (code) => {
+            if (!settled) {
+                drain();
+                console.error(`dev-dashboard exited before becoming ready (code ${code ?? "?"}) — see ${logFile}`);
+                process.exit(code ?? 1);
+            }
+        });
+
+        poll = setInterval(drain, 150);
+        // Safety net: detach + exit even if the ready marker never matches,
+        // rather than holding the terminal forever.
+        deadline = setTimeout(
+            () => finish("⚠ ready marker not seen in 30s — detaching anyway; check the URL."),
+            30_000
+        );
     });
 
 const auth = program.command("auth").description("Manage dev-dashboard Basic Auth");
