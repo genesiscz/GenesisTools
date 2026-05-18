@@ -96,6 +96,11 @@ export async function runTask(task: DaemonTask, attempt: number, logsBaseDir: st
         detached: true,
     });
 
+    // POSIX: negative pid signals the whole process group (sh + descendants).
+    // Windows has no process groups, so process.kill(-pid) throws, the catch
+    // falls back to proc.kill (reaps sh only) and a grandchild may leak — the
+    // stream-drain abort below still unblocks the result. A true Windows tree
+    // kill would need `taskkill /T /F /PID`; add that only if it ever matters.
     const killTree = (signal: "SIGTERM" | "SIGKILL"): void => {
         try {
             process.kill(-proc.pid, signal);
