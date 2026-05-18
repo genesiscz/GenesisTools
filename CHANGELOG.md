@@ -4,6 +4,41 @@ All notable changes to GenesisTools will be documented in this file.
 
 Version format: `YYYY.MM.DD.revision` (e.g., `2026.02.18.1`)
 
+## 2026.05.18.2
+
+### CI
+
+- Added a cross-platform test-discovery matrix: Ubuntu always, Windows opt-in via PR title/label or manual dispatch, with per-OS step timeouts and a bun install cache (`~/.bun/install/cache`)
+- Improved CI cost/speed: folded lint + typecheck into the Ubuntu test job (no separate runner), pinned setup-bun to 1.3.13, and excluded the dashboard/Internal/shops workspaces from the bun-test glob
+
+### Core / Utils
+
+- Added cross-platform path helpers in `utils/paths` — `tmpdir`/`tmpPath`/`makeTempDir` (single temp-root abstraction) and `toPosixPath` for separator-stable keys and output
+- Added Windows-resilient `removeRecursive`/`removeDbFile` in `utils/fs` with a self-implemented EBUSY retry loop (Bun's `rmSync` ignores `maxRetries`)
+- Fixed `attachReadonly` to work without the SQLite URI-filenames build flag, with balanced connection-scoped read-only enforcement (no leak to later writes)
+- Fixed in-memory databases to skip directory creation (Windows ENOENT), and added `isPortInUse` for safe port pre-checks
+- Added a centralized test skip/opt-in gate module (`utils/test/skip`) and a preload that stops `process.exit()` from aborting the shared test run
+
+### indexer
+
+- Fixed Windows path separators bleeding into Merkle hash keys, code-graph edges, tsconfig alias targets, and search output (now POSIX-normalized at the source)
+
+### doctor
+
+- Fixed `parsePsOutput` to be line-ending agnostic (CRLF-safe) and the doctor path constants to be deterministic forward-slash cross-platform
+
+### daemon
+
+- Fixed `runTask` to kill the whole process tree on timeout and never hang on stream drain (a runaway child no longer pins a CPU core)
+
+### reas
+
+- Fixed `reas --dashboard` to pre-check the port and bail with an actionable error instead of spinning at 100% CPU when the port is occupied
+
+### Testing
+
+- Improved the test suite to run green cross-platform: skip/opt-in gates for macOS-binary, live-credential, audio-device, and Unix-only suites; temp-DB cleanup routed through the Windows-resilient helpers; and POSIX-stable assertions
+
 ## 2026.05.18.1
 
 ### dashboard (new)
