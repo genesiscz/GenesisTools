@@ -1,5 +1,6 @@
 import { copyFile, mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
+import { toPosixPath } from "@app/utils/paths";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -37,5 +38,5 @@ export async function buildExtension(): Promise<string> {
     }
 
     p.log.success(`Built to ${dist}. Load it via chrome://extensions → Developer Mode → Load unpacked.`);
-    return dist;
+    return toPosixPath(dist);
 }

@@ -27,7 +27,7 @@ export interface ProcessRecord {
 }
 
 export function parsePsOutput(raw: string): ProcessRecord[] {
-    const lines = raw.split("\n").filter((line) => line.trim().length > 0);
+    const lines = raw.split(/\r?\n/).filter((line) => line.trim().length > 0);
     const records: ProcessRecord[] = [];
 
     for (const line of lines) {

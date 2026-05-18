@@ -3,6 +3,7 @@ import { join } from "node:path";
 import logger from "@app/logger";
 import { ShopRegistry } from "@app/shops/api/ShopRegistry";
 import { SafeJSON } from "@app/utils/json";
+import { toPosixPath } from "@app/utils/paths";
 import { WebView } from "@app/utils/WebView";
 
 const log = logger.child({ component: "shops:capture-fixture" });
@@ -118,5 +119,5 @@ export async function runCaptureFixture(opts: RunCaptureFixtureOptions): Promise
         log.info({ shop: client.shopOrigin, path, status }, "fixture written (HTTP)");
     }
 
-    return { writtenPaths: written };
+    return { writtenPaths: written.map(toPosixPath) };
 }

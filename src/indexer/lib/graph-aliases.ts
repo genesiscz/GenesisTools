@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { SafeJSON } from "@app/utils/json";
+import { toPosixPath } from "@app/utils/paths";
 
 export interface PathAliases {
     /** Map of alias prefix -> target directories (relative to project root) */
@@ -94,7 +95,7 @@ export function parsePathAliases(jsonContent: string, projectDir: string): PathA
 
             const targetPath = target.endsWith("/*") ? target.slice(0, -1) : target;
             const absolute = resolve(baseDir, targetPath);
-            resolvedTargets.push(relative(projectDir, absolute));
+            resolvedTargets.push(toPosixPath(relative(projectDir, absolute)));
         }
 
         if (resolvedTargets.length > 0) {

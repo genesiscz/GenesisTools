@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { removeRecursive } from "@app/utils/fs";
 import { SafeJSON } from "@app/utils/json";
 import { ensureExtensionCapableSQLite } from "@app/utils/search/stores/sqlite-vec-loader";
 import type { Storage } from "@app/utils/storage/storage";
@@ -90,7 +91,7 @@ export class IndexerManager {
         const indexDir = join(this.storage.getBaseDir(), name);
 
         if (existsSync(indexDir)) {
-            rmSync(indexDir, { recursive: true, force: true });
+            removeRecursive(indexDir);
         }
 
         // Also remove companion context index if it exists
@@ -110,7 +111,7 @@ export class IndexerManager {
             const contextDir = join(this.storage.getBaseDir(), contextName);
 
             if (existsSync(contextDir)) {
-                rmSync(contextDir, { recursive: true, force: true });
+                removeRecursive(contextDir);
             }
         }
     }

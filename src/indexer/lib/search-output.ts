@@ -1,4 +1,5 @@
 import { isAbsolute, relative } from "node:path";
+import { toPosixPath } from "@app/utils/paths";
 import { formatTable } from "@app/utils/table";
 import pc from "picocolors";
 import { highlightQueryWords } from "./highlight";
@@ -34,7 +35,9 @@ export function toDisplayPath(filePath: string, indexName: string, baseDirs?: Ma
         const rel = relative(baseDir, filePath);
 
         if (rel && !rel.startsWith("..") && !isAbsolute(rel)) {
-            return rel;
+            // Stable display output — POSIX on every OS (Windows `relative`
+            // yields `app\Services\X.php`, breaking display + snapshots).
+            return toPosixPath(rel);
         }
     }
 

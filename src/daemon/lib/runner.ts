@@ -7,6 +7,7 @@ import type { DaemonTask, RunResult } from "./types";
 
 const DEFAULT_TASK_TIMEOUT_MS = 10 * 60 * 1000;
 const FORCE_KILL_GRACE_MS = 500;
+const STREAM_DRAIN_GRACE_MS = 250;
 
 function safeTimestamp(): string {
     return formatLocalFileTimestamp();
@@ -19,11 +20,18 @@ function appendJsonl(path: string, data: Record<string, unknown>): void {
 async function streamLines(
     stream: ReadableStream<Uint8Array>,
     type: "stdout" | "stderr",
-    logPath: string
+    logPath: string,
+    signal: AbortSignal
 ): Promise<void> {
     const reader = stream.getReader();
     const decoder = new TextDecoder();
     let partial = "";
+
+    const onAbort = (): void => {
+        reader.cancel().catch(() => {});
+    };
+
+    signal.addEventListener("abort", onAbort, { once: true });
 
     try {
         while (true) {
@@ -48,6 +56,7 @@ async function streamLines(
             }
         }
     } finally {
+        signal.removeEventListener("abort", onAbort);
         reader.releaseLock();
     }
 }
@@ -76,44 +85,72 @@ export async function runTask(task: DaemonTask, attempt: number, logsBaseDir: st
     appLogger.info({ task: task.name, attempt, timeoutMs, logFile }, "[daemon] spawning task process");
     appLogger.debug({ task: task.name, command: task.command }, "[daemon] task command");
 
+    // `detached: true` makes the child a process-group leader (POSIX setsid),
+    // so a kill can target the whole group (`sh` + every descendant). Without
+    // it, killing the Bun.spawn child only reaps `sh`; a runaway grandchild
+    // survives, holds the stdout pipe open, and hangs the result forever.
     const proc = Bun.spawn(["sh", "-c", task.command], {
         stdout: "pipe",
         stderr: "pipe",
         stdin: "ignore",
+        detached: true,
     });
 
-    const stdoutDone = streamLines(proc.stdout, "stdout", logFile);
-    const stderrDone = streamLines(proc.stderr, "stderr", logFile);
+    // POSIX: negative pid signals the whole process group (sh + descendants).
+    // Windows has no process groups, so process.kill(-pid) throws, the catch
+    // falls back to proc.kill (reaps sh only) and a grandchild may leak — the
+    // stream-drain abort below still unblocks the result. A true Windows tree
+    // kill would need `taskkill /T /F /PID`; add that only if it ever matters.
+    const killTree = (signal: "SIGTERM" | "SIGKILL"): void => {
+        try {
+            process.kill(-proc.pid, signal);
+        } catch {
+            try {
+                proc.kill(signal);
+            } catch {
+                // Process already gone — nothing to signal.
+            }
+        }
+    };
+
+    const drainAbort = new AbortController();
+    const stdoutDone = streamLines(proc.stdout, "stdout", logFile, drainAbort.signal);
+    const stderrDone = streamLines(proc.stderr, "stderr", logFile, drainAbort.signal);
     let timedOut = false;
     let exited = false;
     let forceKillTimer: Timer | undefined;
     const timeoutTimer = setTimeout(() => {
         timedOut = true;
         appLogger.warn({ task: task.name, attempt, timeoutMs, logFile }, "[daemon] task timed out, sending SIGTERM");
-        proc.kill("SIGTERM");
+        killTree("SIGTERM");
         forceKillTimer = setTimeout(() => {
             if (!exited) {
                 appLogger.warn(
                     { task: task.name, attempt, timeoutMs, logFile },
                     "[daemon] task still running, sending SIGKILL"
                 );
-                proc.kill("SIGKILL");
+                killTree("SIGKILL");
             }
         }, FORCE_KILL_GRACE_MS);
     }, timeoutMs);
 
     timeoutTimer.unref?.();
 
-    const exitPromise = proc.exited.finally(() => {
-        exited = true;
-        clearTimeout(timeoutTimer);
+    const rawExitCode = await proc.exited;
+    exited = true;
+    clearTimeout(timeoutTimer);
 
-        if (forceKillTimer) {
-            clearTimeout(forceKillTimer);
-        }
-    });
+    if (forceKillTimer) {
+        clearTimeout(forceKillTimer);
+    }
 
-    const [rawExitCode] = await Promise.all([exitPromise, stdoutDone, stderrDone]);
+    // The child exited, but a detached grandchild that escaped the kill could
+    // still hold the pipe open. Give the streams a bounded grace to flush,
+    // then abort the readers so the result can never hang on stream drain.
+    await Promise.race([Promise.all([stdoutDone, stderrDone]), Bun.sleep(STREAM_DRAIN_GRACE_MS)]);
+    drainAbort.abort();
+    await Promise.allSettled([stdoutDone, stderrDone]);
+
     const duration_ms = Date.now() - startMs;
     const exitCode = timedOut ? null : rawExitCode;
 

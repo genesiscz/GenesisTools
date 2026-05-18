@@ -24,6 +24,7 @@ import {
 import type { AnalysisFilters, FullAnalysis, TargetProperty } from "@app/Internal/commands/reas/types";
 import { isInteractive, suggestCommand } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
+import { isPortInUse } from "@app/utils/network";
 import { stripAnsi } from "@app/utils/string";
 import { formatTable } from "@app/utils/table";
 import * as p from "@clack/prompts";
@@ -476,14 +477,44 @@ async function runReasAnalysis(options: ReasOptions): Promise<void> {
         const { resolve } = await import("node:path");
         const { spawn } = await import("node:child_process");
         const configPath = resolve(import.meta.dir, "ui/vite.config.ts");
-        const port = options.dashboardPort ?? "3072";
+        const portStr = options.dashboardPort ?? "3072";
+        const port = Number.parseInt(portStr, 10);
+
+        if (Number.isNaN(port) || port < 1 || port > 65535) {
+            console.error(
+                `Invalid --dashboard-port value: "${portStr}". Please provide a valid port number (1-65535).`
+            );
+            return;
+        }
+
+        const portOccupied = await isPortInUse(port);
+
+        if (portOccupied) {
+            console.error(`Port ${port} is already in use.`);
+            console.log(
+                suggestCommand("tools internal reas --dashboard", {
+                    add: ["--dashboard-port", "<port>"],
+                })
+            );
+            return;
+        }
+
         console.log(`Starting REAS dashboard on port ${port}...`);
-        const child = spawn("bun", ["--bun", "vite", "dev", "--strictPort", "-c", configPath, "--port", port], {
+        const child = spawn("bun", ["--bun", "vite", "dev", "--strictPort", "-c", configPath, "--port", String(port)], {
             stdio: "inherit",
         });
 
-        child.on("error", (err: Error) => console.error("Dashboard failed:", err));
-        await new Promise(() => {});
+        const exitCode = await new Promise<number>((resolveExit) => {
+            child.once("error", (err: Error) => {
+                console.error("Dashboard failed:", err);
+                resolveExit(1);
+            });
+            child.once("close", (code) => {
+                resolveExit(code ?? 0);
+            });
+        });
+
+        process.exit(exitCode);
         return;
     }
 

@@ -1,5 +1,6 @@
-import { dirname, relative, sep } from "node:path";
+import { dirname, relative } from "node:path";
 import { SafeJSON } from "@app/utils/json";
+import { toPosixPath } from "@app/utils/paths";
 import type { MerkleNode } from "./types";
 
 /**
@@ -29,7 +30,7 @@ export function buildMerkleTree(opts: {
     dirChildren.set("", []);
 
     for (const file of files) {
-        const relPath = relative(baseDir, file.path);
+        const relPath = toPosixPath(relative(baseDir, file.path));
         const chunkHashes = [...file.chunkHashes].sort();
         const fileHash = sha256(`${relPath}\0${chunkHashes.join("")}`);
 
@@ -42,12 +43,12 @@ export function buildMerkleTree(opts: {
 
         // Ensure all ancestor directories exist in the map
         const dir = dirname(relPath);
-        const parts = dir === "." ? [] : dir.split(sep);
+        const parts = dir === "." ? [] : dir.split("/");
         let current = "";
 
         for (const part of parts) {
             const parent = current;
-            current = current ? `${current}${sep}${part}` : part;
+            current = current ? `${current}/${part}` : part;
 
             if (!dirChildren.has(current)) {
                 dirChildren.set(current, []);
