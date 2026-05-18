@@ -26,6 +26,16 @@ export class ProcessExitError extends Error {
     }
 }
 
+// Command code legitimately sets `process.exitCode = 1` on error paths. Under
+// `bun test` (one shared process) that lingering value makes the whole run
+// exit non-zero even with 0 failures — a false red. bun derives its own exit
+// from pass/fail, so reset the side effect after every test, globally.
+import { afterEach } from "bun:test";
+
+afterEach(() => {
+    process.exitCode = 0;
+});
+
 const realExit = process.exit;
 
 function throwingExit(code?: number | string | null): never {
