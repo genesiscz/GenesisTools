@@ -1,5 +1,6 @@
 import { Separator } from "@ui/components/separator";
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@ui/components/sidebar";
+import { cn } from "@ui/lib/utils";
 import { ThemeProvider } from "@ui/theme/provider";
 import type React from "react";
 
@@ -8,6 +9,9 @@ interface AppShellProps {
     title?: string;
     description?: string;
     statusLabel?: string;
+    /** Token theme class applied to the shell root (e.g. "cyberpunk", "wow").
+     *  Pins token values regardless of ambient; default inherits (dashboard). */
+    themeClass?: string;
     gridBackground?: boolean;
     scanLinesEffect?: boolean;
     children: React.ReactNode;
@@ -18,13 +22,15 @@ export function AppShell({
     title,
     description,
     statusLabel = "System Online",
+    themeClass,
     gridBackground,
     scanLinesEffect,
     children,
 }: AppShellProps) {
     return (
         <ThemeProvider variant="nexus">
-            <SidebarProvider className="nexus">
+            <SidebarProvider className={cn("nexus", themeClass)}>
+                <div className="fixed inset-0 -z-10 bg-background pointer-events-none" />
                 {gridBackground && <div className="fixed inset-0 cyber-grid opacity-40 pointer-events-none" />}
                 {scanLinesEffect && <div className="fixed inset-0 scan-lines opacity-30 pointer-events-none" />}
 

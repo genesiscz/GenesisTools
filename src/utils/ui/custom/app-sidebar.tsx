@@ -33,12 +33,21 @@ export interface SidebarNavGroup {
 }
 
 interface AppSidebarProps {
-    brand: { initial: string; name: string; tagline: string; to?: string };
+    /** Default brand block. Omit when supplying `renderBrand`. */
+    brand?: { initial: string; name: string; tagline: string; to?: string };
+    /** Full override for the brand/header block (custom logo lockup). */
+    renderBrand?: () => ReactNode;
     navGroups: SidebarNavGroup[];
     activePath: string;
     /** Optional account footer. Omitted entirely when not provided (e.g. tools with no auth). */
     user?: { name: string; email?: string; avatarUrl?: string; initials: string };
     onSignOut?: () => void;
+    /** Per-item render override. Replaces the default menu-button rendering. */
+    MenuItemComponent?: React.ComponentType<{
+        item: SidebarNavItem;
+        active: boolean;
+        LinkComponent: React.ElementType;
+    }>;
     LinkComponent: React.ElementType;
 }
 
@@ -58,7 +67,16 @@ const groupButton: Record<SidebarGroupTheme, string> = {
         "data-[active=true]:bg-sidebar-foreground/10 data-[active=true]:text-sidebar-foreground hover:bg-sidebar-foreground/5 hover:text-sidebar-foreground transition-colors",
 };
 
-export function AppSidebar({ brand, navGroups, activePath, user, onSignOut, LinkComponent }: AppSidebarProps) {
+export function AppSidebar({
+    brand,
+    renderBrand,
+    navGroups,
+    activePath,
+    user,
+    onSignOut,
+    MenuItemComponent,
+    LinkComponent,
+}: AppSidebarProps) {
     const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
 
     const isActive = (url: string) => activePath === url || activePath.startsWith(`${url}/`);
@@ -66,37 +84,59 @@ export function AppSidebar({ brand, navGroups, activePath, user, onSignOut, Link
     return (
         <Sidebar className="border-r border-sidebar-border bg-sidebar">
             <SidebarHeader className="border-b border-sidebar-border p-4 bg-gradient-to-b from-sidebar to-sidebar/80">
-                <LinkComponent to={brand.to ?? "/dashboard"} className="flex items-center gap-3">
-                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-amber-500 to-amber-600 text-black font-bold text-sm">
-                        {brand.initial}
-                    </div>
-                    <div className="flex flex-col">
-                        <span className="font-semibold text-sm tracking-tight gradient-text">{brand.name}</span>
-                        <span className="text-[10px] text-muted-foreground tracking-widest uppercase">
-                            {brand.tagline}
-                        </span>
-                    </div>
-                </LinkComponent>
+                {renderBrand
+                    ? renderBrand()
+                    : brand && (
+                          <LinkComponent to={brand.to ?? "/dashboard"} className="flex items-center gap-3">
+                              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-amber-500 to-amber-600 text-black font-bold text-sm">
+                                  {brand.initial}
+                              </div>
+                              <div className="flex flex-col">
+                                  <span className="font-semibold text-sm tracking-tight gradient-text">
+                                      {brand.name}
+                                  </span>
+                                  <span className="text-[10px] text-muted-foreground tracking-widest uppercase">
+                                      {brand.tagline}
+                                  </span>
+                              </div>
+                          </LinkComponent>
+                      )}
             </SidebarHeader>
 
             <SidebarContent className="px-2">
                 {navGroups.map((group) => (
                     <SidebarGroup key={group.label}>
-                        <SidebarGroupLabel
-                            className={`${groupLabel[group.theme]} text-[10px] tracking-widest uppercase font-semibold`}
-                        >
-                            {group.label}
-                        </SidebarGroupLabel>
+                        {group.label && (
+                            <SidebarGroupLabel
+                                className={`${groupLabel[group.theme]} text-[10px] tracking-widest uppercase font-semibold`}
+                            >
+                                {group.label}
+                            </SidebarGroupLabel>
+                        )}
                         <SidebarGroupContent>
                             <SidebarMenu>
                                 {group.items.map((item) => {
+                                    const active = isActive(item.url);
+
+                                    if (MenuItemComponent) {
+                                        return (
+                                            <SidebarMenuItem key={item.title}>
+                                                <MenuItemComponent
+                                                    item={item}
+                                                    active={active}
+                                                    LinkComponent={LinkComponent}
+                                                />
+                                            </SidebarMenuItem>
+                                        );
+                                    }
+
                                     const Icon = item.icon;
 
                                     return (
                                         <SidebarMenuItem key={item.title}>
                                             <SidebarMenuButton
                                                 asChild
-                                                isActive={isActive(item.url)}
+                                                isActive={active}
                                                 className={groupButton[group.theme]}
                                             >
                                                 <LinkComponent to={item.url}>
