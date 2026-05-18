@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { statSync } from "node:fs";
 import { detectBunCapabilities } from "@app/utils/bun";
+import { skip } from "@app/utils/test/skip";
 import { WebViewError, WebViewEvaluateError, WebViewNavigationError, WebViewTimeoutError } from "./errors";
 import { WebView } from "./WebView";
 import { WebViewPool } from "./WebViewPool";
@@ -59,7 +60,7 @@ describe("WebViewEvaluateError", () => {
 // suppresses or routes the deferred error properly.
 // TODO(bun): re-enable skipped tests once Bun.WebView no longer emits exit-time
 // "WebView closed" errors that bypass try/catch and uncaughtException.
-describe("WebView (integration)", () => {
+describe.skipIf(skip.unlessMac)("WebView (integration)", () => {
     it.skip("constructs without throwing (skipped: bun WebView close emits orphan exit-time error)", async () => {
         await using wv = new WebView({ url: "about:blank" });
         expect(wv.instanceId).toMatch(/^[0-9a-f]{8}$/);
@@ -112,7 +113,7 @@ describe("WebView (integration)", () => {
     });
 });
 
-describe("WebView -- consolePipe (integration)", () => {
+describe.skipIf(skip.unlessMac)("WebView -- consolePipe (integration)", () => {
     it.skip("page console.log does not throw when consolePipe: true (skipped: bun WebView close emits orphan exit-time error)", async () => {
         await using wv = new WebView({
             consolePipe: true,

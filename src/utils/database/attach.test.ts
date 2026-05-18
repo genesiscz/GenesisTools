@@ -1,15 +1,15 @@
 import { Database } from "bun:sqlite";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { removeRecursive } from "@app/utils/fs";
+import { makeTempDir } from "@app/utils/paths";
 import { attachReadonly, detachQuietly } from "./attach";
 
 let dir: string;
 let extPath: string;
 
 beforeAll(() => {
-    dir = mkdtempSync(join(tmpdir(), "attach-helper-"));
+    dir = makeTempDir("attach-helper-");
     extPath = join(dir, "ext.db");
     const ext = new Database(extPath);
     ext.run("CREATE TABLE t (id TEXT)");
@@ -18,7 +18,7 @@ beforeAll(() => {
 });
 
 afterAll(() => {
-    rmSync(dir, { recursive: true, force: true });
+    removeRecursive(dir);
 });
 
 describe("attachReadonly / detachQuietly", () => {
@@ -57,7 +57,7 @@ describe("attachReadonly / detachQuietly", () => {
     });
 
     it("attaches paths containing URI-reserved characters", () => {
-        const specialDir = mkdtempSync(join(tmpdir(), "attach special#dir?"));
+        const specialDir = makeTempDir("attach special#dir?");
         const specialPath = join(specialDir, "quote'and#hash?.db");
         const ext = new Database(specialPath);
         ext.run("CREATE TABLE t (id TEXT)");
@@ -72,7 +72,7 @@ describe("attachReadonly / detachQuietly", () => {
             expect(row.id).toBe("z");
             db.close();
         } finally {
-            rmSync(specialDir, { recursive: true, force: true });
+            removeRecursive(specialDir);
         }
     });
 

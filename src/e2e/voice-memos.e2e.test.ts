@@ -2,10 +2,12 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, readdirSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { getOutput, runTool } from "@app/utils/e2e/helpers";
+import { tmpPath } from "@app/utils/paths";
+import { skip } from "@app/utils/test/skip";
 
-const EXPORT_DIR = "/tmp/vm-e2e-export";
+const EXPORT_DIR = tmpPath("vm-e2e-export");
 
-describe("tools macos voice-memos", () => {
+describe.skipIf(skip.unlessMac)("tools macos voice-memos", () => {
     afterAll(async () => {
         if (existsSync(EXPORT_DIR)) {
             await rm(EXPORT_DIR, { recursive: true, force: true });

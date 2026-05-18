@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { join } from "node:path";
+import { skip } from "@app/utils/test/skip";
 
 // We need to test with platform overrides, so we import the module fresh per test group.
 // For Windows tests, we mock process.platform before importing.
@@ -281,7 +282,7 @@ describe("escapeShellArg: Windows (cross-spawn compatible, two-phase)", () => {
         expect(escapeShellArg("foo & bar")).toBe('^"foo^ ^&^ bar^"');
     });
 
-    it("uses single quotes on Unix (default)", async () => {
+    it.skipIf(skip.onWindows)("uses single quotes on Unix (default)", async () => {
         restorePlatform();
         const { escapeShellArg } = await import("../utils/string");
         expect(escapeShellArg("hello")).toBe("'hello'");
