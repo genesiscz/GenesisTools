@@ -9,6 +9,7 @@
         "tsgo": "tsgo --noEmit",
         "tsc": "tsgo --noEmit",
         "lint": "biome check .",
+        "check:ui-palette": "bun scripts/check-ui-palette.ts",
         "lint:fix": "biome check --write .",
         "lint:dashboard": "cd src/claude-history-dashboard && biome check .",
         "lint:dashboard:fix": "cd src/claude-history-dashboard && biome check --write .",
