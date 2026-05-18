@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { skip } from "@app/utils/test/skip";
 import { runTask } from "./runner";
 import type { DaemonTask } from "./types";
 
@@ -22,7 +23,7 @@ afterEach(() => {
 });
 
 describe("runTask", () => {
-    it("times out a command that prints output but never exits", async () => {
+    it.skipIf(skip.onWindows)("times out a command that prints output but never exits", async () => {
         const logsDir = makeTempDir();
         const task: DaemonTask = {
             name: "hung-task",

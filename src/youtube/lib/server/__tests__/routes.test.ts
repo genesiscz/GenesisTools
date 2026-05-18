@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@app/utils/json";
+import { skip } from "@app/utils/test/skip";
 import { startServer } from "@app/youtube/lib/server";
 import type { SummarizeOpts, SummarizeResult } from "@app/youtube/lib/summarize.types";
 
@@ -175,70 +176,73 @@ describe("youtube server foundation", () => {
         }
     });
 
-    it("POST /summary with mode=long, tone, format, length passes them through to summarize", async () => {
-        const dir = await mkdtemp(join(tmpdir(), "youtube-server-routes-"));
-        const handle = await startServer({ port: 0, baseDir: dir, startPipeline: false });
+    it.skipIf(skip.network)(
+        "POST /summary with mode=long, tone, format, length passes them through to summarize",
+        async () => {
+            const dir = await mkdtemp(join(tmpdir(), "youtube-server-routes-"));
+            const handle = await startServer({ port: 0, baseDir: dir, startPipeline: false });
 
-        try {
-            handle.youtube.db.upsertChannel({ handle: "@mkbhd" });
-            handle.youtube.db.upsertVideo({
-                id: "abc123def45",
-                channelHandle: "@mkbhd",
-                title: "Test Video",
-                uploadDate: "2026-04-01",
-            });
-            handle.youtube.db.saveTranscript({
-                videoId: "abc123def45",
-                lang: "en",
-                source: "captions",
-                text: "hello",
-                segments: [{ text: "hello", start: 0, end: 1 }],
-                durationSec: 1,
-            });
+            try {
+                handle.youtube.db.upsertChannel({ handle: "@mkbhd" });
+                handle.youtube.db.upsertVideo({
+                    id: "abc123def45",
+                    channelHandle: "@mkbhd",
+                    title: "Test Video",
+                    uploadDate: "2026-04-01",
+                });
+                handle.youtube.db.saveTranscript({
+                    videoId: "abc123def45",
+                    lang: "en",
+                    source: "captions",
+                    text: "hello",
+                    segments: [{ text: "hello", start: 0, end: 1 }],
+                    durationSec: 1,
+                });
 
-            const captured: SummarizeOpts[] = [];
-            handle.youtube.summary.summarize = async (opts: SummarizeOpts): Promise<SummarizeResult> => {
-                captured.push(opts);
-                return {
-                    long: {
-                        tldr: "ok",
-                        keyPoints: [],
-                        learnings: [],
-                        chapters: [],
-                        conclusion: null,
-                    },
+                const captured: SummarizeOpts[] = [];
+                handle.youtube.summary.summarize = async (opts: SummarizeOpts): Promise<SummarizeResult> => {
+                    captured.push(opts);
+                    return {
+                        long: {
+                            tldr: "ok",
+                            keyPoints: [],
+                            learnings: [],
+                            chapters: [],
+                            conclusion: null,
+                        },
+                    };
                 };
-            };
 
-            const res = await fetch(`http://localhost:${handle.port}/api/v1/videos/abc123def45/summary`, {
-                method: "POST",
-                headers: { "content-type": "application/json" },
-                body: SafeJSON.stringify({
+                const res = await fetch(`http://localhost:${handle.port}/api/v1/videos/abc123def45/summary`, {
+                    method: "POST",
+                    headers: { "content-type": "application/json" },
+                    body: SafeJSON.stringify({
+                        mode: "long",
+                        tone: "actionable",
+                        format: "qa",
+                        length: "detailed",
+                        provider: "anthropic",
+                        model: "claude-haiku-4-5",
+                    }),
+                });
+                const body = (await res.json()) as { summary: { tldr: string }; mode: string; jobId: number };
+
+                expect(res.status).toBe(200);
+                expect(body.mode).toBe("long");
+                expect(body.summary.tldr).toBe("ok");
+                expect(typeof body.jobId).toBe("number");
+                expect(captured[0]).toMatchObject({
                     mode: "long",
                     tone: "actionable",
                     format: "qa",
                     length: "detailed",
-                    provider: "anthropic",
-                    model: "claude-haiku-4-5",
-                }),
-            });
-            const body = (await res.json()) as { summary: { tldr: string }; mode: string; jobId: number };
-
-            expect(res.status).toBe(200);
-            expect(body.mode).toBe("long");
-            expect(body.summary.tldr).toBe("ok");
-            expect(typeof body.jobId).toBe("number");
-            expect(captured[0]).toMatchObject({
-                mode: "long",
-                tone: "actionable",
-                format: "qa",
-                length: "detailed",
-            });
-        } finally {
-            await handle.stop();
-            await rm(dir, { recursive: true, force: true });
+                });
+            } finally {
+                await handle.stop();
+                await rm(dir, { recursive: true, force: true });
+            }
         }
-    });
+    );
 
     it("serves cache stats and config get/patch routes", async () => {
         const dir = await mkdtemp(join(tmpdir(), "youtube-server-routes-"));

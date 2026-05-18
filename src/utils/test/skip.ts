@@ -22,6 +22,10 @@
  *   RUN_SOLID=1 bun test                 # Solid TUI + live-machine doctor integration (~30s)
  *   RUN_MAIL_INFRA=1 bun test            # EmlxBodyExtractor tests that scan ~/Library/Mail/V10 (~5s each)
  *   RUN_INTEGRATION=1 bun test          # benchmark/timer/say e2e tests that spawn bun subprocesses
+ *   RUN_AI_ACCOUNTS=1 bun test           # tests that expect local AI account config (Claude/OpenAI creds)
+ *   RUN_CLAUDE_DATA=1 bun test           # tests that discover ~/.claude session data (0 files on CI)
+ *   RUN_LOCAL_MODELS=1 bun test          # tests that require locally-installed ONNX models (e.g. sherpa-onnx)
+ *   RUN_AUDIO_DEVICE=1 bun test          # tests that need a real audio output device (playback)
  *
  * Env-var names intentionally reuse the conventions already in the repo
  * (RUN_NETWORK_TESTS, RUN_LIVE, …) so existing CI/local muscle memory holds.
@@ -75,6 +79,31 @@ export const optIn = {
      * Set RUN_INTEGRATION=1 to include them.
      */
     integration: flag("RUN_INTEGRATION"),
+    /**
+     * Tests that call AIAccount.listClaude() / AIAccount.list(), which read local AI
+     * account config (Claude subscriptions, OpenAI keys, etc.). On CI there are no
+     * credentials, so list() returns 0 accounts and the length assertions fail.
+     * Set RUN_AI_ACCOUNTS=1 to include them.
+     */
+    aiAccounts: flag("RUN_AI_ACCOUNTS"),
+    /**
+     * Tests that discover ~/.claude session files (discoverSessionFiles / discoverSessionFilesInDir).
+     * On CI the home directory has no Claude Code history, so the count assertions fail.
+     * Set RUN_CLAUDE_DATA=1 to include them.
+     */
+    claudeData: flag("RUN_CLAUDE_DATA"),
+    /**
+     * Tests that require locally-installed ONNX models such as sherpa-onnx-darwin-arm64.
+     * These models are not present on CI runners — the require() will throw and file-existence
+     * checks will fail. Set RUN_LOCAL_MODELS=1 to include them.
+     */
+    localModels: flag("RUN_LOCAL_MODELS"),
+    /**
+     * Tests that exercise real audio output (playBuffer / playStream via ffplay/afplay).
+     * CI runners have no audio device; the promise rejects with a device error.
+     * Set RUN_AUDIO_DEVICE=1 to include them.
+     */
+    audioDevice: flag("RUN_AUDIO_DEVICE"),
 } as const;
 
 /**
@@ -124,6 +153,26 @@ export const skip = {
      * Gates integration e2e tests that spawn bun subprocesses (benchmark, timer, say).
      */
     integration: !optIn.integration,
+    /**
+     * Skip unless RUN_AI_ACCOUNTS is set.
+     * Gates tests that expect local AI account config (Claude subscriptions, OpenAI keys).
+     */
+    aiAccounts: !optIn.aiAccounts,
+    /**
+     * Skip unless RUN_CLAUDE_DATA is set.
+     * Gates tests that discover ~/.claude session files — no history present on CI.
+     */
+    claudeData: !optIn.claudeData,
+    /**
+     * Skip unless RUN_LOCAL_MODELS is set.
+     * Gates tests that require locally-installed ONNX models (e.g. sherpa-onnx).
+     */
+    localModels: !optIn.localModels,
+    /**
+     * Skip unless RUN_AUDIO_DEVICE is set.
+     * Gates tests that exercise real audio output (ffplay/afplay) — no device on CI.
+     */
+    audioDevice: !optIn.audioDevice,
 } as const;
 
 /** Compose gates: skip if ANY condition is true. */

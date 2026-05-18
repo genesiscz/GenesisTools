@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runTool, stripAnsi } from "@app/utils/e2e/helpers";
 import { SafeJSON } from "@app/utils/json";
+import { skip } from "@app/utils/test/skip";
 
 const TEST_PREFIX = `test_e2e_${Date.now()}`;
 let tempDir: string;
@@ -62,7 +63,7 @@ async function tryRemoveIndex(name: string): Promise<void> {
     await runTool(["indexer", "remove", name, "--force"], 30_000);
 }
 
-describe("tools indexer (E2E)", () => {
+describe.skipIf(skip.e2e)("tools indexer (E2E)", () => {
     beforeAll(() => {
         tempDir = createFixtureDir();
         indexName = `${TEST_PREFIX}_flow`;

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { skip } from "@app/utils/test/skip";
 import { createWatcher, isTransientError, type WatcherEvent, type WatcherSubscription } from "./watcher";
 
 let tempDir: string;
@@ -81,7 +82,7 @@ function collectEvents(opts?: { debounceMs?: number; filter?: (e: WatcherEvent) 
 }
 
 describe("createWatcher", () => {
-    test(
+    test.skipIf(skip.onWindows)(
         "detects file creation",
         async () => {
             const { waitForEvents, startWatcher } = collectEvents();
