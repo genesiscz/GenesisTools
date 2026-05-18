@@ -210,15 +210,22 @@ async function stopRunningDashboard(port: number): Promise<void> {
         const stuck = await pidsListeningOn(port);
         console.log(`Port :${port} still held by ${stuck.join(", ")}; sending SIGKILL.`);
         signalPids(stuck, "SIGKILL");
-        await waitForPortFree(port, 4000);
-    }
 
-    // A SIGKILLed parent can't reap its Vite child; sweep the orphan (matched
-    // narrowly by the dev-dashboard Vite config path) so it doesn't accumulate.
-    const orphanVite = await pidsMatching("src/dev-dashboard/ui/vite.config.ts");
+        if (!(await waitForPortFree(port, 4000))) {
+            // Abort here — proceeding would only fail later as an opaque
+            // EADDRINUSE inside runUiServer().
+            throw new Error(`Port :${port} is still in use after SIGTERM+SIGKILL; aborting restart.`);
+        }
 
-    if (orphanVite.length > 0) {
-        signalPids(orphanVite, "SIGTERM");
+        // Only reachable on the force-kill path. A SIGKILLed parent can't reap
+        // its Vite child (the graceful SIGTERM path's shutdown handler does),
+        // so sweep the orphan here only — scoping it to this branch keeps a
+        // dev-dashboard running from another worktree/checkout untouched.
+        const orphanVite = await pidsMatching("src/dev-dashboard/ui/vite.config.ts");
+
+        if (orphanVite.length > 0) {
+            signalPids(orphanVite, "SIGTERM");
+        }
     }
 }
 

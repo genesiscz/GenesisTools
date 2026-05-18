@@ -5,6 +5,7 @@ import {
     buildSessionCookie,
     isCompleteAuthConfig,
     issueSessionToken,
+    LOCAL_ORIGIN_HEADER,
     verifyBasicAuthHeader,
     verifySessionToken,
 } from "@app/dev-dashboard/lib/auth";
@@ -86,7 +87,7 @@ async function requireDashboardAuth(req: IncomingMessage, res: ServerResponse, u
     // Cloudflare headers) and strips any inbound copy, so this cannot be forged
     // over the tunnel or LAN. Vite binds 127.0.0.1, so only the local
     // front-proxy can reach here to set it.
-    if (req.headers["x-dd-local-origin"] === "1") {
+    if (req.headers[LOCAL_ORIGIN_HEADER] === "1") {
         return true;
     }
 

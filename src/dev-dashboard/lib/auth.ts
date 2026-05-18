@@ -98,6 +98,15 @@ export function verifyBasicAuthHeader(header: string | null, auth: CompleteDashb
     return secureHexEqual(hashPassword(parsed.password, auth.passwordSalt), auth.passwordHash);
 }
 
+// Single source of truth for the loopback-trust header. The front-proxy sets
+// it ONLY for a genuine localhost origin and strips any inbound copy; the Vite
+// auth middleware trusts it to skip Basic Auth for localhost. Both modules MUST
+// reference this exact name — if the set/strip side and the trust side ever
+// desync, an attacker-supplied header could go un-stripped and bypass auth
+// (fail-open). Defined here because auth.ts is the one module both already
+// import.
+export const LOCAL_ORIGIN_HEADER = "x-dd-local-origin";
+
 // Browser-initiated WebSocket handshakes cannot carry an Authorization header,
 // so the ttyd terminal + HMR sockets (which bypass the Vite auth middleware via
 // the front-proxy) are gated by a signed session cookie instead. The cookie is
@@ -211,5 +220,11 @@ export function verifySessionToken(
         return false;
     }
 
-    return Date.now() - payload.iat < maxAgeMs;
+    const now = Date.now();
+
+    // Require issued-in-the-past AND not-expired: a future-dated iat must not
+    // validate (it would otherwise never expire). Forging iat needs the HMAC
+    // secret, so this is clock-skew / defense-in-depth robustness, not the
+    // primary control.
+    return payload.iat <= now && now - payload.iat < maxAgeMs;
 }

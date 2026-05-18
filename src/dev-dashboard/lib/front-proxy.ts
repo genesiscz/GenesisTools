@@ -1,7 +1,8 @@
-import { getDashboardAuthCached } from "@app/dev-dashboard/config";
+import { type DashboardAuthProvision, getDashboardAuthCached } from "@app/dev-dashboard/config";
 import {
     type CompleteDashboardAuthConfig,
     isCompleteAuthConfig,
+    LOCAL_ORIGIN_HEADER,
     verifyBasicAuthHeader,
     verifySessionToken,
 } from "@app/dev-dashboard/lib/auth";
@@ -18,11 +19,8 @@ import type { Server, ServerWebSocket } from "bun";
 
 const TTYD_PATH = /^\/ttyd\/([0-9a-fA-F-]{36})(?:\/|$)/;
 
-// Header the front-proxy sets ONLY for genuine loopback-origin requests so the
-// Vite auth middleware can skip Basic Auth for localhost while still enforcing
-// it for the tunnel and LAN. Stripped from every inbound request first
-// (anti-spoof); Vite binds 127.0.0.1, so only this proxy can legitimately set it.
-const LOCAL_ORIGIN_HEADER = "x-dd-local-origin";
+// LOCAL_ORIGIN_HEADER is the single source of truth in auth.ts (set/stripped
+// here, trusted by the Vite middleware — they must never desync).
 
 const WWW_AUTHENTICATE = 'Basic realm="GenesisTools dev dashboard", charset="UTF-8"';
 
@@ -38,7 +36,7 @@ function isLoopbackAddress(address: string | undefined): boolean {
 // Cloudflare/forwarded edge headers. cloudflared connects from 127.0.0.1 too,
 // so the socket alone is insufficient — the un-strippable cf-*/cdn-loop headers
 // and the original Host are what separate a local browser from tunnel/LAN.
-function isLoopbackOnlyOrigin(req: Request, clientAddress: string | undefined): boolean {
+export function isLoopbackOnlyOrigin(req: Request, clientAddress: string | undefined): boolean {
     if (!isLoopbackAddress(clientAddress)) {
         return false;
     }
@@ -61,20 +59,27 @@ function isLoopbackOnlyOrigin(req: Request, clientAddress: string | undefined): 
     return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
 }
 
-type AuthDecision = "allow" | "deny" | "unconfigured";
+export type AuthDecision = "allow" | "deny" | "unconfigured";
 
-// ttyd HTTP assets and EVERY WebSocket upgrade (ttyd terminal + Vite HMR) are
-// served/bridged by this proxy and never reach the Vite auth middleware, so
-// without this gate they are an unauthenticated bypass (proven: interactive
-// shell over LAN and the public tunnel). Accept a genuine loopback origin, a
-// valid Basic header (curl/programmatic clients), or the signed session cookie
-// (browser WS handshakes cannot carry an Authorization header).
-async function authorizeProxied(req: Request, isLocal: boolean): Promise<AuthDecision> {
+// Pure auth decision (no I/O) so the full gate matrix is unit-testable and
+// can't silently regress. ttyd HTTP assets and EVERY WebSocket upgrade (ttyd
+// terminal + Vite HMR) are served/bridged by this proxy and never reach the
+// Vite auth middleware, so without this gate they are an unauthenticated
+// bypass (proven: interactive shell over LAN and the public tunnel). Accept a
+// genuine loopback origin, a valid Basic header (curl/programmatic clients),
+// or the signed session cookie (browser WS handshakes cannot send an
+// Authorization header). Note: this never trusts an inbound LOCAL_ORIGIN_HEADER
+// — locality comes only from the socket + Host via isLocal, never a header.
+export function decideProxyAuth(args: {
+    req: Request;
+    isLocal: boolean;
+    provision: DashboardAuthProvision;
+}): AuthDecision {
+    const { req, isLocal, provision } = args;
+
     if (isLocal) {
         return "allow";
     }
-
-    const provision = await getDashboardAuthCached();
 
     if (!provision.auth.enabled) {
         return "allow";
@@ -94,6 +99,10 @@ async function authorizeProxied(req: Request, isLocal: boolean): Promise<AuthDec
     }
 
     return "deny";
+}
+
+async function authorizeProxied(req: Request, isLocal: boolean): Promise<AuthDecision> {
+    return decideProxyAuth({ req, isLocal, provision: await getDashboardAuthCached() });
 }
 
 interface BridgeData {

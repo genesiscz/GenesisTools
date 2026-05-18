@@ -63,6 +63,17 @@ describe("dashboard session cookie", () => {
         expect(verifySessionToken(`dd_session=${token}`, auth, 0)).toBe(false);
     });
 
+    test("rejects a future-dated (iat > now) token", () => {
+        const realNow = Date.now;
+        Date.now = () => realNow() + 60_000;
+        const futureToken = issueSessionToken(auth);
+        Date.now = realNow;
+
+        // Without the issued-in-the-past guard this would validate (now - iat
+        // is negative, so < maxAgeMs is trivially true) and never expire.
+        expect(verifySessionToken(`dd_session=${futureToken}`, auth)).toBe(false);
+    });
+
     test("rejects a token signed with a different password (post `auth reset`)", () => {
         const token = issueSessionToken(auth);
         const { auth: rotated } = createBasicAuthCredentials({ username: "martin", password: "new-pass" });

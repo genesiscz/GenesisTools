@@ -112,6 +112,7 @@ export async function getOrCreateDashboardAuth(): Promise<DashboardAuthProvision
 // restart needed — while collapsing what was a per-request config-file read.
 const AUTH_CACHE_TTL_MS = 30_000;
 let authCache: { provision: DashboardAuthProvision; at: number } | null = null;
+let authCacheInFlight: Promise<DashboardAuthProvision> | null = null;
 
 export async function getDashboardAuthCached(): Promise<DashboardAuthProvision> {
     const now = Date.now();
@@ -120,10 +121,26 @@ export async function getDashboardAuthCached(): Promise<DashboardAuthProvision> 
         return authCache.provision;
     }
 
-    const provision = await getOrCreateDashboardAuth();
-    authCache = { provision, at: now };
+    // Coalesce concurrent cold/expired missers onto one provisioning call.
+    // Without this, a first-run incomplete config makes each concurrent caller
+    // generate and persist a *different* random password (last write wins) —
+    // some requests would then be issued/verified against credentials a later
+    // write silently replaced. Clear the in-flight ref on rejection so a
+    // failed provision can be retried.
+    if (authCacheInFlight) {
+        return authCacheInFlight;
+    }
 
-    return provision;
+    authCacheInFlight = getOrCreateDashboardAuth()
+        .then((provision) => {
+            authCache = { provision, at: Date.now() };
+            return provision;
+        })
+        .finally(() => {
+            authCacheInFlight = null;
+        });
+
+    return authCacheInFlight;
 }
 
 export async function saveTtydSessions(ttydSessions: TtydSession[]): Promise<void> {
