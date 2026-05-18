@@ -104,6 +104,14 @@ export const optIn = {
      * Set RUN_AUDIO_DEVICE=1 to include them.
      */
     audioDevice: flag("RUN_AUDIO_DEVICE"),
+    /**
+     * Tests that make live calls to paid external AI APIs (OpenAI, Anthropic,
+     * @ai-sdk/* providers, Deepgram, Groq, Google GenAI) using real keys from
+     * the environment. CI passes no keys (these 401 or self-skip there), but
+     * running the full suite locally with keys in env silently burns paid
+     * credits and hits provider rate limits. Set RUN_REAL_APIS=1 to include.
+     */
+    realApis: flag("RUN_REAL_APIS"),
 } as const;
 
 /**
@@ -173,6 +181,11 @@ export const skip = {
      * Gates tests that exercise real audio output (ffplay/afplay) — no device on CI.
      */
     audioDevice: !optIn.audioDevice,
+    /**
+     * Skip unless RUN_REAL_APIS is set.
+     * Gates tests that hit live paid AI APIs with real keys (cost + rate limits).
+     */
+    realApis: !optIn.realApis,
 } as const;
 
 /** Compose gates: skip if ANY condition is true. */
