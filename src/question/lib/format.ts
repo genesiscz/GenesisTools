@@ -10,10 +10,7 @@ const TAG_TINT: Record<string, (s: string) => string> = {
     directive: (s) => pc.bold(pc.green(s)),
 };
 
-type FormattableEntry = Pick<
-    QaEntry,
-    "ts" | "project" | "branch" | "tag" | "question" | "answerMd" | "sessionId"
->;
+type FormattableEntry = Pick<QaEntry, "ts" | "project" | "branch" | "tag" | "question" | "answerMd" | "sessionId">;
 
 /**
  * Single source of truth for one Q→A entry's terminal rendering. Used by both

@@ -1,6 +1,6 @@
 import { FileTailer } from "@app/utils/fs/file-tailer";
-import pc from "picocolors";
 import type { Command } from "commander";
+import pc from "picocolors";
 import { formatQaEntry } from "../lib/format";
 import { logFilePathFor } from "../lib/log-store";
 import { openReadModel, queryEntries } from "../lib/read-model";

@@ -1,8 +1,8 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@app/utils/json";
-import pc from "picocolors";
 import type { Command } from "commander";
+import pc from "picocolors";
 import { formatQaEntry } from "../lib/format";
 import { openReadModel, type QueryOpts, queryEntries } from "../lib/read-model";
 
