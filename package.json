@@ -16,7 +16,8 @@
         "format": "biome format --write .",
         "format:dashboard": "cd src/claude-history-dashboard && biome format --write .",
         "dev:reas-dashboard": "bun --bun vite dev --strictPort -c src/Internal/commands/reas/ui/vite.config.ts",
-        "clear-cache": "bun src/utils/clearCache.ts"
+        "clear-cache": "bun src/utils/clearCache.ts",
+        "test": "bun test --parallel --path-ignore-patterns='**/dashboard/**' --path-ignore-patterns='**/dev-dashboard/**' --path-ignore-patterns='**/claude-history-dashboard/**' --path-ignore-patterns='**/Internal/**' --path-ignore-patterns='**/shops/**'"
     },
     "devDependencies": {
         "@anthropic-ai/claude-code": "^2.1.45",
