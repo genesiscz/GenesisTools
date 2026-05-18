@@ -270,7 +270,7 @@ function SettingsPage() {
                                     value={adoUrl}
                                     onChange={(e) => setAdoUrl(e.target.value)}
                                     placeholder="https://dev.azure.com/MyOrg/MyProject/..."
-                                    className="bg-black/30 border-white/10 font-mono text-sm flex-1"
+                                    className="bg-card/60 border-border/60 font-mono text-sm flex-1"
                                 />
                                 <Button
                                     onClick={() => adoMutation.mutate()}
@@ -293,8 +293,8 @@ function SettingsPage() {
                                         adoMutation.error.message.toLowerCase().includes("not logged in") && (
                                             <p className="font-mono text-xs text-primary/70 mt-1">
                                                 Hint: Run{" "}
-                                                <code className="px-1 py-0.5 bg-white/5 rounded">az login</code> in your
-                                                terminal first
+                                                <code className="px-1 py-0.5 bg-muted/50 rounded">az login</code> in
+                                                your terminal first
                                             </p>
                                         )}
                                 </div>
@@ -397,7 +397,7 @@ function SettingsPage() {
                                                     value={memberFilter}
                                                     onChange={(e) => setMemberFilter(e.target.value)}
                                                     placeholder="Filter by name or email..."
-                                                    className="bg-black/30 border-white/10 font-mono text-xs pl-8"
+                                                    className="bg-card/60 border-border/60 font-mono text-xs pl-8"
                                                 />
                                             </div>
 
@@ -412,7 +412,7 @@ function SettingsPage() {
                                                             className={`w-full text-left px-3 py-2 rounded border font-mono text-xs transition-colors ${
                                                                 isSelected
                                                                     ? "border-primary/50 bg-primary/10 text-primary"
-                                                                    : "border-white/5 bg-black/20 text-gray-400 hover:border-primary/20"
+                                                                    : "border-border/60 bg-card/60 text-gray-400 hover:border-primary/20"
                                                             }`}
                                                         >
                                                             <span className="font-bold">{member.displayName}</span>
@@ -482,7 +482,7 @@ function SettingsPage() {
                         <ol className="list-decimal list-inside space-y-0.5 text-gray-600 pl-1">
                             <li>Open Clarity PPM in Chrome/Edge, go to Timesheets</li>
                             <li>
-                                Press <kbd className="px-1 py-0.5 bg-white/5 rounded text-gray-400">F12</kbd> to open
+                                Press <kbd className="px-1 py-0.5 bg-muted/50 rounded text-gray-400">F12</kbd> to open
                                 Developer Tools
                             </li>
                             <li>
@@ -498,7 +498,7 @@ function SettingsPage() {
                         value={curlInput}
                         onChange={(e) => setCurlInput(e.target.value)}
                         placeholder="curl 'https://...' -H 'authToken: ...' -H 'Cookie: sessionId=...'"
-                        className="w-full h-32 bg-black/30 border border-white/10 rounded px-3 py-2 font-mono text-xs text-gray-300 placeholder:text-gray-600 focus:border-primary/40 focus:outline-none resize-none"
+                        className="w-full h-32 bg-card/60 border border-border/60 rounded px-3 py-2 font-mono text-xs text-gray-300 placeholder:text-gray-600 focus:border-primary/40 focus:outline-none resize-none"
                     />
                     <div className="mt-3 flex items-center gap-3">
                         <Button
@@ -529,7 +529,7 @@ function SettingsPage() {
             </Card>
 
             {/* Help section */}
-            <Card className="border-white/5">
+            <Card className="border-border/60">
                 <CardHeader className="pb-3">
                     <CardTitle className="text-sm font-mono text-gray-400">CLI Commands</CardTitle>
                 </CardHeader>

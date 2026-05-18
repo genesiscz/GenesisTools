@@ -131,7 +131,7 @@ export function FillWeekCard({
                                     return (
                                         <Fragment key={entry.clarityTaskCode}>
                                             <TableRow
-                                                className={`border-white/5 ${hasEntries ? "cursor-pointer hover:bg-primary/5" : ""}`}
+                                                className={`border-border/60 ${hasEntries ? "cursor-pointer hover:bg-primary/5" : ""}`}
                                                 onClick={
                                                     hasEntries ? () => toggleExpand(entry.clarityTaskCode) : undefined
                                                 }
@@ -178,7 +178,7 @@ export function FillWeekCard({
                                                 </TableCell>
                                             </TableRow>
                                             {isExpanded && (
-                                                <TableRow className="border-white/5">
+                                                <TableRow className="border-border/60">
                                                     <TableCell colSpan={workDays.length + 2} className="p-0">
                                                         <TimelogEntriesTable
                                                             entries={entry.timelogEntries ?? []}
@@ -203,7 +203,7 @@ export function FillWeekCard({
                                     {entries
                                         .filter((e) => e.clarityOnly)
                                         .map((entry) => (
-                                            <TableRow key={entry.clarityTaskCode} className="border-white/5">
+                                            <TableRow key={entry.clarityTaskCode} className="border-border/60">
                                                 <TableCell className="font-mono text-sm text-gray-500">
                                                     <div className="truncate" title={entry.clarityTaskName}>
                                                         {entry.clarityTaskName}
@@ -354,10 +354,10 @@ function TimelogEntriesTable({ entries, adoConfig }: { entries: TimelogEntry[]; 
     const sorted = [...entries].sort((a, b) => a.date.localeCompare(b.date) || a.workItemId - b.workItemId);
 
     return (
-        <div className="ml-6 mr-2 my-2 border border-white/5 rounded bg-white/[0.01]">
+        <div className="ml-6 mr-2 my-2 border border-border/60 rounded bg-muted/50">
             <Table>
                 <TableHeader>
-                    <TableRow className="border-white/5">
+                    <TableRow className="border-border/60">
                         <TableHead className="font-mono text-[10px] text-gray-500">Date</TableHead>
                         <TableHead className="font-mono text-[10px] text-gray-500">Hours</TableHead>
                         <TableHead className="font-mono text-[10px] text-gray-500">Work Item</TableHead>
@@ -366,7 +366,7 @@ function TimelogEntriesTable({ entries, adoConfig }: { entries: TimelogEntry[]; 
                 </TableHeader>
                 <TableBody>
                     {sorted.map((e, i) => (
-                        <TableRow key={`${e.date}-${e.workItemId}-${i}`} className="border-white/5">
+                        <TableRow key={`${e.date}-${e.workItemId}-${i}`} className="border-border/60">
                             <TableCell className="font-mono text-xs text-gray-500 py-1">{e.date}</TableCell>
                             <TableCell className="font-mono text-xs text-primary/80 py-1">
                                 {(e.minutes / 60).toFixed(2)}h

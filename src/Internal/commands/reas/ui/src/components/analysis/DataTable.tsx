@@ -59,7 +59,7 @@ export function DataTable<Row extends Record<string, ReactNode>>({
         <div className="overflow-x-auto">
             <Table>
                 <TableHeader>
-                    <TableRow className="border-white/5 hover:bg-transparent">
+                    <TableRow className="border-border/60 hover:bg-transparent">
                         {columns.map((column) => (
                             <TableHead
                                 key={String(column.key)}
@@ -79,7 +79,7 @@ export function DataTable<Row extends Record<string, ReactNode>>({
                         sortedRows.map((row, index) => (
                             <TableRow
                                 key={getRowKey(row, index)}
-                                className={cn("border-white/5 hover:bg-white/[0.03]", rowClassName?.(row))}
+                                className={cn("border-border/60 hover:bg-primary/5", rowClassName?.(row))}
                             >
                                 {columns.map((column) => (
                                     <TableCell
@@ -96,7 +96,7 @@ export function DataTable<Row extends Record<string, ReactNode>>({
                             </TableRow>
                         ))
                     ) : (
-                        <TableRow className="border-white/5 hover:bg-transparent">
+                        <TableRow className="border-border/60 hover:bg-transparent">
                             <TableCell
                                 colSpan={columns.length}
                                 className="py-8 text-center font-mono text-xs text-slate-500"

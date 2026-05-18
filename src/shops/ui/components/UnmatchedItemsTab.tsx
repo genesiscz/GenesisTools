@@ -105,7 +105,7 @@ function UnmatchedRow({ item, onAttach }: { item: UnmatchedItem; onAttach: (mast
     });
 
     return (
-        <div className="border border-zinc-800 rounded p-2 flex flex-col md:flex-row gap-2 md:items-center">
+        <div className="border border-border rounded p-2 flex flex-col md:flex-row gap-2 md:items-center">
             <div className="flex-1 min-w-0">
                 <div className="text-xs font-mono text-foreground truncate">{item.name}</div>
                 <div className="text-[10px] font-mono text-muted-foreground">
@@ -126,7 +126,7 @@ function UnmatchedRow({ item, onAttach }: { item: UnmatchedItem; onAttach: (mast
                     const found = search.data?.find((r) => r.master_product_id === id) ?? null;
                     setPicked(found);
                 }}
-                className="bg-zinc-950 border border-zinc-800 text-xs font-mono px-2 py-1 rounded md:w-64"
+                className="bg-card border border-border text-xs font-mono px-2 py-1 rounded md:w-64"
             >
                 <option value="">— pick master —</option>
                 {(search.data ?? []).map((r) => (

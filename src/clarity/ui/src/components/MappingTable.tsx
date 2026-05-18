@@ -151,14 +151,14 @@ export function MappingTable({
                         className={`rounded-lg border transition-colors ${
                             isDropTarget && !containsDraggedItem
                                 ? "border-primary/60 bg-primary/5"
-                                : "border-white/10 bg-white/[0.02]"
+                                : "border-border/60 bg-muted/50"
                         }`}
                         onDragOver={(e) => handleDragOver(e, group.clarityTaskId)}
                         onDragLeave={(e) => handleDragLeave(e, group.clarityTaskId)}
                         onDrop={(e) => handleDrop(e, group)}
                     >
                         {/* Group Header */}
-                        <div className="px-4 py-3 border-b border-white/5">
+                        <div className="px-4 py-3 border-b border-border/60">
                             <div className="flex items-center justify-between">
                                 <div>
                                     <div className="font-mono text-sm text-gray-200">{group.clarityTaskName}</div>

@@ -1,6 +1,6 @@
+import { apiHandler, jsonBody } from "@app/clarity/ui/src/server/api-utils";
+import { addMapping, getMappings, removeMapping } from "@app/clarity/ui/src/server/mappings";
 import { createFileRoute } from "@tanstack/react-router";
-import { apiHandler, jsonBody } from "../../server/api-utils";
-import { addMapping, getMappings, removeMapping } from "../../server/mappings";
 
 export const Route = createFileRoute("/api/mappings")({
     server: {

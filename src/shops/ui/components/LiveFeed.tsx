@@ -99,7 +99,7 @@ export function LiveFeed() {
                 status={status}
                 queueSize={filtered.length}
             />
-            <div className="border border-zinc-800 rounded-md overflow-hidden">
+            <div className="border border-border rounded-md overflow-hidden">
                 <div className="max-h-[70vh] overflow-y-auto">
                     {filtered.length === 0 ? (
                         <div className="p-12 text-center font-mono text-xs tracking-[0.2em] text-muted-foreground uppercase">

@@ -60,7 +60,7 @@ export function BulkAddOrdersTable({ providers, onBulkAdd }: Props): ReactNode {
     return (
         <div className="space-y-3">
             {providers.map((p) => (
-                <Card key={p.shop_origin} className="border-zinc-800 bg-zinc-950">
+                <Card key={p.shop_origin}>
                     <CardHeader>
                         <CardTitle className="font-mono text-xs tracking-[0.25em] uppercase text-muted-foreground">
                             {p.shop_origin} · {p.orders.length} orders
@@ -68,8 +68,8 @@ export function BulkAddOrdersTable({ providers, onBulkAdd }: Props): ReactNode {
                     </CardHeader>
                     <CardContent className="space-y-3">
                         {p.orders.map((o) => (
-                            <div key={o.id} className="border border-zinc-800 rounded">
-                                <div className="px-3 py-1.5 border-b border-zinc-800 flex justify-between text-xs font-mono">
+                            <div key={o.id} className="border border-border rounded">
+                                <div className="px-3 py-1.5 border-b border-border flex justify-between text-xs font-mono">
                                     <span className="text-muted-foreground">
                                         #{o.external_order_id} · {new Date(o.ordered_at).toLocaleDateString("cs-CZ")}
                                     </span>
@@ -77,7 +77,7 @@ export function BulkAddOrdersTable({ providers, onBulkAdd }: Props): ReactNode {
                                         {o.total_amount.toLocaleString("cs-CZ")} {o.currency}
                                     </span>
                                 </div>
-                                <ul className="text-xs font-mono divide-y divide-zinc-900">
+                                <ul className="text-xs font-mono divide-y divide-border">
                                     {o.items.map((it) => (
                                         <li key={it.line_no} className="flex items-center gap-3 px-3 py-1.5">
                                             <Checkbox
@@ -109,7 +109,7 @@ export function BulkAddOrdersTable({ providers, onBulkAdd }: Props): ReactNode {
                     </CardContent>
                 </Card>
             ))}
-            <div className="sticky bottom-2 bg-background/80 backdrop-blur-md border border-zinc-800 rounded p-2 flex justify-between items-center">
+            <div className="sticky bottom-2 bg-background/80 backdrop-blur-md border border-border rounded p-2 flex justify-between items-center">
                 <span className="text-xs font-mono text-muted-foreground">{selected.size} selected</span>
                 <Button size="sm" disabled={selected.size === 0 || submitting} onClick={submit}>
                     {submitting ? "..." : `Add ${selected.size} to watchlist`}

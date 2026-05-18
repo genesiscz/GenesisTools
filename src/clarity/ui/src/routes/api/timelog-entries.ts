@@ -1,6 +1,6 @@
+import { apiHandler } from "@app/clarity/ui/src/server/api-utils";
+import { getTimelogEntries } from "@app/clarity/ui/src/server/export";
 import { createFileRoute } from "@tanstack/react-router";
-import { apiHandler } from "../../server/api-utils";
-import { getTimelogEntries } from "../../server/export";
 
 export const Route = createFileRoute("/api/timelog-entries")({
     server: {

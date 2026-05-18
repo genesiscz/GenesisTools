@@ -17,7 +17,7 @@ export interface PriceSparklineProps {
 export function PriceSparkline({ points, width = 100, height = 28 }: PriceSparklineProps) {
     const data = points.filter((p) => p.c !== null).map((p) => ({ d: p.d, c: p.c as number }));
     if (data.length === 0) {
-        return <span className="text-xs text-zinc-500 font-mono">no data</span>;
+        return <span className="text-xs text-muted-foreground font-mono">no data</span>;
     }
 
     return (

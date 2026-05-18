@@ -61,7 +61,7 @@ function IndexPage() {
                         onClick={() => router.navigate({ to: action.href })}
                         className="text-left"
                     >
-                        <Card className="border-white/5 hover:border-primary/30 transition-all cursor-pointer h-full">
+                        <Card className="border-border/60 hover:border-primary/30 transition-all cursor-pointer h-full">
                             <CardContent className="p-5">
                                 <div className="flex items-start gap-4">
                                     <div className="p-2 rounded bg-primary/10 border border-primary/30 text-primary">

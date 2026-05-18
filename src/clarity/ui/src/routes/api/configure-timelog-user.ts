@@ -1,6 +1,6 @@
+import { apiHandler, jsonBody } from "@app/clarity/ui/src/server/api-utils";
+import { setTimeLogDefaultUser } from "@app/clarity/ui/src/server/settings";
 import { createFileRoute } from "@tanstack/react-router";
-import { apiHandler, jsonBody } from "../../server/api-utils";
-import { setTimeLogDefaultUser } from "../../server/settings";
 
 export const Route = createFileRoute("/api/configure-timelog-user")({
     server: {

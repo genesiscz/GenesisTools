@@ -1,6 +1,6 @@
+import { apiHandler, jsonBody } from "@app/clarity/ui/src/server/api-utils";
+import { postTimesheetNote } from "@app/clarity/ui/src/server/fill";
 import { createFileRoute } from "@tanstack/react-router";
-import { apiHandler, jsonBody } from "../../server/api-utils";
-import { postTimesheetNote } from "../../server/fill";
 
 export const Route = createFileRoute("/api/post-note")({
     server: {

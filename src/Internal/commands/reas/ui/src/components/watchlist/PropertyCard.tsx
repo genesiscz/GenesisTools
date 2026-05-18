@@ -46,7 +46,7 @@ interface MetricItemProps {
 
 function MetricItem({ label, value, tone = "default" }: MetricItemProps) {
     return (
-        <div className="rounded-md border border-white/5 bg-white/[0.02] px-3 py-2">
+        <div className="rounded-md border border-border/60 bg-muted/50 px-3 py-2">
             <div className="text-[10px] font-mono uppercase tracking-wider text-gray-600 truncate">{label}</div>
             <div
                 className={cn(
@@ -154,7 +154,7 @@ export function PropertyCard({
     }, [alertGradeChange, alertYieldFloor, onUpdateAlerts, property.id]);
 
     return (
-        <Card className="border-white/10 bg-white/[0.02] hover:border-amber-500/30 hover:shadow-[0_0_20px_rgba(245,158,11,0.07)] transition-all duration-200">
+        <Card className="hover:border-primary/30 hover:shadow-[0_0_20px_rgba(245,158,11,0.07)] transition-all duration-200">
             <CardHeader className="space-y-3 pb-3">
                 <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0 space-y-1">
@@ -196,7 +196,7 @@ export function PropertyCard({
                                 key={provider}
                                 variant="outline"
                                 className={cn(
-                                    "border-white/10 bg-white/[0.02] text-[10px] font-mono",
+                                    "border-border/60 bg-muted/50 text-[10px] font-mono",
                                     PROVIDER_BADGE_STYLES[provider] ?? "text-gray-400"
                                 )}
                             >
@@ -274,14 +274,14 @@ export function PropertyCard({
                                         <PropertyMortgageCard mortgage={cardModel.mortgage} />
                                     </div>
                                 ) : (
-                                    <div className="rounded-lg border border-dashed border-white/10 bg-black/20 px-3 py-4 text-[11px] font-mono text-gray-400">
+                                    <div className="rounded-lg border border-dashed border-border/60 bg-card/60 px-3 py-4 text-[11px] font-mono text-gray-400">
                                         This card has no stored analysis yet. You can still manage alerts now and
                                         refresh later to unlock the full dossier.
                                     </div>
                                 )}
 
                                 {onUpdateAlerts && (
-                                    <div className="rounded-lg border border-white/5 bg-black/20 p-3">
+                                    <div className="rounded-lg border border-border/60 bg-card/60 p-3">
                                         <div className="flex flex-wrap items-start justify-between gap-3">
                                             <div>
                                                 <div className="text-[10px] font-mono uppercase tracking-[0.18em] text-gray-500">
@@ -296,10 +296,10 @@ export function PropertyCard({
                                                 <Badge
                                                     variant="outline"
                                                     className={cn(
-                                                        "bg-white/[0.02]",
+                                                        "bg-muted/50",
                                                         alertYieldTriggered
                                                             ? "border-rose-500/30 text-rose-300"
-                                                            : "border-white/10 text-gray-400"
+                                                            : "border-border/60 text-gray-400"
                                                     )}
                                                 >
                                                     Current {formatYield(property.last_net_yield)}
@@ -307,10 +307,10 @@ export function PropertyCard({
                                                 <Badge
                                                     variant="outline"
                                                     className={cn(
-                                                        "bg-white/[0.02]",
+                                                        "bg-muted/50",
                                                         property.alert_grade_change
-                                                            ? "border-amber-500/20 text-amber-300"
-                                                            : "border-white/10 text-gray-500"
+                                                            ? "border-primary/20 text-primary"
+                                                            : "border-border/60 text-gray-500"
                                                     )}
                                                 >
                                                     Grade change {property.alert_grade_change ? "on" : "off"}
@@ -335,11 +335,11 @@ export function PropertyCard({
                                                         setAlertValidationMessage(null);
                                                     }}
                                                     placeholder="4.5"
-                                                    className="h-8 border-white/10 bg-black/20 text-xs font-mono"
+                                                    className="h-8 border-border/60 bg-card/60 text-xs font-mono"
                                                 />
                                             </div>
 
-                                            <label className="flex h-8 items-center gap-2 rounded border border-white/10 bg-black/20 px-3 text-[11px] font-mono text-gray-300">
+                                            <label className="flex h-8 items-center gap-2 rounded border border-border/60 bg-card/60 px-3 text-[11px] font-mono text-gray-300">
                                                 <Checkbox
                                                     id={`property-alert-grade-${property.id}`}
                                                     checked={alertGradeChange}
@@ -357,7 +357,7 @@ export function PropertyCard({
                                                 variant="outline"
                                                 onClick={handleSaveAlerts}
                                                 disabled={savingAlerts}
-                                                className="h-8 border-amber-500/30 text-xs font-mono text-amber-300 hover:bg-amber-500/10"
+                                                className="h-8 border-primary/30 text-xs font-mono text-primary hover:bg-primary/10"
                                             >
                                                 {savingAlerts ? "Saving..." : "Save Alerts"}
                                             </Button>
@@ -378,7 +378,7 @@ export function PropertyCard({
                             size="sm"
                             variant="outline"
                             onClick={() => setExpanded((current) => !current)}
-                            className="h-8 border-white/10 text-xs font-mono text-gray-300 hover:bg-white/[0.04]"
+                            className="h-8 border-border/60 text-xs font-mono text-gray-300 hover:bg-primary/5"
                         >
                             {expanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
                             {expanded ? "Collapse Card" : cardModel ? "Expand Analysis" : "Expand Alerts"}
@@ -387,32 +387,32 @@ export function PropertyCard({
                 )}
 
                 <div className="flex flex-wrap gap-2 text-[10px] font-mono">
-                    <Badge variant="outline" className="border-white/10 text-gray-400 bg-white/[0.02]">
+                    <Badge variant="outline" className="border-border/60 text-gray-400 bg-muted/50">
                         Area {formatNumber(property.target_area, 0)} m2
                     </Badge>
-                    <Badge variant="outline" className="border-white/10 text-gray-400 bg-white/[0.02]">
+                    <Badge variant="outline" className="border-border/60 text-gray-400 bg-muted/50">
                         Rent {formatCurrencyCompact(property.monthly_rent)}
                     </Badge>
-                    <Badge variant="outline" className="border-white/10 text-gray-400 bg-white/[0.02]">
+                    <Badge variant="outline" className="border-border/60 text-gray-400 bg-muted/50">
                         DOM {formatNumber(property.time_on_market)}
                     </Badge>
-                    <Badge variant="outline" className="border-white/10 text-gray-400 bg-white/[0.02]">
+                    <Badge variant="outline" className="border-border/60 text-gray-400 bg-muted/50">
                         Comps {formatNumber(property.comparable_count)}
                     </Badge>
-                    <Badge variant="outline" className="border-white/10 text-gray-400 bg-white/[0.02]">
+                    <Badge variant="outline" className="border-border/60 text-gray-400 bg-muted/50">
                         Rentals {formatNumber(property.rental_count)}
                     </Badge>
-                    <Badge variant="outline" className="border-white/10 text-gray-400 bg-white/[0.02]">
+                    <Badge variant="outline" className="border-border/60 text-gray-400 bg-muted/50">
                         Discount {formatPercent(property.discount_vs_market)}
                     </Badge>
-                    <Badge variant="outline" className="border-white/10 text-gray-400 bg-white/[0.02]">
+                    <Badge variant="outline" className="border-border/60 text-gray-400 bg-muted/50">
                         Momentum {property.momentum ?? "-"}
                     </Badge>
-                    <Badge variant="outline" className="border-white/10 text-gray-400 bg-white/[0.02]">
+                    <Badge variant="outline" className="border-border/60 text-gray-400 bg-muted/50">
                         Percentile {property.percentile != null ? `${property.percentile.toFixed(0)}th` : "-"}
                     </Badge>
                     {property.alert_yield_floor != null && (
-                        <Badge variant="outline" className="border-amber-500/20 text-amber-300 bg-amber-500/5">
+                        <Badge variant="outline" className="border-primary/20 text-primary bg-primary/5">
                             Alert yield &lt; {property.alert_yield_floor.toFixed(1)}%
                         </Badge>
                     )}
@@ -424,7 +424,7 @@ export function PropertyCard({
                 </div>
 
                 {property.notes && (
-                    <p className="rounded-md border border-white/5 bg-black/20 px-3 py-2 text-[10px] font-mono text-gray-500 italic">
+                    <p className="rounded-md border border-border/60 bg-card/60 px-3 py-2 text-[10px] font-mono text-gray-500 italic">
                         {property.notes}
                     </p>
                 )}
@@ -439,7 +439,7 @@ export function PropertyCard({
                                 "col-span-2 h-8 text-xs font-mono",
                                 selectedForCompare
                                     ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
-                                    : "border-white/10 text-gray-300 hover:bg-white/[0.04]"
+                                    : "border-border/60 text-gray-300 hover:bg-primary/5"
                             )}
                         >
                             {selectedForCompare ? <CheckSquare className="w-3 h-3" /> : <Square className="w-3 h-3" />}
@@ -462,7 +462,7 @@ export function PropertyCard({
                         size="sm"
                         variant="outline"
                         asChild
-                        className="h-8 text-xs font-mono border-amber-500/20 text-amber-400 hover:bg-amber-500/10"
+                        className="h-8 text-xs font-mono border-primary/20 text-primary hover:bg-primary/10"
                     >
                         <Link to="/watchlist/$propertyId" params={{ propertyId: String(property.id) }}>
                             Details
@@ -473,7 +473,7 @@ export function PropertyCard({
                         size="sm"
                         variant="outline"
                         asChild
-                        className="h-8 text-xs font-mono border-white/10 text-gray-300 hover:bg-white/[0.04]"
+                        className="h-8 text-xs font-mono border-border/60 text-gray-300 hover:bg-primary/5"
                     >
                         <Link to={compareHref}>Compare District</Link>
                     </Button>

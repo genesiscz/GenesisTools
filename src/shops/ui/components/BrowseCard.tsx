@@ -19,10 +19,10 @@ export function BrowseCard({ item }: BrowseCardProps) {
             className="group block focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/60 rounded"
         >
             <Card
-                className="overflow-hidden bg-zinc-950 border-zinc-800 transition-all duration-200 group-hover:-translate-y-0.5 group-hover:shadow-[0_12px_24px_rgba(34,211,238,0.18)]"
+                className="overflow-hidden transition-all duration-200 group-hover:-translate-y-0.5 group-hover:shadow-[0_12px_24px_rgba(34,211,238,0.18)]"
                 style={{ borderBottom: `4px solid ${accent}` }}
             >
-                <div className="relative aspect-square bg-zinc-900 overflow-hidden">
+                <div className="relative aspect-square bg-muted overflow-hidden">
                     {item.representative_image_url ? (
                         <img
                             src={item.representative_image_url}
@@ -31,12 +31,12 @@ export function BrowseCard({ item }: BrowseCardProps) {
                             className="w-full h-full object-contain transition-transform duration-300 group-hover:scale-105 group-hover:brightness-110"
                         />
                     ) : (
-                        <div className="w-full h-full flex items-center justify-center text-zinc-700">
+                        <div className="w-full h-full flex items-center justify-center text-muted-foreground">
                             <ImageOff className="w-8 h-8" />
                         </div>
                     )}
                     <div className="absolute inset-x-0 bottom-0 px-2 py-1.5 bg-gradient-to-t from-black/90 to-transparent translate-y-full group-hover:translate-y-0 transition-transform duration-200">
-                        <div className="font-mono text-[10px] uppercase tracking-[0.15em] text-zinc-400">
+                        <div className="font-mono text-[10px] uppercase tracking-[0.15em] text-muted-foreground">
                             {item.brand ?? "no brand"}
                         </div>
                     </div>

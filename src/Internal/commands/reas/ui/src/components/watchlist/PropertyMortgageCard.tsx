@@ -3,7 +3,7 @@ import { formatCurrencyCompact, formatCurrencyFull, formatPercent, formatYield }
 
 export function PropertyMortgageCard({ mortgage }: { mortgage: PropertyMortgageModel | null }) {
     return (
-        <div className="rounded-md border border-white/5 bg-black/20 px-3 py-3">
+        <div className="rounded-md border border-border/60 bg-card/60 px-3 py-3">
             <div className="text-[10px] font-mono uppercase tracking-wider text-gray-600">Mortgage</div>
             {mortgage ? (
                 <>

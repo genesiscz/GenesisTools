@@ -5,8 +5,8 @@ import {
     type DistrictSnapshotResolution,
 } from "@app/Internal/commands/reas/lib/district-snapshot";
 import { reasDatabase } from "@app/Internal/commands/reas/lib/store";
+import { apiHandler, jsonBody } from "@app/Internal/commands/reas/ui/src/server/api-utils";
 import { createFileRoute } from "@tanstack/react-router";
-import { apiHandler, jsonBody } from "../../server/api-utils";
 
 function parseSnapshotResolution(value: string | null): DistrictSnapshotResolution {
     return value === "monthly" ? "monthly" : "daily";

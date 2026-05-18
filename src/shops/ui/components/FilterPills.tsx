@@ -27,7 +27,7 @@ export function FilterPills({ value, onChange, counts }: FilterPillsProps) {
                         "px-2.5 py-1 rounded-full border transition-all",
                         value === opt.value
                             ? "border-cyan-400 bg-cyan-400/10 text-cyan-300"
-                            : "border-zinc-700 text-zinc-400 hover:text-zinc-200 hover:border-zinc-500"
+                            : "border-border text-muted-foreground hover:text-foreground hover:border-border"
                     )}
                 >
                     {opt.label}

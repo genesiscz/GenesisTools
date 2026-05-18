@@ -44,7 +44,7 @@ export function SourceBadge({ source, className, href }: SourceBadgeProps) {
             variant="outline"
             className={cn(
                 "gap-1 text-[10px] font-mono uppercase tracking-[0.16em]",
-                metadata?.className ?? "border-white/10 bg-white/[0.03] text-gray-300",
+                metadata?.className ?? "border-border/60 bg-muted/50 text-gray-300",
                 className
             )}
         >

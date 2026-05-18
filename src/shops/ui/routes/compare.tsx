@@ -38,7 +38,7 @@ function ComparePage() {
                 Compare :: <span className="text-foreground">N-Way</span>
             </h1>
             {ids.length === 0 ? (
-                <div className="font-mono text-xs text-muted-foreground tracking-[0.15em] uppercase border border-dashed border-zinc-800 rounded-md p-12 text-center">
+                <div className="font-mono text-xs text-muted-foreground tracking-[0.15em] uppercase border border-dashed border-border rounded-md p-12 text-center">
                     pass <span className="text-[var(--color-neon-cyan)]">?ids=A,B,C</span> to compare master products
                 </div>
             ) : (

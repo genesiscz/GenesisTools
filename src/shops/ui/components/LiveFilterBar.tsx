@@ -53,7 +53,7 @@ export function LiveFilterBar({
     const sb = statusBadge(status);
 
     return (
-        <div className="flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between border-b border-zinc-800 pb-3">
+        <div className="flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between border-b border-border pb-3">
             <div className="flex flex-wrap items-center gap-2">
                 <Badge variant="outline" className={`font-mono text-[10px] tracking-[0.2em] uppercase ${sb.className}`}>
                     {sb.label}
@@ -67,7 +67,7 @@ export function LiveFilterBar({
                             key={name}
                             onClick={() => onToggleEvent(name)}
                             className={`font-mono text-[10px] tracking-[0.15em] uppercase border rounded px-1.5 py-0.5 transition-colors ${
-                                enabled ? color : "border-zinc-700 text-zinc-500 hover:text-zinc-300"
+                                enabled ? color : "border-border text-muted-foreground hover:text-foreground"
                             }`}
                         >
                             {label}

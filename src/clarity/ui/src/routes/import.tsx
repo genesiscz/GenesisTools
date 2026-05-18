@@ -456,8 +456,8 @@ function FillResultsCard({ result }: { result: ExecuteFillResult }) {
                         <Fragment key={entryKey}>
                             <button
                                 type="button"
-                                className={`flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer hover:bg-white/5 w-full text-left ${
-                                    isExpanded ? "bg-white/[0.03]" : ""
+                                className={`flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer hover:bg-primary/5 w-full text-left ${
+                                    isExpanded ? "bg-muted/50" : ""
                                 }`}
                                 onClick={() => toggleEntry(idx)}
                             >
@@ -529,7 +529,7 @@ function FillResultsCard({ result }: { result: ExecuteFillResult }) {
 
                                     {/* Debug: HTTP request/response */}
                                     {hasDebug && (
-                                        <div className="space-y-2 border border-gray-700/50 rounded p-2 bg-black/30">
+                                        <div className="space-y-2 border border-gray-700/50 rounded p-2 bg-card/60">
                                             <div className="text-[10px] font-mono text-gray-500 uppercase tracking-wider">
                                                 HTTP Request
                                             </div>
