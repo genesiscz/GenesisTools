@@ -90,6 +90,7 @@
         "@types/react": "^19.2.2",
         "@types/react-dom": "^19.2.0",
         "@vitejs/plugin-react": "^6.0.2",
+        "@workos/authkit-session": "0.3.2",
         "babel-plugin-react-compiler": "^1.0.0",
         "dotenv": "^17.2.3",
         "drizzle-kit": "^0.31.8",
@@ -607,7 +608,7 @@
 
     "@tanstack/ai-gemini": ["@tanstack/ai-gemini@0.10.5", "", { "dependencies": { "@google/genai": "^1.43.0", "@tanstack/ai-utils": "0.2.0" }, "peerDependencies": { "@tanstack/ai": "^0.18.0" } }, "sha512-HQOBusHTvKDFkf0NMEBmrfH4AUi3nh/onb+fXbMorcG6k5K5LxO2jAZFaLWVLbWlKckR69go3N67l9paxGAJSg=="],
 
-    "@tanstack/ai-ollama": ["@tanstack/ai-ollama@0.6.15", "", { "dependencies": { "@tanstack/ai-utils": "0.2.0", "ollama": "^0.6.3" }, "peerDependencies": { "@tanstack/ai": "^0.18.0" } }, "sha512-HgHN/TPwWTWgElBxI1QQJihfUOtJl5XhdlJVJTAvkM1QQk6U4dcWl0tf2paZ+hZAdyIVZBMg51bvkX+wQtDq4Q=="],
+    "@tanstack/ai-ollama": ["@tanstack/ai-ollama@0.6.16", "", { "dependencies": { "@tanstack/ai-utils": "0.2.0", "ollama": "^0.6.3" }, "peerDependencies": { "@tanstack/ai": "^0.18.0" } }, "sha512-VOYHQwPomolcqCUy1f9ACQu23VSgDMhV70ptVghJlCxes1SGv++FDXm6hGm8x/CdZQJbCPIAOnVyvSYv+VA+1Q=="],
 
     "@tanstack/ai-openai": ["@tanstack/ai-openai@0.9.1", "", { "dependencies": { "@tanstack/ai-utils": "0.2.0", "@tanstack/openai-base": "0.3.1", "openai": "^6.9.1" }, "peerDependencies": { "@tanstack/ai": "^0.18.0", "@tanstack/ai-client": "^0.10.0", "zod": "^4.0.0" } }, "sha512-l0YP6RuVhF4KfgYVG//31v2CZd6zNeUT28UUkopR/MDdLMzIUqmux1Hmlwi5LJ5itq5+oieWl7n6s000gk8PAA=="],
 

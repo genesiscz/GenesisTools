@@ -83,6 +83,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.2.4",
+    "@workos/authkit-session": "0.3.2",
     "@tanstack/devtools-event-client": "^0.4.0",
     "@tanstack/devtools-vite": "^0.3.11",
     "@testing-library/dom": "^10.4.0",
