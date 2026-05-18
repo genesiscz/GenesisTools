@@ -144,9 +144,103 @@ async function runUiServer(): Promise<void> {
     process.exit(exitCode);
 }
 
+async function pidsListeningOn(port: number): Promise<number[]> {
+    const proc = Bun.spawn(["lsof", "-ti", `tcp:${port}`, "-sTCP:LISTEN"], {
+        stdout: "pipe",
+        stderr: "ignore",
+    });
+    const out = await new Response(proc.stdout).text();
+    await proc.exited;
+
+    return out
+        .split("\n")
+        .map((line) => Number.parseInt(line.trim(), 10))
+        .filter((pid) => Number.isInteger(pid) && pid > 0 && pid !== process.pid);
+}
+
+async function pidsMatching(pattern: string): Promise<number[]> {
+    const proc = Bun.spawn(["pgrep", "-f", pattern], { stdout: "pipe", stderr: "ignore" });
+    const out = await new Response(proc.stdout).text();
+    await proc.exited;
+
+    return out
+        .split("\n")
+        .map((line) => Number.parseInt(line.trim(), 10))
+        .filter((pid) => Number.isInteger(pid) && pid > 0 && pid !== process.pid);
+}
+
+function signalPids(pids: number[], signal: NodeJS.Signals): void {
+    for (const pid of pids) {
+        try {
+            process.kill(pid, signal);
+        } catch (err) {
+            logger.debug({ err, pid, signal }, "dev-dashboard restart: kill failed (process already gone?)");
+        }
+    }
+}
+
+async function waitForPortFree(port: number, timeoutMs: number): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+
+    while (Date.now() < deadline) {
+        if ((await pidsListeningOn(port)).length === 0) {
+            return true;
+        }
+
+        await Bun.sleep(200);
+    }
+
+    return (await pidsListeningOn(port)).length === 0;
+}
+
+async function stopRunningDashboard(port: number): Promise<void> {
+    const pids = await pidsListeningOn(port);
+
+    if (pids.length === 0) {
+        console.log(`No dev-dashboard listening on :${port}.`);
+        return;
+    }
+
+    console.log(`Stopping dev-dashboard (pid ${pids.join(", ")}) on :${port} ...`);
+    // SIGTERM lets index.ts's handler stop the front-proxy and reap its Vite
+    // child gracefully; SIGKILL is the fallback if the port is still held.
+    signalPids(pids, "SIGTERM");
+
+    if (!(await waitForPortFree(port, 6000))) {
+        const stuck = await pidsListeningOn(port);
+        console.log(`Port :${port} still held by ${stuck.join(", ")}; sending SIGKILL.`);
+        signalPids(stuck, "SIGKILL");
+
+        if (!(await waitForPortFree(port, 4000))) {
+            // Abort here — proceeding would only fail later as an opaque
+            // EADDRINUSE inside runUiServer().
+            throw new Error(`Port :${port} is still in use after SIGTERM+SIGKILL; aborting restart.`);
+        }
+
+        // Only reachable on the force-kill path. A SIGKILLed parent can't reap
+        // its Vite child (the graceful SIGTERM path's shutdown handler does),
+        // so sweep the orphan here only — scoping it to this branch keeps a
+        // dev-dashboard running from another worktree/checkout untouched.
+        const orphanVite = await pidsMatching("src/dev-dashboard/ui/vite.config.ts");
+
+        if (orphanVite.length > 0) {
+            signalPids(orphanVite, "SIGTERM");
+        }
+    }
+}
+
 program.action(runUiServer);
 
 program.command("ui").alias("dashboard").description("Launch the dev-dashboard web UI").action(runUiServer);
+
+program
+    .command("restart")
+    .description("Stop any running dev-dashboard instance, then launch the UI (same as `ui`)")
+    .action(async () => {
+        const { port } = await getConfig();
+        await stopRunningDashboard(port);
+        await runUiServer();
+    });
 
 const auth = program.command("auth").description("Manage dev-dashboard Basic Auth");
 
