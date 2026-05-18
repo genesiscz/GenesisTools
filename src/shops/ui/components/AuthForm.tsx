@@ -40,6 +40,7 @@ export function AuthForm({ title, submitLabel, onSubmit, bottomSlot }: AuthFormP
                 className="space-y-3"
                 onSubmit={(e) => {
                     e.preventDefault();
+
                     if (email && password && !submitting) {
                         handle();
                     }

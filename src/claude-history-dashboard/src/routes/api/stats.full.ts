@@ -1,6 +1,6 @@
 import { type DateRange, getConversationStatsWithCache } from "@app/claude/lib/history/search";
-import { createFileRoute } from "@tanstack/react-router";
 import type { SerializableStats } from "@app/claude-history-dashboard/src/server/serializers";
+import { createFileRoute } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/api/stats/full")({
 	server: {

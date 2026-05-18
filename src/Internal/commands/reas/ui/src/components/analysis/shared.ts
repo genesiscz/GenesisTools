@@ -14,7 +14,7 @@ export const STAT_CARD_ACCENT_STYLES: Record<StatCardAccent, string> = {
 export const INFO_BOX_TONE_STYLES: Record<InfoBoxTone, string> = {
     info: "border-cyan-500/30 bg-cyan-500/10 text-cyan-100",
     positive: "border-emerald-500/30 bg-emerald-500/10 text-emerald-100",
-    warning: "border-primary/30 bg-amber-500/10 text-amber-100",
+    warning: "border-amber-500/30 bg-amber-500/10 text-amber-100",
     critical: "border-rose-500/30 bg-rose-500/10 text-rose-100",
 };
 

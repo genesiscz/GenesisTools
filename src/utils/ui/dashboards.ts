@@ -150,7 +150,9 @@ export function listDashboards(): readonly DashboardEntry[] {
 }
 
 export function dashboardUrl(key: DashboardKey, host = "localhost"): string {
-    return `http://${host}:${DASHBOARDS[key].port}`;
+    const normalizedHost = host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+
+    return `http://${normalizedHost}:${DASHBOARDS[key].port}`;
 }
 
 /**

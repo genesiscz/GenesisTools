@@ -69,13 +69,7 @@ export function WatchlistRow({ row, pendingNotifications, sparklinePoints, onAck
                 <PriceSparkline points={sparklinePoints} />
             </TableCell>
             <TableCell className="w-32">
-                <span
-                    className={`text-[11px] font-mono ${
-                        row.last_observed_at && Date.now() - new Date(row.last_observed_at).getTime() < 24 * 3_600_000
-                            ? "text-muted-foreground"
-                            : "text-muted-foreground"
-                    }`}
-                >
+                <span className="text-[11px] font-mono text-muted-foreground">
                     {row.last_observed_at ? `${relativeTime(row.last_observed_at)} ago` : "never"}
                 </span>
             </TableCell>
