@@ -42,7 +42,14 @@ export interface CreateKyselyClientOptions<DB> {
 export function createKyselyClient<DB>(opts: CreateKyselyClientOptions<DB>): DatabaseClient<DB> {
     const { path, bootstrap, migrations, migrationContext, pragmas, readonly = false, onOpen } = opts;
 
-    if (!readonly) {
+    // In-memory DBs have no filesystem directory. `dirname(":memory:")` is a
+    // bogus path on Windows (`:` is the drive separator), so the mkdir below
+    // ENOENTs there — breaking every `:memory:` test. Skip dir creation for
+    // any in-memory form.
+    const isInMemory =
+        path === ":memory:" || path === "" || path.startsWith("file::memory:") || path.includes("mode=memory");
+
+    if (!readonly && !isInMemory) {
         const dir = dirname(path);
 
         if (!existsSync(dir)) {
