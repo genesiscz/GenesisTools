@@ -11,9 +11,10 @@ interface AppShellProps {
     description?: string;
     statusLabel?: string;
     /** Ambient bloom. Default "subtle" (dashboard / DashboardLayout-safe, no
-     *  perf cost). "rich" = colorful sign-in-style static bloom. "rich-animated"
-     *  = +pulse (low-cost single-purpose pages only — see GlowOrbsNexus). */
-    glowVariant?: "subtle" | "rich" | "rich-animated";
+     *  perf cost). "rich" = warm amber+teal static bloom. "playful" = restrained
+     *  4-hue (amber/teal/magenta/violet) static wash. "rich-animated" = +pulse
+     *  (low-cost single-purpose pages only — see GlowOrbsNexus). */
+    glowVariant?: "subtle" | "rich" | "rich-animated" | "playful";
     /** Token theme class applied to the shell root (e.g. "cyberpunk", "wow").
      *  Pins token values regardless of ambient; default inherits (dashboard). */
     themeClass?: string;

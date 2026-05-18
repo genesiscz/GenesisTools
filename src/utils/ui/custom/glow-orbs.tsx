@@ -44,18 +44,33 @@ export function GlowOrbs({ orbs = defaultOrbs }: GlowOrbsProps) {
  * - `subtle` (default): two quiet corner orbs — the original; dashboard /
  *   DashboardLayout (clarity/shops/reas) safe, zero perf cost.
  * - `rich`: large amber/accent blooms + soft center bloom, STATIC.
+ * - `playful`: same radial technique as `rich` but a restrained FOUR-hue wash
+ *   (amber + teal + magenta + violet) for a livelier, multi-color ambient.
+ *   Still gradient-only — no disc, no filter, cheap. STATIC.
  * - `rich-animated`: same, with `animate-pulse`. Opt-in ONLY for low-cost
  *   single-purpose pages (e.g. an auth screen). Do NOT use on content shells —
  *   pulsing viewport-scale blurred layers = continuous full-frame repaint →
  *   100% CPU / flicker across every consumer (AppShell + DashboardLayout).
  */
-export function GlowOrbsNexus({ variant = "subtle" }: { variant?: "rich" | "rich-animated" | "subtle" }) {
+export function GlowOrbsNexus({ variant = "subtle" }: { variant?: "rich" | "rich-animated" | "subtle" | "playful" }) {
     if (variant === "subtle") {
         return (
             <>
                 <div className="absolute top-0 right-0 w-96 h-96 bg-primary/15 rounded-full blur-3xl -translate-y-1/3 translate-x-1/3 opacity-50" />
                 <div className="absolute bottom-0 left-0 w-72 h-72 bg-accent/12 rounded-full blur-3xl translate-y-1/3 -translate-x-1/3 opacity-50" />
             </>
+        );
+    }
+
+    if (variant === "playful") {
+        return (
+            <div
+                className="absolute inset-0"
+                style={{
+                    background:
+                        "radial-gradient(60% 55% at 0% 0%, oklch(0.78 0.18 70 / 0.19), transparent 60%), radial-gradient(58% 52% at 100% 100%, oklch(0.68 0.15 195 / 0.19), transparent 58%), radial-gradient(45% 45% at 88% 18%, oklch(0.70 0.22 350 / 0.12), transparent 60%), radial-gradient(50% 50% at 22% 95%, oklch(0.62 0.20 300 / 0.13), transparent 62%)",
+                }}
+            />
         );
     }
 
