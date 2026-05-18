@@ -86,7 +86,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          bun test 2>&1 | tee "test-${{ runner.os }}.log"
+          bun run test 2>&1 | tee "test-${{ runner.os }}.log"
 
       - name: Summarize results
         if: always()

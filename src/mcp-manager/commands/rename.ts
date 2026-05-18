@@ -62,7 +62,6 @@ export async function renameServer(
     // Validate old name exists
     if (!config.mcpServers[finalOldName]) {
         logger.error(`Server '${finalOldName}' not found in unified config.`);
-        process.exitCode = 1;
         return;
     }
 
