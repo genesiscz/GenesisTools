@@ -1,6 +1,7 @@
 import { Button } from "@app/utils/ui/components/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@app/utils/ui/components/card";
 import { Input } from "@app/utils/ui/components/input";
+import { AuthLayout } from "@app/utils/ui/layouts/AuthLayout";
+import { ShoppingBasket } from "lucide-react";
 import { useState } from "react";
 
 export interface AuthFormProps {
@@ -35,47 +36,43 @@ export function AuthForm({ title, submitLabel, onSubmit, bottomSlot }: AuthFormP
     }
 
     return (
-        <div className="max-w-md mx-auto px-4 sm:px-6 py-12">
-            <Card className="border-zinc-800 bg-zinc-950">
-                <CardHeader>
-                    <CardTitle className="font-mono text-sm tracking-[0.25em] uppercase">{title}</CardTitle>
-                </CardHeader>
-                <CardContent>
-                    <form
-                        className="space-y-3"
-                        onSubmit={(e) => {
-                            e.preventDefault();
-                            if (email && password && !submitting) {
-                                handle();
-                            }
-                        }}
-                    >
-                        <Input
-                            type="email"
-                            placeholder="Email"
-                            value={email}
-                            onChange={(e) => setEmail(e.target.value)}
-                            onKeyDown={handleKey}
-                            autoComplete="email"
-                        />
-                        <Input
-                            type="password"
-                            placeholder="Password"
-                            value={password}
-                            onChange={(e) => setPassword(e.target.value)}
-                            onKeyDown={handleKey}
-                            autoComplete={
-                                submitLabel.toLowerCase().includes("register") ? "new-password" : "current-password"
-                            }
-                        />
-                        {error ? <div className="text-xs text-[var(--color-neon-coral,#ff5577)]">{error}</div> : null}
-                        <Button type="submit" disabled={submitting || !email || !password} className="w-full">
-                            {submitting ? "..." : submitLabel}
-                        </Button>
-                        {bottomSlot}
-                    </form>
-                </CardContent>
-            </Card>
-        </div>
+        <AuthLayout
+            brand="SHOPS::CZ"
+            icon={<ShoppingBasket className="h-6 w-6 text-primary-foreground" />}
+            footer={<>Czech eshop price aggregator — watchlist, alerts, observability</>}
+        >
+            <h1 className="font-mono text-sm tracking-[0.25em] uppercase text-muted-foreground mb-6">{title}</h1>
+            <form
+                className="space-y-3"
+                onSubmit={(e) => {
+                    e.preventDefault();
+                    if (email && password && !submitting) {
+                        handle();
+                    }
+                }}
+            >
+                <Input
+                    type="email"
+                    placeholder="Email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    onKeyDown={handleKey}
+                    autoComplete="email"
+                />
+                <Input
+                    type="password"
+                    placeholder="Password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    onKeyDown={handleKey}
+                    autoComplete={submitLabel.toLowerCase().includes("register") ? "new-password" : "current-password"}
+                />
+                {error ? <div className="text-xs text-destructive">{error}</div> : null}
+                <Button type="submit" disabled={submitting || !email || !password} className="w-full">
+                    {submitting ? "..." : submitLabel}
+                </Button>
+                {bottomSlot}
+            </form>
+        </AuthLayout>
     );
 }
