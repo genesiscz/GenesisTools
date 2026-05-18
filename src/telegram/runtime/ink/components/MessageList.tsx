@@ -1,5 +1,5 @@
+import type { WatchMessage } from "@app/telegram/runtime/shared/WatchSession";
 import { Box, Text } from "ink";
-import type { WatchMessage } from "../../shared/WatchSession";
 
 interface MessageListProps {
     messages: WatchMessage[];

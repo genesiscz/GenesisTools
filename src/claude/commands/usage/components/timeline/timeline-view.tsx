@@ -1,10 +1,10 @@
+import type { PollResult, TimelineZoom } from "@app/claude/commands/usage/types";
+import { ZOOM_ORDER } from "@app/claude/commands/usage/types";
 import { VISIBLE_BUCKETS } from "@app/claude/lib/usage/constants";
 import type { UsageDashboardConfig } from "@app/claude/lib/usage/dashboard-config";
 import type { UsageHistoryDb } from "@app/claude/lib/usage/history-db";
 import { Box, Text, useInput, useStdout } from "ink";
 import { useState } from "react";
-import type { PollResult, TimelineZoom } from "../../types";
-import { ZOOM_ORDER } from "../../types";
 import { ChartPanel } from "./chart-panel";
 import { CHART_MODES, type ChartMode } from "./chart-renderers";
 

@@ -1,5 +1,5 @@
+import type { TelegramContactV2 } from "@app/telegram/lib/types";
 import { Box, Text } from "ink";
-import type { TelegramContactV2 } from "../../../lib/types";
 
 interface StatusBarProps {
     contact: TelegramContactV2;

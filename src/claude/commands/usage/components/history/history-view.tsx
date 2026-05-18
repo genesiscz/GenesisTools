@@ -1,7 +1,7 @@
+import { useScroll } from "@app/claude/commands/usage/hooks/use-scroll";
 import type { UsageHistoryDb, UsageSnapshot } from "@app/claude/lib/usage/history-db";
 import { Box, Text, useInput, useStdout } from "ink";
 import { useEffect, useMemo, useState } from "react";
-import { useScroll } from "../../hooks/use-scroll";
 
 // Module-level: survives component unmount/remount (tab switches)
 let _savedHistoryOffset = 0;

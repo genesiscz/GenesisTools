@@ -1,8 +1,8 @@
 import logger from "@app/logger";
+import type { AITask, AITextToSpeechProvider, TTSOptions, TTSResult, TTSVoice } from "@app/utils/ai/types";
 import { rateLimitAwareDelay, retry } from "@app/utils/async";
 import type { AIProviderType } from "@app/utils/config/ai.types";
 import { SafeJSON } from "@app/utils/json";
-import type { AITask, AITextToSpeechProvider, TTSOptions, TTSResult, TTSVoice } from "../../types";
 
 const BASE_URL = "https://api.openai.com/v1";
 const MAX_INPUT_CHARS = 4096;

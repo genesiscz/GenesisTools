@@ -1,9 +1,9 @@
+import type { TimelineZoom } from "@app/claude/commands/usage/types";
+import { ZOOM_MINUTES } from "@app/claude/commands/usage/types";
 import { BUCKET_COLORS, BUCKET_INK_COLORS, BUCKET_LABELS } from "@app/claude/lib/usage/constants";
 import type { UsageHistoryDb } from "@app/claude/lib/usage/history-db";
 import { Box, Text } from "ink";
 import { useMemo } from "react";
-import type { TimelineZoom } from "../../types";
-import { ZOOM_MINUTES } from "../../types";
 import { CHART_MODE_LABELS, type ChartMode, type ChartSeries, renderChart } from "./chart-renderers";
 
 interface ChartPanelProps {

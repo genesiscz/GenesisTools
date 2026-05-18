@@ -1,6 +1,6 @@
+import type { TelegramContactV2 } from "@app/telegram/lib/types";
 import { Box, useApp, useInput } from "ink";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { TelegramContactV2 } from "../../lib/types";
 import type { WatchMessage, WatchSession } from "../shared/WatchSession";
 import { ContactList } from "./components/ContactList";
 import { InputBar } from "./components/InputBar";

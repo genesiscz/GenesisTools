@@ -6,7 +6,7 @@ import {
 	extractToolUses,
 	type SerializableConversationDetail,
 	serializeResult,
-} from "../../server/serializers";
+} from "@app/claude-history-dashboard/src/server/serializers";
 
 export const Route = createFileRoute("/api/conversations/$id")({
 	server: {

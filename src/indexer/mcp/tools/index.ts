@@ -1,7 +1,7 @@
 import { basename, resolve } from "node:path";
+import type { IndexConfig } from "@app/indexer/lib/types";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import type { IndexConfig } from "../../lib/types";
 import { formatError, getManager } from "../shared";
 
 export function registerIndexTools(server: McpServer): void {
