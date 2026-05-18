@@ -30,7 +30,7 @@ export function renderDigest(opts: QueryOpts & { dbPath: string }): string {
                 const when = new Date(r.ts).toISOString().slice(0, 16).replace("T", " ");
                 const tint = TAG_TINT[r.tag] ?? chalk.bold.gray;
                 const head = `${chalk.dim(when)}  ${chalk.cyan.bold(r.project)} ${chalk.dim("·")} ${chalk.magenta(r.branch ?? "-")}  ${tint(`[${r.tag}]`)}`;
-                const preview = chalk.gray(r.answerMd.split("\n").slice(0, 3).join("\n"));
+                const preview = chalk.yellow(r.answerMd.split("\n").slice(0, 3).join("\n"));
                 return `${head}\n${chalk.green("❯")} ${chalk.bold(r.question)}\n${preview}\n`;
             })
             .join("\n");
