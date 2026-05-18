@@ -7,12 +7,16 @@ on:
     branches: [master, main]
   workflow_dispatch:
 
-# Bun's global install cache to a fixed workspace path so one actions/cache
-# entry works identically on Linux and Windows (no per-OS path branching).
-# The Windows `bun install` is ~14x slower than Linux purely from cold
-# package fetch/extract on NTFS; a warm cache collapses it to seconds.
+# Bun's global install cache pinned to runner.temp — a fixed path OUTSIDE
+# the checked-out workspace. One actions/cache entry works identically on
+# Linux and Windows (no per-OS branching). MUST stay outside ${{ github.workspace }}:
+# if it lives in the repo, `biome check .` lints the whole package cache and
+# `bun test`'s fs-walk traverses it, which on slow Windows NTFS starved I/O
+# so badly that timing tests blew their timeouts (~27x slowdown observed).
+# The Windows `bun install` is ~14x slower than Linux from cold NTFS
+# fetch/extract; a warm cache collapses it to seconds.
 env:
-  BUN_INSTALL_CACHE_DIR: ${{ github.workspace }}/.bun-cache
+  BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/.bun-cache
 
 jobs:
   check:
@@ -27,7 +31,7 @@ jobs:
       - name: Cache bun install
         uses: actions/cache@v4
         with:
-          path: ${{ github.workspace }}/.bun-cache
+          path: ${{ runner.temp }}/.bun-cache
           key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
           restore-keys: |
             ${{ runner.os }}-bun-
@@ -36,12 +40,15 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Run Biome check (main)
+        timeout-minutes: 2
         run: bun run lint
 
       - name: Run Biome check (dashboard)
+        timeout-minutes: 2
         run: bun run lint:dashboard
 
       - name: TypeScript check
+        timeout-minutes: 3
         run: bun run typecheck:all
 
   # Decide which OSes the test matrix runs on.
@@ -89,7 +96,7 @@ jobs:
       - name: Cache bun install
         uses: actions/cache@v4
         with:
-          path: ${{ github.workspace }}/.bun-cache
+          path: ${{ runner.temp }}/.bun-cache
           key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
           restore-keys: |
             ${{ runner.os }}-bun-
@@ -106,9 +113,13 @@ jobs:
       # Run the WHOLE suite. Discovery only — never fail the job here; the
       # signal is the log, not the exit code. bun test continues past failing
       # files, so one log = full failure inventory for this OS.
+      # Tripwire: a stuck/slow run dies fast and still uploads the partial
+      # tee'd log instead of burning the 45-min job backstop. ubuntu is ~1min
+      # healthy, windows ~5min healthy — 2/7 leaves headroom but catches hangs.
       - name: Run tests (full suite, discovery)
         id: tests
         continue-on-error: true
+        timeout-minutes: ${{ matrix.os == 'windows-latest' && 7 || 2 }}
         shell: bash
         run: |
           set -o pipefail
