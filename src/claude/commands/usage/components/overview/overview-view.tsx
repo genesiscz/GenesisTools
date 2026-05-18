@@ -1,6 +1,6 @@
+import type { PollResult } from "@app/claude/commands/usage/types";
 import type { UsageDashboardConfig } from "@app/claude/lib/usage/dashboard-config";
 import { Box, Text } from "ink";
-import type { PollResult } from "../../types";
 import { AccountSection } from "./account-section";
 
 interface OverviewViewProps {

@@ -1,10 +1,10 @@
+import { useScroll } from "@app/claude/commands/usage/hooks/use-scroll";
+import { type SessionRow, useSessions } from "@app/claude/commands/usage/hooks/use-sessions";
+import type { NotificationManager } from "@app/claude/lib/usage/notification-manager";
 import { findClaudeCommand } from "@app/utils/claude";
 import { formatRelativeTime, formatTokens } from "@app/utils/format";
 import { Box, Text, useInput, useStdout } from "ink";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { NotificationManager } from "../../../../lib/usage/notification-manager";
-import { useScroll } from "../../hooks/use-scroll";
-import { type SessionRow, useSessions } from "../../hooks/use-sessions";
 
 // Module-level: survives component unmount/remount (tab switches)
 let _savedSessionsOffset = 0;

@@ -1,9 +1,9 @@
+import { fmt, pct } from "@app/Internal/commands/reas/ui/src/lib/format";
 import { Badge } from "@ui/components/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@ui/components/table";
 import { Medal } from "lucide-react";
 import { useMemo } from "react";
-import { fmt, pct } from "../../lib/format";
 import { GRADE_COLORS, getScoreCardModel } from "../analysis/display-model";
 import type { DistrictComparison } from "./types";
 

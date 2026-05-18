@@ -1,7 +1,7 @@
 import { loadConfig } from "@app/azure-devops/config";
 import { getWorkItemTypeColors } from "@app/azure-devops/lib/work-item-enrichment";
+import { apiHandler } from "@app/clarity/ui/src/server/api-utils";
 import { createFileRoute } from "@tanstack/react-router";
-import { apiHandler } from "../../server/api-utils";
 
 export const Route = createFileRoute("/api/workitem-type-colors")({
     server: {

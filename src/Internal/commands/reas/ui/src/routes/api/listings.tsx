@@ -1,8 +1,8 @@
 import { fetchListingsIntoCache } from "@app/Internal/commands/reas/lib/analysis-service";
 import type { GetListingsOptions } from "@app/Internal/commands/reas/lib/store";
 import { reasDatabase } from "@app/Internal/commands/reas/lib/store";
+import { apiHandler, jsonBody } from "@app/Internal/commands/reas/ui/src/server/api-utils";
 import { createFileRoute } from "@tanstack/react-router";
-import { apiHandler, jsonBody } from "../../server/api-utils";
 
 function parseMultiValue(value: string | null): string[] | undefined {
     if (!value) {

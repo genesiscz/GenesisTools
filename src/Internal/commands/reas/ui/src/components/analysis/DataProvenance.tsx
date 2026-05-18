@@ -1,9 +1,9 @@
 import type { DashboardProvenance, DashboardSectionProvenance } from "@app/Internal/commands/reas/lib/api-export";
 import type { ProviderFetchSummary } from "@app/Internal/commands/reas/types";
+import { fmtDateTime } from "@app/Internal/commands/reas/ui/src/lib/format";
 import { Badge } from "@ui/components/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
 import { cn } from "@ui/lib/utils";
-import { fmtDateTime } from "../../lib/format";
 import { summarizeProviderMessage } from "./shared";
 
 function formatFetchedAt(value: string): string {

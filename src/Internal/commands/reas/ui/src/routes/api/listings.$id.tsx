@@ -1,6 +1,6 @@
 import { getListingDetail, saveListingToWatchlist } from "@app/Internal/commands/reas/lib/listing-service";
+import { apiHandler, jsonBody } from "@app/Internal/commands/reas/ui/src/server/api-utils";
 import { createFileRoute } from "@tanstack/react-router";
-import { apiHandler, jsonBody } from "../../server/api-utils";
 
 export const Route = createFileRoute("/api/listings/$id")({
     server: {

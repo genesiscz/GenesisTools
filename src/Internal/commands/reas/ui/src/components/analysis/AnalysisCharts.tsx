@@ -1,4 +1,5 @@
 import type { DashboardExport } from "@app/Internal/commands/reas/lib/api-export";
+import { fmtDateTime } from "@app/Internal/commands/reas/ui/src/lib/format";
 import { ChartContainer, ChartTooltipContent, chartAxisProps, chartGridProps } from "@ui/graphs";
 import { useMemo } from "react";
 import {
@@ -20,7 +21,6 @@ import {
     XAxis,
     YAxis,
 } from "recharts";
-import { fmtDateTime } from "../../lib/format";
 import { formatCurrency, formatInteger, formatPercent, formatSignedPercent, getTargetPricePerM2 } from "./utils";
 
 const HISTOGRAM_COLORS = ["#f59e0b", "#14b8a6", "#38bdf8", "#818cf8", "#c084fc", "#f472b6"];

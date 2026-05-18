@@ -1,4 +1,5 @@
 import type { DashboardExport } from "@app/Internal/commands/reas/lib/api-export";
+import { fmtDateTime, fmtPercentile } from "@app/Internal/commands/reas/ui/src/lib/format";
 import { Badge } from "@ui/components/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@ui/components/card";
 import { Input } from "@ui/components/input";
@@ -22,7 +23,6 @@ import {
     TrendingUp,
 } from "lucide-react";
 import { useMemo, useState } from "react";
-import { fmtDateTime, fmtPercentile } from "../../lib/format";
 import {
     ActiveSalesChart,
     ComparablesScatterChart,

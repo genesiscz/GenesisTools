@@ -1,8 +1,8 @@
 import { fetchAndAnalyze } from "@app/Internal/commands/reas/lib/analysis-service";
 import { buildDashboardExport } from "@app/Internal/commands/reas/lib/api-export";
 import { buildConfig, resolveDistrict } from "@app/Internal/commands/reas/lib/config-builder";
+import { apiHandler, jsonBody } from "@app/Internal/commands/reas/ui/src/server/api-utils";
 import { createFileRoute } from "@tanstack/react-router";
-import { apiHandler, jsonBody } from "../../server/api-utils";
 
 export const Route = createFileRoute("/api/analysis")({
     server: {

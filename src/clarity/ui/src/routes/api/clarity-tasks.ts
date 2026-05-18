@@ -1,6 +1,6 @@
+import { apiHandler } from "@app/clarity/ui/src/server/api-utils";
+import { getClarityTasks } from "@app/clarity/ui/src/server/mappings";
 import { createFileRoute } from "@tanstack/react-router";
-import { apiHandler } from "../../server/api-utils";
-import { getClarityTasks } from "../../server/mappings";
 
 export const Route = createFileRoute("/api/clarity-tasks")({
     server: {

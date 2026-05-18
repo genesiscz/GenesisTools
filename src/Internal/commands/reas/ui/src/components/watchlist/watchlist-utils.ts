@@ -1,5 +1,5 @@
 import type { ProviderName } from "@app/Internal/commands/reas/types";
-import { fmt, fmtDateTime, pct } from "../../lib/format";
+import { fmt, fmtDateTime, pct } from "@app/Internal/commands/reas/ui/src/lib/format";
 
 export { GRADE_COLORS } from "../analysis/display-model";
 

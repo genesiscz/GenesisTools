@@ -1,6 +1,6 @@
+import { buildCodeGraph, getGraphStats, toMermaidDiagram } from "@app/indexer/lib/code-graph";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { buildCodeGraph, getGraphStats, toMermaidDiagram } from "../../lib/code-graph";
 import { formatError, getManager } from "../shared";
 
 export function registerGraphTools(server: McpServer): void {

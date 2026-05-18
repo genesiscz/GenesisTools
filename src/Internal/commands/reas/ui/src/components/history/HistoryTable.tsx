@@ -1,10 +1,10 @@
+import { fmt, fmtDateTime, pct } from "@app/Internal/commands/reas/ui/src/lib/format";
 import { Badge } from "@ui/components/badge";
 import { Button } from "@ui/components/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@ui/components/table";
 import { cn } from "@ui/lib/utils";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useMemo, useState } from "react";
-import { fmt, fmtDateTime, pct } from "../../lib/format";
 import { GRADE_COLORS } from "../analysis/display-model";
 
 interface HistoryEntry {

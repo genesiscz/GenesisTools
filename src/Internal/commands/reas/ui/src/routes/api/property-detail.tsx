@@ -1,6 +1,6 @@
 import { getPropertyDetail } from "@app/Internal/commands/reas/lib/property-service";
+import { apiHandler } from "@app/Internal/commands/reas/ui/src/server/api-utils";
 import { createFileRoute } from "@tanstack/react-router";
-import { apiHandler } from "../../server/api-utils";
 
 export const Route = createFileRoute("/api/property-detail")({
     server: {

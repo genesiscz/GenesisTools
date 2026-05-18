@@ -1,9 +1,9 @@
 import type { ProviderFetchLogRow, ProviderHealthSummary } from "@app/Internal/commands/reas/lib/store";
+import { fmtDateTime } from "@app/Internal/commands/reas/ui/src/lib/format";
 import { Badge } from "@ui/components/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@ui/components/card";
 import { cn } from "@ui/lib/utils";
 import { Activity, AlertTriangle, CheckCircle2, Clock, Database, XCircle } from "lucide-react";
-import { fmtDateTime } from "../../lib/format";
 
 interface ProviderHealthDashboardProps {
     health: ProviderHealthSummary[];

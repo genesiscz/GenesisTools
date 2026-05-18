@@ -1,6 +1,6 @@
+import type { TelegramContactV2 } from "@app/telegram/lib/types";
 import { Box, Text, useInput } from "ink";
 import SelectInput from "ink-select-input";
-import type { TelegramContactV2 } from "../../../lib/types";
 
 interface ContactListProps {
     contacts: TelegramContactV2[];

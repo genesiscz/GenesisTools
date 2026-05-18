@@ -11,7 +11,7 @@ export {
     fmtPercentile,
     type PercentOptions,
     pct,
-} from "../../lib/format";
+} from "@app/Internal/commands/reas/ui/src/lib/format";
 
 export function renderMaybe(value: ReactNode | null | undefined, fallback = "-"): ReactNode {
     if (value == null || value === "") {
