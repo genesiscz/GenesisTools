@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { rmSync } from "node:fs";
+import { removeRecursive } from "@app/utils/fs";
 import { ensureExtensionCapableSQLite } from "@app/utils/search/stores/sqlite-vec-loader";
 import type { IndexerSource, MetadataPopulateOpts, MetadataResult } from "./sources/source";
 import { getIndexerStorage } from "./storage";
@@ -36,7 +36,7 @@ afterAll(() => {
         `phase2-bf-${RUN_ID}`,
         `phase2-bare-${RUN_ID}`,
     ]) {
-        rmSync(storage.getIndexDir(name), { recursive: true, force: true });
+        removeRecursive(storage.getIndexDir(name));
     }
 });
 
