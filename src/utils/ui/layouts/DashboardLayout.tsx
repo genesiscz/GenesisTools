@@ -72,7 +72,6 @@ export function DashboardLayout({
                                 type="button"
                                 className="flex items-center gap-2 group cursor-pointer shrink-0"
                                 onClick={() => onNavigate?.("/")}
-                                onKeyDown={(e) => e.key === "Enter" && onNavigate?.("/")}
                             >
                                 {icon && (
                                     <div className="p-1 rounded-md bg-primary/10 border border-primary/30 theme-glow-hover group-hover:bg-primary/20 group-hover:border-primary/50 transition-colors">

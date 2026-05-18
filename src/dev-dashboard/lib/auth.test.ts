@@ -65,9 +65,14 @@ describe("dashboard session cookie", () => {
 
     test("rejects a future-dated (iat > now) token", () => {
         const realNow = Date.now;
-        Date.now = () => realNow() + 60_000;
-        const futureToken = issueSessionToken(auth);
-        Date.now = realNow;
+        let futureToken = "";
+
+        try {
+            Date.now = () => realNow() + 60_000;
+            futureToken = issueSessionToken(auth);
+        } finally {
+            Date.now = realNow;
+        }
 
         // Without the issued-in-the-past guard this would validate (now - iat
         // is negative, so < maxAgeMs is trivially true) and never expire.

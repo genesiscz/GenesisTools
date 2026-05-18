@@ -1,5 +1,4 @@
 import { getConversationBySessionId } from "@app/claude/lib/history/search";
-import { createFileRoute } from "@tanstack/react-router";
 import {
 	extractMessageContent,
 	extractToolResults,
@@ -7,6 +6,7 @@ import {
 	type SerializableConversationDetail,
 	serializeResult,
 } from "@app/claude-history-dashboard/src/server/serializers";
+import { createFileRoute } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/api/conversations/$id")({
 	server: {
