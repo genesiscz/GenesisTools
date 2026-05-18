@@ -1,10 +1,10 @@
-import { AssistantEngine } from "../../lib/AssistantEngine";
-import { StyleProfileEngine } from "../../lib/StyleProfileEngine";
-import { SuggestionEngine } from "../../lib/SuggestionEngine";
-import type { TelegramHistoryStore } from "../../lib/TelegramHistoryStore";
-import type { TelegramMessage } from "../../lib/TelegramMessage";
-import type { TGClient } from "../../lib/TGClient";
-import type { TelegramContactV2 } from "../../lib/types";
+import { AssistantEngine } from "@app/telegram/lib/AssistantEngine";
+import { StyleProfileEngine } from "@app/telegram/lib/StyleProfileEngine";
+import { SuggestionEngine } from "@app/telegram/lib/SuggestionEngine";
+import type { TelegramHistoryStore } from "@app/telegram/lib/TelegramHistoryStore";
+import type { TelegramMessage } from "@app/telegram/lib/TelegramMessage";
+import type { TGClient } from "@app/telegram/lib/TGClient";
+import type { TelegramContactV2 } from "@app/telegram/lib/types";
 
 export interface WatchMessage {
     id: number;

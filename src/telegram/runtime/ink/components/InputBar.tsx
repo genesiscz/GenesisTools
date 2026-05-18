@@ -1,7 +1,7 @@
+import type { InputMode } from "@app/telegram/runtime/shared/WatchSession";
 import { Box, Text } from "ink";
 import TextInput from "ink-text-input";
 import { useState } from "react";
-import type { InputMode } from "../../shared/WatchSession";
 
 interface InputBarProps {
     mode: InputMode;

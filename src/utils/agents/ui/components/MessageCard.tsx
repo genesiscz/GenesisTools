@@ -1,11 +1,10 @@
+import { messageToBlocks } from "@app/utils/agents/formatters/block-parser";
+import type { FormatOptions, FormattedBlock } from "@app/utils/agents/formatters/types";
+import type { AgentMessage } from "@app/utils/agents/types";
 import { Badge } from "@ui/components/badge";
 import { cn } from "@ui/lib/utils";
 import { Bot, ChevronDown, User } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
-
-import { messageToBlocks } from "../../formatters/block-parser";
-import type { FormatOptions, FormattedBlock } from "../../formatters/types";
-import type { AgentMessage } from "../../types";
 import type { MessageCardProps } from "../types";
 import { MarkdownRenderer } from "./MarkdownRenderer";
 import { ThinkingBlock } from "./ThinkingBlock";

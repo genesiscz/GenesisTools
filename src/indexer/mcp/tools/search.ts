@@ -1,7 +1,7 @@
+import { detectMode } from "@app/indexer/lib/search-mode";
+import type { ChunkRecord } from "@app/indexer/lib/types";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { detectMode } from "../../lib/search-mode";
-import type { ChunkRecord } from "../../lib/types";
 import { formatError, getManager } from "../shared";
 
 export function registerSearchTools(server: McpServer): void {
