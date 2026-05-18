@@ -1,7 +1,8 @@
 #!/usr/bin/env bun
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { closeSync, existsSync, mkdirSync, openSync, readSync, statSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { getConfig, saveConfig } from "@app/dev-dashboard/config";
 import { createBasicAuthCredentials } from "@app/dev-dashboard/lib/auth";
 import { startFrontProxy } from "@app/dev-dashboard/lib/front-proxy";
@@ -131,7 +132,8 @@ async function runUiServer(): Promise<void> {
             try {
                 await fetch(internalUrl, { signal: AbortSignal.timeout(1000) });
                 break; // any response (even 404) means Vite is listening
-            } catch {
+            } catch (err) {
+                logger.debug({ err, internalUrl }, "vite readiness probe retry (not up yet)");
                 await new Promise((r) => setTimeout(r, 250));
             }
         }
@@ -258,25 +260,31 @@ program
         await stopRunningDashboard(port);
 
         const url = `http://localhost:${port}`;
-        // Daemonize: the UI is Vite + an in-process front-proxy, so we can't
-        // just background Vite — we re-spawn the whole `dev-dashboard ui`
-        // command detached, echo its output until it's ready, then exit and
-        // leave it running (unlike `ui`, which stays foreground).
-        const child = spawn("tools", ["dev-dashboard", "ui"], {
+        const logFile = join(homedir(), ".genesis-tools", "logs", "dev-dashboard.bg.log");
+        mkdirSync(dirname(logFile), { recursive: true });
+        const logFd = openSync(logFile, "a");
+
+        // Daemonize: the UI is Vite + an in-process front-proxy. Re-invoke THIS
+        // script via process.execPath + argv[1] so it works even when `tools`
+        // isn't on PATH (t2). Child stdout/stderr go to a LOG FILE, not pipes —
+        // the inherited fd stays valid after we exit, so the backgrounded Vite
+        // never hits EPIPE/SIGPIPE on parent exit (t1). We tail the file for
+        // readiness; output to a file is also already ANSI-free.
+        const child = spawn(process.execPath, [process.argv[1], "ui"], {
             cwd: PROJECT_ROOT,
             detached: true,
-            stdio: ["ignore", "pipe", "pipe"],
-            env: { ...process.env, FORCE_COLOR: "1" },
-            shell: process.platform === "win32",
+            stdio: ["ignore", logFd, logFd],
+            env: process.env,
         });
+        closeSync(logFd); // the child holds its own dup'd fd now
 
-        // Match against ANSI-stripped, ACCUMULATED output: with FORCE_COLOR the
-        // banner is colored (`Local\x1b[22m:`) and arrives split across stdout
-        // chunks, so a per-raw-chunk test never matched and we always hit the
-        // 30s fallback. Accumulate + strip first.
         const READY = /ready in \d+\s*m?s|Local:\s*http|localhost:\d+|press h \+ enter/i;
-        let acc = "";
+        const isTty = Boolean(process.stdout.isTTY);
         let settled = false;
+        let pos = 0;
+        let acc = "";
+        let poll: ReturnType<typeof setInterval> | undefined;
+        let deadline: ReturnType<typeof setTimeout> | undefined;
 
         const finish = (note: string): void => {
             if (settled) {
@@ -284,40 +292,75 @@ program
             }
 
             settled = true;
+            if (poll) {
+                clearInterval(poll);
+            }
+
+            if (deadline) {
+                clearTimeout(deadline);
+            }
+
             console.log(`\n${note}`);
             console.log(`dev-dashboard running in background → ${url}  (pid ${child.pid})`);
-            console.log(`stop it with: tools dev-dashboard restart   (or kill ${child.pid})`);
-            child.stdout?.removeAllListeners();
-            child.stderr?.removeAllListeners();
+            console.log(`logs → ${logFile}`);
+            console.log(`stop it with: kill ${child.pid}  (\`tools dev-dashboard restart\` relaunches a new one)`);
             child.unref();
             process.exit(0);
         };
 
-        const onChunk = (buf: Buffer): void => {
-            const text = buf.toString();
-            process.stdout.write(text);
-            acc += stripAnsi(text);
-            if (READY.test(acc)) {
-                finish("✓ dev-dashboard is up.");
+        // Tail the child's log file; echo new bytes (strip ANSI when our stdout
+        // isn't a TTY — t6) and match the accumulated stripped text (t3).
+        const drain = (): void => {
+            let size: number;
+            try {
+                size = statSync(logFile).size;
+            } catch {
+                return;
+            }
+
+            if (size <= pos) {
+                return;
+            }
+
+            const fd = openSync(logFile, "r");
+            try {
+                const buf = Buffer.alloc(size - pos);
+                const read = readSync(fd, buf, 0, buf.length, pos);
+                pos += read;
+                const chunk = buf.subarray(0, read).toString();
+                process.stdout.write(isTty ? chunk : stripAnsi(chunk));
+                acc += stripAnsi(chunk);
+                if (acc.length > 4000) {
+                    acc = acc.slice(-2000);
+                }
+
+                if (READY.test(acc)) {
+                    finish("✓ dev-dashboard is up.");
+                }
+            } finally {
+                closeSync(fd);
             }
         };
 
-        child.stdout?.on("data", onChunk);
-        child.stderr?.on("data", onChunk);
         child.on("error", (err) => {
             console.error(`Failed to launch dev-dashboard: ${err.message}`);
             process.exit(1);
         });
         child.on("exit", (code) => {
             if (!settled) {
-                console.error(`dev-dashboard exited before becoming ready (code ${code ?? "?"})`);
+                drain();
+                console.error(`dev-dashboard exited before becoming ready (code ${code ?? "?"}) — see ${logFile}`);
                 process.exit(code ?? 1);
             }
         });
 
-        // Safety net: if the ready marker never matches, still detach and exit
+        poll = setInterval(drain, 150);
+        // Safety net: detach + exit even if the ready marker never matches,
         // rather than holding the terminal forever.
-        setTimeout(() => finish("⚠ ready marker not seen in 30s — detaching anyway; check the URL."), 30_000);
+        deadline = setTimeout(
+            () => finish("⚠ ready marker not seen in 30s — detaching anyway; check the URL."),
+            30_000
+        );
     });
 
 const auth = program.command("auth").description("Manage dev-dashboard Basic Auth");
