@@ -1,8 +1,8 @@
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { removeRecursive } from "@app/utils/fs";
+import { makeTempDir } from "@app/utils/paths";
 import { PathHashStore } from "./path-hashes";
 
 describe("PathHashStore", () => {
@@ -13,12 +13,12 @@ describe("PathHashStore", () => {
         db?.close();
 
         if (tmpDir) {
-            rmSync(tmpDir, { recursive: true, force: true });
+            removeRecursive(tmpDir);
         }
     });
 
     it("stores and retrieves file hashes", () => {
-        tmpDir = mkdtempSync(join(tmpdir(), "path-hash-"));
+        tmpDir = makeTempDir("path-hash-");
         db = new Database(join(tmpDir, "test.db"));
         const store = new PathHashStore(db);
 
@@ -30,7 +30,7 @@ describe("PathHashStore", () => {
     });
 
     it("updates only changed paths on sync", () => {
-        tmpDir = mkdtempSync(join(tmpdir(), "path-hash-"));
+        tmpDir = makeTempDir("path-hash-");
         db = new Database(join(tmpDir, "test.db"));
         const store = new PathHashStore(db);
 
@@ -46,7 +46,7 @@ describe("PathHashStore", () => {
     });
 
     it("removes deleted paths", () => {
-        tmpDir = mkdtempSync(join(tmpdir(), "path-hash-"));
+        tmpDir = makeTempDir("path-hash-");
         db = new Database(join(tmpDir, "test.db"));
         const store = new PathHashStore(db);
 
@@ -57,7 +57,7 @@ describe("PathHashStore", () => {
     });
 
     it("gets all file hashes for Merkle comparison", () => {
-        tmpDir = mkdtempSync(join(tmpdir(), "path-hash-"));
+        tmpDir = makeTempDir("path-hash-");
         db = new Database(join(tmpDir, "test.db"));
         const store = new PathHashStore(db);
 
@@ -71,7 +71,7 @@ describe("PathHashStore", () => {
     });
 
     it("excludes directories from getAllFiles()", () => {
-        tmpDir = mkdtempSync(join(tmpdir(), "path-hash-"));
+        tmpDir = makeTempDir("path-hash-");
         db = new Database(join(tmpDir, "test.db"));
         const store = new PathHashStore(db);
 
@@ -84,7 +84,7 @@ describe("PathHashStore", () => {
     });
 
     it("bulk sync updates/inserts/deletes efficiently", () => {
-        tmpDir = mkdtempSync(join(tmpdir(), "path-hash-"));
+        tmpDir = makeTempDir("path-hash-");
         db = new Database(join(tmpDir, "test.db"));
         const store = new PathHashStore(db);
 
@@ -102,7 +102,7 @@ describe("PathHashStore", () => {
     });
 
     it("returns null for non-existent paths", () => {
-        tmpDir = mkdtempSync(join(tmpdir(), "path-hash-"));
+        tmpDir = makeTempDir("path-hash-");
         db = new Database(join(tmpDir, "test.db"));
         const store = new PathHashStore(db);
 
@@ -110,7 +110,7 @@ describe("PathHashStore", () => {
     });
 
     it("getFileCount returns count without loading all rows", () => {
-        tmpDir = mkdtempSync(join(tmpdir(), "path-hash-"));
+        tmpDir = makeTempDir("path-hash-");
         db = new Database(join(tmpDir, "test.db"));
         const store = new PathHashStore(db);
 
@@ -122,7 +122,7 @@ describe("PathHashStore", () => {
     });
 
     it("getMaxNumericPath returns highest numeric path", () => {
-        tmpDir = mkdtempSync(join(tmpdir(), "path-hash-"));
+        tmpDir = makeTempDir("path-hash-");
         db = new Database(join(tmpDir, "test.db"));
         const store = new PathHashStore(db);
 
@@ -135,7 +135,7 @@ describe("PathHashStore", () => {
     });
 
     it("getMaxNumericPath returns 0 when no numeric paths", () => {
-        tmpDir = mkdtempSync(join(tmpdir(), "path-hash-"));
+        tmpDir = makeTempDir("path-hash-");
         db = new Database(join(tmpDir, "test.db"));
         const store = new PathHashStore(db);
 

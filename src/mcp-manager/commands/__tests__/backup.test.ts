@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, spyOn } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
 import * as fs from "node:fs";
 import logger from "@app/logger";
 import { backupAllConfigs } from "@app/mcp-manager/commands/backup.js";
@@ -13,6 +13,13 @@ describe("backupAllConfigs", () => {
     beforeEach(() => {
         mockProvider = new MockMCPProvider("claude", "/mock/claude.json");
         mockProvider2 = new MockMCPProvider("gemini", "/mock/gemini.json");
+    });
+
+    // spyOn(fs, ...) is process-global in bun and is NOT auto-restored across
+    // test files. Without this, the `fs.existsSync` stub leaks and corrupts
+    // every test file that runs after this one (file-source, cmux, youtube, …).
+    afterEach(() => {
+        mock.restore();
     });
 
     it("should backup all provider configs", async () => {

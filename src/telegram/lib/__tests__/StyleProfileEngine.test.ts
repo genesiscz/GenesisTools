@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, unlinkSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { removeDbFile } from "@app/utils/fs";
+import { tmpdir } from "@app/utils/paths";
 import { StyleProfileEngine } from "../StyleProfileEngine";
 import { TelegramHistoryStore } from "../TelegramHistoryStore";
 
@@ -68,10 +68,7 @@ describe("StyleProfileEngine", () => {
 
     afterEach(() => {
         store.close();
-
-        if (existsSync(dbPath)) {
-            unlinkSync(dbPath);
-        }
+        removeDbFile(dbPath);
     });
 
     it("generates a style summary from messages", () => {

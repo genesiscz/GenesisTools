@@ -1,7 +1,8 @@
 import { describe, expect, it } from "bun:test";
+import { skip } from "@app/utils/test/skip";
 import { runDarwinKit } from "./helpers";
 
-describe("darwinkit TTS commands", () => {
+describe.skipIf(skip.darwinkit)("darwinkit TTS commands", () => {
     describe("list-voices", () => {
         it("returns array of voice strings", async () => {
             const result = await runDarwinKit("list-voices");
@@ -24,7 +25,7 @@ describe("darwinkit TTS commands", () => {
     });
 });
 
-describe("darwinkit auth commands", () => {
+describe.skipIf(skip.darwinkit)("darwinkit auth commands", () => {
     describe("check-biometry", () => {
         it("returns availability and type", async () => {
             const result = await runDarwinKit("check-biometry");
@@ -38,7 +39,7 @@ describe("darwinkit auth commands", () => {
     });
 });
 
-describe("darwinkit system commands", () => {
+describe.skipIf(skip.darwinkit)("darwinkit system commands", () => {
     describe("capabilities", () => {
         it("returns version, OS, arch, and methods", async () => {
             const result = await runDarwinKit("capabilities");

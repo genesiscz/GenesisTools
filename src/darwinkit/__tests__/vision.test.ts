@@ -1,15 +1,17 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { skip } from "@app/utils/test/skip";
 import { runDarwinKit, runDarwinKitRaw } from "./helpers";
 
 const TEST_IMAGE = "/tmp/darwinkit-ocr-test.png";
 
-beforeAll(async () => {
-    // Create test image with text using Swift/AppKit
-    const proc = Bun.spawn(
-        [
-            "swift",
-            "-e",
-            `
+describe.skipIf(skip.darwinkit)("darwinkit vision commands", () => {
+    beforeAll(async () => {
+        // Create test image with text using Swift/AppKit
+        const proc = Bun.spawn(
+            [
+                "swift",
+                "-e",
+                `
 import AppKit
 let img = NSImage(size: NSSize(width: 400, height: 100))
 img.lockFocus()
@@ -23,27 +25,26 @@ let rep = NSBitmapImageRep(data: tiff)!
 let png = rep.representation(using: .png, properties: [:])!
 try! png.write(to: URL(fileURLWithPath: "${TEST_IMAGE}"))
     `,
-        ],
-        { stdout: "pipe", stderr: "pipe" }
-    );
-    const stderr = await new Response(proc.stderr).text();
-    const exitCode = await proc.exited;
+            ],
+            { stdout: "pipe", stderr: "pipe" }
+        );
+        const stderr = await new Response(proc.stderr).text();
+        const exitCode = await proc.exited;
 
-    if (exitCode !== 0) {
-        throw new Error(`Failed to generate OCR test image (exit ${exitCode}): ${stderr.trim()}`);
-    }
-});
+        if (exitCode !== 0) {
+            throw new Error(`Failed to generate OCR test image (exit ${exitCode}): ${stderr.trim()}`);
+        }
+    });
 
-afterAll(async () => {
-    try {
-        const { unlinkSync } = await import("node:fs");
-        unlinkSync(TEST_IMAGE);
-    } catch {
-        // ignore
-    }
-});
+    afterAll(async () => {
+        try {
+            const { unlinkSync } = await import("node:fs");
+            unlinkSync(TEST_IMAGE);
+        } catch {
+            // ignore
+        }
+    });
 
-describe("darwinkit vision commands", () => {
     describe("ocr", () => {
         it("extracts text with bounding boxes", async () => {
             const result = await runDarwinKit("ocr", TEST_IMAGE);

@@ -1,7 +1,8 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { getOutput, runTool } from "@app/utils/e2e/helpers";
+import { skip } from "@app/utils/test/skip";
 
-describe("tools timer", () => {
+describe.skipIf(skip.integration)("tools timer", () => {
     afterAll(async () => {
         await runTool(["timer", "cancel"]);
     });

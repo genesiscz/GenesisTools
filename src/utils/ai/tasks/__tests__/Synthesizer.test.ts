@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { skip } from "@app/utils/test/skip";
 import { Synthesizer } from "../Synthesizer";
 
-describe("Synthesizer", () => {
+describe.skipIf(skip.unlessMac)("Synthesizer", () => {
     test("create({ provider: 'macos' }) resolves to macOS provider", async () => {
         const s = await Synthesizer.create({ provider: "macos" });
         expect(s.providerType).toBe("macos");

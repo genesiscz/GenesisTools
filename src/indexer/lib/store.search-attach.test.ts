@@ -1,10 +1,10 @@
 import { Database } from "bun:sqlite";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { removeRecursive } from "@app/utils/fs";
+import { makeTempDir } from "@app/utils/paths";
 import { ensureExtensionCapableSQLite } from "@app/utils/search/stores/sqlite-vec-loader";
-import { _resetIndexerStorageForTesting, wipeAllTestIndexes } from "./storage";
+import { getIndexerStorage } from "./storage";
 import { createIndexStore, searchIndexReadonly } from "./store";
 
 ensureExtensionCapableSQLite();
@@ -12,34 +12,19 @@ ensureExtensionCapableSQLite();
 /**
  * Integration tests for ReadonlySearchOptions.{filters, attach} (Plan 1 Task 6).
  *
- * Strategy: redirect Storage's `homedir()` lookup to a tmp dir by overriding
- * the HOME env var, then drive a real createIndexStore + insertChunks +
- * searchIndexReadonly cycle in fulltext mode (no embedder needed).
+ * Each test run generates a unique timestamp suffix for the index names so that
+ * concurrent parallel workers don't conflict on the same homedir paths.
+ * Cleanup only removes the names created by this specific run — never a
+ * broad prefix sweep that could delete another worker's live indexes.
  */
 
-const ORIG_HOME = process.env.HOME;
-let tmpHome: string;
-
-beforeAll(() => {
-    tmpHome = mkdtempSync(join(tmpdir(), "search-attach-"));
-    process.env.HOME = tmpHome;
-    _resetIndexerStorageForTesting();
-});
+const RUN_ID = Date.now();
 
 afterAll(() => {
-    if (ORIG_HOME !== undefined) {
-        process.env.HOME = ORIG_HOME;
-    } else {
-        delete process.env.HOME;
+    const storage = getIndexerStorage();
+    for (const name of [`filters-test-${RUN_ID}`, `attach-test-${RUN_ID}`]) {
+        removeRecursive(storage.getIndexDir(name));
     }
-
-    _resetIndexerStorageForTesting();
-
-    // Belt-and-suspenders: if the singleton beat the HOME redirect on this run,
-    // the seed dirs landed in the real homedir. wipeAllTestIndexes covers them.
-    wipeAllTestIndexes();
-
-    rmSync(tmpHome, { recursive: true, force: true });
 });
 
 async function seed(indexName: string): Promise<void> {
@@ -80,7 +65,7 @@ async function seed(indexName: string): Promise<void> {
 }
 
 describe("searchIndexReadonly with filters", () => {
-    const NAME = "filters-test";
+    const NAME = `filters-test-${RUN_ID}`;
 
     beforeAll(async () => {
         await seed(NAME);
@@ -130,14 +115,14 @@ describe("searchIndexReadonly with filters", () => {
 });
 
 describe("searchIndexReadonly with attach", () => {
-    const NAME = "attach-test";
+    const NAME = `attach-test-${RUN_ID}`;
     let extDir: string;
     let extDbPath: string;
 
     beforeAll(async () => {
         await seed(NAME);
 
-        extDir = mkdtempSync(join(tmpdir(), "ext-"));
+        extDir = makeTempDir("ext-");
         extDbPath = join(extDir, "ext.db");
         const ext = new Database(extDbPath);
         ext.run("CREATE TABLE allowed (id TEXT)");
@@ -146,7 +131,7 @@ describe("searchIndexReadonly with attach", () => {
     });
 
     afterAll(() => {
-        rmSync(extDir, { recursive: true, force: true });
+        removeRecursive(extDir);
     });
 
     it("attaches an external DB read-only and uses it inside a subquery", async () => {
@@ -193,9 +178,9 @@ describe("searchIndexReadonly with attach", () => {
         ).rejects.toThrow();
     });
 
-    it("attaches DB paths containing URI-reserved characters", async () => {
-        const specialDir = mkdtempSync(join(tmpdir(), "ext special#dir?"));
-        const specialPath = join(specialDir, "quote'and#hash?.db");
+    it("attaches DB paths containing URI-reserved characters (#, ', space, %)", async () => {
+        const specialDir = makeTempDir("ext special#dir");
+        const specialPath = join(specialDir, "quote'and #hash%.db");
         const ext = new Database(specialPath);
         ext.run("CREATE TABLE allowed (id TEXT)");
         ext.run("INSERT INTO allowed (id) VALUES ('3')");
@@ -213,7 +198,7 @@ describe("searchIndexReadonly with attach", () => {
             const sid = results[0].doc.sourceId ?? String(results[0].doc.metadata?.source_id ?? "");
             expect(String(sid)).toBe("3");
         } finally {
-            rmSync(specialDir, { recursive: true, force: true });
+            removeRecursive(specialDir);
         }
     });
 

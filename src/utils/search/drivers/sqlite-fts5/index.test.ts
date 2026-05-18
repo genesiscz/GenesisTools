@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { removeRecursive } from "@app/utils/fs";
+import { makeTempDir } from "@app/utils/paths";
 import { SearchEngine } from "./index";
 
 interface TestDoc extends Record<string, unknown> {
@@ -16,7 +16,7 @@ describe("SearchEngine", () => {
     let engine: SearchEngine<TestDoc>;
 
     beforeEach(() => {
-        tmpDir = mkdtempSync(join(tmpdir(), "fts5-test-"));
+        tmpDir = makeTempDir("fts5-test-");
         dbPath = join(tmpDir, "test.db");
         engine = new SearchEngine<TestDoc>({
             dbPath,
@@ -37,7 +37,7 @@ describe("SearchEngine", () => {
             }
         }
 
-        rmSync(tmpDir, { recursive: true, force: true });
+        removeRecursive(tmpDir);
     });
 
     it("constructor creates FTS5 tables (count starts at 0)", () => {

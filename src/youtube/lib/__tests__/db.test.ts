@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { removeRecursive } from "@app/utils/fs";
+import { makeTempDir } from "@app/utils/paths";
 import { YoutubeDatabase } from "@app/youtube/lib/db";
 
 let db: YoutubeDatabase;
@@ -15,7 +16,7 @@ afterEach(() => {
     db.close();
 
     for (const tempDir of tempDirs) {
-        rmSync(tempDir, { recursive: true, force: true });
+        removeRecursive(tempDir);
     }
 
     tempDirs = [];
@@ -245,7 +246,7 @@ describe("YoutubeDatabase videos", () => {
     });
 
     it("prunes expired binary files and clears database paths", async () => {
-        const tempDir = mkdtempSync(join(tmpdir(), "youtube-db-prune-"));
+        const tempDir = makeTempDir("youtube-db-prune-");
         tempDirs.push(tempDir);
         const audioPath = join(tempDir, "old.wav");
         const videoPath = join(tempDir, "old.mp4");

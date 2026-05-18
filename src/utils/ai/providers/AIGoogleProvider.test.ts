@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { SafeJSON } from "@app/utils/json";
+import { skip } from "@app/utils/test/skip";
 import { AIGoogleProvider } from "./AIGoogleProvider";
 
 /** Stub globalThis.fetch without TS complaining about the `preconnect` property Bun adds. */
@@ -261,7 +262,7 @@ describe("AIGoogleProvider", () => {
         }
     });
 
-    test.skipIf(!process.env.TEST_GOOGLE)("embed() returns valid vector (requires GOOGLE_API_KEY)", async () => {
+    test.skipIf(skip.realApis)("embed() returns valid vector (requires GOOGLE_API_KEY)", async () => {
         const provider = new AIGoogleProvider();
         const result = await provider.embed("Hello, world!");
 

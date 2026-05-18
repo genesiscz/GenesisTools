@@ -1,12 +1,22 @@
-import { beforeEach, describe, expect, it, spyOn } from "bun:test";
+import { afterEach, describe, expect, it, mock, spyOn } from "bun:test";
+import { setupInquirerMock } from "./inquirer-mock.js";
+
+// openConfig() gates spawning the editor behind isInteractive(); setupInquirerMock
+// stubs it true. Must run before the command module is imported, so the command
+// is loaded dynamically below (mirrors install.test.ts).
+setupInquirerMock();
+
+const { openConfig } = await import("@app/mcp-manager/commands/config.js");
+
 import logger from "@app/logger";
-import { openConfig } from "@app/mcp-manager/commands/config.js";
 import * as configUtils from "@app/mcp-manager/utils/config.utils.js";
 import { Storage } from "@app/utils/storage";
 
 describe("openConfig", () => {
-    beforeEach(() => {
-        // Reset mocks
+    // spyOn(Bun,'spawn'/Storage/...) is process-global in bun and not
+    // auto-restored across files — restore so it can't leak into later suites.
+    afterEach(() => {
+        mock.restore();
     });
 
     it("should create default config if it doesn't exist", async () => {

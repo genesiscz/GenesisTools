@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { exportMessages, parseMailIds } from "@app/macos/lib/mail/export";
 import type { MailMessage } from "@app/macos/lib/mail/types";
+import { skip } from "@app/utils/test/skip";
 
 function msg(rowid: number, subject: string): MailMessage {
     return {
@@ -23,7 +24,7 @@ function msg(rowid: number, subject: string): MailMessage {
     };
 }
 
-describe("exportMessages", () => {
+describe.skipIf(skip.mailInfra)("exportMessages", () => {
     it("writes one markdown file per message under emails/", async () => {
         const dir = mkdtempSync(join(tmpdir(), "mailexport-"));
         const result = await exportMessages({
@@ -68,7 +69,7 @@ describe("parseMailIds", () => {
     });
 });
 
-describe("exportMessages attachmentsOnly", () => {
+describe.skipIf(skip.mailInfra)("exportMessages attachmentsOnly", () => {
     it("does not create the emails/ dir or index.md when attachmentsOnly is set", async () => {
         const dir = mkdtempSync(join(tmpdir(), "mailexport-ao-"));
         const result = await exportMessages({

@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { existsSync, unlinkSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { removeDbFile } from "@app/utils/fs";
+import { tmpdir } from "@app/utils/paths";
 import { SeenStore } from "./seen-store";
 
 function tempDbPath(): string {
@@ -13,11 +14,7 @@ describe("SeenStore", () => {
 
     afterEach(() => {
         for (const p of paths) {
-            for (const file of [p, `${p}-wal`, `${p}-shm`]) {
-                if (existsSync(file)) {
-                    unlinkSync(file);
-                }
-            }
+            removeDbFile(p);
         }
 
         paths.length = 0;
