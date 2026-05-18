@@ -355,7 +355,7 @@ function ComparePage() {
                         </div>
                     )}
 
-                    <Card className="border-border/60 bg-muted/50">
+                    <Card>
                         <CardHeader className="gap-3 pb-2">
                             <div className="flex flex-wrap items-center justify-between gap-3">
                                 <CardTitle className="text-xs font-mono text-gray-300">Shared configuration</CardTitle>
@@ -617,7 +617,7 @@ function ComparePage() {
                                 </div>
                             </div>
 
-                            <Card className="border-border/60 bg-muted/50">
+                            <Card>
                                 <CardHeader>
                                     <CardTitle className="text-sm font-mono text-primary">Data provenance</CardTitle>
                                 </CardHeader>
@@ -693,7 +693,7 @@ function ComparisonLoadingState({ districts }: { districts: string[] }) {
     return (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {districts.map((district) => (
-                <Card key={district} className="border-border/60 bg-muted/50">
+                <Card key={district}>
                     <CardHeader className="pb-2">
                         <CardTitle className="text-sm font-mono text-gray-300">{district}</CardTitle>
                     </CardHeader>

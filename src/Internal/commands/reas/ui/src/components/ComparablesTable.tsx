@@ -62,7 +62,7 @@ export function ComparablesTable({ data }: ComparablesTableProps) {
     }, [listings, sort]);
 
     return (
-        <Card className="border-border/60">
+        <Card>
             <CardHeader className="pb-0">
                 <CardTitle className="flex items-center gap-2 text-sm font-mono">
                     <LayoutList className="h-4 w-4 text-primary" />

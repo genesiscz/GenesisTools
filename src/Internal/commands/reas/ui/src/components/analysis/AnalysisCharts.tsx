@@ -34,7 +34,7 @@ interface DistributionHistogramProps {
 
 export function DistributionHistogram({ title, description, data, countLabel }: DistributionHistogramProps) {
     return (
-        <ChartContainer title={title} description={description} height={280} className="border-border/60 bg-muted/50">
+        <ChartContainer title={title} description={description} height={280}>
             <BarChart data={data} margin={{ top: 10, right: 10, left: 0, bottom: 12 }}>
                 <CartesianGrid {...chartGridProps} />
                 <XAxis {...chartAxisProps} dataKey="range" interval={0} angle={-25} textAnchor="end" height={56} />
@@ -76,7 +76,6 @@ export function TrendChartCard({ data }: TrendChartCardProps) {
             title="Median price trajectory"
             description="Quarter-over-quarter pricing signal for sold comparables in the selected district."
             height={320}
-            className="border-border/60 bg-muted/50"
         >
             <LineChart data={chartData} margin={{ top: 10, right: 20, left: 12, bottom: 12 }}>
                 <CartesianGrid {...chartGridProps} />
@@ -116,7 +115,6 @@ export function ComparablesScatterChart({ data }: ComparablesScatterChartProps) 
             title="Comparable sales scatter"
             description="Area on the x-axis, realized price per square meter on the y-axis."
             height={320}
-            className="border-border/60 bg-muted/50"
         >
             <ScatterChart margin={{ top: 10, right: 24, left: 12, bottom: 12 }}>
                 <CartesianGrid {...chartGridProps} />
@@ -267,7 +265,6 @@ export function ActiveSalesChart({ data, listings }: ActiveSalesChartProps) {
             title="Active sales pricing"
             description="Current asking inventory positioned against the sold-market price cloud."
             height={280}
-            className="border-border/60 bg-muted/50"
         >
             <ScatterChart margin={{ top: 10, right: 20, left: 12, bottom: 12 }}>
                 <CartesianGrid {...chartGridProps} />
@@ -312,7 +309,6 @@ export function RentalAggregationChart({
             title="Rental range by disposition"
             description="Minimum, median, and maximum asking rents across the current rental evidence."
             height={320}
-            className="border-border/60 bg-muted/50"
         >
             <ComposedChart data={chartData} margin={{ top: 10, right: 20, left: 12, bottom: 12 }}>
                 <CartesianGrid {...chartGridProps} />
@@ -357,7 +353,6 @@ export function InvestmentBenchmarkChart({ data }: { data: DashboardExport }) {
             title="Return benchmark spread"
             description="Net yield versus the export's benchmark set."
             height={320}
-            className="border-border/60 bg-muted/50"
         >
             <BarChart data={chartData} margin={{ top: 10, right: 20, left: 12, bottom: 24 }}>
                 <CartesianGrid {...chartGridProps} />
@@ -398,7 +393,6 @@ export function InvestmentSensitivityChart({
             title="Yield sensitivity"
             description="How the net and gross yield shift under transparent rent and price scenarios."
             height={320}
-            className="border-border/60 bg-muted/50"
         >
             <AreaChart data={scenarios} margin={{ top: 10, right: 20, left: 12, bottom: 12 }}>
                 <CartesianGrid {...chartGridProps} />
@@ -486,7 +480,6 @@ export function MfRentComparisonChart({
             title="MF vs market rent comparison"
             description="Government reference prices against observed market rental medians per size category."
             height={320}
-            className="border-border/60 bg-muted/50"
         >
             <BarChart data={chartData} margin={{ top: 10, right: 20, left: 12, bottom: 12 }}>
                 <CartesianGrid {...chartGridProps} />

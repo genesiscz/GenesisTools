@@ -222,7 +222,7 @@ function WatchlistPropertyDetailPage() {
                     </Link>
                 </Button>
 
-                <Card className="border-border/60 bg-muted/50">
+                <Card>
                     <CardContent className="py-5 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                         <div className="space-y-2 min-w-0">
                             <div className="flex flex-wrap items-center gap-2">
@@ -297,7 +297,7 @@ function WatchlistPropertyDetailPage() {
                     <StatCard label="Comparable Count" value={formatNumber(property.comparable_count)} accent="green" />
                 </div>
 
-                <Card className="border-border/60 bg-muted/50">
+                <Card>
                     <CardHeader className="pb-3">
                         <CardTitle className="text-sm font-mono text-primary">Alert Settings</CardTitle>
                     </CardHeader>
@@ -412,7 +412,7 @@ function WatchlistPropertyDetailPage() {
                             />
 
                             <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.1fr_0.9fr]">
-                                <Card className="border-border/60 bg-muted/50">
+                                <Card>
                                     <CardContent className="flex flex-col gap-4 p-5 md:flex-row md:items-center md:justify-between">
                                         <div className="space-y-3">
                                             <div className="text-xs font-mono uppercase tracking-[0.24em] text-slate-500">
@@ -483,7 +483,7 @@ function WatchlistPropertyDetailPage() {
                             </div>
                         </>
                     ) : (
-                        <Card className="border-border/60 bg-muted/50">
+                        <Card>
                             <CardContent className="py-10 text-center">
                                 <p className="text-sm font-mono text-gray-400">
                                     This property does not have stored export data yet.
@@ -503,7 +503,7 @@ function WatchlistPropertyDetailPage() {
                             <ComparablesTable data={exportData} />
                         </>
                     ) : (
-                        <Card className="border-border/60 bg-muted/50">
+                        <Card>
                             <CardContent className="py-10 text-center">
                                 <p className="text-sm font-mono text-gray-400">No sold comparables are stored yet.</p>
                             </CardContent>
@@ -543,7 +543,7 @@ function WatchlistPropertyDetailPage() {
                             </div>
 
                             <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-                                <Card className="border-border/60 bg-muted/50">
+                                <Card>
                                     <CardHeader className="pb-2">
                                         <CardTitle className="text-sm font-mono text-primary">
                                             Stored Rental Listings
@@ -578,11 +578,9 @@ function WatchlistPropertyDetailPage() {
                                     </CardContent>
                                 </Card>
 
-                                <Card className="border-border/60 bg-muted/50">
+                                <Card>
                                     <CardHeader className="pb-2">
-                                        <CardTitle className="text-sm font-mono text-primary">
-                                            Yield Context
-                                        </CardTitle>
+                                        <CardTitle className="text-sm font-mono text-primary">Yield Context</CardTitle>
                                     </CardHeader>
                                     <CardContent className="space-y-4">
                                         <YieldCard data={exportData} />
@@ -591,7 +589,7 @@ function WatchlistPropertyDetailPage() {
                             </div>
                         </>
                     ) : (
-                        <Card className="border-border/60 bg-muted/50">
+                        <Card>
                             <CardContent className="py-10 text-center">
                                 <p className="text-sm font-mono text-gray-400">
                                     No stored export payload is available for this property.
@@ -607,7 +605,7 @@ function WatchlistPropertyDetailPage() {
                         subtitle="Financing impact, yield breakdown, and the current score stack for this property."
                     />
                     <div className="grid grid-cols-1 xl:grid-cols-[1fr_1fr] gap-4">
-                        <Card className="border-border/60 bg-muted/50">
+                        <Card>
                             <CardContent className="grid gap-4 p-5 md:grid-cols-[0.8fr_1.2fr] md:items-center">
                                 <ScoreGauge score={property.last_score ?? 0} label="Stored score" />
                                 <div className="space-y-3">
@@ -658,7 +656,7 @@ function WatchlistPropertyDetailPage() {
                         </InfoBox>
                     )}
 
-                    <Card className="border-border/60 bg-muted/50">
+                    <Card>
                         <CardHeader className="pb-2">
                             <CardTitle className="text-sm font-mono text-primary">Provider Fetch Summary</CardTitle>
                         </CardHeader>
@@ -689,7 +687,7 @@ function WatchlistPropertyDetailPage() {
                         </CardContent>
                     </Card>
 
-                    <Card className="border-border/60 bg-muted/50">
+                    <Card>
                         <CardHeader className="pb-2">
                             <CardTitle className="text-sm font-mono text-primary">Analysis Snapshots</CardTitle>
                         </CardHeader>

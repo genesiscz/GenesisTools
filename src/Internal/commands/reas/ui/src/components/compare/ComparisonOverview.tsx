@@ -23,7 +23,7 @@ export function ComparisonOverview({ comparisons }: ComparisonOverviewProps) {
                     latestSnapshot?.trendDirection ?? exportData.analysis.momentum?.direction ?? "stable";
 
                 return (
-                    <Card key={comparison.district} className="border-border/60 bg-muted/50">
+                    <Card key={comparison.district}>
                         <CardHeader className="gap-4 sm:flex-row sm:items-start sm:justify-between">
                             <div className="space-y-2">
                                 <div className="flex items-center gap-2 flex-wrap">

@@ -51,7 +51,7 @@ export function DataProvenance({
               }));
 
     return (
-        <Card className={cn("border-border/60 bg-muted/50", compact && "bg-card/60")}>
+        <Card className={cn(compact && "bg-card/60")}>
             <CardHeader className={cn("pb-3", compact && "pb-2")}>
                 <CardTitle className="text-sm font-mono text-primary">{title}</CardTitle>
             </CardHeader>

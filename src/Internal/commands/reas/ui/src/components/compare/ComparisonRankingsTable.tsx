@@ -24,7 +24,7 @@ export function ComparisonRankingsTable({ comparisons }: ComparisonRankingsTable
     );
 
     return (
-        <Card className="border-border/60 bg-muted/50">
+        <Card>
             <CardHeader>
                 <CardTitle className="text-sm font-mono text-primary flex items-center gap-2">
                     <Medal className="w-4 h-4" />

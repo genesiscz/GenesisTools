@@ -49,7 +49,7 @@ export function ListingFilters({
     sortOptions: Array<{ value: SortBy; label: string }>;
 }) {
     return (
-        <Card className="mb-6 border-border/60 bg-muted/50">
+        <Card className="mb-6">
             <CardHeader className="border-b border-border/60 pb-4">
                 <CardTitle className="flex items-center gap-2 font-mono text-sm text-primary">
                     <Filter className="h-4 w-4" />

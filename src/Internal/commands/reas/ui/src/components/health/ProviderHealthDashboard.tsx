@@ -168,7 +168,7 @@ export function ProviderHealthDashboard({ health, recentLog }: ProviderHealthDas
                     </Card>
                 ))}
                 {health.length === 0 ? (
-                    <Card className="border-border/60 bg-muted/50 sm:col-span-2 lg:col-span-3 xl:col-span-4">
+                    <Card className="sm:col-span-2 lg:col-span-3 xl:col-span-4">
                         <CardContent className="flex flex-col items-center gap-3 py-12 text-center">
                             <Database className="h-8 w-8 text-slate-600" />
                             <p className="font-mono text-sm text-slate-400">
@@ -179,7 +179,7 @@ export function ProviderHealthDashboard({ health, recentLog }: ProviderHealthDas
                 ) : null}
             </div>
 
-            <Card className="border-border/60 bg-muted/50">
+            <Card>
                 <CardHeader className="pb-3">
                     <CardTitle className="flex items-center gap-2 text-sm font-mono text-foreground">
                         <Activity className="h-4 w-4 text-cyan-300" />

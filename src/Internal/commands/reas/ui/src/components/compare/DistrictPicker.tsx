@@ -17,7 +17,7 @@ export function DistrictPicker({
     const districtCountLabel = `${selectedDistricts.length}/${maxDistricts}`;
 
     return (
-        <Card className="border-border/60 bg-muted/50 overflow-visible">
+        <Card className="overflow-visible">
             <CardHeader className="gap-3">
                 <div className="flex items-center justify-between gap-3">
                     <CardTitle className="text-xs font-mono text-gray-300 flex items-center gap-2">

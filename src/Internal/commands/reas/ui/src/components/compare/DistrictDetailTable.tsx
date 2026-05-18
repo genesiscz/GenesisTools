@@ -46,7 +46,7 @@ export function DistrictDetailTable({ comparisons }: { comparisons: DistrictComp
     }
 
     return (
-        <Card className="border-border/60 bg-muted/50">
+        <Card>
             <CardHeader>
                 <CardTitle className="flex items-center gap-2 text-sm font-mono text-primary">
                     <TableProperties className="w-4 h-4" />

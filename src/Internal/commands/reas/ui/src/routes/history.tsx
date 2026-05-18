@@ -158,7 +158,7 @@ function HistoryPage() {
             </div>
 
             {/* Trend Chart Section */}
-            <Card className="border-border/60 bg-muted/50 mb-6">
+            <Card className="mb-6">
                 <CardHeader className="pb-2">
                     <CardTitle className="text-sm font-mono text-primary flex items-center gap-2">
                         <BarChart3 className="w-4 h-4" />
@@ -182,7 +182,7 @@ function HistoryPage() {
             </Card>
 
             {/* History Table Section */}
-            <Card className="border-border/60 bg-muted/50">
+            <Card>
                 <CardHeader className="pb-2">
                     <CardTitle className="text-sm font-mono text-primary flex items-center gap-2">
                         <Clock className="w-4 h-4" />

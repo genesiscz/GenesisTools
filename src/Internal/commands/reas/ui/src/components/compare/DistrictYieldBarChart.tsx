@@ -17,7 +17,6 @@ export function DistrictYieldBarChart({
             title="District yield spread"
             description="Gross yield comparison with a portfolio benchmark line to show where rents outrun pricing."
             height={320}
-            className="border-border/60 bg-muted/50"
         >
             <BarChart data={model.rows} margin={{ top: 10, right: 24, left: 0, bottom: 12 }}>
                 <CartesianGrid {...chartGridProps} />

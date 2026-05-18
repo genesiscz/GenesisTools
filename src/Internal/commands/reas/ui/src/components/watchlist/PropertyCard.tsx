@@ -154,7 +154,7 @@ export function PropertyCard({
     }, [alertGradeChange, alertYieldFloor, onUpdateAlerts, property.id]);
 
     return (
-        <Card className="border-border/60 bg-muted/50 hover:border-primary/30 hover:shadow-[0_0_20px_rgba(245,158,11,0.07)] transition-all duration-200">
+        <Card className="hover:border-primary/30 hover:shadow-[0_0_20px_rgba(245,158,11,0.07)] transition-all duration-200">
             <CardHeader className="space-y-3 pb-3">
                 <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0 space-y-1">

@@ -66,7 +66,7 @@ export function ListingsTable({
     onPageChange,
 }: ListingsTableProps) {
     return (
-        <Card className="border-border/60 bg-muted/50">
+        <Card>
             <CardHeader className="border-b border-border/60 pb-4">
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                     <div>

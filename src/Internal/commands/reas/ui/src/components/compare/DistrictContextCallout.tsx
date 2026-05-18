@@ -9,7 +9,7 @@ export function DistrictContextCallout({ districts }: { districts: string[] }) {
     return (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {items.map((item) => (
-                <Card key={item.district} className="border-border/60 bg-muted/50">
+                <Card key={item.district}>
                     <CardHeader>
                         <CardTitle className="flex items-center gap-2 text-sm font-mono text-primary">
                             <MapPinned className="w-4 h-4" />

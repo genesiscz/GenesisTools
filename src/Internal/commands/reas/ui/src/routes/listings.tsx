@@ -251,7 +251,7 @@ function ListingsPage() {
                 </div>
 
                 {overview && (
-                    <Card className="mb-6 border-border/60 bg-muted/50">
+                    <Card className="mb-6">
                         <CardHeader className="border-b border-border/60 pb-4">
                             <CardTitle className="font-mono text-sm text-cyan-300">Cache overview</CardTitle>
                             <CardDescription className="font-mono text-xs text-gray-500">

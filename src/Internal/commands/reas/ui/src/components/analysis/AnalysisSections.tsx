@@ -100,7 +100,7 @@ export function OverviewTab({ data }: AnalysisSectionProps) {
                 title="Overview"
                 subtitle="Stored snapshot across pricing, yield, provider depth, and analyst conviction."
             />
-            <Card className="border-border/60 bg-[radial-gradient(circle_at_top_left,rgba(245,158,11,0.18),transparent_40%),radial-gradient(circle_at_top_right,rgba(56,189,248,0.12),transparent_38%),rgba(255,255,255,0.02)]">
+            <Card className="bg-[radial-gradient(circle_at_top_left,rgba(245,158,11,0.18),transparent_40%),radial-gradient(circle_at_top_right,rgba(56,189,248,0.12),transparent_38%),rgba(255,255,255,0.02)]">
                 <CardContent className="grid gap-6 p-6 lg:grid-cols-[1.3fr_0.7fr]">
                     <div className="space-y-4">
                         <div className="flex flex-wrap items-center gap-2">
@@ -159,7 +159,7 @@ export function OverviewTab({ data }: AnalysisSectionProps) {
                             />
                         </div>
                     </div>
-                    <Card className="border-border/60 bg-slate-950/60">
+                    <Card className="bg-slate-950/60">
                         <CardHeader className="pb-3">
                             <CardTitle className="flex items-center gap-2 text-sm font-mono text-foreground">
                                 <Sparkles className="h-4 w-4 text-primary" />
@@ -193,7 +193,7 @@ export function OverviewTab({ data }: AnalysisSectionProps) {
             </Card>
 
             <div className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
-                <Card className="border-border/60 bg-muted/50">
+                <Card>
                     <CardHeader className="pb-3">
                         <CardTitle className="flex items-center gap-2 text-sm font-mono text-foreground">
                             <Building2 className="h-4 w-4 text-cyan-300" />
@@ -236,7 +236,7 @@ export function OverviewTab({ data }: AnalysisSectionProps) {
                     </CardContent>
                 </Card>
 
-                <Card className="border-border/60 bg-muted/50">
+                <Card>
                     <CardHeader className="pb-3">
                         <CardTitle className="flex items-center gap-2 text-sm font-mono text-foreground">
                             <ShieldCheck className="h-4 w-4 text-lime-300" />
@@ -555,7 +555,7 @@ export function ComparablesTab({ data }: AnalysisSectionProps) {
                 title="Comparables"
                 subtitle="Sold evidence, active asking context, and direct source links for every exported sale."
             />
-            <Card className="border-border/60 bg-muted/50">
+            <Card>
                 <CardContent className="grid gap-3 p-4 md:grid-cols-[160px_180px_minmax(0,1fr)]">
                     <Select value={dispositionFilter} onValueChange={setDispositionFilter}>
                         <SelectTrigger className="border-border/60 bg-slate-950/50 font-mono text-xs text-slate-200">
@@ -595,7 +595,7 @@ export function ComparablesTab({ data }: AnalysisSectionProps) {
             </div>
 
             {activeVsSold ? (
-                <Card className="border-border/60 bg-muted/50">
+                <Card>
                     <CardHeader className="pb-3">
                         <CardTitle className="flex items-center gap-2 text-sm font-mono text-foreground">
                             <Layers3 className="h-4 w-4 text-cyan-300" />
@@ -629,7 +629,7 @@ export function ComparablesTab({ data }: AnalysisSectionProps) {
                 </Card>
             ) : null}
 
-            <Card className="border-border/60 bg-muted/50">
+            <Card>
                 <CardHeader className="pb-3">
                     <CardTitle className="flex items-center gap-2 text-sm font-mono text-foreground">
                         <Building2 className="h-4 w-4 text-primary" />
@@ -763,7 +763,7 @@ export function RentalsTab({ data }: AnalysisSectionProps) {
                 title="Rentals"
                 subtitle="Deduplicated rental supply grouped by disposition, with provider-level evidence and raw rows."
             />
-            <Card className="border-border/60 bg-muted/50">
+            <Card>
                 <CardContent className="grid gap-3 p-4 md:grid-cols-[160px_180px_minmax(0,1fr)]">
                     <Select value={dispositionFilter} onValueChange={setDispositionFilter}>
                         <SelectTrigger className="border-border/60 bg-slate-950/50 font-mono text-xs text-slate-200">
@@ -806,10 +806,12 @@ export function RentalsTab({ data }: AnalysisSectionProps) {
             <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
                 {filteredAggregated.length > 0 ? (
                     filteredAggregated.map((group) => (
-                        <Card key={group.disposition} className="border-border/60 bg-muted/50">
+                        <Card key={group.disposition}>
                             <CardHeader className="pb-3">
                                 <div className="flex items-center justify-between gap-3">
-                                    <CardTitle className="text-sm font-mono text-foreground">{group.disposition}</CardTitle>
+                                    <CardTitle className="text-sm font-mono text-foreground">
+                                        {group.disposition}
+                                    </CardTitle>
                                     <Badge
                                         className={cn(
                                             "border font-mono text-[10px] uppercase tracking-[0.2em]",
@@ -859,7 +861,7 @@ export function RentalsTab({ data }: AnalysisSectionProps) {
                         </Card>
                     ))
                 ) : (
-                    <Card className="border-border/60 bg-muted/50 lg:col-span-2 xl:col-span-3">
+                    <Card className="lg:col-span-2 xl:col-span-3">
                         <CardContent className="p-6">
                             <InfoBox title="Rental aggregation" tone="warning">
                                 No aggregated rental rows match the current filters.
@@ -870,7 +872,7 @@ export function RentalsTab({ data }: AnalysisSectionProps) {
             </div>
 
             {rentEstimation ? (
-                <Card className="border-border/60 bg-muted/50">
+                <Card>
                     <CardHeader className="pb-3">
                         <CardTitle className="flex items-center gap-2 text-sm font-mono text-foreground">
                             <Sparkles className="h-4 w-4 text-purple-300" />
@@ -913,7 +915,7 @@ export function RentalsTab({ data }: AnalysisSectionProps) {
             ) : null}
 
             {dispositionYields.length > 0 ? (
-                <Card className="border-border/60 bg-muted/50">
+                <Card>
                     <CardHeader className="pb-3">
                         <CardTitle className="flex items-center gap-2 text-sm font-mono text-foreground">
                             <TrendingUp className="h-4 w-4 text-emerald-300" />
@@ -963,7 +965,7 @@ export function RentalsTab({ data }: AnalysisSectionProps) {
             ) : null}
 
             <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
-                <Card className="border-border/60 bg-muted/50">
+                <Card>
                     <CardHeader className="pb-3">
                         <CardTitle className="flex items-center gap-2 text-sm font-mono text-foreground">
                             <Landmark className="h-4 w-4 text-cyan-300" />
@@ -1029,7 +1031,7 @@ export function RentalsTab({ data }: AnalysisSectionProps) {
                     </CardContent>
                 </Card>
 
-                <Card className="border-border/60 bg-muted/50">
+                <Card>
                     <CardHeader className="pb-3">
                         <CardTitle className="flex items-center gap-2 text-sm font-mono text-foreground">
                             <Landmark className="h-4 w-4 text-lime-300" />
@@ -1148,7 +1150,7 @@ export function InvestmentTab({ data }: AnalysisSectionProps) {
                 subtitle="Pricing edge, yield spread, benchmark context, and the current score rationale."
             />
             <div className="grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
-                <Card className="border-border/60 bg-muted/50">
+                <Card>
                     <CardHeader className="pb-3">
                         <CardTitle className="flex items-center gap-2 text-sm font-mono text-foreground">
                             <ShieldCheck className="h-4 w-4 text-primary" />
@@ -1237,7 +1239,7 @@ export function InvestmentTab({ data }: AnalysisSectionProps) {
             </div>
 
             <div className="grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
-                <Card className="border-border/60 bg-muted/50">
+                <Card>
                     <CardHeader className="pb-3">
                         <CardTitle className="text-sm font-mono text-foreground">Net yield decomposition</CardTitle>
                         <CardDescription className="font-mono text-xs text-slate-500">
@@ -1246,7 +1248,7 @@ export function InvestmentTab({ data }: AnalysisSectionProps) {
                     </CardHeader>
                     <CardContent className="grid gap-3 sm:grid-cols-2">
                         {decomposition.map((item) => (
-                            <Card key={item.label} className="border-border/60 bg-slate-950/40">
+                            <Card key={item.label} className="bg-slate-950/40">
                                 <CardContent className="space-y-2 p-4">
                                     <div className="text-[10px] font-mono uppercase tracking-[0.24em] text-slate-500">
                                         {item.label}
@@ -1266,7 +1268,7 @@ export function InvestmentTab({ data }: AnalysisSectionProps) {
                     </CardContent>
                 </Card>
 
-                <Card className="border-border/60 bg-muted/50">
+                <Card>
                     <CardHeader className="pb-3">
                         <CardTitle className="text-sm font-mono text-foreground">Projection ladder</CardTitle>
                         <CardDescription className="font-mono text-xs text-slate-500">
@@ -1301,7 +1303,7 @@ export function InvestmentTab({ data }: AnalysisSectionProps) {
                 </Card>
             </div>
 
-            <Card className="border-border/60 bg-muted/50">
+            <Card>
                 <CardHeader className="pb-3">
                     <CardTitle className="flex items-center gap-2 text-sm font-mono text-foreground">
                         <Percent className="h-4 w-4 text-cyan-300" />
@@ -1313,7 +1315,7 @@ export function InvestmentTab({ data }: AnalysisSectionProps) {
                         const spread = data.analysis.yield.netYield - benchmark.annualReturn;
 
                         return (
-                            <Card key={benchmark.name} className="border-border/60 bg-slate-950/40">
+                            <Card key={benchmark.name} className="bg-slate-950/40">
                                 <CardContent className="space-y-2 p-4">
                                     <div className="text-[10px] font-mono uppercase tracking-[0.24em] text-slate-500">
                                         {benchmark.name}
@@ -1336,7 +1338,7 @@ export function InvestmentTab({ data }: AnalysisSectionProps) {
                 </CardContent>
             </Card>
 
-            <Card className="border-border/60 bg-muted/50">
+            <Card>
                 <CardHeader className="pb-3">
                     <CardTitle className="text-sm font-mono text-foreground">Scenario sensitivity</CardTitle>
                     <CardDescription className="font-mono text-xs text-slate-500">
@@ -1374,7 +1376,7 @@ export function InvestmentTab({ data }: AnalysisSectionProps) {
                 </CardContent>
             </Card>
 
-            <Card className="border-border/60 bg-muted/50">
+            <Card>
                 <CardHeader className="pb-3">
                     <CardTitle className="text-sm font-mono text-foreground">Score factor audit</CardTitle>
                     <CardDescription className="font-mono text-xs text-slate-500">
@@ -1435,7 +1437,7 @@ export function VerdictTab({ data }: AnalysisSectionProps) {
                 title="Verdict"
                 subtitle="Bottom-line recommendation with evidence depth and explicit provenance from the current export."
             />
-            <Card className="border-border/60 bg-[radial-gradient(circle_at_top_left,rgba(56,189,248,0.16),transparent_40%),radial-gradient(circle_at_bottom_right,rgba(245,158,11,0.14),transparent_36%),rgba(255,255,255,0.02)]">
+            <Card className="bg-[radial-gradient(circle_at_top_left,rgba(56,189,248,0.16),transparent_40%),radial-gradient(circle_at_bottom_right,rgba(245,158,11,0.14),transparent_36%),rgba(255,255,255,0.02)]">
                 <CardContent className="grid gap-6 p-6 lg:grid-cols-[1.1fr_0.9fr]">
                     <div className="space-y-4">
                         <div className="flex items-center gap-2">
@@ -1500,7 +1502,7 @@ export function VerdictTab({ data }: AnalysisSectionProps) {
                     </div>
 
                     <div className="grid gap-4 sm:grid-cols-2">
-                        <Card className="border-border/60 bg-slate-950/60 sm:col-span-2">
+                        <Card className="bg-slate-950/60 sm:col-span-2">
                             <CardContent className="flex flex-col items-center gap-3 p-4">
                                 <ScoreGauge score={scoreModel.score} label="Conviction" />
                                 <div className={cn("text-sm font-mono", getScoreTone(scoreModel.score))}>
@@ -1537,7 +1539,7 @@ export function VerdictTab({ data }: AnalysisSectionProps) {
                 </CardContent>
             </Card>
 
-            <Card className="border-border/60 bg-muted/50">
+            <Card>
                 <CardHeader className="pb-3">
                     <CardTitle className="text-sm font-mono text-foreground">Score categories</CardTitle>
                 </CardHeader>
@@ -1555,7 +1557,7 @@ export function VerdictTab({ data }: AnalysisSectionProps) {
                 </CardContent>
             </Card>
 
-            <Card className="border-border/60 bg-muted/50">
+            <Card>
                 <CardHeader className="pb-3">
                     <CardTitle className="text-sm font-mono text-foreground">Pass / fail checklist</CardTitle>
                 </CardHeader>

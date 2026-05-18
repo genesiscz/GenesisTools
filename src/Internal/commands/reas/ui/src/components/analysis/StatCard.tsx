@@ -23,7 +23,7 @@ export function StatCard({
     accent = "amber",
 }: StatCardProps) {
     return (
-        <Card className={cn("border-border/60 border-l-2 bg-muted/50", STAT_CARD_ACCENT_STYLES[accent], className)}>
+        <Card className={cn("border-l-2", STAT_CARD_ACCENT_STYLES[accent], className)}>
             <CardContent className="flex h-full flex-col gap-3 p-4">
                 <div className="flex items-center justify-between gap-3">
                     <span className="text-[10px] font-mono uppercase tracking-[0.24em] text-slate-500">{label}</span>

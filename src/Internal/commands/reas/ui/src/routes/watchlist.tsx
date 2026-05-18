@@ -60,7 +60,7 @@ function useProperties() {
 
 function SummaryMetric({ label, value, hint, tone = "default" }: SummaryMetricProps) {
     return (
-        <Card className="border-border/60 bg-muted/50">
+        <Card>
             <CardHeader className="pb-2">
                 <CardTitle className="text-[10px] font-mono uppercase tracking-[0.18em] text-gray-600">
                     {label}
@@ -436,7 +436,7 @@ function WatchlistIndexPage() {
                 </div>
             </div>
 
-            <Card className="border-border/60 bg-muted/50 mb-6">
+            <Card className="mb-6">
                 <CardHeader className="pb-3">
                     <CardTitle className="text-sm font-mono text-primary">Screening</CardTitle>
                 </CardHeader>
