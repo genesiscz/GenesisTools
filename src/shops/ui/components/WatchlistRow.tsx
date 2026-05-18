@@ -35,32 +35,32 @@ export function WatchlistRow({ row, pendingNotifications, sparklinePoints, onAck
             </TableCell>
             <TableCell>
                 <div className="flex flex-col">
-                    <span className="text-zinc-100 font-medium">{row.label ?? `master#${row.master_product_id}`}</span>
-                    <span className="text-[10px] uppercase tracking-wider text-zinc-500">
+                    <span className="text-foreground font-medium">{row.label ?? `master#${row.master_product_id}`}</span>
+                    <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
                         {row.restricted_to_shop ? `[${row.restricted_to_shop} only]` : "[any shop]"}
                     </span>
                 </div>
             </TableCell>
-            <TableCell className="text-right text-zinc-300">
+            <TableCell className="text-right text-foreground">
                 {row.target_price !== null ? row.target_price.toFixed(2) : "—"}
             </TableCell>
             <TableCell className="text-right">
                 {row.best_price !== null ? (
                     <span>
                         <span className="text-cyan-300 font-medium">{row.best_price.toFixed(2)}</span>
-                        <span className="text-zinc-500 text-[10px] ml-1">{row.best_shop}</span>
+                        <span className="text-muted-foreground text-[10px] ml-1">{row.best_shop}</span>
                     </span>
                 ) : (
-                    <span className="text-zinc-500">no offer</span>
+                    <span className="text-muted-foreground">no offer</span>
                 )}
             </TableCell>
             <TableCell className="text-right">
                 {row.delta_percent !== null && row.delta_percent !== 0 ? (
-                    <span className={cn(row.delta_percent > 0 ? "text-emerald-300" : "text-zinc-400")}>
+                    <span className={cn(row.delta_percent > 0 ? "text-emerald-300" : "text-muted-foreground")}>
                         {(row.delta_percent * 100).toFixed(1)}%
                     </span>
                 ) : (
-                    <span className="text-zinc-500">—</span>
+                    <span className="text-muted-foreground">—</span>
                 )}
             </TableCell>
             <TableCell className="w-32">
@@ -71,7 +71,7 @@ export function WatchlistRow({ row, pendingNotifications, sparklinePoints, onAck
                     className={`text-[11px] font-mono ${
                         row.last_observed_at && Date.now() - new Date(row.last_observed_at).getTime() < 24 * 3_600_000
                             ? "text-muted-foreground"
-                            : "text-zinc-500"
+                            : "text-muted-foreground"
                     }`}
                 >
                     {row.last_observed_at ? `${relativeTime(row.last_observed_at)} ago` : "never"}

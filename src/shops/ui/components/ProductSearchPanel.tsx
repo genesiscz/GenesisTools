@@ -31,7 +31,7 @@ export function ProductSearchPanel({ onSelect }: ProductSearchPanelProps) {
 
     return (
         <div className="h-full flex flex-col">
-            <div className="relative px-3 py-2 border-b border-zinc-800">
+            <div className="relative px-3 py-2 border-b border-border">
                 <Search className="absolute left-5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
                 <Input
                     value={query}
@@ -56,11 +56,11 @@ export function ProductSearchPanel({ onSelect }: ProductSearchPanelProps) {
                         no hits
                     </div>
                 ) : (
-                    <ul className="divide-y divide-zinc-900/50">
+                    <ul className="divide-y divide-border/50">
                         {searchQuery.data.hits.map((hit) => {
                             const inner = (
-                                <div className="flex items-center gap-3 px-3 py-2 hover:bg-white/5 transition-colors">
-                                    <div className="w-10 h-10 bg-zinc-900 border border-zinc-800 rounded overflow-hidden flex items-center justify-center shrink-0">
+                                <div className="flex items-center gap-3 px-3 py-2 hover:bg-primary/5 transition-colors">
+                                    <div className="w-10 h-10 bg-muted border border-border rounded overflow-hidden flex items-center justify-center shrink-0">
                                         {hit.image_url ? (
                                             <img
                                                 src={hit.image_url}
@@ -68,7 +68,7 @@ export function ProductSearchPanel({ onSelect }: ProductSearchPanelProps) {
                                                 className="w-full h-full object-contain"
                                             />
                                         ) : (
-                                            <ImageOff className="w-4 h-4 text-zinc-700" />
+                                            <ImageOff className="w-4 h-4 text-muted-foreground" />
                                         )}
                                     </div>
                                     <div className="min-w-0 flex-1">

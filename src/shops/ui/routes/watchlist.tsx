@@ -141,14 +141,14 @@ function WatchlistPage() {
 
     return (
         <div className="px-4 md:px-6 py-4 space-y-4">
-            <div className="sticky top-14 z-20 backdrop-blur bg-zinc-950/80 border-b border-zinc-800/60 py-3 flex flex-wrap items-center gap-3">
+            <div className="sticky top-14 z-20 backdrop-blur bg-card/80 border-b border-border/60 py-3 flex flex-wrap items-center gap-3">
                 <PasteUrlQuickAdd />
                 <FilterPills value={filter} onChange={setFilter} counts={counts} />
                 <Input
                     placeholder="Search label / id..."
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
-                    className="w-full md:w-56 font-mono bg-zinc-950/60 border-zinc-700"
+                    className="w-full md:w-56 font-mono bg-card/60 border-border"
                 />
             </div>
             {recurring.data && recurring.data.length > 0 ? (
@@ -157,9 +157,9 @@ function WatchlistPage() {
                     onOpen={(id) => navigate({ to: "/master/$id", params: { id: String(id) } })}
                 />
             ) : null}
-            <Card className="bg-zinc-950/40">
+            <Card>
                 <CardHeader>
-                    <CardTitle className="font-mono uppercase tracking-wider text-xs text-zinc-400">
+                    <CardTitle className="font-mono uppercase tracking-wider text-xs text-muted-foreground">
                         Watchlist · {filtered.length}/{rows.length}
                     </CardTitle>
                 </CardHeader>

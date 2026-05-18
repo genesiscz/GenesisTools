@@ -70,13 +70,13 @@ function OfferDetailPanel({ offer }: { offer: MasterOfferRow }) {
     }, [offer.metadata_json]);
 
     return (
-        <div className="border border-zinc-800 rounded-md bg-zinc-950/60 overflow-hidden">
+        <div className="border border-border rounded-md bg-card/60 overflow-hidden">
             <div className="flex flex-col md:flex-row gap-4 p-4">
-                <div className="w-40 h-40 bg-zinc-900 border border-zinc-800 rounded overflow-hidden flex items-center justify-center shrink-0">
+                <div className="w-40 h-40 bg-muted border border-border rounded overflow-hidden flex items-center justify-center shrink-0">
                     {offer.image_url ? (
                         <img src={offer.image_url} alt={offer.name} className="w-full h-full object-contain" />
                     ) : (
-                        <ImageOff className="w-10 h-10 text-zinc-700" />
+                        <ImageOff className="w-10 h-10 text-muted-foreground" />
                     )}
                 </div>
                 <div className="flex-1 min-w-0 space-y-2">
@@ -147,17 +147,17 @@ function OfferDetailPanel({ offer }: { offer: MasterOfferRow }) {
             </div>
 
             {offer.description ? (
-                <div className="border-t border-zinc-900/80 px-4 py-3">
+                <div className="border-t border-border/80 px-4 py-3">
                     <div className="font-mono text-[10px] tracking-[0.25em] text-muted-foreground uppercase mb-1.5">
                         Description
                     </div>
-                    <p className="font-mono text-xs text-zinc-300 leading-relaxed whitespace-pre-line">
+                    <p className="font-mono text-xs text-foreground leading-relaxed whitespace-pre-line">
                         {offer.description}
                     </p>
                 </div>
             ) : null}
 
-            <div className="border-t border-zinc-900/80 px-4 py-3 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-6 gap-y-2 font-mono text-[11px]">
+            <div className="border-t border-border/80 px-4 py-3 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-6 gap-y-2 font-mono text-[11px]">
                 <Spec label="EAN" value={offer.ean} />
                 <Spec
                     label="Unit"
@@ -189,8 +189,8 @@ function Spec({ label, value }: { label: string; value: string | null }) {
     return (
         <div className="min-w-0">
             <div className="text-[9px] tracking-[0.2em] text-muted-foreground uppercase">{label}</div>
-            <div className="text-zinc-200 truncate" title={value ?? undefined}>
-                {value ?? <span className="text-zinc-600">—</span>}
+            <div className="text-foreground truncate" title={value ?? undefined}>
+                {value ?? <span className="text-muted-foreground">—</span>}
             </div>
         </div>
     );
@@ -201,18 +201,18 @@ function RawPayload({ meta }: { meta: Record<string, unknown> }) {
     const json = useMemo(() => SafeJSON.stringify(meta, null, 2), [meta]);
 
     return (
-        <div className="border-t border-zinc-900/80">
+        <div className="border-t border-border/80">
             <button
                 type="button"
                 onClick={() => setOpen((v) => !v)}
                 aria-expanded={open}
-                className="w-full px-4 py-2 flex items-center gap-2 font-mono text-[10px] tracking-[0.25em] text-muted-foreground uppercase hover:bg-white/5 transition-colors cursor-pointer"
+                className="w-full px-4 py-2 flex items-center gap-2 font-mono text-[10px] tracking-[0.25em] text-muted-foreground uppercase hover:bg-primary/5 transition-colors cursor-pointer"
             >
                 <ChevronDown className={`w-3 h-3 transition-transform ${open ? "rotate-0" : "-rotate-90"}`} />
                 Raw shop payload {open ? "" : `· ${Object.keys(meta).length} keys`}
             </button>
             {open ? (
-                <pre className="px-4 pb-3 font-mono text-[10px] text-zinc-400 max-h-96 overflow-auto whitespace-pre-wrap break-all">
+                <pre className="px-4 pb-3 font-mono text-[10px] text-muted-foreground max-h-96 overflow-auto whitespace-pre-wrap break-all">
                     {json}
                 </pre>
             ) : null}

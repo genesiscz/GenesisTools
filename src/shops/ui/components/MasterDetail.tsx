@@ -39,7 +39,7 @@ export function MasterDetail({
     return (
         <div className="space-y-6">
             <div className="flex flex-col md:flex-row gap-6 items-start">
-                <div className="w-48 h-48 bg-zinc-900 border border-zinc-800 rounded overflow-hidden flex items-center justify-center shrink-0">
+                <div className="w-48 h-48 bg-muted border border-border rounded overflow-hidden flex items-center justify-center shrink-0">
                     {detail.representative_image_url ? (
                         <img
                             src={detail.representative_image_url}
@@ -47,7 +47,7 @@ export function MasterDetail({
                             className="w-full h-full object-contain"
                         />
                     ) : (
-                        <ImageOff className="w-12 h-12 text-zinc-700" />
+                        <ImageOff className="w-12 h-12 text-muted-foreground" />
                     )}
                 </div>
                 <div className="flex-1 min-w-0 space-y-3">

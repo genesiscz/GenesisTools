@@ -12,16 +12,16 @@ interface Props {
 export function NotificationCard({ notification, onAck, onOpen }: Props) {
     const acked = notification.acknowledged_at !== null;
     return (
-        <Card className={acked ? "opacity-60 bg-zinc-950/40" : "bg-red-950/20 border-red-500/30"}>
+        <Card className={acked ? "opacity-60 bg-card/40" : "bg-red-950/20 border-red-500/30"}>
             <CardContent className="py-3 px-4 flex items-center justify-between gap-4 font-mono">
                 <div className="flex flex-col gap-1">
                     <div className="flex items-center gap-2">
                         <Badge variant={acked ? "secondary" : "destructive"}>{notification.reason}</Badge>
-                        <span className="text-zinc-300 text-sm">
+                        <span className="text-foreground text-sm">
                             {notification.shop_origin} · {notification.curr_price?.toFixed(2)} CZK
                         </span>
                     </div>
-                    <span className="text-[10px] uppercase tracking-wider text-zinc-500">{notification.fired_at}</span>
+                    <span className="text-[10px] uppercase tracking-wider text-muted-foreground">{notification.fired_at}</span>
                 </div>
                 <div className="flex gap-1.5">
                     <Button size="sm" variant="ghost" onClick={() => onOpen(notification.master_product_id)}>

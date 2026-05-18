@@ -11,7 +11,7 @@ interface CrossShopOffersTableProps {
 export function CrossShopOffersTable({ offers }: CrossShopOffersTableProps) {
     if (offers.length === 0) {
         return (
-            <div className="border border-dashed border-zinc-800 rounded p-8 text-center font-mono text-xs tracking-[0.2em] text-muted-foreground uppercase">
+            <div className="border border-dashed border-border rounded p-8 text-center font-mono text-xs tracking-[0.2em] text-muted-foreground uppercase">
                 no offers
             </div>
         );
@@ -20,7 +20,7 @@ export function CrossShopOffersTable({ offers }: CrossShopOffersTableProps) {
     const bestPrice = Math.min(...offers.filter((o) => o.current_price !== null).map((o) => o.current_price as number));
 
     return (
-        <div className="border border-zinc-800 rounded-md overflow-hidden">
+        <div className="border border-border rounded-md overflow-hidden">
             <Table>
                 <TableHeader>
                     <TableRow className="font-mono text-[10px] tracking-[0.2em] uppercase">
@@ -42,7 +42,7 @@ export function CrossShopOffersTable({ offers }: CrossShopOffersTableProps) {
                                 className={
                                     isBest
                                         ? "bg-cyan-500/5 hover:bg-cyan-500/10 transition-colors"
-                                        : "hover:bg-white/5 transition-colors"
+                                        : "hover:bg-primary/5 transition-colors"
                                 }
                             >
                                 <TableCell>
