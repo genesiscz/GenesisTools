@@ -1,4 +1,14 @@
-import { Activity, BookOpen, Bot, Boxes, Container, ListTodo, TerminalSquare, Timer } from "lucide-react";
+import {
+    Activity,
+    BookOpen,
+    Bot,
+    Boxes,
+    Container,
+    ListTodo,
+    MessageCircleQuestion,
+    TerminalSquare,
+    Timer,
+} from "lucide-react";
 import type { ComponentType } from "react";
 
 export interface NavRoute {
@@ -16,6 +26,7 @@ export const NAV_ROUTES: NavRoute[] = [
     { to: "/daemon", label: "daemon", Icon: Timer },
     { to: "/containers", label: "containers", Icon: Container },
     { to: "/todos", label: "todos", Icon: ListTodo },
+    { to: "/qa", label: "Q&A", Icon: MessageCircleQuestion },
     { to: "/ttyd", label: "ttyd", Icon: TerminalSquare },
     { to: "/cmux", label: "cmux", Icon: Boxes },
     { to: "/obsidian", label: "obsidian", Icon: BookOpen },
