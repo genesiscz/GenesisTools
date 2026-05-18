@@ -9,9 +9,9 @@ export function DistrictContextCallout({ districts }: { districts: string[] }) {
     return (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {items.map((item) => (
-                <Card key={item.district} className="border-white/5 bg-white/[0.02]">
+                <Card key={item.district} className="border-border/60 bg-muted/50">
                     <CardHeader>
-                        <CardTitle className="flex items-center gap-2 text-sm font-mono text-amber-300">
+                        <CardTitle className="flex items-center gap-2 text-sm font-mono text-primary">
                             <MapPinned className="w-4 h-4" />
                             {item.title}
                         </CardTitle>
@@ -30,7 +30,7 @@ export function DistrictContextCallout({ districts }: { districts: string[] }) {
 function Section({ label, values, tone }: { label: string; values: string[]; tone: "amber" | "cyan" | "emerald" }) {
     const toneClass =
         tone === "amber"
-            ? "border-amber-500/20 bg-amber-500/5 text-amber-200"
+            ? "border-primary/20 bg-primary/5 text-primary"
             : tone === "cyan"
               ? "border-cyan-500/20 bg-cyan-500/5 text-cyan-200"
               : "border-emerald-500/20 bg-emerald-500/5 text-emerald-200";

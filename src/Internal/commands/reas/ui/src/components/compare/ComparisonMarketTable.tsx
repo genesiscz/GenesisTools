@@ -9,9 +9,9 @@ interface ComparisonMarketTableProps {
 
 export function ComparisonMarketTable({ comparisons }: ComparisonMarketTableProps) {
     return (
-        <Card className="border-white/5 bg-white/[0.02]">
+        <Card className="border-border/60 bg-muted/50">
             <CardHeader>
-                <CardTitle className="text-sm font-mono text-amber-400 flex items-center gap-2">
+                <CardTitle className="text-sm font-mono text-primary flex items-center gap-2">
                     <Database className="w-4 h-4" />
                     Market depth
                 </CardTitle>
@@ -19,7 +19,7 @@ export function ComparisonMarketTable({ comparisons }: ComparisonMarketTableProp
             <CardContent className="px-0">
                 <Table>
                     <TableHeader>
-                        <TableRow className="border-white/5 hover:bg-transparent">
+                        <TableRow className="border-border/60 hover:bg-transparent">
                             <TableHead className="text-[10px] font-mono text-gray-500">District</TableHead>
                             <TableHead className="text-[10px] font-mono text-gray-500 text-right">Sold</TableHead>
                             <TableHead className="text-[10px] font-mono text-gray-500 text-right">
@@ -39,7 +39,7 @@ export function ComparisonMarketTable({ comparisons }: ComparisonMarketTableProp
                             const comparables = comparison.exportData.analysis.comparables;
 
                             return (
-                                <TableRow key={comparison.district} className="border-white/5 hover:bg-white/[0.02]">
+                                <TableRow key={comparison.district} className="border-border/60 hover:bg-primary/5">
                                     <TableCell className="font-mono text-xs text-gray-200">
                                         {comparison.district}
                                     </TableCell>
@@ -59,7 +59,7 @@ export function ComparisonMarketTable({ comparisons }: ComparisonMarketTableProp
                                         {Math.round(comparables.p25).toLocaleString("cs-CZ")} -{" "}
                                         {Math.round(comparables.p75).toLocaleString("cs-CZ")}
                                     </TableCell>
-                                    <TableCell className="font-mono text-xs text-right text-amber-300">
+                                    <TableCell className="font-mono text-xs text-right text-primary">
                                         {latestSnapshot?.yoyChange !== null && latestSnapshot?.yoyChange !== undefined
                                             ? `${latestSnapshot.yoyChange >= 0 ? "+" : ""}${latestSnapshot.yoyChange.toFixed(1)}%`
                                             : "--"}

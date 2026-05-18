@@ -18,7 +18,7 @@ interface ComparisonMetricProps {
 export function ComparisonMetric({ label, values, bestIndex, worstIndex, icon }: ComparisonMetricProps) {
     return (
         <div className="grid gap-2" style={{ gridTemplateColumns: `140px repeat(${values.length}, 1fr)` }}>
-            <div className="flex items-center gap-2 text-xs font-mono text-gray-400 py-2 border-b border-white/5">
+            <div className="flex items-center gap-2 text-xs font-mono text-gray-400 py-2 border-b border-border/60">
                 {icon}
                 {label}
             </div>
@@ -26,7 +26,7 @@ export function ComparisonMetric({ label, values, bestIndex, worstIndex, icon }:
                 <div
                     key={v.district}
                     className={cn(
-                        "flex items-center justify-center gap-2 py-2 border-b border-white/5 text-sm font-mono",
+                        "flex items-center justify-center gap-2 py-2 border-b border-border/60 text-sm font-mono",
                         i === bestIndex && "text-emerald-400",
                         i === worstIndex && "text-red-400",
                         i !== bestIndex && i !== worstIndex && "text-gray-300"

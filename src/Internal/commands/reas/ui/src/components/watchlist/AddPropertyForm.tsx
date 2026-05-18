@@ -320,16 +320,16 @@ export function AddPropertyForm({ onAdd }: AddPropertyFormProps) {
                 <Button
                     variant="outline"
                     size="sm"
-                    className="border-amber-500/30 text-amber-400 hover:bg-amber-500/10 font-mono text-xs"
+                    className="border-primary/30 text-primary hover:bg-primary/10 font-mono text-xs"
                 >
                     <Plus className="w-3.5 h-3.5 mr-1.5" />
                     Add Property
                 </Button>
             </DialogTrigger>
 
-            <DialogContent className="bg-[#0a0a14] border-amber-500/20 max-w-lg">
+            <DialogContent className="bg-[#0a0a14] border-primary/20 max-w-lg">
                 <DialogHeader>
-                    <DialogTitle className="font-mono text-amber-400">Add Property to Watchlist</DialogTitle>
+                    <DialogTitle className="font-mono text-primary">Add Property to Watchlist</DialogTitle>
                     <DialogDescription className="font-mono text-gray-500 text-xs">
                         Track a property for recurring analysis
                     </DialogDescription>
@@ -345,7 +345,7 @@ export function AddPropertyForm({ onAdd }: AddPropertyFormProps) {
                             value={name}
                             onChange={(e) => setName(e.target.value)}
                             placeholder="My apartment in Praha 2"
-                            className="h-8 text-xs font-mono bg-black/20 border-white/10"
+                            className="h-8 text-xs font-mono bg-card/60 border-border/60"
                         />
                     </div>
 
@@ -409,7 +409,7 @@ export function AddPropertyForm({ onAdd }: AddPropertyFormProps) {
                                 value={targetPrice}
                                 onChange={(e) => setTargetPrice(e.target.value)}
                                 placeholder="5000000"
-                                className="h-8 text-xs font-mono bg-black/20 border-white/10"
+                                className="h-8 text-xs font-mono bg-card/60 border-border/60"
                             />
                         </div>
                         <div>
@@ -422,7 +422,7 @@ export function AddPropertyForm({ onAdd }: AddPropertyFormProps) {
                                 value={targetArea}
                                 onChange={(e) => setTargetArea(e.target.value)}
                                 placeholder="80"
-                                className="h-8 text-xs font-mono bg-black/20 border-white/10"
+                                className="h-8 text-xs font-mono bg-card/60 border-border/60"
                             />
                         </div>
                     </div>
@@ -438,7 +438,7 @@ export function AddPropertyForm({ onAdd }: AddPropertyFormProps) {
                                 value={monthlyRent}
                                 onChange={(e) => setMonthlyRent(e.target.value)}
                                 placeholder="15000"
-                                className="h-8 text-xs font-mono bg-black/20 border-white/10"
+                                className="h-8 text-xs font-mono bg-card/60 border-border/60"
                             />
                             {shouldEstimateRent && rentEstimateQuery.isFetching && (
                                 <p className="mt-2 text-[10px] font-mono text-gray-500">
@@ -467,7 +467,7 @@ export function AddPropertyForm({ onAdd }: AddPropertyFormProps) {
                                 value={monthlyCosts}
                                 onChange={(e) => setMonthlyCosts(e.target.value)}
                                 placeholder="5000"
-                                className="h-8 text-xs font-mono bg-black/20 border-white/10"
+                                className="h-8 text-xs font-mono bg-card/60 border-border/60"
                             />
                         </div>
                     </div>
@@ -487,12 +487,12 @@ export function AddPropertyForm({ onAdd }: AddPropertyFormProps) {
                                     setListingImportMessage(null);
                                 }}
                                 placeholder="https://www.sreality.cz/..."
-                                className="h-8 text-xs font-mono bg-black/20 border-white/10"
+                                className="h-8 text-xs font-mono bg-card/60 border-border/60"
                             />
                             <Button
                                 type="button"
                                 variant="outline"
-                                className="border-white/10 bg-black/20 text-[11px] font-mono text-gray-300 hover:bg-white/[0.04]"
+                                className="border-border/60 bg-card/60 text-[11px] font-mono text-gray-300 hover:bg-primary/5"
                                 onClick={handleImportFromUrl}
                                 disabled={importing}
                             >
@@ -509,21 +509,21 @@ export function AddPropertyForm({ onAdd }: AddPropertyFormProps) {
                                 </div>
                                 <div className="mt-1 text-gray-300">{importedListingPreview.address}</div>
                                 <div className="mt-2 flex flex-wrap gap-2 text-[10px]">
-                                    <span className="rounded border border-white/10 bg-black/20 px-2 py-1 text-gray-300">
+                                    <span className="rounded border border-border/60 bg-card/60 px-2 py-1 text-gray-300">
                                         {PROVIDER_LABELS[importedListingPreview.source] ??
                                             importedListingPreview.source}
                                     </span>
-                                    <span className="rounded border border-white/10 bg-black/20 px-2 py-1 text-gray-300">
+                                    <span className="rounded border border-border/60 bg-card/60 px-2 py-1 text-gray-300">
                                         {importedListingPreview.type}
                                     </span>
                                     {importedListingPreview.constructionType && (
-                                        <span className="rounded border border-white/10 bg-black/20 px-2 py-1 text-gray-300">
+                                        <span className="rounded border border-border/60 bg-card/60 px-2 py-1 text-gray-300">
                                             {PROPERTY_TYPE_LABELS[importedListingPreview.constructionType] ??
                                                 importedListingPreview.constructionType}
                                         </span>
                                     )}
                                     {importedListingPreview.rentEstimateCount != null && (
-                                        <span className="rounded border border-white/10 bg-black/20 px-2 py-1 text-gray-300">
+                                        <span className="rounded border border-border/60 bg-card/60 px-2 py-1 text-gray-300">
                                             Rent comps {importedListingPreview.rentEstimateCount}
                                         </span>
                                     )}
@@ -536,7 +536,7 @@ export function AddPropertyForm({ onAdd }: AddPropertyFormProps) {
                         <div>
                             <div className="mb-1 block text-[10px] font-mono text-gray-500">Analysis Period</div>
                             <Select value={periods} onValueChange={setPeriods}>
-                                <SelectTrigger className="h-8 border-white/10 bg-black/20 text-xs font-mono text-gray-300">
+                                <SelectTrigger className="h-8 border-border/60 bg-card/60 text-xs font-mono text-gray-300">
                                     <SelectValue placeholder="Select period" />
                                 </SelectTrigger>
                                 <SelectContent>
@@ -553,7 +553,7 @@ export function AddPropertyForm({ onAdd }: AddPropertyFormProps) {
 
                         <div>
                             <div className="mb-1 block text-[10px] font-mono text-gray-500">Providers</div>
-                            <div className="grid grid-cols-2 gap-2 rounded border border-white/10 bg-black/20 p-3">
+                            <div className="grid grid-cols-2 gap-2 rounded border border-border/60 bg-card/60 p-3">
                                 {PROVIDER_OPTIONS.map((provider) => (
                                     <label
                                         key={provider.value}
@@ -574,7 +574,7 @@ export function AddPropertyForm({ onAdd }: AddPropertyFormProps) {
                         </div>
                     </div>
 
-                    <div className="rounded border border-white/10 bg-black/10 p-3">
+                    <div className="rounded border border-border/60 bg-card/60 p-3">
                         <div className="mb-3 text-[10px] font-mono uppercase tracking-[0.18em] text-gray-500">
                             Mortgage
                         </div>
@@ -592,7 +592,7 @@ export function AddPropertyForm({ onAdd }: AddPropertyFormProps) {
                                     value={mortgageRate}
                                     onChange={(e) => setMortgageRate(e.target.value)}
                                     placeholder="4.29"
-                                    className="h-8 border-white/10 bg-black/20 text-xs font-mono"
+                                    className="h-8 border-border/60 bg-card/60 text-xs font-mono"
                                 />
                             </div>
                             <div>
@@ -608,7 +608,7 @@ export function AddPropertyForm({ onAdd }: AddPropertyFormProps) {
                                     value={mortgageTerm}
                                     onChange={(e) => setMortgageTerm(e.target.value)}
                                     placeholder="30"
-                                    className="h-8 border-white/10 bg-black/20 text-xs font-mono"
+                                    className="h-8 border-border/60 bg-card/60 text-xs font-mono"
                                 />
                             </div>
                             <div>
@@ -624,7 +624,7 @@ export function AddPropertyForm({ onAdd }: AddPropertyFormProps) {
                                     value={downPayment}
                                     onChange={(e) => setDownPayment(e.target.value)}
                                     placeholder="1000000"
-                                    className="h-8 border-white/10 bg-black/20 text-xs font-mono"
+                                    className="h-8 border-border/60 bg-card/60 text-xs font-mono"
                                 />
                             </div>
                             <div>
@@ -640,13 +640,13 @@ export function AddPropertyForm({ onAdd }: AddPropertyFormProps) {
                                     value={loanAmount}
                                     onChange={(e) => setLoanAmount(e.target.value)}
                                     placeholder="4000000"
-                                    className="h-8 border-white/10 bg-black/20 text-xs font-mono"
+                                    className="h-8 border-border/60 bg-card/60 text-xs font-mono"
                                 />
                             </div>
                         </div>
                     </div>
 
-                    <div className="rounded border border-white/10 bg-black/10 p-3">
+                    <div className="rounded border border-border/60 bg-card/60 p-3">
                         <div className="mb-3 text-[10px] font-mono uppercase tracking-[0.18em] text-gray-500">
                             Alerts
                         </div>
@@ -667,13 +667,13 @@ export function AddPropertyForm({ onAdd }: AddPropertyFormProps) {
                                         setAlertYieldFloorError(null);
                                     }}
                                     placeholder="4.5"
-                                    className="h-8 border-white/10 bg-black/20 text-xs font-mono"
+                                    className="h-8 border-border/60 bg-card/60 text-xs font-mono"
                                 />
                                 {alertYieldFloorError && (
                                     <p className="mt-2 text-[10px] font-mono text-rose-300">{alertYieldFloorError}</p>
                                 )}
                             </div>
-                            <label className="flex items-center gap-2 rounded border border-white/10 bg-black/20 px-3 py-2 text-[11px] font-mono text-gray-300">
+                            <label className="flex items-center gap-2 rounded border border-border/60 bg-card/60 px-3 py-2 text-[11px] font-mono text-gray-300">
                                 <Checkbox
                                     id="prop-alert-grade"
                                     checked={alertGradeChange}
@@ -694,7 +694,7 @@ export function AddPropertyForm({ onAdd }: AddPropertyFormProps) {
                             onChange={(e) => setNotes(e.target.value)}
                             placeholder="Optional notes about the property..."
                             rows={2}
-                            className="w-full rounded bg-black/20 border border-white/10 text-xs font-mono text-gray-300 px-3 py-2 resize-none"
+                            className="w-full rounded bg-card/60 border border-border/60 text-xs font-mono text-gray-300 px-3 py-2 resize-none"
                         />
                     </div>
                 </div>
@@ -703,7 +703,7 @@ export function AddPropertyForm({ onAdd }: AddPropertyFormProps) {
                     <Button
                         onClick={handleSubmit}
                         disabled={!canSubmit || submitting}
-                        className="bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-400 font-mono text-xs"
+                        className="bg-primary/10 hover:bg-primary/20 border border-primary/30 text-primary font-mono text-xs"
                     >
                         {submitting ? (
                             <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />

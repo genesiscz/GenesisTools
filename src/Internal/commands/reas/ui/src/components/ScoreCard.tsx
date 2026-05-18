@@ -14,10 +14,10 @@ export function ScoreCard({ data }: ScoreCardProps) {
         getScoreCardModel(data);
 
     return (
-        <Card className="border-white/5">
+        <Card className="border-border/60">
             <CardHeader className="pb-0">
                 <CardTitle className="flex items-center gap-2 text-sm font-mono">
-                    <Award className="h-4 w-4 text-amber-400" />
+                    <Award className="h-4 w-4 text-primary" />
                     Investment Score
                 </CardTitle>
             </CardHeader>
@@ -46,7 +46,7 @@ export function ScoreCard({ data }: ScoreCardProps) {
                         </div>
 
                         {/* Progress bar */}
-                        <div className="h-1.5 w-full rounded-full bg-white/5 overflow-hidden">
+                        <div className="h-1.5 w-full rounded-full bg-muted/50 overflow-hidden">
                             <div
                                 className={cn(
                                     "h-full rounded-full transition-all duration-500",
@@ -73,7 +73,7 @@ export function ScoreCard({ data }: ScoreCardProps) {
                 <div className="mt-4 space-y-1">
                     {reasoning.map((r) => (
                         <div key={r} className="flex items-start gap-2 text-xs font-mono text-gray-400">
-                            <span className="mt-1 h-1 w-1 rounded-full bg-amber-500/60 shrink-0" />
+                            <span className="mt-1 h-1 w-1 rounded-full bg-primary/60 shrink-0" />
                             {r}
                         </div>
                     ))}

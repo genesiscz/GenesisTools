@@ -60,8 +60,8 @@ function AnalyzePage() {
         <div className="w-[90%] mx-auto px-4 sm:px-6 py-6 sm:py-8">
             {/* Page header */}
             <div className="flex items-center gap-3 mb-6">
-                <div className="p-2 rounded bg-amber-500/10 border border-amber-500/30">
-                    <Search className="w-5 h-5 text-amber-400" />
+                <div className="p-2 rounded bg-primary/10 border border-primary/30">
+                    <Search className="w-5 h-5 text-primary" />
                 </div>
                 <div>
                     <h1 className="text-xl font-mono font-bold text-gray-200">Analyze</h1>
@@ -143,7 +143,7 @@ function LoadingSkeleton() {
 function EmptyState() {
     return (
         <div className="flex flex-col items-center justify-center py-20 text-center">
-            <div className="p-4 rounded-xl border border-white/5 bg-white/[0.02] mb-4">
+            <div className="p-4 rounded-xl border border-border/60 bg-muted/50 mb-4">
                 <Search className="h-8 w-8 text-gray-600" />
             </div>
             <h3 className="text-sm font-mono font-bold text-gray-400 mb-1">No Analysis Yet</h3>

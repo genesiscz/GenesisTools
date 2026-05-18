@@ -24,9 +24,9 @@ export function ComparisonRankingsTable({ comparisons }: ComparisonRankingsTable
     );
 
     return (
-        <Card className="border-white/5 bg-white/[0.02]">
+        <Card className="border-border/60 bg-muted/50">
             <CardHeader>
-                <CardTitle className="text-sm font-mono text-amber-400 flex items-center gap-2">
+                <CardTitle className="text-sm font-mono text-primary flex items-center gap-2">
                     <Medal className="w-4 h-4" />
                     Ranking table
                 </CardTitle>
@@ -34,7 +34,7 @@ export function ComparisonRankingsTable({ comparisons }: ComparisonRankingsTable
             <CardContent className="px-0">
                 <Table>
                     <TableHeader>
-                        <TableRow className="border-white/5 hover:bg-transparent">
+                        <TableRow className="border-border/60 hover:bg-transparent">
                             <TableHead className="text-[10px] font-mono text-gray-500">Rank</TableHead>
                             <TableHead className="text-[10px] font-mono text-gray-500">District</TableHead>
                             <TableHead className="text-[10px] font-mono text-gray-500 text-right">Score</TableHead>
@@ -55,7 +55,7 @@ export function ComparisonRankingsTable({ comparisons }: ComparisonRankingsTable
                     </TableHeader>
                     <TableBody>
                         {ranked.map(({ comparison, score }, index) => (
-                            <TableRow key={comparison.district} className="border-white/5 hover:bg-white/[0.02]">
+                            <TableRow key={comparison.district} className="border-border/60 hover:bg-primary/5">
                                 <TableCell className="font-mono text-xs text-gray-400">#{index + 1}</TableCell>
                                 <TableCell className="font-mono text-xs text-gray-200">
                                     <div className="flex items-center gap-2">
@@ -83,7 +83,7 @@ export function ComparisonRankingsTable({ comparisons }: ComparisonRankingsTable
                                 <TableCell className="font-mono text-xs text-right text-gray-400">
                                     {Math.round(comparison.summary.daysOnMarket)}d
                                 </TableCell>
-                                <TableCell className="font-mono text-xs text-right text-amber-300">
+                                <TableCell className="font-mono text-xs text-right text-primary">
                                     {comparison.summary.targetPercentile.toFixed(0)}th
                                 </TableCell>
                             </TableRow>

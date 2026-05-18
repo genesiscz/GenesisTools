@@ -53,9 +53,9 @@ export function ComparisonTrendSection({ comparisons, snapshotResolution }: Comp
     }
 
     return (
-        <Card className="border-white/5 bg-white/[0.02]">
+        <Card className="border-border/60 bg-muted/50">
             <CardHeader>
-                <CardTitle className="text-sm font-mono text-amber-400 flex items-center gap-2">
+                <CardTitle className="text-sm font-mono text-primary flex items-center gap-2">
                     <TrendingUp className="w-4 h-4" />
                     Multi-district trendline
                 </CardTitle>
@@ -73,14 +73,14 @@ export function ComparisonTrendSection({ comparisons, snapshotResolution }: Comp
                                     "rounded-md border px-2.5 py-1 text-[10px] font-mono uppercase tracking-wider transition-colors",
                                     timeframeDays === timeframe.days
                                         ? "border-cyan-400/40 bg-cyan-500/10 text-cyan-300"
-                                        : "border-white/10 bg-black/20 text-gray-500 hover:border-white/20 hover:text-gray-300"
+                                        : "border-border/60 bg-card/60 text-gray-500 hover:border-border/60 hover:text-gray-300"
                                 )}
                             >
                                 {timeframe.label}
                             </button>
                         ))}
                     </div>
-                    <div className="rounded-lg border border-white/5 bg-black/20 px-3 py-2 text-[10px] font-mono uppercase tracking-[0.24em] text-gray-400">
+                    <div className="rounded-lg border border-border/60 bg-card/60 px-3 py-2 text-[10px] font-mono uppercase tracking-[0.24em] text-gray-400">
                         {snapshotResolution === "monthly"
                             ? "Monthly snapshots loaded for smoother district overlays"
                             : "Daily snapshots loaded for high-frequency market reads"}
@@ -98,8 +98,8 @@ export function ComparisonTrendSection({ comparisons, snapshotResolution }: Comp
                                     className={cn(
                                         "rounded-md border px-2.5 py-1 text-[10px] font-mono transition-colors",
                                         isVisible
-                                            ? "border-amber-500/30 bg-amber-500/10 text-amber-300"
-                                            : "border-white/10 bg-black/20 text-gray-500 hover:border-white/20 hover:text-gray-300"
+                                            ? "border-primary/30 bg-primary/10 text-primary"
+                                            : "border-border/60 bg-card/60 text-gray-500 hover:border-border/60 hover:text-gray-300"
                                     )}
                                 >
                                     {district}
@@ -118,7 +118,7 @@ export function ComparisonTrendSection({ comparisons, snapshotResolution }: Comp
                         return (
                             <div
                                 key={series.district}
-                                className="flex flex-col gap-2 rounded-lg border border-white/5 bg-black/20 p-3"
+                                className="flex flex-col gap-2 rounded-lg border border-border/60 bg-card/60 p-3"
                             >
                                 <div className="flex items-center justify-between gap-3">
                                     <div>
@@ -151,7 +151,7 @@ export function ComparisonTrendSection({ comparisons, snapshotResolution }: Comp
                                     className={cn(
                                         "flex items-center gap-2 text-xs font-mono rounded-md px-2.5 py-2 border",
                                         yoyChange === null
-                                            ? "border-white/10 text-gray-500"
+                                            ? "border-border/60 text-gray-500"
                                             : yoyChange >= 0
                                               ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-300"
                                               : "border-red-500/20 bg-red-500/10 text-red-300"

@@ -140,7 +140,7 @@ export function getConfidenceTone(confidence: string): string {
     }
 
     if (confidence === "medium") {
-        return "text-amber-300 border-amber-500/20 bg-amber-500/10";
+        return "text-amber-300 border-primary/20 bg-amber-500/10";
     }
 
     return "text-red-300 border-red-500/20 bg-red-500/10";

@@ -23,13 +23,13 @@ export function StatCard({
     accent = "amber",
 }: StatCardProps) {
     return (
-        <Card className={cn("border-white/5 border-l-2 bg-white/[0.02]", STAT_CARD_ACCENT_STYLES[accent], className)}>
+        <Card className={cn("border-border/60 border-l-2 bg-muted/50", STAT_CARD_ACCENT_STYLES[accent], className)}>
             <CardContent className="flex h-full flex-col gap-3 p-4">
                 <div className="flex items-center justify-between gap-3">
                     <span className="text-[10px] font-mono uppercase tracking-[0.24em] text-slate-500">{label}</span>
                     {Icon ? <Icon className="h-4 w-4 text-slate-400" /> : null}
                 </div>
-                <div className={cn("text-2xl font-mono font-semibold text-white", valueClassName)}>{value}</div>
+                <div className={cn("text-2xl font-mono font-semibold text-foreground", valueClassName)}>{value}</div>
                 {hint ? <p className="text-xs font-mono leading-5 text-slate-400">{hint}</p> : null}
             </CardContent>
         </Card>

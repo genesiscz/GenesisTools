@@ -245,19 +245,19 @@ function ComparePage() {
 
     return (
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
-            <section className="relative mb-6 overflow-hidden rounded-3xl border border-white/8 bg-[#09101b] px-5 py-6 sm:px-7 sm:py-7">
+            <section className="relative mb-6 overflow-hidden rounded-3xl border border-border/60 bg-[#09101b] px-5 py-6 sm:px-7 sm:py-7">
                 <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(34,211,238,0.18),_transparent_42%),radial-gradient(circle_at_bottom_right,_rgba(245,158,11,0.18),_transparent_36%)]" />
                 <div className="relative grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px] xl:items-start">
                     <div className="flex flex-col gap-4">
                         <div className="flex items-center gap-3">
-                            <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-2.5 shadow-[0_0_32px_rgba(245,158,11,0.15)]">
-                                <GitCompare className="h-5 w-5 text-amber-300" />
+                            <div className="rounded-2xl border border-primary/30 bg-primary/10 p-2.5 shadow-[0_0_32px_rgba(245,158,11,0.15)]">
+                                <GitCompare className="h-5 w-5 text-primary" />
                             </div>
                             <div>
                                 <div className="text-[11px] font-mono uppercase tracking-[0.32em] text-cyan-300/80">
                                     District intelligence
                                 </div>
-                                <h1 className="text-2xl font-mono font-bold text-white sm:text-3xl">
+                                <h1 className="text-2xl font-mono font-bold text-foreground sm:text-3xl">
                                     Compare Prague wards and market leaders in one command deck
                                 </h1>
                             </div>
@@ -277,19 +277,19 @@ function ComparePage() {
                             </Badge>
                             <Badge
                                 variant="outline"
-                                className="border-amber-500/30 bg-amber-500/10 font-mono text-[10px] text-amber-200"
+                                className="border-primary/30 bg-primary/10 font-mono text-[10px] text-primary"
                             >
                                 {resolutionLabel}
                             </Badge>
                             <Badge
                                 variant="outline"
-                                className="border-white/10 bg-white/[0.04] font-mono text-[10px] text-slate-300"
+                                className="border-border/60 bg-muted/50 font-mono text-[10px] text-slate-300"
                             >
                                 Praha wards {selectedPrahaWards}
                             </Badge>
                             <Badge
                                 variant="outline"
-                                className="border-white/10 bg-white/[0.04] font-mono text-[10px] text-slate-300"
+                                className="border-border/60 bg-muted/50 font-mono text-[10px] text-slate-300"
                             >
                                 Regional districts {selectedRegionalDistricts}
                             </Badge>
@@ -304,7 +304,7 @@ function ComparePage() {
                             detail="Balanced side-by-side reads"
                         />
                         <HeroMetricCard
-                            icon={<History className="h-4 w-4 text-amber-300" />}
+                            icon={<History className="h-4 w-4 text-primary" />}
                             label="Trend mode"
                             value={snapshotResolution === "monthly" ? "Monthly" : "Daily"}
                             detail="Overlay chart cadence"
@@ -334,12 +334,12 @@ function ComparePage() {
 
                 <div className="lg:col-span-2 space-y-4">
                     {selectedDistricts.length > 0 && (
-                        <div className="flex flex-wrap gap-2 rounded-2xl border border-white/5 bg-white/[0.02] p-3">
+                        <div className="flex flex-wrap gap-2 rounded-2xl border border-border/60 bg-muted/50 p-3">
                             {selectedDistricts.map((district) => (
                                 <Badge
                                     key={district}
                                     variant="outline"
-                                    className="border-amber-500/30 bg-amber-500/5 px-2 py-1 text-xs font-mono text-amber-300"
+                                    className="border-primary/30 bg-primary/5 px-2 py-1 text-xs font-mono text-primary"
                                 >
                                     <span className="mr-1">{district}</span>
                                     <button
@@ -355,13 +355,13 @@ function ComparePage() {
                         </div>
                     )}
 
-                    <Card className="border-white/5 bg-white/[0.02]">
+                    <Card className="border-border/60 bg-muted/50">
                         <CardHeader className="gap-3 pb-2">
                             <div className="flex flex-wrap items-center justify-between gap-3">
                                 <CardTitle className="text-xs font-mono text-gray-300">Shared configuration</CardTitle>
                                 <Badge
                                     variant="outline"
-                                    className="border-white/10 bg-white/[0.03] font-mono text-[10px] text-slate-300"
+                                    className="border-border/60 bg-muted/50 font-mono text-[10px] text-slate-300"
                                 >
                                     URL synced
                                 </Badge>
@@ -429,7 +429,7 @@ function ComparePage() {
                                         type="number"
                                         value={price}
                                         onChange={(event) => setPrice(event.target.value)}
-                                        className="h-8 text-xs font-mono bg-black/20 border-white/10"
+                                        className="h-8 text-xs font-mono bg-card/60 border-border/60"
                                     />
                                 </div>
                                 <div>
@@ -444,12 +444,12 @@ function ComparePage() {
                                         type="number"
                                         value={area}
                                         onChange={(event) => setArea(event.target.value)}
-                                        className="h-8 text-xs font-mono bg-black/20 border-white/10"
+                                        className="h-8 text-xs font-mono bg-card/60 border-border/60"
                                     />
                                 </div>
                             </div>
 
-                            <div className="rounded-2xl border border-white/6 bg-black/20 p-4">
+                            <div className="rounded-2xl border border-border/60 bg-card/60 p-4">
                                 <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                                     <div>
                                         <div className="text-[10px] font-mono uppercase tracking-[0.3em] text-cyan-300/80">
@@ -477,7 +477,7 @@ function ComparePage() {
                                                     "rounded-full border px-3 py-1.5 text-[10px] font-mono uppercase tracking-[0.24em] transition-colors",
                                                     snapshotResolution === option.value
                                                         ? "border-cyan-400/40 bg-cyan-500/10 text-cyan-200"
-                                                        : "border-white/10 bg-black/20 text-gray-500 hover:border-white/20 hover:text-gray-300"
+                                                        : "border-border/60 bg-card/60 text-gray-500 hover:border-border/60 hover:text-gray-300"
                                                 )}
                                             >
                                                 {option.label}
@@ -509,7 +509,7 @@ function ComparePage() {
                         <Button
                             onClick={runComparison}
                             disabled={!canCompare}
-                            className="w-full border border-amber-500/30 bg-amber-500/10 font-mono text-sm text-amber-300 hover:bg-amber-500/20"
+                            className="w-full border border-primary/30 bg-primary/10 font-mono text-sm text-primary hover:bg-primary/20"
                         >
                             {isComparing ? (
                                 <>
@@ -603,7 +603,7 @@ function ComparePage() {
                                 districts={loadedComparisons.map((comparison) => comparison.district)}
                             />
 
-                            <Separator className="bg-white/5" />
+                            <Separator className="bg-muted/50" />
 
                             <div className="grid grid-cols-1 gap-6 2xl:grid-cols-2">
                                 <div className="min-w-0">
@@ -617,15 +617,15 @@ function ComparePage() {
                                 </div>
                             </div>
 
-                            <Card className="border-white/5 bg-white/[0.02]">
+                            <Card className="border-border/60 bg-muted/50">
                                 <CardHeader>
-                                    <CardTitle className="text-sm font-mono text-amber-300">Data provenance</CardTitle>
+                                    <CardTitle className="text-sm font-mono text-primary">Data provenance</CardTitle>
                                 </CardHeader>
                                 <CardContent className="flex flex-col gap-3 text-xs font-mono text-gray-400">
                                     {loadedComparisons.map((comparison) => (
                                         <div
                                             key={comparison.district}
-                                            className="rounded-lg border border-white/5 bg-black/20 p-3"
+                                            className="rounded-lg border border-border/60 bg-card/60 p-3"
                                         >
                                             <div className="text-gray-200">{comparison.district}</div>
                                             <div className="mt-1">
@@ -646,7 +646,7 @@ function ComparePage() {
             )}
 
             {results.length === 0 && !isComparing && (
-                <div className="rounded-3xl border border-dashed border-white/10 bg-white/[0.02] p-8 text-center">
+                <div className="rounded-3xl border border-dashed border-border/60 bg-muted/50 p-8 text-center">
                     <p className="text-sm font-mono text-gray-500">
                         {selectedDistricts.length < MIN_DISTRICTS
                             ? `Select at least ${MIN_DISTRICTS} districts to compare`
@@ -678,12 +678,12 @@ function HeroMetricCard({
     detail: string;
 }) {
     return (
-        <div className="rounded-2xl border border-white/8 bg-white/[0.04] p-4 backdrop-blur-sm">
+        <div className="rounded-2xl border border-border/60 bg-muted/50 p-4 backdrop-blur-sm">
             <div className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-[0.28em] text-slate-400">
                 {icon}
                 {label}
             </div>
-            <div className="mt-3 text-lg font-mono font-semibold text-white">{value}</div>
+            <div className="mt-3 text-lg font-mono font-semibold text-foreground">{value}</div>
             <div className="mt-1 text-xs font-mono text-slate-400">{detail}</div>
         </div>
     );
@@ -693,7 +693,7 @@ function ComparisonLoadingState({ districts }: { districts: string[] }) {
     return (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {districts.map((district) => (
-                <Card key={district} className="border-white/5 bg-white/[0.02]">
+                <Card key={district} className="border-border/60 bg-muted/50">
                     <CardHeader className="pb-2">
                         <CardTitle className="text-sm font-mono text-gray-300">{district}</CardTitle>
                     </CardHeader>

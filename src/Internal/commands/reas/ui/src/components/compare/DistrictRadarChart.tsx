@@ -30,7 +30,7 @@ export function DistrictRadarComparison({
             title="Multi-factor radar"
             description="A fast read on pricing, yield, liquidity, discount, trend, and volume for up to four districts."
             height={360}
-            className="border-white/5 bg-white/[0.02]"
+            className="border-border/60 bg-muted/50"
         >
             <RadarChart data={model.rows} outerRadius="70%">
                 <PolarGrid stroke="rgba(255,255,255,0.16)" />

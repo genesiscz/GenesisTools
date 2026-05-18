@@ -63,7 +63,7 @@ export function TrendChart({ data, height = 200, rows, series }: TrendChartProps
 
     if (resolvedRows.length === 0 || resolvedSeries.length === 0) {
         return (
-            <div className="flex items-center justify-center border border-white/5 rounded-lg" style={{ height }}>
+            <div className="flex items-center justify-center border border-border/60 rounded-lg" style={{ height }}>
                 <p className="text-xs font-mono text-gray-500">No snapshot data available</p>
             </div>
         );

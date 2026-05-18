@@ -34,7 +34,7 @@ interface DistributionHistogramProps {
 
 export function DistributionHistogram({ title, description, data, countLabel }: DistributionHistogramProps) {
     return (
-        <ChartContainer title={title} description={description} height={280} className="border-white/5 bg-white/[0.02]">
+        <ChartContainer title={title} description={description} height={280} className="border-border/60 bg-muted/50">
             <BarChart data={data} margin={{ top: 10, right: 10, left: 0, bottom: 12 }}>
                 <CartesianGrid {...chartGridProps} />
                 <XAxis {...chartAxisProps} dataKey="range" interval={0} angle={-25} textAnchor="end" height={56} />
@@ -76,7 +76,7 @@ export function TrendChartCard({ data }: TrendChartCardProps) {
             title="Median price trajectory"
             description="Quarter-over-quarter pricing signal for sold comparables in the selected district."
             height={320}
-            className="border-white/5 bg-white/[0.02]"
+            className="border-border/60 bg-muted/50"
         >
             <LineChart data={chartData} margin={{ top: 10, right: 20, left: 12, bottom: 12 }}>
                 <CartesianGrid {...chartGridProps} />
@@ -116,7 +116,7 @@ export function ComparablesScatterChart({ data }: ComparablesScatterChartProps) 
             title="Comparable sales scatter"
             description="Area on the x-axis, realized price per square meter on the y-axis."
             height={320}
-            className="border-white/5 bg-white/[0.02]"
+            className="border-border/60 bg-muted/50"
         >
             <ScatterChart margin={{ top: 10, right: 24, left: 12, bottom: 12 }}>
                 <CartesianGrid {...chartGridProps} />
@@ -169,7 +169,7 @@ function ScatterTooltip({
     const item = payload[0].payload;
 
     return (
-        <div className="min-w-56 rounded-xl border border-white/10 bg-slate-950/95 px-3 py-2 text-xs shadow-2xl backdrop-blur-sm">
+        <div className="min-w-56 rounded-xl border border-border/60 bg-slate-950/95 px-3 py-2 text-xs shadow-2xl backdrop-blur-sm">
             <div className="mb-2 text-[11px] font-mono uppercase tracking-[0.2em] text-slate-300">{item.address}</div>
             <div className="space-y-1 font-mono text-slate-200">
                 <div className="flex items-center justify-between gap-4">
@@ -219,7 +219,7 @@ function TrendTooltip({
     const item = payload[0].payload;
 
     return (
-        <div className="min-w-56 rounded-xl border border-white/10 bg-slate-950/95 px-3 py-2 text-xs shadow-2xl backdrop-blur-sm">
+        <div className="min-w-56 rounded-xl border border-border/60 bg-slate-950/95 px-3 py-2 text-xs shadow-2xl backdrop-blur-sm">
             <div className="mb-2 text-[11px] font-mono uppercase tracking-[0.2em] text-slate-300">{item.period}</div>
             <div className="space-y-1 font-mono text-slate-200">
                 <div className="flex items-center justify-between gap-4">
@@ -267,7 +267,7 @@ export function ActiveSalesChart({ data, listings }: ActiveSalesChartProps) {
             title="Active sales pricing"
             description="Current asking inventory positioned against the sold-market price cloud."
             height={280}
-            className="border-white/5 bg-white/[0.02]"
+            className="border-border/60 bg-muted/50"
         >
             <ScatterChart margin={{ top: 10, right: 20, left: 12, bottom: 12 }}>
                 <CartesianGrid {...chartGridProps} />
@@ -312,7 +312,7 @@ export function RentalAggregationChart({
             title="Rental range by disposition"
             description="Minimum, median, and maximum asking rents across the current rental evidence."
             height={320}
-            className="border-white/5 bg-white/[0.02]"
+            className="border-border/60 bg-muted/50"
         >
             <ComposedChart data={chartData} margin={{ top: 10, right: 20, left: 12, bottom: 12 }}>
                 <CartesianGrid {...chartGridProps} />
@@ -357,7 +357,7 @@ export function InvestmentBenchmarkChart({ data }: { data: DashboardExport }) {
             title="Return benchmark spread"
             description="Net yield versus the export's benchmark set."
             height={320}
-            className="border-white/5 bg-white/[0.02]"
+            className="border-border/60 bg-muted/50"
         >
             <BarChart data={chartData} margin={{ top: 10, right: 20, left: 12, bottom: 24 }}>
                 <CartesianGrid {...chartGridProps} />
@@ -398,7 +398,7 @@ export function InvestmentSensitivityChart({
             title="Yield sensitivity"
             description="How the net and gross yield shift under transparent rent and price scenarios."
             height={320}
-            className="border-white/5 bg-white/[0.02]"
+            className="border-border/60 bg-muted/50"
         >
             <AreaChart data={scenarios} margin={{ top: 10, right: 20, left: 12, bottom: 12 }}>
                 <CartesianGrid {...chartGridProps} />
@@ -486,7 +486,7 @@ export function MfRentComparisonChart({
             title="MF vs market rent comparison"
             description="Government reference prices against observed market rental medians per size category."
             height={320}
-            className="border-white/5 bg-white/[0.02]"
+            className="border-border/60 bg-muted/50"
         >
             <BarChart data={chartData} margin={{ top: 10, right: 20, left: 12, bottom: 12 }}>
                 <CartesianGrid {...chartGridProps} />
@@ -521,7 +521,7 @@ function MfComparisonTooltip({
     }
 
     return (
-        <div className="min-w-48 rounded-xl border border-white/10 bg-slate-950/95 px-3 py-2 text-xs shadow-2xl backdrop-blur-sm">
+        <div className="min-w-48 rounded-xl border border-border/60 bg-slate-950/95 px-3 py-2 text-xs shadow-2xl backdrop-blur-sm">
             {payload.map((entry) => (
                 <div key={entry.name} className="flex items-center justify-between gap-4 font-mono text-slate-200">
                     <span className="flex items-center gap-2">
@@ -560,7 +560,7 @@ function HistogramTooltip({
     const item = payload[0].payload;
 
     return (
-        <div className="min-w-56 rounded-xl border border-white/10 bg-slate-950/95 px-3 py-2 text-xs shadow-2xl backdrop-blur-sm">
+        <div className="min-w-56 rounded-xl border border-border/60 bg-slate-950/95 px-3 py-2 text-xs shadow-2xl backdrop-blur-sm">
             <div className="mb-2 text-[11px] font-mono uppercase tracking-[0.2em] text-slate-300">{item.range}</div>
             <div className="font-mono text-slate-200">
                 {item.count} {countLabel}
@@ -592,7 +592,7 @@ function ActiveSaleTooltip({
     const item = payload[0].payload;
 
     return (
-        <div className="min-w-56 rounded-xl border border-white/10 bg-slate-950/95 px-3 py-2 text-xs shadow-2xl backdrop-blur-sm">
+        <div className="min-w-56 rounded-xl border border-border/60 bg-slate-950/95 px-3 py-2 text-xs shadow-2xl backdrop-blur-sm">
             <div className="mb-2 text-[11px] font-mono uppercase tracking-[0.2em] text-slate-300">{item.address}</div>
             <div className="space-y-1 font-mono text-slate-200">
                 <div className="flex items-center justify-between gap-4">

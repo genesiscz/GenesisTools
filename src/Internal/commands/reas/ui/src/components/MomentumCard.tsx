@@ -12,7 +12,7 @@ interface MomentumCardProps {
 
 const DIRECTION_CONFIG: Record<string, { icon: typeof ArrowUp; color: string }> = {
     rising: { icon: ArrowUp, color: "text-green-400" },
-    stable: { icon: ArrowRight, color: "text-amber-400" },
+    stable: { icon: ArrowRight, color: "text-primary" },
     declining: { icon: ArrowDown, color: "text-red-400" },
 };
 
@@ -23,10 +23,10 @@ export function MomentumCard({ data }: MomentumCardProps) {
     const DirectionIcon = dirConfig.icon;
 
     return (
-        <Card className="border-white/5">
+        <Card className="border-border/60">
             <CardHeader className="pb-0">
                 <CardTitle className="flex items-center gap-2 text-sm font-mono">
-                    <Activity className="h-4 w-4 text-amber-400" />
+                    <Activity className="h-4 w-4 text-primary" />
                     Market Momentum
                 </CardTitle>
             </CardHeader>
@@ -35,7 +35,7 @@ export function MomentumCard({ data }: MomentumCardProps) {
                 <div className="flex items-center gap-4">
                     <div
                         className={cn(
-                            "flex h-12 w-12 items-center justify-center rounded-lg border border-white/10 bg-white/[0.02]",
+                            "flex h-12 w-12 items-center justify-center rounded-lg border border-border/60 bg-muted/50",
                             dirConfig.color
                         )}
                     >
@@ -63,7 +63,7 @@ export function MomentumCard({ data }: MomentumCardProps) {
                         <span className="text-xs font-mono text-gray-500">Confidence</span>
                         <span className="text-xs font-mono text-gray-400">{model.confidencePercent}%</span>
                     </div>
-                    <div className="h-1 w-full rounded-full bg-white/5 overflow-hidden">
+                    <div className="h-1 w-full rounded-full bg-muted/50 overflow-hidden">
                         <div
                             className={cn("h-full rounded-full transition-all duration-500", model.confidenceClassName)}
                             style={{ width: `${model.confidencePercent}%` }}

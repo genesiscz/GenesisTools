@@ -45,7 +45,7 @@ const DETAIL_SKELETON_KEYS = ["one", "two", "three", "four", "five", "six"] as c
 
 const STATUS_STYLES: Record<string, string> = {
     active: "border-emerald-500/30 bg-emerald-500/10 text-emerald-300",
-    sold: "border-amber-500/30 bg-amber-500/10 text-amber-300",
+    sold: "border-primary/30 bg-primary/10 text-primary",
     removed: "border-red-500/30 bg-red-500/10 text-red-300",
 };
 
@@ -151,9 +151,9 @@ export function ListingDetailSheet({ listingId, open, onOpenChange }: ListingDet
 
     return (
         <Sheet open={open} onOpenChange={onOpenChange}>
-            <SheetContent side="right" className="w-full border-white/10 bg-[#09090d] p-0 sm:max-w-2xl">
+            <SheetContent side="right" className="w-full border-border/60 bg-[#09090d] p-0 sm:max-w-2xl">
                 <div className="flex h-full flex-col">
-                    <SheetHeader className="border-b border-white/5 px-6 py-5 pr-14">
+                    <SheetHeader className="border-b border-border/60 px-6 py-5 pr-14">
                         <div className="flex flex-wrap items-center gap-2">
                             {listing && (
                                 <>
@@ -173,7 +173,7 @@ export function ListingDetailSheet({ listingId, open, onOpenChange }: ListingDet
                                     </Badge>
                                     <Badge
                                         variant="outline"
-                                        className="border-white/10 bg-white/[0.03] text-[10px] font-mono uppercase tracking-[0.2em] text-gray-300"
+                                        className="border-border/60 bg-muted/50 text-[10px] font-mono uppercase tracking-[0.2em] text-gray-300"
                                     >
                                         {listing.type}
                                     </Badge>
@@ -264,7 +264,7 @@ export function ListingDetailSheet({ listingId, open, onOpenChange }: ListingDet
                                     </section>
                                 )}
 
-                                <section className="rounded-xl border border-white/5 bg-white/[0.02] p-4">
+                                <section className="rounded-xl border border-border/60 bg-muted/50 p-4">
                                     <div className="mb-2 text-[11px] font-mono uppercase tracking-[0.24em] text-gray-500">
                                         Description
                                     </div>
@@ -274,7 +274,7 @@ export function ListingDetailSheet({ listingId, open, onOpenChange }: ListingDet
                                 </section>
 
                                 {imageGallery.length > 0 && (
-                                    <section className="rounded-xl border border-white/5 bg-white/[0.02] p-4">
+                                    <section className="rounded-xl border border-border/60 bg-muted/50 p-4">
                                         <div className="mb-3 text-[11px] font-mono uppercase tracking-[0.24em] text-gray-500">
                                             Media gallery
                                         </div>
@@ -285,7 +285,7 @@ export function ListingDetailSheet({ listingId, open, onOpenChange }: ListingDet
                                                     href={image.full}
                                                     target="_blank"
                                                     rel="noreferrer"
-                                                    className="group relative block shrink-0 overflow-hidden rounded-lg border border-white/10 bg-black/20"
+                                                    className="group relative block shrink-0 overflow-hidden rounded-lg border border-border/60 bg-card/60"
                                                 >
                                                     <img
                                                         src={image.preview}
@@ -300,7 +300,7 @@ export function ListingDetailSheet({ listingId, open, onOpenChange }: ListingDet
                                 )}
 
                                 {listingTimeline.length > 0 && (
-                                    <section className="rounded-xl border border-white/5 bg-white/[0.02] p-4">
+                                    <section className="rounded-xl border border-border/60 bg-muted/50 p-4">
                                         <div className="mb-3 text-[11px] font-mono uppercase tracking-[0.24em] text-gray-500">
                                             Price timeline
                                         </div>
@@ -321,7 +321,7 @@ export function ListingDetailSheet({ listingId, open, onOpenChange }: ListingDet
                                     listing.coordinates_lng !== null &&
                                     mapEmbedUrl &&
                                     mapLinkUrl && (
-                                        <section className="rounded-xl border border-white/5 bg-white/[0.02] p-4">
+                                        <section className="rounded-xl border border-border/60 bg-muted/50 p-4">
                                             <div className="mb-3 flex items-center justify-between gap-3">
                                                 <div>
                                                     <div className="text-[11px] font-mono uppercase tracking-[0.24em] text-gray-500">
@@ -336,7 +336,7 @@ export function ListingDetailSheet({ listingId, open, onOpenChange }: ListingDet
                                                     asChild
                                                     size="sm"
                                                     variant="outline"
-                                                    className="border-white/10 bg-black/20 text-gray-300 hover:bg-white/[0.04]"
+                                                    className="border-border/60 bg-card/60 text-gray-300 hover:bg-primary/5"
                                                 >
                                                     <a href={mapLinkUrl} target="_blank" rel="noreferrer">
                                                         <ExternalLink className="h-3.5 w-3.5" />
@@ -347,7 +347,7 @@ export function ListingDetailSheet({ listingId, open, onOpenChange }: ListingDet
                                             <iframe
                                                 title={`Map for ${listing.address}`}
                                                 src={mapEmbedUrl}
-                                                className="h-64 w-full rounded-lg border border-white/5"
+                                                className="h-64 w-full rounded-lg border border-border/60"
                                                 loading="lazy"
                                             />
                                         </section>
@@ -391,7 +391,7 @@ export function ListingDetailSheet({ listingId, open, onOpenChange }: ListingDet
                                                     <Badge
                                                         key={`${region.id}-${region.name}`}
                                                         variant="outline"
-                                                        className="border-white/10 bg-white/[0.03] font-mono text-[10px] text-gray-300"
+                                                        className="border-border/60 bg-muted/50 font-mono text-[10px] text-gray-300"
                                                     >
                                                         {region.name}
                                                     </Badge>
@@ -407,7 +407,7 @@ export function ListingDetailSheet({ listingId, open, onOpenChange }: ListingDet
                                                         asChild
                                                         size="sm"
                                                         variant="outline"
-                                                        className="border-white/10 bg-black/20 text-gray-300 hover:bg-white/[0.04]"
+                                                        className="border-border/60 bg-card/60 text-gray-300 hover:bg-primary/5"
                                                     >
                                                         <a href={link.url} target="_blank" rel="noreferrer">
                                                             <ExternalLink className="h-3.5 w-3.5" />
@@ -419,7 +419,7 @@ export function ListingDetailSheet({ listingId, open, onOpenChange }: ListingDet
                                         )}
 
                                         {poiHighlights.length > 0 && (
-                                            <div className="mt-4 rounded-xl border border-white/5 bg-black/20 p-3">
+                                            <div className="mt-4 rounded-xl border border-border/60 bg-card/60 p-3">
                                                 <div className="mb-2 text-[11px] font-mono uppercase tracking-[0.24em] text-gray-500">
                                                     Nearby signals
                                                 </div>
@@ -428,7 +428,7 @@ export function ListingDetailSheet({ listingId, open, onOpenChange }: ListingDet
                                                         <Badge
                                                             key={`${highlight.category}-${highlight.name}`}
                                                             variant="outline"
-                                                            className="border-white/10 bg-white/[0.03] font-mono text-[10px] text-gray-300"
+                                                            className="border-border/60 bg-muted/50 font-mono text-[10px] text-gray-300"
                                                         >
                                                             {formatPoiCategory(highlight.category)}: {highlight.name}
                                                         </Badge>
@@ -438,7 +438,7 @@ export function ListingDetailSheet({ listingId, open, onOpenChange }: ListingDet
                                         )}
 
                                         {reportLinks.length > 0 && (
-                                            <div className="mt-4 rounded-xl border border-white/5 bg-black/20 p-3">
+                                            <div className="mt-4 rounded-xl border border-border/60 bg-card/60 p-3">
                                                 <div className="mb-2 text-[11px] font-mono uppercase tracking-[0.24em] text-gray-500">
                                                     Report links
                                                 </div>
@@ -449,7 +449,7 @@ export function ListingDetailSheet({ listingId, open, onOpenChange }: ListingDet
                                                             asChild
                                                             size="sm"
                                                             variant="outline"
-                                                            className="border-white/10 bg-black/20 text-gray-300 hover:bg-white/[0.04]"
+                                                            className="border-border/60 bg-card/60 text-gray-300 hover:bg-primary/5"
                                                         >
                                                             <a href={link.url} target="_blank" rel="noreferrer">
                                                                 <ExternalLink className="h-3.5 w-3.5" />
@@ -462,7 +462,7 @@ export function ListingDetailSheet({ listingId, open, onOpenChange }: ListingDet
                                         )}
 
                                         {formattedAds.length > 0 && (
-                                            <div className="mt-4 rounded-xl border border-white/5 bg-black/20 p-3">
+                                            <div className="mt-4 rounded-xl border border-border/60 bg-card/60 p-3">
                                                 <div className="mb-2 text-[11px] font-mono uppercase tracking-[0.24em] text-gray-500">
                                                     Formatted ads
                                                 </div>
@@ -470,7 +470,7 @@ export function ListingDetailSheet({ listingId, open, onOpenChange }: ListingDet
                                                     {formattedAds.map((entry, index) => (
                                                         <div
                                                             key={`${entry.title ?? entry.value ?? index}`}
-                                                            className="flex items-center justify-between gap-3 rounded-lg border border-white/5 bg-white/[0.02] px-3 py-2 text-xs font-mono text-gray-300"
+                                                            className="flex items-center justify-between gap-3 rounded-lg border border-border/60 bg-muted/50 px-3 py-2 text-xs font-mono text-gray-300"
                                                         >
                                                             <span className="text-gray-400">
                                                                 {entry.title ?? `Detail ${index + 1}`}
@@ -499,7 +499,7 @@ export function ListingDetailSheet({ listingId, open, onOpenChange }: ListingDet
                                         )}
 
                                         {relatedAdverts.length > 0 && (
-                                            <div className="mt-4 rounded-xl border border-white/5 bg-black/20 p-3">
+                                            <div className="mt-4 rounded-xl border border-border/60 bg-card/60 p-3">
                                                 <div className="mb-2 text-[11px] font-mono uppercase tracking-[0.24em] text-gray-500">
                                                     Related adverts
                                                 </div>
@@ -510,7 +510,7 @@ export function ListingDetailSheet({ listingId, open, onOpenChange }: ListingDet
                                                             href={advert.link}
                                                             target="_blank"
                                                             rel="noreferrer"
-                                                            className="flex items-center justify-between gap-3 rounded-lg border border-white/5 bg-white/[0.02] px-3 py-2 text-xs font-mono text-gray-300 hover:border-cyan-500/30 hover:text-cyan-300"
+                                                            className="flex items-center justify-between gap-3 rounded-lg border border-border/60 bg-muted/50 px-3 py-2 text-xs font-mono text-gray-300 hover:border-cyan-500/30 hover:text-cyan-300"
                                                         >
                                                             <span className="truncate">
                                                                 {getRelatedAdvertLabel(advert)}
@@ -524,7 +524,7 @@ export function ListingDetailSheet({ listingId, open, onOpenChange }: ListingDet
                                     </section>
                                 )}
 
-                                <section className="rounded-xl border border-white/5 bg-white/[0.02] p-4">
+                                <section className="rounded-xl border border-border/60 bg-muted/50 p-4">
                                     <div className="mb-3 flex items-center justify-between gap-3">
                                         <div>
                                             <div className="text-[11px] font-mono uppercase tracking-[0.24em] text-gray-500">
@@ -536,10 +536,10 @@ export function ListingDetailSheet({ listingId, open, onOpenChange }: ListingDet
                                         </div>
                                         <div className="flex flex-wrap items-center justify-end gap-2">
                                             <Select value={constructionType} onValueChange={setConstructionType}>
-                                                <SelectTrigger className="h-9 w-[120px] border-white/10 bg-black/20 font-mono text-xs text-gray-200">
+                                                <SelectTrigger className="h-9 w-[120px] border-border/60 bg-card/60 font-mono text-xs text-gray-200">
                                                     <SelectValue placeholder="Type" />
                                                 </SelectTrigger>
-                                                <SelectContent className="border-white/10 bg-[#09090d] font-mono text-xs text-gray-200">
+                                                <SelectContent className="border-border/60 bg-[#09090d] font-mono text-xs text-gray-200">
                                                     {PROPERTY_TYPES.map((type) => (
                                                         <SelectItem
                                                             key={type.value}
@@ -555,7 +555,7 @@ export function ListingDetailSheet({ listingId, open, onOpenChange }: ListingDet
                                                 asChild
                                                 size="sm"
                                                 variant="outline"
-                                                className="border-white/10 bg-black/20 text-gray-300 hover:bg-white/[0.04]"
+                                                className="border-border/60 bg-card/60 text-gray-300 hover:bg-primary/5"
                                             >
                                                 <Link to={compareHref ?? "/compare"} disabled={!compareHref}>
                                                     Compare district
@@ -568,7 +568,7 @@ export function ListingDetailSheet({ listingId, open, onOpenChange }: ListingDet
                                                     saveToWatchlistMutation.mutate();
                                                 }}
                                                 disabled={saveToWatchlistMutation.isPending || linkedProperty !== null}
-                                                className="border-amber-500/20 bg-amber-500/5 text-amber-300 hover:bg-amber-500/10"
+                                                className="border-primary/20 bg-primary/5 text-primary hover:bg-primary/10"
                                             >
                                                 {linkedProperty
                                                     ? "Saved to watchlist"
@@ -591,11 +591,11 @@ export function ListingDetailSheet({ listingId, open, onOpenChange }: ListingDet
                                     </div>
                                 </section>
 
-                                <section className="rounded-xl border border-white/5 bg-black/30 p-4">
+                                <section className="rounded-xl border border-border/60 bg-card/60 p-4">
                                     <div className="mb-3 text-[11px] font-mono uppercase tracking-[0.24em] text-gray-500">
                                         Raw payload
                                     </div>
-                                    <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded-lg border border-white/5 bg-black/30 p-4 font-mono text-[11px] leading-5 text-gray-300">
+                                    <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded-lg border border-border/60 bg-card/60 p-4 font-mono text-[11px] leading-5 text-gray-300">
                                         {rawContent}
                                     </pre>
                                 </section>
@@ -610,9 +610,9 @@ export function ListingDetailSheet({ listingId, open, onOpenChange }: ListingDet
 
 function Metric({ label, value, accent = false }: { label: string; value: string; accent?: boolean }) {
     return (
-        <div className="rounded-xl border border-white/5 bg-white/[0.02] p-4">
+        <div className="rounded-xl border border-border/60 bg-muted/50 p-4">
             <div className="text-[11px] font-mono uppercase tracking-[0.24em] text-gray-500">{label}</div>
-            <div className={cn("mt-2 font-mono text-sm text-gray-200", accent && "text-amber-300")}>{value}</div>
+            <div className={cn("mt-2 font-mono text-sm text-gray-200", accent && "text-primary")}>{value}</div>
         </div>
     );
 }
@@ -774,7 +774,7 @@ function DetailSkeleton() {
 }
 
 function getStatusStyle(status: string) {
-    return STATUS_STYLES[status] ?? "border-white/10 bg-white/[0.03] text-gray-300";
+    return STATUS_STYLES[status] ?? "border-border/60 bg-muted/50 text-gray-300";
 }
 
 function formatCurrency(value: number | null) {

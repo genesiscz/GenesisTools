@@ -17,16 +17,16 @@ export function DistrictPicker({
     const districtCountLabel = `${selectedDistricts.length}/${maxDistricts}`;
 
     return (
-        <Card className="border-white/5 bg-white/[0.02] overflow-visible">
+        <Card className="border-border/60 bg-muted/50 overflow-visible">
             <CardHeader className="gap-3">
                 <div className="flex items-center justify-between gap-3">
                     <CardTitle className="text-xs font-mono text-gray-300 flex items-center gap-2">
-                        <MapPinned className="w-4 h-4 text-amber-300" />
+                        <MapPinned className="w-4 h-4 text-primary" />
                         District basket
                     </CardTitle>
                     <Badge
                         variant="outline"
-                        className="border-amber-500/20 bg-amber-500/5 text-[10px] font-mono text-amber-200"
+                        className="border-primary/20 bg-primary/5 text-[10px] font-mono text-primary"
                     >
                         {districtCountLabel}
                     </Badge>
@@ -61,7 +61,7 @@ export function DistrictPicker({
                         size="sm"
                         variant="outline"
                         onClick={() => setSelectedDistricts([])}
-                        className="border-white/10 bg-black/20 font-mono text-xs text-gray-300 hover:bg-white/[0.04]"
+                        className="border-border/60 bg-card/60 font-mono text-xs text-gray-300 hover:bg-primary/5"
                     >
                         Clear basket
                     </Button>

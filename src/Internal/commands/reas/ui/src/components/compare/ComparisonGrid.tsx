@@ -128,9 +128,9 @@ export function ComparisonGrid({ comparisons }: ComparisonGridProps) {
     const discountBW = findBestWorst(discounts, true);
 
     return (
-        <Card className="border-white/5 bg-white/[0.02]">
+        <Card className="border-border/60 bg-muted/50">
             <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-mono text-amber-400 flex items-center gap-2">
+                <CardTitle className="text-sm font-mono text-primary flex items-center gap-2">
                     <BarChart3 className="w-4 h-4" />
                     Side-by-side comparison
                 </CardTitle>

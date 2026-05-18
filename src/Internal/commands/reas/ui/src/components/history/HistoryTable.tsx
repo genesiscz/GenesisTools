@@ -45,7 +45,7 @@ export function HistoryTable({ entries, districtFilter }: HistoryTableProps) {
 
     if (filtered.length === 0) {
         return (
-            <div className="border border-white/5 rounded-lg p-6 text-center">
+            <div className="border border-border/60 rounded-lg p-6 text-center">
                 <p className="text-xs font-mono text-gray-500">No history entries found</p>
             </div>
         );
@@ -55,7 +55,7 @@ export function HistoryTable({ entries, districtFilter }: HistoryTableProps) {
         <div>
             <Table>
                 <TableHeader>
-                    <TableRow className="border-white/5 hover:bg-transparent">
+                    <TableRow className="border-border/60 hover:bg-transparent">
                         <TableHead className="text-[10px] font-mono text-gray-500">Date</TableHead>
                         <TableHead className="text-[10px] font-mono text-gray-500">District</TableHead>
                         <TableHead className="text-[10px] font-mono text-gray-500">Type</TableHead>
@@ -68,7 +68,7 @@ export function HistoryTable({ entries, districtFilter }: HistoryTableProps) {
                 </TableHeader>
                 <TableBody>
                     {paged.map((entry) => (
-                        <TableRow key={entry.id} className="border-white/5 hover:bg-white/[0.02]">
+                        <TableRow key={entry.id} className="border-border/60 hover:bg-primary/5">
                             <TableCell className="text-xs font-mono text-gray-400">
                                 {formatDate(entry.createdAt)}
                             </TableCell>
@@ -118,7 +118,7 @@ export function HistoryTable({ entries, districtFilter }: HistoryTableProps) {
                             variant="outline"
                             onClick={goPrev}
                             disabled={page === 0}
-                            className="h-6 w-6 p-0 border-white/10"
+                            className="h-6 w-6 p-0 border-border/60"
                         >
                             <ChevronLeft className="w-3 h-3" />
                         </Button>
@@ -127,7 +127,7 @@ export function HistoryTable({ entries, districtFilter }: HistoryTableProps) {
                             variant="outline"
                             onClick={goNext}
                             disabled={page >= totalPages - 1}
-                            className="h-6 w-6 p-0 border-white/10"
+                            className="h-6 w-6 p-0 border-border/60"
                         >
                             <ChevronRight className="w-3 h-3" />
                         </Button>

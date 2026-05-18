@@ -62,10 +62,10 @@ export function ComparablesTable({ data }: ComparablesTableProps) {
     }, [listings, sort]);
 
     return (
-        <Card className="border-white/5">
+        <Card className="border-border/60">
             <CardHeader className="pb-0">
                 <CardTitle className="flex items-center gap-2 text-sm font-mono">
-                    <LayoutList className="h-4 w-4 text-amber-400" />
+                    <LayoutList className="h-4 w-4 text-primary" />
                     Comparables
                     <Badge variant="outline" className="ml-2 font-mono text-[10px]">
                         {listings.length}
@@ -76,12 +76,12 @@ export function ComparablesTable({ data }: ComparablesTableProps) {
                 <div className="overflow-x-auto">
                     <Table>
                         <TableHeader>
-                            <TableRow className="border-white/5 hover:bg-transparent">
+                            <TableRow className="border-border/60 hover:bg-transparent">
                                 {COLUMN_DEFS.map((col) => (
                                     <TableHead
                                         key={col.key}
                                         className={cn(
-                                            "font-mono text-[10px] uppercase tracking-wider text-gray-500 cursor-pointer select-none hover:text-amber-400 transition-colors",
+                                            "font-mono text-[10px] uppercase tracking-wider text-gray-500 cursor-pointer select-none hover:text-primary transition-colors",
                                             col.align === "right" && "text-right"
                                         )}
                                         onClick={() => handleSort(col.key)}
@@ -109,13 +109,13 @@ export function ComparablesTable({ data }: ComparablesTableProps) {
                                 sorted.map((item, idx) => (
                                     <TableRow
                                         key={`${item.address}-${idx}`}
-                                        className="border-white/5 hover:bg-amber-500/5"
+                                        className="border-border/60 hover:bg-primary/5"
                                     >
                                         <TableCell className="font-mono text-xs text-gray-300 max-w-[200px] truncate">
                                             {item.address}
                                         </TableCell>
                                         <TableCell>
-                                            <Badge variant="outline" className="font-mono text-[10px] border-white/10">
+                                            <Badge variant="outline" className="font-mono text-[10px] border-border/60">
                                                 {item.disposition}
                                             </Badge>
                                         </TableCell>
@@ -137,7 +137,7 @@ export function ComparablesTable({ data }: ComparablesTableProps) {
                                                     href={item.link}
                                                     target="_blank"
                                                     rel="noopener noreferrer"
-                                                    className="text-gray-600 hover:text-amber-400 transition-colors"
+                                                    className="text-gray-600 hover:text-primary transition-colors"
                                                 >
                                                     <ExternalLink className="h-3 w-3" />
                                                 </a>
@@ -173,7 +173,7 @@ export function ComparablesTable({ data }: ComparablesTableProps) {
                         </span>
                         <span>
                             Target:{" "}
-                            <span className="text-amber-400">
+                            <span className="text-primary">
                                 {data.analysis.comparables.targetPercentile.toFixed(0)}th percentile
                             </span>
                         </span>
@@ -190,8 +190,8 @@ function SortIndicator({ active, direction }: { active: boolean; direction: Sort
     }
 
     return direction === "asc" ? (
-        <ArrowUp className="h-3 w-3 text-amber-400" />
+        <ArrowUp className="h-3 w-3 text-primary" />
     ) : (
-        <ArrowDown className="h-3 w-3 text-amber-400" />
+        <ArrowDown className="h-3 w-3 text-primary" />
     );
 }

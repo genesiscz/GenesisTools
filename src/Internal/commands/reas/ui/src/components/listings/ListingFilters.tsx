@@ -49,9 +49,9 @@ export function ListingFilters({
     sortOptions: Array<{ value: SortBy; label: string }>;
 }) {
     return (
-        <Card className="mb-6 border-white/5 bg-white/[0.02]">
-            <CardHeader className="border-b border-white/5 pb-4">
-                <CardTitle className="flex items-center gap-2 font-mono text-sm text-amber-300">
+        <Card className="mb-6 border-border/60 bg-muted/50">
+            <CardHeader className="border-b border-border/60 pb-4">
+                <CardTitle className="flex items-center gap-2 font-mono text-sm text-primary">
                     <Filter className="h-4 w-4" />
                     Filters
                 </CardTitle>
@@ -134,7 +134,7 @@ export function ListingFilters({
                         />
                     </div>
 
-                    <div className="rounded-xl border border-white/5 bg-black/20 p-3">
+                    <div className="rounded-xl border border-border/60 bg-card/60 p-3">
                         <span className="mb-3 block text-[10px] font-mono uppercase tracking-[0.2em] text-gray-500">
                             Seen date range
                         </span>
@@ -144,7 +144,7 @@ export function ListingFilters({
                         />
                     </div>
 
-                    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/5 pt-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border/60 pt-4">
                         <p className="font-mono text-[11px] text-gray-500">
                             Page {page} of {totalPages}
                         </p>
@@ -152,14 +152,14 @@ export function ListingFilters({
                             <Button
                                 type="button"
                                 variant="outline"
-                                className="border-white/10 bg-white/[0.02] text-gray-300 hover:bg-white/[0.04]"
+                                className="border-border/60 bg-muted/50 text-gray-300 hover:bg-primary/5"
                                 onClick={onReset}
                             >
                                 Reset
                             </Button>
                             <Button
                                 type="submit"
-                                className="border-amber-500/30 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20"
+                                className="border-primary/30 bg-primary/10 text-primary hover:bg-primary/20"
                             >
                                 Apply filters
                             </Button>
@@ -192,7 +192,7 @@ function FilterInput({
                 value={value}
                 onChange={(event) => onChange(event.target.value)}
                 placeholder={placeholder}
-                className="border-white/10 bg-black/20 font-mono text-xs text-gray-200 placeholder:text-gray-600"
+                className="border-border/60 bg-card/60 font-mono text-xs text-gray-200 placeholder:text-gray-600"
             />
         </div>
     );
@@ -219,12 +219,12 @@ function FilterMultiSelect({
                     <Button
                         type="button"
                         variant="outline"
-                        className="w-full justify-between border-white/10 bg-black/20 font-mono text-xs text-gray-200 hover:bg-white/[0.04]"
+                        className="w-full justify-between border-border/60 bg-card/60 font-mono text-xs text-gray-200 hover:bg-primary/5"
                     >
                         <span className="truncate">{getMultiSelectLabel({ selectedValues, emptyLabel })}</span>
                     </Button>
                 </PopoverTrigger>
-                <PopoverContent align="start" className="w-72 border-white/10 bg-[#09090d] p-3">
+                <PopoverContent align="start" className="w-72 border-border/60 bg-[#09090d] p-3">
                     <div className="flex max-h-64 flex-col gap-2 overflow-y-auto">
                         {options.map((option) => {
                             const checked = selectedValues.includes(option.value);
@@ -232,7 +232,7 @@ function FilterMultiSelect({
                             return (
                                 <label
                                     key={option.value}
-                                    className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-xs font-mono text-gray-200 hover:bg-white/[0.04]"
+                                    className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-xs font-mono text-gray-200 hover:bg-primary/5"
                                 >
                                     <Checkbox checked={checked} onCheckedChange={() => onToggle(option.value)} />
                                     <span>{option.label}</span>
@@ -261,10 +261,10 @@ function SelectField<TValue extends string>({
         <div className="block">
             <span className="mb-1.5 block text-[10px] font-mono uppercase tracking-[0.2em] text-gray-500">{label}</span>
             <Select value={value} onValueChange={(nextValue) => onChange(nextValue as TValue)}>
-                <SelectTrigger className="border-white/10 bg-black/20 font-mono text-xs text-gray-200 hover:border-white/20 focus:border-amber-500/40">
+                <SelectTrigger className="border-border/60 bg-card/60 font-mono text-xs text-gray-200 hover:border-border/60 focus:border-primary/40">
                     <SelectValue />
                 </SelectTrigger>
-                <SelectContent className="border-white/10 bg-[#09090d] font-mono text-xs text-gray-200">
+                <SelectContent className="border-border/60 bg-[#09090d] font-mono text-xs text-gray-200">
                     {options.map((option) => (
                         <SelectItem key={option.value} value={option.value} className="font-mono text-xs text-gray-200">
                             {option.label}

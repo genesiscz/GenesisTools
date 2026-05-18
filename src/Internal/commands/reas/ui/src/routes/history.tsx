@@ -101,8 +101,8 @@ function HistoryPage() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
             {/* Header */}
             <div className="flex items-center gap-3 mb-6">
-                <div className="p-2 rounded bg-amber-500/10 border border-amber-500/30">
-                    <Clock className="w-5 h-5 text-amber-400" />
+                <div className="p-2 rounded bg-primary/10 border border-primary/30">
+                    <Clock className="w-5 h-5 text-primary" />
                 </div>
                 <div>
                     <h1 className="text-xl font-mono font-bold text-gray-200">History</h1>
@@ -129,7 +129,7 @@ function HistoryPage() {
                             <button
                                 type="button"
                                 onClick={() => setSelectedDistrict("")}
-                                className="p-1.5 rounded text-gray-500 hover:text-gray-300 hover:bg-white/5 transition-colors"
+                                className="p-1.5 rounded text-gray-500 hover:text-gray-300 hover:bg-primary/5 transition-colors"
                                 title="Clear filter"
                             >
                                 <X className="w-4 h-4" />
@@ -158,9 +158,9 @@ function HistoryPage() {
             </div>
 
             {/* Trend Chart Section */}
-            <Card className="border-white/5 bg-white/[0.02] mb-6">
+            <Card className="border-border/60 bg-muted/50 mb-6">
                 <CardHeader className="pb-2">
-                    <CardTitle className="text-sm font-mono text-amber-400 flex items-center gap-2">
+                    <CardTitle className="text-sm font-mono text-primary flex items-center gap-2">
                         <BarChart3 className="w-4 h-4" />
                         Price Trend (CZK/m2)
                         {selectedDistrict && <span className="text-gray-500 font-normal">— {selectedDistrict}</span>}
@@ -168,7 +168,7 @@ function HistoryPage() {
                 </CardHeader>
                 <CardContent>
                     {!selectedDistrict ? (
-                        <div className="flex items-center justify-center h-[200px] border border-white/5 rounded-lg">
+                        <div className="flex items-center justify-center h-[200px] border border-border/60 rounded-lg">
                             <p className="text-xs font-mono text-gray-500">
                                 Select a district above to view price trends
                             </p>
@@ -182,9 +182,9 @@ function HistoryPage() {
             </Card>
 
             {/* History Table Section */}
-            <Card className="border-white/5 bg-white/[0.02]">
+            <Card className="border-border/60 bg-muted/50">
                 <CardHeader className="pb-2">
-                    <CardTitle className="text-sm font-mono text-amber-400 flex items-center gap-2">
+                    <CardTitle className="text-sm font-mono text-primary flex items-center gap-2">
                         <Clock className="w-4 h-4" />
                         Analysis History
                         {selectedDistrict && <span className="text-gray-500 font-normal">— {selectedDistrict}</span>}

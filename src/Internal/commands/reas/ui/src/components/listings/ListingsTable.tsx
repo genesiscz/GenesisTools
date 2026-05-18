@@ -66,11 +66,11 @@ export function ListingsTable({
     onPageChange,
 }: ListingsTableProps) {
     return (
-        <Card className="border-white/5 bg-white/[0.02]">
-            <CardHeader className="border-b border-white/5 pb-4">
+        <Card className="border-border/60 bg-muted/50">
+            <CardHeader className="border-b border-border/60 pb-4">
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                     <div>
-                        <CardTitle className="flex items-center gap-2 font-mono text-sm text-amber-300">
+                        <CardTitle className="flex items-center gap-2 font-mono text-sm text-primary">
                             <SlidersHorizontal className="h-4 w-4" />
                             Listing table
                         </CardTitle>
@@ -80,7 +80,7 @@ export function ListingsTable({
                     </div>
                     <Button
                         variant="outline"
-                        className="border-white/10 bg-white/[0.02] text-gray-300 hover:bg-white/[0.04]"
+                        className="border-border/60 bg-muted/50 text-gray-300 hover:bg-primary/5"
                         onClick={onRefresh}
                     >
                         <RefreshCw className={cn("h-4 w-4", isRefreshing && "animate-spin")} />
@@ -90,7 +90,7 @@ export function ListingsTable({
             </CardHeader>
             <CardContent className="pt-6">
                 {listingType !== "sold" && total <= 5 && !isLoading && !isError && (
-                    <div className="mb-4 rounded-xl border border-amber-500/20 bg-amber-500/5 p-4 font-mono text-xs text-amber-200">
+                    <div className="mb-4 rounded-xl border border-primary/20 bg-primary/5 p-4 font-mono text-xs text-primary">
                         This active tab is sparse because only previously ingested listings are available in the cache
                         right now. Run a fresh analysis or refresh tracked properties to ingest more active inventory.
                     </div>
@@ -105,7 +105,7 @@ export function ListingsTable({
                 )}
 
                 {!isLoading && !isError && listings.length === 0 && (
-                    <div className="rounded-xl border border-white/5 bg-black/20 px-6 py-14 text-center">
+                    <div className="rounded-xl border border-border/60 bg-card/60 px-6 py-14 text-center">
                         <p className="font-mono text-sm text-gray-300">No listings matched the current filters.</p>
                         <p className="mt-2 font-mono text-xs text-gray-500">
                             Reset the form or switch tabs to explore other inventory.
@@ -117,7 +117,7 @@ export function ListingsTable({
                     <>
                         <Table>
                             <TableHeader>
-                                <TableRow className="border-white/5 hover:bg-transparent">
+                                <TableRow className="border-border/60 hover:bg-transparent">
                                     <TableHead className="text-[10px] font-mono uppercase tracking-[0.2em] text-gray-500">
                                         Source
                                     </TableHead>
@@ -155,7 +155,7 @@ export function ListingsTable({
                                     <TableRow
                                         key={listing.id}
                                         tabIndex={0}
-                                        className="cursor-pointer border-white/5 hover:bg-white/[0.03] focus-visible:bg-white/[0.04] focus-visible:outline-none"
+                                        className="cursor-pointer border-border/60 hover:bg-primary/5 focus-visible:bg-primary/5 focus-visible:outline-none"
                                         onClick={() => onSelectListing(listing.id)}
                                         onKeyDown={(event) => {
                                             if (isNestedInteractiveTarget(event.target)) {
@@ -178,7 +178,7 @@ export function ListingsTable({
                                                     className={cn(
                                                         "text-[10px] font-mono uppercase tracking-[0.18em]",
                                                         listing.status === "sold" &&
-                                                            "border-amber-500/30 bg-amber-500/10 text-amber-300",
+                                                            "border-primary/30 bg-primary/10 text-primary",
                                                         listing.status === "active" &&
                                                             "border-emerald-500/30 bg-emerald-500/10 text-emerald-300",
                                                         listing.status === "removed" &&
@@ -197,7 +197,7 @@ export function ListingsTable({
                                                         event.stopPropagation();
                                                         onSelectListing(listing.id);
                                                     }}
-                                                    className="text-left font-mono text-xs text-gray-100 transition-colors hover:text-amber-300"
+                                                    className="text-left font-mono text-xs text-gray-100 transition-colors hover:text-primary"
                                                 >
                                                     {listing.address}
                                                 </button>
@@ -227,7 +227,7 @@ export function ListingsTable({
                                         <TableCell className="text-right font-mono text-xs text-gray-300">
                                             {formatArea(listing.area)}
                                         </TableCell>
-                                        <TableCell className="text-right font-mono text-xs text-amber-300">
+                                        <TableCell className="text-right font-mono text-xs text-primary">
                                             {formatPrice(listing.price)}
                                         </TableCell>
                                         <TableCell className="text-right font-mono text-xs text-cyan-300">
@@ -254,7 +254,7 @@ export function ListingsTable({
                             </TableBody>
                         </Table>
 
-                        <div className="mt-4 flex flex-col gap-3 border-t border-white/5 pt-4 md:flex-row md:items-center md:justify-between">
+                        <div className="mt-4 flex flex-col gap-3 border-t border-border/60 pt-4 md:flex-row md:items-center md:justify-between">
                             <div className="font-mono text-[11px] text-gray-500">
                                 {getListingRangeLabel({ page, limit, total })}
                             </div>
@@ -263,7 +263,7 @@ export function ListingsTable({
                                     <PaginationItem>
                                         <Button
                                             variant="outline"
-                                            className="border-white/10 bg-white/[0.02] text-gray-300 hover:bg-white/[0.04]"
+                                            className="border-border/60 bg-muted/50 text-gray-300 hover:bg-primary/5"
                                             disabled={page <= 1}
                                             onClick={() => onPageChange(Math.max(page - 1, 1))}
                                         >
@@ -273,7 +273,7 @@ export function ListingsTable({
                                     <PaginationItem>
                                         <Badge
                                             variant="outline"
-                                            className="border-white/10 bg-white/[0.03] px-3 py-2 font-mono text-[11px] text-gray-300"
+                                            className="border-border/60 bg-muted/50 px-3 py-2 font-mono text-[11px] text-gray-300"
                                         >
                                             {page} / {totalPages}
                                         </Badge>
@@ -281,7 +281,7 @@ export function ListingsTable({
                                     <PaginationItem>
                                         <Button
                                             variant="outline"
-                                            className="border-white/10 bg-white/[0.02] text-gray-300 hover:bg-white/[0.04]"
+                                            className="border-border/60 bg-muted/50 text-gray-300 hover:bg-primary/5"
                                             disabled={page >= totalPages}
                                             onClick={() => onPageChange(Math.min(page + 1, totalPages))}
                                         >
@@ -321,7 +321,7 @@ function RowActions({
                 <Button
                     variant="outline"
                     size="icon"
-                    className="size-8 border-white/10 bg-white/[0.02] text-gray-300 hover:bg-white/[0.04]"
+                    className="size-8 border-border/60 bg-muted/50 text-gray-300 hover:bg-primary/5"
                     onClick={(event) => {
                         event.stopPropagation();
                     }}

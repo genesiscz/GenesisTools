@@ -197,8 +197,8 @@ function ListingsPage() {
             <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8">
                 <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
                     <div className="flex items-center gap-3">
-                        <div className="rounded bg-amber-500/10 p-2 border border-amber-500/30">
-                            <Building2 className="h-5 w-5 text-amber-400" />
+                        <div className="rounded bg-primary/10 p-2 border border-primary/30">
+                            <Building2 className="h-5 w-5 text-primary" />
                         </div>
                         <div>
                             <h1 className="text-xl font-mono font-bold text-gray-200">Listings</h1>
@@ -211,7 +211,7 @@ function ListingsPage() {
                     <div className="flex flex-wrap items-center gap-2 justify-end">
                         <div className="flex items-center gap-2">
                             <Select value={fetchConstructionType} onValueChange={setFetchConstructionType}>
-                                <SelectTrigger className="h-9 w-[140px] border-white/10 bg-white/[0.02] text-xs font-mono text-gray-300">
+                                <SelectTrigger className="h-9 w-[140px] border-border/60 bg-muted/50 text-xs font-mono text-gray-300">
                                     <SelectValue placeholder="Structure" />
                                 </SelectTrigger>
                                 <SelectContent>
@@ -224,7 +224,7 @@ function ListingsPage() {
                             </Select>
                             <Button
                                 variant="outline"
-                                className="border-amber-500/30 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20"
+                                className="border-primary/30 bg-primary/10 text-primary hover:bg-primary/20"
                                 onClick={() => fetchListingsMutation.mutate()}
                                 disabled={fetchListingsMutation.isPending}
                             >
@@ -237,7 +237,7 @@ function ListingsPage() {
                         {selectedFreshness && <StalenessIndicator generatedAt={selectedFreshness} />}
                         <Badge
                             variant="outline"
-                            className="border-white/10 bg-white/[0.03] px-2.5 py-1 text-[10px] font-mono uppercase tracking-[0.2em] text-gray-300"
+                            className="border-border/60 bg-muted/50 px-2.5 py-1 text-[10px] font-mono uppercase tracking-[0.2em] text-gray-300"
                         >
                             {listingsQuery.data?.total ?? 0} matches
                         </Badge>
@@ -251,8 +251,8 @@ function ListingsPage() {
                 </div>
 
                 {overview && (
-                    <Card className="mb-6 border-white/5 bg-white/[0.02]">
-                        <CardHeader className="border-b border-white/5 pb-4">
+                    <Card className="mb-6 border-border/60 bg-muted/50">
+                        <CardHeader className="border-b border-border/60 pb-4">
                             <CardTitle className="font-mono text-sm text-cyan-300">Cache overview</CardTitle>
                             <CardDescription className="font-mono text-xs text-gray-500">
                                 Active tabs only show listings already ingested into the local SQLite cache. They do not
@@ -275,20 +275,20 @@ function ListingsPage() {
                                 </Badge>
                                 <Badge
                                     variant="outline"
-                                    className="border-amber-500/20 bg-amber-500/5 font-mono text-[10px] text-amber-300"
+                                    className="border-primary/20 bg-primary/5 font-mono text-[10px] text-primary"
                                 >
                                     {overview.soldCount} sold
                                 </Badge>
                                 <Badge
                                     variant="outline"
-                                    className="border-white/10 bg-white/[0.03] font-mono text-[10px] text-gray-300"
+                                    className="border-border/60 bg-muted/50 font-mono text-[10px] text-gray-300"
                                 >
                                     {overview.sourceCount} cached sources
                                 </Badge>
                                 {overview.lastFetchedAt && (
                                     <Badge
                                         variant="outline"
-                                        className="border-white/10 bg-white/[0.03] font-mono text-[10px] text-gray-300"
+                                        className="border-border/60 bg-muted/50 font-mono text-[10px] text-gray-300"
                                     >
                                         Last updated {formatShortDateTime(overview.lastFetchedAt)}
                                     </Badge>
@@ -300,7 +300,7 @@ function ListingsPage() {
                                     {overview.sources.map((source) => (
                                         <div
                                             key={source.source}
-                                            className="rounded-xl border border-white/5 bg-black/20 p-3"
+                                            className="rounded-xl border border-border/60 bg-card/60 p-3"
                                         >
                                             <div className="flex items-center justify-between gap-2">
                                                 <SourceBadge source={source.source} />
@@ -317,7 +317,7 @@ function ListingsPage() {
                                                 ) : (
                                                     <Badge
                                                         variant="outline"
-                                                        className="border-white/10 bg-white/[0.03] font-mono text-[10px] text-gray-500"
+                                                        className="border-border/60 bg-muted/50 font-mono text-[10px] text-gray-500"
                                                     >
                                                         never
                                                     </Badge>
@@ -336,12 +336,12 @@ function ListingsPage() {
                 )}
 
                 <Tabs value={listingType} onValueChange={handleTypeChange} className="mb-6">
-                    <TabsList className="bg-white/[0.02]">
+                    <TabsList className="bg-muted/50">
                         {LISTING_TYPES.map((type) => (
                             <TabsTrigger
                                 key={type.value}
                                 value={type.value}
-                                className="font-mono text-xs uppercase tracking-[0.18em] data-[state=active]:bg-amber-500/10 data-[state=active]:text-amber-300"
+                                className="font-mono text-xs uppercase tracking-[0.18em] data-[state=active]:bg-primary/10 data-[state=active]:text-primary"
                             >
                                 {type.label}
                             </TabsTrigger>
@@ -478,7 +478,7 @@ function DistrictSourceBreakdown({ districtSources }: { districtSources: Distric
             <div className="overflow-x-auto">
                 <table className="w-full text-xs font-mono">
                     <thead>
-                        <tr className="border-b border-white/5 text-left text-[9px] uppercase tracking-[0.2em] text-gray-600">
+                        <tr className="border-b border-border/60 text-left text-[9px] uppercase tracking-[0.2em] text-gray-600">
                             <th className="px-2 py-1.5">District</th>
                             <th className="px-2 py-1.5">Source</th>
                             <th className="px-2 py-1.5">Type</th>
@@ -491,14 +491,14 @@ function DistrictSourceBreakdown({ districtSources }: { districtSources: Distric
                             entries.map((entry, idx) => (
                                 <tr
                                     key={`${district}-${entry.source}-${entry.type}`}
-                                    className="border-b border-white/[0.03] transition-colors hover:bg-white/[0.02]"
+                                    className="border-b border-border/60 transition-colors hover:bg-primary/5"
                                 >
                                     <td className="px-2 py-1.5 text-gray-200">{idx === 0 ? district : ""}</td>
                                     <td className="px-2 py-1.5">
                                         <SourceBadge source={entry.source} />
                                     </td>
                                     <td className="px-2 py-1.5 text-gray-400">{entry.type}</td>
-                                    <td className="px-2 py-1.5 text-right text-white">{entry.count}</td>
+                                    <td className="px-2 py-1.5 text-right text-foreground">{entry.count}</td>
                                     <td className="px-2 py-1.5 text-right text-gray-500">
                                         {entry.lastFetchedAt ? formatShortDateTime(entry.lastFetchedAt) : "never"}
                                     </td>

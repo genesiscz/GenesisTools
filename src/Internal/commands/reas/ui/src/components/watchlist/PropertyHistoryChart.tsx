@@ -27,12 +27,12 @@ function formatAxisValue(value: number): string {
 export function PropertyHistoryChart({ title, valueSuffix = "", color, points }: PropertyHistoryChartProps) {
     if (points.length === 0) {
         return (
-            <Card className="border-white/5 bg-white/[0.02]">
+            <Card className="border-border/60 bg-muted/50">
                 <CardHeader className="pb-2">
-                    <CardTitle className="text-sm font-mono text-amber-400">{title}</CardTitle>
+                    <CardTitle className="text-sm font-mono text-primary">{title}</CardTitle>
                 </CardHeader>
                 <CardContent>
-                    <div className="flex h-[180px] items-center justify-center rounded-lg border border-white/5">
+                    <div className="flex h-[180px] items-center justify-center rounded-lg border border-border/60">
                         <p className="text-xs font-mono text-gray-500">Not enough history to chart yet</p>
                     </div>
                 </CardContent>
@@ -71,9 +71,9 @@ export function PropertyHistoryChart({ title, valueSuffix = "", color, points }:
     const yTicks = Array.from({ length: 4 }, (_, index) => yMin + ((yMax - yMin) / 3) * index);
 
     return (
-        <Card className="border-white/5 bg-white/[0.02]">
+        <Card className="border-border/60 bg-muted/50">
             <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-mono text-amber-400">{title}</CardTitle>
+                <CardTitle className="text-sm font-mono text-primary">{title}</CardTitle>
             </CardHeader>
             <CardContent>
                 <svg
