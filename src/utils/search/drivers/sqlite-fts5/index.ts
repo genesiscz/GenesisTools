@@ -140,13 +140,15 @@ export class SearchEngine<TDoc extends Record<string, unknown> = Record<string, 
     async remove(id: string | number): Promise<void> {
         const docId = String(id);
 
-        this.db.run(`DELETE FROM ${this.contentTableName} WHERE id = ?`, [docId]);
+        const { changes } = this.db.run(`DELETE FROM ${this.contentTableName} WHERE id = ?`, [docId]);
 
         if (this._vectorStore) {
             this._vectorStore.remove(docId);
         }
 
-        this.docCount--;
+        if (changes > 0) {
+            this.docCount--;
+        }
     }
 
     async search(opts: SearchOptions): Promise<SearchResult<TDoc>[]> {
@@ -290,6 +292,9 @@ export class SearchEngine<TDoc extends Record<string, unknown> = Record<string, 
         const placeholders = columns.map(() => "?").join(", ");
         const values = [docId, ...textFields.map((f) => String(doc[f] ?? ""))];
 
+        const alreadyExists =
+            this.db.query(`SELECT 1 FROM ${this.contentTableName} WHERE id = ? LIMIT 1`).get(docId) != null;
+
         this.db.run(
             `INSERT OR REPLACE INTO ${this.contentTableName} (${columns.join(", ")}) VALUES (${placeholders})`,
             values
@@ -310,7 +315,9 @@ export class SearchEngine<TDoc extends Record<string, unknown> = Record<string, 
             }
         }
 
-        this.docCount++;
+        if (!alreadyExists) {
+            this.docCount++;
+        }
     }
 
     bm25Search(
