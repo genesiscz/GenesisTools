@@ -6,6 +6,7 @@ import { registerDaemonCommand } from "./commands/daemon";
 import { registerDesktopCommand } from "./commands/desktop";
 import { registerExportCommand } from "./commands/export";
 import { registerHistoryCommand } from "./commands/history";
+import { registerMcpCommand } from "./commands/mcp";
 import { registerMemoryCommand } from "./commands/memory";
 import { registerMigrateCommand } from "./commands/migrate";
 import { registerResumeCommand } from "./commands/resume";
@@ -34,6 +35,7 @@ registerConfigCommand(program);
 registerDaemonCommand(program);
 registerMigrateCommand(program);
 registerWarmupCommand(program);
+registerMcpCommand(program);
 
 async function main(): Promise<void> {
     try {

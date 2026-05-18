@@ -13,6 +13,7 @@ import {
     type ToolUseBlock,
     type UserMessage,
 } from "@app/claude/lib/history/search";
+import { getAgentRuntimeContext } from "@app/utils/agent-runtime";
 import { resolveProjectFilter } from "@app/utils/claude";
 import { SafeJSON } from "@app/utils/json";
 import { PROJECT_ROOT } from "@app/utils/paths";
@@ -244,7 +245,7 @@ export function registerHistoryCommand(program: Command): void {
 
                     const currentSessionId =
                         options.excludeSession ||
-                        (options.excludeCurrent ? process.env.CLAUDE_CODE_SESSION_ID : undefined);
+                        (options.excludeCurrent ? (getAgentRuntimeContext().sessionId ?? undefined) : undefined);
 
                     filters = {
                         query,

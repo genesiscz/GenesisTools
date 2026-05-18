@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { discoverTools } from "@app/tools/lib/discovery";
+import { getAgentRuntimeContext } from "@app/utils/agent-runtime";
 import * as p from "@clack/prompts";
 import { Command } from "commander";
 import pc from "picocolors";
@@ -51,7 +52,7 @@ const program = new Command()
         }
 
         // 3. Claude Code plugin management
-        const inClaudeCode = Boolean(process.env.CLAUDE_CODE_SESSION_ID);
+        const inClaudeCode = getAgentRuntimeContext().isInAgent;
         const runClaudeUpdates = await p.confirm({
             message: inClaudeCode
                 ? "Run Claude plugin update and marketplace update?"
