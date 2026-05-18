@@ -4,6 +4,84 @@ All notable changes to GenesisTools will be documented in this file.
 
 Version format: `YYYY.MM.DD.revision` (e.g., `2026.02.18.1`)
 
+## 2026.05.18.1
+
+### dashboard (new)
+
+- Added `tools dashboard` — a personal productivity dashboard (TanStack Start + Turborepo monorepo, SQLite/Drizzle data layer with migrations, Node-runtime SSR)
+- Added server-side WorkOS auth with per-user data isolation (GitHub/Google OAuth, route guards, email-verification gate)
+- Added a timer engine (stopwatch / countdown / pomodoro) with cross-tab + SSE sync and pop-out
+- Added Focus Mode + Daily Planner, an AI assistant chat with MCP server (tasks/timers), and an assistant view (blockers, handoffs, decisions, critical path)
+- Added Quick Notes + Bookmarks (live-preview markdown, SSRF-safe metadata fetch), home/settings/health pages, and per-route error/pending boundaries
+- Added the `tools dashboard` launcher: starts the dev server and opens the browser, auto-installs deps when missing, `--prod` (PM2), `--no-open`, `-p <port>`
+- Updated the dashboard to Vite 8 / `@vitejs/plugin-react` 6 and aligned commander to v14
+
+### shops (new)
+
+- Added `tools shops` — a Czech e-shop price aggregator: API clients for 17 shops, catalog/sitemap crawlers, SQLite DB + migrations, ingest/match/watchlist/analytics/orders pipelines, an SSE-driven React dashboard UI, and a shops MCP server
+
+### dev-dashboard (new)
+
+- Added `tools dev-dashboard` — a personal Pulse dashboard (system/weather/Claude-usage/daemon/containers/todos collectors + panels)
+- Added an Obsidian share with a public `/share/:slug` renderer, and a ttyd tunnel proxy (Bun.spawn-based, in-memory port registry) so terminals work over a Cloudflare tunnel
+- Added a mobile terminal shell with ttyd/cmux focused UI + rename, and a per-account multi-bucket Claude usage history chart
+- Fixed Button hover legibility, focused empty-state chrome, and a ttyd readiness race
+
+### transcribe
+
+- Added Deepgram-native diarization (utterances, speaker segments, SRT/VTT, CLI flags)
+- Added local sherpa-onnx diarization (CAM++ multilingual embedding) with whisperX speaker alignment
+- Added consecutive-run repetition cleanup and a speaker-label normalizer
+- Added an xAI transcription provider with model selection and a quiet non-TTY spinner
+- Fixed ffprobe JSON parsing strictness and CLI speaker-count validation
+
+### jenkins-mcp (new)
+
+- Added `tools jenkins-mcp` — an MCP server + CLI for daily Jenkins ops (builds, queue, log tailing)
+- Improved log fetching with incremental whole-build tailing, decoration stripping, and a `/api/json` fallback when run status lags build completion
+
+### claude
+
+- Added a shared Claude-usage cache so all consumers hit Anthropic at most once per 30s, with `claude-usage-poll` run-log retention
+
+### daemon
+
+- Added optional per-task run-log retention and improved `listRunsForTask` performance
+- Improved polling robustness and log timestamps
+
+### search
+
+- Fixed sqlite-vec loading stability and a double-preload warning (process-global `setCustomSQLite` guard)
+
+### indexer
+
+- Improved reliability: orphan-vector self-healing, paired counts, single-call ast-grep registration
+
+### debugging-master
+
+- Added a live cyberpunk dashboard with SSE streaming
+
+### say
+
+- Added automatic fallback to macOS TTS when the cloud provider fails
+
+### Core / Utils
+
+- Added a shared `@ui` component library (shadcn-based primitives + blocks) under `src/utils/ui`, reusable repo-wide
+- Added a WebView pool, an `ApiClient`, and bun/async/string helpers under `src/utils`
+- Improved `macos-mail` search export output; `apple-calendar` now tries all sources and falls back to a writable calendar
+- Extracted audio probe/split/converter/format-detection into reusable `src/utils/audio` modules
+- Fixed all biome lint + the vendored-shadcn `noDocumentCookie` warning for green CI (root + dashboard biome, `tsgo --noEmit`)
+
+### ui (design system)
+
+- Un-flattened the shared primitives + `DashboardLayout` (nexus theme, cyber-grid, glass) so clarity/shops/reas render the themed surface again instead of a flat grey one
+- Added the design-system contract (`design-system.md`) + an 8-dashboard catalog, a raw-palette guardrail (`check:ui-palette`), and a shared token-driven `AuthLayout`
+- Replaced ~590 raw `zinc`/`white` utilities with theme tokens across clarity/shops/reas; shops gained branded glass auth (login/register)
+- Converged the youtube UI onto the shared `AppShell` + `AppSidebar` (override slots + theme class), retiring its bespoke sidebar/topbar
+- Added `GlowOrbsNexus` ambient variants (`subtle`/`rich`/`playful`/`rich-animated`) and a central dashboards registry with port-conflict detection
+- Aliased deep-relative imports to `@app`/`@ui` across 69 files
+
 ## 2026.05.04.1
 
 ### claude-history-dashboard
