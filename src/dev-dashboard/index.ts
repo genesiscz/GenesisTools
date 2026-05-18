@@ -119,10 +119,26 @@ async function runUiServer(): Promise<void> {
         killChild();
     });
 
-    setTimeout(() => {
+    // Open the browser only AFTER Vite is actually serving — the page load is
+    // what triggers /api/ttyd/spawn, so a blind 2s timer opened it before Vite
+    // was up and the proxy spammed ECONNREFUSED for Vite + the just-spawned
+    // ttyd. Poll the internal Vite port; ttyd is now effectively deferred until
+    // Vite is ready (no extra ttyd-lifecycle changes needed).
+    void (async () => {
+        const deadline = Date.now() + 20_000;
+        const internalUrl = `http://127.0.0.1:${internalPort}/`;
+        while (Date.now() < deadline) {
+            try {
+                await fetch(internalUrl, { signal: AbortSignal.timeout(1000) });
+                break; // any response (even 404) means Vite is listening
+            } catch {
+                await new Promise((r) => setTimeout(r, 250));
+            }
+        }
+
         // Best-effort browser open. Detached spawns have no "error" listener by
         // default; an unhandled "error" (opener binary missing) would crash the
-        // dashboard ~2s post-startup, so swallow it.
+        // dashboard, so swallow it.
         const [cmd, args] =
             process.platform === "darwin"
                 ? (["open", [url]] as const)
@@ -132,7 +148,7 @@ async function runUiServer(): Promise<void> {
         const opener = spawn(cmd, args, { stdio: "ignore", detached: true });
         opener.on("error", (err) => logger.debug({ err, cmd }, "failed to auto-open browser"));
         opener.unref();
-    }, 2000);
+    })();
 
     const exitCode: number = await new Promise((resolveExit) => {
         child.on("exit", (code) => resolveExit(code ?? 1));
