@@ -9,7 +9,8 @@ const buttonVariants = cva(
     {
         variants: {
             variant: {
-                default: "bg-primary text-primary-foreground hover:bg-primary/90",
+                default:
+                    "bg-primary text-primary-foreground shadow-sm hover:bg-primary/90 hover:shadow-[0_8px_24px_-8px_var(--color-primary)] hover:-translate-y-px active:translate-y-0",
                 destructive:
                     "bg-destructive text-white hover:bg-destructive/90 focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40 dark:bg-destructive/60",
                 outline:
@@ -18,7 +19,7 @@ const buttonVariants = cva(
                 ghost: "hover:bg-accent hover:text-accent-foreground dark:hover:bg-accent/50 dark:hover:text-foreground",
                 link: "text-primary underline-offset-4 hover:underline",
                 brand: "bg-purple-600 text-white hover:bg-purple-700 shadow-lg shadow-purple-500/20 hover:shadow-xl hover:shadow-purple-500/30 transition-all",
-                nexus: "bg-primary text-primary-foreground hover:bg-primary/90",
+                nexus: "bg-primary text-primary-foreground shadow-sm hover:bg-primary/90 hover:shadow-[0_8px_24px_-8px_var(--color-primary)] hover:-translate-y-px active:translate-y-0",
                 cyber: "glass-card neon-border border-primary/30 bg-transparent text-primary hover:bg-primary/10 hover:border-primary/50 btn-glow",
                 "cyber-secondary":
                     "glass-card border-secondary/30 bg-transparent text-secondary hover:bg-secondary/10 hover:border-secondary/50",
