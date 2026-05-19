@@ -79,7 +79,8 @@ describe("optimize --apply non-TTY guard", () => {
     });
 });
 
-import { newProcessId, writeMeta } from "@app/macos/lib/clones/audit";
+import { appendOp, newProcessId, readProcess, writeMeta } from "@app/macos/lib/clones/audit";
+import { JsonRenderer } from "@app/macos/lib/clones/render/json";
 
 describe("optimize --list", () => {
     it("--list --format json lists recorded processes newest-first", async () => {
@@ -105,5 +106,78 @@ describe("optimize --list", () => {
 
         const parsed = SafeJSON.parse(logs.join("\n")) as { processes: { id: string }[] };
         expect(parsed.processes.some((pr) => pr.id === id)).toBe(true);
+    });
+});
+
+describe("optimize --log", () => {
+    it("--log json === JsonRenderer.processReport of the replayed process (apply-tail parity)", async () => {
+        const id = newProcessId();
+        const started = new Date().toISOString();
+        writeMeta({
+            id,
+            state: "applied",
+            roots: ["/tmp/log-test"],
+            startedAt: started,
+            endedAt: started,
+            planCacheHit: false,
+        });
+        appendOp(id, {
+            seq: 1,
+            ts: started,
+            op: "clone",
+            status: "ok",
+            bytes: 2048,
+            keep: "/tmp/log-test/k",
+            replace: "/tmp/log-test/r",
+            modeBefore: 0o644,
+            mtimeBeforeMs: 1,
+            sha256Before: "deadbeef",
+            sha256After: "deadbeef",
+        });
+
+        const logs: string[] = [];
+        const orig = console.log;
+        console.log = (...x: unknown[]) => logs.push(x.join(" "));
+        try {
+            await createOptimizeCommand().parseAsync(
+                ["node", "optimize", "--log", "--process", id, "--format", "json"],
+                { from: "node" },
+            );
+        } finally {
+            console.log = orig;
+        }
+
+        const rep = readProcess(id);
+        expect(rep).not.toBeNull();
+        const expected = new JsonRenderer().processReport(rep!);
+        expect(logs.join("\n").trim()).toBe(expected.trim());
+    });
+
+    it("unknown --process exits 1 and lists closest ids", async () => {
+        const errs: string[] = [];
+        const origErr = console.error;
+        const origExit = process.exit;
+        let code: number | undefined;
+        console.error = (...x: unknown[]) => errs.push(x.join(" "));
+        process.exit = ((c?: number) => {
+            code = c;
+            throw new Error("__exit__");
+        }) as typeof process.exit;
+        try {
+            await createOptimizeCommand().parseAsync(
+                ["node", "optimize", "--log", "--process", "definitely-not-real-zzz"],
+                { from: "node" },
+            );
+        } catch (e) {
+            if (!(e instanceof Error) || e.message !== "__exit__") {
+                throw e;
+            }
+        } finally {
+            console.error = origErr;
+            process.exit = origExit;
+        }
+
+        expect(code).toBe(1);
+        expect(errs.join("\n").toLowerCase()).toContain("process");
     });
 });
