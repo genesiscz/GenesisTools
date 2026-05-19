@@ -5,7 +5,7 @@ import { writeStdout } from "@app/utils/cli/stdout";
 import type { SelectValue } from "@app/utils/prompts/p";
 import * as p from "@app/utils/prompts/p";
 import { isCancel } from "@clack/prompts";
-import { logger } from "../logger";
+import { logger, type Logger } from "../logger";
 
 export interface OutConfig {
     clack: "auto" | "off";
@@ -79,8 +79,17 @@ function emitResult(text: string): void {
     });
 }
 
-/** Build an Out bound to an optional component + how it mirrors to the logger. */
-export function makeOut(component: string | null, mirror: "component" | "config" | "none"): Out {
+/**
+ * Build an Out bound to an optional component + how it mirrors to the logger.
+ * `mirrorLogger`: a pre-built child to mirror through — pass it (e.g. from
+ * logger.scoped()) to avoid re-deriving a scoped child (and two makeOut
+ * closures) on every mirrored line (PR #176 review t4/t5).
+ */
+export function makeOut(
+    component: string | null,
+    mirror: "component" | "config" | "none",
+    mirrorLogger?: Logger
+): Out {
     const mirrorLine = (m: string): void => {
         if (mirror === "none") {
             return;
@@ -90,7 +99,7 @@ export function makeOut(component: string | null, mirror: "component" | "config"
             return;
         }
 
-        const target = component ? logger.scoped(component).log : logger;
+        const target = mirrorLogger ?? (component ? logger.scoped(component).log : logger);
         target.debug(m);
     };
 

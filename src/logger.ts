@@ -265,7 +265,7 @@ export const logger: LoggerFacade = {
         // log.out/log.tee ALWAYS mirror with the component tag (ignores
         // configureOut.mirrorToLogger — "tee" means tee). The destructured
         // `out` is only-out (mirror "none"): clack/stdout, no debug mirror.
-        const scopedOut = makeOut(component, "component");
+        const scopedOut = makeOut(component, "component", child);
         const logExt = child as pino.Logger & { out: Out; tee: Out };
         logExt.out = scopedOut;
         logExt.tee = scopedOut;
