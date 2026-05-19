@@ -8,6 +8,7 @@ import { registerFillCommand } from "./commands/fill.js";
 import { registerLinkCommand } from "./commands/link-workitems.js";
 import { registerTimesheetCommand } from "./commands/timesheet.js";
 import { runClarityPreflight } from "./lib/preflight.js";
+import { runTool } from "@app/utils/cli";
 
 const program = new Command()
     .name("clarity")
@@ -98,3 +99,7 @@ program
     });
 
 program.parse();
+
+// CODEMOD-4b: review & fold existing parse/readme/verbose into this
+await runTool(program, { tool: "clarity" });
+

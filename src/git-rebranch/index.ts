@@ -9,6 +9,7 @@ import { Command } from "commander";
 import pc from "picocolors";
 import { groupCommits, parseCommit } from "./grouping";
 import type { BranchResult, CommitGroup } from "./types";
+import { runTool } from "@app/utils/cli";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
@@ -496,3 +497,7 @@ main().catch((err) => {
     p.log.error(pc.red(String(err)));
     process.exit(1);
 });
+
+// CODEMOD-4b: review & fold existing parse/readme/verbose into this
+await runTool(program, { tool: "git-rebranch" });
+

@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { type MarkdownRenderOptions, renderMarkdownToCli } from "@app/utils/markdown/index.js";
 import chokidar from "chokidar";
 import { Command, Option } from "commander";
+import { runTool } from "@app/utils/cli";
 
 interface MarkdownCLIOptions {
     watch?: boolean;
@@ -72,3 +73,7 @@ program
     });
 
 program.parse();
+
+// CODEMOD-4b: review & fold existing parse/readme/verbose into this
+await runTool(program, { tool: "markdown-cli" });
+

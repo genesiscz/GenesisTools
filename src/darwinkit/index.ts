@@ -10,6 +10,7 @@ import pc from "picocolors";
 import { type CommandDef, commands, GROUP_LABELS, GROUP_ORDER, getCommandsByGroup } from "./lib/commands";
 import { defaultFormat, formatOutput, type OutputFormat } from "./lib/format";
 import { runCommandInteractive, runInteractiveMenu } from "./lib/interactive";
+import { runTool } from "@app/utils/cli";
 
 handleReadmeFlag(import.meta.url);
 
@@ -212,3 +213,7 @@ main().catch((err) => {
     closeDarwinKit();
     process.exit(1);
 });
+
+// CODEMOD-4b: review & fold existing parse/readme/verbose into this
+await runTool(program, { tool: "darwinkit" });
+

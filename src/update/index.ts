@@ -5,6 +5,7 @@ import { getAgentRuntimeContext } from "@app/utils/agent-runtime";
 import * as p from "@clack/prompts";
 import { Command } from "commander";
 import pc from "picocolors";
+import { runTool } from "@app/utils/cli";
 
 const program = new Command()
     .name("update")
@@ -195,3 +196,7 @@ function discoverSkills(skillsDir: string): Array<{ name: string; description: s
 }
 
 program.parse();
+
+// CODEMOD-4b: review & fold existing parse/readme/verbose into this
+await runTool(program, { tool: "update" });
+

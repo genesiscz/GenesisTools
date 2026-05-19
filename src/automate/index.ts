@@ -14,6 +14,7 @@ import logger from "@app/logger.ts";
 import { handleReadmeFlag } from "@app/utils/readme.ts";
 import * as p from "@clack/prompts";
 import { Command } from "commander";
+import { runTool } from "@app/utils/cli";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
@@ -69,3 +70,7 @@ main().catch((err) => {
     logger.error(`Unexpected error: ${err}`);
     process.exit(1);
 });
+
+// CODEMOD-4b: review & fold existing parse/readme/verbose into this
+await runTool(program, { tool: "automate" });
+

@@ -4,6 +4,7 @@ import { clearRejectedPackages, listRejectedPackages, removeRejectedPackage } fr
 import * as p from "@clack/prompts";
 import chalk from "chalk";
 import { Command } from "commander";
+import { runTool } from "@app/utils/cli";
 
 const program = new Command().name("config").description("Manage GenesisTools configuration");
 
@@ -62,3 +63,7 @@ program
     });
 
 program.parse();
+
+// CODEMOD-4b: review & fold existing parse/readme/verbose into this
+await runTool(program, { tool: "config" });
+

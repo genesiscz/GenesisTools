@@ -9,6 +9,7 @@ import { registerListCommand } from "./commands/list";
 import { registerRemoveCommand } from "./commands/remove";
 import { registerRunCommand } from "./commands/run";
 import { registerShowCommand } from "./commands/show";
+import { runTool } from "@app/utils/cli";
 
 const program = new Command();
 
@@ -31,3 +32,7 @@ async function main(): Promise<void> {
 }
 
 main();
+
+// CODEMOD-4b: review & fold existing parse/readme/verbose into this
+await runTool(program, { tool: "benchmark" });
+

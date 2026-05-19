@@ -16,6 +16,7 @@ import * as diff from "diff";
 import { filesize } from "filesize";
 import { minimatch } from "minimatch";
 import ora, { type Ora } from "ora";
+import { runTool } from "@app/utils/cli";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
@@ -1405,3 +1406,7 @@ main().catch((error) => {
     logger.error(`Fatal error: ${error}`);
     process.exit(1);
 });
+
+// CODEMOD-4b: review & fold existing parse/readme/verbose into this
+await runTool(program, { tool: "npm-package-diff" });
+

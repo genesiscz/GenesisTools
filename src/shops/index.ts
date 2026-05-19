@@ -18,6 +18,7 @@ import { registerUiCommand } from "@app/shops/commands/ui";
 import { registerWatchCommand } from "@app/shops/commands/watch";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { Command } from "commander";
+import { runTool } from "@app/utils/cli";
 
 handleReadmeFlag(import.meta.url);
 
@@ -47,3 +48,7 @@ registerProviderConnectCommand(program);
 registerOrdersSyncCommand(program);
 
 await program.parseAsync(process.argv);
+
+// CODEMOD-4b: review & fold existing parse/readme/verbose into this
+await runTool(program, { tool: "shops" });
+

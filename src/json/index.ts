@@ -4,6 +4,7 @@ import { SafeJSON } from "@app/utils/json";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { Command } from "commander";
 import { fromToon as decode, toToon as encode } from "./lib/toon";
+import { runTool } from "@app/utils/cli";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
@@ -375,3 +376,7 @@ main().catch((error) => {
     console.error(`Unexpected error: ${error}`);
     process.exit(1);
 });
+
+// CODEMOD-4b: review & fold existing parse/readme/verbose into this
+await runTool(program, { tool: "json" });
+

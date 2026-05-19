@@ -29,6 +29,7 @@ import { isVerbose } from "@app/utils/cli";
 import { copyToClipboard } from "@app/utils/clipboard";
 
 import { SafeJSON } from "@app/utils/json";
+import { runTool } from "@app/utils/cli";
 
 // Resolve babel-plugin-react-compiler from GenesisTools installation
 const __filename = fileURLToPath(import.meta.url);
@@ -479,3 +480,7 @@ async function main(fileArg: string | undefined, options: ProgramOptions) {
 }
 
 program.parse();
+
+// CODEMOD-4b: review & fold existing parse/readme/verbose into this
+await runTool(program, { tool: "react-compiler-debug" });
+

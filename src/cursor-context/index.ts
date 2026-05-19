@@ -7,6 +7,7 @@ import { copyToClipboard } from "@app/utils/clipboard";
 import { ExitPromptError } from "@inquirer/core";
 import { checkbox, confirm, input } from "@inquirer/prompts";
 import { Command } from "commander";
+import { runTool } from "@app/utils/cli";
 
 interface ToolUseBlock {
     toolName: string;
@@ -408,3 +409,7 @@ main().catch((err) => {
     logger.error(`\n✖ Unexpected error: ${err}`);
     process.exit(1);
 });
+
+// CODEMOD-4b: review & fold existing parse/readme/verbose into this
+await runTool(program, { tool: "cursor-context" });
+

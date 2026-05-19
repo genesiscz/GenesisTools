@@ -30,6 +30,7 @@ import { registerTimelogCommand } from "@app/azure-devops/commands/timelog";
 import { handleWorkItem, registerWorkitemCommand } from "@app/azure-devops/commands/workitem";
 import { registerWorkitemCacheCommand } from "@app/azure-devops/commands/workitem-cache";
 import { registerWorkitemCreateCommand } from "@app/azure-devops/commands/workitem-create";
+import { runTool } from "@app/utils/cli";
 
 // Wire up cross-command dependencies
 // Query command needs to call workitem handler for --download-workitems
@@ -198,3 +199,7 @@ main().catch((err) => {
     logger.error(`Unexpected error: ${err}`);
     process.exit(1);
 });
+
+// CODEMOD-4b: review & fold existing parse/readme/verbose into this
+await runTool(program, { tool: "azure-devops" });
+

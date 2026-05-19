@@ -9,6 +9,7 @@ import chalk from "chalk";
 import chokidar from "chokidar";
 import { Command } from "commander";
 import { glob } from "glob";
+import { runTool } from "@app/utils/cli";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
@@ -670,3 +671,7 @@ async function startWatcher() {
 
 // Start the application
 startWatcher();
+
+// CODEMOD-4b: review & fold existing parse/readme/verbose into this
+await runTool(program, { tool: "watch" });
+

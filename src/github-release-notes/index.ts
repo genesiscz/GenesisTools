@@ -4,6 +4,7 @@ import { logger } from "@app/logger";
 import { handleReadmeFlag } from "@app/utils/readme";
 import axios from "axios";
 import { Command } from "commander";
+import { runTool } from "@app/utils/cli";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
@@ -223,3 +224,7 @@ function parseCommandLineArgs(): ScriptOptions {
 
 const options = parseCommandLineArgs();
 fetchReleaseNotes(options).catch(logger.error);
+
+// CODEMOD-4b: review & fold existing parse/readme/verbose into this
+await runTool(program, { tool: "github-release-notes" });
+

@@ -4,6 +4,7 @@ import { logger } from "@app/logger";
 import { Executor } from "@app/utils/cli";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { Command } from "commander";
+import { runTool } from "@app/utils/cli";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
@@ -204,3 +205,7 @@ main().catch((err) => {
     logger.error("\n✖ An unexpected error occurred:", err);
     process.exit(1);
 });
+
+// CODEMOD-4b: review & fold existing parse/readme/verbose into this
+await runTool(program, { tool: "collect-files-for-ai" });
+

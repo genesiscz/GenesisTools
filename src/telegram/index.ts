@@ -5,6 +5,7 @@ import { registerContactsCommand } from "./commands/contacts";
 import { registerHistoryCommand } from "./commands/history";
 import { registerListenCommand } from "./commands/listen";
 import { registerWatchCommand } from "./commands/watch";
+import { runTool } from "@app/utils/cli";
 
 handleReadmeFlag(import.meta.url);
 
@@ -25,3 +26,7 @@ program.parseAsync().catch((err) => {
     console.error(err);
     process.exit(1);
 });
+
+// CODEMOD-4b: review & fold existing parse/readme/verbose into this
+await runTool(program, { tool: "telegram" });
+

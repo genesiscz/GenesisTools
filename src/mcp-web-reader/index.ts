@@ -21,6 +21,7 @@ import {
 } from "./handlers.js";
 import { limitToTokens } from "./utils/tokens.js";
 import { buildJinaUrl, ensureHttpUrl } from "./utils/urls.js";
+import { runTool } from "@app/utils/cli";
 
 const log = {
     info: (msg: string) => console.log(chalk.blue("ℹ️ ") + msg),
@@ -347,3 +348,7 @@ main().catch((e) => {
     console.error("Fatal error:", e);
     process.exit(1);
 });
+
+// CODEMOD-4b: review & fold existing parse/readme/verbose into this
+await runTool(program, { tool: "mcp-web-reader" });
+
