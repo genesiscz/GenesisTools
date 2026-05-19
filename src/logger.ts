@@ -11,6 +11,7 @@ import PinoPretty from "pino-pretty";
 // `logger` only inside closures, never at module-eval. Never convert to
 // require() (not a Bun ESM default) or a dynamic import (loses sync ordering).
 import { makeOut, type Out } from "./logger/out";
+
 // Surface the standalone unscoped `out` through the package entry so callers
 // can `import { out } from "@app/logger"` (the two-layer model's user-facing
 // channel). No new ESM-cycle risk: logger.ts already statically depends on
