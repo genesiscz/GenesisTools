@@ -28,3 +28,33 @@ describe("disk-usage per-file sizers + walkFiles", () => {
         }
     });
 });
+
+import { measureTree } from "@app/utils/fs/disk-usage";
+
+describe("measureTree", () => {
+    it("aggregates logical/allocated/counts and collects errors", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-du-tree-"));
+        try {
+            writeFileSync(join(dir, "x"), Buffer.alloc(20_000, 1));
+            mkdirSync(join(dir, "d"));
+            writeFileSync(join(dir, "d", "y"), Buffer.alloc(30_000, 2));
+
+            const u = measureTree(dir);
+            expect(u.logical).toBe(50_000);
+            expect(u.allocated).toBeGreaterThanOrEqual(50_000);
+            expect(u.fileCount).toBe(2);
+            expect(u.dirCount).toBe(1);
+            expect(u.errors).toEqual([]);
+            // private is a number on macOS, null elsewhere
+            expect(u.private === null || typeof u.private === "number").toBe(true);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("records an error for an unreadable root instead of throwing", () => {
+        const u = measureTree("/this/path/does/not/exist");
+        expect(u.errors.length).toBeGreaterThan(0);
+        expect(u.fileCount).toBe(0);
+    });
+});

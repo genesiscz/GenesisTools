@@ -30,6 +30,9 @@ export interface DiskUsage {
      *  (best-effort intra-tree dedup). null when private is null. */
     exactReclaimable: number | null;
     fileCount: number;
+    /** Subdirectories under root, excluding root itself. Derived from the
+     *  parent dirs of measured files — pure-empty subdirs (no files) are not
+     *  counted (they contribute zero bytes, so this is acceptable here). */
     dirCount: number;
     errors: WalkError[];
 }
@@ -93,4 +96,72 @@ function errnoOf(err: unknown): string {
     }
 
     return "UNKNOWN";
+}
+
+export interface MeasureOptions {
+    /** Include clone-family dedup pass for exactReclaimable. Default true. */
+    exact?: boolean;
+}
+
+export function measureTree(
+    root: string,
+    opts: MeasureOptions = {},
+): DiskUsage {
+    const errors: WalkError[] = [];
+    let logical = 0;
+    let allocated = 0;
+    let privateSum = 0;
+    let privateSeen = false;
+    let fileCount = 0;
+    const dirs = new Set<string>();
+    const cloneGroups = new Map<string, { private: number; allocated: number }>();
+    const rootKey = root.endsWith("/") ? root.slice(0, -1) : root;
+
+    for (const e of walkFiles(root, { onError: (err) => errors.push(err) })) {
+        fileCount += 1;
+        logical += e.logical;
+        allocated += e.allocated;
+        const parent = e.path.slice(0, e.path.lastIndexOf("/"));
+        if (parent !== rootKey) {
+            dirs.add(parent);
+        }
+
+        const priv = getPrivateSize(e.path);
+        if (priv !== null) {
+            privateSeen = true;
+            privateSum += priv;
+            if (opts.exact !== false) {
+                const id = getCloneId(e.path);
+                if (id !== null && id !== 0n) {
+                    const key = id.toString(16);
+                    const g = cloneGroups.get(key) ?? { private: 0, allocated: 0 };
+                    g.private += priv;
+                    g.allocated += e.allocated;
+                    cloneGroups.set(key, g);
+                }
+            }
+        }
+    }
+
+    const privateTotal = privateSeen ? privateSum : null;
+    let exactReclaimable: number | null = privateTotal;
+    if (privateTotal !== null && opts.exact !== false) {
+        let sharedOnce = 0;
+        for (const g of cloneGroups.values()) {
+            // bytes shared by an in-tree clone family, counted a single time
+            sharedOnce += Math.max(0, g.allocated - g.private);
+        }
+
+        exactReclaimable = privateTotal + sharedOnce;
+    }
+
+    return {
+        logical,
+        allocated,
+        private: privateTotal,
+        exactReclaimable,
+        fileCount,
+        dirCount: dirs.size,
+        errors,
+    };
 }
