@@ -57,6 +57,7 @@
         "lucide-react": "^0.577.0",
         "react-devtools-core": "^7.0.0",
         "tailwind-merge": "^3.5.0",
+        "ts-morph": "^28.0.0",
         "vite-tsconfig-paths": "^6.1.1",
         "web-vitals": "^5.2.0"
     },
