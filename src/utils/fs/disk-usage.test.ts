@@ -58,3 +58,43 @@ describe("measureTree", () => {
         expect(u.fileCount).toBe(0);
     });
 });
+
+import { spawnSync } from "node:child_process";
+import { skip } from "@app/utils/test/skip";
+import {
+    exactReclaimableBytes,
+    findCloneFamilies,
+    reclaimableBytes,
+} from "@app/utils/fs/disk-usage";
+
+describe.skipIf(skip.unlessMac)("clone-family dedup (intra-tree)", () => {
+    it("private undercounts a shared pair; exact ~= one copy; families grouped", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-du-clone-"));
+        try {
+            const a = join(dir, "a.bin");
+            writeFileSync(a, Buffer.alloc(4 * 1024 * 1024, 9));
+            expect(spawnSync("cp", ["-c", a, join(dir, "b.bin")]).status).toBe(0);
+
+            const families = findCloneFamilies(dir);
+            // both files share one clone id
+            expect([...families.values()][0].length).toBe(2);
+
+            const naive = reclaimableBytes(dir) as number;
+            const exact = exactReclaimableBytes(dir) as number;
+            // two fully-shared clones → little is private…
+            expect(naive).toBeLessThan(1024 * 1024);
+            // …but deleting the whole dir really frees ~one 4 MB copy
+            expect(exact).toBeGreaterThan(3.5 * 1024 * 1024);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+});
+
+describe("reclaimable accessors degrade gracefully", () => {
+    it("return null when private is unavailable (non-darwin)", () => {
+        const r = reclaimableBytes("/this/does/not/exist");
+        // missing path → no files measured → null/0 but never throws
+        expect(r === null || r === 0).toBe(true);
+    });
+});

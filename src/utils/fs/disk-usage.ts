@@ -165,3 +165,43 @@ export function measureTree(
         errors,
     };
 }
+
+/** Bytes freed if `root` is deleted while the bun cache / other projects stay
+ *  (the real-world question). Correct for the common cross-tree case
+ *  (node_modules ↔ cache). For the rarer case of two files cloned to each
+ *  other *inside* `root`, this UNDERCOUNTS — use exactReclaimableBytes. */
+export function reclaimableBytes(root: string): number | null {
+    return measureTree(root, { exact: false }).private;
+}
+
+/** Best-effort whole-tree reclaim: reclaimableBytes plus each in-tree clone
+ *  family's shared bytes counted once. Approximate (exact extent accounting
+ *  via F_LOG2PHYS_EXT is a non-goal). null off-darwin. */
+export function exactReclaimableBytes(root: string): number | null {
+    return measureTree(root, { exact: true }).exactReclaimable;
+}
+
+/** Maps clone-id (hex) → file paths that share it, for files under `root`.
+ *  Empty off-darwin / when no clones present. */
+export function findCloneFamilies(root: string): Map<string, string[]> {
+    const families = new Map<string, string[]>();
+    for (const e of walkFiles(root)) {
+        const id = getCloneId(e.path);
+        if (id === null || id === 0n) {
+            continue;
+        }
+
+        const key = id.toString(16);
+        const list = families.get(key) ?? [];
+        list.push(e.path);
+        families.set(key, list);
+    }
+
+    for (const [key, list] of families) {
+        if (list.length < 2) {
+            families.delete(key);
+        }
+    }
+
+    return families;
+}
