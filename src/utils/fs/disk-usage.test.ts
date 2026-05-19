@@ -1,4 +1,12 @@
-import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+    linkSync,
+    mkdirSync,
+    mkdtempSync,
+    readdirSync,
+    rmSync,
+    symlinkSync,
+    writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "bun:test";
@@ -182,6 +190,133 @@ describe("duplicate detection", () => {
             expect(cands[0].reclaimable).toBeGreaterThanOrEqual(128_000);
             expect(cands[0].keep).toBeDefined();
             expect(cands[0].replace.length).toBe(2);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+});
+
+import { chmodSync, lstatSync, readFileSync, statSync } from "node:fs";
+import { dedupeFile } from "@app/utils/fs/disk-usage";
+
+describe.skipIf(skip.unlessMac)("dedupeFile safety", () => {
+    it("converts a duplicate to a clone that still behaves independently", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-dedupe-"));
+        const keep = join(dir, "keep.bin");
+        const dup = join(dir, "dup.bin");
+        try {
+            const payload = Buffer.alloc(2 * 1024 * 1024, 0x42);
+            writeFileSync(keep, payload);
+            writeFileSync(dup, payload); // independent identical copy
+            chmodSync(dup, 0o640);
+            const beforeIno = statSync(dup).ino;
+            const beforeMode = statSync(dup).mode;
+
+            const res = dedupeFile({ keep, replace: dup });
+            expect(res.status).toBe("cloned");
+            expect(res.bytesReclaimed).toBeGreaterThan(0);
+
+            // content identical, different inode, same clone family, perms kept
+            expect(readFileSync(dup).equals(readFileSync(keep))).toBe(true);
+            expect(statSync(dup).ino).not.toBe(statSync(keep).ino);
+            expect(statSync(dup).ino).not.toBe(beforeIno); // it was swapped
+            expect(statSync(dup).mode).toBe(beforeMode); // mode preserved
+
+            // INDEPENDENCE: mutate dup → keep unchanged; mutate keep → dup unchanged
+            writeFileSync(dup, Buffer.alloc(2 * 1024 * 1024, 0x99));
+            expect(readFileSync(keep)[0]).toBe(0x42);
+            writeFileSync(keep, Buffer.alloc(2 * 1024 * 1024, 0x11));
+            expect(readFileSync(dup)[0]).toBe(0x99);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("refuses when contents differ (never clones non-identical files)", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-dedupe-x-"));
+        const keep = join(dir, "k");
+        const other = join(dir, "o");
+        try {
+            writeFileSync(keep, Buffer.alloc(1000, 1));
+            writeFileSync(other, Buffer.alloc(1000, 2));
+            const res = dedupeFile({ keep, replace: other });
+            expect(res.status).toBe("skipped-different");
+            expect(readFileSync(other)[0]).toBe(2); // untouched
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("never breaks a hardlink (same dev+ino → skipped-same-file)", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-dedupe-hl-"));
+        const a = join(dir, "a");
+        const b = join(dir, "b");
+        try {
+            writeFileSync(a, Buffer.alloc(4096, 7));
+            linkSync(a, b); // hardlink: same inode
+            const res = dedupeFile({ keep: a, replace: b });
+            expect(res.status).toBe("skipped-same-file");
+            expect(statSync(a).ino).toBe(statSync(b).ino); // still hardlinked
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("skips zero-byte and non-regular targets", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-dedupe-z-"));
+        const keep = join(dir, "k");
+        const empty = join(dir, "e");
+        try {
+            writeFileSync(keep, Buffer.alloc(0));
+            writeFileSync(empty, Buffer.alloc(0));
+            expect(dedupeFile({ keep, replace: empty }).status).toBe(
+                "skipped-not-regular",
+            );
+            expect(dedupeFile({ keep: dir, replace: keep }).status).toBe(
+                "skipped-not-regular",
+            );
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("rolls back leaving replace intact when rename fails (read-only dir)", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-dedupe-ro-"));
+        const sub = join(dir, "sub");
+        mkdirSync(sub);
+        const keep = join(dir, "keep");
+        const dup = join(sub, "dup");
+        try {
+            const payload = Buffer.alloc(64_000, 0x33);
+            writeFileSync(keep, payload);
+            writeFileSync(dup, payload);
+            chmodSync(sub, 0o500); // dir read-only → rename into it fails
+            expect(() => dedupeFile({ keep, replace: dup })).toThrow();
+            chmodSync(sub, 0o700);
+            // replace still byte-identical to the original, no temp left behind
+            expect(readFileSync(dup).equals(payload)).toBe(true);
+            expect(
+                readdirSync(sub).every((n) => !n.includes(".gtclone.")),
+            ).toBe(true);
+        } finally {
+            chmodSync(sub, 0o700);
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("re-verifies content immediately before cloning (scan/apply race)", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-dedupe-race-"));
+        const keep = join(dir, "k");
+        const dup = join(dir, "d");
+        try {
+            const payload = Buffer.alloc(8192, 0xa1);
+            writeFileSync(keep, payload);
+            writeFileSync(dup, payload);
+            // simulate: dup mutated AFTER it was selected as a candidate
+            writeFileSync(dup, Buffer.alloc(8192, 0xb2));
+            const res = dedupeFile({ keep, replace: dup });
+            expect(res.status).toBe("skipped-different");
+            expect(readFileSync(dup)[0]).toBe(0xb2); // untouched
         } finally {
             rmSync(dir, { recursive: true, force: true });
         }
