@@ -25,6 +25,7 @@ handleReadmeFlag(import.meta.url);
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { logger } from "@app/logger";
+import { isVerbose } from "@app/utils/cli";
 import { copyToClipboard } from "@app/utils/clipboard";
 
 import { SafeJSON } from "@app/utils/json";
@@ -46,7 +47,6 @@ interface CompilerOptions {
 interface ProgramOptions {
     code?: string;
     stdin?: boolean;
-    verbose?: boolean;
     clipboard?: boolean;
     target?: "17" | "18" | "19";
     mode?: "infer" | "all" | "annotation" | "syntax";
@@ -62,7 +62,6 @@ program
     .argument("[file]", "File to compile")
     .option("-c, --code <code>", "Compile inline code snippet")
     .option("-s, --stdin", "Read code from stdin")
-    .option("-v, --verbose", "Show compiler events")
     .option("--clipboard", "Copy output to clipboard")
     .option("-t, --target <version>", "React version target (17, 18, 19)", "19")
     .option("-m, --mode <mode>", "Compilation mode (infer, all, annotation, syntax)", "infer")
@@ -74,7 +73,7 @@ program
         } catch (error) {
             if (error instanceof Error) {
                 console.error(chalk.red("Error:"), error.message);
-                if (options.verbose) {
+                if (isVerbose()) {
                     console.error(error.stack);
                 }
             }
@@ -88,7 +87,7 @@ function createCompilerOptions(options: ProgramOptions): CompilerOptions {
         compilationMode: options.mode || "infer",
     };
 
-    if (options.verbose) {
+    if (isVerbose()) {
         compilerOptions.logger = {
             logEvent(filename: string | null, event: unknown) {
                 console.error(
@@ -429,7 +428,7 @@ async function main(fileArg: string | undefined, options: ProgramOptions) {
                 compiled = prettifyCompiledCode(compiled);
             } catch (prettifyError) {
                 // If prettification fails, fall back to raw output
-                if (options.verbose) {
+                if (isVerbose()) {
                     console.error(chalk.yellow("Prettification failed, using raw output:"), prettifyError);
                 }
             }
@@ -459,7 +458,7 @@ async function main(fileArg: string | undefined, options: ProgramOptions) {
             output.push(chalk.red(`Compilation error: ${errorMessage}`));
         }
 
-        if (options.verbose && error instanceof Error) {
+        if (isVerbose() && error instanceof Error) {
             output.push(chalk.dim(error.stack || ""));
         }
     }
