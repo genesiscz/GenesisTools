@@ -9,6 +9,10 @@ set -uo pipefail
 OUT="${1:?usage: capture-goldens.sh <label>}"
 DIR="/tmp/logger-goldens/$OUT"
 mkdir -p "$DIR"
+# Idempotent: drop this label's prior captures so a changed matrix never
+# leaves a stale golden behind (Task 5's verify loop globs $DIR/*.out — a
+# lingering golden from an old matrix would false-positive every phase).
+find "$DIR" -maxdepth 1 -type f \( -name '*.out' -o -name '*.err' -o -name '*.code' \) -delete
 
 run() { # <golden-name> <tool-dir> [argv...]
   local name="$1"; shift
@@ -17,10 +21,21 @@ run() { # <golden-name> <tool-dir> [argv...]
   echo $? >"$DIR/$name.code"
 }
 
-run t3chat_json     t3chat-length    --format json
-run gitcommit_help  git-commit       --help
-run npmdiff_help    npm-package-diff  --help
-run macos_mail_help macos             mail search --help
-run indexer_json    indexer           search x --format json
+# Golden-selection criterion (do NOT add a tool that fails it):
+# Each golden's stdout must reach the terminal via a writer the logger+out
+# overhaul does NOT relocate, so a byte diff is a TRUE regression signal:
+#   (a) commander's built-in --help writer (untouched by the overhaul)
+#   (b) direct console.log / process.stdout.write / writeStdout NOT gated
+#       behind a clack/logger short-circuit (the machine result)
+# REJECTED (c): stdout emitted via logger.* or clack p.log.* — Phases 1–3
+# move those to stderr by design, so it would false-positive the §6.1 gate
+# every phase. (`indexer search x --format json` hit a clack "Multiple
+# indexes found" guard BEFORE its JSON path = category (c); replaced with
+# `json` on a tracked fixture = a pure category-(b) transform.)
+run t3chat_json     t3chat-length    --format json                       # (b) writeStdout(asResult) — Task 0c; stdout = "[]\n"
+run gitcommit_help  git-commit       --help                              # (a) commander help
+run npmdiff_help    npm-package-diff  --help                             # (a) commander help
+run macos_mail_help macos             mail search --help                 # (a) commander help
+run json_toon       json             scripts/codemod/golden-fixture.json # (b) pure console.log transform, codemod-untouched
 
 echo "captured → $DIR"
