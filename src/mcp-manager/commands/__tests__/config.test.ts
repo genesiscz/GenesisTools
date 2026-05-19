@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test";
 import { setupInquirerMock } from "./inquirer-mock.js";
-import { setupStorageSandbox } from "./sandbox.js";
+import { setupStorageSandbox } from "@app/utils/storage/test-sandbox";
 
 // openConfig() gates spawning the editor behind isInteractive(); setupInquirerMock
 // stubs it true. Must run before the command module is imported, so the command

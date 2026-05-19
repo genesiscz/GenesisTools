@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { setMockResponses, setupInquirerMock } from "./inquirer-mock.js";
-import { setupStorageSandbox } from "./sandbox.js";
+import { setupStorageSandbox } from "@app/utils/storage/test-sandbox";
 
 // Setup @inquirer/prompts mock BEFORE importing command modules
 setupInquirerMock();

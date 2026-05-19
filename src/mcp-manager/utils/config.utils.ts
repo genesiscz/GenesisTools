@@ -109,8 +109,9 @@ export function ensureMetaFromEnabledMcpServers(config: UnifiedMCPConfig): Unifi
  * Read the unified config from storage
  */
 export async function readUnifiedConfig(): Promise<UnifiedMCPConfig> {
-    await mcpStorage().ensureDirs();
-    let config = await mcpStorage().getConfig<UnifiedMCPConfig>();
+    const storage = mcpStorage();
+    await storage.ensureDirs();
+    let config = await storage.getConfig<UnifiedMCPConfig>();
     if (!config) {
         config = { mcpServers: {} };
     }
@@ -129,7 +130,8 @@ export async function readUnifiedConfig(): Promise<UnifiedMCPConfig> {
  * @returns true if changes were written, false if no changes or rejected
  */
 export async function writeUnifiedConfig(config: UnifiedMCPConfig): Promise<boolean> {
-    const configPath = getUnifiedConfigPath();
+    const storage = mcpStorage();
+    const configPath = storage.getConfigPath();
 
     // Ensure enabledMcpServers is in sync with _meta.enabled before writing
     config = syncEnabledMcpServers(config);
@@ -137,7 +139,7 @@ export async function writeUnifiedConfig(config: UnifiedMCPConfig): Promise<bool
     const newContent = SafeJSON.stringify(config, null, 2);
 
     // Read old content
-    const existingConfig = await mcpStorage().getConfig<UnifiedMCPConfig>();
+    const existingConfig = await storage.getConfig<UnifiedMCPConfig>();
     const oldContent = existingConfig ? SafeJSON.stringify(existingConfig, null, 2) : "";
 
     // Early exit if no changes
@@ -158,7 +160,7 @@ export async function writeUnifiedConfig(config: UnifiedMCPConfig): Promise<bool
     await backupManager.createBackup(configPath, "unified");
 
     // Only now write to file
-    await mcpStorage().setConfig(config);
+    await storage.setConfig(config);
     logger.info(chalk.green(`✓ Configuration written to ${configPath}`));
     return true;
 }

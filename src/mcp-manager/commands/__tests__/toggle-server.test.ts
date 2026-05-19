@@ -4,7 +4,7 @@ import { toggleServer } from "@app/mcp-manager/commands/toggle-server.js";
 import * as commandUtils from "@app/mcp-manager/utils/command.utils.js";
 import * as configUtils from "@app/mcp-manager/utils/config.utils.js";
 import type { UnifiedMCPConfig } from "@app/mcp-manager/utils/providers/types.js";
-import { setupStorageSandbox } from "./sandbox.js";
+import { setupStorageSandbox } from "@app/utils/storage/test-sandbox";
 import { createMockUnifiedConfig, MockMCPProvider } from "./test-utils.js";
 
 setupStorageSandbox();
