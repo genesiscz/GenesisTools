@@ -24,7 +24,13 @@ export class Storage {
      */
     constructor(toolName: string) {
         this.toolName = toolName;
-        this.baseDir = join(homedir(), ".genesis-tools", toolName);
+        // GENESIS_TOOLS_HOME overrides the storage root. Purely additive: unset
+        // in production → identical to `homedir()`. Tests set it to a fresh
+        // tmp dir so the suite can never write a user's real ~/.genesis-tools
+        // (bun's spyOn is process-global with no reliable cross-file restore,
+        // so per-test mocks alone are not a safe sandbox).
+        const root = process.env.GENESIS_TOOLS_HOME || homedir();
+        this.baseDir = join(root, ".genesis-tools", toolName);
         this.cacheDir = join(this.baseDir, "cache");
         this.configPath = join(this.baseDir, "config.json");
     }
