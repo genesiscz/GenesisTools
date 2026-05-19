@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, spyOn } from "bun:test";
-import { logger } from "@app/logger";
+import { logger, out } from "@app/logger";
 import { showServerConfig } from "@app/mcp-manager/commands/show.js";
 import { createMockServerConfig, MockMCPProvider } from "./test-utils.js";
 
@@ -12,22 +12,21 @@ describe("showServerConfig", () => {
         mockProvider2 = new MockMCPProvider("gemini", "/mock/gemini.json");
     });
 
-    it("should show server config from all providers", async () => {
+    it("should show server config from all providers (via out.print → stdout result)", async () => {
         const mockConfig = createMockServerConfig("test-server");
         mockProvider.getServerConfigResult = mockConfig;
         mockProvider2.getServerConfigResult = mockConfig;
 
-        spyOn(logger, "info");
-        spyOn(logger, "warn");
+        spyOn(out, "print");
 
         await showServerConfig("test-server", [mockProvider, mockProvider2]);
 
-        expect(logger.info).toHaveBeenCalledWith(expect.stringContaining("Configuration for 'test-server'"));
-        expect(logger.info).toHaveBeenCalledWith(expect.stringContaining("claude"));
-        expect(logger.info).toHaveBeenCalledWith(expect.stringContaining("gemini"));
+        expect(out.print).toHaveBeenCalledWith(expect.stringContaining("Configuration for 'test-server'"));
+        expect(out.print).toHaveBeenCalledWith(expect.stringContaining("claude"));
+        expect(out.print).toHaveBeenCalledWith(expect.stringContaining("gemini"));
     });
 
-    it("should warn if server not found in any provider", async () => {
+    it("should warn (logger → stderr) if server not found in any provider", async () => {
         mockProvider.getServerConfigResult = null;
         mockProvider2.getServerConfigResult = null;
 
@@ -43,22 +42,22 @@ describe("showServerConfig", () => {
         mockProvider.configExistsResult = false;
         mockProvider2.getServerConfigResult = mockConfig;
 
-        spyOn(logger, "info");
+        spyOn(out, "print");
 
         await showServerConfig("test-server", [mockProvider, mockProvider2]);
 
-        expect(logger.info).toHaveBeenCalledWith(expect.stringContaining("gemini"));
+        expect(out.print).toHaveBeenCalledWith(expect.stringContaining("gemini"));
     });
 
     it("should display config as JSON", async () => {
         const mockConfig = createMockServerConfig("test-server");
         mockProvider.getServerConfigResult = mockConfig;
 
-        spyOn(logger, "info");
+        spyOn(out, "print");
 
         await showServerConfig("test-server", [mockProvider]);
 
-        const jsonCall = (logger.info as unknown as { mock: { calls: string[][] } }).mock.calls.find((call: string[]) =>
+        const jsonCall = (out.print as unknown as { mock: { calls: string[][] } }).mock.calls.find((call: string[]) =>
             call[0].includes("test-server-command")
         );
         expect(jsonCall).toBeDefined();
