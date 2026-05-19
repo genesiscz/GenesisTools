@@ -4,7 +4,7 @@ import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { resolvePathWithTilde } from "@app/utils";
-import { isVerbose } from "@app/utils/cli";
+import { isVerbose, runTool } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
 import { handleReadmeFlag } from "@app/utils/readme";
 import boxen from "boxen";
@@ -16,7 +16,6 @@ import * as diff from "diff";
 import { filesize } from "filesize";
 import { minimatch } from "minimatch";
 import ora, { type Ora } from "ora";
-import { runTool } from "@app/utils/cli";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
@@ -121,8 +120,9 @@ const program = new Command()
     .option("--delta-theme <theme>", "Delta theme to use (light/dark)")
     .option("--npmrc <path>", "Path to .npmrc file for authentication")
     .option("--timeout <ms>", "Installation timeout in ms", "120000")
-    .option("--context <lines>", "Number of context lines", "10")
-    .parse();
+    .option("--context <lines>", "Number of context lines", "10");
+
+await runTool(program, { tool: "npm-package-diff" });
 
 const options = program.opts();
 const [packageName, version1, version2] = program.args;
@@ -1406,7 +1406,3 @@ main().catch((error) => {
     logger.error(`Fatal error: ${error}`);
     process.exit(1);
 });
-
-// CODEMOD-4b: review & fold existing parse/readme/verbose into this
-await runTool(program, { tool: "npm-package-diff" });
-

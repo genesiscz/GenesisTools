@@ -13,10 +13,9 @@ import { registerCommitsCommand } from "@app/git/commands/commits";
 import { registerConfigureAuthorsCommand } from "@app/git/commands/configure-authors";
 import { registerConfigureWorkitemPatternsCommand } from "@app/git/commands/configure-workitem-patterns";
 import { logger } from "@app/logger";
-import { enhanceHelp } from "@app/utils/cli";
+import { enhanceHelp, runTool } from "@app/utils/cli";
 import { Storage } from "@app/utils/storage";
 import { Command } from "commander";
-import { runTool } from "@app/utils/cli";
 
 const storage = new Storage("git");
 
@@ -103,7 +102,7 @@ Storage:
 
 async function main(): Promise<void> {
     try {
-        await program.parseAsync(process.argv);
+        await runTool(program, { tool: "git" });
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         logger.error(`Error: ${message}`);
@@ -120,7 +119,3 @@ main().catch((err) => {
     logger.error(`Unexpected error: ${err}`);
     process.exit(1);
 });
-
-// CODEMOD-4b: review & fold existing parse/readme/verbose into this
-await runTool(program, { tool: "git" });
-

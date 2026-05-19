@@ -1,5 +1,6 @@
 import { spawn as nodeSpawn } from "node:child_process";
 import { resolve } from "node:path";
+import { runTool } from "@app/utils/cli";
 import { formatDuration, parseDuration } from "@app/utils/format";
 import { withCancel } from "@app/utils/prompts/clack/helpers";
 import { Storage } from "@app/utils/storage/storage";
@@ -7,7 +8,6 @@ import { formatTable } from "@app/utils/table";
 import * as p from "@clack/prompts";
 import { Command } from "commander";
 import pc from "picocolors";
-import { runTool } from "@app/utils/cli";
 
 // ============================================
 // Types
@@ -556,7 +556,7 @@ async function main(): Promise<void> {
     }
 
     try {
-        await program.parseAsync(process.argv);
+        await runTool(program, { tool: "timer" });
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.error(pc.red(message));
@@ -565,7 +565,3 @@ async function main(): Promise<void> {
 }
 
 main();
-
-// CODEMOD-4b: review & fold existing parse/readme/verbose into this
-await runTool(program, { tool: "timer" });
-

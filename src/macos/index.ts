@@ -48,9 +48,9 @@ import { registerRemindersCommand } from "@app/macos/commands/reminders/index";
 import { registerSleepCommand } from "@app/macos/commands/sleep/index";
 import { registerSwapCommand } from "@app/macos/commands/swap/index";
 import { registerVoiceMemosCommand } from "@app/macos/commands/voice-memos/index";
+import { runTool } from "@app/utils/cli";
 import { closeDarwinKit } from "@app/utils/macos/darwinkit";
 import { Command } from "commander";
-import { runTool } from "@app/utils/cli";
 
 const program = new Command();
 
@@ -71,7 +71,7 @@ registerVoiceMemosCommand(program);
 
 async function main(): Promise<void> {
     try {
-        await program.parseAsync(process.argv);
+        await runTool(program, { tool: "macos" });
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         logger.error(`Error: ${message}`);
@@ -93,7 +93,3 @@ main().catch((err) => {
     logger.error(`Unexpected error: ${err}`);
     process.exit(1);
 });
-
-// CODEMOD-4b: review & fold existing parse/readme/verbose into this
-await runTool(program, { tool: "macos" });
-

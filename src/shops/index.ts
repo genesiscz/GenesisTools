@@ -16,9 +16,9 @@ import { registerSitemapCrawlCommand } from "@app/shops/commands/sitemap-crawl";
 import { registerSitemapSyncCommand } from "@app/shops/commands/sitemap-sync";
 import { registerUiCommand } from "@app/shops/commands/ui";
 import { registerWatchCommand } from "@app/shops/commands/watch";
+import { runTool } from "@app/utils/cli";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { Command } from "commander";
-import { runTool } from "@app/utils/cli";
 
 handleReadmeFlag(import.meta.url);
 
@@ -47,8 +47,4 @@ registerDevCaptureFixtureCommand(program);
 registerProviderConnectCommand(program);
 registerOrdersSyncCommand(program);
 
-await program.parseAsync(process.argv);
-
-// CODEMOD-4b: review & fold existing parse/readme/verbose into this
 await runTool(program, { tool: "shops" });
-

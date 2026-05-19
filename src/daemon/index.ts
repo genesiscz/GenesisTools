@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 
+import { runTool } from "@app/utils/cli";
 import { handleReadmeFlag } from "@app/utils/readme";
 import * as p from "@clack/prompts";
 import { Command } from "commander";
@@ -13,7 +14,6 @@ import { registerStatusCommand } from "./commands/status";
 import { registerStopCommand } from "./commands/stop";
 import { runInteractiveMenu } from "./interactive/menu";
 import { ensureStorage } from "./lib/config";
-import { runTool } from "@app/utils/cli";
 
 handleReadmeFlag(import.meta.url);
 
@@ -43,7 +43,7 @@ async function main(): Promise<void> {
     }
 
     try {
-        await program.parseAsync(process.argv);
+        await runTool(program, { tool: "daemon" });
     } catch (error) {
         p.log.error(error instanceof Error ? error.message : String(error));
         process.exit(1);
@@ -54,7 +54,3 @@ main().catch((err) => {
     p.log.error(err instanceof Error ? err.message : String(err));
     process.exit(1);
 });
-
-// CODEMOD-4b: review & fold existing parse/readme/verbose into this
-await runTool(program, { tool: "daemon" });
-

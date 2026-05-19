@@ -15,6 +15,7 @@ program
     .option("-v, --verbose", "Verbose logging")
     .option("-i, --interactive", "Launch interactive mode");
 
+import { runTool } from "@app/utils/cli";
 import { registerCookiesCommand } from "./commands/cookies";
 import { registerDashboardCommand } from "./commands/dashboard";
 import { registerDiffCommand } from "./commands/diff";
@@ -33,7 +34,6 @@ import { registerSessionsCommand } from "./commands/sessions";
 import { registerExpandCommand, registerShowCommand } from "./commands/show";
 import { registerSizeCommand } from "./commands/size";
 import { registerWaterfallCommand } from "./commands/waterfall";
-import { runTool } from "@app/utils/cli";
 
 registerLoadCommand(program);
 registerDashboardCommand(program);
@@ -63,8 +63,4 @@ program.action(async (options) => {
     }
 });
 
-program.parse();
-
-// CODEMOD-4b: review & fold existing parse/readme/verbose into this
 await runTool(program, { tool: "har-analyzer" });
-

@@ -1,14 +1,13 @@
 import { existsSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { Executor } from "@app/utils/cli";
+import { Executor, runTool } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
 import { isPromptCancelled } from "@app/utils/prompt-helpers.js";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { confirm, input, number } from "@inquirer/prompts";
 import chalk from "chalk";
 import { Command } from "commander";
-import { runTool } from "@app/utils/cli";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
@@ -853,8 +852,9 @@ async function main() {
         .description("Interactively rename git commits")
         .option("-c, --commits <n>", "Number of commits to rename", (value: string) => parseInt(value, 10))
         .option("-f, --force", "Force: skip safety check (not recommended - use only if commits are backed up)")
-        .option("-?, --help-full", "Show detailed help message")
-        .parse();
+        .option("-?, --help-full", "Show detailed help message");
+
+    await runTool(program, { tool: "git-rename-commits" });
 
     const opts = program.opts<Options>();
 
@@ -1047,7 +1047,3 @@ main().catch((err) => {
     logger.error(`\n✖ Unexpected error: ${err}`);
     process.exit(1);
 });
-
-// CODEMOD-4b: review & fold existing parse/readme/verbose into this
-await runTool(program, { tool: "git-rename-commits" });
-

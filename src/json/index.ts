@@ -1,10 +1,10 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { runTool } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { Command } from "commander";
 import { fromToon as decode, toToon as encode } from "./lib/toon";
-import { runTool } from "@app/utils/cli";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
@@ -233,8 +233,9 @@ async function main(): Promise<void> {
         .option("-t, --to-toon", "Force conversion to TOON format")
         .option("-j, --to-json", "Force conversion to JSON format")
         .option("-v, --verbose", "Enable verbose logging (shows format detection, size comparison, etc.)")
-        .option("--validate", "Error on invalid JSON/TOON input (default: passthrough)")
-        .parse();
+        .option("--validate", "Error on invalid JSON/TOON input (default: passthrough)");
+
+    await runTool(program, { tool: "json" });
 
     const options = program.opts();
     const args = program.args;
@@ -376,7 +377,3 @@ main().catch((error) => {
     console.error(`Unexpected error: ${error}`);
     process.exit(1);
 });
-
-// CODEMOD-4b: review & fold existing parse/readme/verbose into this
-await runTool(program, { tool: "json" });
-

@@ -1,10 +1,9 @@
 import { mkdir } from "node:fs/promises"; // Using fs.promises for async operations - Bun implements this
 import { basename, dirname, join, resolve } from "node:path";
 import { logger } from "@app/logger";
-import { Executor } from "@app/utils/cli";
+import { Executor, runTool } from "@app/utils/cli";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { Command } from "commander";
-import { runTool } from "@app/utils/cli";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
@@ -50,8 +49,9 @@ async function main() {
         .option(
             "-f, --flat",
             "Copy all files directly to the target directory without preserving the directory structure"
-        )
-        .parse();
+        );
+
+    await runTool(program, { tool: "collect-files-for-ai" });
 
     const repoDir = resolve(program.args[0]);
     const git = new Executor({ prefix: "git", cwd: repoDir });
@@ -205,7 +205,3 @@ main().catch((err) => {
     logger.error("\n✖ An unexpected error occurred:", err);
     process.exit(1);
 });
-
-// CODEMOD-4b: review & fold existing parse/readme/verbose into this
-await runTool(program, { tool: "collect-files-for-ai" });
-

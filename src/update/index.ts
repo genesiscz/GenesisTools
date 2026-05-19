@@ -2,10 +2,10 @@ import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { discoverTools } from "@app/tools/lib/discovery";
 import { getAgentRuntimeContext } from "@app/utils/agent-runtime";
+import { runTool } from "@app/utils/cli";
 import * as p from "@clack/prompts";
 import { Command } from "commander";
 import pc from "picocolors";
-import { runTool } from "@app/utils/cli";
 
 const program = new Command()
     .name("update")
@@ -195,8 +195,4 @@ function discoverSkills(skillsDir: string): Array<{ name: string; description: s
     return skills.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-program.parse();
-
-// CODEMOD-4b: review & fold existing parse/readme/verbose into this
 await runTool(program, { tool: "update" });
-

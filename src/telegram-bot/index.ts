@@ -1,11 +1,11 @@
 #!/usr/bin/env bun
 
+import { runTool } from "@app/utils/cli";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { Command } from "commander";
 import { registerConfigureCommand } from "./commands/configure";
 import { registerSendCommand } from "./commands/send";
 import { registerStartCommand } from "./commands/start";
-import { runTool } from "@app/utils/cli";
 
 handleReadmeFlag(import.meta.url);
 
@@ -20,8 +20,4 @@ registerConfigureCommand(program);
 registerSendCommand(program);
 registerStartCommand(program);
 
-program.parse();
-
-// CODEMOD-4b: review & fold existing parse/readme/verbose into this
 await runTool(program, { tool: "telegram-bot" });
-

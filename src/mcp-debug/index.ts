@@ -1,7 +1,6 @@
-import { Executor } from "@app/utils/cli";
+import { Executor, runTool } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
 import { Command } from "commander";
-import { runTool } from "@app/utils/cli";
 
 function showHelp() {
     // Write help to stderr to avoid polluting stdout
@@ -99,8 +98,9 @@ async function main() {
         .option("-v, --verbose", "Enable verbose logging")
         .option("-e, --env", "Execute 'env' command automatically")
         .option("--help-full", "Show extended help (use --help-full, not -h)")
-        .argument("[command...]", "Command and arguments to execute")
-        .parse();
+        .argument("[command...]", "Command and arguments to execute");
+
+    await runTool(program, { tool: "mcp-debug" });
 
     const options = program.opts();
 
@@ -201,7 +201,3 @@ main().catch((err) => {
     process.stderr.write(`\n✖ Unexpected error: ${err}\n`);
     process.exit(1);
 });
-
-// CODEMOD-4b: review & fold existing parse/readme/verbose into this
-await runTool(program, { tool: "mcp-debug" });
-

@@ -11,10 +11,10 @@ import { registerStepCommands } from "@app/automate/commands/steps.ts";
 import { registerTaskCommand } from "@app/automate/commands/task.ts";
 import { ensureStorage } from "@app/automate/lib/storage.ts";
 import logger from "@app/logger.ts";
+import { runTool } from "@app/utils/cli";
 import { handleReadmeFlag } from "@app/utils/readme.ts";
 import * as p from "@clack/prompts";
 import { Command } from "commander";
-import { runTool } from "@app/utils/cli";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
@@ -58,7 +58,7 @@ async function main(): Promise<void> {
     }
 
     try {
-        await program.parseAsync(process.argv);
+        await runTool(program, { tool: "automate" });
     } catch (error) {
         logger.error({ error }, "Automate command failed");
         p.log.error(error instanceof Error ? error.message : String(error));
@@ -70,7 +70,3 @@ main().catch((err) => {
     logger.error(`Unexpected error: ${err}`);
     process.exit(1);
 });
-
-// CODEMOD-4b: review & fold existing parse/readme/verbose into this
-await runTool(program, { tool: "automate" });
-

@@ -1,11 +1,11 @@
 import * as path from "node:path";
 import { logger } from "@app/logger";
+import { runTool } from "@app/utils/cli";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { spawn } from "bun";
 import chalk from "chalk";
 import { Command } from "commander";
 import * as fsevents from "fsevents";
-import { runTool } from "@app/utils/cli";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
@@ -73,8 +73,9 @@ async function main() {
         .option("-t, --top <number>", "How many top directories to display", String(DEFAULT_TOP_N))
         .option("-w, --watchers", "Show processes currently watching fsevents")
         .option("-v, --verbose", "Enable verbose logging")
-        .option("-?, --help-full", "Show extended help message")
-        .parse();
+        .option("-?, --help-full", "Show extended help message");
+
+    await runTool(program, { tool: "fsevents-profile" });
 
     const options: Options = {
         duration: parseInt(program.opts().duration, 10),
@@ -268,7 +269,3 @@ main().catch((err) => {
     logger.error(`\n${chalk.red("✖ Unexpected error:")} ${err}`);
     process.exit(1);
 });
-
-// CODEMOD-4b: review & fold existing parse/readme/verbose into this
-await runTool(program, { tool: "fsevents-profile" });
-

@@ -7,6 +7,7 @@ import { AI } from "@app/utils/ai/index.ts";
 import { getAllProviders } from "@app/utils/ai/providers/index.ts";
 import { formatOutput, formatTimestamp, type OutputFormat, toSRT, toVTT } from "@app/utils/ai/transcription-format.ts";
 import type { AIProviderType } from "@app/utils/ai/types.ts";
+import { runTool } from "@app/utils/cli";
 import { isInteractive, suggestCommand } from "@app/utils/cli/executor.ts";
 import { isQuietOutput } from "@app/utils/cli/output-mode.ts";
 import { createQuietSpinner } from "@app/utils/cli/quiet-spinner.ts";
@@ -15,7 +16,6 @@ import { formatBytes, formatDuration } from "@app/utils/format.ts";
 import * as p from "@clack/prompts";
 import { Command } from "commander";
 import pc from "picocolors";
-import { runTool } from "@app/utils/cli";
 
 const SUPPORTED_AUDIO_EXTENSIONS = new Set([
     ".mp3",
@@ -427,7 +427,7 @@ async function listAvailableTranscribeProviders(): Promise<string[]> {
 
 async function main(): Promise<void> {
     try {
-        await program.parseAsync(process.argv);
+        await runTool(program, { tool: "transcribe" });
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.error(message);
@@ -436,7 +436,3 @@ async function main(): Promise<void> {
 }
 
 main();
-
-// CODEMOD-4b: review & fold existing parse/readme/verbose into this
-await runTool(program, { tool: "transcribe" });
-

@@ -1,5 +1,5 @@
 import { logger } from "@app/logger";
-import { Executor } from "@app/utils/cli";
+import { Executor, runTool } from "@app/utils/cli";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { ExitPromptError } from "@inquirer/core";
 import { confirm, select } from "@inquirer/prompts";
@@ -7,7 +7,6 @@ import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { generateObject } from "ai";
 import { Command } from "commander";
 import { z } from "zod";
-import { runTool } from "@app/utils/cli";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
@@ -85,9 +84,9 @@ async function main() {
         .name("git-commit")
         .description("Generate commit messages using AI and optionally push")
         .option("-s, --stage", "Stage all changes before committing")
-        .option("-d, --detail", "Generate detailed commit messages with body text")
-        .parse();
+        .option("-d, --detail", "Generate detailed commit messages with body text");
 
+    await runTool(program, { tool: "git-commit" });
     const options = program.opts();
     const git = new Executor({ prefix: "git" });
 
@@ -174,7 +173,3 @@ main().catch((err) => {
     logger.error(`\n✖ Unexpected error: ${err}`);
     process.exit(1);
 });
-
-// CODEMOD-4b: review & fold existing parse/readme/verbose into this
-await runTool(program, { tool: "git-commit" });
-

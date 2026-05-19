@@ -3,11 +3,11 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { logger } from "@app/logger";
+import { runTool } from "@app/utils/cli";
 import { copyToClipboard } from "@app/utils/clipboard";
 import { ExitPromptError } from "@inquirer/core";
 import { checkbox, confirm, input } from "@inquirer/prompts";
 import { Command } from "commander";
-import { runTool } from "@app/utils/cli";
 
 interface ToolUseBlock {
     toolName: string;
@@ -237,8 +237,9 @@ async function main() {
         .argument("[file]", "Path to the SpecStory file", "logs/story.log")
         .option("-i, --input <file>", "Input SpecStory file path")
         .option("-o, --output <file>", "Output file path")
-        .option("-?, --help-full", "Show this help message")
-        .parse();
+        .option("-?, --help-full", "Show this help message");
+
+    await runTool(program, { tool: "cursor-context" });
 
     const options = program.opts();
     const [fileArg] = program.args;
@@ -409,7 +410,3 @@ main().catch((err) => {
     logger.error(`\n✖ Unexpected error: ${err}`);
     process.exit(1);
 });
-
-// CODEMOD-4b: review & fold existing parse/readme/verbose into this
-await runTool(program, { tool: "cursor-context" });
-
