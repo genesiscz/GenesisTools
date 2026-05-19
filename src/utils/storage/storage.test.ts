@@ -1,6 +1,6 @@
+import { afterEach, describe, expect, it } from "bun:test";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "bun:test";
 import { Storage } from "./storage";
 
 describe("Storage.parseTTL", () => {
