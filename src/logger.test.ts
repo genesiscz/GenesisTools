@@ -69,3 +69,28 @@ describe("level resolution + child propagation", () => {
         expect(out).toContain("CHILD_DEBUG_AFTER");
     });
 });
+
+describe("configureLogger in-place", () => {
+    it("force-debug sets the console gate without rebuilding the instance", async () => {
+        const mod = await import("./logger");
+        const ref = mod.logger;
+        mod.setConsoleLevel("warn"); // neutralize prior tests — debug now hidden
+        mod.configureLogger({ level: "debug" }); // must drive the gate, not rebuild
+        expect(mod.logger).toBe(ref); // identity unchanged (no rebuild)
+        const chunks: string[] = [];
+        const oe = process.stderr.write.bind(process.stderr);
+        process.stderr.write = (c: string) => {
+            chunks.push(String(c));
+            return true;
+        };
+        mod.logger.debug("FORCED_DEBUG");
+        process.stderr.write = oe;
+        expect(chunks.join("")).toContain("FORCED_DEBUG");
+    });
+
+    it("createLogger({logToFile:false}) yields a file-less pino (daemons)", async () => {
+        const mod = await import("./logger");
+        const d = mod.createLogger({ logToFile: false, minimalLevels: true });
+        expect(typeof d.info).toBe("function");
+    });
+});
