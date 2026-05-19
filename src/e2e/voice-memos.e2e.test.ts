@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, readdirSync } from "node:fs";
 import { rm } from "node:fs/promises";
-import { getOutput, execTool } from "@app/utils/e2e/helpers";
+import { execTool, getOutput } from "@app/utils/e2e/helpers";
 import { tmpPath } from "@app/utils/paths";
 import { skip } from "@app/utils/test/skip";
 

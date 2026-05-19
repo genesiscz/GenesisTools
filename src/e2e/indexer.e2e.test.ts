@@ -140,7 +140,10 @@ describe.skipIf(skip.e2e)("tools indexer (E2E)", () => {
             "add -> status -> search -> search json -> rebuild -> remove",
             async () => {
                 // 1. Add index
-                const addResult = await execTool(["indexer", "add", tempDir, "--name", indexName, "--no-embed"], 60_000);
+                const addResult = await execTool(
+                    ["indexer", "add", tempDir, "--name", indexName, "--no-embed"],
+                    60_000
+                );
                 const addOutput = stripAnsi(addResult.stdout + addResult.stderr);
 
                 expect(addResult.exitCode).toBe(0);

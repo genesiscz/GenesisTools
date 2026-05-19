@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { getOutput, execTool } from "@app/utils/e2e/helpers";
+import { execTool, getOutput } from "@app/utils/e2e/helpers";
 import { skip } from "@app/utils/test/skip";
 
 describe.skipIf(skip.integration)("tools benchmark", () => {
