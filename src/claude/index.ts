@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import "./log-policy";
 import logger from "@app/logger";
-import { addGlobalVerboseOption } from "@app/utils/cli/commander";
+import { runTool } from "@app/utils/cli";
 import { Command } from "commander";
 import { registerConfigCommand } from "./commands/config";
 import { registerDaemonCommand } from "./commands/daemon";
@@ -43,7 +43,7 @@ addGlobalVerboseOption(program);
 
 async function main(): Promise<void> {
     try {
-        await program.parseAsync(process.argv);
+        await runTool(program, { tool: "claude" });
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         if (message.includes("ExitPromptError") || message === "Cancelled") {

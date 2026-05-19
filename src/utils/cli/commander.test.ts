@@ -83,3 +83,17 @@ describe("runTool", () => {
         expect(prog.helpInformation()).toContain("tool's own");
     });
 });
+
+describe("addGlobalVerboseOption trace gate", () => {
+    // The {trace} gate was pulled forward into Task 13 (runTool needs it),
+    // so this standalone Task-14 test is green on arrival by design — it
+    // pins the gate behaviour independently of runTool.
+    it("omits --trace by default, includes when {trace:true}", () => {
+        const a = new Command();
+        addGlobalVerboseOption(a);
+        expect(a.helpInformation()).not.toContain("--trace");
+        const b = new Command();
+        addGlobalVerboseOption(b, { trace: true });
+        expect(b.helpInformation()).toContain("--trace");
+    });
+});
