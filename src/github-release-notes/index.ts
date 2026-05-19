@@ -223,4 +223,7 @@ async function main(): Promise<void> {
     await fetchReleaseNotes(options);
 }
 
-main().catch(logger.error);
+main().catch((err) => {
+    logger.error(err);
+    process.exit(1);
+});

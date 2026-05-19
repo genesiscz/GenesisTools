@@ -15,6 +15,7 @@ import {
 } from "@app/claude/lib/history/search";
 import { out } from "@app/logger";
 import { getAgentRuntimeContext } from "@app/utils/agent-runtime";
+import { isInteractive } from "@app/utils/cli";
 import { resolveProjectFilter } from "@app/utils/claude";
 import { SafeJSON } from "@app/utils/json";
 import { PROJECT_ROOT } from "@app/utils/paths";
@@ -287,8 +288,9 @@ export function registerHistoryCommand(program: Command): void {
                     console.log(formatResultsAsMarkdown(results, filters));
                 }
 
-                // Post-search: offer to summarize a session (TTY + interactive only)
-                if (process.stdout.isTTY && options.interactive && results.length > 0) {
+                // Post-search: offer to summarize a session (interactive only —
+                // isInteractive() also accounts for CI/piped/headless, not just TTY)
+                if (isInteractive() && options.interactive && results.length > 0) {
                     const wantSummarize = await out.confirm({
                         message: "Would you like to summarize one of these sessions?",
                         initialValue: false,

@@ -7,6 +7,12 @@
 set -uo pipefail
 
 OUT="${1:?usage: capture-goldens.sh <label>}"
+# Restrict the label to a safe charset so it can't escape /tmp/logger-goldens
+# via "/" or ".." before it's used to build a path we then -delete from.
+if [[ ! "$OUT" =~ ^[A-Za-z0-9._-]+$ ]]; then
+  echo "capture-goldens: invalid label '$OUT' (allowed: A-Z a-z 0-9 . _ -)" >&2
+  exit 2
+fi
 DIR="/tmp/logger-goldens/$OUT"
 mkdir -p "$DIR"
 # Idempotent: drop this label's prior captures so a changed matrix never
