@@ -1,4 +1,4 @@
-import { logger } from "@app/logger";
+import { logger, out } from "@app/logger";
 import type { MCPProvider, UnifiedMCPServerConfig } from "@app/mcp-manager/utils/providers/types.js";
 import { SafeJSON } from "@app/utils/json";
 import chalk from "chalk";
@@ -23,10 +23,13 @@ export async function showServerConfig(serverName: string, providers: MCPProvide
         return;
     }
 
-    logger.info(`\nConfiguration for '${serverName}':\n`);
+    // `mcp-manager show <server>` — the config dump is the command's
+    // machine result, so it goes to stdout via out.print (Task-17's
+    // mechanical consoleLog→logger rename had mis-routed it to stderr).
+    out.print(`\nConfiguration for '${serverName}':\n`);
     for (const { provider, config } of configs) {
-        logger.info(`${chalk.bold(provider)}:`);
-        logger.info(SafeJSON.stringify(config, null, 2));
-        logger.info("");
+        out.print(`${chalk.bold(provider)}:`);
+        out.print(SafeJSON.stringify(config, null, 2));
+        out.print("");
     }
 }
