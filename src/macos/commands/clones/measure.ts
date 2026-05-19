@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import logger from "@app/logger";
 import { buildMeasureReport, expandNodeModules, resolveRoots } from "@app/macos/lib/clones/orchestrator";
 import { resolveFormat, resolveRenderer } from "@app/macos/lib/clones/render/index";
+import { loadClonesConfig } from "@app/macos/lib/clones/store";
 import { parseVariadic } from "@app/utils/cli";
 import { Command, Option } from "commander";
 
@@ -27,9 +28,7 @@ interface MeasureOpts {
 export function applySharedMeasureFlags(cmd: Command): Command {
     return cmd
         .addOption(
-            new Option("--format <format>", "Output format")
-                .choices(["auto", "table", "json", "jsonl"])
-                .default("auto"),
+            new Option("--format <format>", "Output format").choices(["auto", "table", "json", "jsonl"]).default("auto")
         )
         .option("--node-modules", "Expand each root to its node_modules dirs", false)
         .option("--min-real <bytes>", "Hide subtrees whose real size is below this", "10485760")
@@ -46,11 +45,12 @@ export function createMeasureCommand(): Command {
         .description("Clone-aware sizes for one or more roots (breakdown by default)")
         .argument("[roots...]", "Roots to measure (default: configured watchedDirs, else cwd)");
     applySharedMeasureFlags(cmd).addOption(
-        new Option("--sort <by>", "Sort rows").choices(["overcount", "real", "du"]).default("overcount"),
+        new Option("--sort <by>", "Sort rows").choices(["overcount", "real", "du"]).default("overcount")
     );
     cmd.action(async (rootsArg: string[], opts: MeasureOpts) => {
         const minReal = Number.parseInt(opts.minReal, 10);
-        const roots0 = resolveRoots(rootsArg ?? [], []);
+        const cfg = await loadClonesConfig();
+        const roots0 = resolveRoots(rootsArg ?? [], cfg.watchedDirs);
         const roots = opts.nodeModules ? expandNodeModules(roots0) : roots0;
         if (roots.length === 0) {
             log.warn("no roots resolved");
@@ -94,9 +94,7 @@ export function createDuCommand(): Command {
         .description("Clone-aware du: measure one folder deeply, depth-limited")
         .argument("[folder]", "Folder to measure (default: cwd)");
     applySharedMeasureFlags(cmd)
-        .addOption(
-            new Option("--sort <by>", "Sort rows").choices(["overcount", "real", "du"]).default("overcount"),
-        )
+        .addOption(new Option("--sort <by>", "Sort rows").choices(["overcount", "real", "du"]).default("overcount"))
         .option("--depth <N>", "Max tree depth below the folder (default: unlimited)");
     cmd.action(async (folderArg: string | undefined, opts: DuOpts) => {
         const folder = resolve(folderArg ?? process.cwd());
