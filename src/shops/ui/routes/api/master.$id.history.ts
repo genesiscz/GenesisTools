@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { getShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import { bestWeekday } from "@app/shops/lib/analytics/best-time";
 import type { PriceHistoryPoint, PriceHistoryResponse } from "@app/shops/types";

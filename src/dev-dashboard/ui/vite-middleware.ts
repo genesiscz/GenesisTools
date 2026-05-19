@@ -32,7 +32,7 @@ import { configureRetention, getCachedPulse, getSeries, startPulsePolling } from
 import { addTodo, completeTodo, deleteTodo, listTodos } from "@app/dev-dashboard/lib/todos/service";
 import { killTtyd, listTtyd, renameTtyd, spawnTtyd } from "@app/dev-dashboard/lib/ttyd/manager";
 import { fetchWeather } from "@app/dev-dashboard/lib/weather/client";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { defaultDbPath } from "@app/question/commands/log";
 import { openReadModel, queryEntries } from "@app/question/lib/read-model";
 import { getAudioLibrary } from "@app/utils/audio/library";
