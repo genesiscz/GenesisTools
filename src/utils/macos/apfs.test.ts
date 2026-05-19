@@ -49,3 +49,37 @@ describe.skipIf(skip.unlessMac)("apfs getPrivateSize (clone semantics)", () => {
         }
     });
 });
+
+import {
+    getCloneId,
+    getExtFlags,
+    isApfsCloneSupported,
+} from "@app/utils/macos/apfs";
+
+describe.skipIf(skip.unlessMac)("apfs clone identity", () => {
+    it("two clones share a non-zero clone id; ext flags mark sharing", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-apfs-id-"));
+        const src = join(dir, "a.bin");
+        const dst = join(dir, "b.bin");
+        try {
+            writeFileSync(src, Buffer.alloc(1024 * 1024, 7));
+            expect(spawnSync("cp", ["-c", src, dst]).status).toBe(0);
+
+            const idSrc = getCloneId(src);
+            const idDst = getCloneId(dst);
+            expect(idSrc).not.toBeNull();
+            expect(idSrc).not.toBe(0n);
+            expect(idDst).toBe(idSrc);
+
+            const flags = getExtFlags(dst);
+            expect(flags).not.toBeNull();
+            expect((flags as { mayShareBlocks: boolean }).mayShareBlocks).toBe(true);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("isApfsCloneSupported is true on macOS", () => {
+        expect(isApfsCloneSupported()).toBe(true);
+    });
+});
