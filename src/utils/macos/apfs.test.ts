@@ -83,3 +83,45 @@ describe.skipIf(skip.unlessMac)("apfs clone identity", () => {
         expect(isApfsCloneSupported()).toBe(true);
     });
 });
+
+import { lstatSync, mkdtempSync as mkd2, readFileSync } from "node:fs";
+import {
+    CloneUnsupportedError,
+    cloneFile,
+    getFsType,
+} from "@app/utils/macos/apfs";
+
+describe.skipIf(skip.unlessMac)("apfs cloneFile + getFsType", () => {
+    it("getFsType returns 'apfs' for the system volume", () => {
+        expect(getFsType("/")).toBe("apfs");
+    });
+
+    it("cloneFile makes an independent COW copy (mutating one never touches the other)", () => {
+        const dir = mkd2(join(tmpdir(), "gt-clonefile-"));
+        const a = join(dir, "a.bin");
+        const b = join(dir, "b.bin");
+        try {
+            writeFileSync(a, Buffer.alloc(1024 * 1024, 0x5a));
+            cloneFile(a, b);
+
+            expect(lstatSync(a).ino).not.toBe(lstatSync(b).ino); // different inodes
+            expect(getCloneId(a)).toBe(getCloneId(b)); // same clone family
+            expect(readFileSync(b).equals(readFileSync(a))).toBe(true);
+
+            // mutate b → a must be unchanged (COW independence)
+            writeFileSync(b, Buffer.alloc(1024 * 1024, 0x01));
+            expect(readFileSync(a)[0]).toBe(0x5a);
+            // mutate a → b must be unchanged
+            writeFileSync(a, Buffer.alloc(1024 * 1024, 0x02));
+            expect(readFileSync(b)[0]).toBe(0x01);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("CloneUnsupportedError is a typed Error", () => {
+        const e = new CloneUnsupportedError("nope");
+        expect(e).toBeInstanceOf(Error);
+        expect(e.name).toBe("CloneUnsupportedError");
+    });
+});
