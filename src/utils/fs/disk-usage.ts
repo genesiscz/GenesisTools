@@ -1,8 +1,25 @@
 import { createHash } from "node:crypto";
-import { readFileSync, readdirSync, statfsSync, statSync } from "node:fs";
-import { join } from "node:path";
+import {
+    chmodSync,
+    lstatSync,
+    readFileSync,
+    readdirSync,
+    renameSync,
+    statfsSync,
+    statSync,
+    unlinkSync,
+    utimesSync,
+} from "node:fs";
+import { join, resolve } from "node:path";
+import logger from "@app/logger";
 import { formatBytes } from "@app/utils/format";
-import { getCloneId, getPrivateSize } from "@app/utils/macos/apfs";
+import {
+    CloneUnsupportedError,
+    cloneFile,
+    getCloneId,
+    getFsType,
+    getPrivateSize,
+} from "@app/utils/macos/apfs";
 
 export interface WalkEntry {
     path: string;
@@ -363,4 +380,106 @@ export function findDedupeCandidates(root: string): DedupeCandidate[] {
     }
 
     return out;
+}
+
+export type DedupeStatus =
+    | "cloned"
+    | "already-cloned"
+    | "skipped-different"
+    | "skipped-symlink"
+    | "skipped-same-file"
+    | "skipped-not-regular";
+
+export interface DedupeResult {
+    status: DedupeStatus;
+    bytesReclaimed: number;
+}
+
+export interface DedupeFileArgs {
+    keep: string;
+    replace: string;
+}
+
+function assertCloneSupported(keep: string, replace: string): void {
+    const a = statSync(keep);
+    const b = statSync(replace);
+    if (a.dev !== b.dev) {
+        throw new CloneUnsupportedError(
+            `keep and replace are on different volumes (dev ${a.dev} != ${b.dev})`,
+        );
+    }
+
+    const fsType = getFsType(replace);
+    if (fsType !== "apfs") {
+        throw new CloneUnsupportedError(
+            `filesystem of "${replace}" is "${fsType}", not apfs — clonefile unsupported`,
+        );
+    }
+}
+
+/** Replace `replace` with a verified COW clone of `keep`, atomically.
+ *  Preconditions enforced (size+sha256+byte-equal, same volume, APFS).
+ *  Throws CloneUnsupportedError on a non-APFS / cross-volume target.
+ *  See "Dedupe Safety Contract". */
+export function dedupeFile({ keep, replace }: DedupeFileArgs): DedupeResult {
+    if (resolve(keep) === resolve(replace)) {
+        return { status: "skipped-same-file", bytesReclaimed: 0 };
+    }
+
+    const ks = lstatSync(keep);
+    const rs = lstatSync(replace);
+    if (ks.isSymbolicLink() || rs.isSymbolicLink()) {
+        return { status: "skipped-symlink", bytesReclaimed: 0 };
+    }
+
+    if (!ks.isFile() || !rs.isFile()) {
+        return { status: "skipped-not-regular", bytesReclaimed: 0 };
+    }
+
+    // same dev+ino = same file or a hardlink set → cloning would break the
+    // hardlink relationship; leave it untouched.
+    if (ks.dev === rs.dev && ks.ino === rs.ino) {
+        return { status: "skipped-same-file", bytesReclaimed: 0 };
+    }
+
+    if (rs.size === 0) {
+        return { status: "skipped-not-regular", bytesReclaimed: 0 };
+    }
+
+    if (ks.size !== rs.size) {
+        return { status: "skipped-different", bytesReclaimed: 0 };
+    }
+
+    const keepId = getCloneId(keep);
+    const replaceId = getCloneId(replace);
+    if (keepId !== null && keepId !== 0n && keepId === replaceId) {
+        return { status: "already-cloned", bytesReclaimed: 0 };
+    }
+
+    const keepBuf = readFileSync(keep);
+    if (!readFileSync(replace).equals(keepBuf)) {
+        return { status: "skipped-different", bytesReclaimed: 0 };
+    }
+
+    assertCloneSupported(keep, replace);
+
+    const reclaimed = fileAllocatedSize(replace);
+    const tmp = `${replace}.gtclone.${process.pid}.${Date.now()}`;
+    try {
+        cloneFile(keep, tmp); // same dir → same volume
+        // preserve replace's original identity-ish metadata
+        renameSync(tmp, replace); // atomic swap
+        chmodSync(replace, rs.mode & 0o7777);
+        utimesSync(replace, rs.atime, rs.mtime);
+    } catch (err) {
+        try {
+            unlinkSync(tmp);
+        } catch (cleanupErr) {
+            logger.debug({ cleanupErr, tmp }, "dedupeFile: temp cleanup failed");
+        }
+
+        throw err;
+    }
+
+    return { status: "cloned", bytesReclaimed: reclaimed };
 }
