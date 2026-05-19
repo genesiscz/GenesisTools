@@ -1,5 +1,5 @@
-import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "bun:test";
+import { existsSync, readFileSync } from "node:fs";
 import {
     appendOp,
     closestProcessIds,
@@ -90,5 +90,50 @@ describe("audit JSONL lifecycle", () => {
 
         const near = closestProcessIds("zzzz-not-a-real-id");
         expect(Array.isArray(near)).toBe(true);
+    });
+});
+
+import { mkdtempSync, readFileSync as rf, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join as j } from "node:path";
+import { runOptimize } from "@app/macos/lib/clones/audit";
+import type { DuplicateSet } from "@app/macos/lib/clones/render/types";
+import { skip } from "@app/utils/test/skip";
+
+describe.skipIf(skip.unlessMac)("runOptimize apply round-trip", () => {
+    it("clones replace files, captures sha-before/after, writes JSONL", () => {
+        const dir = mkdtempSync(j(tmpdir(), "gt-cl-apply-"));
+        try {
+            const payload = Buffer.alloc(512 * 1024, 0x42);
+            writeFileSync(j(dir, "keep"), payload);
+            writeFileSync(j(dir, "dupA"), payload);
+            writeFileSync(j(dir, "dupB"), payload);
+            const sets: DuplicateSet[] = [
+                {
+                    kind: "file",
+                    what: "keep",
+                    copies: 3,
+                    eachBytes: 512 * 1024,
+                    reclaimable: 1024 * 1024,
+                    members: [j(dir, "keep"), j(dir, "dupA"), j(dir, "dupB")],
+                    keep: j(dir, "keep"),
+                },
+            ];
+
+            const rep = runOptimize({ roots: [dir], sets, planCacheHit: false });
+            expect(rep.state).toBe("applied");
+            expect(rep.totals.cloned).toBe(2);
+            const cloneOps = rep.ops.filter((o) => o.op === "clone");
+            expect(cloneOps.length).toBe(2);
+            for (const o of cloneOps) {
+                expect(o.sha256After).toBe(o.sha256Before);
+                expect(o.bytes).toBeGreaterThan(0);
+            }
+
+            const onDisk = rf(processJsonlPath(rep.id), "utf8").trim().split("\n");
+            expect(onDisk.length).toBe(3);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
     });
 });

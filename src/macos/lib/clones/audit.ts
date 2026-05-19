@@ -1,9 +1,21 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+    appendFileSync,
+    existsSync,
+    lstatSync,
+    mkdirSync,
+    readFileSync as readBin,
+    readdirSync,
+    readFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import logger from "@app/logger";
+import { dedupeFile } from "@app/utils/fs/disk-usage";
 import { SafeJSON } from "@app/utils/json";
+import { CloneUnsupportedError, isApfsCloneSupported } from "@app/utils/macos/apfs";
 import { Storage } from "@app/utils/storage/storage";
 import type {
+    DuplicateSet,
     ProcessListEntry,
     ProcessListReport,
     ProcessOp,
@@ -194,3 +206,155 @@ export function closestProcessIds(wanted: string): string[] {
 }
 
 export { firstMeta };
+
+export class IntegrityError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = "IntegrityError";
+    }
+}
+
+function sha256(path: string): string {
+    return createHash("sha256").update(readBin(path)).digest("hex");
+}
+
+export interface RunOptimizeArgs {
+    roots: string[];
+    sets: DuplicateSet[];
+    planCacheHit: boolean;
+    planCacheAgeMs?: number;
+}
+
+/** Audit wrapper (does NOT extend utils dedupeFile). Per file: capture
+ *  pre-state → dedupeFile → on clone re-hash + assert byte-identity (abort
+ *  on mismatch) → append ProcessOp JSONL. Per-file isolation for skips/errors.
+ *  Preflight: off-APFS → throws (caller maps to exit 1). */
+export function runOptimize({ roots, sets, planCacheHit, planCacheAgeMs }: RunOptimizeArgs): ProcessReport {
+    if (!isApfsCloneSupported()) {
+        throw new CloneUnsupportedError("APFS clone support unavailable on this volume — cannot --apply");
+    }
+
+    const id = newProcessId();
+    const startedAt = new Date().toISOString();
+    writeMeta({
+        id,
+        state: "applied",
+        roots,
+        startedAt,
+        endedAt: startedAt,
+        planCacheHit,
+        ...(planCacheAgeMs !== undefined ? { planCacheAgeMs } : {}),
+    });
+
+    let seq = 0;
+    for (const set of sets) {
+        for (const replace of set.members.filter((m) => m !== set.keep)) {
+            seq += 1;
+            const ts = new Date().toISOString();
+            let modeBefore = 0;
+            let mtimeBeforeMs = 0;
+            let sha256Before = "";
+            try {
+                const st = lstatSync(replace);
+                modeBefore = st.mode & 0o7777;
+                mtimeBeforeMs = st.mtimeMs;
+                sha256Before = sha256(replace);
+            } catch (err) {
+                log.warn({ err, replace }, "pre-state capture failed");
+                appendOp(id, {
+                    seq,
+                    ts,
+                    op: "error",
+                    status: "prestate",
+                    bytes: 0,
+                    keep: set.keep,
+                    replace,
+                    modeBefore,
+                    mtimeBeforeMs,
+                    sha256Before,
+                    message: err instanceof Error ? err.message : String(err),
+                });
+                continue;
+            }
+
+            try {
+                const res = dedupeFile({ keep: set.keep, replace });
+                if (res.status === "cloned") {
+                    const sha256After = sha256(replace);
+                    if (sha256After !== sha256Before) {
+                        appendOp(id, {
+                            seq,
+                            ts,
+                            op: "error",
+                            status: "integrity",
+                            bytes: 0,
+                            keep: set.keep,
+                            replace,
+                            modeBefore,
+                            mtimeBeforeMs,
+                            sha256Before,
+                            sha256After,
+                            message: "sha256 changed after clone — run aborted",
+                        });
+                        throw new IntegrityError(
+                            `integrity violation cloning ${replace}: ${sha256Before} != ${sha256After}`
+                        );
+                    }
+
+                    appendOp(id, {
+                        seq,
+                        ts,
+                        op: "clone",
+                        status: "ok",
+                        bytes: res.bytesReclaimed,
+                        keep: set.keep,
+                        replace,
+                        modeBefore,
+                        mtimeBeforeMs,
+                        sha256Before,
+                        sha256After,
+                    });
+                } else {
+                    appendOp(id, {
+                        seq,
+                        ts,
+                        op: "skip",
+                        status: res.status,
+                        bytes: 0,
+                        keep: set.keep,
+                        replace,
+                        modeBefore,
+                        mtimeBeforeMs,
+                        sha256Before,
+                    });
+                }
+            } catch (err) {
+                if (err instanceof IntegrityError) {
+                    throw err;
+                }
+
+                const isClone = err instanceof CloneUnsupportedError;
+                appendOp(id, {
+                    seq,
+                    ts,
+                    op: "error",
+                    status: isClone ? "clone-unsupported" : "errno",
+                    bytes: 0,
+                    keep: set.keep,
+                    replace,
+                    modeBefore,
+                    mtimeBeforeMs,
+                    sha256Before,
+                    message: err instanceof Error ? err.message : String(err),
+                });
+            }
+        }
+    }
+
+    const rep = readProcess(id);
+    if (!rep) {
+        throw new Error(`runOptimize: process ${id} could not be read back`);
+    }
+
+    return rep;
+}

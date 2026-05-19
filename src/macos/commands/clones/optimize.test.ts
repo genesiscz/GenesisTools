@@ -1,7 +1,7 @@
+import { describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "bun:test";
 import { createOptimizeCommand } from "@app/macos/commands/clones/optimize";
 import { SafeJSON } from "@app/utils/json";
 
@@ -41,6 +41,38 @@ describe("createOptimizeCommand (dry-run default)", () => {
             expect(rep.ops).toEqual([]);
             expect(rep.totals.bytesReclaimed).toBeGreaterThanOrEqual(64_000);
             expect(readdirSync(join(dir, "b")).length).toBe(1);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+});
+
+describe("optimize --apply non-TTY guard", () => {
+    it("non-TTY --apply without --yes errors with the exact suggestCommand and exits 1", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-cl-applyguard-"));
+        try {
+            const errs: string[] = [];
+            const origErr = console.error;
+            const origExit = process.exit;
+            let code: number | undefined;
+            console.error = (...x: unknown[]) => errs.push(x.join(" "));
+            process.exit = ((c?: number) => {
+                code = c;
+                throw new Error("__exit__");
+            }) as typeof process.exit;
+            try {
+                await createOptimizeCommand().parseAsync(["node", "optimize", dir, "--apply"], { from: "node" });
+            } catch (e) {
+                if (!(e instanceof Error) || e.message !== "__exit__") {
+                    throw e;
+                }
+            } finally {
+                console.error = origErr;
+                process.exit = origExit;
+            }
+
+            expect(code).toBe(1);
+            expect(errs.join("\n")).toContain("--yes");
         } finally {
             rmSync(dir, { recursive: true, force: true });
         }
