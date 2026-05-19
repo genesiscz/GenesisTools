@@ -16,7 +16,7 @@ import type {
     ReviewCommentData,
     ReviewThreadStats,
 } from "@app/github/types";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { getOctokit } from "@app/utils/github/octokit";
 import { withRetry } from "@app/utils/github/rate-limit";
 import { detectRepoFromGit, parseGitHubUrl } from "@app/utils/github/url-parser";

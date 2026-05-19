@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import type { Embedder } from "@app/utils/ai/tasks/Embedder";
 import { SqliteVectorStore } from "@app/utils/search/stores/sqlite-vector-store";
 import type { VectorSearchHit, VectorStore } from "@app/utils/search/stores/vector-store";

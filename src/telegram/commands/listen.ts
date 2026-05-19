@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";

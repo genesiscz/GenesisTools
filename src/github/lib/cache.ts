@@ -11,7 +11,7 @@ import type {
     RepoRecord,
     TimelineEventRecord,
 } from "@app/github/types";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 
 const DEFAULT_CACHE_DIR = join(homedir(), ".genesis-tools", "github");
 const DB_NAME = "cache.db";

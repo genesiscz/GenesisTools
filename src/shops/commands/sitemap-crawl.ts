@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import { parsePositiveInt } from "@app/shops/lib/cli-validators";
 import { DbHttpRequestSink } from "@app/shops/lib/http-sink";

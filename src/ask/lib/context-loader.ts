@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { CONFIG_FILENAME, loadContextConfig } from "@app/indexer/lib/context-artifacts";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { limitToTokens } from "@app/utils/tokens";
 
 /**

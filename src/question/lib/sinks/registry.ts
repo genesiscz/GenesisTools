@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import type { QuestionConfig } from "../config";
 import type { QaEntry } from "../types";
 import { type Sink, SinkError, type SinkResult } from "./types";

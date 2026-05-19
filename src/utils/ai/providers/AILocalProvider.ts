@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { toFloat32Audio } from "@app/utils/audio/converter";
 import { formatBytes } from "@app/utils/format";
 import { Stopwatch } from "@app/utils/Stopwatch";

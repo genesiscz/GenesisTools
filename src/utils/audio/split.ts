@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { join, parse } from "node:path";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { MONO_MP3_BITRATE_KBPS } from "@app/utils/audio/converter";
 import { getAudioInfo } from "@app/utils/audio/probe";
 import { spawn } from "bun";

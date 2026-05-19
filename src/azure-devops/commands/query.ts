@@ -25,7 +25,7 @@ import {
     isQueryIdOrUrl,
     requireConfig,
 } from "@app/azure-devops/utils";
-import logger, { consoleLog } from "@app/logger";
+import { consoleLog, logger } from "@app/logger";
 import { formatLocalDateTimeStamp } from "@app/utils/date";
 import type { Command } from "commander";
 

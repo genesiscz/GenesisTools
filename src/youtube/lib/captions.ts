@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import type { FetchCaptionsOpts, FetchCaptionsResult } from "@app/youtube/lib/captions.types";
 import { type TranscriptResponse, YoutubeTranscript } from "youtube-transcript";
 

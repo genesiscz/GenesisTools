@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { getShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import { UserProvidersRepository } from "@app/shops/db/UserProvidersRepository";
 import { addFavoriteByMaster } from "@app/shops/lib/watchlist-api";

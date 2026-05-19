@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import type { RunLogRetention } from "./types";
 
 // Matches `<safeTimestamp>-<runId>.jsonl`, e.g. 2026-05-15T19-02-16-a8a9c339.jsonl

@@ -1,4 +1,4 @@
-import logger, { configureLogger } from "@app/logger";
+import { configureLogger, logger } from "@app/logger";
 import { enhanceHelp, isInteractive } from "@app/utils/cli";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { ExitPromptError } from "@inquirer/core";

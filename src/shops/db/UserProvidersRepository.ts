@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import type { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import type { UserProvider } from "@app/shops/db/types";
 import { decryptCredentials, encryptCredentials } from "@app/shops/lib/crypto";

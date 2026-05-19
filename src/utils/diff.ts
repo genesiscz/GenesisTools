@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import logger, { consoleLog } from "@app/logger";
+import { consoleLog, logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import chalk from "chalk";
 

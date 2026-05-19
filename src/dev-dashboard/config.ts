@@ -6,7 +6,7 @@ import {
 } from "@app/dev-dashboard/lib/auth";
 import { getDevDashboardStorage } from "@app/dev-dashboard/lib/storage";
 import type { TtydSession } from "@app/dev-dashboard/lib/ttyd/types";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { resolveVaultRoot } from "@app/utils/obsidian/config";
 import { z } from "zod";
 

@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import pc from "picocolors";
 import type { NewMessageEvent } from "telegram/events";
 import type { DeletedMessageEvent } from "telegram/events/DeletedMessage";

@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import type { YoutubeConfig } from "@app/youtube/lib/config";
 import type { YoutubeDatabase } from "@app/youtube/lib/db";
 import { withJobActivity } from "@app/youtube/lib/job-activity";

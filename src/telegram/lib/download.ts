@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { formatNumber } from "@app/utils/format";
 import { detectLanguage, embedText } from "@app/utils/macos/nlp";
 import type { EmbedResult } from "@app/utils/macos/types";

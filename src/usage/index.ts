@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { UsageDatabase } from "@app/ask/output/UsageDatabase";
 import { dynamicPricingManager } from "@app/ask/providers/DynamicPricing";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { formatDateTime } from "@app/utils/date";
 import { SafeJSON } from "@app/utils/json";
 import chalk from "chalk";

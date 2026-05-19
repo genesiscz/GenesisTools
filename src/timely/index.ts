@@ -2,7 +2,7 @@
 
 // src/timely/index.ts
 
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { enhanceHelp } from "@app/utils/cli";
 import { Storage } from "@app/utils/storage";
 import chalk from "chalk";

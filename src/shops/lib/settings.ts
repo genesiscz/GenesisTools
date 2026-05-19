@@ -1,6 +1,6 @@
 import { copyFile, mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import type {
     DefaultLandingView,
     NotificationChannelsConfig,

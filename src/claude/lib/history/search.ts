@@ -8,7 +8,7 @@ import { createReadStream, readFileSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import { basename, sep } from "node:path";
 import { createInterface } from "node:readline";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { discoverSessionFiles, discoverSessionFilesInDir } from "@app/utils/claude/discovery";
 import { extractProjectName, PROJECTS_DIR, resolveProjectDir } from "@app/utils/claude/projects";
 import { Executor } from "@app/utils/cli";

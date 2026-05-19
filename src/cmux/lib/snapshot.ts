@@ -11,7 +11,7 @@ import {
 } from "@app/cmux/lib/socket";
 import type { Pane, Profile, ProfileScope, Surface, Window, Workspace } from "@app/cmux/lib/types";
 import { PROFILE_VERSION } from "@app/cmux/lib/types";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 
 interface SurfaceListEntry {
     ref: string;

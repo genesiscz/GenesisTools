@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { renderJson, renderResult } from "@app/macos/lib/swap/display";
 import { scan } from "@app/macos/lib/swap/scanner";
 import * as p from "@clack/prompts";

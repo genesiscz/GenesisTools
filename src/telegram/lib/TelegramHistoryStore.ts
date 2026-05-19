@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { SearchEngine } from "@app/utils/search";
 import { vectorSearch } from "@app/utils/search/drivers/sqlite-fts5/vector";
 import type { SerializedMessage } from "./TelegramMessage";

@@ -2,7 +2,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { AI } from "@app/utils/ai/index.ts";
 import { getModelsForTask } from "@app/utils/ai/ModelManager";
 import { getProvidersForTask } from "@app/utils/ai/providers";

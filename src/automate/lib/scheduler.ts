@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import type { AutomateDatabase, ScheduleRow } from "./db";
 import { runPreset } from "./engine";

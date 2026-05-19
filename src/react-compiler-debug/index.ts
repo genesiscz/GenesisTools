@@ -24,7 +24,7 @@ handleReadmeFlag(import.meta.url);
 
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { copyToClipboard } from "@app/utils/clipboard";
 
 import { SafeJSON } from "@app/utils/json";

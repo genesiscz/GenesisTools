@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import type { AIAccount } from "@app/utils/ai/AIAccount";
 import { buildProviderOptions } from "@app/utils/ai/prompt-caching";
 import { applySystemPromptPrefix } from "@app/utils/claude/subscription-billing";

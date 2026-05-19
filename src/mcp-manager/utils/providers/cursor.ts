@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { stripMeta } from "@app/mcp-manager/utils/config.utils.js";
 import { SafeJSON } from "@app/utils/json";
 import chalk from "chalk";

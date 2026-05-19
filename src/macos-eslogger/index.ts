@@ -1,5 +1,5 @@
 import { type ChildProcess, spawn } from "node:child_process";
-import logger, { consoleLog } from "@app/logger";
+import { consoleLog, logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { ExitPromptError } from "@inquirer/core";

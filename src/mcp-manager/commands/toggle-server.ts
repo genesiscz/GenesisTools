@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { getServerNames, promptForProjects, promptForProviders } from "@app/mcp-manager/utils/command.utils.js";
 import { readUnifiedConfig, stripMeta, writeUnifiedConfig } from "@app/mcp-manager/utils/config.utils.js";
 import type { MCPProvider } from "@app/mcp-manager/utils/providers/types.js";

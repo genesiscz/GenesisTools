@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { clearPortFile, SERVER_BASE_DIR } from "@app/youtube/lib/server/port-file";
 
 export const PID_FILE = join(SERVER_BASE_DIR, "server.pid");

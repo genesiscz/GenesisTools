@@ -12,7 +12,7 @@ import { resolveUser, userMatches } from "@app/azure-devops/history";
 import type { AzureConfig, WorkItem, WorkItemCache } from "@app/azure-devops/types";
 import { requireConfig } from "@app/azure-devops/utils";
 import { buildCombinedQuery, buildEverAssignedQuery } from "@app/azure-devops/wiql-builder";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { suggestCommand } from "@app/utils/cli";
 import { formatLocalDate, formatLocalDateTimeStamp } from "@app/utils/date";
 import { formatDuration as _formatDuration } from "@app/utils/format";

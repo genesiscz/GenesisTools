@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { ALL_COLUMN_KEYS, type MailColumnKey } from "@app/macos/lib/mail/columns";
 import {
     enrichWithBodies,

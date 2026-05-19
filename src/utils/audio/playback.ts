@@ -1,7 +1,7 @@
 import { existsSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 
 let _ffplayCache: boolean | null = null;
 

@@ -1,5 +1,5 @@
 import type { ProviderV2 } from "@ai-sdk/provider";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import {
     createSubscriptionFetch,
     SUBSCRIPTION_BETAS,

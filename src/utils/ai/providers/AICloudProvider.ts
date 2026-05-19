@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { TranscriptionManager } from "@app/utils/ai/transcription/TranscriptionManager";
 import type {
     AIEmbeddingProvider,

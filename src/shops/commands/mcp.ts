@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { startMcpServer } from "@app/shops/mcp/server";
 import type { Command } from "commander";
 

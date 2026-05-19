@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { getShopsDatabase, type ShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import { buildRegistry, getAdvertisedTools, getHandler, type ToolEntry } from "@app/shops/mcp/registry";
 import { listResources, readResource } from "@app/shops/mcp/resources";

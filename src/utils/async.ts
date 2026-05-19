@@ -3,7 +3,7 @@
  * Consolidates retry, debounce, throttle, and withTimeout.
  */
 
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 
 // ============= Retry =============
 

@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { createKyselyClient, type DatabaseClient } from "@app/utils/database";
 import { sql } from "kysely";
 import type { AutomateDB, RunLogRow, RunRow, ScheduleRow } from "./db-types";

@@ -16,7 +16,7 @@ import type {
     WorkItemSettings,
 } from "@app/azure-devops/types";
 import { filterAttachments, getTaskFilePath } from "@app/azure-devops/utils";
-import logger, { consoleLog } from "@app/logger";
+import { consoleLog, logger } from "@app/logger";
 import { concurrentMap } from "@app/utils/async";
 import { withQueryParams } from "@app/utils/url";
 

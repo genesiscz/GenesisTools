@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import type { IndexerSource, MetadataPopulateOpts } from "./sources/source";
 import type { MetadataColumnSpec } from "./types";
