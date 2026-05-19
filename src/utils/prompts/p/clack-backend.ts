@@ -2,6 +2,16 @@ import { handleCancel, isCancelled } from "@app/utils/prompts/clack/helpers";
 import type { TextOptions } from "@clack/prompts";
 import * as clack from "@clack/prompts";
 import pc from "picocolors";
+
+// stdout is reserved for machine results (out.result/print). Route clack's
+// non-prompt rendering (log.*, spinner, note, intro/outro/cancel) to stderr.
+// @clack/prompts@1.0.0 ClackSettings has no `output` field, so the plan's
+// `updateSettings({ output })` recipe is a no-op on this pin; the portable
+// surface is the per-call `output` on CommonOptions (inherited by
+// LogMessageOptions/NoteOptions/SpinnerOptions). Interactive prompts
+// (text/confirm/select/multiselect/password) intentionally do NOT pass this —
+// they stay on the TTY.
+const STDERR: { output: typeof process.stderr } = { output: process.stderr };
 import type { PromptBackend } from "./backend";
 import type {
     Log,
@@ -23,13 +33,13 @@ function unwrap<T>(result: T | symbol): T {
 }
 
 const log: Log = {
-    info: (msg) => clack.log.info(msg),
-    success: (msg) => clack.log.success(msg),
-    warn: (msg) => clack.log.warn(msg),
-    warning: (msg) => clack.log.warn(msg),
-    error: (msg) => clack.log.error(msg),
-    step: (msg) => clack.log.step(msg),
-    message: (msg) => clack.log.message(Array.isArray(msg) ? msg.join("\n") : msg),
+    info: (msg) => clack.log.info(msg, STDERR),
+    success: (msg) => clack.log.success(msg, STDERR),
+    warn: (msg) => clack.log.warn(msg, STDERR),
+    warning: (msg) => clack.log.warn(msg, STDERR),
+    error: (msg) => clack.log.error(msg, STDERR),
+    step: (msg) => clack.log.step(msg, STDERR),
+    message: (msg) => clack.log.message(Array.isArray(msg) ? msg.join("\n") : msg, STDERR),
 };
 
 function toTextOptions(opts: TextOpts): TextOptions {
@@ -80,10 +90,10 @@ async function typedConfirmImpl(opts: TypedConfirmOpts): Promise<boolean> {
 }
 
 export const clackBackend: PromptBackend = {
-    intro: (msg) => clack.intro(msg),
-    outro: (msg) => clack.outro(msg),
-    cancel: (msg) => clack.cancel(msg),
-    note: (content, title) => clack.note(content, title),
+    intro: (msg) => clack.intro(msg, STDERR),
+    outro: (msg) => clack.outro(msg, STDERR),
+    cancel: (msg) => clack.cancel(msg, STDERR),
+    note: (content, title) => clack.note(content, title, STDERR),
 
     text: async (opts: TextOpts) => unwrap(await clack.text(toTextOptions(opts))),
 
@@ -124,7 +134,7 @@ export const clackBackend: PromptBackend = {
         ),
 
     spinner: (): Spinner => {
-        const spinner = clack.spinner();
+        const spinner = clack.spinner(STDERR);
         return {
             start: (msg) => spinner.start(msg),
             stop: (msg) => spinner.stop(msg),
