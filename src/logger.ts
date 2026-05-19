@@ -271,26 +271,77 @@ export const createConsoleLoggerRaw = (logLevel: LogLevel = currentLevel): RawCo
     };
 };
 
-// Default logger instances - both use minimalLevels (no level prefix for info/debug/trace)
-let logger = createLogger({ logToFile: true, minimalLevels: true });
-let consoleLog = createLogger({ logToFile: true, minimalLevels: true });
+export type Logger = pino.Logger;
+
+let _pino: pino.Logger | null = null;
+function get(): pino.Logger {
+    if (_pino === null) {
+        _pino = createLogger({ logToFile: true, minimalLevels: true });
+    }
+
+    return _pino;
+}
+
+// Hand-coded stable facade. NOT a Proxy (pino .level/.bindings getter+setter
+// and method count make Proxy traps fragile — see spec §3.1).
+interface ScopedLogger {
+    log: pino.Logger; // child; .out/.tee added in Phase 2
+}
+
+export interface LoggerFacade {
+    trace: pino.LogFn;
+    debug: pino.LogFn;
+    info: pino.LogFn;
+    warn: pino.LogFn;
+    error: pino.LogFn;
+    fatal: pino.LogFn;
+    child(bindings: pino.Bindings, options?: pino.ChildLoggerOptions): pino.Logger;
+    get level(): string;
+    set level(v: string);
+    flush(): void;
+    scoped(component: string, opts?: { level?: string; bindings?: Record<string, unknown> }): ScopedLogger;
+}
+
+export const logger: LoggerFacade = {
+    trace: (...a: Parameters<pino.LogFn>) => get().trace(...a),
+    debug: (...a: Parameters<pino.LogFn>) => get().debug(...a),
+    info: (...a: Parameters<pino.LogFn>) => get().info(...a),
+    warn: (...a: Parameters<pino.LogFn>) => get().warn(...a),
+    error: (...a: Parameters<pino.LogFn>) => get().error(...a),
+    fatal: (...a: Parameters<pino.LogFn>) => get().fatal(...a),
+    child: (b: pino.Bindings, o?: pino.ChildLoggerOptions) => get().child(b, o),
+    get level() {
+        return get().level;
+    },
+    set level(v: string) {
+        get().level = v;
+    },
+    flush: () => get().flush(),
+    scoped(component, opts) {
+        const child = get().child(
+            { component, ...(opts?.bindings ?? {}) },
+            opts?.level ? { level: opts.level } : undefined
+        );
+
+        return { log: child };
+    },
+};
 
 /**
- * Configure logger behavior and recreate logger instances
+ * Bridging stubs: the facade replaced the old mutable `let logger`/`let
+ * consoleLog`, but configureLogger (2 ext callers) and getLogger (3 ext
+ * callers — ApiClient, WebViewPool) must keep compiling through Phase 1.
+ * Task 4 rewrites configureLogger to drive the console gate; here it only
+ * records globalConfig (no rebuild — the facade singleton never rebuilds).
  */
 export const configureLogger = (config: LoggerConfig): void => {
     globalConfig = { ...globalConfig, ...config };
-    const logToFile = globalConfig.logToFile ?? false;
-    const level = globalConfig.level;
-    logger = createLogger({ logToFile, minimalLevels: true, ...(level && { level }) });
-    // consoleLog participates in file logging to capture full session output
-    consoleLog = createLogger({ logToFile, minimalLevels: true, ...(level && { level }) });
 };
 
-/** Returns the current logger instance (reflects configureLogger changes) */
+/** Returns the underlying pino (now the lazy singleton). */
 export function getLogger(): pino.Logger {
-    return logger;
+    return get();
 }
 
-export { consoleLog };
-export default logger;
+export const consoleLog = logger; // transitional alias (Phase 4 migrates importers)
+export default logger; // transitional default (removed in Task 22)
