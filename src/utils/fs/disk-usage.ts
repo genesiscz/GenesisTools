@@ -205,3 +205,64 @@ export function findCloneFamilies(root: string): Map<string, string[]> {
 
     return families;
 }
+
+export interface FreeSpace {
+    total: number;
+    free: number;
+    available: number;
+}
+
+/** Volume capacity for the filesystem containing `path` (node:fs.statfsSync,
+ *  works in Bun 1.3.13). Cross-platform. */
+export function freeDiskSpace(path: string): FreeSpace {
+    const s = statfsSync(path, { bigint: true });
+    const bsize = Number(s.bsize);
+    return {
+        total: Number(s.blocks) * bsize,
+        free: Number(s.bfree) * bsize,
+        available: Number(s.bavail) * bsize,
+    };
+}
+
+/** How inflated the du/allocated number is vs the real reclaimable size.
+ *  null when private is unavailable (non-darwin / all syscalls failed). */
+export function overcountRatio(
+    root: string,
+): { allocated: number; private: number; ratio: number } | null {
+    const u = measureTree(root);
+    if (u.private === null) {
+        return null;
+    }
+
+    const ratio = u.private > 0 ? u.allocated / u.private : 1;
+    return { allocated: u.allocated, private: u.private, ratio };
+}
+
+/** Multi-line human summary that always shows du vs real side-by-side. */
+export function formatDiskUsage(u: DiskUsage): string {
+    const lines = [
+        `files: ${u.fileCount}  dirs: ${u.dirCount}`,
+        `logical:   ${formatBytes(u.logical)}`,
+        `du says:   ${formatBytes(u.allocated)}  (per-inode, overcounts clones)`,
+    ];
+    if (u.private === null) {
+        lines.push("actually:  unknown (clone-aware sizing unavailable here)");
+    } else {
+        const ratio = u.private > 0 ? u.allocated / u.private : 1;
+        lines.push(
+            `actually:  ${formatBytes(u.private)} freed if deleted now` +
+                `  (overcount ${ratio.toFixed(1)}x)`,
+        );
+        if (u.exactReclaimable !== null && u.exactReclaimable !== u.private) {
+            lines.push(
+                `whole-tree: ~${formatBytes(u.exactReclaimable)} (clone-deduped)`,
+            );
+        }
+    }
+
+    if (u.errors.length > 0) {
+        lines.push(`(${u.errors.length} path(s) skipped: ${u.errors[0].errno}…)`);
+    }
+
+    return lines.join("\n");
+}
