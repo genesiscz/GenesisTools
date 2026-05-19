@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import logger from "@app/logger";
 import { getUnifiedConfigPath } from "@app/mcp-manager/utils/config.utils.js";
+import { BackupManager } from "@app/mcp-manager/utils/backup.js";
 import type { UnifiedMCPConfig } from "@app/mcp-manager/utils/providers/types.js";
 import { isInteractive } from "@app/utils/cli";
 import { Storage } from "@app/utils/storage";
@@ -28,6 +29,17 @@ export async function openConfig(options: ConfigOptions = {}): Promise<void> {
         const defaultConfig: UnifiedMCPConfig = {
             mcpServers: {},
         };
+        // Defense-in-depth (post-incident hardening): this is the ONLY
+        // unified-config writer that doesn't go through writeUnifiedConfig()
+        // (which always backs up first). It's guarded by !existsSync above,
+        // but guard the TOCTOU window too — if the file materialised between
+        // the check and here, back it up via the same BackupManager
+        // mechanism before the default write, so an empty default can never
+        // silently replace a populated config without a recoverable backup.
+        if (existsSync(configPath)) {
+            await new BackupManager().createBackup(configPath, "unified");
+        }
+
         await mcpStorage().setConfig(defaultConfig);
         logger.info(`Created default config at ${configPath}`);
     }
