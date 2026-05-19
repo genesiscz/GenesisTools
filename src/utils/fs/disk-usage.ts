@@ -1,11 +1,11 @@
 import { createHash } from "node:crypto";
 import {
-    type Dirent,
     chmodSync,
     chownSync,
+    type Dirent,
     lstatSync,
-    readFileSync,
     readdirSync,
+    readFileSync,
     renameSync,
     statfsSync,
     statSync,
@@ -15,13 +15,7 @@ import {
 import { join, resolve } from "node:path";
 import logger from "@app/logger";
 import { formatBytes } from "@app/utils/format";
-import {
-    CloneUnsupportedError,
-    cloneFile,
-    getCloneId,
-    getFsType,
-    getPrivateSize,
-} from "@app/utils/macos/apfs";
+import { CloneUnsupportedError, cloneFile, getCloneId, getFsType, getPrivateSize } from "@app/utils/macos/apfs";
 
 export interface WalkEntry {
     path: string;
@@ -75,10 +69,7 @@ export function filePrivateSize(path: string): number | null {
 /** Recursively yields regular files under `root`. Never follows symlinks
  *  (readdirSync does not, and apfs syscalls use FSOPT_NOFOLLOW). Per-entry
  *  errors (EPERM/ENOENT mid-walk) are reported via opts.onError, not thrown. */
-export function* walkFiles(
-    root: string,
-    opts: WalkOptions = {},
-): Generator<WalkEntry> {
+export function* walkFiles(root: string, opts: WalkOptions = {}): Generator<WalkEntry> {
     let entries: Dirent[];
     try {
         entries = readdirSync(root, { withFileTypes: true });
@@ -123,10 +114,7 @@ export interface MeasureOptions {
     exact?: boolean;
 }
 
-export function measureTree(
-    root: string,
-    opts: MeasureOptions = {},
-): DiskUsage {
+export function measureTree(root: string, opts: MeasureOptions = {}): DiskUsage {
     const errors: WalkError[] = [];
     let logical = 0;
     let allocated = 0;
@@ -246,9 +234,7 @@ export function freeDiskSpace(path: string): FreeSpace {
 
 /** How inflated the du/allocated number is vs the real reclaimable size.
  *  null when private is unavailable (non-darwin / all syscalls failed). */
-export function overcountRatio(
-    root: string,
-): { allocated: number; private: number; ratio: number } | null {
+export function overcountRatio(root: string): { allocated: number; private: number; ratio: number } | null {
     const u = measureTree(root);
     if (u.private === null) {
         return null;
@@ -269,14 +255,9 @@ export function formatDiskUsage(u: DiskUsage): string {
         lines.push("actually:  unknown (clone-aware sizing unavailable here)");
     } else {
         const ratio = u.private > 0 ? u.allocated / u.private : 1;
-        lines.push(
-            `actually:  ${formatBytes(u.private)} freed if deleted now` +
-                `  (overcount ${ratio.toFixed(1)}x)`,
-        );
+        lines.push(`actually:  ${formatBytes(u.private)} freed if deleted now` + `  (overcount ${ratio.toFixed(1)}x)`);
         if (u.exactReclaimable !== null && u.exactReclaimable !== u.private) {
-            lines.push(
-                `whole-tree: ~${formatBytes(u.exactReclaimable)} (clone-deduped)`,
-            );
+            lines.push(`whole-tree: ~${formatBytes(u.exactReclaimable)} (clone-deduped)`);
         }
     }
 
@@ -344,9 +325,7 @@ export function findDuplicateFiles(root: string): DuplicateGroup[] {
             }
 
             const ref = readFileSync(group[0]);
-            const confirmed = group.filter(
-                (p) => p === group[0] || readFileSync(p).equals(ref),
-            );
+            const confirmed = group.filter((p) => p === group[0] || readFileSync(p).equals(ref));
             if (confirmed.length >= 2) {
                 groups.push({ size, sha256, paths: confirmed.sort() });
             }
@@ -406,16 +385,12 @@ function assertCloneSupported(keep: string, replace: string): void {
     const a = statSync(keep);
     const b = statSync(replace);
     if (a.dev !== b.dev) {
-        throw new CloneUnsupportedError(
-            `keep and replace are on different volumes (dev ${a.dev} != ${b.dev})`,
-        );
+        throw new CloneUnsupportedError(`keep and replace are on different volumes (dev ${a.dev} != ${b.dev})`);
     }
 
     const fsType = getFsType(replace);
     if (fsType !== "apfs") {
-        throw new CloneUnsupportedError(
-            `filesystem of "${replace}" is "${fsType}", not apfs — clonefile unsupported`,
-        );
+        throw new CloneUnsupportedError(`filesystem of "${replace}" is "${fsType}", not apfs — clonefile unsupported`);
     }
 }
 
@@ -521,10 +496,7 @@ export interface DedupeTreeReport {
 /** Walk `root`, find non-clone duplicates, and (only if `apply: true`)
  *  convert each duplicate into a verified COW clone of its group's
  *  representative. Default is a dry run that mutates nothing. */
-export function dedupeTree(
-    root: string,
-    opts: DedupeTreeOptions = {},
-): DedupeTreeReport {
+export function dedupeTree(root: string, opts: DedupeTreeOptions = {}): DedupeTreeReport {
     const apply = opts.apply === true;
     const candidates = findDedupeCandidates(root);
     const report: DedupeTreeReport = {

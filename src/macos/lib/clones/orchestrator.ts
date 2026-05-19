@@ -84,7 +84,7 @@ function anySegmentMatches(rel: string, glob: string): boolean {
 }
 
 function passesGlobs(rel: string, base: string, include?: string[], exclude?: string[]): boolean {
-    if (exclude && exclude.some((g) => anySegmentMatches(rel, g) || matchGlob(base, g))) {
+    if (exclude?.some((g) => anySegmentMatches(rel, g) || matchGlob(base, g))) {
         return false;
     }
 

@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import {
-    type ClonesConfig,
     addWatchedDirs,
+    type ClonesConfig,
     loadClonesConfig,
     removeWatchedDirs,
     setMinReal,

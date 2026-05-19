@@ -44,13 +44,7 @@ export class CloneUnsupportedError extends Error {
 }
 
 type LibcExt = {
-    getattrlist: (
-        path: number,
-        attrList: number,
-        attrBuf: number,
-        attrBufSize: bigint,
-        options: bigint,
-    ) => number;
+    getattrlist: (path: number, attrList: number, attrBuf: number, attrBufSize: bigint, options: bigint) => number;
     clonefile: (src: number, dst: number, flags: number) => number;
     statfs: (path: number, buf: number) => number;
 };
@@ -99,9 +93,7 @@ function getLibc(): LibcExt | null {
 
         for (const sName of ["statfs$INODE64", "statfs"]) {
             try {
-                sym.statfs = dlopen(candidate, { [sName]: statfsSig }).symbols[
-                    sName
-                ];
+                sym.statfs = dlopen(candidate, { [sName]: statfsSig }).symbols[sName];
                 break;
             } catch (err) {
                 logger.debug({ err, candidate, sName }, "apfs: statfs bind failed");
@@ -214,9 +206,7 @@ export function getFsType(path: string): string | null {
 
     const bytes = new Uint8Array(buf, F_FSTYPENAME_OFFSET, MFSTYPENAMELEN);
     const end = bytes.indexOf(0);
-    return new TextDecoder()
-        .decode(bytes.subarray(0, end === -1 ? MFSTYPENAMELEN : end))
-        .toLowerCase();
+    return new TextDecoder().decode(bytes.subarray(0, end === -1 ? MFSTYPENAMELEN : end)).toLowerCase();
 }
 
 /** True if the filesystem at `path` supports APFS clonefile. */
@@ -236,12 +226,12 @@ export function cloneFile(src: string, dst: string): void {
     const rc = lib.clonefile(
         ptr(Buffer.from(`${src}\0`, "utf8")),
         ptr(Buffer.from(`${dst}\0`, "utf8")),
-        CLONE_NOFOLLOW,
+        CLONE_NOFOLLOW
     );
     if (rc !== 0) {
         throw new CloneUnsupportedError(
             `clonefile("${src}" -> "${dst}") failed (rc=${rc}); ` +
-                "volume likely not APFS or src/dst on different volumes",
+                "volume likely not APFS or src/dst on different volumes"
         );
     }
 }
