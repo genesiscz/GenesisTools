@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { callLLM, callLLMStructured } from "@app/utils/ai/call-llm";
 import { Summarizer } from "@app/utils/ai/tasks/Summarizer";
 import type { YoutubeConfig } from "@app/youtube/lib/config";

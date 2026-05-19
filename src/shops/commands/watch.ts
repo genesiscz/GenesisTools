@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { parseCooldown, parsePercent } from "@app/shops/lib/watch-parsing";
 import { addFavorite, editFavorite, getWatchlist, removeFavorite } from "@app/shops/lib/watchlist-api";
 import { runWatchlistTick } from "@app/shops/lib/watchlist-tick";

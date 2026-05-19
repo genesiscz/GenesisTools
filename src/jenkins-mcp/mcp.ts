@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";

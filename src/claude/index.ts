@@ -1,6 +1,5 @@
 #!/usr/bin/env bun
-import "./log-policy";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { runTool } from "@app/utils/cli";
 import { Command } from "commander";
 import { registerConfigCommand } from "./commands/config";

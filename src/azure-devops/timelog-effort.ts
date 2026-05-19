@@ -1,6 +1,6 @@
 import type { Api } from "@app/azure-devops/api";
 import type { JsonPatchOperation } from "@app/azure-devops/types";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import pc from "picocolors";
 
 const REMAINING_FIELD = "Microsoft.VSTS.Scheduling.RemainingWork";

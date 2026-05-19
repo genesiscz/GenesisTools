@@ -1,6 +1,6 @@
 import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readSync, watch, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { parseJsonlChunk } from "@app/utils/jsonl";
 
 const log = logger.child({ component: "fs:file-tailer" });

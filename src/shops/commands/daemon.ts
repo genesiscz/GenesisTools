@@ -1,5 +1,5 @@
 import { type RegisterTaskOptions, registerTask, unregisterTask } from "@app/daemon/lib/register";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { Executor } from "@app/utils/cli";
 import type { Command } from "commander";
 

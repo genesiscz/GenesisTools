@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { retry } from "@app/utils/async";
 import type { OAuthTokens } from "./auth";
 import { claudeOAuth } from "./auth";

@@ -1,5 +1,5 @@
 import { statSync } from "node:fs";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import type { TranscriptionModel } from "ai";
 import { experimental_transcribe as transcribe } from "ai";
 import pc from "picocolors";

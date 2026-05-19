@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { HlidacShopuClient } from "@app/shops/api/HlidacShopuClient";
 import {
     type AddFavoriteArgs,

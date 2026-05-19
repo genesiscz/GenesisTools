@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { isInteractive } from "@app/utils/cli";
 import { formatDuration } from "@app/utils/format";
 import { SafeJSON } from "@app/utils/json";

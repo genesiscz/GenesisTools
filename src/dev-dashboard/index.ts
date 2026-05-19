@@ -7,7 +7,7 @@ import { getConfig, saveConfig } from "@app/dev-dashboard/config";
 import { createBasicAuthCredentials } from "@app/dev-dashboard/lib/auth";
 import { startFrontProxy } from "@app/dev-dashboard/lib/front-proxy";
 import { findFreePort } from "@app/dev-dashboard/lib/ttyd/free-port";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { PROJECT_ROOT } from "@app/utils/paths";
 import { stripAnsi } from "@app/utils/string";
 import { Command } from "commander";

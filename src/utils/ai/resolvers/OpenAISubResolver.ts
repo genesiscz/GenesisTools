@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import type { AIProvider } from "@app/utils/config/ai.types";
 import type { DetectedProvider, ModelInfo } from "@ask/types";
 import type { AccountResolver } from "./index";

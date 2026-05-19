@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import type { AxiosInstance } from "axios";
 import { type ErrorBlock, extractErrors } from "./errors";

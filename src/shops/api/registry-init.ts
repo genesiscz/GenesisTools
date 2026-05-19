@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { ShopRegistry } from "@app/shops/api/ShopRegistry";
 import { AlbertClient } from "@app/shops/api/shops/AlbertClient";
 import { AlzaClient } from "@app/shops/api/shops/AlzaClient";

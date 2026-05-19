@@ -33,7 +33,7 @@ import type {
     WorkItemTypeDefinition,
     WorkItemUpdate,
 } from "@app/azure-devops/types";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { concurrentMap } from "@app/utils/async";
 import { SafeJSON } from "@app/utils/json";
 import { buildUrl } from "@app/utils/url";

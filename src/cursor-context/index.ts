@@ -2,7 +2,7 @@
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { copyToClipboard } from "@app/utils/clipboard";
 import { ExitPromptError } from "@inquirer/core";
 import { checkbox, confirm, input } from "@inquirer/prompts";

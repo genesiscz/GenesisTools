@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { EmlxBodyExtractor } from "@app/macos/lib/mail/emlx";
 import {
     generateAttachmentName,

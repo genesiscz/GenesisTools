@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { getIndexerStorage } from "@app/indexer/lib/storage";
 import { searchIndexReadonly } from "@app/indexer/lib/store";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { ENVELOPE_INDEX_PATH } from "@app/macos/lib/mail/constants";
 import { buildMailFilterPredicate } from "@app/macos/lib/mail/search-filters";
 import {

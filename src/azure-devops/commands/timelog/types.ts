@@ -2,7 +2,7 @@ import { loadTimeTypesCache, saveTimeTypesCache } from "@app/azure-devops/cache"
 import { TimeLogApi } from "@app/azure-devops/timelog-api";
 import type { TimeType } from "@app/azure-devops/types";
 import { requireTimeLogConfig, requireTimeLogUser } from "@app/azure-devops/utils";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import type { Command } from "commander";
 

@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { unlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 
 const DEFAULT_TIMEOUT_MS = 5000;
 const POLL_INTERVAL_MS = 50;

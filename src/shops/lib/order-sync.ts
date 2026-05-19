@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { getShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import { UserOrdersRepository } from "@app/shops/db/UserOrdersRepository";
 import { UserProvidersRepository } from "@app/shops/db/UserProvidersRepository";

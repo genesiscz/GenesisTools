@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 
 export interface Migration {
     id: string;

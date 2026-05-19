@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { UsageHistoryDb } from "@app/claude/lib/usage/history-db";
 import { getClaudeUsageStorage } from "@app/claude/lib/usage/storage";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import type { AccountUsage } from "./api";
 import { fetchAllAccountsUsage } from "./api";
 

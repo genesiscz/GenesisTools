@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { transcriptionManager } from "@app/utils/ai/transcription/TranscriptionManager";
 import { input } from "@app/utils/prompts/clack";
 import { handleReadmeFlag } from "@app/utils/readme";

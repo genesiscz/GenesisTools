@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { copyToClipboard } from "@app/utils/clipboard";
 import { SafeJSON } from "@app/utils/json";
 import type { OutputConfig, OutputFormat } from "@ask/types";

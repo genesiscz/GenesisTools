@@ -1,4 +1,4 @@
-import log from "@app/logger";
+import { logger as log } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { ExitPromptError } from "@inquirer/core";

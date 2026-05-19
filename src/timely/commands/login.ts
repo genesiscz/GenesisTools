@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import type { TimelyApiClient } from "@app/timely/api/client";
 import type { OAuthApplication } from "@app/timely/types";
 import { Browser } from "@app/utils/browser";

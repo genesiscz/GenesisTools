@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import type { TimelyEntry } from "@app/timely/types";
 import type { Storage } from "@app/utils/storage";
 

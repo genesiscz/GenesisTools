@@ -2,7 +2,7 @@
 
 import { formatNotifications } from "@app/github/lib/output";
 import type { GitHubNotification, NotificationItem, NotificationsCommandOptions } from "@app/github/types";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { Browser } from "@app/utils/browser";
 import { getOctokit } from "@app/utils/github/octokit";
 import { withRetry } from "@app/utils/github/rate-limit";

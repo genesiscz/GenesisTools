@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { handleReadmeFlag } from "@app/utils/readme";
 import axios from "axios";
 import { Command } from "commander";

@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import type { NotificationEvent, TelegramChannelConfig } from "../types";
 
 export async function dispatchTelegram(event: NotificationEvent, config: TelegramChannelConfig): Promise<void> {

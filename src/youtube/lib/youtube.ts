@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { concurrentMap } from "@app/utils/async";
 import { audioPath, ensureBinaryDir, videoFilePath } from "@app/youtube/lib/cache";
 import type { ChannelHandle } from "@app/youtube/lib/channel.types";

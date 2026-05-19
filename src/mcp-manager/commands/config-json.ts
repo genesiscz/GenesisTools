@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { readUnifiedConfig, stripMetaFromServers } from "@app/mcp-manager/utils/config.utils.js";
 import type { UnifiedMCPServerConfig } from "@app/mcp-manager/utils/providers/types.js";
 import { copyToClipboard } from "@app/utils/clipboard";

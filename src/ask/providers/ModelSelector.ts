@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import type { TranscriptionCapableProvider } from "@app/utils/ai/types";
 import type { SearchItem } from "@app/utils/prompts/clack";
 import { searchSelect, searchSelectCancelSymbol } from "@app/utils/prompts/clack";

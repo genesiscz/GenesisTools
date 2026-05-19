@@ -7,7 +7,7 @@
  */
 
 import type { AllowedTypeConfig, AzWorkItemRaw, Relation } from "@app/azure-devops/types";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import { $ } from "bun";
 

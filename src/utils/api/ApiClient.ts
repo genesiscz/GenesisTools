@@ -1,4 +1,4 @@
-import type logger from "@app/logger";
+import type { Logger as logger } from "@app/logger";
 import { getLogger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import { type FetchError, ofetch, type ResponseType } from "ofetch";

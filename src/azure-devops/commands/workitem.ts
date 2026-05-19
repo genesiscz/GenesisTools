@@ -34,7 +34,7 @@ import {
     parseRelations,
     requireConfig,
 } from "@app/azure-devops/utils";
-import logger, { consoleLog } from "@app/logger";
+import { consoleLog, logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import type { Command } from "commander";
 

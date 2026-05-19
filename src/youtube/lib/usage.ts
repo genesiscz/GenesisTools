@@ -11,7 +11,7 @@
  * also written to `job_activity` so the jobs inspector can show prompts/responses/cost
  * per pipeline job.
  */
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { getJobActivityContext } from "@app/youtube/lib/job-activity";
 import type { JobActivityKind } from "@app/youtube/lib/jobs.types";
 import { costTracker } from "@ask/output/CostTracker";

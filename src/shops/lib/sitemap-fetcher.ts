@@ -1,5 +1,5 @@
 import { gunzipSync } from "node:zlib";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { parseSitemap } from "@crawlee/utils";
 import { parseHTML } from "linkedom";
 
