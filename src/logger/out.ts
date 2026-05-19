@@ -1,10 +1,10 @@
-import { isCancel } from "@clack/prompts";
-import { asResult } from "@app/utils/cli/result";
 import { isQuietOutput } from "@app/utils/cli/output-mode";
 import { createQuietSpinner } from "@app/utils/cli/quiet-spinner";
+import { asResult } from "@app/utils/cli/result";
 import { writeStdout } from "@app/utils/cli/stdout";
-import * as p from "@app/utils/prompts/p";
 import type { SelectValue } from "@app/utils/prompts/p";
+import * as p from "@app/utils/prompts/p";
+import { isCancel } from "@clack/prompts";
 import { logger } from "../logger";
 
 export interface OutConfig {
