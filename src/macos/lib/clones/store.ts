@@ -8,7 +8,10 @@ export interface ClonesConfig {
     nodeModules?: boolean;
 }
 
-const storage = new Storage("macos-clones");
+/** Exported for test fixtures that need to snapshot/restore the entire config
+ *  via `storage.getConfig()`/`storage.setConfig()`/`storage.clearConfig()`.
+ *  Production callers should use the typed helpers below. */
+export const storage = new Storage("macos-clones");
 
 function normalize(config: Partial<ClonesConfig>): ClonesConfig {
     return {

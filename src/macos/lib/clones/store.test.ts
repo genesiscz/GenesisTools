@@ -1,13 +1,29 @@
-import { describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import {
+    type ClonesConfig,
     addWatchedDirs,
     loadClonesConfig,
     removeWatchedDirs,
     setMinReal,
     setNodeModules,
+    storage,
 } from "@app/macos/lib/clones/store";
 
 describe("clones store", () => {
+    let snapshot: ClonesConfig | null;
+
+    beforeAll(async () => {
+        snapshot = await storage.getConfig<ClonesConfig>();
+    });
+
+    afterAll(async () => {
+        if (snapshot) {
+            await storage.setConfig(snapshot);
+        } else {
+            await storage.clearConfig();
+        }
+    });
+
     it("defaults to an empty config; add/remove watched dirs dedups & persists", async () => {
         const c0 = await loadClonesConfig();
         expect(Array.isArray(c0.watchedDirs)).toBe(true);
