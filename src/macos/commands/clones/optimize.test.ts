@@ -78,3 +78,32 @@ describe("optimize --apply non-TTY guard", () => {
         }
     });
 });
+
+import { newProcessId, writeMeta } from "@app/macos/lib/clones/audit";
+
+describe("optimize --list", () => {
+    it("--list --format json lists recorded processes newest-first", async () => {
+        const id = newProcessId();
+        writeMeta({
+            id,
+            state: "dry-run",
+            roots: ["/tmp/list-test"],
+            startedAt: new Date().toISOString(),
+            endedAt: new Date().toISOString(),
+            planCacheHit: false,
+        });
+        const logs: string[] = [];
+        const orig = console.log;
+        console.log = (...x: unknown[]) => logs.push(x.join(" "));
+        try {
+            await createOptimizeCommand().parseAsync(["node", "optimize", "--list", "--format", "json"], {
+                from: "node",
+            });
+        } finally {
+            console.log = orig;
+        }
+
+        const parsed = SafeJSON.parse(logs.join("\n")) as { processes: { id: string }[] };
+        expect(parsed.processes.some((pr) => pr.id === id)).toBe(true);
+    });
+});

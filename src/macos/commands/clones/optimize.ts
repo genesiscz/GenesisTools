@@ -1,5 +1,5 @@
 import logger from "@app/logger";
-import { IntegrityError, runOptimize } from "@app/macos/lib/clones/audit";
+import { IntegrityError, listProcesses, runOptimize } from "@app/macos/lib/clones/audit";
 import { cachePlan, getCachedPlan } from "@app/macos/lib/clones/cache";
 import { collapseDuplicates } from "@app/macos/lib/clones/collapse";
 import { expandNodeModules, resolveRoots } from "@app/macos/lib/clones/orchestrator";
@@ -71,8 +71,14 @@ export function createOptimizeCommand(): Command {
         .option("-v, --verbose", "Verbose logging", false)
         .option("--silent", "Suppress non-essential output", false)
         .action(async (rootsArg: string[], opts: OptimizeOpts) => {
-            if (opts.list || opts.log || opts.rollback) {
-                throw new Error("optimize: --list/--log/--rollback are wired in Tasks 14–16");
+            if (opts.log || opts.rollback) {
+                throw new Error("optimize: --log/--rollback are wired in Tasks 15–16");
+            }
+
+            if (opts.list) {
+                console.log(resolveRenderer(resolveFormat(opts.format)).processList(listProcesses()));
+                process.exitCode = 0;
+                return;
             }
 
             const roots0 = resolveRoots(rootsArg ?? [], []);
