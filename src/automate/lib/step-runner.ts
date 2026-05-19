@@ -1,4 +1,4 @@
-import logger from "@app/logger.ts";
+import { logger } from "@app/logger";
 import { execTool } from "@app/utils/cli/tools";
 import { SafeJSON } from "@app/utils/json";
 import { executeBuiltin, isBuiltinAction } from "./builtins.ts";

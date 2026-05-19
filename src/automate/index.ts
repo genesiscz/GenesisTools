@@ -10,7 +10,7 @@ import { registerShowCommand } from "@app/automate/commands/show.ts";
 import { registerStepCommands } from "@app/automate/commands/steps.ts";
 import { registerTaskCommand } from "@app/automate/commands/task.ts";
 import { ensureStorage } from "@app/automate/lib/storage.ts";
-import logger from "@app/logger.ts";
+import { logger } from "@app/logger";
 import { runTool } from "@app/utils/cli";
 import { handleReadmeFlag } from "@app/utils/readme.ts";
 import * as p from "@clack/prompts";
