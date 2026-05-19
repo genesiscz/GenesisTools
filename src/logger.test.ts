@@ -94,3 +94,40 @@ describe("configureLogger in-place", () => {
         expect(typeof d.info).toBe("function");
     });
 });
+
+describe("scoped out + log.out/log.tee double-mirror rule", () => {
+    // Plan Task 9 test deviations (faithful):
+    //  - plan called `log.out.step(...)` but `step` lives on `Out.log`
+    //    (Task 8 Out shape) → real call is `log.out.log.step(...)`.
+    //  - plan spied `log.debug`, but out.ts mirrorLine re-scopes via
+    //    `logger.scoped(component)` (a DIFFERENT child instance), so that
+    //    spy would capture nothing. The real, render-verified discriminator
+    //    is the component-tagged pino debug line: clack's step render does
+    //    NOT carry `component: "<name>"`; the single mirror debug line does.
+    //    Exactly-one occurrence == the no-double-mirror invariant.
+    it("log.out.log.* emits EXACTLY ONE component-tagged debug line (mirrorToLogger=true)", async () => {
+        const mod = await import("./logger");
+        const { configureOut } = await import("./logger/out");
+        configureOut({ mirrorToLogger: true });
+        mod.setConsoleLevel("debug");
+        const { log } = mod.logger.scoped("shops:crawler");
+        const chunks: string[] = [];
+        const oe = process.stderr.write.bind(process.stderr);
+        process.stderr.write = (c: string) => {
+            chunks.push(String(c));
+            return true;
+        };
+        log.out.log.step("Crawling");
+        await Bun.sleep(20);
+        process.stderr.write = oe;
+        const stderr = chunks.join("");
+        expect((stderr.match(/component: "shops:crawler"/g) ?? []).length).toBe(1);
+        expect(stderr).toContain("Crawling");
+    });
+
+    it("log.tee === log.out (alias)", async () => {
+        const mod = await import("./logger");
+        const { log } = mod.logger.scoped("x");
+        expect(log.tee).toBe(log.out);
+    });
+});

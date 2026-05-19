@@ -6,6 +6,11 @@ import { SafeJSON } from "@app/utils/json";
 import chalk from "chalk";
 import pino from "pino";
 import PinoPretty from "pino-pretty";
+// ESM cycle logger.ts ⇄ logger/out.ts is safe: makeOut is a HOISTED
+// `export function` (resolvable while out.ts is mid-eval) and out.ts touches
+// `logger` only inside closures, never at module-eval. Never convert to
+// require() (not a Bun ESM default) or a dynamic import (loses sync ordering).
+import { type Out, makeOut } from "./logger/out";
 
 type LogLevel = "trace" | "debug" | "info" | "warn" | "error" | "silent";
 
@@ -185,7 +190,8 @@ function get(): pino.Logger {
 // Hand-coded stable facade. NOT a Proxy (pino .level/.bindings getter+setter
 // and method count make Proxy traps fragile — see spec §3.1).
 interface ScopedLogger {
-    log: pino.Logger; // child; .out/.tee added in Phase 2
+    log: pino.Logger & { out: Out; tee: Out };
+    out: Out;
 }
 
 export interface LoggerFacade {
@@ -222,8 +228,15 @@ export const logger: LoggerFacade = {
             { component, ...(opts?.bindings ?? {}) },
             opts?.level ? { level: opts.level } : undefined
         );
+        // log.out/log.tee ALWAYS mirror with the component tag (ignores
+        // configureOut.mirrorToLogger — "tee" means tee). The destructured
+        // `out` is only-out (mirror "none"): clack/stdout, no debug mirror.
+        const scopedOut = makeOut(component, "component");
+        const logExt = child as pino.Logger & { out: Out; tee: Out };
+        logExt.out = scopedOut;
+        logExt.tee = scopedOut;
 
-        return { log: child };
+        return { log: logExt, out: makeOut(component, "none") };
     },
 };
 
