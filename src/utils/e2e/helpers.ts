@@ -28,7 +28,7 @@ export interface RunResult {
     exitCode: number;
 }
 
-export async function runTool(args: string[], timeoutMs = 15_000): Promise<RunResult> {
+export async function execTool(args: string[], timeoutMs = 15_000): Promise<RunResult> {
     const proc = Bun.spawn(["bun", "run", TOOLS_PATH, ...args], {
         stdout: "pipe",
         stderr: "pipe",

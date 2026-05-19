@@ -4,8 +4,9 @@ import { fileURLToPath } from "node:url";
 import { renderMarkdownToCli } from "./markdown/index.js";
 
 /**
- * Print the README that sits next to a tool's entry, then exit. `runTool`
- * (and `handleReadmeFlag`) call this — the only print+exit body.
+ * Print the README that sits next to a tool's entry, then exit. The
+ * `runTool` bootstrap (and `handleReadmeFlag`) call this — the only
+ * print+exit body.
  *
  * @param toolDir - directory containing the tool's README.md
  * @returns never (always exits: 0 if found, 1 if missing)
