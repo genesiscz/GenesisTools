@@ -8,6 +8,7 @@ import type {
     TextOpts,
     TypedConfirmOpts,
 } from "./types";
+import { clackBackend } from "./clack-backend"; // STATIC: clack only, no opentui (verified separate file)
 
 export interface PromptBackend {
     intro(msg: string): void;
@@ -25,16 +26,16 @@ export interface PromptBackend {
     log: Log;
 }
 
-let active: PromptBackend | null = null;
+// Default to clack at module load (advisor: getBackend stays SYNC — 700+
+// sync p.log.*/p.spinner() callers; an async/buffered shim would reorder the
+// first log line of every process). clack-backend.ts does not import @opentui
+// (separate file), so the "no opentui/solid pulled" constraint holds.
+let active: PromptBackend = clackBackend;
 
 export function setBackend(backend: PromptBackend): void {
-    active = backend;
+    active = backend; // doctor's plain/tui paths override the clack default
 }
 
 export function getBackend(): PromptBackend {
-    if (!active) {
-        throw new Error("p.* backend not set. Call setBackend(...) during startup.");
-    }
-
     return active;
 }
