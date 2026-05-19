@@ -10,7 +10,7 @@ import PinoPretty from "pino-pretty";
 // `export function` (resolvable while out.ts is mid-eval) and out.ts touches
 // `logger` only inside closures, never at module-eval. Never convert to
 // require() (not a Bun ESM default) or a dynamic import (loses sync ordering).
-import { type Out, makeOut } from "./logger/out";
+import { makeOut, type Out } from "./logger/out";
 
 type LogLevel = "trace" | "debug" | "info" | "warn" | "error" | "silent";
 

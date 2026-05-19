@@ -12,6 +12,7 @@ import pc from "picocolors";
 // (text/confirm/select/multiselect/password) intentionally do NOT pass this —
 // they stay on the TTY.
 const STDERR: { output: typeof process.stderr } = { output: process.stderr };
+
 import type { PromptBackend } from "./backend";
 import type {
     Log,
