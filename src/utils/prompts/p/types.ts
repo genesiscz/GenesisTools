@@ -48,6 +48,13 @@ export interface Log {
     info(msg: string): void;
     success(msg: string): void;
     warn(msg: string): void;
+    warning(msg: string): void; // alias for warn (existing ~5 call sites use .warning)
     error(msg: string): void;
     step(msg: string): void;
+    message(msg: string | string[]): void; // clack's real log.message (~25 sites); array → joined
+}
+
+export interface PasswordOpts {
+    message: string;
+    validate?: (value: string) => string | undefined; // matches TextOpts.validate convention
 }

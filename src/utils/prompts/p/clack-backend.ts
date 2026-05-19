@@ -3,7 +3,16 @@ import type { TextOptions } from "@clack/prompts";
 import * as clack from "@clack/prompts";
 import pc from "picocolors";
 import type { PromptBackend } from "./backend";
-import type { Log, MultiSelectOpts, SelectOption, SelectOpts, Spinner, TextOpts, TypedConfirmOpts } from "./types";
+import type {
+    Log,
+    MultiSelectOpts,
+    PasswordOpts,
+    SelectOption,
+    SelectOpts,
+    Spinner,
+    TextOpts,
+    TypedConfirmOpts,
+} from "./types";
 
 function unwrap<T>(result: T | symbol): T {
     if (isCancelled(result)) {
@@ -17,8 +26,10 @@ const log: Log = {
     info: (msg) => clack.log.info(msg),
     success: (msg) => clack.log.success(msg),
     warn: (msg) => clack.log.warn(msg),
+    warning: (msg) => clack.log.warn(msg),
     error: (msg) => clack.log.error(msg),
     step: (msg) => clack.log.step(msg),
+    message: (msg) => clack.log.message(Array.isArray(msg) ? msg.join("\n") : msg),
 };
 
 function toTextOptions(opts: TextOpts): TextOptions {
@@ -99,6 +110,16 @@ export const clackBackend: PromptBackend = {
                 options: toClackOptions(opts.options),
                 required: opts.required ?? false,
                 initialValues: opts.initialValues,
+            })
+        ),
+
+    password: async (opts: PasswordOpts) =>
+        unwrap(
+            await clack.password({
+                message: opts.message,
+                // clack's validate is (string|undefined)=>string|Error|undefined;
+                // adapt our (string)=>string|void.
+                validate: opts.validate ? (v) => opts.validate?.(v ?? "") ?? undefined : undefined,
             })
         ),
 
