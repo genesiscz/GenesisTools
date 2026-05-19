@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { getShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import type { MasterDetail } from "@app/shops/types";
 import { apiHandler } from "@app/shops/ui/server/api-utils";

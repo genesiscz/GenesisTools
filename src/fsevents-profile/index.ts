@@ -1,5 +1,5 @@
 import * as path from "node:path";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { spawn } from "bun";
 import chalk from "chalk";
