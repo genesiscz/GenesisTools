@@ -15,8 +15,8 @@ import {
 } from "@app/claude/lib/history/search";
 import { out } from "@app/logger";
 import { getAgentRuntimeContext } from "@app/utils/agent-runtime";
-import { isInteractive } from "@app/utils/cli";
 import { resolveProjectFilter } from "@app/utils/claude";
+import { isInteractive } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
 import { PROJECT_ROOT } from "@app/utils/paths";
 import { input, search, select } from "@inquirer/prompts";
