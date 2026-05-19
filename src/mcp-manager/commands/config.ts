@@ -5,7 +5,9 @@ import type { UnifiedMCPConfig } from "@app/mcp-manager/utils/providers/types.js
 import { isInteractive } from "@app/utils/cli";
 import { Storage } from "@app/utils/storage";
 
-const storage = new Storage("mcp-manager");
+// Lazy (not a module-level singleton) so it re-reads GENESIS_TOOLS_HOME at
+// use time — production identical, lets the test suite sandbox the path.
+const mcpStorage = (): Storage => new Storage("mcp-manager");
 
 export interface ConfigOptions {
     path?: boolean; // Only show path, don't open editor
@@ -16,7 +18,7 @@ export interface ConfigOptions {
  * @param options.path - If true, only prints the path without opening
  */
 export async function openConfig(options: ConfigOptions = {}): Promise<void> {
-    await storage.ensureDirs();
+    await mcpStorage().ensureDirs();
     const configPath = getUnifiedConfigPath();
 
     // Only create default config if file doesn't exist on disk.
@@ -26,7 +28,7 @@ export async function openConfig(options: ConfigOptions = {}): Promise<void> {
         const defaultConfig: UnifiedMCPConfig = {
             mcpServers: {},
         };
-        await storage.setConfig(defaultConfig);
+        await mcpStorage().setConfig(defaultConfig);
         logger.info(`Created default config at ${configPath}`);
     }
 

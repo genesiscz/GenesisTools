@@ -5,6 +5,9 @@ import { backupAllConfigs } from "@app/mcp-manager/commands/backup.js";
 import * as backupUtils from "@app/mcp-manager/utils/backup.js";
 import * as configUtils from "@app/mcp-manager/utils/config.utils.js";
 import { MockMCPProvider } from "./test-utils.js";
+import { setupStorageSandbox } from "./sandbox.js";
+
+setupStorageSandbox();
 
 describe("backupAllConfigs", () => {
     let mockProvider: MockMCPProvider;

@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { setMockResponses, setupInquirerMock } from "./inquirer-mock.js";
+import { setupStorageSandbox } from "./sandbox.js";
 
 // Setup @inquirer/prompts mock BEFORE importing command modules
 setupInquirerMock();
+setupStorageSandbox();
 
 // Now import after mocking
 const { renameServer } = await import("../rename.js");

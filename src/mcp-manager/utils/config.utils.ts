@@ -6,8 +6,12 @@ import { BackupManager } from "./backup.js";
 import type { UnifiedMCPConfig, UnifiedMCPServerConfig } from "./providers/types.js";
 import type { EnabledMcpServers } from "./types.js";
 
-// Initialize Storage instance for mcp-manager
-const storage = new Storage("mcp-manager");
+// Lazy Storage accessor (NOT a module-level singleton): constructed per call
+// so it always re-reads GENESIS_TOOLS_HOME at use time. Production behavior is
+// identical (env unset → real ~/.genesis-tools path, construction is just path
+// joins); this lets the test suite sandbox the path so a leaked/bled mock can
+// never write the user's real config (see storage.ts override + test sandbox).
+const mcpStorage = (): Storage => new Storage("mcp-manager");
 
 // Global options that can be set from main entry point
 export interface GlobalOptions {
@@ -28,7 +32,7 @@ export function getGlobalOptions(): GlobalOptions {
  * Get the path to the unified config file
  */
 export function getUnifiedConfigPath(): string {
-    return storage.getConfigPath();
+    return mcpStorage().getConfigPath();
 }
 
 /**
@@ -105,8 +109,8 @@ export function ensureMetaFromEnabledMcpServers(config: UnifiedMCPConfig): Unifi
  * Read the unified config from storage
  */
 export async function readUnifiedConfig(): Promise<UnifiedMCPConfig> {
-    await storage.ensureDirs();
-    let config = await storage.getConfig<UnifiedMCPConfig>();
+    await mcpStorage().ensureDirs();
+    let config = await mcpStorage().getConfig<UnifiedMCPConfig>();
     if (!config) {
         config = { mcpServers: {} };
     }
@@ -133,7 +137,7 @@ export async function writeUnifiedConfig(config: UnifiedMCPConfig): Promise<bool
     const newContent = SafeJSON.stringify(config, null, 2);
 
     // Read old content
-    const existingConfig = await storage.getConfig<UnifiedMCPConfig>();
+    const existingConfig = await mcpStorage().getConfig<UnifiedMCPConfig>();
     const oldContent = existingConfig ? SafeJSON.stringify(existingConfig, null, 2) : "";
 
     // Early exit if no changes
@@ -154,7 +158,7 @@ export async function writeUnifiedConfig(config: UnifiedMCPConfig): Promise<bool
     await backupManager.createBackup(configPath, "unified");
 
     // Only now write to file
-    await storage.setConfig(config);
+    await mcpStorage().setConfig(config);
     logger.info(chalk.green(`✓ Configuration written to ${configPath}`));
     return true;
 }
