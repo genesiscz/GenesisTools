@@ -2,7 +2,6 @@ import logger from "@app/logger";
 import { newProcessId, writeMeta } from "@app/macos/lib/clones/audit";
 import { cachePlan } from "@app/macos/lib/clones/cache";
 import { collapseDuplicates } from "@app/macos/lib/clones/collapse";
-import { buildMeasureReport } from "@app/macos/lib/clones/orchestrator";
 import { loadClonesConfig } from "@app/macos/lib/clones/store";
 import { formatBytes } from "@app/utils/format";
 import { sendNotification } from "@app/utils/macos/notifications";
@@ -32,7 +31,10 @@ export async function runDaemonScan(args: DaemonScanArgs = {}): Promise<DaemonSc
     }
 
     const minReal = cfg.minReal ?? 10485760;
-    buildMeasureReport({ roots, minReal, breakdown: false });
+    // The daemon's job is to surface ACTIONABLE reclaim (what `optimize` would
+    // free) — that's what collapseDuplicates gives us. A separate measure pass
+    // here would only inform the log line, not the user-facing notification,
+    // and doubles the I/O of every daemon tick. Drop it.
     const sets = collapseDuplicates({ roots }).sets;
     const reclaimable = sets.reduce((s, x) => s + x.reclaimable, 0);
 

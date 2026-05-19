@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -71,6 +72,35 @@ describe.skipIf(skip.unlessMac)("buildMeasureReport keep rule", () => {
             expect(rep.totals.logical).toBeGreaterThan(0);
         } finally {
             rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("cross-tree shared bytes: file cloned from OUTSIDE the scan root reports sharedBytes>0 + sharedNote", () => {
+        const out = mkdtempSync(join(tmpdir(), "gt-cl-cts-out-"));
+        const inn = mkdtempSync(join(tmpdir(), "gt-cl-cts-in-"));
+        try {
+            const payload = Buffer.alloc(2 * 1024 * 1024, 0x5a);
+            writeFileSync(join(out, "external.bin"), payload);
+            // Clone INTO the measured root; the partner stays outside it.
+            expect(spawnSync("cp", ["-c", join(out, "external.bin"), join(inn, "intree.bin")]).status).toBe(0);
+            // Add an independent local file so the dir clears minReal and is
+            // kept by pruneTree — the cross-tree clone alone would have ~0 real.
+            writeFileSync(join(inn, "local.bin"), Buffer.alloc(5 * 1024 * 1024, 0x9b));
+
+            const rep = buildMeasureReport({ roots: [inn], minReal: 1024, breakdown: true });
+            expect(rep.cloneAnalysis.sharedBytes).toBeGreaterThan(1024 * 1024);
+            expect(rep.cloneAnalysis.notes.join(" ")).toMatch(/cross-tree|outside/i);
+            const treeJson = SafeJSON.stringify(rep.tree);
+            expect(treeJson).toMatch(/sharedNote/);
+            expect(treeJson).toMatch(/shared with cross-tree/);
+
+            // Once BOTH copies are in-scope, they form an intra-tree family and
+            // sharedBytes drops back to 0 (no external partner anymore).
+            const repBoth = buildMeasureReport({ roots: [out, inn], minReal: 1024, breakdown: true });
+            expect(repBoth.cloneAnalysis.sharedBytes).toBe(0);
+        } finally {
+            rmSync(out, { recursive: true, force: true });
+            rmSync(inn, { recursive: true, force: true });
         }
     });
 
