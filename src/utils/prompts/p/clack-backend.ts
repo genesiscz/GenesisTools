@@ -1,4 +1,5 @@
 import { handleCancel, isCancelled } from "@app/utils/prompts/clack/helpers";
+import { searchSelect } from "@app/utils/prompts/clack/search-select";
 import type { TextOptions } from "@clack/prompts";
 import * as clack from "@clack/prompts";
 import pc from "picocolors";
@@ -15,9 +16,12 @@ const STDERR: { output: typeof process.stderr } = { output: process.stderr };
 
 import type { PromptBackend } from "./backend";
 import type {
+    EditorOpts,
     Log,
     MultiSelectOpts,
+    NumberOpts,
     PasswordOpts,
+    SearchOpts,
     SelectOption,
     SelectOpts,
     Spinner,
@@ -141,6 +145,92 @@ export const clackBackend: PromptBackend = {
             stop: (msg) => spinner.stop(msg),
             message: (msg) => spinner.message(msg),
         };
+    },
+
+    // search: pre-load with opts.options("") to get the initial static item set,
+    // then pass to searchSelect which has its own typed-query filter on the list.
+    // Dynamic-filter behavior (re-fetching as user types) is not supported by
+    // searchSelect's UX — it filters the initial snapshot instead.
+    search: async <T>(opts: SearchOpts<T>): Promise<T> => {
+        const items = await opts.options("");
+        const result = await searchSelect<T>({
+            message: opts.message,
+            items,
+        });
+
+        if (typeof result === "symbol") {
+            handleCancel();
+        }
+
+        return result as T;
+    },
+
+    editor: async (opts: EditorOpts): Promise<string> => {
+        const editor = process.env.EDITOR ?? process.env.VISUAL;
+
+        if (editor) {
+            const tmpPath = `/tmp/clack-editor-${Date.now()}${opts.postfix ?? ".txt"}`;
+            if (opts.initialValue !== undefined) {
+                await Bun.write(tmpPath, opts.initialValue);
+            }
+
+            const proc = Bun.spawn([editor, tmpPath], {
+                stdin: "inherit",
+                stdout: "inherit",
+                stderr: "inherit",
+            });
+            await proc.exited;
+
+            const content = await Bun.file(tmpPath).text();
+            // Clean up the temp file
+            try {
+                await Bun.file(tmpPath).writer().end();
+            } catch {
+                // ignore cleanup errors
+            }
+            return content;
+        }
+
+        // No $EDITOR available — fall back to clack.text multiline
+        // Note: @clack/prompts text does not have a multiline option at v1.0.0;
+        // this is a plain text prompt as fallback.
+        return unwrap(
+            await clack.text({
+                message: `${opts.message} ${pc.dim("($EDITOR not set — type inline)")}`,
+                initialValue: opts.initialValue,
+            })
+        );
+    },
+
+    number: async (opts: NumberOpts): Promise<number> => {
+        const raw = unwrap(
+            await clack.text({
+                message: opts.message,
+                initialValue: opts.initialValue !== undefined ? String(opts.initialValue) : undefined,
+                validate: (value) => {
+                    const n = Number(value);
+                    if (!Number.isFinite(n)) {
+                        return "Please enter a valid number";
+                    }
+
+                    if (opts.min !== undefined && n < opts.min) {
+                        return `Must be ≥ ${opts.min}`;
+                    }
+
+                    if (opts.max !== undefined && n > opts.max) {
+                        return `Must be ≤ ${opts.max}`;
+                    }
+
+                    if (opts.validate) {
+                        return opts.validate(n);
+                    }
+
+                    return undefined;
+                },
+            })
+        );
+
+        return Number(raw);
     },
 
     log,

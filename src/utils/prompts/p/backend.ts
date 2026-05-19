@@ -1,9 +1,12 @@
 import { clackBackend } from "./clack-backend"; // STATIC: clack only, no opentui (verified separate file)
 import type {
     ConfirmOpts,
+    EditorOpts,
     Log,
     MultiSelectOpts,
+    NumberOpts,
     PasswordOpts,
+    SearchOpts,
     SelectOpts,
     SelectValue,
     Spinner,
@@ -23,6 +26,9 @@ export interface PromptBackend {
     select(opts: SelectOpts): Promise<SelectValue>;
     multiselect(opts: MultiSelectOpts): Promise<SelectValue[]>;
     password(opts: PasswordOpts): Promise<string>;
+    search<T>(opts: SearchOpts<T>): Promise<T>;
+    editor(opts: EditorOpts): Promise<string>;
+    number(opts: NumberOpts): Promise<number>;
 
     spinner(): Spinner;
     log: Log;

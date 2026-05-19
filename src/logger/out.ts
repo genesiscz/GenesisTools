@@ -66,6 +66,12 @@ export interface Out {
     result(data: unknown): void;
     print(raw: string): void;
     detail(m: string): void;
+    // Convenience shortcuts — match console.* ergonomics (rest args appended).
+    // out.info/warn/error forward to out.log.info/warn/error but also accept
+    // extra args (e.g. `out.warn("msg", err)`) matching the codemod output shape.
+    info(msg: string, ...rest: unknown[]): void;
+    warn(msg: string, ...rest: unknown[]): void;
+    error(msg: string, ...rest: unknown[]): void;
 }
 
 // Drain-safe stdout write; a rejected write is surfaced to the logger (file)
@@ -106,6 +112,16 @@ export function makeOut(component: string | null, mirror: "component" | "config"
             mirrorLine(m);
         };
 
+    // Lrest: like L but accepts rest args (matches console.* ergonomics).
+    // Extra args are appended after a space so `out.warn("msg", err)` stays readable.
+    const Lrest =
+        (k: "info" | "warn" | "error") =>
+        (msg: string, ...rest: unknown[]): void => {
+            const m = rest.length > 0 ? `${msg} ${rest.map((a) => (typeof a === "object" ? String(a) : a)).join(" ")}` : msg;
+            p.log[k](m);
+            mirrorLine(m);
+        };
+
     return {
         intro: (t) => p.intro(t),
         outro: (m) => p.outro(m),
@@ -137,6 +153,9 @@ export function makeOut(component: string | null, mirror: "component" | "config"
             p.log.message(m);
             mirrorLine(m);
         },
+        info: Lrest("info"),
+        warn: Lrest("warn"),
+        error: Lrest("error"),
     };
 }
 
