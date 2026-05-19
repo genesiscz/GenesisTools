@@ -25,6 +25,7 @@ import {
     watchPorts,
 } from "./lib/scanner";
 import type { PortSnapshot } from "./lib/types";
+import { runTool } from "@app/utils/cli";
 
 interface RootOptions {
     all?: boolean;
@@ -319,3 +320,7 @@ async function main(): Promise<void> {
 }
 
 main();
+
+// CODEMOD-4b: review & fold existing parse/readme/verbose into this
+await runTool(program, { tool: "port" });
+

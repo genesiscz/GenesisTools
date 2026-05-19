@@ -8,6 +8,7 @@ import { estimateTokens, formatTokens } from "@ask/utils/helpers";
 import type { FileSink } from "bun";
 import { Command } from "commander";
 import { minimatch } from "minimatch";
+import { runTool } from "@app/utils/cli";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
@@ -1036,3 +1037,7 @@ async function main(): Promise<void> {
 }
 
 main();
+
+// CODEMOD-4b: review & fold existing parse/readme/verbose into this
+await runTool(program, { tool: "files-to-prompt" });
+

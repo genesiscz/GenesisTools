@@ -28,6 +28,7 @@ import {
     syncServers,
 } from "./commands/index.js";
 import { setGlobalOptions } from "./utils/config.utils.js";
+import { runTool } from "@app/utils/cli";
 
 // Include timestamps in console output. The console stream is now always
 // sync (pino-pretty sync:true in createLogger), so logs reliably appear
@@ -338,3 +339,7 @@ main().catch((err) => {
     logger.error(`\n✖ Unexpected error: ${err}`);
     process.exit(1);
 });
+
+// CODEMOD-4b: review & fold existing parse/readme/verbose into this
+await runTool(program, { tool: "mcp-manager" });
+

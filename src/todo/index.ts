@@ -16,6 +16,7 @@ import {
 import { createSyncCommand } from "@app/todo/commands/sync";
 import { enhanceHelp } from "@app/utils/cli";
 import { Command } from "commander";
+import { runTool } from "@app/utils/cli";
 
 const program = new Command();
 
@@ -51,3 +52,7 @@ main().catch((err) => {
     console.error(`Unexpected error: ${err}`);
     process.exit(1);
 });
+
+// CODEMOD-4b: review & fold existing parse/readme/verbose into this
+await runTool(program, { tool: "todo" });
+

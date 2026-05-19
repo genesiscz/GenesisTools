@@ -10,6 +10,7 @@ import { registerTranscribeCommand } from "@app/youtube/commands/transcribe";
 import { registerUiCommand } from "@app/youtube/commands/ui";
 import { registerVideosCommand } from "@app/youtube/commands/videos";
 import { Command } from "commander";
+import { runTool } from "@app/utils/cli";
 
 export function buildYoutubeProgram(): Command {
     const program = new Command()
@@ -43,3 +44,7 @@ program.parseAsync(process.argv).catch((error) => {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;
 });
+
+// CODEMOD-4b: review & fold existing parse/readme/verbose into this
+await runTool(program, { tool: "youtube" });
+

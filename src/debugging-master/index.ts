@@ -8,6 +8,7 @@ import { registerSessionsCommand } from "./commands/sessions";
 import { registerSnippetCommand } from "./commands/snippet";
 import { registerStartCommand } from "./commands/start";
 import { registerTailCommand } from "./commands/tail";
+import { runTool } from "@app/utils/cli";
 
 const program = new Command();
 
@@ -30,3 +31,7 @@ registerDiffCommand(program);
 registerDashboardCommand(program);
 
 program.parse();
+
+// CODEMOD-4b: review & fold existing parse/readme/verbose into this
+await runTool(program, { tool: "debugging-master" });
+

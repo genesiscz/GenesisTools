@@ -6,6 +6,7 @@ import { ExitPromptError } from "@inquirer/core";
 import { checkbox, select } from "@inquirer/prompts";
 import chalk from "chalk";
 import { Command } from "commander";
+import { runTool } from "@app/utils/cli";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
@@ -1076,3 +1077,7 @@ main().catch((err) => {
     logger.error(`\n✖ Unexpected error: ${err}`);
     process.exit(1);
 });
+
+// CODEMOD-4b: review & fold existing parse/readme/verbose into this
+await runTool(program, { tool: "macos-eslogger" });
+

@@ -49,6 +49,7 @@ import { registerSwapCommand } from "@app/macos/commands/swap/index";
 import { registerVoiceMemosCommand } from "@app/macos/commands/voice-memos/index";
 import { closeDarwinKit } from "@app/utils/macos/darwinkit";
 import { Command } from "commander";
+import { runTool } from "@app/utils/cli";
 
 const program = new Command();
 
@@ -90,3 +91,7 @@ main().catch((err) => {
     logger.error(`Unexpected error: ${err}`);
     process.exit(1);
 });
+
+// CODEMOD-4b: review & fold existing parse/readme/verbose into this
+await runTool(program, { tool: "macos" });
+

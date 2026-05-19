@@ -7,6 +7,7 @@ import { SafeJSON } from "@app/utils/json";
 import chalk from "chalk";
 import Table from "cli-table3";
 import { Command } from "commander";
+import { runTool } from "@app/utils/cli";
 
 interface Options {
     days?: number;
@@ -261,3 +262,7 @@ main().catch((err) => {
     logger.error(`Unexpected error: ${err}`);
     process.exit(1);
 });
+
+// CODEMOD-4b: review & fold existing parse/readme/verbose into this
+await runTool(program, { tool: "usage" });
+

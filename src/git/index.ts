@@ -16,6 +16,7 @@ import { logger } from "@app/logger";
 import { enhanceHelp } from "@app/utils/cli";
 import { Storage } from "@app/utils/storage";
 import { Command } from "commander";
+import { runTool } from "@app/utils/cli";
 
 const storage = new Storage("git");
 
@@ -119,3 +120,7 @@ main().catch((err) => {
     logger.error(`Unexpected error: ${err}`);
     process.exit(1);
 });
+
+// CODEMOD-4b: review & fold existing parse/readme/verbose into this
+await runTool(program, { tool: "git" });
+

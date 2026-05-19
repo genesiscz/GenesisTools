@@ -27,6 +27,7 @@ import pc from "picocolors";
 import { SayAudioCache } from "./lib/cache";
 import { speakWithProfile } from "./lib/speak";
 import { getSayStorage } from "./lib/storage";
+import { runTool } from "@app/utils/cli";
 
 interface SayOptions {
     volume?: number;
@@ -1160,3 +1161,7 @@ async function deleteAppTUI(mgr: SayConfigManager): Promise<void> {
     await mgr.deleteApp(String(target));
     p.log.success(`Deleted "${target}"`);
 }
+
+// CODEMOD-4b: review & fold existing parse/readme/verbose into this
+await runTool(program, { tool: "say" });
+

@@ -15,6 +15,7 @@ import { formatBytes, formatDuration } from "@app/utils/format.ts";
 import * as p from "@clack/prompts";
 import { Command } from "commander";
 import pc from "picocolors";
+import { runTool } from "@app/utils/cli";
 
 const SUPPORTED_AUDIO_EXTENSIONS = new Set([
     ".mp3",
@@ -435,3 +436,7 @@ async function main(): Promise<void> {
 }
 
 main();
+
+// CODEMOD-4b: review & fold existing parse/readme/verbose into this
+await runTool(program, { tool: "transcribe" });
+

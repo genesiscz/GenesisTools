@@ -13,6 +13,7 @@ import { registerStatusCommand } from "./commands/status";
 import { registerStopCommand } from "./commands/stop";
 import { runInteractiveMenu } from "./interactive/menu";
 import { ensureStorage } from "./lib/config";
+import { runTool } from "@app/utils/cli";
 
 handleReadmeFlag(import.meta.url);
 
@@ -53,3 +54,7 @@ main().catch((err) => {
     p.log.error(err instanceof Error ? err.message : String(err));
     process.exit(1);
 });
+
+// CODEMOD-4b: review & fold existing parse/readme/verbose into this
+await runTool(program, { tool: "daemon" });
+

@@ -2,6 +2,7 @@ import { copyToClipboard } from "@app/utils/clipboard";
 import { SafeJSON } from "@app/utils/json";
 import { formatSchema, type OutputMode } from "@app/utils/json-schema";
 import { Command, Option } from "commander";
+import { runTool } from "@app/utils/cli";
 
 interface Options {
     mode: OutputMode;
@@ -60,3 +61,7 @@ program
     });
 
 program.parse();
+
+// CODEMOD-4b: review & fold existing parse/readme/verbose into this
+await runTool(program, { tool: "json-schema" });
+
