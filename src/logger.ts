@@ -1,5 +1,6 @@
 import { homedir } from "node:os";
 import path from "node:path";
+import { Writable } from "node:stream";
 import { formatLocalDate } from "@app/utils/date";
 import { SafeJSON } from "@app/utils/json";
 import chalk from "chalk";
@@ -44,6 +45,38 @@ const getLogLevel = (): LogLevel => {
 
 // Check environment
 const currentLevel = getLogLevel();
+
+// Console threshold is a runtime-mutable module-level value; the pino root
+// stays "trace" (file never starves) and a gated Writable (built in
+// createLogger) drops sub-threshold records before pino-pretty. Mutating this
+// via setConsoleLevel()/configureLogger() retroactively re-gates already
+// created children — no rebuild, see spec §3.1.
+function getConsoleLevel(): pino.LevelWithSilent {
+    if (process.env.LOG_TRACE === "1") {
+        return "trace";
+    }
+
+    if (process.env.LOG_DEBUG === "1") {
+        return "debug";
+    }
+
+    if (process.env.LOG_SILENT === "1") {
+        return "silent";
+    }
+
+    const env = process.env.LOG_CONSOLE_LEVEL as pino.LevelWithSilent | undefined;
+    if (env && env in pino.levels.values) {
+        return env;
+    }
+
+    return "info";
+}
+
+let consoleLevel: pino.LevelWithSilent = getConsoleLevel();
+export function setConsoleLevel(l: pino.LevelWithSilent): void {
+    consoleLevel = l;
+}
+
 const prefixPid = process.env.LOG_PID === "1" || process.env.DEBUG === "1";
 const isTerminal = process.stdout.isTTY === true;
 
@@ -79,7 +112,6 @@ let fileLogWarningShown = false;
  */
 export const createLogger = (options: LoggerOptions = {}): pino.Logger => {
     const {
-        level: logLevel = currentLevel,
         logToFile = false,
         includeTimestamp = globalConfig.includeTimestamp ?? false,
         prefixPid: showPid = prefixPid,
@@ -89,9 +121,9 @@ export const createLogger = (options: LoggerOptions = {}): pino.Logger => {
     } = options;
 
     const streams: pino.StreamEntry[] = [];
-    const streamLevel = logLevel as pino.Level;
 
-    // File stream (if enabled) — always captures debug+ regardless of console level
+    // File stream (if enabled) — ALWAYS debug+, independent of the console
+    // gate, so the file never starves no matter how high the console threshold.
     if (logToFile) {
         const date = formatLocalDate(new Date());
         const logDir = path.join(homedir(), ".genesis-tools", "logs");
@@ -112,54 +144,63 @@ export const createLogger = (options: LoggerOptions = {}): pino.Logger => {
         }
     }
 
-    // Console stream
-    if (process.stdout && typeof process.stdout.write === "function") {
-        // Auto-route to stderr in three cases:
-        //   1. LOG_STDERR=1 — explicit override
-        //   2. MCP mode (stdin piped + "mcp" arg) — protect JSON-RPC frames
-        //   3. stdout is NOT a TTY (i.e., output is being piped/redirected) — protect
-        //      any structured payload the tool is emitting (JSON to `jq`, tables to a
-        //      file, etc.). When stdout IS a TTY (interactive terminal), keep logs on
-        //      stdout where the user sees them inline with the report.
-        const useStderr =
-            process.env.LOG_STDERR === "1" ||
-            (process.argv.some((arg) => arg === "mcp") && !process.stdin.isTTY) ||
-            process.stdout.isTTY !== true;
+    // Console stream → STDERR (stdout is reserved for machine results via
+    // out.result). A gated Writable drops records below the *mutable*
+    // module-level consoleLevel before pino-pretty, so setConsoleLevel() /
+    // configureLogger() retroactively re-gate already-created children — the
+    // root pino stays "trace" so the file sink never starves (spec §3.1).
+    // `destination` is the process.stderr STREAM, not fd 2: same fd in prod,
+    // but pino-pretty pipes through it so test stderr shims still intercept.
+    if (process.stderr && typeof process.stderr.write === "function") {
         const prettyOptions: PinoPretty.PrettyOptions = {
-            sync,
-            colorize: isTerminal,
+            destination: process.stderr,
+            sync: true,
+            colorize: process.stderr.isTTY === true,
             translateTime: timestampFormat,
             ignore: showPid ? "hostname" : "pid,hostname",
-            ...(useStderr ? { destination: 2 as number } : {}),
         };
 
-        // For minimal levels: hide level for info/debug/trace, show for warn/error
+        // minimalLevels: hide level for info/debug/trace, colored WARN:/ERROR:.
         if (minimalLevels) {
             prettyOptions.customPrettifiers = {
                 level: (logLevelValue: unknown) => {
                     const lvl = String(logLevelValue).toLowerCase();
-                    // pino sends level as number (30=info, 40=warn, 50=error) or label
+                    // pino sends level as number (40=warn, 50=error) or label
                     if (lvl === "warn" || lvl === "40") {
                         return isTerminal ? chalk.yellow("WARN:") : "WARN:";
                     }
+
                     if (lvl === "error" || lvl === "50") {
                         return isTerminal ? chalk.red("ERROR:") : "ERROR:";
                     }
-                    return ""; // Hide for trace/debug/info
+
+                    return ""; // hide for trace/debug/info
                 },
             };
         }
 
-        streams.push({
-            level: streamLevel,
-            stream: PinoPretty(prettyOptions),
+        const pretty = PinoPretty(prettyOptions);
+        const gated = new Writable({
+            write(chunk, _enc, cb) {
+                try {
+                    const lvl = (SafeJSON.parse(chunk.toString()) as { level: number }).level;
+                    if (lvl >= pino.levels.values[consoleLevel]) {
+                        pretty.write(chunk);
+                    }
+                } catch {
+                    // Fail-open: an unparseable record still reaches the user.
+                    // We cannot logger.* here — that recurses into this sink.
+                    pretty.write(chunk);
+                }
+
+                cb();
+            },
         });
+        streams.push({ level: "trace" as pino.Level, stream: gated });
     }
 
-    // Set pino base level to the lowest stream level so debug reaches the file stream
-    const effectiveLevel = logToFile ? "debug" : logLevel;
     const baseConfig: pino.LoggerOptions = {
-        level: effectiveLevel,
+        level: "trace",
         timestamp: includeTimestamp ? pino.stdTimeFunctions.isoTime : false,
         ...(showPid && { base: { pid: process.pid } }),
     };

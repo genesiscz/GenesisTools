@@ -18,3 +18,29 @@ describe("logger facade", () => {
         expect(mod.consoleLog).toBe(mod.logger); // transitional alias
     });
 });
+
+describe("build() streams", () => {
+    it("console sink writes to stderr, file sink always debug; stdout untouched", async () => {
+        const mod = await import("./logger");
+        const errChunks: string[] = [];
+        const outChunks: string[] = [];
+        const oe = process.stderr.write.bind(process.stderr);
+        const oo = process.stdout.write.bind(process.stdout);
+        process.stderr.write = (c: string) => {
+            errChunks.push(String(c));
+            return true;
+        };
+        process.stdout.write = (c: string) => {
+            outChunks.push(String(c));
+            return true;
+        };
+        mod.logger.info("INFO_VISIBLE");
+        mod.logger.debug("DEBUG_HIDDEN_ON_CONSOLE");
+        process.stderr.write = oe;
+        process.stdout.write = oo;
+        const err = errChunks.join("");
+        expect(err).toContain("INFO_VISIBLE");
+        expect(err).not.toContain("DEBUG_HIDDEN_ON_CONSOLE");
+        expect(outChunks.join("")).toBe(""); // logger never touches stdout
+    });
+});
