@@ -82,7 +82,7 @@ tools macos clones daemon    <enable|disable|status>    # once/24h dry-run scan 
 Every command except `config`:
 
 - `--format <auto|table|json|jsonl>` (default `auto`). `resolveFormat()` (copy of `src/todo/lib/format.ts` pattern): `auto` → `table` if `isInteractive()` else `json`. `jsonl` only meaningful for `optimize --log` (streams ops).
-- `--node-modules` · `--min-real <bytes>` (default `10485760` = 10 MB) · `--top <N>` (default **unlimited** — no trimming) · `--no-breakdown` · `--include <glob>` / `--exclude <glob>` (repeatable, `parseVariadic`) · `-v/--verbose` · `--silent`.
+- `--node-modules` · `--min-real <bytes>` (default `10485760` = 10 MB) · `--top <N>` (default **unlimited** — no trimming) · `--no-breakdown` · `--include <glob>` / `--exclude <glob>` (repeatable, `parseVariadic`; a glob matches if it matches **either** the path relative to its scan root **or** the basename; `--exclude` wins over `--include`) · `-v/--verbose` · `--silent`.
 - `optimize` adds: `--apply` · `--rollback` · `--list` · `--log` · `--process <id>` · `--no-cache`.
 
 `config` has no `--format` (prompt/flag flow); emits its config as JSON when non-TTY with no mutating flag.
@@ -174,9 +174,10 @@ The JSONL on disk is **the source of truth**. `--apply` produces `ProcessReport`
 
 ## 5. `measure` / `du` semantics
 
-- Walks via the utils (`measureTree` per root; `freeDiskSpace`; `getCloneId` for family analysis). Tool builds the `DirNode` tree.
+- **The per-subdir `DirNode` tree is built in `orchestrator.ts` from utils `walkFiles()` + per-file `getPrivateSize()` (and `node:fs` stat for logical/allocated).** Utils `measureTree` is used ONLY for per-root `totals`; it returns one aggregated `DiskUsage` and exposes no per-directory walk — do not extend it. `freeSpace` via utils `freeDiskSpace`; family analysis via per-file `getCloneId`.
+- **Per-dir size definition (concrete):** `real(D) = Σ getPrivateSize(f) for files directly in D + Σ real(childDir)`; `logical(D)`/`allocated(D)` analogously. **"own real"** of D `= real(D) − Σ real(childDir)`. (`getPrivateSize` is per-file; a dir's number is this recursive sum — not a syscall on the dir.)
 - **Breakdown is default.** `--no-breakdown` → totals + cloneAnalysis only (no `children`).
-- **Subdir keep rule (deepest-significant):** include a dir D as a `children` node iff `real(D) > minReal`. Collapse ancestors: if a single child C has `real(C) ≥ 0.9 * real(D)` and is itself kept, D is *not* emitted as its own row (pass-through) — its child is. A dir IS emitted when it has `> minReal` of its own real spread across sub-`minReal` children (e.g. `.cache/` 198 MB, children all <10 MB → `.cache/` is the deepest-kept). `du` = same algorithm rooted at one folder with `--depth N` cap (default unlimited).
+- **Subdir keep rule (deepest-significant):** include a dir D as a `children` node iff `real(D) > minReal`. Collapse ancestors: if a single child C has `real(C) ≥ 0.9 * real(D)` and is itself kept, D is *not* emitted as its own row (pass-through) — its child is. A dir IS emitted when its **own real** (defined above) `> minReal` even though no single child is (e.g. `.cache/` own-real 198 MB spread across <10 MB children → `.cache/` is the deepest-kept). `du` = same algorithm rooted at one folder with `--depth N` cap (default unlimited).
 - Columns per row: `logical · du -sh · real · overcount`. `real` per row = bytes freed if **that dir alone** is deleted (clone/snapshot-aware). Cloned-away remainder shown as one `sharedNote` line (e.g. `└ 3,402 files cloned from <keeper> → 0 B real`), expandable with `--show-shared`.
 - `--sort <overcount|real|du>` (default `overcount`). No trimming; `--top N` opt-in.
 - Off-APFS: `real`/`overcount` = `null`; renderer prints `unavailable`; `measure`/`du` still work (logical/du). `optimize` hard-errors off-APFS (see §7).
@@ -187,7 +188,7 @@ The JSONL on disk is **the source of truth**. `--apply` produces `ProcessReport`
 `src/macos/lib/clones/collapse.ts`:
 
 1. Use utils `findDuplicateFiles(root)` per root → file-level identical groups (size→sha256→byte-equal; already clone-aware: a group only matters if members are NOT already same `cloneId`).
-2. **Directory rollup:** for each dir, compute `dirContentHash = sha256(sorted list of (relpathFromDir, fileSha256, mode))`. Two dirs are *whole-dir duplicates* iff equal `dirContentHash` AND equal recursive file count AND no extra entries.
+2. **Directory rollup:** for each dir, compute `dirContentHash = sha256(sorted list of (relpathFromDir, fileSha256, mode))`. Two dirs are *whole-dir duplicates* iff equal `dirContentHash` AND equal recursive file count AND no extra entries. **Performance (mandatory):** reuse the per-file `sha256` already computed by `findDuplicateFiles` (memoise it `path→sha`); do NOT re-hash files. **Cheap reject first:** only roll up a dir pair if their recursive file counts match — counting is O(entries), hashing is O(bytes); skip the hash entirely on count mismatch. Without this, a multi-`node_modules` Projects scan hashes hundreds of GB and appears to hang.
 3. **Collapse upward** to the **highest** ancestor that is still a whole-dir duplicate of a counterpart — but **HARD STOP at the scan roots**: never test or ascend above any path in `roots` (prevents a bug walking up to `/Users` or `/`). If a whole `node_modules/` is duplicated, that's the entry; else the deepest shared subtree; else individual files.
 4. Emit `DuplicateSet` per collapsed group: `kind`, `what` (label relative to common ancestor of roots), `copies`, `eachBytes`, `reclaimable=(copies-1)*eachBytes`, full `members`, `keep` (lexically-first stable pick).
 5. `--group` → renderer lists every `member` under each set (no trimming).
@@ -202,11 +203,12 @@ The JSONL on disk is **the source of truth**. `--apply` produces `ProcessReport`
   - Reuse fresh (<1h, same key) cached plan unless `--no-cache`; report `planCache.hit/ageMs`.
   - **TTY confirm:** clack summary (`N files → clones · reclaim X · rewrites in place, content-verified`) then `p.text` requiring the literal token **`apply`** (`p.isCancel`/mismatch → abort, mutate nothing). **Non-TTY:** requires `--yes`; absent → error + `suggestCommand(... {add:["--apply","--yes"]})`, exit 1.
   - **Audit wrapper (does NOT extend utils):** `audit.ts` `runOptimize()` iterates candidates; per file: capture pre-state (`lstat` mode/mtime, `sha256Before`) → call utils `dedupeFile({keep,replace})` (the 14-invariant-safe primitive, unchanged) → on `cloned` re-hash → `sha256After`, assert `===sha256Before` (byte-identity; mismatch ⇒ record `op:"error" status:"integrity"` and STOP the run) → append a `ProcessOp` JSONL line. `skipped-*`/`CloneUnsupportedError` map to `op:"skip"`/`"error"` with `status`+`message`; the run continues (per-file isolation).
-  - JSONL path: `~/.genesis-tools/macos-clones/process/<id>.jsonl` via `Storage("macos-clones")` (`process/` subdir). Streamed line-by-line (crash-safe partial log).
+  - `id` = `<UTC ISO, filename-safe>.<pid>` (e.g. `2026-05-19T14-03-22Z.41109`) — the `.<pid>` suffix prevents collision when two `--apply`s start in the same second. JSONL path: `~/.genesis-tools/macos-clones/process/<id>.jsonl` via `Storage("macos-clones")` (`process/` subdir). Streamed line-by-line (crash-safe partial log).
   - Tail = `renderer.processReport(report)` — identical to `--log --process <id>`. Always prints: per-op table, **skipped list with reasons**, **errors list with reasons**, totals, and `suggestCommand`: `tools macos clones optimize --rollback --process <id>`.
 - `--list` → `ProcessListReport` from the `process/` dir (newest first; states; `--format json`).
 - `--log --process <id>` → read JSONL → reconstruct `ProcessReport` → `renderer.processReport`. Read-only. `--format jsonl` streams raw lines. Works on `applied` and `rolled-back` (rollback ops appended to the same file).
 - `--rollback --process <id>`:
+  - **Free-space preflight (mandatory):** rollback physically re-allocates the shared bytes. Compute `total = Σ bytes of op:"clone"` not already rolled back; if `freeDiskSpace(<volume of process roots>).available <= total * 1.1` → **exit 1**, print required-vs-available, mutate nothing. (Real failure mode: the bun-cache use case is *"disk was full"* — a naive rollback would fail mid-way leaving a partial restore.)
   - TTY confirm token **`rollback`** (mirrors `apply`); non-TTY needs `--yes`.
   - For each `op:"clone"` in the process: re-materialise `replace` as an **independent (un-shared) copy** (plain copy, not `clonefile`) so its extents are no longer shared, then restore `modeBefore`/`mtimeBefore`. Content is already byte-identical (verified at apply) so rollback changes only physical layout, never bytes. Append `op:"rollback-uncloned"` ops to the **same JSONL** (preserves the audit chain); set process `state:"rolled-back"`. Emits its own `processReport` view (rollback ops).
 
@@ -255,7 +257,7 @@ cross-tree the family's sharing partner is OUTSIDE the measured folder (usually
     retention:{ maxAgeDays:14, minRuns:14 },
     description:"Clone-aware dry-run scan of watched dirs; notify reclaimable" }
   ```
-  `absBun = Bun.which("bun") ?? process.execPath`; `absScanScript = fileURLToPath(new URL("../lib/clones/scan-daemon.ts", import.meta.url))` — resolved when `enable` runs so the registered command stays valid regardless of cwd.
+  `absBun = Bun.which("bun") ?? process.execPath`; `absScanScript = fileURLToPath(new URL("../lib/clones/scan-daemon.ts", import.meta.url))` (`fileURLToPath` from `node:url`) — resolved when `enable` runs so the registered command stays valid regardless of cwd.
 - `scan-daemon.ts` (non-interactive): load `watchedDirs`; if empty → log+exit 0. Run **dry-run** `measure`+`duplicates` (NEVER `--apply` — unattended mutation is the one thing the safety model forbids); write the 1h plan cache; emit ONE macOS notification: *"N GB reclaimable across M dirs — run `tools macos clones optimize --apply`"*. Write a `ProcessReport` with `state:"dry-run"` to `process/` so `--list` shows it.
 - `disable` → remove/disable the task via daemon lib. `status` → last run + next run + last dry-run reclaimable summary; remind `tools daemon start` if daemon not running.
 
