@@ -44,3 +44,28 @@ describe("build() streams", () => {
         expect(outChunks.join("")).toBe(""); // logger never touches stdout
     });
 });
+
+describe("level resolution + child propagation", () => {
+    // Plan's literal test asserted log.isLevelEnabled("debug") === false, which
+    // contradicts Task 2's architecture (root pino stays "trace" → isLevelEnabled
+    // is always true; the GATE is the mechanism). Plan comment says "assert the
+    // gate by capturing stderr" — this is that, as a clean before/after proving
+    // a child created BEFORE the level change is retroactively re-gated.
+    it("mutating console level retroactively re-gates a pre-created scoped child", async () => {
+        const mod = await import("./logger");
+        const { log } = mod.logger.scoped("test:child"); // created BEFORE the change
+        const chunks: string[] = [];
+        const oe = process.stderr.write.bind(process.stderr);
+        process.stderr.write = (c: string) => {
+            chunks.push(String(c));
+            return true;
+        };
+        log.debug("CHILD_DEBUG_BEFORE"); // gate=info default → dropped from console
+        mod.setConsoleLevel("debug"); // retroactively lowers the gate
+        log.debug("CHILD_DEBUG_AFTER"); // same pre-created child → now visible
+        process.stderr.write = oe;
+        const out = chunks.join("");
+        expect(out).not.toContain("CHILD_DEBUG_BEFORE");
+        expect(out).toContain("CHILD_DEBUG_AFTER");
+    });
+});
