@@ -7,7 +7,7 @@ import { Command } from "commander";
 
 function buildGroup(name: string): Command {
     const group = new Command(name).description(
-        "Clone-aware disk usage: real reclaimable size, duplicates, safe dedupe (macOS/APFS)",
+        "Clone-aware disk usage: real reclaimable size, duplicates, safe dedupe (macOS/APFS)"
     );
     group.addCommand(createMeasureCommand());
     group.addCommand(createDuCommand());

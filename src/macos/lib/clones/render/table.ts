@@ -58,7 +58,7 @@ export class TableRenderer implements CloneRenderer {
                 formatTable(rows, ["path", "logical", "du -sh", "real", "overcount"], {
                     alignRight: [1, 2, 3, 4],
                     maxColWidth: 60,
-                }),
+                })
             );
         }
 
@@ -66,13 +66,11 @@ export class TableRenderer implements CloneRenderer {
         lines.push(
             pc.bold(
                 `TOTAL  logical ${formatBytes(r.totals.logical)}  du ${formatBytes(r.totals.allocated)}  ` +
-                    `real ${realCell(r.totals.real)}  overcount ${overcountCell(r.totals.overcount)}`,
-            ),
+                    `real ${realCell(r.totals.real)}  overcount ${overcountCell(r.totals.overcount)}`
+            )
         );
         lines.push(
-            pc.dim(
-                `free space: ${formatBytes(r.freeSpace.available)} available of ${formatBytes(r.freeSpace.total)}`,
-            ),
+            pc.dim(`free space: ${formatBytes(r.freeSpace.available)} available of ${formatBytes(r.freeSpace.total)}`)
         );
 
         if (r.cloneAnalysis.families > 0) {
@@ -80,7 +78,7 @@ export class TableRenderer implements CloneRenderer {
             lines.push(pc.bold("clone analysis"));
             lines.push(
                 `  ${r.cloneAnalysis.families} family(ies), ${r.cloneAnalysis.clonedFiles} cloned file(s), ` +
-                    `${formatBytes(r.cloneAnalysis.sharedBytes)} shared`,
+                    `${formatBytes(r.cloneAnalysis.sharedBytes)} shared`
             );
             if (r.cloneAnalysis.crossTreePartners.length > 0) {
                 lines.push(`  cross-tree partners: ${r.cloneAnalysis.crossTreePartners.join(", ")}`);
@@ -117,7 +115,7 @@ export class TableRenderer implements CloneRenderer {
                 formatTable(rows, ["kind", "what", "copies", "each", "reclaimable"], {
                     alignRight: [2, 3, 4],
                     maxColWidth: 60,
-                }),
+                })
             );
 
             if (r.grouped) {
@@ -145,8 +143,8 @@ export class TableRenderer implements CloneRenderer {
         lines.push(
             pc.dim(
                 `roots: ${r.roots.join(", ")}  plan cache: ` +
-                    `${r.planCache.hit ? `hit (${Math.round((r.planCache.ageMs ?? 0) / 1000)}s old)` : "miss"}`,
-            ),
+                    `${r.planCache.hit ? `hit (${Math.round((r.planCache.ageMs ?? 0) / 1000)}s old)` : "miss"}`
+            )
         );
 
         const opRows = r.ops.map((op: ProcessOp) => [
@@ -161,7 +159,7 @@ export class TableRenderer implements CloneRenderer {
                 formatTable(opRows, ["#", "op", "status", "bytes", "replace"], {
                     alignRight: [3],
                     maxColWidth: 60,
-                }),
+                })
             );
         }
 
@@ -187,8 +185,8 @@ export class TableRenderer implements CloneRenderer {
         lines.push(
             pc.bold(
                 `TOTAL  cloned ${r.totals.cloned}  skipped ${r.totals.skipped}  ` +
-                    `errors ${r.totals.errors}  reclaimed ${formatBytes(r.totals.bytesReclaimed)}`,
-            ),
+                    `errors ${r.totals.errors}  reclaimed ${formatBytes(r.totals.bytesReclaimed)}`
+            )
         );
         if (r.state === "applied") {
             lines.push(pc.dim(`tools macos clones optimize --rollback --process ${r.id}`));

@@ -1,11 +1,5 @@
 import { SafeJSON } from "@app/utils/json";
-import type {
-    CloneRenderer,
-    DuplicatesReport,
-    MeasureReport,
-    ProcessListReport,
-    ProcessReport,
-} from "./types";
+import type { CloneRenderer, DuplicatesReport, MeasureReport, ProcessListReport, ProcessReport } from "./types";
 
 export class JsonRenderer implements CloneRenderer {
     measure(r: MeasureReport): string {
