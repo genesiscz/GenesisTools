@@ -5,6 +5,7 @@ import type {
     ConfirmOpts,
     Log,
     MultiSelectOpts,
+    PasswordOpts,
     SelectOpts,
     SelectValue,
     Spinner,
@@ -79,8 +80,10 @@ export function opentuiBackend(_renderer: CliRenderer): PromptBackend {
         info: (message) => logSink("info", message),
         success: (message) => logSink("success", message),
         warn: (message) => logSink("warn", message),
+        warning: (message) => logSink("warn", message),
         error: (message) => logSink("error", message),
         step: (message) => logSink("step", message),
+        message: (message) => logSink("info", Array.isArray(message) ? message.join("\n") : message),
     };
 
     return {
@@ -93,6 +96,15 @@ export function opentuiBackend(_renderer: CliRenderer): PromptBackend {
         confirm: (opts: ConfirmOpts) => enqueue({ id: nextTaskId(), type: "confirm", opts }, coerceBoolean),
         typedConfirm: (opts: TypedConfirmOpts) =>
             enqueue({ id: nextTaskId(), type: "typedConfirm", opts }, coerceBoolean),
+        // opentui is doctor-only and its renderer has no password widget; route
+        // through the text prompt (no visual masking — out of scope for the
+        // logger/out overhaul, which never touches the opentui renderer).
+        // opentui is doctor-only with no password widget; route through the
+        // text prompt. validate is intentionally dropped here — opentui TUI
+        // validation is renderer scope, out of the logger/out overhaul; the
+        // clack default (the real backend) does honor PasswordOpts.validate.
+        password: (opts: PasswordOpts) =>
+            enqueue({ id: nextTaskId(), type: "text", opts: { message: opts.message } }, coerceText),
         select: (opts: SelectOpts) => enqueue({ id: nextTaskId(), type: "select", opts }, coerceSelectValue),
         multiselect: (opts: MultiSelectOpts) =>
             enqueue({ id: nextTaskId(), type: "multiselect", opts }, coerceSelectValues),

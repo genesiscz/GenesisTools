@@ -58,8 +58,10 @@ export const log: Log = {
     info: (msg) => getBackend().log.info(msg),
     success: (msg) => getBackend().log.success(msg),
     warn: (msg) => getBackend().log.warn(msg),
+    warning: (msg) => getBackend().log.warning(msg),
     error: (msg) => getBackend().log.error(msg),
     step: (msg) => getBackend().log.step(msg),
+    message: (msg) => getBackend().log.message(msg),
 };
 
 export type { OfferInstallOpts } from "./offer-install";
