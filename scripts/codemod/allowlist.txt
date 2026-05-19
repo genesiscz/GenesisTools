@@ -1,0 +1,12 @@
+src/utils/api/ApiClient.ts
+src/shops/api/shops/ItescoClient.ts
+src/watch/index.ts
+src/git-commit/index.ts
+src/timely/commands/events.ts
+src/macos/commands/mail/search.ts
+src/last-changes/index.ts
+src/git-rebranch/index.ts
+src/react-compiler-debug/index.ts
+src/npm-package-diff/index.ts
+src/claude/commands/history.ts
+src/mcp-manager/commands/__tests__/show.test.ts
