@@ -12,10 +12,14 @@ describe("logger facade", () => {
         expect(typeof mod.logger.scoped).toBe("function");
     });
 
-    it("exports a Logger type and transitional default + consoleLog", async () => {
+    it("does NOT export a default or consoleLog (transitional exports removed — Task 21)", async () => {
         const mod = await import("./logger");
-        expect(mod.default).toBe(mod.logger); // transitional default === named
-        expect(mod.consoleLog).toBe(mod.logger); // transitional alias
+        // Regression guard: these transitional exports were removed once every
+        // importer migrated to the named `logger`. Re-adding either would
+        // silently revive the dual-channel ambiguity the overhaul eliminated.
+        expect(mod).not.toHaveProperty("default");
+        expect(mod).not.toHaveProperty("consoleLog");
+        expect(mod.logger).toBeDefined();
     });
 });
 

@@ -296,6 +296,3 @@ export const configureLogger = (config: LoggerConfig): void => {
 export function getLogger(): pino.Logger {
     return get();
 }
-
-export const consoleLog = logger; // transitional alias (Phase 4 migrates importers)
-export default logger; // transitional default (removed in Task 22)
