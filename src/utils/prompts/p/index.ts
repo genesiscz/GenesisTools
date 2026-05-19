@@ -3,6 +3,7 @@ import type {
     ConfirmOpts,
     Log,
     MultiSelectOpts,
+    PasswordOpts,
     SelectOpts,
     SelectValue,
     Spinner,
@@ -48,6 +49,10 @@ export function select(opts: SelectOpts): Promise<SelectValue> {
 
 export function multiselect(opts: MultiSelectOpts): Promise<SelectValue[]> {
     return getBackend().multiselect(opts);
+}
+
+export function password(opts: PasswordOpts): Promise<string> {
+    return getBackend().password(opts);
 }
 
 export function spinner(): Spinner {
