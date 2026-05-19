@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { getSettingsRepository, type SettingsPatch } from "@app/shops/lib/settings";
 import { authedApiHandler, safeJsonBody } from "@app/shops/ui/server/api-utils";
 import { createFileRoute } from "@tanstack/react-router";

@@ -4,7 +4,7 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { Command } from "commander";
 import pc from "picocolors";
 
