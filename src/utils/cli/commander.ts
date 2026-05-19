@@ -102,7 +102,11 @@ function getCommandVerbosity(command: Command): Verbosity {
 
 export function addGlobalVerboseOption<T extends Command>(program: T, opts: { trace?: boolean } = {}): T {
     if (!optionExists(program, "-v") && !optionExists(program, "--verbose")) {
-        program.option("-v, --verbose", "Enable verbose logging; repeat for trace logging", incrementVerbosity, 0);
+        // Description text is intentionally the historical canonical
+        // "Enable verbose logging" (matching every pre-overhaul bespoke -v) so
+        // that after codemod-4b re-adds this global option, the golden --help
+        // anchors (gitcommit_help, npmdiff_help) render byte-identical to HEAD.
+        program.option("-v, --verbose", "Enable verbose logging", incrementVerbosity, 0);
     }
 
     // `--trace` is opt-in (trace-gated): only registered when explicitly
