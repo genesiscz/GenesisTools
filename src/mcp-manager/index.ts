@@ -29,12 +29,12 @@ import {
 } from "./commands/index.js";
 import { setGlobalOptions } from "./utils/config.utils.js";
 
-// Configure logger to include timestamps in console output and enable sync mode
-// Sync mode ensures logs appear before Inquirer prompts
+// Include timestamps in console output. The console stream is now always
+// sync (pino-pretty sync:true in createLogger), so logs reliably appear
+// before Inquirer prompts without an explicit sync flag.
 configureLogger({
     includeTimestamp: true,
     timestampFormat: "HH:MM:ss",
-    sync: true,
 });
 
 /**

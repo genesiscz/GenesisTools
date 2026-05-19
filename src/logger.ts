@@ -7,52 +7,7 @@ import chalk from "chalk";
 import pino from "pino";
 import PinoPretty from "pino-pretty";
 
-// Parse command line args for log level (simple check without minimist)
-const args = {
-    verbose: process.argv.includes("-v") || process.argv.includes("--verbose"),
-    trace: process.argv.some((arg) => arg === "-vv") || process.argv.includes("--trace"),
-};
-
 type LogLevel = "trace" | "debug" | "info" | "warn" | "error" | "silent";
-
-const LOG_LEVELS: Record<LogLevel, number> = {
-    trace: 10,
-    debug: 20,
-    info: 30,
-    warn: 40,
-    error: 50,
-    silent: 100,
-};
-
-const getLogLevel = (): LogLevel => {
-    if (process.env.LOG_TRACE === "1") {
-        return "trace";
-    }
-    if (process.env.LOG_DEBUG === "1") {
-        return "debug";
-    }
-    if (process.env.LOG_SILENT === "1") {
-        return "silent";
-    }
-    if (args.trace) {
-        return "trace";
-    }
-    if (args.verbose) {
-        return "debug";
-    }
-    // Generic, opt-in console-level override. Unset by default (global default
-    // stays "info"); a tool may set LOG_CONSOLE_LEVEL before this module is
-    // imported to scope its own console verbosity without changing other tools.
-    // Explicit verbose/trace/debug signals above still win.
-    const envLevel = process.env.LOG_CONSOLE_LEVEL as LogLevel | undefined;
-    if (envLevel && envLevel in LOG_LEVELS) {
-        return envLevel;
-    }
-    return "info";
-};
-
-// Check environment
-const currentLevel = getLogLevel();
 
 // Console threshold is a runtime-mutable module-level value; the pino root
 // stays "trace" (file never starves) and a gated Writable (built in
@@ -94,7 +49,6 @@ export interface LoggerOptions {
     includeTimestamp?: boolean;
     prefixPid?: boolean;
     timestampFormat?: string | false;
-    sync?: boolean;
     /** Hide level prefix for info/debug/trace, only show for warn/error */
     minimalLevels?: boolean;
 }
@@ -102,7 +56,6 @@ export interface LoggerOptions {
 export interface LoggerConfig {
     includeTimestamp?: boolean;
     timestampFormat?: string;
-    sync?: boolean;
     logToFile?: boolean;
     level?: LogLevel;
 }
@@ -111,7 +64,6 @@ export interface LoggerConfig {
 let globalConfig: LoggerConfig = {
     includeTimestamp: false, // Default: no timestamps
     timestampFormat: "HH:MM:ss",
-    sync: true, // Default: sync mode to ensure proper log ordering
 };
 let fileLogWarningShown = false;
 
@@ -124,7 +76,6 @@ export const createLogger = (options: LoggerOptions = {}): pino.Logger => {
         includeTimestamp = globalConfig.includeTimestamp ?? false,
         prefixPid: showPid = prefixPid,
         timestampFormat = includeTimestamp ? (globalConfig.timestampFormat ?? "HH:MM:ss") : false,
-        sync = globalConfig.sync ?? false,
         minimalLevels = false,
     } = options;
 
@@ -215,101 +166,9 @@ export const createLogger = (options: LoggerOptions = {}): pino.Logger => {
 
     const logger = pino(baseConfig, pino.multistream(streams));
 
-    // In sync mode on TTY, wrap methods to flush after each log
-    if (sync && isTerminal) {
-        const wrap = (method: pino.LogFn): pino.LogFn => {
-            const bound = method.bind(logger);
-            return ((...args: Parameters<pino.LogFn>) => {
-                bound(...args);
-                logger.flush();
-            }) as pino.LogFn;
-        };
-
-        logger.info = wrap(logger.info);
-        logger.warn = wrap(logger.warn);
-        logger.error = wrap(logger.error);
-        logger.debug = wrap(logger.debug);
-        logger.trace = wrap(logger.trace);
-    }
-
+    // Streams are sync (file + pretty); no per-call flush wrap needed — pino
+    // writes synchronously, so output ordering is preserved as-is.
     return logger;
-};
-
-/**
- * Simple raw console logger interface - no pino overhead
- * Clean output: no timestamps, no levels for info, colored WARN/ERROR for those
- */
-export interface RawConsoleLogger {
-    trace: (...args: unknown[]) => void;
-    debug: (...args: unknown[]) => void;
-    info: (...args: unknown[]) => void;
-    warn: (...args: unknown[]) => void;
-    error: (...args: unknown[]) => void;
-    level: LogLevel;
-    flush: () => void;
-}
-
-/**
- * Create a raw console logger - bypasses pino entirely for minimal overhead
- * - trace/debug: gray text
- * - info: plain text
- * - warn: yellow "WARN:" prefix
- * - error: red "ERROR:" prefix
- */
-export const createConsoleLoggerRaw = (logLevel: LogLevel = currentLevel): RawConsoleLogger => {
-    const shouldLog = (level: LogLevel) => LOG_LEVELS[level] >= LOG_LEVELS[logLevel];
-
-    const formatArgs = (args: unknown[]): string => {
-        return args
-            .map((arg) => {
-                if (typeof arg === "string") {
-                    return arg;
-                }
-                if (arg instanceof Error) {
-                    return arg.message;
-                }
-                try {
-                    return SafeJSON.stringify(arg);
-                } catch {
-                    return String(arg);
-                }
-            })
-            .join(" ");
-    };
-
-    return {
-        level: logLevel,
-        trace: (...args: unknown[]) => {
-            if (shouldLog("trace")) {
-                const msg = formatArgs(args);
-                console.log(isTerminal ? chalk.gray(msg) : msg);
-            }
-        },
-        debug: (...args: unknown[]) => {
-            if (shouldLog("debug")) {
-                const msg = formatArgs(args);
-                console.log(isTerminal ? chalk.gray(msg) : msg);
-            }
-        },
-        info: (...args: unknown[]) => {
-            if (shouldLog("info")) {
-                console.log(formatArgs(args));
-            }
-        },
-        warn: (...args: unknown[]) => {
-            if (shouldLog("warn")) {
-                const prefix = isTerminal ? chalk.yellow("WARN:") : "WARN:";
-                console.log(prefix, formatArgs(args));
-            }
-        },
-        error: (...args: unknown[]) => {
-            if (shouldLog("error")) {
-                const prefix = isTerminal ? chalk.red("ERROR:") : "ERROR:";
-                console.log(prefix, formatArgs(args));
-            }
-        },
-        flush: () => {}, // No-op for raw logger
-    };
 };
 
 export type Logger = pino.Logger;
@@ -377,6 +236,13 @@ export const logger: LoggerFacade = {
  */
 export const configureLogger = (config: LoggerConfig): void => {
     globalConfig = { ...globalConfig, ...config };
+    if (config.level) {
+        // Drive the runtime console gate in place — the facade singleton is
+        // never rebuilt, so this retroactively re-gates existing children.
+        setConsoleLevel(config.level);
+    }
+    // Timestamp opts merged into globalConfig only take effect if set BEFORE
+    // the first log (createLogger reads them lazily on first use).
 };
 
 /** Returns the underlying pino (now the lazy singleton). */
