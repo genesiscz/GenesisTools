@@ -98,3 +98,45 @@ describe("reclaimable accessors degrade gracefully", () => {
         expect(r === null || r === 0).toBe(true);
     });
 });
+
+import {
+    formatDiskUsage,
+    freeDiskSpace,
+    overcountRatio,
+} from "@app/utils/fs/disk-usage";
+
+describe("freeDiskSpace / overcountRatio / formatDiskUsage", () => {
+    it("freeDiskSpace returns positive byte totals", () => {
+        const s = freeDiskSpace("/");
+        expect(s.total).toBeGreaterThan(0);
+        expect(s.available).toBeGreaterThan(0);
+        expect(s.total).toBeGreaterThanOrEqual(s.free);
+    });
+
+    it("overcountRatio is null when private unknown, else >= 1", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-du-ratio-"));
+        try {
+            writeFileSync(join(dir, "f"), Buffer.alloc(40_000, 1));
+            const r = overcountRatio(dir);
+            if (r !== null) {
+                expect(r.ratio).toBeGreaterThanOrEqual(1);
+            }
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("formatDiskUsage shows both numbers side by side", () => {
+        const out = formatDiskUsage({
+            logical: 1_000,
+            allocated: 38_700_000_000,
+            private: 2_100_000_000,
+            exactReclaimable: 2_100_000_000,
+            fileCount: 5,
+            dirCount: 2,
+            errors: [],
+        });
+        expect(out).toContain("du says");
+        expect(out).toContain("actually");
+    });
+});
