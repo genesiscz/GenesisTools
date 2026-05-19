@@ -1,20 +1,8 @@
-import {
-    linkSync,
-    mkdirSync,
-    mkdtempSync,
-    readdirSync,
-    rmSync,
-    symlinkSync,
-    writeFileSync,
-} from "node:fs";
+import { describe, expect, it } from "bun:test";
+import { linkSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "bun:test";
-import {
-    fileAllocatedSize,
-    fileLogicalSize,
-    walkFiles,
-} from "@app/utils/fs/disk-usage";
+import { fileAllocatedSize, fileLogicalSize, walkFiles } from "@app/utils/fs/disk-usage";
 
 describe("disk-usage per-file sizers + walkFiles", () => {
     it("logical == byte length; allocated >= logical; walk skips symlinks", () => {
@@ -68,12 +56,8 @@ describe("measureTree", () => {
 });
 
 import { spawnSync } from "node:child_process";
+import { exactReclaimableBytes, findCloneFamilies, reclaimableBytes } from "@app/utils/fs/disk-usage";
 import { skip } from "@app/utils/test/skip";
-import {
-    exactReclaimableBytes,
-    findCloneFamilies,
-    reclaimableBytes,
-} from "@app/utils/fs/disk-usage";
 
 describe.skipIf(skip.unlessMac)("clone-family dedup (intra-tree)", () => {
     it("private undercounts a shared pair; exact ~= one copy; families grouped", () => {
@@ -107,11 +91,7 @@ describe("reclaimable accessors degrade gracefully", () => {
     });
 });
 
-import {
-    formatDiskUsage,
-    freeDiskSpace,
-    overcountRatio,
-} from "@app/utils/fs/disk-usage";
+import { formatDiskUsage, freeDiskSpace, overcountRatio } from "@app/utils/fs/disk-usage";
 
 describe("freeDiskSpace / overcountRatio / formatDiskUsage", () => {
     it("freeDiskSpace returns positive byte totals", () => {
@@ -149,10 +129,7 @@ describe("freeDiskSpace / overcountRatio / formatDiskUsage", () => {
     });
 });
 
-import {
-    findDedupeCandidates,
-    findDuplicateFiles,
-} from "@app/utils/fs/disk-usage";
+import { findDedupeCandidates, findDuplicateFiles } from "@app/utils/fs/disk-usage";
 
 describe("duplicate detection", () => {
     it("groups byte-identical files; ignores unique and size-mismatched", () => {
@@ -166,10 +143,7 @@ describe("duplicate detection", () => {
 
             const groups = findDuplicateFiles(dir);
             expect(groups.length).toBe(1);
-            expect(groups[0].paths.map((p) => p.split("/").pop()).sort()).toEqual([
-                "one.bin",
-                "two.bin",
-            ]);
+            expect(groups[0].paths.map((p) => p.split("/").pop()).sort()).toEqual(["one.bin", "two.bin"]);
             expect(groups[0].size).toBe(64_000);
         } finally {
             rmSync(dir, { recursive: true, force: true });
@@ -196,7 +170,7 @@ describe("duplicate detection", () => {
     });
 });
 
-import { chmodSync, lstatSync, readFileSync, statSync } from "node:fs";
+import { chmodSync, readFileSync, statSync, utimesSync } from "node:fs";
 import { dedupeFile } from "@app/utils/fs/disk-usage";
 
 describe.skipIf(skip.unlessMac)("dedupeFile safety", () => {
@@ -209,18 +183,32 @@ describe.skipIf(skip.unlessMac)("dedupeFile safety", () => {
             writeFileSync(keep, payload);
             writeFileSync(dup, payload); // independent identical copy
             chmodSync(dup, 0o640);
-            const beforeIno = statSync(dup).ino;
-            const beforeMode = statSync(dup).mode;
+            // Pin a fixed mtime/atime so we can prove utimes-restore ran
+            // (without this, dup might accidentally share keep's mtime).
+            const pinned = new Date(2025, 0, 1, 12, 0, 0);
+            utimesSync(dup, pinned, pinned);
+            const beforeStats = statSync(dup);
 
             const res = dedupeFile({ keep, replace: dup });
             expect(res.status).toBe("cloned");
             expect(res.bytesReclaimed).toBeGreaterThan(0);
 
-            // content identical, different inode, same clone family, perms kept
+            // content identical, different inode, same clone family
             expect(readFileSync(dup).equals(readFileSync(keep))).toBe(true);
             expect(statSync(dup).ino).not.toBe(statSync(keep).ino);
-            expect(statSync(dup).ino).not.toBe(beforeIno); // it was swapped
-            expect(statSync(dup).mode).toBe(beforeMode); // mode preserved
+            expect(statSync(dup).ino).not.toBe(beforeStats.ino); // it was swapped
+
+            // Safety Contract invariant 4 — metadata preserved post-swap:
+            const afterStats = statSync(dup);
+            expect(afterStats.mode).toBe(beforeStats.mode); // chmod ran
+            // utimes ran — pinned mtime survived the clone-swap (which would
+            // otherwise have inherited keep's "now" mtime). Compare seconds
+            // since some filesystems round sub-second precision.
+            expect(Math.trunc(afterStats.mtimeMs / 1000)).toBe(Math.trunc(beforeStats.mtimeMs / 1000));
+            // chown ran (single-user box → values match anyway, but proves the
+            // call did not throw and ownership wasn't silently changed):
+            expect(afterStats.uid).toBe(beforeStats.uid);
+            expect(afterStats.gid).toBe(beforeStats.gid);
 
             // INDEPENDENCE: mutate dup → keep unchanged; mutate keep → dup unchanged
             writeFileSync(dup, Buffer.alloc(2 * 1024 * 1024, 0x99));
@@ -269,12 +257,8 @@ describe.skipIf(skip.unlessMac)("dedupeFile safety", () => {
         try {
             writeFileSync(keep, Buffer.alloc(0));
             writeFileSync(empty, Buffer.alloc(0));
-            expect(dedupeFile({ keep, replace: empty }).status).toBe(
-                "skipped-not-regular",
-            );
-            expect(dedupeFile({ keep: dir, replace: keep }).status).toBe(
-                "skipped-not-regular",
-            );
+            expect(dedupeFile({ keep, replace: empty }).status).toBe("skipped-not-regular");
+            expect(dedupeFile({ keep: dir, replace: keep }).status).toBe("skipped-not-regular");
         } finally {
             rmSync(dir, { recursive: true, force: true });
         }
@@ -295,9 +279,7 @@ describe.skipIf(skip.unlessMac)("dedupeFile safety", () => {
             chmodSync(sub, 0o700);
             // replace still byte-identical to the original, no temp left behind
             expect(readFileSync(dup).equals(payload)).toBe(true);
-            expect(
-                readdirSync(sub).every((n) => !n.includes(".gtclone.")),
-            ).toBe(true);
+            expect(readdirSync(sub).every((n) => !n.includes(".gtclone."))).toBe(true);
         } finally {
             chmodSync(sub, 0o700);
             rmSync(dir, { recursive: true, force: true });
