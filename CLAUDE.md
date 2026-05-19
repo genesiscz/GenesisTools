@@ -230,6 +230,16 @@ See `.claude/docs/tool-template.md` for complete templates (@inquirer + @clack/p
 - **Log enough to triage from logs alone.** Every tool must emit enough via `@app/logger` that a future reader can reconstruct what happened without re-running it: log key decision branches, every external-resource access (DB opens with their paths, spawned commands, API URLs), mode/config resolution, and result counts.
 - **Never swallow errors.** A bare `catch {}` is forbidden. At minimum `logger.debug` (or `.warn`) the caught error with context. A swallowed error is a future debugging session that did not have to happen.
 
+## Logging & output
+
+Two cleanly separated layers (the 2026-05 logger+out overhaul):
+
+- **`logger` — diagnostics.** `import { logger } from "@app/logger"` (named only; there is **no** default export and no `consoleLog` — they were removed). Writes to the day-stamped file **always** (debug+), and to the console **on stderr**, gated by level. `logger.*` is **never** the result channel. Global `-v` promotes file-only `logger.debug` to the console; `-vv` → trace (only on tools that opted into `--trace`).
+- **`out` — user-facing.** `import { out } from "@app/logger"` (or `const { log, out } = logger.scoped("comp")`). clack-shaped. **`out.result(data)` / `out.print(raw)` are the ONLY writers to stdout** (the machine result). `out.log.*` / spinners / notes / prompts → stderr. Never emit a serialized result via `logger.*` — that is `out.result()`'s job (CI guard enforces this).
+- **`const { log, out } = logger.scoped("comp")`:** `log.*` = logger-only (diagnostics); `log.out.*` / `log.tee.*` = both (component-tagged single mirror); destructured `out.*` = only-out (no logger mirror).
+- **Every commander entrypoint** ends with `await runTool(program, { tool })` (from `@app/utils/cli`) — it owns `-v`/`--readme`/help registration, console-level resolution, and the `{tool}` log binding, then `parseAsync`. The subprocess **spawner** is `execTool` (renamed from the old `runTool`).
+- **`scripts/ci/logging-guard.sh`** enforces this convention repo-wide in CI: no default/extension/relative-path/any-name import of the logger module (root `./tools` and `scripts/` included — not just `src/`), no bare `logger.*(SafeJSON.stringify(…))` result dumps, no reintroduced transitional shims, and that the browser-client isolation test exists. Browser-client trees never value-importing `@app/logger` is authoritatively enforced by `src/logger/client-isolation.test.ts`.
+
 ## Claude Agent SDK Types Reference
 
 The session/message types in `src/utils/claude/` are aligned with `@anthropic-ai/claude-agent-sdk`. To check for upstream changes:
