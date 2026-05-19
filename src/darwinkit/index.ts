@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { parseVariadic } from "@app/utils/cli";
+import { parseVariadic, runTool } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
 import { closeDarwinKit } from "@app/utils/macos";
 import { handleReadmeFlag } from "@app/utils/readme";
@@ -10,7 +10,6 @@ import pc from "picocolors";
 import { type CommandDef, commands, GROUP_LABELS, GROUP_ORDER, getCommandsByGroup } from "./lib/commands";
 import { defaultFormat, formatOutput, type OutputFormat } from "./lib/format";
 import { runCommandInteractive, runInteractiveMenu } from "./lib/interactive";
-import { runTool } from "@app/utils/cli";
 
 handleReadmeFlag(import.meta.url);
 
@@ -191,7 +190,7 @@ async function main(): Promise<void> {
     const program = buildProgram();
 
     try {
-        await program.parseAsync(process.argv);
+        await runTool(program, { tool: "darwinkit" });
     } catch (error) {
         if (process.stdout.isTTY) {
             p.log.error(error instanceof Error ? error.message : String(error));
@@ -213,7 +212,3 @@ main().catch((err) => {
     closeDarwinKit();
     process.exit(1);
 });
-
-// CODEMOD-4b: review & fold existing parse/readme/verbose into this
-await runTool(program, { tool: "darwinkit" });
-

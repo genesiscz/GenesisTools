@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 
+import { runTool } from "@app/utils/cli";
 import * as p from "@clack/prompts";
 import { Command } from "commander";
 import { registerAddCommand } from "./commands/add";
@@ -9,7 +10,6 @@ import { registerListCommand } from "./commands/list";
 import { registerRemoveCommand } from "./commands/remove";
 import { registerRunCommand } from "./commands/run";
 import { registerShowCommand } from "./commands/show";
-import { runTool } from "@app/utils/cli";
 
 const program = new Command();
 
@@ -23,7 +23,7 @@ registerHistoryCommand(program);
 
 async function main(): Promise<void> {
     try {
-        await program.parseAsync(process.argv);
+        await runTool(program, { tool: "benchmark" });
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         p.log.error(message);
@@ -32,7 +32,3 @@ async function main(): Promise<void> {
 }
 
 main();
-
-// CODEMOD-4b: review & fold existing parse/readme/verbose into this
-await runTool(program, { tool: "benchmark" });
-

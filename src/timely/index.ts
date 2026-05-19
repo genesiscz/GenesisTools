@@ -3,7 +3,7 @@
 // src/timely/index.ts
 
 import { logger } from "@app/logger";
-import { enhanceHelp } from "@app/utils/cli";
+import { enhanceHelp, runTool } from "@app/utils/cli";
 import { Storage } from "@app/utils/storage";
 import chalk from "chalk";
 import { Command } from "commander";
@@ -20,7 +20,6 @@ import { registerLogoutCommand } from "./commands/logout";
 import { registerMemoriesCommand } from "./commands/memories";
 import { registerProjectsCommand } from "./commands/projects";
 import { registerStatusCommand } from "./commands/status";
-import { runTool } from "@app/utils/cli";
 
 // Initialize shared dependencies
 const storage = new Storage("timely");
@@ -109,14 +108,10 @@ async function main(): Promise<void> {
     enhanceHelp(program);
 
     // Parse and execute
-    await program.parseAsync(process.argv);
+    await runTool(program, { tool: "timely" });
 }
 
 main().catch((err) => {
     logger.error(`Unexpected error: ${err}`);
     process.exit(1);
 });
-
-// CODEMOD-4b: review & fold existing parse/readme/verbose into this
-await runTool(program, { tool: "timely" });
-

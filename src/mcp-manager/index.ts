@@ -14,6 +14,7 @@ import type { MCPProvider } from "./utils/providers/types.js";
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
 
+import { runTool } from "@app/utils/cli";
 import {
     backupAllConfigs,
     configJson,
@@ -28,7 +29,6 @@ import {
     syncServers,
 } from "./commands/index.js";
 import { setGlobalOptions } from "./utils/config.utils.js";
-import { runTool } from "@app/utils/cli";
 
 // Include timestamps in console output. The console stream is now always
 // sync (pino-pretty sync:true in createLogger), so logs reliably appear
@@ -319,7 +319,7 @@ enhanceHelp(program);
 // Main function
 async function main() {
     try {
-        await program.parseAsync();
+        await runTool(program, { tool: "mcp-manager" });
     } catch (error: unknown) {
         const opts = program.opts();
         if (error instanceof Error) {
@@ -339,7 +339,3 @@ main().catch((err) => {
     logger.error(`\n✖ Unexpected error: ${err}`);
     process.exit(1);
 });
-
-// CODEMOD-4b: review & fold existing parse/readme/verbose into this
-await runTool(program, { tool: "mcp-manager" });
-

@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
+import { runTool } from "@app/utils/cli";
 import { PROJECT_ROOT } from "@app/utils/paths";
 import { Command } from "commander";
 import { registerConfigureCommand } from "./commands/configure.js";
@@ -8,7 +9,6 @@ import { registerFillCommand } from "./commands/fill.js";
 import { registerLinkCommand } from "./commands/link-workitems.js";
 import { registerTimesheetCommand } from "./commands/timesheet.js";
 import { runClarityPreflight } from "./lib/preflight.js";
-import { runTool } from "@app/utils/cli";
 
 const program = new Command()
     .name("clarity")
@@ -98,8 +98,4 @@ program
         process.exit(exitCode);
     });
 
-program.parse();
-
-// CODEMOD-4b: review & fold existing parse/readme/verbose into this
 await runTool(program, { tool: "clarity" });
-

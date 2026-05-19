@@ -1,9 +1,9 @@
+import { runTool } from "@app/utils/cli";
 import { Command } from "commander";
 import { registerConfigCommand } from "./commands/config";
 import { registerLogCommand } from "./commands/log";
 import { registerRecordCommand } from "./commands/record";
 import { registerTailCommand } from "./commands/tail";
-import { runTool } from "@app/utils/cli";
 
 const program = new Command();
 program.name("question").description("Capture & review Q→A fired at agents mid-session");
@@ -17,11 +17,7 @@ if (process.argv.slice(2).length === 0) {
     process.exit(0);
 }
 
-program.parseAsync(process.argv).catch((err) => {
+await runTool(program, { tool: "question" }).catch((err) => {
     process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
     process.exit(1);
 });
-
-// CODEMOD-4b: review & fold existing parse/readme/verbose into this
-await runTool(program, { tool: "question" });
-

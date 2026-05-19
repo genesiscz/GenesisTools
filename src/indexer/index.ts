@@ -1,3 +1,4 @@
+import { runTool } from "@app/utils/cli";
 import * as p from "@clack/prompts";
 import { Command } from "commander";
 import { registerAddCommand } from "./commands/add";
@@ -15,7 +16,6 @@ import { registerStopCommand } from "./commands/stop";
 import { registerSyncCommand } from "./commands/sync";
 import { registerVerifyCommand } from "./commands/verify";
 import { registerWatchCommand } from "./commands/watch";
-import { runTool } from "@app/utils/cli";
 
 const program = new Command();
 
@@ -65,7 +65,7 @@ async function main(): Promise<void> {
     }
 
     try {
-        await program.parseAsync(process.argv);
+        await runTool(program, { tool: "indexer" });
     } catch (error) {
         p.log.error(error instanceof Error ? error.message : String(error));
         process.exit(1);
@@ -76,7 +76,3 @@ main().catch((err) => {
     p.log.error(err instanceof Error ? err.message : String(err));
     process.exit(1);
 });
-
-// CODEMOD-4b: review & fold existing parse/readme/verbose into this
-await runTool(program, { tool: "indexer" });
-

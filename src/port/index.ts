@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { enhanceHelp, isInteractive } from "@app/utils/cli";
+import { enhanceHelp, isInteractive, runTool } from "@app/utils/cli";
 import { withCancel } from "@app/utils/prompts/clack/helpers";
 import * as p from "@clack/prompts";
 import { Command } from "commander";
@@ -25,7 +25,6 @@ import {
     watchPorts,
 } from "./lib/scanner";
 import type { PortSnapshot } from "./lib/types";
-import { runTool } from "@app/utils/cli";
 
 interface RootOptions {
     all?: boolean;
@@ -311,7 +310,7 @@ enhanceHelp(program);
 
 async function main(): Promise<void> {
     try {
-        await program.parseAsync(process.argv);
+        await runTool(program, { tool: "port" });
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         p.log.error(message);
@@ -320,7 +319,3 @@ async function main(): Promise<void> {
 }
 
 main();
-
-// CODEMOD-4b: review & fold existing parse/readme/verbose into this
-await runTool(program, { tool: "port" });
-

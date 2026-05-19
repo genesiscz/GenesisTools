@@ -7,6 +7,7 @@ import { join, resolve } from "node:path";
 import { AI, AIConfig } from "@app/utils/ai/index.ts";
 import { ModelManager } from "@app/utils/ai/ModelManager.ts";
 import type { AIProviderType, AITask } from "@app/utils/ai/types.ts";
+import { runTool } from "@app/utils/cli";
 import { copyToClipboard, readFromClipboard } from "@app/utils/clipboard.ts";
 import { formatBytes } from "@app/utils/format.ts";
 import { classifyText } from "@app/utils/macos/classification.ts";
@@ -17,7 +18,6 @@ import { formatTable } from "@app/utils/table.ts";
 import * as p from "@clack/prompts";
 import { Command } from "commander";
 import pc from "picocolors";
-import { runTool } from "@app/utils/cli";
 
 // ============================================
 // Translate
@@ -682,7 +682,7 @@ program
 
 async function main(): Promise<void> {
     try {
-        await program.parseAsync(process.argv);
+        await runTool(program, { tool: "ai" });
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         p.log.error(message);
@@ -691,7 +691,3 @@ async function main(): Promise<void> {
 }
 
 main();
-
-// CODEMOD-4b: review & fold existing parse/readme/verbose into this
-await runTool(program, { tool: "ai" });
-

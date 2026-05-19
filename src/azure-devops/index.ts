@@ -173,7 +173,7 @@ Documentation: https://learn.microsoft.com/en-us/azure/devops/cli/?view=azure-de
 
 async function main(): Promise<void> {
     try {
-        await program.parseAsync(process.argv);
+        await runTool(program, { tool: "azure-devops" });
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
 
@@ -199,7 +199,3 @@ main().catch((err) => {
     logger.error(`Unexpected error: ${err}`);
     process.exit(1);
 });
-
-// CODEMOD-4b: review & fold existing parse/readme/verbose into this
-await runTool(program, { tool: "azure-devops" });
-

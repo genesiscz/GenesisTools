@@ -1,12 +1,11 @@
 import { resolve } from "node:path";
 import { logger } from "@app/logger";
-import { Executor } from "@app/utils/cli";
+import { Executor, runTool } from "@app/utils/cli";
 import { copyToClipboard } from "@app/utils/clipboard";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { ExitPromptError } from "@inquirer/core";
 import { input, search, select } from "@inquirer/prompts";
 import { Command } from "commander";
-import { runTool } from "@app/utils/cli";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
@@ -139,8 +138,9 @@ async function main() {
         .option("-c, --commits <number>", "Number of recent commits to diff")
         .option("-o, --output [file]", "Output file path")
         .option("--clipboard", "Copy diff output to clipboard")
-        .option("-?, --help-full", "Show this help message")
-        .parse();
+        .option("-?, --help-full", "Show this help message");
+
+    await runTool(program, { tool: "git-last-commits-diff" });
 
     const options = program.opts();
     const [repoDirArg] = program.args;
@@ -332,7 +332,3 @@ main().catch((err) => {
     logger.error("\n✖ An unexpected error occurred:", err);
     process.exit(1);
 });
-
-// CODEMOD-4b: review & fold existing parse/readme/verbose into this
-await runTool(program, { tool: "git-last-commits-diff" });
-

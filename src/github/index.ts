@@ -11,14 +11,13 @@ import { createReviewCommand, reviewCommand } from "@app/github/commands/review"
 import { createSearchCommand, searchCommand } from "@app/github/commands/search";
 import { closeDatabase, getCacheStats } from "@app/github/lib/cache";
 import { logger } from "@app/logger";
-import { enhanceHelp } from "@app/utils/cli";
+import { enhanceHelp, runTool } from "@app/utils/cli";
 import { checkAuth, getRateLimit } from "@app/utils/github/octokit";
 import { detectRepoFromGit, parseGitHubUrl } from "@app/utils/github/url-parser";
 import { ExitPromptError } from "@inquirer/core";
 import { confirm, input, select } from "@inquirer/prompts";
 import chalk from "chalk";
 import { Command } from "commander";
-import { runTool } from "@app/utils/cli";
 
 const program = new Command();
 
@@ -426,7 +425,7 @@ async function main(): Promise<void> {
 
     // Otherwise, parse command line
     try {
-        await program.parseAsync();
+        await runTool(program, { tool: "github" });
     } catch (error) {
         logger.error({ error }, "Command failed");
         console.error(chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`));
@@ -437,7 +436,3 @@ async function main(): Promise<void> {
 }
 
 main();
-
-// CODEMOD-4b: review & fold existing parse/readme/verbose into this
-await runTool(program, { tool: "github" });
-

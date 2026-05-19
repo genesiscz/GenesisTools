@@ -1,12 +1,12 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { logger } from "@app/logger";
+import { runTool } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { ExitPromptError } from "@inquirer/core";
 import { checkbox, select } from "@inquirer/prompts";
 import chalk from "chalk";
 import { Command } from "commander";
-import { runTool } from "@app/utils/cli";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
@@ -998,8 +998,9 @@ async function main() {
         .option("--debug", "Show raw JSON for each event (useful for debugging)")
         .option("--include-fork", "Automatically include 'fork' events when monitoring 'exec'")
         .option("--filter-event <expr>", "Filter events using JSON path expression")
-        .option("-?, --help-full", "Show this help message")
-        .parse();
+        .option("-?, --help-full", "Show this help message");
+
+    await runTool(program, { tool: "macos-eslogger" });
 
     const options = program.opts();
 
@@ -1077,7 +1078,3 @@ main().catch((err) => {
     logger.error(`\n✖ Unexpected error: ${err}`);
     process.exit(1);
 });
-
-// CODEMOD-4b: review & fold existing parse/readme/verbose into this
-await runTool(program, { tool: "macos-eslogger" });
-

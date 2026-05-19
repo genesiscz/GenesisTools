@@ -8,6 +8,7 @@ import { getModelsForTask } from "@app/utils/ai/ModelManager";
 import { getProvidersForTask } from "@app/utils/ai/providers";
 import type { AIProviderType } from "@app/utils/ai/types.ts";
 import { playBuffer } from "@app/utils/audio/playback";
+import { runTool } from "@app/utils/cli";
 import { isInteractive, suggestCommand } from "@app/utils/cli/executor";
 import { parseVariadic } from "@app/utils/cli/variadic";
 import {
@@ -27,7 +28,6 @@ import pc from "picocolors";
 import { SayAudioCache } from "./lib/cache";
 import { speakWithProfile } from "./lib/speak";
 import { getSayStorage } from "./lib/storage";
-import { runTool } from "@app/utils/cli";
 
 interface SayOptions {
     volume?: number;
@@ -594,7 +594,7 @@ async function printVoiceList(filter?: SayProvider): Promise<void> {
 
 async function main(): Promise<void> {
     try {
-        await program.parseAsync(process.argv);
+        await runTool(program, { tool: "say" });
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.error(message);
@@ -1161,7 +1161,3 @@ async function deleteAppTUI(mgr: SayConfigManager): Promise<void> {
     await mgr.deleteApp(String(target));
     p.log.success(`Deleted "${target}"`);
 }
-
-// CODEMOD-4b: review & fold existing parse/readme/verbose into this
-await runTool(program, { tool: "say" });
-

@@ -2,12 +2,12 @@
 import { UsageDatabase } from "@app/ask/output/UsageDatabase";
 import { dynamicPricingManager } from "@app/ask/providers/DynamicPricing";
 import { logger } from "@app/logger";
+import { runTool } from "@app/utils/cli";
 import { formatDateTime } from "@app/utils/date";
 import { SafeJSON } from "@app/utils/json";
 import chalk from "chalk";
 import Table from "cli-table3";
 import { Command } from "commander";
-import { runTool } from "@app/utils/cli";
 
 interface Options {
     days?: number;
@@ -218,8 +218,9 @@ async function main() {
         .option("-p, --provider <name>", "Filter by provider name")
         .option("-m, --model <name>", "Filter by model name")
         .option("-f, --format <format>", "Output format: table, json, summary", "table")
-        .option("-?, --help-full", "Show detailed help message")
-        .parse();
+        .option("-?, --help-full", "Show detailed help message");
+
+    await runTool(program, { tool: "usage" });
 
     const options = program.opts<Options>();
 
@@ -262,7 +263,3 @@ main().catch((err) => {
     logger.error(`Unexpected error: ${err}`);
     process.exit(1);
 });
-
-// CODEMOD-4b: review & fold existing parse/readme/verbose into this
-await runTool(program, { tool: "usage" });
-

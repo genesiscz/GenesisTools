@@ -1,3 +1,4 @@
+import { runTool } from "@app/utils/cli";
 import { enhanceHelp } from "@app/utils/cli/executor";
 import { registerAnalyzeCommand } from "@app/youtube/commands/analyze";
 import { registerCacheCommand } from "@app/youtube/commands/cache";
@@ -10,7 +11,6 @@ import { registerTranscribeCommand } from "@app/youtube/commands/transcribe";
 import { registerUiCommand } from "@app/youtube/commands/ui";
 import { registerVideosCommand } from "@app/youtube/commands/videos";
 import { Command } from "commander";
-import { runTool } from "@app/utils/cli";
 
 export function buildYoutubeProgram(): Command {
     const program = new Command()
@@ -40,11 +40,7 @@ export function buildYoutubeProgram(): Command {
 
 const program = buildYoutubeProgram();
 
-program.parseAsync(process.argv).catch((error) => {
+await runTool(program, { tool: "youtube" }).catch((error) => {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;
 });
-
-// CODEMOD-4b: review & fold existing parse/readme/verbose into this
-await runTool(program, { tool: "youtube" });
-
