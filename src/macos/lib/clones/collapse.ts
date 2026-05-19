@@ -61,7 +61,12 @@ function listFiles(dir: string): string[] {
     return out;
 }
 
-function dirInfo(dir: string, shaOf: Map<string, string>, sizeOf: Map<string, number>): DirInfo {
+function dirInfo(
+    dir: string,
+    shaOf: Map<string, string>,
+    sizeOf: Map<string, number>,
+    modeOf: Map<string, number>
+): DirInfo {
     const files = listFiles(dir).sort();
     let bytes = 0;
     const h = createHash("sha256");
@@ -73,9 +78,15 @@ function dirInfo(dir: string, shaOf: Map<string, string>, sizeOf: Map<string, nu
 
         const size = sizeOf.get(f) ?? statSync(f).size;
         bytes += size;
+        // Spec §6: dir identity = (relpath, sha, mode) per file. Two dirs with
+        // identical content but different POSIX modes must NOT collapse together
+        // (cloning preserves replace's mode, so users would lose their bit set).
+        const mode = modeOf.get(f) ?? statSync(f).mode & 0o7777;
         h.update(relative(dir, f));
         h.update("\0");
         h.update(sha);
+        h.update("\0");
+        h.update(mode.toString(8));
         h.update("\0");
     }
 
@@ -89,6 +100,7 @@ function isAtOrAboveRoot(dir: string, roots: string[]): boolean {
 export function collapseDuplicates({ roots }: CollapseArgs): DuplicatesReport {
     const shaOf = new Map<string, string>();
     const sizeOf = new Map<string, number>();
+    const modeOf = new Map<string, number>();
     const fileGroups: { sha256: string; size: number; paths: string[] }[] = [];
 
     for (const root of roots) {
@@ -96,6 +108,11 @@ export function collapseDuplicates({ roots }: CollapseArgs): DuplicatesReport {
             for (const p of g.paths) {
                 shaOf.set(p, g.sha256);
                 sizeOf.set(p, g.size);
+                try {
+                    modeOf.set(p, statSync(p).mode & 0o7777);
+                } catch (err) {
+                    log.debug({ err, p }, "modeOf stat failed");
+                }
             }
 
             fileGroups.push({ sha256: g.sha256, size: g.size, paths: g.paths });
@@ -109,7 +126,7 @@ export function collapseDuplicates({ roots }: CollapseArgs): DuplicatesReport {
             return cached;
         }
 
-        const info = dirInfo(dir, shaOf, sizeOf);
+        const info = dirInfo(dir, shaOf, sizeOf, modeOf);
         dirCache.set(dir, info);
         return info;
     };

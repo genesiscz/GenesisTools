@@ -1,8 +1,9 @@
 import { execFileSync } from "node:child_process";
 import { dirname, relative, resolve } from "node:path";
 import logger from "@app/logger";
+import { formatBytes } from "@app/utils/format";
 import { type DiskUsage, findCloneFamilies, freeDiskSpace, measureTree, walkFiles } from "@app/utils/fs/disk-usage";
-import { getPrivateSize } from "@app/utils/macos/apfs";
+import { getCloneId, getPrivateSize } from "@app/utils/macos/apfs";
 import { matchGlob } from "@app/utils/string";
 import type { CloneAnalysis, DirNode, MeasureReport } from "./render/types";
 
@@ -62,11 +63,61 @@ interface MutNode {
     allocated: number;
     real: number | null;
     realSeen: boolean;
+    /** Sum of (allocated - private) for files in this subtree whose clone-id
+     *  has only ONE in-tree member (i.e. the sharing partner lives outside the
+     *  measured roots — typically the bun install cache). */
+    crossTreeShared: number;
     children: Map<string, MutNode>;
 }
 
 function emptyNode(path: string, depth: number): MutNode {
-    return { path, depth, logical: 0, allocated: 0, real: 0, realSeen: false, children: new Map() };
+    return {
+        path,
+        depth,
+        logical: 0,
+        allocated: 0,
+        real: 0,
+        realSeen: false,
+        crossTreeShared: 0,
+        children: new Map(),
+    };
+}
+
+/** First pass: build path → cross-tree-shared bytes map. Cross-tree = the
+ *  clone-id appears EXACTLY once in the measured roots, so the family's
+ *  other members are external. shared = allocated - private for those lone
+ *  in-tree files. Used for both DirNode.sharedNote and cloneAnalysis.sharedBytes. */
+function detectCrossTreeShared(roots: string[]): Map<string, number> {
+    const byCloneId = new Map<string, { path: string; allocated: number; priv: number }[]>();
+    for (const root of roots) {
+        for (const e of walkFiles(root, { onError: (err) => log.debug({ err }, "cross-tree walk") })) {
+            const id = getCloneId(e.path);
+            if (id === null || id === 0n) {
+                continue;
+            }
+
+            const key = id.toString(16);
+            const priv = getPrivateSize(e.path) ?? e.allocated;
+            const list = byCloneId.get(key) ?? [];
+            list.push({ path: e.path, allocated: e.allocated, priv });
+            byCloneId.set(key, list);
+        }
+    }
+
+    const sharedByPath = new Map<string, number>();
+    for (const files of byCloneId.values()) {
+        if (files.length !== 1) {
+            continue;
+        }
+
+        const f = files[0];
+        const shared = Math.max(0, f.allocated - f.priv);
+        if (shared > 0) {
+            sharedByPath.set(f.path, shared);
+        }
+    }
+
+    return sharedByPath;
 }
 
 function anySegmentMatches(rel: string, glob: string): boolean {
@@ -95,7 +146,7 @@ function passesGlobs(rel: string, base: string, include?: string[], exclude?: st
     return true;
 }
 
-function buildRootTree(root: string, args: BuildMeasureArgs): MutNode {
+function buildRootTree(root: string, args: BuildMeasureArgs, crossTreeShared: Map<string, number>): MutNode {
     const rootNode = emptyNode(root, 0);
     for (const e of walkFiles(root, { onError: (err) => log.debug({ err }, "walk error") })) {
         const rel = relative(root, e.path);
@@ -109,9 +160,11 @@ function buildRootTree(root: string, args: BuildMeasureArgs): MutNode {
         }
 
         const priv = getPrivateSize(e.path);
+        const fileShared = crossTreeShared.get(e.path) ?? 0;
         let node = rootNode;
         node.logical += e.logical;
         node.allocated += e.allocated;
+        node.crossTreeShared += fileShared;
         if (priv !== null) {
             node.real = (node.real ?? 0) + priv;
             node.realSeen = true;
@@ -130,6 +183,7 @@ function buildRootTree(root: string, args: BuildMeasureArgs): MutNode {
 
             child.logical += e.logical;
             child.allocated += e.allocated;
+            child.crossTreeShared += fileShared;
             if (priv !== null) {
                 child.real = (child.real ?? 0) + priv;
                 child.realSeen = true;
@@ -182,34 +236,43 @@ function pruneTree(node: MutNode, minReal: number): DirNode[] {
             real,
             overcount,
             children: keptChildren.map((c) => ({ ...c, depth: c.depth })),
+            ...(node.crossTreeShared > 0
+                ? {
+                      sharedNote: `${formatBytes(node.crossTreeShared)} shared with cross-tree partner (stays on disk if deleted)`,
+                  }
+                : {}),
         },
     ];
 }
 
-function buildCloneAnalysis(roots: string[]): CloneAnalysis {
+function buildCloneAnalysis(roots: string[], crossTreeShared: Map<string, number>): CloneAnalysis {
     let families = 0;
     let clonedFiles = 0;
-    const partners = new Set<string>();
     for (const root of roots) {
         const fams = findCloneFamilies(root);
         families += fams.size;
         for (const members of fams.values()) {
             clonedFiles += members.length;
-            for (const m of members) {
-                if (!roots.some((r) => m.startsWith(r))) {
-                    partners.add(dirname(m));
-                }
-            }
         }
     }
 
-    return {
-        families,
-        clonedFiles,
-        sharedBytes: 0,
-        crossTreePartners: [...partners],
-        notes: [],
-    };
+    let sharedBytes = 0;
+    for (const v of crossTreeShared.values()) {
+        sharedBytes += v;
+    }
+
+    const notes: string[] = [];
+    if (sharedBytes > 0) {
+        notes.push(
+            `${formatBytes(sharedBytes)} of measured bytes are shared with files OUTSIDE the scan roots ` +
+                "(typically ~/.bun/install/cache) and won't be freed by deleting these dirs."
+        );
+    }
+
+    // crossTreePartners is opaque without probing known external locations
+    // (bun cache, npm cache, …). The lone-family signal above already tells
+    // the user HOW MANY bytes are stuck — the WHERE is a future enhancement.
+    return { families, clonedFiles, sharedBytes, crossTreePartners: [], notes };
 }
 
 function sortTree(nodes: DirNode[], by: "overcount" | "real" | "du"): DirNode[] {
@@ -230,6 +293,7 @@ export function buildMeasureReport(args: BuildMeasureArgs): MeasureReport {
     };
     let realSeen = false;
     const tree: DirNode[] = [];
+    const crossTreeShared = detectCrossTreeShared(args.roots);
 
     for (const root of args.roots) {
         const u = measureTree(root);
@@ -243,7 +307,7 @@ export function buildMeasureReport(args: BuildMeasureArgs): MeasureReport {
         totalsAgg.errors.push(...u.errors);
 
         if (args.breakdown) {
-            const rootMut = buildRootTree(root, args);
+            const rootMut = buildRootTree(root, args, crossTreeShared);
             tree.push(...pruneTree(rootMut, args.minReal));
         }
     }
@@ -264,7 +328,7 @@ export function buildMeasureReport(args: BuildMeasureArgs): MeasureReport {
             real: totalReal,
             overcount: totalOvercount,
         },
-        cloneAnalysis: buildCloneAnalysis(args.roots),
+        cloneAnalysis: buildCloneAnalysis(args.roots, crossTreeShared),
         freeSpace: { total: fs.total, free: fs.free, available: fs.available },
         errors: totalsAgg.errors.map((e) => ({ path: e.path, errno: e.errno })),
     };
