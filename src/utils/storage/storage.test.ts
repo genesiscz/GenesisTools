@@ -1,4 +1,6 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { Storage } from "./storage";
 
 describe("Storage.parseTTL", () => {
@@ -64,5 +66,33 @@ describe("Storage.parseTTL", () => {
         it("throws for unsupported units", () => {
             expect(() => storage.parseTTL("5 months")).toThrow("Invalid TTL format");
         });
+    });
+});
+
+describe("Storage GENESIS_TOOLS_HOME override", () => {
+    const ORIG = process.env.GENESIS_TOOLS_HOME;
+
+    afterEach(() => {
+        if (ORIG === undefined) {
+            delete process.env.GENESIS_TOOLS_HOME;
+        } else {
+            process.env.GENESIS_TOOLS_HOME = ORIG;
+        }
+    });
+
+    it("roots all paths under GENESIS_TOOLS_HOME when set", () => {
+        process.env.GENESIS_TOOLS_HOME = "/tmp/gt-sandbox-xyz";
+        const s = new Storage("mcp-manager");
+        expect(s.getBaseDir()).toBe("/tmp/gt-sandbox-xyz/.genesis-tools/mcp-manager");
+        expect(s.getConfigPath()).toBe("/tmp/gt-sandbox-xyz/.genesis-tools/mcp-manager/config.json");
+        expect(s.getCacheDir()).toBe("/tmp/gt-sandbox-xyz/.genesis-tools/mcp-manager/cache");
+    });
+
+    it("falls back to homedir() when unset or empty (production behavior unchanged)", () => {
+        delete process.env.GENESIS_TOOLS_HOME;
+        const home = homedir();
+        expect(new Storage("ask").getConfigPath()).toBe(join(home, ".genesis-tools", "ask", "config.json"));
+        process.env.GENESIS_TOOLS_HOME = "";
+        expect(new Storage("ask").getConfigPath()).toBe(join(home, ".genesis-tools", "ask", "config.json"));
     });
 });

@@ -1,11 +1,14 @@
 import { existsSync } from "node:fs";
 import logger from "@app/logger";
+import { BackupManager } from "@app/mcp-manager/utils/backup.js";
 import { getUnifiedConfigPath } from "@app/mcp-manager/utils/config.utils.js";
 import type { UnifiedMCPConfig } from "@app/mcp-manager/utils/providers/types.js";
 import { isInteractive } from "@app/utils/cli";
 import { Storage } from "@app/utils/storage";
 
-const storage = new Storage("mcp-manager");
+// Lazy (not a module-level singleton) so it re-reads GENESIS_TOOLS_HOME at
+// use time — production identical, lets the test suite sandbox the path.
+const mcpStorage = (): Storage => new Storage("mcp-manager");
 
 export interface ConfigOptions {
     path?: boolean; // Only show path, don't open editor
@@ -16,7 +19,7 @@ export interface ConfigOptions {
  * @param options.path - If true, only prints the path without opening
  */
 export async function openConfig(options: ConfigOptions = {}): Promise<void> {
-    await storage.ensureDirs();
+    await mcpStorage().ensureDirs();
     const configPath = getUnifiedConfigPath();
 
     // Only create default config if file doesn't exist on disk.
@@ -26,7 +29,18 @@ export async function openConfig(options: ConfigOptions = {}): Promise<void> {
         const defaultConfig: UnifiedMCPConfig = {
             mcpServers: {},
         };
-        await storage.setConfig(defaultConfig);
+        // Defense-in-depth (post-incident hardening): this is the ONLY
+        // unified-config writer that doesn't go through writeUnifiedConfig()
+        // (which always backs up first). It's guarded by !existsSync above,
+        // but guard the TOCTOU window too — if the file materialised between
+        // the check and here, back it up via the same BackupManager
+        // mechanism before the default write, so an empty default can never
+        // silently replace a populated config without a recoverable backup.
+        if (existsSync(configPath)) {
+            await new BackupManager().createBackup(configPath, "unified");
+        }
+
+        await mcpStorage().setConfig(defaultConfig);
         logger.info(`Created default config at ${configPath}`);
     }
 

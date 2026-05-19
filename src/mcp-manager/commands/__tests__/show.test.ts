@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it, spyOn } from "bun:test";
 import logger, { consoleLog } from "@app/logger";
 import { showServerConfig } from "@app/mcp-manager/commands/show.js";
+import { setupStorageSandbox } from "@app/utils/storage/test-sandbox";
 import { createMockServerConfig, MockMCPProvider } from "./test-utils.js";
+
+setupStorageSandbox();
 
 describe("showServerConfig", () => {
     let mockProvider: MockMCPProvider;

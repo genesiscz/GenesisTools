@@ -6,8 +6,12 @@ import { BackupManager } from "./backup.js";
 import type { UnifiedMCPConfig, UnifiedMCPServerConfig } from "./providers/types.js";
 import type { EnabledMcpServers } from "./types.js";
 
-// Initialize Storage instance for mcp-manager
-const storage = new Storage("mcp-manager");
+// Lazy Storage accessor (NOT a module-level singleton): constructed per call
+// so it always re-reads GENESIS_TOOLS_HOME at use time. Production behavior is
+// identical (env unset → real ~/.genesis-tools path, construction is just path
+// joins); this lets the test suite sandbox the path so a leaked/bled mock can
+// never write the user's real config (see storage.ts override + test sandbox).
+const mcpStorage = (): Storage => new Storage("mcp-manager");
 
 // Global options that can be set from main entry point
 export interface GlobalOptions {
@@ -28,7 +32,7 @@ export function getGlobalOptions(): GlobalOptions {
  * Get the path to the unified config file
  */
 export function getUnifiedConfigPath(): string {
-    return storage.getConfigPath();
+    return mcpStorage().getConfigPath();
 }
 
 /**
@@ -105,6 +109,7 @@ export function ensureMetaFromEnabledMcpServers(config: UnifiedMCPConfig): Unifi
  * Read the unified config from storage
  */
 export async function readUnifiedConfig(): Promise<UnifiedMCPConfig> {
+    const storage = mcpStorage();
     await storage.ensureDirs();
     let config = await storage.getConfig<UnifiedMCPConfig>();
     if (!config) {
@@ -125,7 +130,8 @@ export async function readUnifiedConfig(): Promise<UnifiedMCPConfig> {
  * @returns true if changes were written, false if no changes or rejected
  */
 export async function writeUnifiedConfig(config: UnifiedMCPConfig): Promise<boolean> {
-    const configPath = getUnifiedConfigPath();
+    const storage = mcpStorage();
+    const configPath = storage.getConfigPath();
 
     // Ensure enabledMcpServers is in sync with _meta.enabled before writing
     config = syncEnabledMcpServers(config);

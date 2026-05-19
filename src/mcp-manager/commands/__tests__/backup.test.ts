@@ -4,7 +4,10 @@ import logger from "@app/logger";
 import { backupAllConfigs } from "@app/mcp-manager/commands/backup.js";
 import * as backupUtils from "@app/mcp-manager/utils/backup.js";
 import * as configUtils from "@app/mcp-manager/utils/config.utils.js";
+import { setupStorageSandbox } from "@app/utils/storage/test-sandbox";
 import { MockMCPProvider } from "./test-utils.js";
+
+setupStorageSandbox();
 
 describe("backupAllConfigs", () => {
     let mockProvider: MockMCPProvider;
