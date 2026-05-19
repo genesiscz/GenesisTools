@@ -92,7 +92,7 @@ export interface ProcessTotals {
 
 export interface ProcessReport {
     id: string;
-    state: "dry-run" | "applied" | "rolled-back";
+    state: "dry-run" | "applied" | "rolled-back" | "aborted";
     roots: string[];
     startedAt: string;
     endedAt: string;
