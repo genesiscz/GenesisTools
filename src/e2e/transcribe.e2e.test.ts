@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, unlinkSync, writeFileSync } from "node:fs";
-import { getOutput, execTool } from "@app/utils/e2e/helpers";
+import { execTool, getOutput } from "@app/utils/e2e/helpers";
 import { tmpPath } from "@app/utils/paths";
 
 const ZERO_BYTE_MP3 = tmpPath("e2e-empty.mp3");

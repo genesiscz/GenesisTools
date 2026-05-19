@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
-import { extractJson, execTool } from "@app/utils/e2e/helpers";
+import { execTool, extractJson } from "@app/utils/e2e/helpers";
 
 const OUTPUT_FILE = "/tmp/yt-e2e-test.txt";
 

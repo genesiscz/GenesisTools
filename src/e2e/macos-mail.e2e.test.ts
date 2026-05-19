@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { ALL_COLUMN_KEYS } from "@app/macos/lib/mail/columns";
-import { extractJson, getOutput, execTool, stripAnsi } from "@app/utils/e2e/helpers";
+import { execTool, extractJson, getOutput, stripAnsi } from "@app/utils/e2e/helpers";
 
 describe("tools macos mail", () => {
     describe("help", () => {
