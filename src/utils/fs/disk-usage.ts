@@ -1,4 +1,5 @@
-import { readdirSync, statfsSync, statSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { readFileSync, readdirSync, statfsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { formatBytes } from "@app/utils/format";
 import { getCloneId, getPrivateSize } from "@app/utils/macos/apfs";
@@ -265,4 +266,101 @@ export function formatDiskUsage(u: DiskUsage): string {
     }
 
     return lines.join("\n");
+}
+
+export interface DuplicateGroup {
+    /** Byte length shared by every file in the group. */
+    size: number;
+    sha256: string;
+    paths: string[];
+}
+
+export interface DedupeCandidate {
+    sha256: string;
+    size: number;
+    /** Representative kept as-is (the others are re-cloned from it). */
+    keep: string;
+    /** Files to replace with a clone of `keep` (excludes ones already
+     *  sharing keep's clone id). */
+    replace: string[];
+    /** Bytes reclaimed if every `replace` becomes a clone of `keep`. */
+    reclaimable: number;
+}
+
+function sha256File(path: string): string {
+    return createHash("sha256").update(readFileSync(path)).digest("hex");
+}
+
+/** Content-identical regular files under `root`, grouped (size → sha256 →
+ *  full byte-compare). Groups of <2 are dropped. Order-independent. */
+export function findDuplicateFiles(root: string): DuplicateGroup[] {
+    const bySize = new Map<number, string[]>();
+    for (const e of walkFiles(root)) {
+        if (e.logical === 0) {
+            continue;
+        }
+
+        const list = bySize.get(e.logical) ?? [];
+        list.push(e.path);
+        bySize.set(e.logical, list);
+    }
+
+    const groups: DuplicateGroup[] = [];
+    for (const [size, paths] of bySize) {
+        if (paths.length < 2) {
+            continue;
+        }
+
+        const byHash = new Map<string, string[]>();
+        for (const p of paths) {
+            const h = sha256File(p);
+            const list = byHash.get(h) ?? [];
+            list.push(p);
+            byHash.set(h, list);
+        }
+
+        for (const [sha256, group] of byHash) {
+            if (group.length < 2) {
+                continue;
+            }
+
+            const ref = readFileSync(group[0]);
+            const confirmed = group.filter(
+                (p) => p === group[0] || readFileSync(p).equals(ref),
+            );
+            if (confirmed.length >= 2) {
+                groups.push({ size, sha256, paths: confirmed.sort() });
+            }
+        }
+    }
+
+    return groups;
+}
+
+/** Duplicate groups reduced to actionable dedupe work: pick a `keep`
+ *  representative, list the `replace` files not already sharing its clone
+ *  id, and project reclaimable bytes. Empty when nothing to do. */
+export function findDedupeCandidates(root: string): DedupeCandidate[] {
+    const out: DedupeCandidate[] = [];
+    for (const g of findDuplicateFiles(root)) {
+        const keep = g.paths[0];
+        const keepId = getCloneId(keep);
+        const replace = g.paths.slice(1).filter((p) => {
+            const id = getCloneId(p);
+            return !(keepId !== null && keepId !== 0n && id === keepId);
+        });
+        if (replace.length === 0) {
+            continue;
+        }
+
+        out.push({
+            sha256: g.sha256,
+            size: g.size,
+            keep,
+            replace,
+            reclaimable: replace.length * g.size,
+        });
+    }
+
+    return out;
 }

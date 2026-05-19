@@ -140,3 +140,50 @@ describe("freeDiskSpace / overcountRatio / formatDiskUsage", () => {
         expect(out).toContain("actually");
     });
 });
+
+import {
+    findDedupeCandidates,
+    findDuplicateFiles,
+} from "@app/utils/fs/disk-usage";
+
+describe("duplicate detection", () => {
+    it("groups byte-identical files; ignores unique and size-mismatched", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-dup-"));
+        try {
+            const payload = Buffer.alloc(64_000, 0xab);
+            writeFileSync(join(dir, "one.bin"), payload);
+            writeFileSync(join(dir, "two.bin"), payload); // identical
+            writeFileSync(join(dir, "diff.bin"), Buffer.alloc(64_000, 0xcd));
+            writeFileSync(join(dir, "small.bin"), Buffer.alloc(10, 1));
+
+            const groups = findDuplicateFiles(dir);
+            expect(groups.length).toBe(1);
+            expect(groups[0].paths.map((p) => p.split("/").pop()).sort()).toEqual([
+                "one.bin",
+                "two.bin",
+            ]);
+            expect(groups[0].size).toBe(64_000);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("findDedupeCandidates projects savings for non-clone duplicates", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-dupc-"));
+        try {
+            const payload = Buffer.alloc(128_000, 0x7);
+            writeFileSync(join(dir, "a.bin"), payload);
+            writeFileSync(join(dir, "b.bin"), payload);
+            writeFileSync(join(dir, "c.bin"), payload);
+
+            const cands = findDedupeCandidates(dir);
+            expect(cands.length).toBe(1);
+            // 3 copies → keep 1, reclaim ~2 copies
+            expect(cands[0].reclaimable).toBeGreaterThanOrEqual(128_000);
+            expect(cands[0].keep).toBeDefined();
+            expect(cands[0].replace.length).toBe(2);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+});
