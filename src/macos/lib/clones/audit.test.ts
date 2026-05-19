@@ -137,3 +137,44 @@ describe.skipIf(skip.unlessMac)("runOptimize apply round-trip", () => {
         }
     });
 });
+
+import { statSync as statS } from "node:fs";
+import { rollbackProcess } from "@app/macos/lib/clones/audit";
+import { getCloneId } from "@app/utils/macos/apfs";
+
+describe.skipIf(skip.unlessMac)("rollbackProcess un-shares clones", () => {
+    it("apply then rollback: replace no longer shares keep's clone id, content unchanged, audit chained", () => {
+        const dir = mkdtempSync(j(tmpdir(), "gt-cl-rb-"));
+        try {
+            const payload = Buffer.alloc(256 * 1024, 0x77);
+            writeFileSync(j(dir, "keep"), payload);
+            writeFileSync(j(dir, "dup"), payload);
+            const sets: DuplicateSet[] = [
+                {
+                    kind: "file",
+                    what: "keep",
+                    copies: 2,
+                    eachBytes: 256 * 1024,
+                    reclaimable: 256 * 1024,
+                    members: [j(dir, "keep"), j(dir, "dup")],
+                    keep: j(dir, "keep"),
+                },
+            ];
+            const applied = runOptimize({ roots: [dir], sets, planCacheHit: false });
+            expect(applied.totals.cloned).toBe(1);
+            expect(getCloneId(j(dir, "dup"))).toBe(getCloneId(j(dir, "keep")));
+
+            const rolled = rollbackProcess(applied.id);
+            expect(rolled.state).toBe("rolled-back");
+            expect(rolled.ops.some((o) => o.op === "rollback-uncloned")).toBe(true);
+            expect(getCloneId(j(dir, "dup"))).not.toBe(getCloneId(j(dir, "keep")));
+            expect(rf(j(dir, "dup"), "utf8")).toBe(rf(j(dir, "keep"), "utf8"));
+            expect(statS(j(dir, "dup")).mode & 0o7777).toBe(applied.ops[0].modeBefore);
+
+            const lines = rf(processJsonlPath(applied.id), "utf8").trim().split("\n");
+            expect(lines.length).toBeGreaterThanOrEqual(4);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+});

@@ -4,6 +4,8 @@ import {
     IntegrityError,
     listProcesses,
     readProcess,
+    rollbackProcess,
+    RollbackSpaceError,
     runOptimize,
 } from "@app/macos/lib/clones/audit";
 import { cachePlan, getCachedPlan } from "@app/macos/lib/clones/cache";
@@ -77,10 +79,6 @@ export function createOptimizeCommand(): Command {
         .option("-v, --verbose", "Verbose logging", false)
         .option("--silent", "Suppress non-essential output", false)
         .action(async (rootsArg: string[], opts: OptimizeOpts) => {
-            if (opts.rollback) {
-                throw new Error("optimize: --rollback is wired in Task 16");
-            }
-
             if (opts.list) {
                 console.log(resolveRenderer(resolveFormat(opts.format)).processList(listProcesses()));
                 process.exitCode = 0;
@@ -112,6 +110,68 @@ export function createOptimizeCommand(): Command {
                 }
 
                 process.exitCode = 0;
+                return;
+            }
+
+            if (opts.rollback) {
+                if (!opts.process) {
+                    console.error("optimize --rollback requires --process <id>.");
+                    process.exit(1);
+                }
+
+                const existing = readProcess(opts.process);
+                if (!existing) {
+                    console.error(`Unknown process "${opts.process}".`);
+                    const near = closestProcessIds(opts.process);
+                    if (near.length > 0) {
+                        console.error(`Closest: ${near.join(", ")}`);
+                    }
+
+                    process.exit(1);
+                }
+
+                if (isInteractive()) {
+                    p.intro(pc.bgCyan(pc.black(" clones optimize --rollback ")));
+                    p.log.warn(
+                        `Will re-allocate shared bytes for ${existing.totals.cloned} clone(s) in ${opts.process}.`,
+                    );
+                    const token = await p.text({
+                        message: 'Type "rollback" to proceed',
+                        validate: (v) => (v === "rollback" ? undefined : 'Type exactly "rollback" or Ctrl-C'),
+                    });
+
+                    if (p.isCancel(token) || token !== "rollback") {
+                        p.cancel("Aborted — nothing was changed.");
+                        process.exit(0);
+                    }
+                } else if (!opts.yes) {
+                    console.error(
+                        "optimize --rollback requires confirmation. In non-interactive mode pass --yes.",
+                    );
+                    console.error(
+                        suggestCommand("tools macos clones optimize", {
+                            add: ["--rollback", "--process", opts.process, "--yes"],
+                            subcommand: ["macos", "clones", "optimize"],
+                        }),
+                    );
+                    process.exit(1);
+                }
+
+                try {
+                    const rolled = rollbackProcess(opts.process);
+                    console.log(resolveRenderer(resolveFormat(opts.format)).processReport(rolled));
+                    process.exitCode = rolled.totals.errors > 0 ? 1 : 0;
+                } catch (err) {
+                    if (err instanceof RollbackSpaceError) {
+                        console.error(
+                            `Cannot rollback: needs ~${err.required} bytes (×1.1), only ${err.available} available.`,
+                        );
+                        process.exit(1);
+                    }
+
+                    throw err;
+                }
+
                 return;
             }
 

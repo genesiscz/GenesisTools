@@ -1,16 +1,20 @@
 import { createHash } from "node:crypto";
 import {
     appendFileSync,
+    chmodSync,
     existsSync,
     lstatSync,
     mkdirSync,
     readFileSync as readBin,
     readdirSync,
     readFileSync,
+    renameSync,
+    utimesSync,
+    writeFileSync as writeBin,
 } from "node:fs";
 import { join } from "node:path";
 import logger from "@app/logger";
-import { dedupeFile } from "@app/utils/fs/disk-usage";
+import { dedupeFile, freeDiskSpace } from "@app/utils/fs/disk-usage";
 import { SafeJSON } from "@app/utils/json";
 import { CloneUnsupportedError, isApfsCloneSupported } from "@app/utils/macos/apfs";
 import { Storage } from "@app/utils/storage/storage";
@@ -357,4 +361,98 @@ export function runOptimize({ roots, sets, planCacheHit, planCacheAgeMs }: RunOp
     }
 
     return rep;
+}
+
+export class RollbackSpaceError extends Error {
+    constructor(
+        message: string,
+        readonly required: number,
+        readonly available: number,
+    ) {
+        super(message);
+        this.name = "RollbackSpaceError";
+    }
+}
+
+/** Re-materialise every cloned `replace` of `id` as an independent (plain,
+ *  un-shared) copy. Free-space preflight is MANDATORY (rollback physically
+ *  re-allocates the shared bytes). Appends rollback ops + a rolled-back meta
+ *  line to the SAME JSONL. Content is byte-identical (verified at apply). */
+export function rollbackProcess(id: string): ProcessReport {
+    const rep = readProcess(id);
+    if (!rep) {
+        throw new Error(`rollbackProcess: unknown process "${id}"`);
+    }
+
+    const toUndo = rep.ops.filter((o) => o.op === "clone");
+    const required = toUndo.reduce((s, o) => s + o.bytes, 0);
+    const probe = rep.roots[0] ?? process.cwd();
+    const free = freeDiskSpace(probe);
+    if (free.available <= required * 1.1) {
+        throw new RollbackSpaceError(
+            `rollback needs ~${required} bytes (×1.1 headroom) but only ${free.available} available`,
+            required,
+            free.available,
+        );
+    }
+
+    let seq = rep.ops.reduce((m, o) => Math.max(m, o.seq), 0);
+    for (const op of toUndo) {
+        seq += 1;
+        const ts = new Date().toISOString();
+        try {
+            const data = readBin(op.replace);
+            const tmp = `${op.replace}.gtunclone.${process.pid}.${Date.now()}`;
+            writeBin(tmp, data);
+            renameSync(tmp, op.replace);
+            chmodSync(op.replace, op.modeBefore & 0o7777);
+            const mtime = new Date(op.mtimeBeforeMs);
+            utimesSync(op.replace, mtime, mtime);
+            appendOp(id, {
+                seq,
+                ts,
+                op: "rollback-uncloned",
+                status: "ok",
+                bytes: op.bytes,
+                keep: op.keep,
+                replace: op.replace,
+                modeBefore: op.modeBefore,
+                mtimeBeforeMs: op.mtimeBeforeMs,
+                sha256Before: op.sha256Before,
+                ...(op.sha256After ? { sha256After: op.sha256After } : {}),
+            });
+        } catch (err) {
+            log.warn({ err, replace: op.replace }, "rollback un-clone failed");
+            appendOp(id, {
+                seq,
+                ts,
+                op: "error",
+                status: "rollback-failed",
+                bytes: 0,
+                keep: op.keep,
+                replace: op.replace,
+                modeBefore: op.modeBefore,
+                mtimeBeforeMs: op.mtimeBeforeMs,
+                sha256Before: op.sha256Before,
+                message: err instanceof Error ? err.message : String(err),
+            });
+        }
+    }
+
+    const endedAt = new Date().toISOString();
+    writeMeta({
+        id,
+        state: "rolled-back",
+        roots: rep.roots,
+        startedAt: rep.startedAt,
+        endedAt,
+        planCacheHit: rep.planCache.hit,
+        ...(rep.planCache.ageMs !== undefined ? { planCacheAgeMs: rep.planCache.ageMs } : {}),
+    });
+    const final = readProcess(id);
+    if (!final) {
+        throw new Error(`rollbackProcess: ${id} unreadable after rollback`);
+    }
+
+    return final;
 }
