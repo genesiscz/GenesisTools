@@ -41,6 +41,7 @@
 
 import logger from "@app/logger";
 import { registerCalendarCommand } from "@app/macos/commands/calendar/index";
+import { registerClonesCommand } from "@app/macos/commands/clones/index";
 import { registerMailCommand } from "@app/macos/commands/mail/index";
 import { registerMessagesCommand } from "@app/macos/commands/messages/index";
 import { registerRemindersCommand } from "@app/macos/commands/reminders/index";
@@ -59,6 +60,7 @@ program
     .showHelpAfterError(true);
 
 registerCalendarCommand(program);
+registerClonesCommand(program);
 registerMailCommand(program);
 registerMessagesCommand(program);
 registerRemindersCommand(program);
