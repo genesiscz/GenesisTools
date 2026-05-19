@@ -16,7 +16,7 @@ import type {
     WorkItemSettings,
 } from "@app/azure-devops/types";
 import { filterAttachments, getTaskFilePath } from "@app/azure-devops/utils";
-import { consoleLog, logger } from "@app/logger";
+import { logger } from "@app/logger";
 import { concurrentMap } from "@app/utils/async";
 import { withQueryParams } from "@app/utils/url";
 
@@ -111,7 +111,7 @@ async function downloadWorkItemAttachments(
         mkdirSync(outputDir, { recursive: true });
     }
 
-    consoleLog.info(`   Downloading ${filtered.length} attachment(s) for #${item.id}...`);
+    logger.info(`   Downloading ${filtered.length} attachment(s) for #${item.id}...`);
 
     const results = await concurrentMap({
         items: filtered,

@@ -34,7 +34,7 @@ import {
     parseRelations,
     requireConfig,
 } from "@app/azure-devops/utils";
-import { consoleLog, logger } from "@app/logger";
+import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import type { Command } from "commander";
 
@@ -42,7 +42,7 @@ import type { Command } from "commander";
 let silentMode = false;
 const log = (msg: string) => {
     if (!silentMode) {
-        consoleLog.info(msg);
+        logger.info(msg);
     }
 };
 

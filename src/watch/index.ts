@@ -1,7 +1,7 @@
 import type { WatchEventType, WatchOptions } from "node:fs";
 import fs from "node:fs";
 import path from "node:path";
-import { consoleLog as logger } from "@app/logger";
+import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import { expandTilde } from "@app/utils/paths";
 import { handleReadmeFlag } from "@app/utils/readme";

@@ -13,6 +13,7 @@ import {
     type ToolUseBlock,
     type UserMessage,
 } from "@app/claude/lib/history/search";
+import { out } from "@app/logger";
 import { getAgentRuntimeContext } from "@app/utils/agent-runtime";
 import { resolveProjectFilter } from "@app/utils/claude";
 import { SafeJSON } from "@app/utils/json";
@@ -288,21 +289,20 @@ export function registerHistoryCommand(program: Command): void {
 
                 // Post-search: offer to summarize a session (TTY + interactive only)
                 if (process.stdout.isTTY && options.interactive && results.length > 0) {
-                    const { confirm: confirmPrompt, select: selectPrompt, isCancel } = await import("@clack/prompts");
-                    const wantSummarize = await confirmPrompt({
+                    const wantSummarize = await out.confirm({
                         message: "Would you like to summarize one of these sessions?",
                         initialValue: false,
                     });
-                    if (!isCancel(wantSummarize) && wantSummarize) {
+                    if (!out.isCancel(wantSummarize) && wantSummarize) {
                         const sessionChoices = results.map((r) => ({
                             value: r.sessionId,
                             label: `${r.customTitle || r.summary || r.sessionId} (${r.timestamp.toISOString().split("T")[0]})`,
                         }));
-                        const chosen = await selectPrompt({
+                        const chosen = await out.select({
                             message: "Select session to summarize:",
                             options: sessionChoices,
                         });
-                        if (!isCancel(chosen)) {
+                        if (!out.isCancel(chosen)) {
                             const proc = spawn({
                                 cmd: [
                                     "bun",

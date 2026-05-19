@@ -25,7 +25,7 @@ import {
     isQueryIdOrUrl,
     requireConfig,
 } from "@app/azure-devops/utils";
-import { consoleLog, logger } from "@app/logger";
+import { logger } from "@app/logger";
 import { formatLocalDateTimeStamp } from "@app/utils/date";
 import type { Command } from "commander";
 
@@ -33,7 +33,7 @@ import type { Command } from "commander";
 let silentMode = false;
 const log = (msg: string): void => {
     if (!silentMode) {
-        consoleLog.info(msg);
+        logger.info(msg);
     }
 };
 

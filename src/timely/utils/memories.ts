@@ -9,7 +9,6 @@ export interface FetchMemoriesOptions {
     accessToken: string;
     dates: string[];
     storage: Storage;
-    verbose?: boolean;
     force?: boolean;
 }
 
@@ -28,13 +27,11 @@ export interface FetchMemoriesResult {
  * Past dates are cached for 30 days.
  */
 export async function fetchMemoriesForDates(options: FetchMemoriesOptions): Promise<FetchMemoriesResult> {
-    const { accountId, accessToken, dates, storage, verbose, force } = options;
+    const { accountId, accessToken, dates, storage, force } = options;
     const today = new Date().toISOString().slice(0, 10);
     const sortedDates = [...dates].sort();
 
-    if (verbose) {
-        logger.info(`[memories] Fetching memories for ${sortedDates.length} date(s) (today=${today})`);
-    }
+    logger.debug(`[memories] Fetching memories for ${sortedDates.length} date(s) (today=${today})`);
 
     const entries: TimelyEntry[] = [];
     const byDate = new Map<string, TimelyEntry[]>();
@@ -55,26 +52,20 @@ export async function fetchMemoriesForDates(options: FetchMemoriesOptions): Prom
                     await storage.putCacheFile(cacheKey, memories, CACHE_TTL);
                 }
                 stats.fetched++;
-                if (verbose) {
-                    logger.info(
-                        `[memories] ${progress} ${date}: ${memories.length} memories (${isToday ? "fresh, today" : "force refresh"})`
-                    );
-                }
+                logger.debug(
+                    `[memories] ${progress} ${date}: ${memories.length} memories (${isToday ? "fresh, today" : "force refresh"})`
+                );
             } else {
                 const cached = await storage.getCacheFile<TimelyEntry[]>(cacheKey, CACHE_TTL);
                 if (cached) {
                     memories = cached;
                     stats.cached++;
-                    if (verbose) {
-                        logger.info(`[memories] ${progress} ${date}: ${memories.length} memories (cached)`);
-                    }
+                    logger.debug(`[memories] ${progress} ${date}: ${memories.length} memories (cached)`);
                 } else {
                     memories = await fetchFromApi(accountId, accessToken, date);
                     await storage.putCacheFile(cacheKey, memories, CACHE_TTL);
                     stats.fetched++;
-                    if (verbose) {
-                        logger.info(`[memories] ${progress} ${date}: ${memories.length} memories (fetched)`);
-                    }
+                    logger.debug(`[memories] ${progress} ${date}: ${memories.length} memories (fetched)`);
                 }
             }
 
@@ -83,17 +74,13 @@ export async function fetchMemoriesForDates(options: FetchMemoriesOptions): Prom
         } catch (err) {
             stats.failed++;
             logger.debug(`[memories] Failed to fetch memories for ${date}: ${err}`);
-            if (verbose) {
-                logger.info(`[memories] ${progress} ${date}: FAILED`);
-            }
+            logger.debug(`[memories] ${progress} ${date}: FAILED`);
         }
     }
 
-    if (verbose) {
-        logger.info(
-            `[memories] Done: ${entries.length} total, ${stats.fetched} fetched, ${stats.cached} cached, ${stats.failed} failed`
-        );
-    }
+    logger.debug(
+        `[memories] Done: ${entries.length} total, ${stats.fetched} fetched, ${stats.cached} cached, ${stats.failed} failed`
+    );
 
     return { entries, byDate, stats };
 }

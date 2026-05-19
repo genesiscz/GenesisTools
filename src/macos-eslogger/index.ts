@@ -1,5 +1,5 @@
 import { type ChildProcess, spawn } from "node:child_process";
-import { consoleLog, logger } from "@app/logger";
+import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { ExitPromptError } from "@inquirer/core";
@@ -464,7 +464,7 @@ function evaluateFilterExpression(event: ESLoggerEvent, expression: string): boo
         // Parse expression like: '.event.fork.child.executable.path == ".*Cursor.*"'
         const match = expression.trim().match(/^([^=!<>~]+)\s*([=!<>~]+)\s*(.+)$/);
         if (!match) {
-            consoleLog.warn(`Invalid filter expression: ${expression}`);
+            logger.warn(`Invalid filter expression: ${expression}`);
             return true; // Don't filter if expression is invalid
         }
 
@@ -483,7 +483,7 @@ function evaluateFilterExpression(event: ESLoggerEvent, expression: string): boo
                         const regex = new RegExp(expectedValue);
                         return regex.test(String(actualValue || ""));
                     } catch (regexError) {
-                        consoleLog.warn(`Invalid regex pattern "${expectedValue}": ${regexError}`);
+                        logger.warn(`Invalid regex pattern "${expectedValue}": ${regexError}`);
                         return false;
                     }
                 }
@@ -495,7 +495,7 @@ function evaluateFilterExpression(event: ESLoggerEvent, expression: string): boo
                         const regex = new RegExp(expectedValue);
                         return !regex.test(String(actualValue || ""));
                     } catch (regexError) {
-                        consoleLog.warn(`Invalid regex pattern "${expectedValue}": ${regexError}`);
+                        logger.warn(`Invalid regex pattern "${expectedValue}": ${regexError}`);
                         return true;
                     }
                 }
@@ -506,7 +506,7 @@ function evaluateFilterExpression(event: ESLoggerEvent, expression: string): boo
                     const regex = new RegExp(expectedValue);
                     return regex.test(String(actualValue || ""));
                 } catch (regexError) {
-                    consoleLog.warn(`Invalid regex pattern "${expectedValue}": ${regexError}`);
+                    logger.warn(`Invalid regex pattern "${expectedValue}": ${regexError}`);
                     return false;
                 }
 
@@ -515,16 +515,16 @@ function evaluateFilterExpression(event: ESLoggerEvent, expression: string): boo
                     const negRegex = new RegExp(expectedValue);
                     return !negRegex.test(String(actualValue || ""));
                 } catch (regexError) {
-                    consoleLog.warn(`Invalid regex pattern "${expectedValue}": ${regexError}`);
+                    logger.warn(`Invalid regex pattern "${expectedValue}": ${regexError}`);
                     return true;
                 }
 
             default:
-                consoleLog.warn(`Unsupported operator: ${operator}`);
+                logger.warn(`Unsupported operator: ${operator}`);
                 return true;
         }
     } catch (error) {
-        consoleLog.warn(`Error evaluating filter expression "${expression}": ${error}`);
+        logger.warn(`Error evaluating filter expression "${expression}": ${error}`);
         return true; // Don't filter on error
     }
 }
@@ -864,19 +864,19 @@ function monitorWithESF(
                     // Formatting error - event parsed but couldn't format it
                     if (!silent) {
                         const eventTypeName = getEventTypeName(event.event_type);
-                        consoleLog.warn(
+                        logger.warn(
                             `[FORMAT_ERROR] Failed to format ${eventTypeName}: ${formatErr instanceof Error ? formatErr.message : String(formatErr)}`
                         );
                         if (debug) {
-                            consoleLog.warn(`Event data: ${SafeJSON.stringify(event, null, 2)}`);
+                            logger.warn(`Event data: ${SafeJSON.stringify(event, null, 2)}`);
                         }
                     }
                 }
             } catch (err) {
                 // JSON parsing error
                 if (!silent) {
-                    consoleLog.warn(`[JSON_PARSE_ERROR] ${err instanceof Error ? err.message : String(err)}`);
-                    consoleLog.warn(`Line: ${line.substring(0, 1000)}...`);
+                    logger.warn(`[JSON_PARSE_ERROR] ${err instanceof Error ? err.message : String(err)}`);
+                    logger.warn(`Line: ${line.substring(0, 1000)}...`);
                 }
             }
         }
@@ -894,26 +894,26 @@ function monitorWithESF(
         if (outputPath && outputBuffer) {
             try {
                 await Bun.write(outputPath, outputBuffer);
-                consoleLog.info(`✔ Output written to ${outputPath}`);
+                logger.info(`✔ Output written to ${outputPath}`);
             } catch (err) {
                 logger.error(`Failed to write output file: ${err}`);
             }
         }
 
         if (!silent) {
-            consoleLog.info(`\n${"─".repeat(80)}`);
-            consoleLog.info(`📈 Total events captured: ${eventCount}`);
+            logger.info(`\n${"─".repeat(80)}`);
+            logger.info(`📈 Total events captured: ${eventCount}`);
             if (code !== 0) {
                 logger.warn(`⚠️  Monitor process exited with code ${code}.`);
             } else {
-                consoleLog.info(chalk.green("✓ Process monitor stopped."));
+                logger.info(chalk.green("✓ Process monitor stopped."));
             }
         }
     });
 
     process.on("SIGINT", () => {
         if (!silent) {
-            consoleLog.info(chalk.red("\n\n🛑 Stopping eslogger monitor..."));
+            logger.info(chalk.red("\n\n🛑 Stopping eslogger monitor..."));
         }
         monitor.kill("SIGINT");
         setTimeout(() => process.exit(0), 500);
@@ -925,7 +925,7 @@ function monitorWithESF(
 // ============================================================================
 
 async function getEventTypesInteractively(): Promise<string[]> {
-    consoleLog.info(chalk.cyan("🔍 macOS ESLogger Real-time Event Monitor\n"));
+    logger.info(chalk.cyan("🔍 macOS ESLogger Real-time Event Monitor\n"));
 
     const mode = await select({
         message: "Choose monitoring mode:",
@@ -951,7 +951,7 @@ async function getEventTypesInteractively(): Promise<string[]> {
         });
 
         if (!categories || categories.length === 0) {
-            consoleLog.info("No categories selected. Exiting.");
+            logger.info("No categories selected. Exiting.");
             process.exit(0);
         }
 
@@ -972,7 +972,7 @@ async function getEventTypesInteractively(): Promise<string[]> {
         });
 
         if (!events || events.length === 0) {
-            consoleLog.info("No events selected. Exiting.");
+            logger.info("No events selected. Exiting.");
             process.exit(0);
         }
 
@@ -1057,14 +1057,14 @@ async function main() {
     if (options.includeFork && eventTypes.includes("exec") && !eventTypes.includes("fork")) {
         eventTypes.push("fork");
         if (!options.silent) {
-            consoleLog.info(chalk.yellow("ℹ️  Added 'fork' event monitoring (fork happens before exec)"));
+            logger.info(chalk.yellow("ℹ️  Added 'fork' event monitoring (fork happens before exec)"));
         }
     }
 
     // Warn about shell builtins if monitoring exec
     if (eventTypes.includes("exec") && !options.silent) {
-        consoleLog.info(chalk.yellow("💡 Tip: Shell builtins (like 'which' in zsh) don't trigger exec events."));
-        consoleLog.info(chalk.yellow("   Use external executables like /usr/bin/which or add --include-fork"));
+        logger.info(chalk.yellow("💡 Tip: Shell builtins (like 'which' in zsh) don't trigger exec events."));
+        logger.info(chalk.yellow("   Use external executables like /usr/bin/which or add --include-fork"));
     }
 
     // Start monitoring
