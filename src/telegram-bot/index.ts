@@ -5,6 +5,7 @@ import { Command } from "commander";
 import { registerConfigureCommand } from "./commands/configure";
 import { registerSendCommand } from "./commands/send";
 import { registerStartCommand } from "./commands/start";
+import { runTool } from "@app/utils/cli";
 
 handleReadmeFlag(import.meta.url);
 
@@ -20,3 +21,7 @@ registerSendCommand(program);
 registerStartCommand(program);
 
 program.parse();
+
+// CODEMOD-4b: review & fold existing parse/readme/verbose into this
+await runTool(program, { tool: "telegram-bot" });
+

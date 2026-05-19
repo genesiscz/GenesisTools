@@ -11,6 +11,7 @@ import { logger } from "@app/logger";
 import { PROJECT_ROOT } from "@app/utils/paths";
 import { stripAnsi } from "@app/utils/string";
 import { Command } from "commander";
+import { runTool } from "@app/utils/cli";
 
 const program = new Command()
     .name("dev-dashboard")
@@ -386,3 +387,7 @@ program.parseAsync().catch((err) => {
     logger.error({ err }, "dev-dashboard failed");
     process.exit(1);
 });
+
+// CODEMOD-4b: review & fold existing parse/readme/verbose into this
+await runTool(program, { tool: "dev-dashboard" });
+

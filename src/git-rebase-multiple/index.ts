@@ -7,6 +7,7 @@ import { git } from "./git";
 import { prompts } from "./prompts";
 import { stateManager } from "./state";
 import type { CLIOptions, PlanStep, RebaseConfig, RebaseState, RebaseSummary } from "./types";
+import { runTool } from "@app/utils/cli";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
@@ -905,3 +906,7 @@ async function main(): Promise<void> {
 }
 
 main();
+
+// CODEMOD-4b: review & fold existing parse/readme/verbose into this
+await runTool(program, { tool: "git-rebase-multiple" });
+

@@ -13,6 +13,7 @@ import { runTui } from "@app/doctor/ui/tui";
 import { logger } from "@app/logger";
 import { enhanceHelp, isInteractive } from "@app/utils/cli";
 import { Command } from "commander";
+import { runTool } from "@app/utils/cli";
 
 interface RootOpts {
     plain?: boolean;
@@ -145,3 +146,7 @@ async function main(): Promise<void> {
 }
 
 main();
+
+// CODEMOD-4b: review & fold existing parse/readme/verbose into this
+await runTool(program, { tool: "doctor" });
+

@@ -5,6 +5,7 @@ import { Storage } from "@app/utils/storage/storage";
 import * as p from "@clack/prompts";
 import { Command } from "commander";
 import pc from "picocolors";
+import { runTool } from "@app/utils/cli";
 
 // Types
 interface Order {
@@ -375,3 +376,7 @@ main().catch((error) => {
     p.log.error(`Error: ${error.message}`);
     process.exit(1);
 });
+
+// CODEMOD-4b: review & fold existing parse/readme/verbose into this
+await runTool(program, { tool: "rohlik-spending" });
+

@@ -33,6 +33,7 @@ import { registerSessionsCommand } from "./commands/sessions";
 import { registerExpandCommand, registerShowCommand } from "./commands/show";
 import { registerSizeCommand } from "./commands/size";
 import { registerWaterfallCommand } from "./commands/waterfall";
+import { runTool } from "@app/utils/cli";
 
 registerLoadCommand(program);
 registerDashboardCommand(program);
@@ -63,3 +64,7 @@ program.action(async (options) => {
 });
 
 program.parse();
+
+// CODEMOD-4b: review & fold existing parse/readme/verbose into this
+await runTool(program, { tool: "har-analyzer" });
+

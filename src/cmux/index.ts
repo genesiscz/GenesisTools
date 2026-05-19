@@ -17,6 +17,7 @@ import { registerProfilesCommand } from "@app/cmux/commands/profiles";
 import { enhanceHelp } from "@app/utils/cli";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { Command } from "commander";
+import { runTool } from "@app/utils/cli";
 
 handleReadmeFlag(import.meta.url);
 
@@ -37,3 +38,7 @@ program.parseAsync(process.argv).catch((error) => {
     console.error(error instanceof Error ? error.message : String(error));
     process.exit(1);
 });
+
+// CODEMOD-4b: review & fold existing parse/readme/verbose into this
+await runTool(program, { tool: "cmux" });
+

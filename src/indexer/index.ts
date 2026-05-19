@@ -15,6 +15,7 @@ import { registerStopCommand } from "./commands/stop";
 import { registerSyncCommand } from "./commands/sync";
 import { registerVerifyCommand } from "./commands/verify";
 import { registerWatchCommand } from "./commands/watch";
+import { runTool } from "@app/utils/cli";
 
 const program = new Command();
 
@@ -75,3 +76,7 @@ main().catch((err) => {
     p.log.error(err instanceof Error ? err.message : String(err));
     process.exit(1);
 });
+
+// CODEMOD-4b: review & fold existing parse/readme/verbose into this
+await runTool(program, { tool: "indexer" });
+

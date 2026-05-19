@@ -20,6 +20,7 @@ import { registerLogoutCommand } from "./commands/logout";
 import { registerMemoriesCommand } from "./commands/memories";
 import { registerProjectsCommand } from "./commands/projects";
 import { registerStatusCommand } from "./commands/status";
+import { runTool } from "@app/utils/cli";
 
 // Initialize shared dependencies
 const storage = new Storage("timely");
@@ -115,3 +116,7 @@ main().catch((err) => {
     logger.error(`Unexpected error: ${err}`);
     process.exit(1);
 });
+
+// CODEMOD-4b: review & fold existing parse/readme/verbose into this
+await runTool(program, { tool: "timely" });
+

@@ -1,6 +1,7 @@
 import { Executor } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
 import { Command } from "commander";
+import { runTool } from "@app/utils/cli";
 
 function showHelp() {
     // Write help to stderr to avoid polluting stdout
@@ -200,3 +201,7 @@ main().catch((err) => {
     process.stderr.write(`\n✖ Unexpected error: ${err}\n`);
     process.exit(1);
 });
+
+// CODEMOD-4b: review & fold existing parse/readme/verbose into this
+await runTool(program, { tool: "mcp-debug" });
+

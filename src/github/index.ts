@@ -18,6 +18,7 @@ import { ExitPromptError } from "@inquirer/core";
 import { confirm, input, select } from "@inquirer/prompts";
 import chalk from "chalk";
 import { Command } from "commander";
+import { runTool } from "@app/utils/cli";
 
 const program = new Command();
 
@@ -436,3 +437,7 @@ async function main(): Promise<void> {
 }
 
 main();
+
+// CODEMOD-4b: review & fold existing parse/readme/verbose into this
+await runTool(program, { tool: "github" });
+
