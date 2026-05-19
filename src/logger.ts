@@ -52,7 +52,11 @@ export function setConsoleLevel(l: pino.LevelWithSilent): void {
 }
 
 const prefixPid = process.env.LOG_PID === "1" || process.env.DEBUG === "1";
-const isTerminal = process.stdout.isTTY === true;
+// pino-pretty writes to STDERR (see createLogger below), so the minimalLevels
+// WARN/ERROR color prefixer must key off stderr.isTTY too — otherwise ANSI
+// leaks when stderr is redirected, or color is suppressed when only stderr
+// is interactive. PR #176 review t19.
+const isTerminal = process.stderr.isTTY === true;
 
 export interface LoggerOptions {
     level?: LogLevel;
