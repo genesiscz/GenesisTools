@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import {
     type Dirent,
     chmodSync,
+    chownSync,
     lstatSync,
     readFileSync,
     readdirSync,
@@ -468,10 +469,7 @@ export function dedupeFile({ keep, replace }: DedupeFileArgs): DedupeResult {
     const tmp = `${replace}.gtclone.${process.pid}.${Date.now()}`;
     try {
         cloneFile(keep, tmp); // same dir → same volume
-        // preserve replace's original identity-ish metadata
-        renameSync(tmp, replace); // atomic swap
-        chmodSync(replace, rs.mode & 0o7777);
-        utimesSync(replace, rs.atime, rs.mtime);
+        renameSync(tmp, replace); // atomic swap — from here, the file IS the clone
     } catch (err) {
         try {
             unlinkSync(tmp);
@@ -480,6 +478,27 @@ export function dedupeFile({ keep, replace }: DedupeFileArgs): DedupeResult {
         }
 
         throw err;
+    }
+
+    // Safety Contract invariant 4: each metadata restore is fail-tolerant.
+    // The atomic rename above already committed the clone-swap; partial
+    // metadata is acceptable — content + POSIX bits are what matter.
+    try {
+        chmodSync(replace, rs.mode & 0o7777);
+    } catch (err) {
+        logger.warn({ err, replace }, "dedupeFile: chmod restore failed (tolerated)");
+    }
+
+    try {
+        utimesSync(replace, rs.atime, rs.mtime);
+    } catch (err) {
+        logger.warn({ err, replace }, "dedupeFile: utimes restore failed (tolerated)");
+    }
+
+    try {
+        chownSync(replace, rs.uid, rs.gid);
+    } catch (err) {
+        logger.warn({ err, replace }, "dedupeFile: chown restore failed (tolerated)");
     }
 
     return { status: "cloned", bytesReclaimed: reclaimed };
