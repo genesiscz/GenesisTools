@@ -47,6 +47,7 @@ export async function getCachedPlan(p: PlanCacheParams): Promise<CachedPlan | nu
     }
 
     const filePath = join(storage.getCacheDir(), key);
-    const ageMs = existsSync(filePath) ? Date.now() - statSync(filePath).mtimeMs : 0;
+    const rawAge = existsSync(filePath) ? Date.now() - statSync(filePath).mtimeMs : 0;
+    const ageMs = Math.max(0, rawAge);
     return { plan, ageMs };
 }
