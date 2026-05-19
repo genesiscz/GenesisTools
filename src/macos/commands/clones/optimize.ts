@@ -1,9 +1,15 @@
 import logger from "@app/logger";
-import { IntegrityError, listProcesses, runOptimize } from "@app/macos/lib/clones/audit";
+import {
+    closestProcessIds,
+    IntegrityError,
+    listProcesses,
+    readProcess,
+    runOptimize,
+} from "@app/macos/lib/clones/audit";
 import { cachePlan, getCachedPlan } from "@app/macos/lib/clones/cache";
 import { collapseDuplicates } from "@app/macos/lib/clones/collapse";
 import { expandNodeModules, resolveRoots } from "@app/macos/lib/clones/orchestrator";
-import { resolveFormat, resolveRenderer } from "@app/macos/lib/clones/render/index";
+import { JsonRenderer, resolveFormat, resolveRenderer } from "@app/macos/lib/clones/render/index";
 import type { DuplicateSet, ProcessReport } from "@app/macos/lib/clones/render/types";
 import { isInteractive, parseVariadic, suggestCommand } from "@app/utils/cli";
 import { formatBytes } from "@app/utils/format";
@@ -71,12 +77,40 @@ export function createOptimizeCommand(): Command {
         .option("-v, --verbose", "Verbose logging", false)
         .option("--silent", "Suppress non-essential output", false)
         .action(async (rootsArg: string[], opts: OptimizeOpts) => {
-            if (opts.log || opts.rollback) {
-                throw new Error("optimize: --log/--rollback are wired in Tasks 15–16");
+            if (opts.rollback) {
+                throw new Error("optimize: --rollback is wired in Task 16");
             }
 
             if (opts.list) {
                 console.log(resolveRenderer(resolveFormat(opts.format)).processList(listProcesses()));
+                process.exitCode = 0;
+                return;
+            }
+
+            if (opts.log) {
+                if (!opts.process) {
+                    console.error("optimize --log requires --process <id>.");
+                    process.exit(1);
+                }
+
+                const rep = readProcess(opts.process);
+                if (!rep) {
+                    console.error(`Unknown process "${opts.process}".`);
+                    const near = closestProcessIds(opts.process);
+                    if (near.length > 0) {
+                        console.error(`Closest: ${near.join(", ")}`);
+                    }
+
+                    process.exit(1);
+                }
+
+                const fmt = resolveFormat(opts.format);
+                if (fmt === "jsonl") {
+                    console.log(new JsonRenderer().processReportJsonl(rep));
+                } else {
+                    console.log(resolveRenderer(fmt).processReport(rep));
+                }
+
                 process.exitCode = 0;
                 return;
             }
