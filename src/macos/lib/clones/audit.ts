@@ -255,107 +255,107 @@ export function runOptimize({ roots, sets, planCacheHit, planCacheAgeMs }: RunOp
     try {
         for (const set of sets) {
             for (const replace of set.members.filter((m) => m !== set.keep)) {
-            seq += 1;
-            const ts = new Date().toISOString();
-            let modeBefore = 0;
-            let mtimeBeforeMs = 0;
-            let sha256Before = "";
-            try {
-                const st = lstatSync(replace);
-                modeBefore = st.mode & 0o7777;
-                mtimeBeforeMs = st.mtimeMs;
-                sha256Before = sha256(replace);
-            } catch (err) {
-                log.warn({ err, replace }, "pre-state capture failed");
-                appendOp(id, {
-                    seq,
-                    ts,
-                    op: "error",
-                    status: "prestate",
-                    bytes: 0,
-                    keep: set.keep,
-                    replace,
-                    modeBefore,
-                    mtimeBeforeMs,
-                    sha256Before,
-                    message: err instanceof Error ? err.message : String(err),
-                });
-                continue;
-            }
-
-            try {
-                const res = dedupeFile({ keep: set.keep, replace });
-                if (res.status === "cloned") {
-                    const sha256After = sha256(replace);
-                    if (sha256After !== sha256Before) {
-                        appendOp(id, {
-                            seq,
-                            ts,
-                            op: "error",
-                            status: "integrity",
-                            bytes: 0,
-                            keep: set.keep,
-                            replace,
-                            modeBefore,
-                            mtimeBeforeMs,
-                            sha256Before,
-                            sha256After,
-                            message: "sha256 changed after clone — run aborted",
-                        });
-                        throw new IntegrityError(
-                            `integrity violation cloning ${replace}: ${sha256Before} != ${sha256After}`
-                        );
-                    }
-
+                seq += 1;
+                const ts = new Date().toISOString();
+                let modeBefore = 0;
+                let mtimeBeforeMs = 0;
+                let sha256Before = "";
+                try {
+                    const st = lstatSync(replace);
+                    modeBefore = st.mode & 0o7777;
+                    mtimeBeforeMs = st.mtimeMs;
+                    sha256Before = sha256(replace);
+                } catch (err) {
+                    log.warn({ err, replace }, "pre-state capture failed");
                     appendOp(id, {
                         seq,
                         ts,
-                        op: "clone",
-                        status: "ok",
-                        bytes: res.bytesReclaimed,
-                        keep: set.keep,
-                        replace,
-                        modeBefore,
-                        mtimeBeforeMs,
-                        sha256Before,
-                        sha256After,
-                    });
-                } else {
-                    appendOp(id, {
-                        seq,
-                        ts,
-                        op: "skip",
-                        status: res.status,
+                        op: "error",
+                        status: "prestate",
                         bytes: 0,
                         keep: set.keep,
                         replace,
                         modeBefore,
                         mtimeBeforeMs,
                         sha256Before,
+                        message: err instanceof Error ? err.message : String(err),
                     });
-                }
-            } catch (err) {
-                if (err instanceof IntegrityError) {
-                    throw err;
+                    continue;
                 }
 
-                const isClone = err instanceof CloneUnsupportedError;
-                appendOp(id, {
-                    seq,
-                    ts,
-                    op: "error",
-                    status: isClone ? "clone-unsupported" : "errno",
-                    bytes: 0,
-                    keep: set.keep,
-                    replace,
-                    modeBefore,
-                    mtimeBeforeMs,
-                    sha256Before,
-                    message: err instanceof Error ? err.message : String(err),
-                });
+                try {
+                    const res = dedupeFile({ keep: set.keep, replace });
+                    if (res.status === "cloned") {
+                        const sha256After = sha256(replace);
+                        if (sha256After !== sha256Before) {
+                            appendOp(id, {
+                                seq,
+                                ts,
+                                op: "error",
+                                status: "integrity",
+                                bytes: 0,
+                                keep: set.keep,
+                                replace,
+                                modeBefore,
+                                mtimeBeforeMs,
+                                sha256Before,
+                                sha256After,
+                                message: "sha256 changed after clone — run aborted",
+                            });
+                            throw new IntegrityError(
+                                `integrity violation cloning ${replace}: ${sha256Before} != ${sha256After}`
+                            );
+                        }
+
+                        appendOp(id, {
+                            seq,
+                            ts,
+                            op: "clone",
+                            status: "ok",
+                            bytes: res.bytesReclaimed,
+                            keep: set.keep,
+                            replace,
+                            modeBefore,
+                            mtimeBeforeMs,
+                            sha256Before,
+                            sha256After,
+                        });
+                    } else {
+                        appendOp(id, {
+                            seq,
+                            ts,
+                            op: "skip",
+                            status: res.status,
+                            bytes: 0,
+                            keep: set.keep,
+                            replace,
+                            modeBefore,
+                            mtimeBeforeMs,
+                            sha256Before,
+                        });
+                    }
+                } catch (err) {
+                    if (err instanceof IntegrityError) {
+                        throw err;
+                    }
+
+                    const isClone = err instanceof CloneUnsupportedError;
+                    appendOp(id, {
+                        seq,
+                        ts,
+                        op: "error",
+                        status: isClone ? "clone-unsupported" : "errno",
+                        bytes: 0,
+                        keep: set.keep,
+                        replace,
+                        modeBefore,
+                        mtimeBeforeMs,
+                        sha256Before,
+                        message: err instanceof Error ? err.message : String(err),
+                    });
+                }
             }
         }
-    }
     } catch (err) {
         if (err instanceof IntegrityError) {
             // Close the audit log with an aborted-state meta so --log shows
@@ -430,7 +430,7 @@ export function rollbackProcess(id: string): ProcessReport {
             throw new RollbackSpaceError(
                 `rollback needs ~${required} bytes (×1.1 headroom) but only ${free.available} available`,
                 required,
-                free.available,
+                free.available
             );
         }
     } else {
@@ -441,7 +441,7 @@ export function rollbackProcess(id: string): ProcessReport {
                     `rollback needs ~${info.required} bytes on volume of "${info.sample}" ` +
                         `(×1.1 headroom) but only ${free.available} available`,
                     info.required,
-                    free.available,
+                    free.available
                 );
             }
         }
