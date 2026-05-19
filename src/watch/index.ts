@@ -2,6 +2,7 @@ import type { WatchEventType, WatchOptions } from "node:fs";
 import fs from "node:fs";
 import path from "node:path";
 import { logger } from "@app/logger";
+import { runTool } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
 import { expandTilde } from "@app/utils/paths";
 import { handleReadmeFlag } from "@app/utils/readme";
@@ -9,7 +10,6 @@ import chalk from "chalk";
 import chokidar from "chokidar";
 import { Command } from "commander";
 import { glob } from "glob";
-import { runTool } from "@app/utils/cli";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
@@ -21,8 +21,9 @@ const program = new Command()
     .option("-s, --seconds <n>", "Polling interval in seconds for directory rescans", "1")
     .option("-v, --verbose", "Enable verbose logging", false)
     .option("-f, --follow", "Follow mode: continuously watch files for changes (like tail -f)", false)
-    .option("-n, --lines <n>", "Number of lines to display from each file", "50")
-    .parse();
+    .option("-n, --lines <n>", "Number of lines to display from each file", "50");
+
+await runTool(program, { tool: "watch" });
 
 const options = program.opts();
 const args = program.args;
@@ -671,7 +672,3 @@ async function startWatcher() {
 
 // Start the application
 startWatcher();
-
-// CODEMOD-4b: review & fold existing parse/readme/verbose into this
-await runTool(program, { tool: "watch" });
-

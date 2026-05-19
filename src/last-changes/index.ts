@@ -1,13 +1,12 @@
 import { lstatSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { logger } from "@app/logger";
-import { Executor } from "@app/utils/cli";
+import { Executor, runTool } from "@app/utils/cli";
 import { formatDateTime } from "@app/utils/date";
 import { formatRelativeTime as _formatRelativeTime } from "@app/utils/format";
 import { handleReadmeFlag } from "@app/utils/readme";
 import chalk from "chalk";
 import { Command } from "commander";
-import { runTool } from "@app/utils/cli";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
@@ -350,8 +349,9 @@ async function main() {
         .description(
             "Shows uncommitted git changes grouped by modification time to help you understand what files were updated and when."
         )
-        .option("-c, --commits <n>", "Show changes from the last N commits instead of uncommitted changes")
-        .parse();
+        .option("-c, --commits <n>", "Show changes from the last N commits instead of uncommitted changes");
+
+    await runTool(program, { tool: "last-changes" });
 
     const options = program.opts<{
         commits?: string;
@@ -426,7 +426,3 @@ main().catch((err) => {
     log.err(`Unexpected error: ${err}`);
     process.exit(1);
 });
-
-// CODEMOD-4b: review & fold existing parse/readme/verbose into this
-await runTool(program, { tool: "last-changes" });
-

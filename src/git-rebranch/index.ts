@@ -1,4 +1,4 @@
-import { isVerbose } from "@app/utils/cli";
+import { isVerbose, runTool } from "@app/utils/cli";
 import type { DetailedCommitInfo } from "@app/utils/git";
 import { createGit } from "@app/utils/git";
 import { withCancel } from "@app/utils/prompts/clack/helpers";
@@ -9,7 +9,6 @@ import { Command } from "commander";
 import pc from "picocolors";
 import { groupCommits, parseCommit } from "./grouping";
 import type { BranchResult, CommitGroup } from "./types";
-import { runTool } from "@app/utils/cli";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
@@ -61,8 +60,9 @@ const program = new Command()
     .name("git-rebranch")
     .description("Split a messy branch into multiple clean branches by commit grouping")
     .option("-?, --help-full", "Show detailed help message")
-    .option("--dry-run", "Show execution plan without creating branches")
-    .parse();
+    .option("--dry-run", "Show execution plan without creating branches");
+
+await runTool(program, { tool: "git-rebranch" });
 
 const opts = program.opts<Options>();
 
@@ -497,7 +497,3 @@ main().catch((err) => {
     p.log.error(pc.red(String(err)));
     process.exit(1);
 });
-
-// CODEMOD-4b: review & fold existing parse/readme/verbose into this
-await runTool(program, { tool: "git-rebranch" });
-

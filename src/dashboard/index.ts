@@ -5,9 +5,9 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { logger } from "@app/logger";
+import { runTool } from "@app/utils/cli";
 import { Command } from "commander";
 import pc from "picocolors";
-import { runTool } from "@app/utils/cli";
 
 const DASHBOARD_DIR = dirname(fileURLToPath(import.meta.url));
 const NODE_MODULES = join(DASHBOARD_DIR, "node_modules");
@@ -155,11 +155,7 @@ program
         });
     });
 
-program.parseAsync(process.argv).catch((err: unknown) => {
+await runTool(program, { tool: "dashboard" }).catch((err: unknown) => {
     logger.error("dashboard launcher failed", err);
     process.exit(1);
 });
-
-// CODEMOD-4b: review & fold existing parse/readme/verbose into this
-await runTool(program, { tool: "dashboard" });
-

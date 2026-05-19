@@ -1,11 +1,11 @@
 #!/usr/bin/env bun
 
+import { runTool } from "@app/utils/cli";
 import { isMultilineCancel, multilineText } from "@app/utils/prompts/clack";
 import { Storage } from "@app/utils/storage/storage";
 import * as p from "@clack/prompts";
 import { Command } from "commander";
 import pc from "picocolors";
-import { runTool } from "@app/utils/cli";
 
 // Types
 interface Order {
@@ -369,14 +369,10 @@ async function main() {
             p.outro(pc.green("Done!"));
         });
 
-    await program.parseAsync();
+    await runTool(program, { tool: "rohlik-spending" });
 }
 
 main().catch((error) => {
     p.log.error(`Error: ${error.message}`);
     process.exit(1);
 });
-
-// CODEMOD-4b: review & fold existing parse/readme/verbose into this
-await runTool(program, { tool: "rohlik-spending" });
-

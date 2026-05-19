@@ -11,9 +11,8 @@ import { runPlain } from "@app/doctor/ui/plain";
 import { runStats } from "@app/doctor/ui/stats";
 import { runTui } from "@app/doctor/ui/tui";
 import { logger } from "@app/logger";
-import { enhanceHelp, isInteractive } from "@app/utils/cli";
+import { enhanceHelp, isInteractive, runTool } from "@app/utils/cli";
 import { Command } from "commander";
-import { runTool } from "@app/utils/cli";
 
 interface RootOpts {
     plain?: boolean;
@@ -142,11 +141,7 @@ program
 enhanceHelp(program);
 
 async function main(): Promise<void> {
-    await program.parseAsync(process.argv);
+    await runTool(program, { tool: "doctor" });
 }
 
 main();
-
-// CODEMOD-4b: review & fold existing parse/readme/verbose into this
-await runTool(program, { tool: "doctor" });
-

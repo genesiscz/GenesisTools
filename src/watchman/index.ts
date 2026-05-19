@@ -1,12 +1,12 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { logger } from "@app/logger";
+import { runTool } from "@app/utils/cli";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { ExitPromptError } from "@inquirer/core";
 import { search } from "@inquirer/prompts";
 import { Command } from "commander";
 import * as watchman from "fb-watchman";
-import { runTool } from "@app/utils/cli";
 
 interface WatchmanFile {
     name: string;
@@ -35,8 +35,9 @@ const client = new watchman.Client();
 const program = new Command()
     .option("-c, --current", "Use current working directory")
     .option("-t, --temporary", "Remove watch when tool exits (won't unwatch pre-existing watches)")
-    .option("-?, --help-full", "Show detailed help message")
-    .parse();
+    .option("-?, --help-full", "Show detailed help message");
+
+await runTool(program, { tool: "watchman" });
 
 const options = program.opts<{ current?: boolean; temporary?: boolean; helpFull?: boolean }>();
 
@@ -330,7 +331,3 @@ function setupCleanup(activeClient: watchman.Client, watchRoot: string): void {
         setupCleanup(activeClient, watchRoot);
     }
 })();
-
-// CODEMOD-4b: review & fold existing parse/readme/verbose into this
-await runTool(program, { tool: "watchman" });
-

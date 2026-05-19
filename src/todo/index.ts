@@ -14,9 +14,8 @@ import {
     createStartCommand,
 } from "@app/todo/commands/status";
 import { createSyncCommand } from "@app/todo/commands/sync";
-import { enhanceHelp } from "@app/utils/cli";
+import { enhanceHelp, runTool } from "@app/utils/cli";
 import { Command } from "commander";
-import { runTool } from "@app/utils/cli";
 
 const program = new Command();
 
@@ -40,7 +39,7 @@ enhanceHelp(program);
 
 async function main(): Promise<void> {
     try {
-        await program.parseAsync(process.argv);
+        await runTool(program, { tool: "todo" });
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.error(`Error: ${message}`);
@@ -52,7 +51,3 @@ main().catch((err) => {
     console.error(`Unexpected error: ${err}`);
     process.exit(1);
 });
-
-// CODEMOD-4b: review & fold existing parse/readme/verbose into this
-await runTool(program, { tool: "todo" });
-

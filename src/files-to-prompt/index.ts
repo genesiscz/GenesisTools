@@ -2,13 +2,13 @@ import { existsSync, statSync } from "node:fs";
 import { mkdir, readdir, readFile } from "node:fs/promises";
 import { basename, dirname, extname, join, relative, resolve } from "node:path";
 import { logger } from "@app/logger";
+import { runTool } from "@app/utils/cli";
 import { formatBytes as _formatBytes } from "@app/utils/format";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { estimateTokens, formatTokens } from "@ask/utils/helpers";
 import type { FileSink } from "bun";
 import { Command } from "commander";
 import { minimatch } from "minimatch";
-import { runTool } from "@app/utils/cli";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
@@ -820,8 +820,9 @@ async function main(): Promise<void> {
             .option("-0, --null", "Use NUL character as separator when reading from stdin")
             .option("--dry", "Show statistics about what would be processed without actually processing")
             .option("-?, --help-full", "Show this help message")
-            .option("--version", "Show version information")
-            .parse();
+            .option("--version", "Show version information");
+
+        await runTool(program, { tool: "files-to-prompt" });
 
         const options = program.opts();
         const paths = program.args;
@@ -1037,7 +1038,3 @@ async function main(): Promise<void> {
 }
 
 main();
-
-// CODEMOD-4b: review & fold existing parse/readme/verbose into this
-await runTool(program, { tool: "files-to-prompt" });
-

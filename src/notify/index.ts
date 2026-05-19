@@ -1,13 +1,12 @@
 #!/usr/bin/env bun
 
-import { isInteractive, suggestCommand } from "@app/utils/cli";
+import { isInteractive, runTool, suggestCommand } from "@app/utils/cli";
 import type { ChannelConfigs } from "@app/utils/notifications";
 import { dispatchNotification, notificationsConfig } from "@app/utils/notifications";
 import { withCancel } from "@app/utils/prompts/clack/helpers";
 import * as p from "@clack/prompts";
 import { Command } from "commander";
 import pc from "picocolors";
-import { runTool } from "@app/utils/cli";
 
 const MACOS_SOUNDS = [
     "Basso",
@@ -307,7 +306,7 @@ program.command("config").description("Configure default notification settings")
 
 async function main(): Promise<void> {
     try {
-        await program.parseAsync(process.argv);
+        await runTool(program, { tool: "notify" });
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         p.log.error(message);
@@ -316,7 +315,3 @@ async function main(): Promise<void> {
 }
 
 main();
-
-// CODEMOD-4b: review & fold existing parse/readme/verbose into this
-await runTool(program, { tool: "notify" });
-

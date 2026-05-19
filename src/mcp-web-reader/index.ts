@@ -6,6 +6,7 @@ import { Command } from "commander";
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
 
+import { runTool } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -21,7 +22,6 @@ import {
 } from "./handlers.js";
 import { limitToTokens } from "./utils/tokens.js";
 import { buildJinaUrl, ensureHttpUrl } from "./utils/urls.js";
-import { runTool } from "@app/utils/cli";
 
 const log = {
     info: (msg: string) => console.log(chalk.blue("ℹ️ ") + msg),
@@ -257,8 +257,9 @@ async function main(): Promise<void> {
         .option("--server", "Start as MCP server instead of CLI")
         .option("--list-engines", "List available markdown engines")
         .option("--model-info", "Show ReaderLM model status")
-        .option("--download-model", "Download ReaderLM model (~1GB)")
-        .parse();
+        .option("--download-model", "Download ReaderLM model (~1GB)");
+
+    await runTool(program, { tool: "mcp-web-reader" });
 
     const opts = program.opts();
     const args = program.args;
@@ -348,7 +349,3 @@ main().catch((e) => {
     console.error("Fatal error:", e);
     process.exit(1);
 });
-
-// CODEMOD-4b: review & fold existing parse/readme/verbose into this
-await runTool(program, { tool: "mcp-web-reader" });
-
