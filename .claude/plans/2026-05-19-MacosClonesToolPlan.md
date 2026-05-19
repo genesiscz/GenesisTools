@@ -121,7 +121,7 @@ All four steps green ⇒ proceed to Task 1. Any red ⇒ this plan is BLOCKED; fi
 
 These are the report value objects every command produces and every renderer consumes (spec §3, §4). Pure types + one tiny constant — no logic.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `src/macos/lib/clones/render/types.test.ts`:
 
@@ -156,7 +156,7 @@ describe("clones render types", () => {
 Run: `bun test src/macos/lib/clones/render/types.test.ts -t "clones render types"`
 Expected: FAIL — `Cannot find module '@app/macos/lib/clones/render/types'`.
 
-- [ ] **Step 3: Implement `render/types.ts`**
+- [x] **Step 3: Implement `render/types.ts`**
 
 `src/macos/lib/clones/render/types.ts`:
 
@@ -301,12 +301,14 @@ export const CLONES_GLOSSARY = [
 ].join("\n");
 ```
 
-- [ ] **Step 4: Run the test**
+- [x] **Step 2: Run it to verify it fails**
+
+- [x] **Step 4: Run the test**
 
 Run: `bun test src/macos/lib/clones/render/types.test.ts -t "clones render types"`
 Expected: PASS (glossary contains the four marker substrings; `CloneRenderer` is satisfiable).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/macos/lib/clones/render/types.ts src/macos/lib/clones/render/types.test.ts
