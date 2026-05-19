@@ -43,15 +43,17 @@ function isServerOrTooling(rel: string): boolean {
         rel.endsWith(".test.tsx") ||
         rel.includes("vite-middleware") ||
         rel.includes("vite.plugins/") ||
-        rel.endsWith(".browser.ts") ||
         /vite\.config\.[cm]?[jt]s$/.test(rel) ||
         rel.includes("/node_modules/") ||
         rel.includes("/dist/")
     );
 }
 
-// A non-type import statement referencing @app/logger or @app/logger/out.
-const VALUE_LOGGER_IMPORT = /import\s+(?!type\b)[^;]*?from\s+["']@app\/logger(?:\/out)?["']/g;
+// Any non-type value import of @app/logger or @app/logger/out — covers the
+// `import … from "…"` form (excluding `import type`), the side-effect form
+// `import "…"`, and the dynamic `import("…")` form (PR #176 review t12).
+const VALUE_LOGGER_IMPORT =
+    /(?:import\s+(?!type\b)[^;]*?from\s+["']@app\/logger(?:\/out)?["']|import\s+["']@app\/logger(?:\/out)?["']|import\s*\(\s*["']@app\/logger(?:\/out)?["']\s*\))/g;
 
 function walk(dir: string, acc: string[]): void {
     for (const name of readdirSync(dir)) {

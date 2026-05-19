@@ -15,12 +15,17 @@ describe("out facade discipline", () => {
             e.push(String(c));
             return true;
         };
-        out.result({ ok: true });
-        out.print("RAW_LINE");
-        out.log.info("STATUS_LINE");
-        await Bun.sleep(10);
-        process.stdout.write = oo;
-        process.stderr.write = oe;
+        try {
+            out.result({ ok: true });
+            out.print("RAW_LINE");
+            out.log.info("STATUS_LINE");
+            await Bun.sleep(10);
+        } finally {
+            // Always restore the real writers — a thrown assertion below must
+            // not leave the whole suite's stdout/stderr patched.
+            process.stdout.write = oo;
+            process.stderr.write = oe;
+        }
         expect(o.join("")).toContain('"ok":true');
         expect(o.join("")).toContain("RAW_LINE");
         expect(o.join("")).not.toContain("STATUS_LINE");
