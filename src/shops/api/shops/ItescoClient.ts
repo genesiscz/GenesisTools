@@ -1,6 +1,6 @@
 // Adapted from topmonks/hlidac-shopu (EUPL-1.2) — actors/itesco-daily/main.js
 
-import logger, { type Logger } from "@app/logger";
+import { type Logger, logger } from "@app/logger";
 import { ShopApiClient, type ShopApiClientConstructorConfig } from "@app/shops/api/ShopApiClient";
 import type { Category, ListingOptions, RawProduct, ShopCapabilities } from "@app/shops/api/ShopApiClient.types";
 import {

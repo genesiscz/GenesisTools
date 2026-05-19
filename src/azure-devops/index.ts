@@ -14,7 +14,7 @@
  */
 
 import { exitWithAuthGuide, exitWithSslGuide, isAuthError, isSslError } from "@app/azure-devops/cli.utils";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { Command } from "commander";
 

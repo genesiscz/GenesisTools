@@ -2,7 +2,7 @@
 
 import { formatActivity } from "@app/github/lib/output";
 import type { ActivityCommandOptions, ActivityItem, GitHubEvent } from "@app/github/types";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { getOctokit } from "@app/utils/github/octokit";
 import { withRetry } from "@app/utils/github/rate-limit";
 import { parseDate } from "@app/utils/github/url-parser";

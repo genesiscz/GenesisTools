@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { formatDuration, parseDuration } from "@app/utils/format";
 import * as p from "@clack/prompts";
 import { Command } from "commander";

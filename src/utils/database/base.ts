@@ -1,7 +1,7 @@
 import { Database as BunDatabase } from "bun:sqlite";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { nowUtcIso, parseSqliteOrIsoDate } from "@app/utils/sql-time";
 
 export { nowUtcIso, parseSqliteOrIsoDate, SQL_NOW_UTC } from "@app/utils/sql-time";

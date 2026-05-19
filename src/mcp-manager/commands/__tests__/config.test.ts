@@ -8,7 +8,7 @@ setupInquirerMock();
 
 const { openConfig } = await import("@app/mcp-manager/commands/config.js");
 
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import * as configUtils from "@app/mcp-manager/utils/config.utils.js";
 import { Storage } from "@app/utils/storage";
 

@@ -30,7 +30,7 @@ import {
     requireConfig,
     saveTemplate,
 } from "@app/azure-devops/utils";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import { ExitPromptError } from "@inquirer/core";
 import { confirm, editor, input, select } from "@inquirer/prompts";

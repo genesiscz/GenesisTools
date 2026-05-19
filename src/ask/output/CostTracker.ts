@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
 import type { CostBreakdown } from "@ask/types";

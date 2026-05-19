@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import type { ShopApiClient } from "@app/shops/api/ShopApiClient";
 import { ShopRegistry } from "@app/shops/api/ShopRegistry";
 import { getShopsDatabase, type ShopsDatabase } from "@app/shops/db/ShopsDatabase";

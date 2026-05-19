@@ -2,7 +2,7 @@
 
 import { resolve } from "node:path";
 import type { GitHubCommitUrl } from "@app/github/types";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { copyToClipboard } from "@app/utils/clipboard";
 import { getOctokit } from "@app/utils/github/octokit";
 import { withRetry } from "@app/utils/github/rate-limit";

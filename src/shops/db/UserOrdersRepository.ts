@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import type { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import type { NewUserOrder, UserOrder, UserOrderItem } from "@app/shops/db/types";
 import { nowUtcIso } from "@app/utils/sql-time";

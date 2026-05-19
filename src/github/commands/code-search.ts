@@ -1,6 +1,6 @@
 // Code search command implementation
 
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { getOctokit } from "@app/utils/github/octokit";
 import { withRetry } from "@app/utils/github/rate-limit";
 import { setGlobalVerbose, verbose } from "@app/utils/github/utils";

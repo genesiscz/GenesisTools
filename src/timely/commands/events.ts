@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import type { TimelyService } from "@app/timely/api/service";
 import type { OAuth2Tokens, TimelyEntry, TimelyEvent, TimelyEventSlim } from "@app/timely/types";
 import { formatDuration } from "@app/timely/utils/date";

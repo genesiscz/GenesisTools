@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import type { FavoritesRepository, FavoriteWithState } from "@app/shops/db/FavoritesRepository";
 import type { NotificationReason, NotificationsRepository } from "@app/shops/db/NotificationsRepository";
 import type { ShopsDatabase } from "@app/shops/db/ShopsDatabase";

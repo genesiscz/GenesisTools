@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { CliHandler } from "@app/mcp-tsc/cli/CliHandler.js";
 import { DiagnosticsCommand } from "@app/mcp-tsc/cli/commands/DiagnosticsCommand.js";
 import { HoverCommand } from "@app/mcp-tsc/cli/commands/HoverCommand.js";

@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { resolveAccountToken } from "@app/utils/claude/subscription-auth";
 import type { AIAccountEntry } from "@app/utils/config/ai.types";
 

@@ -1,5 +1,5 @@
 import path from "node:path";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import type { CliArgs } from "@app/mcp-tsc/core/interfaces.js";
 import { McpAdapter } from "@app/mcp-tsc/protocols/McpAdapter.js";
 import { LspServer } from "@app/mcp-tsc/providers/LspServer.js";

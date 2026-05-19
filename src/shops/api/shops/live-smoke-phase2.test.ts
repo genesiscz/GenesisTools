@@ -11,7 +11,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { __resetInitState, initShopRegistry } from "@app/shops/api/registry-init";
 import { ShopRegistry } from "@app/shops/api/ShopRegistry";
 

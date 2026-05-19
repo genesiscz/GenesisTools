@@ -1,7 +1,7 @@
 import { existsSync, statSync } from "node:fs";
 import { mkdir, readdir, readFile } from "node:fs/promises";
 import { basename, dirname, extname, join, relative, resolve } from "node:path";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { formatBytes as _formatBytes } from "@app/utils/format";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { estimateTokens, formatTokens } from "@ask/utils/helpers";

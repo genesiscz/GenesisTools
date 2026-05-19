@@ -1,5 +1,5 @@
 import { stat } from "node:fs/promises";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import type { ChannelHandle } from "@app/youtube/lib/channel.types";
 import type {

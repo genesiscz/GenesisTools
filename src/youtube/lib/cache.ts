@@ -2,7 +2,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import { unlink } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import type { CacheLayout } from "@app/youtube/lib/cache.types";
 import type { ChannelHandle } from "@app/youtube/lib/channel.types";
 import type { VideoId } from "@app/youtube/lib/video.types";

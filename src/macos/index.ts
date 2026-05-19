@@ -39,7 +39,7 @@
  *   tools macos contacts search
  */
 
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { registerCalendarCommand } from "@app/macos/commands/calendar/index";
 import { registerMailCommand } from "@app/macos/commands/mail/index";
 import { registerMessagesCommand } from "@app/macos/commands/messages/index";

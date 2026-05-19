@@ -1,7 +1,7 @@
 import { Database as BunDatabase } from "bun:sqlite";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { Kysely } from "kysely";
 import { BunSqliteDialect } from "./dialect";
 import { type Migration, type MigrationContext, runMigrations } from "./migrations";

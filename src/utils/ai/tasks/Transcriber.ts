@@ -3,7 +3,7 @@ import { readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { audioProcessor } from "@app/ask/audio/AudioProcessor";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { rateLimitAwareDelay, retry } from "@app/utils/async";
 import { diarizeLocal } from "@app/utils/audio/diarize-local";
 import { CLOUD_PROVIDER_TYPES } from "@app/utils/config/ai.types";

@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { readCache, writeCache } from "./cache";
 import { writeAnalysisLog } from "./history";
 import type { AnalyzerCategory, AnalyzerContext, AnalyzerResult, Finding } from "./types";

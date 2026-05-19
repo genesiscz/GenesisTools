@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { HlidacShopuClient } from "@app/shops/api/HlidacShopuClient";
 import { initShopRegistry } from "@app/shops/api/registry-init";
 import type { ShopApiClient } from "@app/shops/api/ShopApiClient";

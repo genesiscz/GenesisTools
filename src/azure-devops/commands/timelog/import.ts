@@ -6,7 +6,7 @@ import { updateWorkItemEffort } from "@app/azure-devops/timelog-effort";
 import type { AllowedTypeConfig, TimeLogImportFile } from "@app/azure-devops/types";
 import { requireTimeLogConfig, requireTimeLogUser } from "@app/azure-devops/utils";
 import { precheckWorkItem } from "@app/azure-devops/workitem-precheck";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import type { Command } from "commander";
 import pc from "picocolors";

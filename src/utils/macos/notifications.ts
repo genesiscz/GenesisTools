@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import type { DarwinKit } from "@app/utils/macos/darwinkit";
 import { getDarwinKit } from "@app/utils/macos/darwinkit";
 import { escapeJxa } from "@app/utils/macos/jxa";

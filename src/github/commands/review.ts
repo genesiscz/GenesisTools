@@ -19,7 +19,7 @@ import {
     parseThreads,
 } from "@app/github/lib/review-threads";
 import type { ReviewCommandOptions, ReviewData, ReviewSessionData } from "@app/github/types";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { formatRelativeTime } from "@app/utils/format";
 import { detectRepoFromGit, parseGitHubUrl } from "@app/utils/github/url-parser";
 import { setGlobalVerbose } from "@app/utils/github/utils";

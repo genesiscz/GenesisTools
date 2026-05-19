@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { parseDate } from "./DateParser";
 import type { TelegramHistoryStore } from "./TelegramHistoryStore";
 import type { MessageRowV2, StyleSourceRule } from "./types";

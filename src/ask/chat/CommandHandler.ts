@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { modelSelector } from "@ask/providers/ModelSelector";
 import type { OutputConfig, OutputFormat, ProviderChoice } from "@ask/types";
 import { getLanguageModel } from "@ask/types";

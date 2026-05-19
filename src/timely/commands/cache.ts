@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import type { Storage } from "@app/utils/storage";
 import { ExitPromptError } from "@inquirer/core";

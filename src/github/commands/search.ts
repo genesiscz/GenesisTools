@@ -2,7 +2,7 @@
 
 import { formatRepoResults, formatSearchResults } from "@app/github/lib/output";
 import type { RepoSearchResult, SearchCommandOptions, SearchResult } from "@app/github/types";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { batchFetchCommentReactions } from "@app/utils/github/graphql";
 import { getOctokit } from "@app/utils/github/octokit";
 import { withRetry } from "@app/utils/github/rate-limit";

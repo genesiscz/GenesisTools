@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import type { DarwinKitOptions } from "@genesiscz/darwinkit";
 import { DarwinKit } from "@genesiscz/darwinkit";
 

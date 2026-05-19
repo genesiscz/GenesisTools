@@ -7,7 +7,7 @@ import { runInteractiveAddInquirer } from "@app/azure-devops/timelog-prompts-inq
 import type { AllowedTypeConfig, AzureConfigWithTimeLog, TimeLogUser } from "@app/azure-devops/types";
 import { requireTimeLogConfig, requireTimeLogUser } from "@app/azure-devops/utils";
 import { precheckWorkItem } from "@app/azure-devops/workitem-precheck";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import type { Command } from "commander";
 import pc from "picocolors";
 
