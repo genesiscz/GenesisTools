@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import {
+    type Dirent,
     chmodSync,
     lstatSync,
     readFileSync,
@@ -77,7 +78,7 @@ export function* walkFiles(
     root: string,
     opts: WalkOptions = {},
 ): Generator<WalkEntry> {
-    let entries: ReturnType<typeof readdirSync>;
+    let entries: Dirent[];
     try {
         entries = readdirSync(root, { withFileTypes: true });
     } catch (err) {
