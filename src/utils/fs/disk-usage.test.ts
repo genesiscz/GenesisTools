@@ -322,3 +322,32 @@ describe.skipIf(skip.unlessMac)("dedupeFile safety", () => {
         }
     });
 });
+
+import { dedupeTree } from "@app/utils/fs/disk-usage";
+
+describe.skipIf(skip.unlessMac)("dedupeTree", () => {
+    it("dry-run reports candidates and mutates nothing; apply reclaims space", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-deduptree-"));
+        try {
+            const payload = Buffer.alloc(1024 * 1024, 0x5e);
+            writeFileSync(join(dir, "p.bin"), payload);
+            writeFileSync(join(dir, "q.bin"), payload);
+            writeFileSync(join(dir, "r.bin"), payload);
+
+            const dry = dedupeTree(dir); // default dryRun: true
+            expect(dry.dryRun).toBe(true);
+            expect(dry.projectedReclaim).toBeGreaterThanOrEqual(2 * 1024 * 1024);
+            expect(dry.cloned).toBe(0);
+
+            const applied = dedupeTree(dir, { apply: true });
+            expect(applied.cloned).toBe(2); // q,r → clones of p
+            expect(applied.bytesReclaimed).toBeGreaterThan(0);
+
+            // re-running finds nothing left (already clones)
+            const again = dedupeTree(dir, { apply: true });
+            expect(again.cloned).toBe(0);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+});

@@ -483,3 +483,56 @@ export function dedupeFile({ keep, replace }: DedupeFileArgs): DedupeResult {
 
     return { status: "cloned", bytesReclaimed: reclaimed };
 }
+
+export interface DedupeTreeOptions {
+    /** When false, actually clone. Default true (report only). */
+    apply?: boolean;
+}
+
+export interface DedupeTreeReport {
+    dryRun: boolean;
+    candidateGroups: number;
+    projectedReclaim: number;
+    cloned: number;
+    bytesReclaimed: number;
+    errors: { path: string; message: string }[];
+}
+
+/** Walk `root`, find non-clone duplicates, and (only if `apply: true`)
+ *  convert each duplicate into a verified COW clone of its group's
+ *  representative. Default is a dry run that mutates nothing. */
+export function dedupeTree(
+    root: string,
+    opts: DedupeTreeOptions = {},
+): DedupeTreeReport {
+    const apply = opts.apply === true;
+    const candidates = findDedupeCandidates(root);
+    const report: DedupeTreeReport = {
+        dryRun: !apply,
+        candidateGroups: candidates.length,
+        projectedReclaim: candidates.reduce((s, c) => s + c.reclaimable, 0),
+        cloned: 0,
+        bytesReclaimed: 0,
+        errors: [],
+    };
+    if (!apply) {
+        return report;
+    }
+
+    for (const c of candidates) {
+        for (const replace of c.replace) {
+            try {
+                const r = dedupeFile({ keep: c.keep, replace });
+                if (r.status === "cloned") {
+                    report.cloned += 1;
+                    report.bytesReclaimed += r.bytesReclaimed;
+                }
+            } catch (err) {
+                const message = err instanceof Error ? err.message : String(err);
+                report.errors.push({ path: replace, message });
+            }
+        }
+    }
+
+    return report;
+}
