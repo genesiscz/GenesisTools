@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { resolvePathWithTilde } from "@app/utils";
+import { isVerbose } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
 import { handleReadmeFlag } from "@app/utils/readme";
 import boxen from "boxen";
@@ -24,7 +25,7 @@ const _require = createRequire(import.meta.url);
 // Custom logger that respects output redirection
 const createSimpleLogger = () => {
     const isTTY = process.stdout.isTTY;
-    const isVerbose = process.argv.includes("-v") || process.argv.includes("--verbose");
+    const v = isVerbose();
     const isSilent = process.argv.includes("--silent");
     const isDebug = process.argv.includes("-vv") || process.argv.includes("--debug");
 
@@ -49,7 +50,7 @@ const createSimpleLogger = () => {
             }
         },
         debug: (msg: string) => {
-            if ((isVerbose || isDebug) && !isSilent) {
+            if ((v || isDebug) && !isSilent) {
                 if (isTTY) {
                     console.log(chalk.gray(`[DEBUG] ${msg}`));
                 } else {
@@ -100,7 +101,6 @@ const program = new Command()
     .argument("[package-name]", "Package name")
     .argument("[version1]", "First version")
     .argument("[version2]", "Second version")
-    .option("-v, --verbose", "Enable verbose logging")
     .option("-f, --filter <pattern>", "Glob pattern to filter files", "**/*.d.ts")
     .option("-?, --help-full", "Show this help message")
     .option("-o, --output <file>", "Output file path")
@@ -147,7 +147,6 @@ const config = {
     exclude: getOptionValue("exclude"),
     output: getOptionValue("output"),
     patch: getOptionValue("patch"),
-    verbose: getOptionValue("verbose"),
     silent: getOptionValue("silent"),
     keep: getOptionValue("keep"),
     stats: getOptionValue("stats"),
@@ -504,7 +503,7 @@ class EnhancedPackageComparison {
         return new Promise((resolve, reject) => {
             const installProcess = spawn(installCmd, installArgs, {
                 cwd: dir,
-                stdio: this.options.verbose ? "inherit" : "pipe",
+                stdio: isVerbose() ? "inherit" : "pipe",
             });
 
             let timedOut = false;

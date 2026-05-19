@@ -24,7 +24,6 @@ export function registerEventsCommand(program: Command, storage: Storage, servic
         .option("--without-details", "Omit full raw event objects in JSON format")
         .option("--without-entries", "Skip fetching linked memories and unlinked analysis")
         .option("--force", "Bypass memory cache, fetch fresh from API")
-        .option("-v, --verbose", "Show debug info (entry fetching, cache hits)")
         .action(async (options) => {
             await eventsAction(storage, service, options);
         });
@@ -41,7 +40,6 @@ interface EventsOptions {
     withoutDetails?: boolean;
     withoutEntries?: boolean;
     force?: boolean;
-    verbose?: boolean;
 }
 
 const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] as const;
@@ -140,21 +138,17 @@ async function eventsAction(storage: Storage, service: TimelyService, options: E
         }
 
         const dates = [...new Set(events.map((e) => e.day))];
-        const verbose = options.verbose;
 
         const result = await fetchMemoriesForDates({
             accountId,
             accessToken: tokens.access_token,
             dates,
             storage,
-            verbose,
             force: options.force,
         });
 
         const subEntryToMemory = buildSubEntryMap(result.entries);
-        if (verbose) {
-            logger.info(chalk.dim(`[entries] Built map: ${subEntryToMemory.size} sub-entry IDs`));
-        }
+        logger.debug(chalk.dim(`[entries] Built map: ${subEntryToMemory.size} sub-entry IDs`));
 
         // Match event entry_ids to memories (deduplicated)
         const linkedMemoryIds = new Set<number>();
@@ -184,9 +178,7 @@ async function eventsAction(storage: Storage, service: TimelyService, options: E
             }
         }
 
-        if (verbose) {
-            logger.info(chalk.dim(`[entries] Matched: ${matchedCount} events, unmatched: ${unmatchedCount}`));
-        }
+        logger.debug(chalk.dim(`[entries] Matched: ${matchedCount} events, unmatched: ${unmatchedCount}`));
 
         // Find unlinked memories per day and fuzzy match to events
         for (const [date, memories] of result.byDate) {
@@ -217,10 +209,8 @@ async function eventsAction(storage: Storage, service: TimelyService, options: E
             unlinkedByDay.set(date, withMatches);
         }
 
-        if (verbose) {
-            const totalUnlinked = Array.from(unlinkedByDay.values()).reduce((s, arr) => s + arr.length, 0);
-            logger.info(chalk.dim(`[entries] Unlinked memories: ${totalUnlinked}`));
-        }
+        const totalUnlinked = Array.from(unlinkedByDay.values()).reduce((s, arr) => s + arr.length, 0);
+        logger.debug(chalk.dim(`[entries] Unlinked memories: ${totalUnlinked}`));
     }
 
     // Output

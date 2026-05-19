@@ -85,7 +85,6 @@ async function main() {
         .description("Generate commit messages using AI and optionally push")
         .option("-s, --stage", "Stage all changes before committing")
         .option("-d, --detail", "Generate detailed commit messages with body text")
-        .option("-v, --verbose", "Enable verbose logging")
         .parse();
 
     const options = program.opts();
@@ -110,9 +109,7 @@ async function main() {
             process.exit(0);
         }
 
-        if (options.verbose) {
-            logger.info(`Diff preview:\n${diff.substring(0, 500)}...`);
-        }
+        logger.debug(`Diff preview:\n${diff.substring(0, 500)}...`);
 
         // Generate commit messages
         logger.info("🤖 Generating commit messages with AI...");
