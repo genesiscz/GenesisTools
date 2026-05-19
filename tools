@@ -3,7 +3,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 
 // --- Configuration ---
 const SRC_DIR_NAME = "src";
