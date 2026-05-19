@@ -1,5 +1,5 @@
 import logger from "@app/logger.ts";
-import { runTool } from "@app/utils/cli/tools";
+import { execTool } from "@app/utils/cli/tools";
 import { SafeJSON } from "@app/utils/json";
 import { executeBuiltin, isBuiltinAction } from "./builtins.ts";
 import { resolveExpression, resolveParams } from "./expressions.ts";
@@ -60,7 +60,7 @@ export async function executeStep(
     }
 
     const start = Date.now();
-    const toolResult = await runTool(args);
+    const toolResult = await execTool(args);
     const stdout = toolResult.stdout;
     const stderr = toolResult.stderr;
     const exitCode = toolResult.exitCode;

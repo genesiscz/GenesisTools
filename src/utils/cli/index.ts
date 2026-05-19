@@ -3,5 +3,5 @@ export { buildCommand, Executor, enhanceHelp, isInteractive, suggestCommand } fr
 export { isQuietOutput } from "./output-mode";
 export { printLn, writeStdout } from "./stdout";
 export type { RunToolOptions } from "./tools";
-export { runTool, runToolInteractive } from "./tools";
+export { execTool, execToolInteractive } from "./tools";
 export { parseVariadic } from "./variadic";
