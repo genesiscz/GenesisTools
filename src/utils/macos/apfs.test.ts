@@ -1,10 +1,10 @@
+import { describe, expect, it } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "bun:test";
-import { skip } from "@app/utils/test/skip";
 import { getPrivateSize } from "@app/utils/macos/apfs";
+import { skip } from "@app/utils/test/skip";
 
 describe.skipIf(skip.unlessMac)("apfs getPrivateSize (clone semantics)", () => {
     it("reports ~0 for a fresh clone, then rises as it diverges", () => {
@@ -29,14 +29,7 @@ describe.skipIf(skip.unlessMac)("apfs getPrivateSize (clone semantics)", () => {
             expect(clonedPrivate as number).toBeLessThan(256 * 1024);
 
             // modify one block of dst → that block goes private (COW)
-            spawnSync("dd", [
-                "if=/dev/zero",
-                `of=${dst}`,
-                "bs=1",
-                "count=4096",
-                "seek=1048576",
-                "conv=notrunc",
-            ]);
+            spawnSync("dd", ["if=/dev/zero", `of=${dst}`, "bs=1", "count=4096", "seek=1048576", "conv=notrunc"]);
             const modifiedPrivate = getPrivateSize(dst) as number;
             expect(modifiedPrivate).toBeGreaterThan(clonedPrivate as number);
 
@@ -50,11 +43,7 @@ describe.skipIf(skip.unlessMac)("apfs getPrivateSize (clone semantics)", () => {
     });
 });
 
-import {
-    getCloneId,
-    getExtFlags,
-    isApfsCloneSupported,
-} from "@app/utils/macos/apfs";
+import { getCloneId, getExtFlags, isApfsCloneSupported } from "@app/utils/macos/apfs";
 
 describe.skipIf(skip.unlessMac)("apfs clone identity", () => {
     it("two clones share a non-zero clone id; ext flags mark sharing", () => {
@@ -85,11 +74,7 @@ describe.skipIf(skip.unlessMac)("apfs clone identity", () => {
 });
 
 import { lstatSync, mkdtempSync as mkd2, readFileSync } from "node:fs";
-import {
-    CloneUnsupportedError,
-    cloneFile,
-    getFsType,
-} from "@app/utils/macos/apfs";
+import { CloneUnsupportedError, cloneFile, getFsType } from "@app/utils/macos/apfs";
 
 describe.skipIf(skip.unlessMac)("apfs cloneFile + getFsType", () => {
     it("getFsType returns 'apfs' for the system volume", () => {
