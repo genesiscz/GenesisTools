@@ -9,6 +9,7 @@ import {
     readdirSync,
     readFileSync,
     renameSync,
+    statSync,
     utimesSync,
     writeFileSync as writeBin,
 } from "node:fs";
@@ -251,8 +252,9 @@ export function runOptimize({ roots, sets, planCacheHit, planCacheAgeMs }: RunOp
     });
 
     let seq = 0;
-    for (const set of sets) {
-        for (const replace of set.members.filter((m) => m !== set.keep)) {
+    try {
+        for (const set of sets) {
+            for (const replace of set.members.filter((m) => m !== set.keep)) {
             seq += 1;
             const ts = new Date().toISOString();
             let modeBefore = 0;
@@ -354,6 +356,24 @@ export function runOptimize({ roots, sets, planCacheHit, planCacheAgeMs }: RunOp
             }
         }
     }
+    } catch (err) {
+        if (err instanceof IntegrityError) {
+            // Close the audit log with an aborted-state meta so --log shows
+            // [aborted] instead of misleading [applied]. The ops trail already
+            // records the integrity failure; this gives the meta the same fact.
+            writeMeta({
+                id,
+                state: "aborted",
+                roots,
+                startedAt,
+                endedAt: new Date().toISOString(),
+                planCacheHit,
+                ...(planCacheAgeMs !== undefined ? { planCacheAgeMs } : {}),
+            });
+        }
+
+        throw err;
+    }
 
     const rep = readProcess(id);
     if (!rep) {
@@ -386,14 +406,45 @@ export function rollbackProcess(id: string): ProcessReport {
 
     const toUndo = rep.ops.filter((o) => o.op === "clone");
     const required = toUndo.reduce((s, o) => s + o.bytes, 0);
-    const probe = rep.roots[0] ?? process.cwd();
-    const free = freeDiskSpace(probe);
-    if (free.available <= required * 1.1) {
-        throw new RollbackSpaceError(
-            `rollback needs ~${required} bytes (×1.1 headroom) but only ${free.available} available`,
-            required,
-            free.available
-        );
+
+    // Multi-volume preflight: group required bytes by replace's volume (dev)
+    // and check freeDiskSpace per distinct volume. Falls back to root[0]/cwd
+    // when no replace file exists (all already removed → nothing to roll back
+    // anyway, but the preflight still has to make a defensible call).
+    const byVolume = new Map<number, { required: number; sample: string }>();
+    for (const op of toUndo) {
+        try {
+            const dev = Number(statSync(op.replace).dev);
+            const cur = byVolume.get(dev) ?? { required: 0, sample: op.replace };
+            cur.required += op.bytes;
+            byVolume.set(dev, cur);
+        } catch (err) {
+            log.debug({ err, replace: op.replace }, "preflight: replace stat failed");
+        }
+    }
+
+    if (byVolume.size === 0) {
+        const probe = rep.roots[0] ?? process.cwd();
+        const free = freeDiskSpace(probe);
+        if (free.available <= required * 1.1) {
+            throw new RollbackSpaceError(
+                `rollback needs ~${required} bytes (×1.1 headroom) but only ${free.available} available`,
+                required,
+                free.available,
+            );
+        }
+    } else {
+        for (const info of byVolume.values()) {
+            const free = freeDiskSpace(info.sample);
+            if (free.available <= info.required * 1.1) {
+                throw new RollbackSpaceError(
+                    `rollback needs ~${info.required} bytes on volume of "${info.sample}" ` +
+                        `(×1.1 headroom) but only ${free.available} available`,
+                    info.required,
+                    free.available,
+                );
+            }
+        }
     }
 
     let seq = rep.ops.reduce((m, o) => Math.max(m, o.seq), 0);

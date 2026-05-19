@@ -130,7 +130,9 @@ export function collapseDuplicates({ roots }: CollapseArgs): DuplicatesReport {
         while (cursor.every((d) => !isAtOrAboveRoot(d, roots))) {
             const infos = cursor.map(infoFor);
             const counts = new Set(infos.map((i) => i.fileCount));
-            const hashes = new Set(infos.map((i) => i.hash ?? `__null:${Math.random()}`));
+            // Null-hashed dirs must compare distinct from every other dir; key
+            // on the dir path so the sentinel stays deterministic across runs.
+            const hashes = new Set(infos.map((i, idx) => i.hash ?? `__null:${cursor[idx]}`));
             const basenames = new Set(cursor.map((d) => basename(d)));
             if (counts.size === 1 && hashes.size === 1 && basenames.size === 1 && infos[0].hash !== null) {
                 bestDirs = [...cursor];

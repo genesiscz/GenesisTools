@@ -74,6 +74,23 @@ describe("audit JSONL lifecycle", () => {
         expect(rep?.ops.length).toBe(3);
     });
 
+    it("'aborted' state round-trips — second meta wins over the initial 'applied'", () => {
+        const id = newProcessId();
+        const startedAt = new Date().toISOString();
+        writeMeta({ id, state: "applied", roots: ["/x"], startedAt, endedAt: startedAt, planCacheHit: false });
+        // simulate IntegrityError path: runOptimize writes a closing "aborted" meta
+        writeMeta({
+            id,
+            state: "aborted",
+            roots: ["/x"],
+            startedAt,
+            endedAt: new Date().toISOString(),
+            planCacheHit: false,
+        });
+        const rep = readProcess(id);
+        expect(rep?.state).toBe("aborted");
+    });
+
     it("listProcesses returns newest-first list entries; closestProcessIds suggests near matches", () => {
         const a = newProcessId();
         writeMeta({
