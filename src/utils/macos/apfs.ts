@@ -1,4 +1,5 @@
 import { dlopen, FFIType, ptr, toArrayBuffer } from "bun:ffi";
+import logger from "@app/logger";
 
 const IS_DARWIN = process.platform === "darwin";
 
@@ -23,7 +24,26 @@ const OPTIONS = BigInt(FSOPT_ATTR_CMN_EXTENDED | FSOPT_NOFOLLOW);
 // distinct flag, so only `mayShareBlocks` is exposed (Task 1 discrepancy).
 const EF_MAY_SHARE_BLOCKS = 0x00000001;
 
-type Libc = {
+// apple/darwin-xnu bsd/sys/clonefile.h:32  #define CLONE_NOFOLLOW 0x0001
+const CLONE_NOFOLLOW = 0x0001;
+
+// apple/darwin-xnu bsd/sys/mount.h: struct statfs (64-bit-inode layout).
+// Field offsets computed from bsd/man/man2/statfs.2 (natural alignment):
+// f_bsize@0 f_iosize@4 f_blocks@8 f_bfree@16 f_bavail@24 f_files@32
+// f_ffree@40 f_fsid@48 f_owner@56 f_type@60 f_flags@64 f_fssubtype@68
+// f_fstypename@72 [char[16]]. mount.h:92 #define MFSTYPENAMELEN 16.
+const STATFS_BUF_SIZE = 2304; // > sizeof(struct statfs) (~2168), padded
+const F_FSTYPENAME_OFFSET = 72;
+const MFSTYPENAMELEN = 16;
+
+export class CloneUnsupportedError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = "CloneUnsupportedError";
+    }
+}
+
+type LibcExt = {
     getattrlist: (
         path: number,
         attrList: number,
@@ -31,12 +51,14 @@ type Libc = {
         attrBufSize: bigint,
         options: bigint,
     ) => number;
+    clonefile: (src: number, dst: number, flags: number) => number;
+    statfs: (path: number, buf: number) => number;
 };
 
-let libc: Libc | null = null;
+let libc: LibcExt | null = null;
 let libcTried = false;
 
-function getLibc(): Libc | null {
+function getLibc(): LibcExt | null {
     if (libcTried) {
         return libc;
     }
@@ -46,21 +68,53 @@ function getLibc(): Libc | null {
         return null;
     }
 
-    const signature = {
+    // Bun's dlopen resolves symbols via dlsym; `statfs$INODE64` is a
+    // compile-time linker alias that dlsym cannot find, so it is bound with a
+    // fall back to plain `statfs` (the plain symbol IS the 64-bit-inode layout
+    // on modern macOS — f_fstypename @ offset 72, verified). Per-symbol
+    // dlopen so one missing symbol doesn't void the whole binding.
+    const sigs = {
         getattrlist: {
             args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.u64, FFIType.u64],
             returns: FFIType.i32,
         },
+        clonefile: {
+            args: [FFIType.ptr, FFIType.ptr, FFIType.i32],
+            returns: FFIType.i32,
+        },
+    } as const;
+    const statfsSig = {
+        args: [FFIType.ptr, FFIType.ptr],
+        returns: FFIType.i32,
     } as const;
     for (const candidate of ["libSystem.dylib", "/usr/lib/libSystem.B.dylib"]) {
-        try {
-            libc = dlopen(candidate, signature).symbols as unknown as Libc;
+        const sym: Record<string, unknown> = {};
+        for (const [name, sig] of Object.entries(sigs)) {
+            try {
+                sym[name] = dlopen(candidate, { [name]: sig }).symbols[name];
+            } catch (err) {
+                logger.debug({ err, candidate, name }, "apfs: symbol bind failed");
+            }
+        }
+
+        for (const sName of ["statfs$INODE64", "statfs"]) {
+            try {
+                sym.statfs = dlopen(candidate, { [sName]: statfsSig }).symbols[
+                    sName
+                ];
+                break;
+            } catch (err) {
+                logger.debug({ err, candidate, sName }, "apfs: statfs bind failed");
+            }
+        }
+
+        if (sym.getattrlist && sym.clonefile && sym.statfs) {
+            libc = sym as unknown as LibcExt;
             return libc;
-        } catch {
-            // try next candidate
         }
     }
 
+    logger.debug("apfs: no libc candidate fully bound; clone APIs unavailable");
     return libc;
 }
 
@@ -142,4 +196,52 @@ export function isApfsCloneSupported(): boolean {
     }
 
     return getPrivateSize(process.cwd()) !== null;
+}
+
+/** Lowercased filesystem type for the volume containing `path`
+ *  (e.g. "apfs", "hfs", "exfat"). null off-darwin / on error. */
+export function getFsType(path: string): string | null {
+    const lib = getLibc();
+    if (!lib) {
+        return null;
+    }
+
+    const buf = new ArrayBuffer(STATFS_BUF_SIZE);
+    const rc = lib.statfs(ptr(Buffer.from(`${path}\0`, "utf8")), ptr(buf));
+    if (rc !== 0) {
+        return null;
+    }
+
+    const bytes = new Uint8Array(buf, F_FSTYPENAME_OFFSET, MFSTYPENAMELEN);
+    const end = bytes.indexOf(0);
+    return new TextDecoder()
+        .decode(bytes.subarray(0, end === -1 ? MFSTYPENAMELEN : end))
+        .toLowerCase();
+}
+
+/** True if the filesystem at `path` supports APFS clonefile. */
+export function supportsClone(path: string): boolean {
+    return getFsType(path) === "apfs";
+}
+
+/** clonefile(2): create `dst` (must NOT exist) as a COW clone of `src`.
+ *  Throws CloneUnsupportedError off-darwin or on syscall failure
+ *  (EXDEV cross-volume, ENOTSUP non-APFS, EEXIST dst exists). */
+export function cloneFile(src: string, dst: string): void {
+    const lib = getLibc();
+    if (!lib) {
+        throw new CloneUnsupportedError("clonefile unavailable (not macOS)");
+    }
+
+    const rc = lib.clonefile(
+        ptr(Buffer.from(`${src}\0`, "utf8")),
+        ptr(Buffer.from(`${dst}\0`, "utf8")),
+        CLONE_NOFOLLOW,
+    );
+    if (rc !== 0) {
+        throw new CloneUnsupportedError(
+            `clonefile("${src}" -> "${dst}") failed (rc=${rc}); ` +
+                "volume likely not APFS or src/dst on different volumes",
+        );
+    }
 }
