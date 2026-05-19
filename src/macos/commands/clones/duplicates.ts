@@ -2,6 +2,7 @@ import logger from "@app/logger";
 import { collapseDuplicates } from "@app/macos/lib/clones/collapse";
 import { expandNodeModules, resolveRoots } from "@app/macos/lib/clones/orchestrator";
 import { resolveFormat, resolveRenderer } from "@app/macos/lib/clones/render/index";
+import { loadClonesConfig } from "@app/macos/lib/clones/store";
 import { Command, Option } from "commander";
 
 const log = logger.child({ component: "clones:duplicates-cmd" });
@@ -26,9 +27,7 @@ export function createDuplicatesCommand(): Command {
         .description("Content-identical files/dirs that are NOT yet clones (folder-collapsed)")
         .argument("[roots...]", "Roots to scan (default: configured watchedDirs, else cwd)")
         .addOption(
-            new Option("--format <format>", "Output format")
-                .choices(["auto", "table", "json", "jsonl"])
-                .default("auto"),
+            new Option("--format <format>", "Output format").choices(["auto", "table", "json", "jsonl"]).default("auto")
         )
         .option("--group", "List every member path under each set", false)
         .option("--node-modules", "Expand each root to its node_modules dirs", false)
@@ -38,7 +37,8 @@ export function createDuplicatesCommand(): Command {
         .option("-v, --verbose", "Verbose logging", false)
         .option("--silent", "Suppress non-essential output", false)
         .action(async (rootsArg: string[], opts: DuplicatesOpts) => {
-            const roots0 = resolveRoots(rootsArg ?? [], []);
+            const cfg = await loadClonesConfig();
+            const roots0 = resolveRoots(rootsArg ?? [], cfg.watchedDirs);
             const roots = opts.nodeModules ? expandNodeModules(roots0) : roots0;
             if (roots.length === 0) {
                 log.warn("no roots resolved");

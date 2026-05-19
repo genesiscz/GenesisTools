@@ -3,15 +3,16 @@ import {
     closestProcessIds,
     IntegrityError,
     listProcesses,
+    RollbackSpaceError,
     readProcess,
     rollbackProcess,
-    RollbackSpaceError,
     runOptimize,
 } from "@app/macos/lib/clones/audit";
 import { cachePlan, getCachedPlan } from "@app/macos/lib/clones/cache";
 import { collapseDuplicates } from "@app/macos/lib/clones/collapse";
 import { expandNodeModules, resolveRoots } from "@app/macos/lib/clones/orchestrator";
 import { JsonRenderer, resolveFormat, resolveRenderer } from "@app/macos/lib/clones/render/index";
+import { loadClonesConfig } from "@app/macos/lib/clones/store";
 import type { DuplicateSet, ProcessReport } from "@app/macos/lib/clones/render/types";
 import { isInteractive, parseVariadic, suggestCommand } from "@app/utils/cli";
 import { formatBytes } from "@app/utils/format";
@@ -133,7 +134,7 @@ export function createOptimizeCommand(): Command {
                 if (isInteractive()) {
                     p.intro(pc.bgCyan(pc.black(" clones optimize --rollback ")));
                     p.log.warn(
-                        `Will re-allocate shared bytes for ${existing.totals.cloned} clone(s) in ${opts.process}.`,
+                        `Will re-allocate shared bytes for ${existing.totals.cloned} clone(s) in ${opts.process}.`
                     );
                     const token = await p.text({
                         message: 'Type "rollback" to proceed',
@@ -145,14 +146,12 @@ export function createOptimizeCommand(): Command {
                         process.exit(0);
                     }
                 } else if (!opts.yes) {
-                    console.error(
-                        "optimize --rollback requires confirmation. In non-interactive mode pass --yes.",
-                    );
+                    console.error("optimize --rollback requires confirmation. In non-interactive mode pass --yes.");
                     console.error(
                         suggestCommand("tools macos clones optimize", {
                             add: ["--rollback", "--process", opts.process, "--yes"],
                             subcommand: ["macos", "clones", "optimize"],
-                        }),
+                        })
                     );
                     process.exit(1);
                 }
@@ -164,7 +163,7 @@ export function createOptimizeCommand(): Command {
                 } catch (err) {
                     if (err instanceof RollbackSpaceError) {
                         console.error(
-                            `Cannot rollback: needs ~${err.required} bytes (×1.1), only ${err.available} available.`,
+                            `Cannot rollback: needs ~${err.required} bytes (×1.1), only ${err.available} available.`
                         );
                         process.exit(1);
                     }
@@ -175,7 +174,8 @@ export function createOptimizeCommand(): Command {
                 return;
             }
 
-            const roots0 = resolveRoots(rootsArg ?? [], []);
+            const cfg = await loadClonesConfig();
+            const roots0 = resolveRoots(rootsArg ?? [], cfg.watchedDirs);
             const roots = opts.nodeModules ? expandNodeModules(roots0) : roots0;
             if (roots.length === 0) {
                 log.warn("no roots resolved");

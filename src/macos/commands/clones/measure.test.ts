@@ -49,6 +49,36 @@ describe("createMeasureCommand", () => {
     });
 });
 
+import { addWatchedDirs, removeWatchedDirs } from "@app/macos/lib/clones/store";
+
+describe("measure roots fall back to configured watchedDirs", () => {
+    it("no explicit roots → uses watchedDirs from config", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-cl-cfgroot-"));
+        try {
+            mkdirSync(join(dir, "s"), { recursive: true });
+            writeFileSync(join(dir, "s", "f"), Buffer.alloc(20 * 1024 * 1024, 1));
+            await addWatchedDirs([dir]);
+            const logs: string[] = [];
+            const orig = console.log;
+            console.log = (...a: unknown[]) => logs.push(a.join(" "));
+            try {
+                await createMeasureCommand().parseAsync(
+                    ["node", "measure", "--format", "json", "--min-real", "1024"],
+                    { from: "node" },
+                );
+            } finally {
+                console.log = orig;
+                await removeWatchedDirs([dir]);
+            }
+
+            const parsed = SafeJSON.parse(logs.join("\n")) as { roots: string[] };
+            expect(parsed.roots).toContain(dir);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+});
+
 describe("createDuCommand", () => {
     it("named 'du', has --depth, single optional folder arg", () => {
         const cmd = createDuCommand();
@@ -68,7 +98,7 @@ describe("createDuCommand", () => {
             try {
                 await createDuCommand().parseAsync(
                     ["node", "du", dir, "--depth", "1", "--format", "json", "--min-real", "1024"],
-                    { from: "node" },
+                    { from: "node" }
                 );
             } finally {
                 console.log = orig;
