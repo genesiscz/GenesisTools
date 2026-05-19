@@ -187,6 +187,34 @@ function get(): pino.Logger {
     return _pino;
 }
 
+// Base binding (e.g. `{ tool }`) set once by the runTool bootstrap before
+// parseAsync. The root pino is NEVER rebuilt; instead a single long-lived
+// child carries the base bindings, and every facade method + scoped()
+// delegates through eff() so the binding is in the chain. The `.level`
+// getter/setter stays on get() (root level is the right setter; child levels
+// propagate down — eff() is a child of get(), so the console gate, which
+// reads the module-level consoleLevel not logger.level, still works).
+// NOTE: scoped children created BEFORE setBaseBinding() (module-init time) do
+// NOT retroactively gain the base binding — only post-call scoped/log calls
+// do. runTool calls setBaseBinding before parseAsync, so action code is fine.
+let _base: Record<string, unknown> = {};
+let _effective: pino.Logger | null = null;
+function eff(): pino.Logger {
+    // Plan used `return (_effective ??= …)`; biome's noAssignInExpressions
+    // blocks assignment-in-expression. Block form is semantically identical
+    // (_effective is only ever null before first init — never undefined).
+    if (_effective === null) {
+        _effective = Object.keys(_base).length ? get().child(_base) : get();
+    }
+
+    return _effective;
+}
+
+export function setBaseBinding(b: Record<string, unknown>): void {
+    _base = { ..._base, ...b };
+    _effective = get().child(_base);
+}
+
 // Hand-coded stable facade. NOT a Proxy (pino .level/.bindings getter+setter
 // and method count make Proxy traps fragile — see spec §3.1).
 interface ScopedLogger {
@@ -209,22 +237,22 @@ export interface LoggerFacade {
 }
 
 export const logger: LoggerFacade = {
-    trace: (...a: Parameters<pino.LogFn>) => get().trace(...a),
-    debug: (...a: Parameters<pino.LogFn>) => get().debug(...a),
-    info: (...a: Parameters<pino.LogFn>) => get().info(...a),
-    warn: (...a: Parameters<pino.LogFn>) => get().warn(...a),
-    error: (...a: Parameters<pino.LogFn>) => get().error(...a),
-    fatal: (...a: Parameters<pino.LogFn>) => get().fatal(...a),
-    child: (b: pino.Bindings, o?: pino.ChildLoggerOptions) => get().child(b, o),
+    trace: (...a: Parameters<pino.LogFn>) => eff().trace(...a),
+    debug: (...a: Parameters<pino.LogFn>) => eff().debug(...a),
+    info: (...a: Parameters<pino.LogFn>) => eff().info(...a),
+    warn: (...a: Parameters<pino.LogFn>) => eff().warn(...a),
+    error: (...a: Parameters<pino.LogFn>) => eff().error(...a),
+    fatal: (...a: Parameters<pino.LogFn>) => eff().fatal(...a),
+    child: (b: pino.Bindings, o?: pino.ChildLoggerOptions) => eff().child(b, o),
     get level() {
         return get().level;
     },
     set level(v: string) {
         get().level = v;
     },
-    flush: () => get().flush(),
+    flush: () => eff().flush(),
     scoped(component, opts) {
-        const child = get().child(
+        const child = eff().child(
             { component, ...(opts?.bindings ?? {}) },
             opts?.level ? { level: opts.level } : undefined
         );

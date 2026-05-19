@@ -131,3 +131,47 @@ describe("scoped out + log.out/log.tee double-mirror rule", () => {
         expect(log.tee).toBe(log.out);
     });
 });
+
+// MUST be the LAST describe in this file: setBaseBinding mutates module-level
+// state (the _base/_effective child) that persists for the rest of the
+// process. Placed last so earlier tests run against the un-bound logger.
+// Advisor-mandated (the plan's Task 13 test only exercises runTool's surface;
+// without these the eff()/setBaseBinding refactor ships untested).
+describe("setBaseBinding + eff() — Task 13", () => {
+    it("logger.info after setBaseBinding({tool}) renders the tool binding on stderr", async () => {
+        const mod = await import("./logger");
+        mod.setConsoleLevel("info");
+        mod.setBaseBinding({ tool: "loggertest" });
+        const chunks: string[] = [];
+        const oe = process.stderr.write.bind(process.stderr);
+        process.stderr.write = (c: string) => {
+            chunks.push(String(c));
+            return true;
+        };
+        mod.logger.info("base-bound line");
+        await Bun.sleep(20);
+        process.stderr.write = oe;
+        const stderr = chunks.join("");
+        expect(stderr).toContain('tool: "loggertest"');
+        expect(stderr).toContain("base-bound line");
+    });
+
+    it("scoped() flows through eff() — renders BOTH tool and component", async () => {
+        const mod = await import("./logger");
+        mod.setConsoleLevel("debug");
+        mod.setBaseBinding({ tool: "loggertest" });
+        const { log } = mod.logger.scoped("scopecomp");
+        const chunks: string[] = [];
+        const oe = process.stderr.write.bind(process.stderr);
+        process.stderr.write = (c: string) => {
+            chunks.push(String(c));
+            return true;
+        };
+        log.info("scoped base-bound line");
+        await Bun.sleep(20);
+        process.stderr.write = oe;
+        const stderr = chunks.join("");
+        expect(stderr).toContain('tool: "loggertest"');
+        expect(stderr).toContain('component: "scopecomp"');
+    });
+});
