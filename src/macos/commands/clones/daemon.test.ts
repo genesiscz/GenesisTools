@@ -20,9 +20,7 @@ describe("createDaemonCommand", () => {
     it("enable registers an ABSOLUTE-path command for macos-clones-scan", async () => {
         await createDaemonCommand().parseAsync(["node", "daemon", "enable"], { from: "node" });
         expect(registerSpy).toHaveBeenCalled();
-        const calls = registerSpy.mock.calls as unknown as Array<
-            [{ name: string; command: string; every: string }]
-        >;
+        const calls = registerSpy.mock.calls as unknown as Array<[{ name: string; command: string; every: string }]>;
         const arg = calls[0][0];
         expect(arg.name).toBe("macos-clones-scan");
         expect(arg.command.split(" ")[0]).toMatch(/^\//);

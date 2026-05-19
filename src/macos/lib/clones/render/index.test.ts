@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { JsonRenderer } from "@app/macos/lib/clones/render/json";
 import { resolveFormat, resolveRenderer } from "@app/macos/lib/clones/render/index";
+import { JsonRenderer } from "@app/macos/lib/clones/render/json";
 import { TableRenderer } from "@app/macos/lib/clones/render/table";
 
 describe("resolveFormat", () => {

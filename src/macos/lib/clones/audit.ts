@@ -367,7 +367,7 @@ export class RollbackSpaceError extends Error {
     constructor(
         message: string,
         readonly required: number,
-        readonly available: number,
+        readonly available: number
     ) {
         super(message);
         this.name = "RollbackSpaceError";
@@ -392,7 +392,7 @@ export function rollbackProcess(id: string): ProcessReport {
         throw new RollbackSpaceError(
             `rollback needs ~${required} bytes (×1.1 headroom) but only ${free.available} available`,
             required,
-            free.available,
+            free.available
         );
     }
 

@@ -3,9 +3,9 @@ import { JsonRenderer } from "./json";
 import { TableRenderer } from "./table";
 import type { CloneRenderer, Format } from "./types";
 
-export * from "./types";
 export { JsonRenderer } from "./json";
 export { TableRenderer } from "./table";
+export * from "./types";
 
 /** Resolve a `--format` flag to a concrete format. `auto`/undefined →
  *  `table` when interactive, else `json` (mirrors src/todo/lib/format.ts). */

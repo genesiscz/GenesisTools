@@ -90,11 +90,9 @@ export function createConfigCommand(): Command {
             p.intro(pc.bgCyan(pc.black(" clones config ")));
             const cfg = await loadClonesConfig();
             p.log.info(
-                `watched dirs:\n${cfg.watchedDirs.length ? cfg.watchedDirs.map((d) => `  ${d}`).join("\n") : "  (none)"}`,
+                `watched dirs:\n${cfg.watchedDirs.length ? cfg.watchedDirs.map((d) => `  ${d}`).join("\n") : "  (none)"}`
             );
-            p.log.info(
-                `minReal: ${cfg.minReal ?? "default (10 MB)"}  nodeModules: ${cfg.nodeModules ? "on" : "off"}`,
-            );
+            p.log.info(`minReal: ${cfg.minReal ?? "default (10 MB)"}  nodeModules: ${cfg.nodeModules ? "on" : "off"}`);
 
             const action = await p.select({
                 message: "Action",

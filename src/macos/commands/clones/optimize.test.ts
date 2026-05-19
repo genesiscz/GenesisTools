@@ -141,7 +141,7 @@ describe("optimize --log", () => {
         try {
             await createOptimizeCommand().parseAsync(
                 ["node", "optimize", "--log", "--process", id, "--format", "json"],
-                { from: "node" },
+                { from: "node" }
             );
         } finally {
             console.log = orig;
@@ -166,7 +166,7 @@ describe("optimize --log", () => {
         try {
             await createOptimizeCommand().parseAsync(
                 ["node", "optimize", "--log", "--process", "definitely-not-real-zzz"],
-                { from: "node" },
+                { from: "node" }
             );
         } catch (e) {
             if (!(e instanceof Error) || e.message !== "__exit__") {

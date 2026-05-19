@@ -1,13 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { dirname, relative, resolve } from "node:path";
 import logger from "@app/logger";
-import {
-    type DiskUsage,
-    findCloneFamilies,
-    freeDiskSpace,
-    measureTree,
-    walkFiles,
-} from "@app/utils/fs/disk-usage";
+import { type DiskUsage, findCloneFamilies, freeDiskSpace, measureTree, walkFiles } from "@app/utils/fs/disk-usage";
 import { getPrivateSize } from "@app/utils/macos/apfs";
 import { matchGlob } from "@app/utils/string";
 import type { CloneAnalysis, DirNode, MeasureReport } from "./render/types";

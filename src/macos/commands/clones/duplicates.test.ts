@@ -1,7 +1,7 @@
+import { describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "bun:test";
 import { createDuplicatesCommand } from "@app/macos/commands/clones/duplicates";
 import { SafeJSON } from "@app/utils/json";
 
@@ -26,10 +26,9 @@ describe("createDuplicatesCommand", () => {
             const orig = console.log;
             console.log = (...a: unknown[]) => logs.push(a.join(" "));
             try {
-                await createDuplicatesCommand().parseAsync(
-                    ["node", "duplicates", dir, "--group", "--format", "json"],
-                    { from: "node" },
-                );
+                await createDuplicatesCommand().parseAsync(["node", "duplicates", dir, "--group", "--format", "json"], {
+                    from: "node",
+                });
             } finally {
                 console.log = orig;
             }
