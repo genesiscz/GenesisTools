@@ -1,14 +1,15 @@
+import { clackBackend } from "./clack-backend"; // STATIC: clack only, no opentui (verified separate file)
 import type {
     ConfirmOpts,
     Log,
     MultiSelectOpts,
+    PasswordOpts,
     SelectOpts,
     SelectValue,
     Spinner,
     TextOpts,
     TypedConfirmOpts,
 } from "./types";
-import { clackBackend } from "./clack-backend"; // STATIC: clack only, no opentui (verified separate file)
 
 export interface PromptBackend {
     intro(msg: string): void;
@@ -21,6 +22,7 @@ export interface PromptBackend {
     typedConfirm(opts: TypedConfirmOpts): Promise<boolean>;
     select(opts: SelectOpts): Promise<SelectValue>;
     multiselect(opts: MultiSelectOpts): Promise<SelectValue[]>;
+    password(opts: PasswordOpts): Promise<string>;
 
     spinner(): Spinner;
     log: Log;
