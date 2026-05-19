@@ -1,8 +1,8 @@
+import { describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "bun:test";
-import { createMeasureCommand } from "@app/macos/commands/clones/measure";
+import { createDuCommand, createMeasureCommand } from "@app/macos/commands/clones/measure";
 import { SafeJSON } from "@app/utils/json";
 
 describe("createMeasureCommand", () => {
@@ -29,9 +29,12 @@ describe("createMeasureCommand", () => {
             const orig = console.log;
             console.log = (...a: unknown[]) => logs.push(a.join(" "));
             try {
-                await createMeasureCommand().parseAsync(["node", "measure", dir, "--format", "json", "--min-real", "1024"], {
-                    from: "node",
-                });
+                await createMeasureCommand().parseAsync(
+                    ["node", "measure", dir, "--format", "json", "--min-real", "1024"],
+                    {
+                        from: "node",
+                    }
+                );
             } finally {
                 console.log = orig;
             }
@@ -40,6 +43,40 @@ describe("createMeasureCommand", () => {
             expect(parsed).toHaveProperty("totals");
             expect(parsed).toHaveProperty("roots");
             expect((parsed as { roots: string[] }).roots[0]).toBe(dir);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+});
+
+describe("createDuCommand", () => {
+    it("named 'du', has --depth, single optional folder arg", () => {
+        const cmd = createDuCommand();
+        expect(cmd.name()).toBe("du");
+        expect(cmd.options.map((o) => o.long)).toContain("--depth");
+        expect(cmd.options.map((o) => o.long)).toContain("--format");
+    });
+
+    it("--depth 1 limits tree nesting; json parseable", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-cl-du-"));
+        try {
+            mkdirSync(join(dir, "l1", "l2", "l3"), { recursive: true });
+            writeFileSync(join(dir, "l1", "l2", "l3", "f"), Buffer.alloc(20 * 1024 * 1024, 1));
+            const logs: string[] = [];
+            const orig = console.log;
+            console.log = (...a: unknown[]) => logs.push(a.join(" "));
+            try {
+                await createDuCommand().parseAsync(
+                    ["node", "du", dir, "--depth", "1", "--format", "json", "--min-real", "1024"],
+                    { from: "node" },
+                );
+            } finally {
+                console.log = orig;
+            }
+
+            const parsed = SafeJSON.parse(logs.join("\n")) as { roots: string[] };
+            expect(parsed.roots[0]).toBe(dir);
+            expect(logs.join("\n")).not.toContain("/l1/l2/l3");
         } finally {
             rmSync(dir, { recursive: true, force: true });
         }
