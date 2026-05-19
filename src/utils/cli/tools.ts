@@ -16,9 +16,9 @@ export interface RunToolOptions {
 
 /**
  * Spawn a GenesisTools tool and capture its output.
- * Usage: `runTool(["claude", "usage"])` runs `tools claude usage`
+ * Usage: `execTool(["claude", "usage"])` runs `tools claude usage`
  */
-export async function runTool(args: string[], options?: RunToolOptions): Promise<ExecResult> {
+export async function execTool(args: string[], options?: RunToolOptions): Promise<ExecResult> {
     const proc = Bun.spawn(["bun", "run", getToolsPath(), ...args], {
         cwd: options?.cwd ?? process.cwd(),
         stdio: ["ignore", "pipe", "pipe"],
@@ -42,9 +42,9 @@ export async function runTool(args: string[], options?: RunToolOptions): Promise
 
 /**
  * Spawn a GenesisTools tool with inherited stdio (interactive).
- * Usage: `runToolInteractive(["telegram-bot", "configure"])`
+ * Usage: `execToolInteractive(["telegram-bot", "configure"])`
  */
-export async function runToolInteractive(
+export async function execToolInteractive(
     args: string[],
     options?: Omit<RunToolOptions, "timeout">
 ): Promise<ExecResult> {

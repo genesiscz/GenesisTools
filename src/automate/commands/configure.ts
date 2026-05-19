@@ -1,5 +1,5 @@
 import { loadTelegramConfig } from "@app/telegram-bot/lib/config";
-import { runToolInteractive } from "@app/utils/cli/tools";
+import { execToolInteractive } from "@app/utils/cli/tools";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 
@@ -33,7 +33,7 @@ export function registerConfigureCommand(program: Command): Command {
             return;
         }
         if (section === "telegram") {
-            await runToolInteractive(["telegram-bot", "configure"]);
+            await execToolInteractive(["telegram-bot", "configure"]);
         }
         p.outro("Configuration complete");
     });
