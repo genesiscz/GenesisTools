@@ -1,10 +1,24 @@
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "bun:test";
 import { createConfigCommand } from "@app/macos/commands/clones/config";
-import { loadClonesConfig } from "@app/macos/lib/clones/store";
+import { type ClonesConfig, loadClonesConfig, storage } from "@app/macos/lib/clones/store";
 import { SafeJSON } from "@app/utils/json";
+
+let configSnapshot: ClonesConfig | null;
+
+beforeAll(async () => {
+    configSnapshot = await storage.getConfig<ClonesConfig>();
+});
+
+afterAll(async () => {
+    if (configSnapshot) {
+        await storage.setConfig(configSnapshot);
+    } else {
+        await storage.clearConfig();
+    }
+});
 
 describe("createConfigCommand (non-TTY)", () => {
     it("has no --format; declares --add-dir/--remove-dir/--list/--set-min-real/--node-modules", () => {

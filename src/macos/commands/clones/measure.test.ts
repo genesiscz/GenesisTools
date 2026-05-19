@@ -1,9 +1,24 @@
-import { describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createDuCommand, createMeasureCommand } from "@app/macos/commands/clones/measure";
+import { type ClonesConfig, storage } from "@app/macos/lib/clones/store";
 import { SafeJSON } from "@app/utils/json";
+
+let configSnapshot: ClonesConfig | null;
+
+beforeAll(async () => {
+    configSnapshot = await storage.getConfig<ClonesConfig>();
+});
+
+afterAll(async () => {
+    if (configSnapshot) {
+        await storage.setConfig(configSnapshot);
+    } else {
+        await storage.clearConfig();
+    }
+});
 
 describe("createMeasureCommand", () => {
     it("is a commander command named 'measure' with the shared flags", () => {
@@ -52,6 +67,9 @@ describe("createMeasureCommand", () => {
 import { addWatchedDirs, removeWatchedDirs } from "@app/macos/lib/clones/store";
 
 describe("measure roots fall back to configured watchedDirs", () => {
+    // The top-level beforeAll/afterAll above snapshots and restores the
+    // live `~/.genesis-tools/macos-clones/config.json` for this whole file,
+    // so any addWatchedDirs left behind by a killed run is reverted on next pass.
     it("no explicit roots → uses watchedDirs from config", async () => {
         const dir = mkdtempSync(join(tmpdir(), "gt-cl-cfgroot-"));
         try {
@@ -62,10 +80,9 @@ describe("measure roots fall back to configured watchedDirs", () => {
             const orig = console.log;
             console.log = (...a: unknown[]) => logs.push(a.join(" "));
             try {
-                await createMeasureCommand().parseAsync(
-                    ["node", "measure", "--format", "json", "--min-real", "1024"],
-                    { from: "node" },
-                );
+                await createMeasureCommand().parseAsync(["node", "measure", "--format", "json", "--min-real", "1024"], {
+                    from: "node",
+                });
             } finally {
                 console.log = orig;
                 await removeWatchedDirs([dir]);
