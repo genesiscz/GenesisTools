@@ -56,7 +56,10 @@ export function buildCommanderCommand({ config, ctx }: BuildOptions): Command {
     // with defaults (background, open=true).
     cmd.option("-i, --interactive", "force the interactive menu even when the action is unambiguous").action(
         async (flags: { interactive?: boolean }) => {
-            await up(ctx, { interactive: flags.interactive });
+            await up(ctx, {
+                interactive: flags.interactive,
+                open: config.type === "ui" ? (config.openBrowser?.enabled ?? true) : false,
+            });
         }
     );
 
@@ -120,8 +123,13 @@ export function buildCommanderCommand({ config, ctx }: BuildOptions): Command {
     if (config.launchd?.available) {
         cmd.command("install")
             .description("Register a launchd plist so this dashboard survives reboot and respawns on crash.")
-            .action(async () => {
-                await install(ctx);
+            .option("--force", "kill any conflicting process before installing")
+            .option("-p, --port <n>", "override the default port")
+            .action(async (flags: { force?: boolean; port?: string }) => {
+                await install(ctx, {
+                    force: flags.force,
+                    port: flags.port ? Number.parseInt(flags.port, 10) : undefined,
+                });
             });
         cmd.command("uninstall")
             .description("Remove the launchd plist registered by `install`.")
