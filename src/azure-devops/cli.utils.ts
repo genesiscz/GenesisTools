@@ -4,7 +4,11 @@ import { out } from "@app/logger";
  * Azure DevOps CLI Tool - CLI Utilities
  *
  * This file contains CLI-related utilities like error messages and user prompts.
+ *
+ * `az login` command suggestions live in `./lib/az-cli.utils.ts` — extract the
+ * helpers from there instead of hand-rolling the command strings.
  */
+import { azLoginSuggestionBlock, extractTenantFromStderr } from "@app/azure-devops/lib/az-cli.utils";
 
 const SSL_PROXY_GUIDE = `
 🔐 SSL Certificate Error (Proxy Detected)
@@ -27,17 +31,17 @@ Quick fixes:
 More info: https://learn.microsoft.com/cli/azure/use-cli-effectively#work-behind-a-proxy
 `;
 
-const AUTH_GUIDE = `
+function authGuide(): string {
+    return `
 🔐 Azure CLI Authentication Required
 
 You need to log in to Azure CLI first. Run:
 
-  az login --allow-no-subscriptions --use-device-code
+${azLoginSuggestionBlock()}
 
 This will:
-1. Display a code and URL
-2. Open the URL in your browser
-3. Enter the code to authenticate
+1. Display a code and URL (first form), or
+2. Open a browser tab for interactive auth (second form)
 
 Prerequisites:
   1. Install Azure CLI: https://learn.microsoft.com/en-us/cli/azure/install-azure-cli
@@ -45,6 +49,7 @@ Prerequisites:
 
 Documentation: https://learn.microsoft.com/en-us/azure/devops/cli/?view=azure-devops
 `;
+}
 
 /**
  * Check if an error message indicates an SSL/proxy certificate issue
@@ -92,30 +97,27 @@ export class AzAuthError extends Error {
 }
 
 /**
- * Build a working `az login` command from auth-error stderr.
+ * Build a working `az login` suggestion from auth-error stderr.
  *
- * `az` itself suggests `az login --tenant <id> --scope <res>/.default`, but that
- * form fails for accounts with no subscriptions in the tenant (common in
- * enterprise setups — e.g. ČEZ — where the user has tenant-level access only).
- * We always emit `--allow-no-subscriptions --use-device-code`, which works in
- * both cases and doesn't require an interactive browser session.
- *
- * Returns null if stderr doesn't look like an auth error.
+ * Delegates to `azLoginSuggestionBlock` so the actual command strings live in
+ * one place (`lib/az-cli.utils.ts`). Returns null if stderr doesn't look like
+ * an auth error.
  */
 export function extractAzLoginSuggestion(stderr: string): string | null {
     if (!stderr) {
         return null;
     }
 
-    const tenantMatch = stderr.match(/--tenant\s+"?([0-9a-fA-F-]{36})"?/);
-    const tenant = tenantMatch?.[1];
-
+    const tenant = extractTenantFromStderr(stderr);
     if (tenant) {
-        return `az login --tenant "${tenant}" --allow-no-subscriptions --use-device-code`;
+        // Trim the leading indent from the shared block so the suggestion
+        // embeds cleanly in single-line error messages (callers already
+        // prefix the field name, e.g. "Fix: ...").
+        return azLoginSuggestionBlock({ tenant, indent: "" });
     }
 
     if (/AADSTS|az login|multi-factor|Presented multi-factor/i.test(stderr)) {
-        return "az login --allow-no-subscriptions --use-device-code";
+        return azLoginSuggestionBlock({ indent: "" });
     }
 
     return null;
@@ -139,7 +141,7 @@ export function exitWithSslGuide(error?: unknown): never {
  * Print authentication guide and exit
  */
 export function exitWithAuthGuide(error?: unknown): never {
-    out.println(AUTH_GUIDE);
+    out.println(authGuide());
 
     if (error instanceof Error && error.stack && process.env.DEBUG) {
         out.error("\nStacktrace:\n");

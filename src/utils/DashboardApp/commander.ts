@@ -49,15 +49,16 @@ export function buildCommanderCommand({ config, ctx }: BuildOptions): Command {
         cmd.alias(alias);
     }
 
-    // Bare command (no verb) — smart default.
-    cmd.option("-i, --interactive", "force the interactive menu even when the action is unambiguous")
-        .option("-f, --foreground", "run in the foreground (block until killed)")
-        .option("-p, --port <n>", "override the default port")
-        .option("--force", "kill any conflicting process before starting")
-        .option("--no-open", "do not auto-open the browser (UI apps only)")
-        .action(async (flags: UpFlags) => {
-            await up(ctx, toUpOptions(flags));
-        });
+    // Bare command (no verb) — smart default. Options are intentionally NOT
+    // duplicated from the `up` subcommand because Commander v14 silently drops
+    // options on a subcommand when the same names exist on the parent action.
+    // For explicit control use `up --foreground` (etc); the bare command runs
+    // with defaults (background, open=true).
+    cmd.option("-i, --interactive", "force the interactive menu even when the action is unambiguous").action(
+        async (flags: { interactive?: boolean }) => {
+            await up(ctx, { interactive: flags.interactive });
+        }
+    );
 
     // `up`
     cmd.command("up")
