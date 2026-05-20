@@ -1,4 +1,12 @@
+import { basename, dirname } from "node:path";
+import { setBaseBinding, setConsoleLevel } from "@app/logger";
+import { consoleFloorFor } from "@app/utils/logging/tool-policy";
+import { printReadmeAndExit } from "@app/utils/readme";
 import type { Command } from "commander";
+import { enhanceHelp } from "./executor";
+// `logger` itself is intentionally NOT imported here — runTool only drives the
+// console gate / base binding via the setters above (importing the logger
+// value into commander.ts would risk a commander↔logger value cycle).
 
 export type Verbosity = 0 | 1 | 2 | 3;
 
@@ -92,12 +100,18 @@ function getCommandVerbosity(command: Command): Verbosity {
     return clampVerbosity(count);
 }
 
-export function addGlobalVerboseOption<T extends Command>(program: T): T {
+export function addGlobalVerboseOption<T extends Command>(program: T, opts: { trace?: boolean } = {}): T {
     if (!optionExists(program, "-v") && !optionExists(program, "--verbose")) {
-        program.option("-v, --verbose", "Enable verbose logging; repeat for trace logging", incrementVerbosity, 0);
+        // Description text is intentionally the historical canonical
+        // "Enable verbose logging" (matching every pre-overhaul bespoke -v) so
+        // that after codemod-4b re-adds this global option, the golden --help
+        // anchors (gitcommit_help, npmdiff_help) render byte-identical to HEAD.
+        program.option("-v, --verbose", "Enable verbose logging", incrementVerbosity, 0);
     }
 
-    if (!optionExists(program, "--trace")) {
+    // `--trace` is opt-in (trace-gated): only registered when explicitly
+    // requested, so most tools never expose a trace flag at all.
+    if (opts.trace === true && !optionExists(program, "--trace")) {
         program.option("--trace", "Enable trace logging");
     }
 
@@ -106,4 +120,72 @@ export function addGlobalVerboseOption<T extends Command>(program: T): T {
     });
 
     return program;
+}
+
+export interface RunToolOpts {
+    tool?: string;
+    trace?: boolean;
+    enhanceHelp?: boolean;
+    ignoreParams?: string[];
+}
+
+export interface RunToolResult {
+    tool: string;
+    verbosity: Verbosity;
+    isVerbose: boolean;
+    command: Command;
+}
+
+let _verbosity: Verbosity = 0;
+
+export function getVerbosity(): Verbosity {
+    return _verbosity;
+}
+
+export function isVerbose(): boolean {
+    return _verbosity >= 1;
+}
+
+function callerDirOf(argv: readonly string[]): string {
+    return dirname(argv[1] ?? "");
+}
+
+/**
+ * Unified tool bootstrap: registers the non-destructive `-v`/`--verbose`
+ * (and trace-gated `--trace`) option + a visible `--readme` flag, resolves
+ * the console level from argv verbosity (or the per-tool floor), applies the
+ * `{ tool }` base binding, then parses. argv is never mutated/spliced.
+ */
+export async function runTool(
+    program: Command,
+    opts: RunToolOpts = {},
+    argv: string[] = process.argv
+): Promise<RunToolResult> {
+    const tool = opts.tool ?? program.name() ?? basename(argv[1] ?? "tool");
+
+    if (!opts.ignoreParams?.includes("verbose")) {
+        addGlobalVerboseOption(program, { trace: opts.trace === true });
+    }
+
+    if (opts.enhanceHelp) {
+        enhanceHelp(program);
+    }
+
+    if (!program.options.some((o) => o.long === "--readme")) {
+        program.option("--readme", "Print this tool's README and exit");
+    }
+
+    program.hook("preAction", () => {
+        if (program.opts().readme) {
+            printReadmeAndExit(callerDirOf(argv));
+        }
+    });
+
+    _verbosity = getArgvVerbosity(argv.slice(2));
+    const level = _verbosity >= 2 && opts.trace === true ? "trace" : _verbosity >= 1 ? "debug" : consoleFloorFor(tool);
+    setConsoleLevel(level);
+    setBaseBinding({ tool });
+
+    await program.parseAsync(argv);
+    return { tool, verbosity: _verbosity, isVerbose: _verbosity >= 1, command: program };
 }

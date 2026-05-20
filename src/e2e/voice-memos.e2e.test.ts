@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, readdirSync } from "node:fs";
 import { rm } from "node:fs/promises";
-import { getOutput, runTool } from "@app/utils/e2e/helpers";
+import { execTool, getOutput } from "@app/utils/e2e/helpers";
 import { tmpPath } from "@app/utils/paths";
 import { skip } from "@app/utils/test/skip";
 
@@ -16,18 +16,18 @@ describe.skipIf(skip.unlessMac)("tools macos voice-memos", () => {
 
     describe("help", () => {
         it("--help exits 0", async () => {
-            const r = await runTool(["macos", "voice-memos", "--help"]);
+            const r = await execTool(["macos", "voice-memos", "--help"]);
             expect(r.exitCode).toBe(0);
             expect(r.stdout).toContain("Voice Memos");
         });
 
         it("list --help exits 0", async () => {
-            const r = await runTool(["macos", "voice-memos", "list", "--help"]);
+            const r = await execTool(["macos", "voice-memos", "list", "--help"]);
             expect(r.exitCode).toBe(0);
         });
 
         it("transcribe --help exits 0 and shows all options", async () => {
-            const r = await runTool(["macos", "voice-memos", "transcribe", "--help"]);
+            const r = await execTool(["macos", "voice-memos", "transcribe", "--help"]);
             expect(r.exitCode).toBe(0);
             for (const flag of [
                 "--lang",
@@ -45,19 +45,19 @@ describe.skipIf(skip.unlessMac)("tools macos voice-memos", () => {
         });
 
         it("export --help exits 0", async () => {
-            const r = await runTool(["macos", "voice-memos", "export", "--help"]);
+            const r = await execTool(["macos", "voice-memos", "export", "--help"]);
             expect(r.exitCode).toBe(0);
         });
 
         it("search --help exits 0", async () => {
-            const r = await runTool(["macos", "voice-memos", "search", "--help"]);
+            const r = await execTool(["macos", "voice-memos", "search", "--help"]);
             expect(r.exitCode).toBe(0);
         });
     });
 
     describe("list", () => {
         it("list exits 0 and shows table headers", async () => {
-            const r = await runTool(["macos", "voice-memos", "list"]);
+            const r = await execTool(["macos", "voice-memos", "list"]);
             expect(r.exitCode).toBe(0);
             expect(r.stdout).toContain("#");
             expect(r.stdout).toContain("Title");
@@ -66,14 +66,14 @@ describe.skipIf(skip.unlessMac)("tools macos voice-memos", () => {
 
     describe("search", () => {
         it("search nonexistent query exits 0", async () => {
-            const r = await runTool(["macos", "voice-memos", "search", "nonexistent-query-xyz-e2e"]);
+            const r = await execTool(["macos", "voice-memos", "search", "nonexistent-query-xyz-e2e"]);
             expect(r.exitCode).toBe(0);
         });
     });
 
     describe("export", () => {
         it("export memo 377 to temp dir", async () => {
-            const r = await runTool(["macos", "voice-memos", "export", "377", EXPORT_DIR]);
+            const r = await execTool(["macos", "voice-memos", "export", "377", EXPORT_DIR]);
             expect(r.exitCode).toBe(0);
             expect(existsSync(EXPORT_DIR)).toBe(true);
             const files = readdirSync(EXPORT_DIR);
@@ -83,20 +83,20 @@ describe.skipIf(skip.unlessMac)("tools macos voice-memos", () => {
 
     describe("transcribe", () => {
         it("transcribe invalid ID exits 1", async () => {
-            const r = await runTool(["macos", "voice-memos", "transcribe", "999999", "--provider", "local-hf"]);
+            const r = await execTool(["macos", "voice-memos", "transcribe", "999999", "--provider", "local-hf"]);
             expect(r.exitCode).toBe(1);
             expect(getOutput(r).toLowerCase()).toMatch(/no memo|not found/i);
         });
 
         it("transcribe --all exits 0", async () => {
-            const r = await runTool(["macos", "voice-memos", "transcribe", "--all", "--provider", "local-hf"], 60_000);
+            const r = await execTool(["macos", "voice-memos", "transcribe", "--all", "--provider", "local-hf"], 60_000);
             expect(r.exitCode).toBe(0);
         }, 60_000);
     });
 
     describe("error handling", () => {
         it("play invalid ID exits 1", async () => {
-            const r = await runTool(["macos", "voice-memos", "play", "999999"]);
+            const r = await execTool(["macos", "voice-memos", "play", "999999"]);
             expect(r.exitCode).toBe(1);
         });
     });

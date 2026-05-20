@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runTool, stripAnsi } from "@app/utils/e2e/helpers";
+import { execTool, stripAnsi } from "@app/utils/e2e/helpers";
 import { SafeJSON } from "@app/utils/json";
 import { skip } from "@app/utils/test/skip";
 
@@ -60,7 +60,7 @@ export function range(start: number, end: number): number[] {
 }
 
 async function tryRemoveIndex(name: string): Promise<void> {
-    await runTool(["indexer", "remove", name, "--force"], 30_000);
+    await execTool(["indexer", "remove", name, "--force"], 30_000);
 }
 
 describe.skipIf(skip.e2e)("tools indexer (E2E)", () => {
@@ -81,7 +81,7 @@ describe.skipIf(skip.e2e)("tools indexer (E2E)", () => {
         it(
             "indexer --help exits 0 and shows description",
             async () => {
-                const r = await runTool(["indexer", "--help"]);
+                const r = await execTool(["indexer", "--help"]);
                 const output = stripAnsi(r.stdout + r.stderr);
 
                 expect(r.exitCode).toBe(0);
@@ -99,7 +99,7 @@ describe.skipIf(skip.e2e)("tools indexer (E2E)", () => {
         it(
             "indexer add --help exits 0 and shows add options",
             async () => {
-                const r = await runTool(["indexer", "add", "--help"]);
+                const r = await execTool(["indexer", "add", "--help"]);
                 const output = stripAnsi(r.stdout + r.stderr);
 
                 expect(r.exitCode).toBe(0);
@@ -112,7 +112,7 @@ describe.skipIf(skip.e2e)("tools indexer (E2E)", () => {
         it(
             "indexer search --help exits 0 and shows search options",
             async () => {
-                const r = await runTool(["indexer", "search", "--help"]);
+                const r = await execTool(["indexer", "search", "--help"]);
                 const output = stripAnsi(r.stdout + r.stderr);
 
                 expect(r.exitCode).toBe(0);
@@ -128,7 +128,7 @@ describe.skipIf(skip.e2e)("tools indexer (E2E)", () => {
         it(
             "status exits 0 with no indexes",
             async () => {
-                const r = await runTool(["indexer", "status"]);
+                const r = await execTool(["indexer", "status"]);
                 expect(r.exitCode).toBe(0);
             },
             { timeout: 30_000 }
@@ -140,21 +140,24 @@ describe.skipIf(skip.e2e)("tools indexer (E2E)", () => {
             "add -> status -> search -> search json -> rebuild -> remove",
             async () => {
                 // 1. Add index
-                const addResult = await runTool(["indexer", "add", tempDir, "--name", indexName, "--no-embed"], 60_000);
+                const addResult = await execTool(
+                    ["indexer", "add", tempDir, "--name", indexName, "--no-embed"],
+                    60_000
+                );
                 const addOutput = stripAnsi(addResult.stdout + addResult.stderr);
 
                 expect(addResult.exitCode).toBe(0);
                 expect(addOutput.toLowerCase()).toMatch(/index|complete|done/i);
 
                 // 2. Status for specific index
-                const statusResult = await runTool(["indexer", "status", indexName], 30_000);
+                const statusResult = await execTool(["indexer", "status", indexName], 30_000);
                 const statusOutput = stripAnsi(statusResult.stdout + statusResult.stderr);
 
                 expect(statusResult.exitCode).toBe(0);
                 expect(statusOutput).toContain(indexName);
 
                 // 3. Search with table format (default)
-                const searchResult = await runTool(["indexer", "search", "function", "--index", indexName], 30_000);
+                const searchResult = await execTool(["indexer", "search", "function", "--index", indexName], 30_000);
                 const searchOutput = stripAnsi(searchResult.stdout + searchResult.stderr);
 
                 expect(searchResult.exitCode).toBe(0);
@@ -162,7 +165,7 @@ describe.skipIf(skip.e2e)("tools indexer (E2E)", () => {
                 expect(searchOutput.toLowerCase()).toMatch(/result|function|add|greet|clamp/i);
 
                 // 4. Search with JSON format
-                const jsonResult = await runTool(
+                const jsonResult = await execTool(
                     ["indexer", "search", "function", "--index", indexName, "--format", "json"],
                     30_000
                 );
@@ -196,19 +199,19 @@ describe.skipIf(skip.e2e)("tools indexer (E2E)", () => {
                 }
 
                 // 5. Rebuild
-                const rebuildResult = await runTool(["indexer", "rebuild", indexName], 60_000);
+                const rebuildResult = await execTool(["indexer", "rebuild", indexName], 60_000);
                 const rebuildOutput = stripAnsi(rebuildResult.stdout + rebuildResult.stderr);
 
                 expect(rebuildResult.exitCode).toBe(0);
                 expect(rebuildOutput.toLowerCase()).toMatch(/rebuild|complete|done/i);
 
                 // 6. Remove
-                const removeResult = await runTool(["indexer", "remove", indexName, "--force"], 30_000);
+                const removeResult = await execTool(["indexer", "remove", indexName, "--force"], 30_000);
 
                 expect(removeResult.exitCode).toBe(0);
 
                 // 7. Verify index is gone
-                const statusAfter = await runTool(["indexer", "status"], 30_000);
+                const statusAfter = await execTool(["indexer", "status"], 30_000);
                 const statusAfterOutput = stripAnsi(statusAfter.stdout + statusAfter.stderr);
 
                 expect(statusAfter.exitCode).toBe(0);
@@ -223,7 +226,7 @@ describe.skipIf(skip.e2e)("tools indexer (E2E)", () => {
             "remove nonexistent index errors gracefully",
             async () => {
                 const name = `${TEST_PREFIX}_nonexistent`;
-                const r = await runTool(["indexer", "remove", name, "--force"], 30_000);
+                const r = await execTool(["indexer", "remove", name, "--force"], 30_000);
                 const output = stripAnsi(r.stdout + r.stderr);
 
                 expect(r.exitCode).not.toBe(0);
@@ -235,7 +238,7 @@ describe.skipIf(skip.e2e)("tools indexer (E2E)", () => {
         it(
             "add with nonexistent path errors gracefully",
             async () => {
-                const r = await runTool(["indexer", "add", "/tmp/definitely-does-not-exist-xyz-123"], 30_000);
+                const r = await execTool(["indexer", "add", "/tmp/definitely-does-not-exist-xyz-123"], 30_000);
                 const output = stripAnsi(r.stdout + r.stderr);
 
                 expect(r.exitCode).not.toBe(0);

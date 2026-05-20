@@ -1,5 +1,5 @@
 import { stripAnsi, truncateForTelegram } from "@app/telegram-bot/lib/formatting";
-import { runTool } from "@app/utils/cli/tools";
+import { execTool } from "@app/utils/cli/tools";
 import * as p from "@clack/prompts";
 import type { Bot } from "grammy";
 
@@ -14,7 +14,7 @@ export function registerToolsCommand(bot: Bot): void {
 
         const parts = args.split(/\s+/);
         p.log.step(`/tools → running: tools ${args}`);
-        const result = await runTool(parts, { env: { NO_COLOR: "1" }, timeout: 30_000 });
+        const result = await execTool(parts, { env: { NO_COLOR: "1" }, timeout: 30_000 });
         const output = stripAnsi(result.stdout + (result.stderr ? `\n${result.stderr}` : "")).trim();
 
         await ctx.reply(truncateForTelegram(output || "(no output)"));
