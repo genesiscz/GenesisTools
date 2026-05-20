@@ -24,6 +24,8 @@
       "@/*": ["./src/*"],
       "@ui": ["../../../utils/ui/index.ts"],
       "@ui/*": ["../../../utils/ui/*"],
+      "@app/logger/client": ["../../../logger/client.ts"],
+      "@app/utils/json": ["../../../utils/json.ts"],
       "@dashboard/shared": ["../../packages/shared/src/index.ts"],
       "@dashboard/shared/*": ["../../packages/shared/src/*"]
     }

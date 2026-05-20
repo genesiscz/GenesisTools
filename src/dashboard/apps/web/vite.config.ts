@@ -59,6 +59,8 @@ const config = defineConfig({
                 find: "@dashboard/shared",
                 replacement: new URL("../../packages/shared/src/index.ts", import.meta.url).pathname,
             },
+            { find: "@app/logger/client", replacement: new URL("../../../logger/client.ts", import.meta.url).pathname },
+            { find: "@app/utils/json", replacement: new URL("../../../utils/json.ts", import.meta.url).pathname },
             { find: "@radix-ui/react-avatar", replacement: dashboardDependency("@radix-ui/react-avatar") },
             { find: "@radix-ui/react-dialog", replacement: dashboardDependency("@radix-ui/react-dialog") },
             {
