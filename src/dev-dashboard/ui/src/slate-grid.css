@@ -31,6 +31,27 @@
     color: transparent;
 }
 
+.dd-qa-section-heading {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.dd-qa-section-heading-bar {
+    flex: none;
+    width: 2px;
+    height: 0.875rem;
+    border-radius: 9999px;
+    background: var(--dd-accent-gradient);
+    box-shadow: 0 0 8px rgba(52, 211, 153, 0.35);
+}
+
+.dd-qa-section-body {
+    margin-left: 0.625rem;
+    padding-left: 0.75rem;
+    border-left: 1px solid var(--dd-border);
+}
+
 .dd-mosaic .mosaic-window {
     background: var(--dd-bg-panel);
     border: 1px solid var(--dd-border);
