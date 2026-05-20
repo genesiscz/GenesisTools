@@ -1,5 +1,20 @@
-import { mock } from "bun:test";
-import * as cliUtils from "@app/utils/cli";
+import { installPromptMock, setPromptBackend } from "@app/utils/testing/prompt-mock";
+import type { PromptBackend, SelectValue } from "@app/utils/prompts/p";
+
+/**
+ * mcp-manager-specific test backend.
+ *
+ * mcp-manager's commands use named response keys (selectedProvider,
+ * inputServerName, selectedOldName, etc.) rather than positional dispatch
+ * by prompt-method name. This file owns that key vocabulary; the rest of
+ * the prompt-mock machinery is the shared `@app/utils/testing/prompt-mock`.
+ *
+ * Migration note: this file used to do `mock.module("@app/utils/prompts/p")`
+ * directly, which leaked across test files via bun:test's worker-pool
+ * reuse. It now drives the canonical `p.setBackend()` path through a
+ * fake PromptBackend, which is per-process state with no module-cache
+ * side effects.
+ */
 
 type MockResponses = Record<string, unknown>;
 
@@ -7,50 +22,25 @@ function getResponses(): MockResponses {
     return ((globalThis as Record<string, unknown>).__inquirerMockResponses as MockResponses) || {};
 }
 
-/**
- * Setup prompt mocks for mcp-manager tests.
- * Mocks @app/utils/prompts/p (p.select, p.multiselect, p.text, p.confirm) and
- * @app/utils/prompts/p/inquirer-backend (inquirerBackend.search).
- *
- * Call this at the top of test files before importing command modules.
- */
-export function setupInquirerMock(): void {
-    // Use globalThis to store mock responses so the mock can access them
-    (globalThis as Record<string, unknown>).__inquirerMockResponses = { selectedProviders: ["claude"] };
+function checkErrors(keys: string[]): void {
+    const responses = getResponses();
+    for (const key of keys) {
+        if (responses[key] instanceof Error) {
+            throw responses[key];
+        }
+    }
+}
 
-    // Commands gate every interactive prompt behind isInteractive() (TTY check),
-    // which is false under `bun test`. Without forcing it true, the commands
-    // take their non-interactive `process.exit(1)` branch instead of the
-    // mocked-prompt path these tests exercise. Re-export the real module so
-    // suggestCommand/Executor/etc. keep working; only isInteractive is stubbed.
-    mock.module("@app/utils/cli", () => ({
-        ...cliUtils,
-        isInteractive: () => true,
-    }));
+/** Build a PromptBackend whose method outputs are driven by mcp-manager's
+ *  response-key vocabulary. Pass to `installPromptMock(makeBackend(...))`. */
+function makeMcpManagerBackend(): PromptBackend {
+    return {
+        intro: () => {},
+        outro: () => {},
+        cancel: () => {},
+        note: () => {},
 
-    // Mock p.* functions (text, select, multiselect, confirm)
-    mock.module("@app/utils/prompts/p", () => ({
-        setBackend: () => {},
-        isCancel: () => false,
-        select: async (_config: unknown) => {
-            const responses = getResponses();
-            const errorKeys = ["selectedProvider", "choice", "inputType"];
-            for (const key of errorKeys) {
-                if (responses[key] instanceof Error) {
-                    throw responses[key];
-                }
-            }
-            return responses.selectedProvider ?? responses.choice ?? responses.inputType ?? "";
-        },
-        multiselect: async (_config: unknown) => {
-            const responses = getResponses();
-            const value = responses.selectedProviders;
-            if (value instanceof Error) {
-                throw value;
-            }
-            return value ?? [];
-        },
-        text: async (config: { message?: string; initialValue?: string; default?: string }) => {
+        text: async (config) => {
             const responses = getResponses();
             const inputKeys = [
                 "inputServerName",
@@ -61,140 +51,122 @@ export function setupInquirerMock(): void {
                 "inputVal",
                 "newServerName",
             ];
+            checkErrors(inputKeys);
+
             for (const key of inputKeys) {
-                if (responses[key] instanceof Error) {
-                    throw responses[key];
-                }
-            }
-            if (responses.inputServerName !== undefined) {
-                return responses.inputServerName;
-            }
-            if (responses.inputNewName !== undefined) {
-                return responses.inputNewName;
-            }
-            if (responses.inputCommand !== undefined) {
-                return responses.inputCommand;
-            }
-            if (responses.inputEnv !== undefined) {
-                return responses.inputEnv;
-            }
-            if (responses.inputHeaders !== undefined) {
-                return responses.inputHeaders;
-            }
-            if (responses.inputVal !== undefined) {
-                return responses.inputVal;
-            }
-            if (responses.newServerName !== undefined) {
-                return responses.newServerName;
-            }
-            return config?.initialValue ?? config?.default ?? "";
-        },
-        confirm: async (_config: unknown) => {
-            const responses = getResponses();
-            const value = responses.confirmed;
-            if (value instanceof Error) {
-                throw value;
-            }
-            return value ?? false;
-        },
-        password: async (_config: unknown) => {
-            const responses = getResponses();
-            const value = responses.password;
-            if (value instanceof Error) {
-                throw value;
-            }
-            return value ?? "";
-        },
-        // Production code now uses p.search/editor/number via the facade
-        // (the inquirerBackend.* direct-call form was removed in favor of
-        // p.X dispatching through setBackend(inquirerBackend) at startup).
-        // Mock the same response keys the inquirer-backend mock used so
-        // existing test fixtures keep working.
-        search: async (_config: unknown) => {
-            const responses = getResponses();
-            const searchKeys = ["selectedOldName", "selectedServerName", "inputServerName"];
-            for (const key of searchKeys) {
-                if (responses[key] instanceof Error) {
-                    throw responses[key];
+                if (responses[key] !== undefined) {
+                    return responses[key] as string;
                 }
             }
 
-            if (responses.selectedOldName !== undefined) {
-                return responses.selectedOldName;
+            return ((config as { initialValue?: string }).initialValue ?? "") as string;
+        },
+        confirm: async () => {
+            checkErrors(["confirmed"]);
+            return (getResponses().confirmed as boolean) ?? false;
+        },
+        typedConfirm: async () => {
+            checkErrors(["typedConfirmed"]);
+            return (getResponses().typedConfirmed as boolean) ?? true;
+        },
+        select: async () => {
+            checkErrors(["selectedProvider", "choice", "inputType"]);
+            const r = getResponses();
+            return (r.selectedProvider ?? r.choice ?? r.inputType ?? "") as SelectValue;
+        },
+        multiselect: async () => {
+            checkErrors(["selectedProviders"]);
+            return ((getResponses().selectedProviders as SelectValue[]) ?? []) as SelectValue[];
+        },
+        password: async () => {
+            checkErrors(["password"]);
+            return (getResponses().password as string) ?? "";
+        },
+
+        // The p.X facade migration (PR #176 t20+t21+t22 follow-up) routes
+        // production search/editor/number through p — same response keys
+        // the prior inquirerBackend.search mock used so fixtures keep working.
+        search: async () => {
+            checkErrors(["selectedOldName", "selectedServerName", "inputServerName"]);
+            const r = getResponses();
+            if (r.selectedOldName !== undefined) {
+                return r.selectedOldName as never;
             }
 
-            if (responses.selectedServerName !== undefined) {
-                return responses.selectedServerName;
+            if (r.selectedServerName !== undefined) {
+                return r.selectedServerName as never;
             }
 
-            if (responses.inputServerName !== undefined) {
-                return responses.inputServerName;
+            if (r.inputServerName !== undefined) {
+                return r.inputServerName as never;
             }
 
-            return "";
+            return "" as never;
         },
-        editor: async (_config: unknown) => {
-            const responses = getResponses();
-            return responses.editorContent ?? "";
+        editor: async () => {
+            checkErrors(["editorContent"]);
+            return (getResponses().editorContent as string) ?? "";
         },
-        number: async (config: { initialValue?: number }) => {
-            const responses = getResponses();
-            return responses.numberValue ?? config?.initialValue ?? 0;
+        number: async (config) => {
+            checkErrors(["numberValue"]);
+            return ((getResponses().numberValue as number) ??
+                (config as { initialValue?: number }).initialValue ??
+                0) as number;
         },
-    }));
 
-    // Mock inquirerBackend.search (used for server/provider search prompts)
-    mock.module("@app/utils/prompts/p/inquirer-backend", () => ({
-        inquirerBackend: {
-            search: async (_config: unknown) => {
-                const responses = getResponses();
-                const searchKeys = ["selectedOldName", "selectedServerName", "inputServerName"];
-                for (const key of searchKeys) {
-                    if (responses[key] instanceof Error) {
-                        throw responses[key];
-                    }
-                }
-                if (responses.selectedOldName !== undefined) {
-                    return responses.selectedOldName;
-                }
-                if (responses.selectedServerName !== undefined) {
-                    return responses.selectedServerName;
-                }
-                if (responses.inputServerName !== undefined) {
-                    return responses.inputServerName;
-                }
-                return "";
-            },
+        spinner: () => ({
+            start: () => {},
+            stop: () => {},
+            message: () => {},
+        }),
+
+        log: {
+            info: () => {},
+            success: () => {},
+            warn: () => {},
+            warning: () => {},
+            error: () => {},
+            step: () => {},
+            message: () => {},
         },
-        InquirerBackend: {},
-        InquirerExtras: {},
-    }));
+    };
 }
 
 /**
- * Set mock responses for prompt functions
- *
- * Keys:
- * - selectedProviders: string[] - for multiselect prompts selecting providers
- * - selectedProvider: string - for select prompts selecting a single provider
- * - choice: string - alternative for select prompts (e.g., conflict resolution)
- * - inputServerName: string - for search/text prompts for server name
- * - selectedOldName: string - for search prompts selecting server to rename
- * - inputNewName: string - for text prompts for new server name
- * - inputCommand: string - for text prompts for command
- * - inputEnv: string - for text prompts for environment variables
- * - inputHeaders: string - for text prompts for headers
- * - inputType: string - for select prompts for transport type
- * - confirmed: boolean - for confirm prompts
- * - newServerName: string - for text prompts when creating new server
+ * Setup prompt mocks for mcp-manager tests. Call this at the top of test
+ * files before importing command modules. Equivalent to the old name —
+ * kept for back-compat with existing test files.
+ */
+export function setupInquirerMock(): void {
+    (globalThis as Record<string, unknown>).__inquirerMockResponses = { selectedProviders: ["claude"] };
+    installPromptMock(makeMcpManagerBackend());
+}
+
+/**
+ * Set mock responses for prompt functions. Keys (named by mcp-manager
+ * test convention):
+ *  - selectedProviders: string[]      — multiselect (provider list)
+ *  - selectedProvider: string         — select (single provider)
+ *  - choice: string                   — select (conflict resolution)
+ *  - inputServerName: string          — search/text (server name)
+ *  - selectedOldName: string          — search (server to rename)
+ *  - inputNewName: string             — text (new server name)
+ *  - inputCommand: string             — text (command)
+ *  - inputEnv: string                 — text (environment vars)
+ *  - inputHeaders: string             — text (HTTP headers)
+ *  - inputType: string                — select (transport type)
+ *  - confirmed: boolean               — confirm
+ *  - newServerName: string            — text (when creating new server)
+ *  - editorContent: string            — editor
+ *  - numberValue: number              — number
  */
 export function setMockResponses(responses: Record<string, unknown>): void {
     (globalThis as Record<string, unknown>).__inquirerMockResponses = responses;
+    // Reinstall to refresh the backend's response source — `getResponses()`
+    // reads globalThis on every call anyway, so this is belt-and-braces.
+    setPromptBackend(makeMcpManagerBackend());
 }
 
-/**
- * Get current mock responses
- */
 export function getMockResponses(): Record<string, unknown> {
     return getResponses();
 }
