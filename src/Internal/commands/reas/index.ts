@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { renderReport } from "@app/Internal/commands/reas/analysis/report";
 import { clearCache } from "@app/Internal/commands/reas/cache/index";
 import type { DistrictInfo } from "@app/Internal/commands/reas/data/districts";
@@ -24,13 +25,32 @@ import {
 import type { AnalysisFilters, FullAnalysis, TargetProperty } from "@app/Internal/commands/reas/types";
 import { out } from "@app/logger";
 import { isInteractive, suggestCommand } from "@app/utils/cli";
+import { defineDashboardApp } from "@app/utils/DashboardApp";
 import { SafeJSON } from "@app/utils/json";
-import { isPortInUse } from "@app/utils/network";
+import { PROJECT_ROOT } from "@app/utils/paths";
 import * as p from "@app/utils/prompts/p";
 import { stripAnsi } from "@app/utils/string";
 import { formatTable } from "@app/utils/table";
 import { Command } from "commander";
 import pc from "picocolors";
+
+const reasUiConfigPath = resolve(import.meta.dir, "ui/vite.config.ts");
+
+const reasUiApp = defineDashboardApp({
+    type: "ui",
+    key: "reas",
+    name: "REAS Analyzer",
+    description: "Launch the REAS Analyzer dashboard",
+    commandName: "ui",
+    aliases: ["dashboard"],
+    spawn: {
+        cmd: ["bun", "--bun", "vite", "dev", "--strictPort", "-c", reasUiConfigPath],
+        cwd: PROJECT_ROOT,
+    },
+    readiness: { kind: "http", path: "/" },
+    openBrowser: { enabled: true },
+    launchd: { available: true },
+});
 
 interface ReasOptions {
     district?: string;
@@ -477,35 +497,15 @@ async function runSearch(query: string, options: ReasOptions): Promise<void> {
 
 async function runReasAnalysis(options: ReasOptions): Promise<void> {
     if (options.dashboard) {
-        const { resolve } = await import("node:path");
-        const { spawnDashboard } = await import("@app/utils/process/spawnDashboard");
-        const configPath = resolve(import.meta.dir, "ui/vite.config.ts");
         const portStr = options.dashboardPort ?? "3072";
-        const port = Number.parseInt(portStr, 10);
+        const portArg = portStr ? Number.parseInt(portStr, 10) : undefined;
 
-        if (Number.isNaN(port) || port < 1 || port > 65535) {
-            out.error(`Invalid --dashboard-port value: "${portStr}". Please provide a valid port number (1-65535).`);
+        if (portArg !== undefined && (Number.isNaN(portArg) || portArg < 1 || portArg > 65535)) {
+            out.error(`Invalid --dashboard-port value: "${portStr}". Provide 1-65535.`);
             return;
         }
 
-        const portOccupied = await isPortInUse(port);
-
-        if (portOccupied) {
-            out.error(`Port ${port} is already in use.`);
-            out.println(
-                suggestCommand("tools internal reas --dashboard", {
-                    add: ["--dashboard-port", "<port>"],
-                })
-            );
-            return;
-        }
-
-        out.println(`Starting REAS dashboard on port ${port}...`);
-        const exitCode = await spawnDashboard({
-            cmd: ["bun", "--bun", "vite", "dev", "--strictPort", "-c", configPath, "--port", String(port)],
-        });
-
-        process.exit(exitCode);
+        await reasUiApp.up({ port: portArg });
         return;
     }
 
@@ -578,6 +578,8 @@ export function registerReasCommand(program: Command): void {
         .action(async (opts: ReasOptions) => {
             await runReasAnalysis(opts);
         });
+
+    reas.addCommand(reasUiApp.commanderCommand);
 
     // ---- Subcommand: listings ----
     reas.command("listings")
