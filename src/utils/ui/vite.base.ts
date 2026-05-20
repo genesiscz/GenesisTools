@@ -126,7 +126,9 @@ function deriveWatchDirs(root: string, appDir: string, extraDirs: string[]): str
         const withoutUi = rootRelativeToApp.replace(/[\\/]ui$/, "");
         const withoutAppsWeb = withoutUi.replace(/[\\/]apps[\\/]web$/, "");
         const toolRel =
-            withoutAppsWeb !== withoutUi || withoutUi !== rootRelativeToApp ? withoutAppsWeb : rootRelativeToApp.split(/[\\/]/)[0];
+            withoutAppsWeb !== withoutUi || withoutUi !== rootRelativeToApp
+                ? withoutAppsWeb
+                : rootRelativeToApp.split(/[\\/]/)[0];
 
         if (toolRel) {
             const toolDir = resolve(appDir, toolRel);

@@ -96,7 +96,13 @@ export function serializeResult(result: Awaited<ReturnType<typeof getAllConversa
 }
 
 export function serializeSessionMetadata(record: SessionMetadataRecord): SerializableConversation {
-	const sessionId = record.sessionId || record.filePath.split("/").pop()?.replace(/\.jsonl$/, "") || "unknown";
+	const sessionId =
+		record.sessionId ||
+		record.filePath
+			.split("/")
+			.pop()
+			?.replace(/\.jsonl$/, "") ||
+		"unknown";
 	const fileIndex = getFileIndex(record.filePath);
 
 	return {
