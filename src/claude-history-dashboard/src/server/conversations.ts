@@ -132,7 +132,20 @@ export const getQuickStats = createServerFn({ method: "GET" }).handler(async () 
 		};
 	}
 
-	// No cache, compute synchronously (first load)
+	// No cache yet — warm incremental stats cache instead of full legacy scan
+	await getConversationStatsWithCache({ forceRefresh: false });
+	const warmed = getQuickStatsFromCache();
+
+	if (warmed) {
+		return {
+			totalConversations: warmed.totalConversations,
+			totalMessages: warmed.totalMessages,
+			subagentCount: warmed.subagentCount,
+			projectCount: warmed.projectCount,
+			isCached: true,
+		};
+	}
+
 	const stats = await getConversationStats();
 	return {
 		totalConversations: stats.totalConversations,
