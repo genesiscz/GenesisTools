@@ -2,6 +2,7 @@ import { convertToMinutes, formatMinutes } from "@app/azure-devops/timelog-api";
 import type { AllowedTypeConfig } from "@app/azure-devops/types";
 import { requireTimeLogConfig } from "@app/azure-devops/utils";
 import { precheckWorkItem } from "@app/azure-devops/workitem-precheck";
+import { out } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import { Storage } from "@app/utils/storage";
 import type { Command } from "commander";
@@ -99,7 +100,7 @@ function printEntry(entry: StoredEntry): void {
     }
 
     parts.push(`[${entry._id.substring(0, 8)}]`);
-    console.log(`  ${parts.join(" | ")}`);
+    out.print(`  ${parts.join(" | ")}`);
 }
 
 // ============= Subcommand Actions =============
@@ -113,17 +114,17 @@ async function handleAdd(options: TimelogAddOptions): Promise<void> {
     try {
         rawEntry = SafeJSON.parse(options.entry);
     } catch {
-        console.error("Invalid JSON in --entry");
+        out.error("Invalid JSON in --entry");
         process.exit(1);
     }
 
     const parseResult = TimelogEntrySchema.safeParse(rawEntry);
 
     if (!parseResult.success) {
-        console.error("Validation errors:");
+        out.error("Validation errors:");
 
         for (const issue of parseResult.error.issues) {
-            console.error(`  - ${issue.path.join(".")}: ${issue.message}`);
+            out.error(`  - ${issue.path.join(".")}: ${issue.message}`);
         }
 
         process.exit(1);
@@ -135,7 +136,7 @@ async function handleAdd(options: TimelogAddOptions): Promise<void> {
     try {
         convertToMinutes(validated.hours, validated.minutes);
     } catch (e) {
-        console.error((e as Error).message);
+        out.error((e as Error).message);
         process.exit(1);
     }
 
@@ -155,13 +156,13 @@ async function handleAdd(options: TimelogAddOptions): Promise<void> {
     let effectiveWorkItemId = validated.workItemId;
 
     if (precheck.status === "error") {
-        console.error(`Precheck failed for #${validated.workItemId}: ${precheck.message}`);
+        out.error(`Precheck failed for #${validated.workItemId}: ${precheck.message}`);
 
         if (precheck.suggestCommands?.length) {
-            console.error("\nSuggested commands:");
+            out.error("\nSuggested commands:");
 
             for (const cmd of precheck.suggestCommands) {
-                console.error(`  ${cmd}`);
+                out.error(`  ${cmd}`);
             }
         }
 
@@ -169,7 +170,7 @@ async function handleAdd(options: TimelogAddOptions): Promise<void> {
     }
 
     if (precheck.status === "redirect") {
-        console.log(`Warning: ${precheck.message}`);
+        out.print(`Warning: ${precheck.message}`);
         effectiveWorkItemId = precheck.redirectId!;
     }
 
@@ -204,7 +205,7 @@ async function handleAdd(options: TimelogAddOptions): Promise<void> {
         };
     });
 
-    console.log("Entry added:");
+    out.print("Entry added:");
     printEntry(storedEntry);
 }
 
@@ -225,7 +226,7 @@ async function handleRemove(options: TimelogRemoveOptions): Promise<void> {
         return { ...current, entries: filtered };
     });
 
-    console.log(`Entry ${options.id} removed. ${updated.entries.length} entries remaining.`);
+    out.print(`Entry ${options.id} removed. ${updated.entries.length} entries remaining.`);
 }
 
 async function handleList(options: TimelogListOptions): Promise<void> {
@@ -233,22 +234,22 @@ async function handleList(options: TimelogListOptions): Promise<void> {
     const data = await storage.getCacheFile<PrepareImportFile>(key, "30 days");
 
     if (!data) {
-        console.error(`No prepare-import file found with name "${options.name}"`);
+        out.error(`No prepare-import file found with name "${options.name}"`);
         process.exit(1);
     }
 
     if (options.format === "json") {
-        console.log(SafeJSON.stringify(data, null, 2));
+        out.print(SafeJSON.stringify(data, null, 2));
         return;
     }
 
     // Table format (default)
-    console.log(`Prepare-import: ${data.name}`);
-    console.log(`Created: ${data.createdAt}`);
-    console.log(`Entries: ${data.entries.length}\n`);
+    out.print(`Prepare-import: ${data.name}`);
+    out.print(`Created: ${data.createdAt}`);
+    out.print(`Entries: ${data.entries.length}\n`);
 
     if (data.entries.length === 0) {
-        console.log("  (no entries)");
+        out.print("  (no entries)");
         return;
     }
 
@@ -267,15 +268,15 @@ async function handleList(options: TimelogListOptions): Promise<void> {
         workitemTotals.set(entry.workItemId, (workitemTotals.get(entry.workItemId) ?? 0) + mins);
     }
 
-    console.log("\nTotals per day:");
+    out.print("\nTotals per day:");
 
     const sortedDays = [...dailyTotals.entries()].sort(([a], [b]) => a.localeCompare(b));
 
     for (const [day, mins] of sortedDays) {
-        console.log(`  ${day}: ${formatMinutes(mins)}`);
+        out.print(`  ${day}: ${formatMinutes(mins)}`);
     }
 
-    console.log("\nTotals per work item:");
+    out.print("\nTotals per work item:");
 
     const workitemNames = new Map<number, string>();
 
@@ -290,17 +291,17 @@ async function handleList(options: TimelogListOptions): Promise<void> {
     for (const [id, mins] of sortedItems) {
         const name = workitemNames.get(id);
         const label = name ? `#${id} ${name}` : `#${id}`;
-        console.log(`  ${label}: ${formatMinutes(mins)}`);
+        out.print(`  ${label}: ${formatMinutes(mins)}`);
     }
 
     const grandTotal = [...dailyTotals.values()].reduce((sum, m) => sum + m, 0);
-    console.log(`\nGrand total: ${formatMinutes(grandTotal)}`);
+    out.print(`\nGrand total: ${formatMinutes(grandTotal)}`);
 }
 
 async function handleClear(options: TimelogClearOptions): Promise<void> {
     const key = cacheKey(options.name);
     await storage.deleteCacheFile(key);
-    console.log(`Prepare-import file "${options.name}" cleared.`);
+    out.print(`Prepare-import file "${options.name}" cleared.`);
 }
 
 // ============= Registration =============
@@ -321,7 +322,7 @@ export function registerPrepareImportSubcommand(parent: Command): void {
             try {
                 await handleAdd(opts);
             } catch (e) {
-                console.error((e as Error).message);
+                out.error((e as Error).message);
                 process.exit(1);
             }
         });
@@ -335,7 +336,7 @@ export function registerPrepareImportSubcommand(parent: Command): void {
             try {
                 await handleRemove(opts);
             } catch (e) {
-                console.error((e as Error).message);
+                out.error((e as Error).message);
                 process.exit(1);
             }
         });
@@ -349,7 +350,7 @@ export function registerPrepareImportSubcommand(parent: Command): void {
             try {
                 await handleList(opts);
             } catch (e) {
-                console.error((e as Error).message);
+                out.error((e as Error).message);
                 process.exit(1);
             }
         });
@@ -362,7 +363,7 @@ export function registerPrepareImportSubcommand(parent: Command): void {
             try {
                 await handleClear(opts);
             } catch (e) {
-                console.error((e as Error).message);
+                out.error((e as Error).message);
                 process.exit(1);
             }
         });

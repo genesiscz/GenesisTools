@@ -1,6 +1,6 @@
 import { lstatSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { logger } from "@app/logger";
+import { logger, out } from "@app/logger";
 import { Executor, runTool } from "@app/utils/cli";
 import { formatDateTime } from "@app/utils/date";
 import { formatRelativeTime as _formatRelativeTime } from "@app/utils/format";
@@ -12,10 +12,10 @@ import { Command } from "commander";
 handleReadmeFlag(import.meta.url);
 
 const log = {
-    info: (msg: string) => console.log(msg),
-    ok: (msg: string) => console.log(chalk.green("✔ ") + msg),
-    warn: (msg: string) => console.log(chalk.yellow("⚠ ") + msg),
-    err: (msg: string, e?: unknown) => console.error(chalk.red("✖ ") + msg + (e ? `: ${String(e)}` : "")),
+    info: (msg: string) => out.print(msg),
+    ok: (msg: string) => out.print(chalk.green("✔ ") + msg),
+    warn: (msg: string) => out.print(chalk.yellow("⚠ ") + msg),
+    err: (msg: string, e?: unknown) => out.error(chalk.red("✖ ") + msg + (e ? `: ${String(e)}` : "")),
 };
 
 interface FileChange {

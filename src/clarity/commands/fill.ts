@@ -1,6 +1,7 @@
 import { exportMonth } from "@app/azure-devops/lib/timelog/export";
 import { formatMinutes, TimeLogApi } from "@app/azure-devops/timelog-api";
 import { requireTimeLogConfig, requireTimeLogUser } from "@app/azure-devops/utils";
+import { out } from "@app/logger";
 import type { TimeEntryRecord, TimeSeriesValue } from "@app/utils/clarity";
 import { ClarityApi } from "@app/utils/clarity";
 import { addDay, formatDate, getWeekRange, subtractDay } from "@app/utils/date";
@@ -27,10 +28,10 @@ function renderWeekPreview(plan: WeekPlan): void {
     const start = plan.periodStart.split("T")[0];
     const end = subtractDay(plan.periodFinish.split("T")[0]);
 
-    console.log(`\n${pc.bold(`Week: ${start} to ${end}`)} (Timesheet: ${plan.timesheetId})`);
+    out.print(`\n${pc.bold(`Week: ${start} to ${end}`)} (Timesheet: ${plan.timesheetId})`);
 
     if (plan.entries.length === 0 && plan.unmappedWorkItems.length === 0) {
-        console.log(pc.dim("  No entries for this week"));
+        out.print(pc.dim("  No entries for this week"));
         return;
     }
 
@@ -85,16 +86,16 @@ function renderWeekPreview(plan: WeekPlan): void {
         table.push([name, ...dayValues, pc.bold(`${(total / 60).toFixed(2)}h`)]);
     }
 
-    console.log(table.toString());
+    out.print(table.toString());
 
     if (plan.unmappedWorkItems.length > 0) {
-        console.log(pc.yellow("\n  Unmapped work items (skipped):"));
+        out.print(pc.yellow("\n  Unmapped work items (skipped):"));
 
         for (const wi of plan.unmappedWorkItems) {
-            console.log(pc.yellow(`    #${wi.workItemId}: ${formatMinutes(wi.minutes)}`));
+            out.print(pc.yellow(`    #${wi.workItemId}: ${formatMinutes(wi.minutes)}`));
         }
 
-        console.log(pc.yellow("  Run 'tools clarity link-workitems' to create mappings"));
+        out.print(pc.yellow("  Run 'tools clarity link-workitems' to create mappings"));
     }
 }
 
@@ -118,7 +119,7 @@ export function registerFillCommand(program: Command): void {
             const year = options.year ?? new Date().getFullYear();
 
             if (options.confirm && options.dryRun) {
-                console.error("Cannot use --confirm and --dry-run together");
+                out.error("Cannot use --confirm and --dry-run together");
                 process.exit(1);
             }
 
@@ -126,7 +127,7 @@ export function registerFillCommand(program: Command): void {
             const verbose = options.verbose ?? false;
 
             if (options.month < 1 || options.month > 12) {
-                console.error("Month must be between 1 and 12");
+                out.error("Month must be between 1 and 12");
                 process.exit(1);
             }
 
@@ -146,14 +147,14 @@ export function registerFillCommand(program: Command): void {
                 cookies: clarityConfig.cookies,
             });
 
-            console.log(pc.bold(`\nFilling Clarity for ${options.month}/${year}${isDryRun ? " (DRY RUN)" : ""}`));
+            out.print(pc.bold(`\nFilling Clarity for ${options.month}/${year}${isDryRun ? " (DRY RUN)" : ""}`));
 
-            console.log("Exporting ADO timelog data...");
+            out.print("Exporting ADO timelog data...");
             const adoExport = await exportMonth(adoApi, options.month, year, adoUser.userId);
-            console.log(`  Found ${adoExport.entries.length} ADO entries (${adoExport.summary.totalHours}h total)`);
+            out.print(`  Found ${adoExport.entries.length} ADO entries (${adoExport.summary.totalHours}h total)`);
 
             if (adoExport.entries.length === 0) {
-                console.log("No ADO timelog entries found for this month.");
+                out.print("No ADO timelog entries found for this month.");
                 return;
             }
 
@@ -170,7 +171,7 @@ export function registerFillCommand(program: Command): void {
             const allDates = [...allDatesSet].sort();
 
             if (allDates.length === 0 && unmappedByWi.size > 0) {
-                console.log(pc.yellow("\nAll entries are unmapped. Run 'tools clarity link-workitems' first."));
+                out.print(pc.yellow("\nAll entries are unmapped. Run 'tools clarity link-workitems' first."));
                 return;
             }
 
@@ -191,13 +192,13 @@ export function registerFillCommand(program: Command): void {
             const firstMapping = clarityConfig.mappings[0];
 
             if (!firstMapping?.clarityTimesheetId) {
-                console.error(
+                out.error(
                     "No cached timesheet ID in mappings. Run 'tools clarity link-workitems' with a valid timesheet first."
                 );
                 process.exit(1);
             }
 
-            console.log("Loading Clarity timesheet data...");
+            out.print("Loading Clarity timesheet data...");
 
             const weekPlans: WeekPlan[] = [];
 
@@ -208,7 +209,7 @@ export function registerFillCommand(program: Command): void {
                 );
 
                 if (!carouselEntry) {
-                    console.warn(pc.yellow(`  Could not find timesheet for week ${formatDate(week.start)}`));
+                    out.warn(pc.yellow(`  Could not find timesheet for week ${formatDate(week.start)}`));
                     continue;
                 }
 
@@ -216,7 +217,7 @@ export function registerFillCommand(program: Command): void {
                 const ts = tsData.timesheets._results[0];
 
                 if (!ts) {
-                    console.warn(
+                    out.warn(
                         pc.yellow(
                             `  Could not load timesheet ${carouselEntry.timesheet_id} for week ${formatDate(week.start)}`
                         )
@@ -241,7 +242,7 @@ export function registerFillCommand(program: Command): void {
                     );
 
                     if (!timeEntry) {
-                        console.warn(
+                        out.warn(
                             pc.yellow(
                                 `  No time entry found for task ${fill.mapping.clarityTaskName} in timesheet ${ts._internalId}`
                             )
@@ -265,18 +266,18 @@ export function registerFillCommand(program: Command): void {
             }
 
             if (isDryRun) {
-                console.log(pc.cyan("\n  This is a DRY RUN. Use --confirm to execute."));
+                out.print(pc.cyan("\n  This is a DRY RUN. Use --confirm to execute."));
                 return;
             }
 
             // Execute
-            console.log(pc.bold("\nExecuting fill..."));
+            out.print(pc.bold("\nExecuting fill..."));
             let successCount = 0;
             let errorCount = 0;
 
             for (const plan of weekPlans) {
                 const weekLabel = `${plan.periodStart.split("T")[0]} to ${subtractDay(plan.periodFinish.split("T")[0])}`;
-                console.log(`\n${pc.dim(`TS#${plan.timesheetId} (${weekLabel})`)}`);
+                out.print(`\n${pc.dim(`TS#${plan.timesheetId} (${weekLabel})`)}`);
 
                 for (const entry of plan.entries) {
                     // periodFinish is inclusive (last day) — add 1 day for exclusive loop bound
@@ -320,33 +321,33 @@ export function registerFillCommand(program: Command): void {
                             actuals,
                         });
                         successCount++;
-                        console.log(
+                        out.print(
                             pc.green(`  ${pc.bold("OK")} ${taskName}: ${totalHours.toFixed(2)}h [${dayBreakdown}]`)
                         );
 
                         if (verbose) {
-                            console.log(pc.dim(`     PUT ${debug.url}`));
-                            console.log(pc.dim(`     Status: ${debug.responseStatus}`));
-                            console.log(pc.dim(`     Request:  ${SafeJSON.stringify(debug.requestBody)}`));
-                            console.log(pc.dim(`     Response: ${SafeJSON.stringify(debug.responseBody)}`));
+                            out.print(pc.dim(`     PUT ${debug.url}`));
+                            out.print(pc.dim(`     Status: ${debug.responseStatus}`));
+                            out.print(pc.dim(`     Request:  ${SafeJSON.stringify(debug.requestBody)}`));
+                            out.print(pc.dim(`     Response: ${SafeJSON.stringify(debug.responseBody)}`));
                         }
                     } catch (err) {
                         errorCount++;
                         const msg = err instanceof Error ? err.message : String(err);
-                        console.error(pc.red(`  ${pc.bold("FAIL")} ${taskName}: ${msg}`));
+                        out.error(pc.red(`  ${pc.bold("FAIL")} ${taskName}: ${msg}`));
 
                         if (verbose) {
                             const debug = (err as Error & { debug?: unknown }).debug;
 
                             if (debug) {
-                                console.log(pc.dim(`     Debug: ${SafeJSON.stringify(debug)}`));
+                                out.print(pc.dim(`     Debug: ${SafeJSON.stringify(debug)}`));
                             }
                         }
                     }
                 }
             }
 
-            console.log(
+            out.print(
                 `\n${pc.bold("Results:")} ${pc.green(`${successCount} updated`)}` +
                     `${errorCount > 0 ? `, ${pc.red(`${errorCount} failed`)}` : ""}`
             );

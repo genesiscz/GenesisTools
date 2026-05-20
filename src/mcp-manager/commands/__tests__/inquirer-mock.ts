@@ -8,11 +8,11 @@ function getResponses(): MockResponses {
 }
 
 /**
- * Setup @inquirer/prompts mock using globalThis for dynamic responses
- * Call this at the top of test files before importing command modules
+ * Setup prompt mocks for mcp-manager tests.
+ * Mocks @app/utils/prompts/p (p.select, p.multiselect, p.text, p.confirm) and
+ * @app/utils/prompts/p/inquirer-backend (inquirerBackend.search).
  *
- * @inquirer/prompts exports individual async functions (not a class like Enquirer),
- * so we mock each function separately.
+ * Call this at the top of test files before importing command modules.
  */
 export function setupInquirerMock(): void {
     // Use globalThis to store mock responses so the mock can access them
@@ -28,33 +28,30 @@ export function setupInquirerMock(): void {
         isInteractive: () => true,
     }));
 
-    mock.module("@inquirer/prompts", () => ({
-        checkbox: async (_config: unknown) => {
-            const responses = getResponses();
-            const value = responses.selectedProviders;
-            // Throw if the response is an Error (e.g., ExitPromptError for testing cancellation)
-            if (value instanceof Error) {
-                throw value;
-            }
-            // checkbox returns an array directly (not wrapped in an object)
-            return value ?? [];
-        },
+    // Mock p.* functions (text, select, multiselect, confirm)
+    mock.module("@app/utils/prompts/p", () => ({
+        setBackend: () => {},
+        isCancel: () => false,
         select: async (_config: unknown) => {
             const responses = getResponses();
-            // Check for error responses first
             const errorKeys = ["selectedProvider", "choice", "inputType"];
             for (const key of errorKeys) {
                 if (responses[key] instanceof Error) {
                     throw responses[key];
                 }
             }
-            // select returns a single value directly
-            // Support both 'selectedProvider' and 'choice' keys for different test scenarios
             return responses.selectedProvider ?? responses.choice ?? responses.inputType ?? "";
         },
-        input: async (config: { message?: string; default?: string }) => {
+        multiselect: async (_config: unknown) => {
             const responses = getResponses();
-            // Check for error responses first
+            const value = responses.selectedProviders;
+            if (value instanceof Error) {
+                throw value;
+            }
+            return value ?? [];
+        },
+        text: async (config: { message?: string; initialValue?: string; default?: string }) => {
+            const responses = getResponses();
             const inputKeys = [
                 "inputServerName",
                 "inputNewName",
@@ -69,8 +66,6 @@ export function setupInquirerMock(): void {
                     throw responses[key];
                 }
             }
-            // input returns a string directly
-            // Support multiple input field keys based on what the test expects
             if (responses.inputServerName !== undefined) {
                 return responses.inputServerName;
             }
@@ -92,80 +87,70 @@ export function setupInquirerMock(): void {
             if (responses.newServerName !== undefined) {
                 return responses.newServerName;
             }
-            // Fall back to default if provided in config
-            return config?.default ?? "";
+            return config?.initialValue ?? config?.default ?? "";
         },
         confirm: async (_config: unknown) => {
             const responses = getResponses();
             const value = responses.confirmed;
-            // Throw if the response is an Error
             if (value instanceof Error) {
                 throw value;
             }
-            // confirm returns a boolean directly
             return value ?? false;
-        },
-        search: async (_config: unknown) => {
-            const responses = getResponses();
-            // Check for error responses first
-            const searchKeys = ["selectedOldName", "selectedServerName", "inputServerName"];
-            for (const key of searchKeys) {
-                if (responses[key] instanceof Error) {
-                    throw responses[key];
-                }
-            }
-            // search returns a single value directly
-            // Support both 'selectedOldName' and 'selectedServerName' keys
-            if (responses.selectedOldName !== undefined) {
-                return responses.selectedOldName;
-            }
-            if (responses.selectedServerName !== undefined) {
-                return responses.selectedServerName;
-            }
-            if (responses.inputServerName !== undefined) {
-                return responses.inputServerName;
-            }
-            return "";
         },
         password: async (_config: unknown) => {
             const responses = getResponses();
             const value = responses.password;
-            // Throw if the response is an Error
             if (value instanceof Error) {
                 throw value;
             }
-            // password returns a string directly
             return value ?? "";
         },
     }));
 
-    // Also mock @inquirer/core for ExitPromptError
-    mock.module("@inquirer/core", () => ({
-        ExitPromptError: class ExitPromptError extends Error {
-            constructor(message = "User force closed the prompt") {
-                super(message);
-                this.name = "ExitPromptError";
-            }
+    // Mock inquirerBackend.search (used for server/provider search prompts)
+    mock.module("@app/utils/prompts/p/inquirer-backend", () => ({
+        inquirerBackend: {
+            search: async (_config: unknown) => {
+                const responses = getResponses();
+                const searchKeys = ["selectedOldName", "selectedServerName", "inputServerName"];
+                for (const key of searchKeys) {
+                    if (responses[key] instanceof Error) {
+                        throw responses[key];
+                    }
+                }
+                if (responses.selectedOldName !== undefined) {
+                    return responses.selectedOldName;
+                }
+                if (responses.selectedServerName !== undefined) {
+                    return responses.selectedServerName;
+                }
+                if (responses.inputServerName !== undefined) {
+                    return responses.inputServerName;
+                }
+                return "";
+            },
         },
+        InquirerBackend: {},
+        InquirerExtras: {},
     }));
 }
 
 /**
- * Set mock responses for @inquirer/prompts functions
+ * Set mock responses for prompt functions
  *
  * Keys:
- * - selectedProviders: string[] - for checkbox prompts selecting providers
+ * - selectedProviders: string[] - for multiselect prompts selecting providers
  * - selectedProvider: string - for select prompts selecting a single provider
  * - choice: string - alternative for select prompts (e.g., conflict resolution)
- * - inputServerName: string - for search/input prompts for server name
+ * - inputServerName: string - for search/text prompts for server name
  * - selectedOldName: string - for search prompts selecting server to rename
- * - inputNewName: string - for input prompts for new server name
- * - inputCommand: string - for input prompts for command
- * - inputEnv: string - for input prompts for environment variables
- * - inputHeaders: string - for input prompts for headers
+ * - inputNewName: string - for text prompts for new server name
+ * - inputCommand: string - for text prompts for command
+ * - inputEnv: string - for text prompts for environment variables
+ * - inputHeaders: string - for text prompts for headers
  * - inputType: string - for select prompts for transport type
  * - confirmed: boolean - for confirm prompts
- * - newServerName: string - for input prompts when creating new server
+ * - newServerName: string - for text prompts when creating new server
  */
 export function setMockResponses(responses: Record<string, unknown>): void {
     (globalThis as Record<string, unknown>).__inquirerMockResponses = responses;

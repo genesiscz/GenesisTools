@@ -1,3 +1,4 @@
+import { out } from "@app/logger";
 import { MacCalendar } from "@app/utils/macos/apple-calendar";
 import { formatTable } from "@app/utils/table";
 import chalk from "chalk";
@@ -12,7 +13,7 @@ export function registerListCalendarsCommand(program: Command): void {
                 const calendars = await MacCalendar.listCalendars();
 
                 if (calendars.length === 0) {
-                    console.log("No calendars found.");
+                    out.print("No calendars found.");
                     return;
                 }
 
@@ -24,9 +25,9 @@ export function registerListCalendarsCommand(program: Command): void {
                 ]);
 
                 const table = formatTable(rows, ["Title", "Source", "Type", "Editable"]);
-                console.log(table);
+                out.print(table);
             } catch (error) {
-                console.error(error instanceof Error ? error.message : String(error));
+                out.error(error instanceof Error ? error.message : String(error));
                 process.exit(1);
             }
         });

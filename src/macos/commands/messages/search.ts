@@ -1,3 +1,4 @@
+import { out } from "@app/logger";
 import { parseMailDate } from "@app/macos/lib/mail/command-helpers";
 import { iMessagesDatabase } from "@app/utils/macos/iMessagesDatabase";
 import { MacContactsDatabase } from "@app/utils/macos/MacContactsDatabase";
@@ -26,7 +27,7 @@ export function registerMessagesSearchCommand(program: Command): void {
             });
 
             if (messages.length === 0) {
-                console.log("No messages found.");
+                out.print("No messages found.");
                 return;
             }
 
@@ -48,11 +49,11 @@ export function registerMessagesSearchCommand(program: Command): void {
                 const chatLabel = chalk.dim(`[${msg.chatIdentifier}]`);
                 const text = msg.text ?? chalk.dim("[no text]");
 
-                console.log(`${senderName} ${chalk.dim(date)} ${chatLabel}`);
-                console.log(`  ${text}`);
-                console.log();
+                out.print(`${senderName} ${chalk.dim(date)} ${chatLabel}`);
+                out.print(`  ${text}`);
+                out.print();
             }
 
-            console.log(chalk.dim(`${messages.length} result(s)`));
+            out.print(chalk.dim(`${messages.length} result(s)`));
         });
 }

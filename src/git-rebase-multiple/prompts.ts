@@ -1,4 +1,6 @@
-import { checkbox, confirm, input, search, select } from "@inquirer/prompts";
+import { out } from "@app/logger";
+import * as p from "@app/utils/prompts/p";
+import { inquirerBackend } from "@app/utils/prompts/p/inquirer-backend";
 import chalk from "chalk";
 import { git } from "./git";
 import type { PlanStep } from "./types";
@@ -19,17 +21,15 @@ export const prompts = {
             name: b.name + (b.isCurrent ? chalk.dim(" (current)") : ""),
         }));
 
-        return search({
+        return inquirerBackend.search({
             message: "Which branch do you want to rebase?",
-            source: async (term) => {
-                if (!term) {
-                    return allChoices;
-                }
-                const lower = term.toLowerCase();
-                return allChoices.filter((c) => c.value.toLowerCase().includes(lower));
+            options: async (term) => {
+                const filtered = !term
+                    ? allChoices
+                    : allChoices.filter((c) => c.value.toLowerCase().includes(term.toLowerCase()));
+                return filtered.map((c) => ({ value: c.value, label: c.name }));
             },
-            default: currentBranch,
-        });
+        }) as Promise<string>;
     },
 
     /**
@@ -45,16 +45,15 @@ export const prompts = {
                 name: b.name,
             }));
 
-        return search({
+        return inquirerBackend.search({
             message: "Onto which branch?",
-            source: async (term) => {
-                if (!term) {
-                    return allChoices;
-                }
-                const lower = term.toLowerCase();
-                return allChoices.filter((c) => c.value.toLowerCase().includes(lower));
+            options: async (term) => {
+                const filtered = !term
+                    ? allChoices
+                    : allChoices.filter((c) => c.value.toLowerCase().includes(term.toLowerCase()));
+                return filtered.map((c) => ({ value: c.value, label: c.name }));
             },
-        });
+        }) as Promise<string>;
     },
 
     /**
@@ -65,40 +64,40 @@ export const prompts = {
         potentialChildren: Array<{ name: string; commitsAhead: number }>
     ): Promise<string[]> {
         if (potentialChildren.length === 0) {
-            console.log(chalk.yellow("\nNo dependent branches found."));
+            out.print(chalk.yellow("\nNo dependent branches found."));
             return [];
         }
 
-        console.log(chalk.dim(`\nFound ${potentialChildren.length} branches that may depend on ${parentBranch}:`));
+        out.print(chalk.dim(`\nFound ${potentialChildren.length} branches that may depend on ${parentBranch}:`));
 
-        return checkbox({
+        return p.multiselect({
             message: "Select child branches to rebase (space to toggle):",
-            choices: potentialChildren.map((child) => ({
+            options: potentialChildren.map((child) => ({
                 value: child.name,
-                name: `${child.name} ${chalk.dim(`(${child.commitsAhead} commits ahead)`)}`,
-                checked: true, // Pre-select all
+                label: `${child.name} ${chalk.dim(`(${child.commitsAhead} commits ahead)`)}`,
             })),
-        });
+            initialValues: potentialChildren.map((child) => child.name),
+        }) as Promise<string[]>;
     },
 
     /**
      * Show execution plan and confirm
      */
     async confirmPlan(_config: unknown, steps: PlanStep[]): Promise<boolean> {
-        console.log(chalk.bold("\n📝 Execution Plan:\n"));
+        out.print(chalk.bold("\n📝 Execution Plan:\n"));
 
         for (const step of steps) {
-            console.log(`${chalk.cyan(`  Step ${step.stepNumber}:`)} ${step.description}`);
+            out.print(`${chalk.cyan(`  Step ${step.stepNumber}:`)} ${step.description}`);
             if (step.command) {
-                console.log(chalk.dim(`         ${step.command}`));
+                out.print(chalk.dim(`         ${step.command}`));
             }
         }
 
-        console.log(chalk.yellow("\n⚠️  You can abort at ANY step with: tools git-rebase-multiple --abort"));
+        out.print(chalk.yellow("\n⚠️  You can abort at ANY step with: tools git-rebase-multiple --abort"));
 
-        return confirm({
+        return p.confirm({
             message: "Continue?",
-            default: true,
+            initialValue: true,
         });
     },
 
@@ -106,7 +105,7 @@ export const prompts = {
      * Wait for user to press Enter
      */
     async pressEnterToContinue(message = "Press Enter to continue..."): Promise<void> {
-        await input({
+        await p.text({
             message: chalk.dim(message),
         });
     },
@@ -115,9 +114,9 @@ export const prompts = {
      * Confirm abort operation
      */
     async confirmAbort(): Promise<boolean> {
-        return confirm({
+        return p.confirm({
             message: "This will restore all branches to their original state. Continue?",
-            default: true,
+            initialValue: true,
         });
     },
 
@@ -125,75 +124,75 @@ export const prompts = {
      * When aborting with uncommitted changes, ask how to handle them
      */
     async selectAbortAction(): Promise<"stash" | "discard" | "cancel"> {
-        return select({
+        return p.select({
             message: "Uncommitted changes detected. How do you want to proceed?",
-            choices: [
+            options: [
                 {
                     value: "stash" as const,
-                    name: "Stash changes (recover later with 'git stash pop')",
+                    label: "Stash changes (recover later with 'git stash pop')",
                 },
                 {
                     value: "discard" as const,
-                    name: "Discard changes (cannot be recovered)",
+                    label: "Discard changes (cannot be recovered)",
                 },
                 {
                     value: "cancel" as const,
-                    name: "Cancel abort (keep current state)",
+                    label: "Cancel abort (keep current state)",
                 },
             ],
-        });
+        }) as Promise<"stash" | "discard" | "cancel">;
     },
 
     /**
      * Confirm proceeding when local branch diverges from remote
      */
     async confirmDivergence(): Promise<boolean> {
-        return select({
+        return p.select({
             message: "Your branch diverges from remote. Continue with rebase?",
-            choices: [
+            options: [
                 {
-                    value: true,
-                    name: "Yes, continue (will require 'git push --force' later)",
+                    value: true as unknown as string,
+                    label: "Yes, continue (will require 'git push --force' later)",
                 },
                 {
-                    value: false,
-                    name: "No, cancel (consider 'git pull' first)",
+                    value: false as unknown as string,
+                    label: "No, cancel (consider 'git pull' first)",
                 },
             ],
-        });
+        }) as unknown as Promise<boolean>;
     },
 
     /**
      * Select cleanup options
      */
     async selectCleanupOption(): Promise<"keep" | "delete-all" | "delete-tags-only"> {
-        return select({
+        return p.select({
             message: "What would you like to do with backup refs?",
-            choices: [
-                { value: "keep" as const, name: "Keep backups (recommended)" },
-                { value: "delete-all" as const, name: "Delete all backups and fork tags" },
-                { value: "delete-tags-only" as const, name: "Delete only fork tags, keep branch backups" },
+            options: [
+                { value: "keep" as const, label: "Keep backups (recommended)" },
+                { value: "delete-all" as const, label: "Delete all backups and fork tags" },
+                { value: "delete-tags-only" as const, label: "Delete only fork tags, keep branch backups" },
             ],
-        });
+        }) as Promise<"keep" | "delete-all" | "delete-tags-only">;
     },
 
     /**
      * Select a branch to restore
      */
     async selectBranchToRestore(branches: string[]): Promise<string> {
-        return select({
+        return p.select({
             message: "Which branch do you want to restore?",
-            choices: branches.map((b) => ({ value: b, name: b })),
-        });
+            options: branches.map((b) => ({ value: b, label: b })),
+        }) as Promise<string>;
     },
 
     /**
      * Confirm continue after conflict resolution
      */
     async confirmContinue(): Promise<boolean> {
-        return confirm({
+        return p.confirm({
             message: "Have you resolved all conflicts and staged the changes?",
-            default: true,
+            initialValue: true,
         });
     },
 
@@ -201,27 +200,27 @@ export const prompts = {
      * Ask what to do about target branch divergence
      */
     async selectTargetDivergenceAction(): Promise<"pull" | "reset" | "skip" | "cancel"> {
-        const answer = await select<"pull" | "reset" | "skip" | "cancel">({
+        const answer = (await p.select({
             message: "Target branch diverges from remote. What would you like to do?",
-            choices: [
+            options: [
                 {
                     value: "pull",
-                    name: "Pull from remote (git pull - merge remote changes)",
+                    label: "Pull from remote (git pull - merge remote changes)",
                 },
                 {
                     value: "reset",
-                    name: "Reset to remote (git reset --hard - discard local changes)",
+                    label: "Reset to remote (git reset --hard - discard local changes)",
                 },
                 {
                     value: "skip",
-                    name: "Skip sync (proceed with local version)",
+                    label: "Skip sync (proceed with local version)",
                 },
                 {
                     value: "cancel",
-                    name: "Cancel operation",
+                    label: "Cancel operation",
                 },
             ],
-        });
+        })) as "pull" | "reset" | "skip" | "cancel";
 
         return answer;
     },

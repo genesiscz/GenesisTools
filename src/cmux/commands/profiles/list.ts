@@ -1,5 +1,6 @@
 import { renderProfileList } from "@app/cmux/lib/format";
 import { ProfileStore } from "@app/cmux/lib/store";
+import { out } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -14,13 +15,13 @@ export function registerListCommand(parent: Command): void {
             const store = new ProfileStore();
             const summaries = store.list();
             if (opts.json) {
-                console.log(SafeJSON.stringify(summaries, null, 2));
+                out.print(SafeJSON.stringify(summaries, null, 2));
                 return;
             }
-            console.log(renderProfileList(summaries));
+            out.print(renderProfileList(summaries));
             if (summaries.length > 0) {
-                console.log("");
-                console.log(pc.dim(`profiles dir: ${store.getProfilesDir()}`));
+                out.print("");
+                out.print(pc.dim(`profiles dir: ${store.getProfilesDir()}`));
             }
         });
 }

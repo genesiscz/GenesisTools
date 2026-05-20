@@ -1,3 +1,4 @@
+import { out } from "@app/logger";
 import type { Command } from "commander";
 import pc from "picocolors";
 
@@ -270,7 +271,7 @@ export class Executor {
         const env = this.buildEnv(options?.env);
 
         if (this.verbose) {
-            console.log(pc.gray(`  $ ${cmd.join(" ")}`));
+            out.print(pc.gray(`  $ ${cmd.join(" ")}`));
         }
 
         const proc = Bun.spawn({
@@ -320,13 +321,13 @@ export class Executor {
 
         if (this.debug) {
             if (result.stdout) {
-                console.log(pc.dim(`  [${this.label}:out] ${result.stdout.substring(0, 200)}`));
+                out.print(pc.dim(`  [${this.label}:out] ${result.stdout.substring(0, 200)}`));
             }
             if (result.stderr) {
-                console.log(pc.dim(`  [${this.label}:err] ${result.stderr.substring(0, 200)}`));
+                out.print(pc.dim(`  [${this.label}:err] ${result.stderr.substring(0, 200)}`));
             }
             if (!result.success) {
-                console.log(pc.red(`  [${this.label}] exit ${exitCode}`));
+                out.print(pc.red(`  [${this.label}] exit ${exitCode}`));
             }
         }
 
@@ -343,7 +344,7 @@ export class Executor {
         const env = this.buildEnv(options?.env);
 
         if (this.verbose) {
-            console.log(pc.cyan(`  $ ${cmd.join(" ")}`));
+            out.print(pc.cyan(`  $ ${cmd.join(" ")}`));
         }
 
         const proc = Bun.spawn({

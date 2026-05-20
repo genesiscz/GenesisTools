@@ -2,6 +2,7 @@ import { printFormatted, truncatePath } from "@app/har-analyzer/core/formatter";
 import { loadHarFile } from "@app/har-analyzer/core/parser";
 import { SessionManager } from "@app/har-analyzer/core/session-manager";
 import type { HarEntry, OutputOptions } from "@app/har-analyzer/types";
+import { out } from "@app/logger";
 import type { Command } from "commander";
 
 interface CookieInfo {
@@ -154,7 +155,7 @@ export function registerCookiesCommand(program: Command): void {
             const cookies = analyzeCookies(har.log.entries);
 
             if (cookies.length === 0) {
-                console.log("No cookies found in HAR file.");
+                out.print("No cookies found in HAR file.");
                 return;
             }
 

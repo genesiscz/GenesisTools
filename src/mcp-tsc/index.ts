@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { logger } from "@app/logger";
+import { logger, out } from "@app/logger";
 import { CliHandler } from "@app/mcp-tsc/cli/CliHandler.js";
 import { DiagnosticsCommand } from "@app/mcp-tsc/cli/commands/DiagnosticsCommand.js";
 import { HoverCommand } from "@app/mcp-tsc/cli/commands/HoverCommand.js";
@@ -170,7 +170,7 @@ async function main() {
         case "diagnostics":
             {
                 if (argv._.length === 0) {
-                    console.error("Error: No files specified for diagnostics");
+                    out.error("Error: No files specified for diagnostics");
                     cliHandler.showHelp();
                     process.exit(1);
                 }
@@ -201,7 +201,7 @@ async function main() {
         case "hover":
             {
                 if (argv["use-tsc"]) {
-                    console.error("Error: Hover is not supported with --use-tsc. Use LSP mode (default) for hover.");
+                    out.error("Error: Hover is not supported with --use-tsc. Use LSP mode (default) for hover.");
                     process.exit(1);
                 }
 
@@ -235,9 +235,9 @@ main().catch((err) => {
         },
         "main() caught error"
     );
-    console.error(`\nError: ${err.message}`);
+    out.error(`\nError: ${err.message}`);
     if (process.env.DEBUG === "1") {
-        console.error(err.stack);
+        out.error(err.stack);
     }
     logger.info({ component: "mcp-tsc", pid: process.pid, exitCode: 2 }, "Exiting due to error");
     process.exit(2);

@@ -1,3 +1,4 @@
+import { out } from "@app/logger";
 import type { TimeEntryRecord, TimesheetRecord } from "@app/utils/clarity";
 import { ClarityApi } from "@app/utils/clarity";
 import { SafeJSON } from "@app/utils/json";
@@ -44,13 +45,13 @@ function renderTimesheetTable(ts: TimesheetRecord, entries: TimeEntryRecord[]): 
     const start = ts.timePeriodStart.split("T")[0];
     const finish = ts.timePeriodFinish.split("T")[0];
 
-    console.log(`\n${pc.bold(`Timesheet ${ts._internalId}`)} (${start} to ${finish})`);
-    console.log(
+    out.print(`\n${pc.bold(`Timesheet ${ts._internalId}`)} (${start} to ${finish})`);
+    out.print(
         `Status: ${statusColor(ts.status.id)} | Entries: ${entries.length} | Total: ${formatSeconds(ts.actualsTotal)}`
     );
 
     if (entries.length === 0) {
-        console.log(pc.dim("  No time entries"));
+        out.print(pc.dim("  No time entries"));
         return;
     }
 
@@ -94,7 +95,7 @@ function renderTimesheetTable(ts: TimesheetRecord, entries: TimeEntryRecord[]): 
         table.push([name, ...dayValues, pc.bold(formatSeconds(entryTotal))]);
     }
 
-    console.log(table.toString());
+    out.print(table.toString());
 }
 
 export function registerTimesheetCommand(program: Command): void {
@@ -115,7 +116,7 @@ export function registerTimesheetCommand(program: Command): void {
             const timesheetId = parseInt(timesheetIdStr, 10);
 
             if (Number.isNaN(timesheetId)) {
-                console.error("Invalid timesheet ID");
+                out.error("Invalid timesheet ID");
                 process.exit(1);
             }
 
@@ -124,19 +125,19 @@ export function registerTimesheetCommand(program: Command): void {
             try {
                 data = await api.getTimesheet(timesheetId);
             } catch (err) {
-                console.error(`Failed to fetch timesheet: ${err instanceof Error ? err.message : String(err)}`);
+                out.error(`Failed to fetch timesheet: ${err instanceof Error ? err.message : String(err)}`);
                 process.exit(1);
             }
 
             const ts = data.timesheets._results[0];
 
             if (!ts) {
-                console.error(`Timesheet ${timesheetId} not found`);
+                out.error(`Timesheet ${timesheetId} not found`);
                 process.exit(1);
             }
 
             if (options.format === "json") {
-                console.log(SafeJSON.stringify(data, null, 2));
+                out.print(SafeJSON.stringify(data, null, 2));
                 return;
             }
 
@@ -157,7 +158,7 @@ export function registerTimesheetCommand(program: Command): void {
             });
 
             if (!options.period) {
-                console.error("--period <timePeriodId> is required. Find it via the Clarity web UI.");
+                out.error("--period <timePeriodId> is required. Find it via the Clarity web UI.");
                 process.exit(1);
             }
 
@@ -166,16 +167,16 @@ export function registerTimesheetCommand(program: Command): void {
             try {
                 data = await api.getTimesheetApp(options.period);
             } catch (err) {
-                console.error(`Failed to fetch timesheets: ${err instanceof Error ? err.message : String(err)}`);
+                out.error(`Failed to fetch timesheets: ${err instanceof Error ? err.message : String(err)}`);
                 process.exit(1);
             }
 
             if (options.format === "json") {
-                console.log(SafeJSON.stringify(data, null, 2));
+                out.print(SafeJSON.stringify(data, null, 2));
                 return;
             }
 
-            console.log(pc.bold("\nTimesheet Carousel:"));
+            out.print(pc.bold("\nTimesheet Carousel:"));
 
             const table = new Table({
                 head: ["Period ID", "Timesheet ID", "Start", "End", "Total", "Status"],
@@ -193,7 +194,7 @@ export function registerTimesheetCommand(program: Command): void {
                 ]);
             }
 
-            console.log(table.toString());
+            out.print(table.toString());
         });
 
     ts.command("submit <timesheetId>")
@@ -210,7 +211,7 @@ export function registerTimesheetCommand(program: Command): void {
             const timesheetId = parseInt(timesheetIdStr, 10);
 
             if (Number.isNaN(timesheetId)) {
-                console.error("Invalid timesheet ID");
+                out.error("Invalid timesheet ID");
                 process.exit(1);
             }
 
@@ -254,7 +255,7 @@ export function registerTimesheetCommand(program: Command): void {
             const timesheetId = parseInt(timesheetIdStr, 10);
 
             if (Number.isNaN(timesheetId)) {
-                console.error("Invalid timesheet ID");
+                out.error("Invalid timesheet ID");
                 process.exit(1);
             }
 

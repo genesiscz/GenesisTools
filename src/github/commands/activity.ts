@@ -2,7 +2,7 @@
 
 import { formatActivity } from "@app/github/lib/output";
 import type { ActivityCommandOptions, ActivityItem, GitHubEvent } from "@app/github/types";
-import { logger } from "@app/logger";
+import { logger, out } from "@app/logger";
 import { getOctokit } from "@app/utils/github/octokit";
 import { withRetry } from "@app/utils/github/rate-limit";
 import { parseDate } from "@app/utils/github/url-parser";
@@ -202,7 +202,7 @@ export async function activityCommand(options: ActivityCommandOptions): Promise<
     items = items.slice(0, limit);
 
     if (items.length === 0) {
-        console.log(chalk.yellow("No matching activity found."));
+        out.print(chalk.yellow("No matching activity found."));
         return;
     }
 
@@ -212,9 +212,9 @@ export async function activityCommand(options: ActivityCommandOptions): Promise<
 
     if (options.output) {
         await Bun.write(options.output, output);
-        console.log(chalk.green(`Output written to ${options.output}`));
+        out.print(chalk.green(`Output written to ${options.output}`));
     } else {
-        console.log(output);
+        out.print(output);
     }
 }
 
@@ -238,7 +238,7 @@ export function createActivityCommand(): Command {
                 await activityCommand(opts);
             } catch (error) {
                 logger.error({ error }, "Activity command failed");
-                console.error(chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`));
+                out.error(chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`));
                 process.exit(1);
             }
         });

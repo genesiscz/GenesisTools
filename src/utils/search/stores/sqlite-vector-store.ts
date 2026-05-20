@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { out } from "@app/logger";
 import { cosineDistance } from "@app/utils/math";
 import type { VectorSearchHit, VectorStore } from "./vector-store";
 
@@ -42,7 +43,7 @@ export class SqliteVectorStore implements VectorStore {
         }>;
 
         if (!this.warnedLargeScan && rows.length > 10_000) {
-            console.warn(
+            out.warn(
                 `[indexer] Brute-force vector scan (${rows.length} vectors). ` +
                     `Run "tools indexer migrate-vec" to convert to sqlite-vec for faster search.`
             );

@@ -6,6 +6,7 @@
  * Usage: bun src/utils/shell/fix/benchmark.ts
  */
 
+import { out } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import chalk from "chalk";
 import { fixShellCommand as fixRegex } from "./impl-regex.js";
@@ -97,15 +98,15 @@ function benchmark(impl: ImplEntry, prettify: boolean, iterations: number): numb
 function printReport(label: string, reports: ImplReport[]): void {
     const total = testCases.length;
 
-    console.log(chalk.dim("─".repeat(80)));
-    console.log(chalk.bold(`  ${label}`));
-    console.log(chalk.dim("─".repeat(80)));
+    out.print(chalk.dim("─".repeat(80)));
+    out.print(chalk.bold(`  ${label}`));
+    out.print(chalk.dim("─".repeat(80)));
 
     for (const report of reports) {
         const statusIcon = report.failed === 0 && report.crashed === 0 ? chalk.green("✓") : chalk.red("✗");
         const passRate = ((report.passed / total) * 100).toFixed(1);
 
-        console.log(
+        out.print(
             `${statusIcon} ${chalk.bold(report.name.padEnd(14))} ` +
                 `${chalk.green(`${report.passed} pass`)}  ` +
                 `${report.failed > 0 ? chalk.red(`${report.failed} fail`) : chalk.dim("0 fail")}  ` +
@@ -128,27 +129,27 @@ function printFailures(reports: ImplReport[]): void {
             continue;
         }
 
-        console.log(chalk.bold.yellow(`  ${report.name}:`));
+        out.print(chalk.bold.yellow(`  ${report.name}:`));
 
         for (const f of report.failures) {
-            console.log(chalk.red(`    ✗ ${f.testName}`));
-            console.log(chalk.dim(`      tags: ${f.tags.join(", ")}`));
-            console.log(chalk.dim(`      expected: ${SafeJSON.stringify(f.expected).slice(0, 120)}`));
-            console.log(chalk.dim(`      actual:   ${SafeJSON.stringify(f.actual).slice(0, 120)}`));
+            out.print(chalk.red(`    ✗ ${f.testName}`));
+            out.print(chalk.dim(`      tags: ${f.tags.join(", ")}`));
+            out.print(chalk.dim(`      expected: ${SafeJSON.stringify(f.expected).slice(0, 120)}`));
+            out.print(chalk.dim(`      actual:   ${SafeJSON.stringify(f.actual).slice(0, 120)}`));
         }
 
         for (const c of report.crashes) {
-            console.log(chalk.yellow(`    💥 ${c.testName}: ${c.error}`));
+            out.print(chalk.yellow(`    💥 ${c.testName}: ${c.error}`));
         }
 
-        console.log();
+        out.print();
     }
 }
 
 // ── Main ─────────────────────────────────────────────────────────────────
 
 const total = testCases.length;
-console.log(chalk.bold(`\nShell Command Fixer — ${total} test cases × ${impls.length} implementations × 2 modes\n`));
+out.print(chalk.bold(`\nShell Command Fixer — ${total} test cases × ${impls.length} implementations × 2 modes\n`));
 
 // Run plain mode
 const plainReports = impls.map((impl) => runImpl(impl, false));
@@ -163,19 +164,19 @@ const allReports = [...plainReports, ...prettyReports];
 const anyFailures = allReports.some((r) => r.failed > 0 || r.crashed > 0);
 
 if (anyFailures) {
-    console.log(chalk.bold.red("\nFailures:\n"));
+    out.print(chalk.bold.red("\nFailures:\n"));
     printFailures(plainReports);
     printFailures(prettyReports);
 }
 
 // Benchmark
 const benchIterations = 100;
-console.log(chalk.bold(`\nBenchmark (${benchIterations} iterations × ${total} cases, prettify mode):\n`));
+out.print(chalk.bold(`\nBenchmark (${benchIterations} iterations × ${total} cases, prettify mode):\n`));
 
 for (const impl of impls) {
     const ms = benchmark(impl, true, benchIterations);
     const perCase = ((ms / (benchIterations * total)) * 1000).toFixed(1);
-    console.log(
+    out.print(
         `  ${chalk.bold(impl.name.padEnd(14))} ` +
             `${chalk.cyan(`${ms.toFixed(0)}ms`)} total  ` +
             `${chalk.dim(`${perCase}µs/case`)}`
@@ -183,17 +184,17 @@ for (const impl of impls) {
 }
 
 // Summary
-console.log(chalk.bold("\n\nSummary:\n"));
+out.print(chalk.bold("\n\nSummary:\n"));
 
 const plainPass = plainReports.reduce((sum, r) => sum + r.passed, 0);
 const prettyPass = prettyReports.reduce((sum, r) => sum + r.passed, 0);
 const totalTests = total * impls.length;
 
-console.log(`  Plain:    ${plainPass}/${totalTests} passed`);
-console.log(`  Prettify: ${prettyPass}/${totalTests} passed`);
+out.print(`  Plain:    ${plainPass}/${totalTests} passed`);
+out.print(`  Prettify: ${prettyPass}/${totalTests} passed`);
 
 if (!anyFailures) {
-    console.log(chalk.green.bold("\n  All implementations pass all tests in both modes! 🎉\n"));
+    out.print(chalk.green.bold("\n  All implementations pass all tests in both modes! 🎉\n"));
 }
 
 process.exit(anyFailures ? 1 : 0);

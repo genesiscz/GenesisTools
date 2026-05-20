@@ -1,3 +1,4 @@
+import { out } from "@app/logger";
 import { EmlxBodyExtractor } from "@app/macos/lib/mail/emlx";
 import { rowToMessage, truncateBody } from "@app/macos/lib/mail/transform";
 import { printLn } from "@app/utils/cli";
@@ -60,14 +61,14 @@ export function registerShowCommand(program: Command): void {
                 const rowid = Number.parseInt(messageIdArg, 10);
 
                 if (Number.isNaN(rowid)) {
-                    console.error("Invalid message ID. Use the numeric ROWID from search results.");
+                    out.error("Invalid message ID. Use the numeric ROWID from search results.");
                     process.exit(1);
                 }
 
                 const row = await db.getMessageById(rowid);
 
                 if (!row) {
-                    console.error(`Message ${rowid} not found.`);
+                    out.error(`Message ${rowid} not found.`);
                     process.exit(1);
                 }
 
@@ -117,17 +118,20 @@ export function registerShowCommand(program: Command): void {
                 const isTTY = process.stdout.isTTY;
                 const dim = isTTY ? chalk.dim : (s: string) => s;
                 const bold = isTTY ? chalk.bold : (s: string) => s;
-                const out: string[] = [];
+                // Renamed from `out` to avoid shadowing the `@app/logger` `out`
+                // import added by the console-sweep codemod (would shadow the
+                // imported writer used in the catch block below).
+                const lines: string[] = [];
 
-                out.push("");
-                out.push(bold(msg.subject));
-                out.push(dim("─".repeat(Math.min(msg.subject.length, 80))));
-                out.push(`From:     ${msg.senderName ?? ""} <${msg.senderAddress ?? "(no sender)"}>`);
+                lines.push("");
+                lines.push(bold(msg.subject));
+                lines.push(dim("─".repeat(Math.min(msg.subject.length, 80))));
+                lines.push(`From:     ${msg.senderName ?? ""} <${msg.senderAddress ?? "(no sender)"}>`);
 
                 const toRecipients = msg.recipients?.filter((r) => r.type === "to") ?? [];
 
                 if (toRecipients.length > 0) {
-                    out.push(
+                    lines.push(
                         `To:       ${toRecipients.map((r) => (r.name ? `${r.name} <${r.address}>` : r.address)).join(", ")}`
                     );
                 }
@@ -135,28 +139,28 @@ export function registerShowCommand(program: Command): void {
                 const ccRecipients = msg.recipients?.filter((r) => r.type === "cc") ?? [];
 
                 if (ccRecipients.length > 0) {
-                    out.push(
+                    lines.push(
                         `CC:       ${ccRecipients.map((r) => (r.name ? `${r.name} <${r.address}>` : r.address)).join(", ")}`
                     );
                 }
 
-                out.push(`Date:     ${msg.dateSent.toLocaleString()}`);
-                out.push(`Mailbox:  ${msg.mailbox}`);
-                out.push(`Size:     ${formatBytes(msg.size)}`);
-                out.push(`ID:       ${rowid}`);
-                out.push(`Body:     ${bodyFormat}`);
+                lines.push(`Date:     ${msg.dateSent.toLocaleString()}`);
+                lines.push(`Mailbox:  ${msg.mailbox}`);
+                lines.push(`Size:     ${formatBytes(msg.size)}`);
+                lines.push(`ID:       ${rowid}`);
+                lines.push(`Body:     ${bodyFormat}`);
 
                 if (msg.attachments.length > 0) {
-                    out.push(`Attach:   ${msg.attachments.map((a) => a.name).join(", ")}`);
+                    lines.push(`Attach:   ${msg.attachments.map((a) => a.name).join(", ")}`);
                 }
 
-                out.push("");
-                out.push(displayBody ? displayBody : dim("(no body content available)"));
-                out.push("");
+                lines.push("");
+                lines.push(displayBody ? displayBody : dim("(no body content available)"));
+                lines.push("");
 
-                await printLn(out);
+                await printLn(lines);
             } catch (error) {
-                console.error(error instanceof Error ? error.message : String(error));
+                out.error(error instanceof Error ? error.message : String(error));
                 process.exit(1);
             } finally {
                 db.close();

@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { out } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import { analysisDirFor, HISTORY_FILE } from "./paths";
 import type { ActionResult, AnalyzerResult } from "./types";
@@ -41,7 +42,7 @@ export async function readHistorySince(since: Date): Promise<HistoryEntry[]> {
                 entries.push(parsed);
             }
         } catch (err) {
-            console.error("Failed to parse history line", err);
+            out.error("Failed to parse history line", err);
         }
     }
 

@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { out } from "@app/logger";
 import { renderMarkdownToCli } from "./markdown/index.js";
 
 /**
@@ -17,11 +18,11 @@ export function printReadmeAndExit(toolDir: string): never {
     if (existsSync(readmePath)) {
         const content = readFileSync(readmePath, "utf-8");
         const rendered = renderMarkdownToCli(content);
-        console.log(rendered);
+        out.print(rendered);
         process.exit(0);
     }
 
-    console.log("No README.md found for this tool.");
+    out.print("No README.md found for this tool.");
     process.exit(1);
 }
 

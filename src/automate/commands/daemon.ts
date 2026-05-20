@@ -7,6 +7,7 @@ import {
     installLaunchd,
     uninstallLaunchd,
 } from "@app/automate/lib/launchd";
+import { out } from "@app/logger";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -61,7 +62,7 @@ function showRecentLogs(lines = 20): void {
     const output = proc.stdout.toString().trim();
     if (output) {
         p.log.step(pc.underline("Recent logs:"));
-        console.log(pc.dim(output));
+        out.print(pc.dim(output));
     }
 }
 

@@ -1,3 +1,4 @@
+import { out } from "@app/logger";
 import { isInteractive, suggestCommand } from "@app/utils/cli/executor";
 import { withCancel } from "@app/utils/prompts/clack/helpers";
 import * as p from "@clack/prompts";
@@ -14,8 +15,8 @@ import { cmdShow } from "./show";
 
 export async function interactiveMode(): Promise<void> {
     if (!isInteractive()) {
-        console.error("Interactive mode requires a TTY.");
-        console.error(suggestCommand("tools benchmark", { add: ["<suite>"] }));
+        out.error("Interactive mode requires a TTY.");
+        out.error(suggestCommand("tools benchmark", { add: ["<suite>"] }));
         process.exit(1);
     }
 

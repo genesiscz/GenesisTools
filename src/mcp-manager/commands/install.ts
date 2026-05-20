@@ -5,8 +5,8 @@ import type { MCPProvider, UnifiedMCPServerConfig } from "@app/mcp-manager/utils
 import { WriteResult } from "@app/mcp-manager/utils/providers/types.js";
 import { isInteractive, suggestCommand } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
-import { ExitPromptError } from "@inquirer/core";
-import { input, search, select } from "@inquirer/prompts";
+import * as p from "@app/utils/prompts/p";
+import { inquirerBackend } from "@app/utils/prompts/p/inquirer-backend";
 import chalk from "chalk";
 
 export interface InstallOptions {
@@ -47,45 +47,36 @@ export async function installServer(
             process.exit(1);
         }
 
-        try {
-            const existingServers = Object.keys(config.mcpServers).sort();
-            const choices = [
-                { value: CREATE_NEW, name: chalk.cyan("+ Create new server...") },
-                ...existingServers.map((name) => ({ value: name, name })),
-            ];
+        const existingServers = Object.keys(config.mcpServers).sort();
+        const choices = [
+            { value: CREATE_NEW, name: chalk.cyan("+ Create new server...") },
+            ...existingServers.map((name) => ({ value: name, name })),
+        ];
 
-            const inputServerName = await search({
-                message: "Select server to install or create new:",
-                source: async (term) => {
-                    if (!term) {
-                        return choices;
-                    }
-                    const lowerTerm = term.toLowerCase();
-                    return choices.filter((c) => c.name.toLowerCase().includes(lowerTerm));
-                },
-                pageSize: 30,
-            });
+        const inputServerName = await inquirerBackend.search<string>({
+            message: "Select server to install or create new:",
+            options: async (term) => {
+                const filtered = !term
+                    ? choices
+                    : choices.filter((c) => c.name.toLowerCase().includes(term.toLowerCase()));
+                return filtered.map((c) => ({ value: c.value, label: c.name }));
+            },
+            pageSize: 30,
+        });
 
-            if (inputServerName === CREATE_NEW) {
-                const newServerName = await input({
-                    message: "Enter name for the new server:",
-                    validate: (value: string) => (value.trim() ? true : "Server name cannot be empty."),
-                });
-                finalServerName = newServerName.trim();
-            } else {
-                finalServerName = inputServerName.trim();
-            }
+        if (inputServerName === CREATE_NEW) {
+            const newServerName = (await p.text({
+                message: "Enter name for the new server:",
+                validate: (value: string) => (value.trim() ? undefined : "Server name cannot be empty."),
+            })) as string;
+            finalServerName = newServerName.trim();
+        } else {
+            finalServerName = inputServerName.trim();
+        }
 
-            if (!finalServerName) {
-                logger.warn("Server name cannot be empty.");
-                return;
-            }
-        } catch (error) {
-            if (error instanceof ExitPromptError) {
-                logger.info("\nOperation cancelled by user.");
-                return;
-            }
-            throw error;
+        if (!finalServerName) {
+            logger.warn("Server name cannot be empty.");
+            return;
         }
     }
 
@@ -115,24 +106,16 @@ export async function installServer(
 
         // If it's a new server or we're overwriting, ask for details
         if (!transportType) {
-            try {
-                const inputType = await select({
-                    message: "Select transport type:",
-                    choices: [
-                        { value: "stdio", name: "stdio (Local executable/npx)" },
-                        { value: "sse", name: "sse (Server-Sent Events / Remote URL)" },
-                        { value: "http", name: "http (Remote HTTP endpoint)" },
-                    ],
-                    default: serverConfig?.type || "stdio",
-                });
-                transportType = inputType as "stdio" | "sse" | "http";
-            } catch (error) {
-                if (error instanceof ExitPromptError) {
-                    logger.info("\nOperation cancelled by user.");
-                    return;
-                }
-                throw error;
-            }
+            const inputType = (await p.select({
+                message: "Select transport type:",
+                options: [
+                    { value: "stdio", label: "stdio (Local executable/npx)" },
+                    { value: "sse", label: "sse (Server-Sent Events / Remote URL)" },
+                    { value: "http", label: "http (Remote HTTP endpoint)" },
+                ],
+                initialValue: serverConfig?.type || "stdio",
+            })) as string;
+            transportType = inputType as "stdio" | "sse" | "http";
         }
 
         let finalCommandOrUrl = commandOrUrl;
@@ -150,27 +133,19 @@ export async function installServer(
         }
 
         if (!finalCommandOrUrl) {
-            try {
-                const isRemote = transportType === "sse" || transportType === "http";
-                const inputVal = await input({
-                    message: isRemote
-                        ? `Enter URL (e.g., "https://server.example.com/sse"):`
-                        : 'Enter command (e.g., "npx -y @modelcontextprotocol/server-github"):',
-                    default: isRemote ? serverConfig?.url || serverConfig?.httpUrl : serverConfig?.command,
-                });
+            const isRemote = transportType === "sse" || transportType === "http";
+            const inputVal = (await p.text({
+                message: isRemote
+                    ? `Enter URL (e.g., "https://server.example.com/sse"):`
+                    : 'Enter command (e.g., "npx -y @modelcontextprotocol/server-github"):',
+                initialValue: isRemote ? serverConfig?.url || serverConfig?.httpUrl : serverConfig?.command,
+            })) as string;
 
-                finalCommandOrUrl = inputVal.trim();
+            finalCommandOrUrl = inputVal.trim();
 
-                if (!finalCommandOrUrl) {
-                    logger.warn("Value cannot be empty.");
-                    return;
-                }
-            } catch (error) {
-                if (error instanceof ExitPromptError) {
-                    logger.info("\nOperation cancelled by user.");
-                    return;
-                }
-                throw error;
+            if (!finalCommandOrUrl) {
+                logger.warn("Value cannot be empty.");
+                return;
             }
         }
 
@@ -198,22 +173,18 @@ export async function installServer(
                 }
             } else if (!isNonInteractive) {
                 // Interactive: ask for headers
-                try {
-                    const inputHeaders = await input({
-                        message: 'Enter optional headers ("Key: value" format or JSON) or leave empty:',
-                        default: serverConfig?.headers ? SafeJSON.stringify(serverConfig.headers) : "",
-                    });
+                const inputHeaders = (await p.text({
+                    message: 'Enter optional headers ("Key: value" format or JSON) or leave empty:',
+                    initialValue: serverConfig?.headers ? SafeJSON.stringify(serverConfig.headers) : "",
+                })) as string;
 
-                    if (inputHeaders.trim()) {
+                if (inputHeaders.trim()) {
+                    try {
                         newServerConfig.headers = parseHeaderString(inputHeaders);
-                    }
-                } catch (error) {
-                    if (error instanceof ExitPromptError) {
-                        logger.info("\nOperation cancelled by user.");
-                        return;
-                    }
-                    if (error instanceof Error) {
-                        logger.warn(`Failed to parse headers: ${error.message}. Skipping headers.`);
+                    } catch (error) {
+                        if (error instanceof Error) {
+                            logger.warn(`Failed to parse headers: ${error.message}. Skipping headers.`);
+                        }
                     }
                 }
             }
@@ -240,22 +211,14 @@ export async function installServer(
                 }
             } else if (!isNonInteractive) {
                 // Interactive: ask for env
-                try {
-                    const inputEnv = await input({
-                        message: "Enter ENV variables (JSON format recommended) or leave empty:",
-                        default: serverConfig?.env ? SafeJSON.stringify(serverConfig.env) : "",
-                    });
+                const inputEnv = (await p.text({
+                    message: "Enter ENV variables (JSON format recommended) or leave empty:",
+                    initialValue: serverConfig?.env ? SafeJSON.stringify(serverConfig.env) : "",
+                })) as string;
 
-                    if (inputEnv.trim()) {
-                        env = parseEnvString(inputEnv);
-                        logger.info(`Parsed ${Object.keys(env).length} environment variable(s)`);
-                    }
-                } catch (error) {
-                    if (error instanceof ExitPromptError) {
-                        logger.info("\nOperation cancelled by user.");
-                        return;
-                    }
-                    throw error;
+                if (inputEnv.trim()) {
+                    env = parseEnvString(inputEnv);
+                    logger.info(`Parsed ${Object.keys(env).length} environment variable(s)`);
                 }
             }
 
@@ -311,22 +274,14 @@ export async function installServer(
         );
         process.exit(1);
     } else {
-        try {
-            const selectedProvider = await select({
-                message: "Select provider to install to:",
-                choices: availableProviders.map((p) => ({
-                    value: p.getName(),
-                    name: `${p.getName()} (${p.getConfigPath()})`,
-                })),
-            });
-            selectedProviderNames = [selectedProvider];
-        } catch (error) {
-            if (error instanceof ExitPromptError) {
-                logger.info("\nOperation cancelled by user.");
-                return;
-            }
-            throw error;
-        }
+        const selectedProvider = (await p.select({
+            message: "Select provider to install to:",
+            options: availableProviders.map((prov) => ({
+                value: prov.getName(),
+                label: `${prov.getName()} (${prov.getConfigPath()})`,
+            })),
+        })) as string;
+        selectedProviderNames = [selectedProvider];
     }
 
     const configToInstall = stripMeta(serverConfig);

@@ -30,7 +30,7 @@ import {
     requireConfig,
     saveTemplate,
 } from "@app/azure-devops/utils";
-import { logger } from "@app/logger";
+import { logger, out } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import { ExitPromptError } from "@inquirer/core";
 import { confirm, editor, input, select } from "@inquirer/prompts";
@@ -94,10 +94,10 @@ async function saveProjectsCache(org: string, projects: Array<{ id: string; name
  */
 async function runInteractiveCreate(api: Api, config: AzureConfig): Promise<void> {
     logger.debug(`[create] Starting interactive wizard for ${config.org}/${config.project}`);
-    console.log("\n🆕 Create New Work Item\n");
-    console.log(`🏢 Organization: ${config.org}`);
-    console.log(`📁 Default project: ${config.project}\n`);
-    console.log("💡 Press Ctrl+C to cancel, ESC to go back\n");
+    out.print("\n🆕 Create New Work Item\n");
+    out.print(`🏢 Organization: ${config.org}`);
+    out.print(`📁 Default project: ${config.project}\n`);
+    out.print("💡 Press Ctrl+C to cancel, ESC to go back\n");
 
     const state: WizardState = {};
     let currentStep = 0;
@@ -116,7 +116,7 @@ async function runInteractiveCreate(api: Api, config: AzureConfig): Promise<void
                 // Load or fetch projects
                 let projects = await loadProjectsCache(config.org);
                 if (!projects) {
-                    console.log("📥 Fetching projects...");
+                    out.print("📥 Fetching projects...");
                     const fetchedProjects = await Api.getProjects(config.org);
                     await saveProjectsCache(config.org, fetchedProjects);
                     projects = fetchedProjects;
@@ -143,7 +143,7 @@ async function runInteractiveCreate(api: Api, config: AzureConfig): Promise<void
                 if (selected.name !== config.project) {
                     activeConfig = { ...config, project: selected.name, projectId: selected.id };
                     activeApi = new Api(activeConfig);
-                    console.log(`\n📁 Switched to project: ${selected.name}\n`);
+                    out.print(`\n📁 Switched to project: ${selected.name}\n`);
                 }
 
                 return true;
@@ -264,7 +264,7 @@ async function runInteractiveCreate(api: Api, config: AzureConfig): Promise<void
                 }
 
                 if (requiredFields.length > 0) {
-                    console.log(`\n📋 Required fields for ${state.type}:\n`);
+                    out.print(`\n📋 Required fields for ${state.type}:\n`);
                     for (const field of requiredFields) {
                         let value: string;
                         const existingValue = additionalFields.get(field.refName);
@@ -375,27 +375,27 @@ async function runInteractiveCreate(api: Api, config: AzureConfig): Promise<void
         {
             name: "confirm",
             run: async () => {
-                console.log("\n📋 Summary:");
-                console.log(`  Project: ${state.project?.name || activeConfig.project}`);
-                console.log(`  Type: ${state.type}`);
-                console.log(`  Title: ${state.title}`);
-                console.log(`  State: ${state.state}`);
+                out.print("\n📋 Summary:");
+                out.print(`  Project: ${state.project?.name || activeConfig.project}`);
+                out.print(`  Type: ${state.type}`);
+                out.print(`  Title: ${state.title}`);
+                out.print(`  State: ${state.state}`);
                 if (state.additionalFields) {
                     for (const [refName, value] of state.additionalFields) {
                         const fieldInfo = state.fieldSchema?.get(refName);
-                        console.log(`  ${fieldInfo?.name || refName}: ${value}`);
+                        out.print(`  ${fieldInfo?.name || refName}: ${value}`);
                     }
                 }
                 if (state.tags && state.tags.length > 0) {
-                    console.log(`  Tags: ${state.tags.join(", ")}`);
+                    out.print(`  Tags: ${state.tags.join(", ")}`);
                 }
                 if (state.assignee) {
-                    console.log(`  Assignee: ${state.assignee}`);
+                    out.print(`  Assignee: ${state.assignee}`);
                 }
                 if (state.parentId) {
-                    console.log(`  Parent: #${state.parentId}`);
+                    out.print(`  Parent: #${state.parentId}`);
                 }
-                console.log("");
+                out.print("");
 
                 const confirmed = await confirm({
                     message: "Create this work item?",
@@ -447,14 +447,14 @@ async function runInteractiveCreate(api: Api, config: AzureConfig): Promise<void
                     });
                 }
 
-                console.log("\n⏳ Creating work item...");
+                out.print("\n⏳ Creating work item...");
                 logger.debug(`[create] Creating ${state.type} with ${operations.length} operations`);
                 logger.debug(`[create] Operations: ${SafeJSON.stringify(operations.map((o) => o.path))}`);
                 const created = await activeApi.createWorkItem(state.type!, operations);
                 logger.debug(`[create] Created work item #${created.id}`);
 
-                console.log(`\n✅ Created work item #${created.id}: ${created.title}`);
-                console.log(`   URL: ${created.url}`);
+                out.print(`\n✅ Created work item #${created.id}: ${created.title}`);
+                out.print(`   URL: ${created.url}`);
                 return true;
             },
         },
@@ -477,10 +477,10 @@ async function runInteractiveCreate(api: Api, config: AzureConfig): Promise<void
                 if (error instanceof ExitPromptError) {
                     // User cancelled (Ctrl+C or closed prompt)
                     if (currentStep > 0) {
-                        console.log("\n⬅️  Going back...\n");
+                        out.print("\n⬅️  Going back...\n");
                         currentStep--;
                     } else {
-                        console.log("\n❌ Creation cancelled.");
+                        out.print("\n❌ Creation cancelled.");
                         return;
                     }
                 } else {
@@ -490,7 +490,7 @@ async function runInteractiveCreate(api: Api, config: AzureConfig): Promise<void
         }
     } catch (error) {
         if (error instanceof ExitPromptError) {
-            console.log("\n❌ Creation cancelled.");
+            out.print("\n❌ Creation cancelled.");
             return;
         }
         throw error;
@@ -605,7 +605,7 @@ function validateTemplate(template: WorkItemTemplate): void {
  * Create a work item from a template file
  */
 async function createFromFile(api: Api, config: AzureConfig, filePath: string): Promise<void> {
-    console.log(`\n📄 Loading template from: ${filePath}\n`);
+    out.print(`\n📄 Loading template from: ${filePath}\n`);
 
     if (!existsSync(filePath)) {
         throw new Error(`Template file not found: ${filePath}`);
@@ -625,25 +625,25 @@ async function createFromFile(api: Api, config: AzureConfig, filePath: string): 
 
     const fields = template.fields as Record<string, unknown>;
 
-    console.log("📋 Template contents:");
-    console.log(`  Type: ${template.type}`);
-    console.log(`  Title: ${fields.title}`);
+    out.print("📋 Template contents:");
+    out.print(`  Type: ${template.type}`);
+    out.print(`  Title: ${fields.title}`);
     if (fields.severity) {
-        console.log(`  Severity: ${fields.severity}`);
+        out.print(`  Severity: ${fields.severity}`);
     }
     if (fields.assignedTo) {
-        console.log(`  Assignee: ${fields.assignedTo}`);
+        out.print(`  Assignee: ${fields.assignedTo}`);
     }
     if (fields.tags) {
         const tags = Array.isArray(fields.tags) ? fields.tags : [fields.tags];
         if (tags.length > 0) {
-            console.log(`  Tags: ${tags.join(", ")}`);
+            out.print(`  Tags: ${tags.join(", ")}`);
         }
     }
     if (template.relations?.parent) {
-        console.log(`  Parent: #${template.relations.parent}`);
+        out.print(`  Parent: #${template.relations.parent}`);
     }
-    console.log("");
+    out.print("");
 
     // Convert template to operations
     const operations = templateToOperations(template);
@@ -662,11 +662,11 @@ async function createFromFile(api: Api, config: AzureConfig, filePath: string): 
     }
 
     // Create the work item
-    console.log("⏳ Creating work item...");
+    out.print("⏳ Creating work item...");
     const created = await api.createWorkItem(template.type, operations);
 
-    console.log(`\n✅ Created work item #${created.id}: ${created.title}`);
-    console.log(`   URL: ${created.url}`);
+    out.print(`\n✅ Created work item #${created.id}: ${created.title}`);
+    out.print(`   URL: ${created.url}`);
 }
 
 // ============= Helper Functions =============
@@ -702,7 +702,7 @@ async function handleCreate(options: {
 
     if (!hasValidMode) {
         // No valid mode specified - show help without requiring config
-        console.log(`
+        out.print(`
 Usage: tools azure-devops workitem-create [options]
 
 Modes:
@@ -750,12 +750,12 @@ Examples:
         const queryId = extractQueryId(options.sourceInput);
         const type = (options.type || "Bug") as WorkItemType;
 
-        console.log(`\n📊 Generating template from query: ${queryId}`);
-        console.log(`   Work item type: ${type}\n`);
+        out.print(`\n📊 Generating template from query: ${queryId}`);
+        out.print(`   Work item type: ${type}\n`);
 
         // Run query to get items
         const items = await api.runQuery(queryId);
-        console.log(`   Found ${items.length} work items to analyze`);
+        out.print(`   Found ${items.length} work items to analyze`);
 
         // Get type definition for field hints
         const typeDef = await api.getWorkItemTypeDefinition(type);
@@ -768,8 +768,8 @@ Examples:
         // Save template
         const filePath = saveTemplate(template);
 
-        console.log(`\n✅ Template generated: ${filePath}`);
-        console.log(`\n📝 Hints from ${items.length} analyzed items:`);
+        out.print(`\n✅ Template generated: ${filePath}`);
+        out.print(`\n📝 Hints from ${items.length} analyzed items:`);
 
         // Show field hints
         if (template._hints) {
@@ -777,13 +777,13 @@ Examples:
             for (const field of hintFields) {
                 const hint = template._hints[field];
                 if (hint?.usedValues?.length) {
-                    console.log(`   ${field}: ${hint.usedValues.slice(0, 5).join(", ")}`);
+                    out.print(`   ${field}: ${hint.usedValues.slice(0, 5).join(", ")}`);
                 }
             }
         }
 
-        console.log(`\n💡 Fill the template and run:`);
-        console.log(`   tools azure-devops workitem-create --from-file "${filePath}"`);
+        out.print(`\n💡 Fill the template and run:`);
+        out.print(`   tools azure-devops workitem-create --from-file "${filePath}"`);
         return;
     }
 
@@ -795,14 +795,14 @@ Examples:
         }
 
         const id = ids[0];
-        console.log(`\n📋 Generating template from work item #${id}\n`);
+        out.print(`\n📋 Generating template from work item #${id}\n`);
 
         // Get the source work item
         const sourceItem = await api.getWorkItem(id);
 
         // Determine type and get type definition for allowedValues
         const type = (options.type as WorkItemType) || inferWorkItemTypeFromRawFields(sourceItem) || "Bug";
-        console.log(`   Type: ${type}`);
+        out.print(`   Type: ${type}`);
 
         // Fetch type definition to get allowedValues for each field
         const typeDef = await api.getWorkItemTypeDefinition(type);
@@ -814,18 +814,18 @@ Examples:
         // Save template
         const filePath = saveTemplate(template);
 
-        console.log(`✅ Template generated: ${filePath}`);
-        console.log(`\n📝 Pre-filled from source work item #${id}:`);
-        console.log(`   Type: ${template.type}`);
+        out.print(`✅ Template generated: ${filePath}`);
+        out.print(`\n📝 Pre-filled from source work item #${id}:`);
+        out.print(`   Type: ${template.type}`);
         if (template.fields.severity) {
-            console.log(`   Severity: ${template.fields.severity}`);
+            out.print(`   Severity: ${template.fields.severity}`);
         }
         if (template.relations?.parent) {
-            console.log(`   Parent: #${template.relations.parent}`);
+            out.print(`   Parent: #${template.relations.parent}`);
         }
 
-        console.log(`\n💡 Fill the template and run:`);
-        console.log(`   tools azure-devops workitem-create --from-file "${filePath}"`);
+        out.print(`\n💡 Fill the template and run:`);
+        out.print(`   tools azure-devops workitem-create --from-file "${filePath}"`);
         return;
     }
 
@@ -833,7 +833,7 @@ Examples:
     if (options.type && options.title) {
         const type = options.type as WorkItemType;
 
-        console.log(`\n🆕 Quick create: ${type}\n`);
+        out.print(`\n🆕 Quick create: ${type}\n`);
 
         const operations: JsonPatchOperation[] = [{ op: "add", path: "/fields/System.Title", value: options.title }];
 
@@ -849,11 +849,11 @@ Examples:
             operations.push({ op: "add", path: "/fields/System.AssignedTo", value: options.assignee });
         }
 
-        console.log("⏳ Creating work item...");
+        out.print("⏳ Creating work item...");
         const created = await api.createWorkItem(type, operations);
 
-        console.log(`\n✅ Created work item #${created.id}: ${created.title}`);
-        console.log(`   URL: ${created.url}`);
+        out.print(`\n✅ Created work item #${created.id}: ${created.title}`);
+        out.print(`   URL: ${created.url}`);
         return;
     }
 }

@@ -1,5 +1,6 @@
 import { readHistorySince } from "@app/doctor/lib/history";
 import { formatBytes } from "@app/doctor/lib/size";
+import { out } from "@app/logger";
 import { formatLocalDate, formatLocalDateTimeStamp } from "@app/utils/date";
 import { SafeJSON } from "@app/utils/json";
 import pc from "picocolors";
@@ -29,16 +30,16 @@ export async function runLog(opts: LogOpts): Promise<void> {
     const filtered = opts.analyzer ? entries.filter((e) => e.action.findingId.includes(opts.analyzer ?? "")) : entries;
 
     if (opts.json) {
-        console.log(SafeJSON.stringify(filtered, null, 2));
+        out.print(SafeJSON.stringify(filtered, null, 2));
         return;
     }
 
     if (filtered.length === 0) {
-        console.log(pc.dim("No history entries in the given window."));
+        out.print(pc.dim("No history entries in the given window."));
         return;
     }
 
-    console.log(pc.bold(`${filtered.length} actions since ${formatLocalDate(since)}:`));
+    out.print(pc.bold(`${filtered.length} actions since ${formatLocalDate(since)}:`));
 
     for (const entry of filtered.slice(-50).reverse()) {
         const s = entry.action.status;
@@ -46,7 +47,7 @@ export async function runLog(opts: LogOpts): Promise<void> {
         const bytes = entry.action.actualReclaimedBytes
             ? pc.dim(` · ${formatBytes(entry.action.actualReclaimedBytes)}`)
             : "";
-        console.log(
+        out.print(
             `${pc.dim(formatLocalDateTimeStamp(entry.timestamp))} ${statusColor(s.padEnd(7))} ${entry.action.actionId.padEnd(20)} ${entry.action.findingId}${bytes}`
         );
     }

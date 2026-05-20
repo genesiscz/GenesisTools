@@ -1,6 +1,7 @@
 import { readHistorySince } from "@app/doctor/lib/history";
 import { formatBytes } from "@app/doctor/lib/size";
 import { aggregate } from "@app/doctor/lib/stats";
+import { out } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import pc from "picocolors";
 
@@ -36,18 +37,18 @@ export async function runStats(opts: StatsOpts): Promise<void> {
     const stats = aggregate(entries);
 
     if (opts.json) {
-        console.log(SafeJSON.stringify(stats, null, 2));
+        out.print(SafeJSON.stringify(stats, null, 2));
         return;
     }
 
-    console.log(pc.bold(`Doctor stats — since ${since.toISOString().slice(0, 10)}`));
-    console.log(`  ${pc.cyan("Reclaimed:")}   ${pc.green(formatBytes(stats.totalReclaimedBytes))}`);
-    console.log(`  ${pc.cyan("Actions:")}     ${stats.totalActions}`);
-    console.log(`  ${pc.cyan("Runs:")}        ${stats.runsCount}`);
-    console.log();
-    console.log(pc.bold("By action type:"));
+    out.print(pc.bold(`Doctor stats — since ${since.toISOString().slice(0, 10)}`));
+    out.print(`  ${pc.cyan("Reclaimed:")}   ${pc.green(formatBytes(stats.totalReclaimedBytes))}`);
+    out.print(`  ${pc.cyan("Actions:")}     ${stats.totalActions}`);
+    out.print(`  ${pc.cyan("Runs:")}        ${stats.runsCount}`);
+    out.print();
+    out.print(pc.bold("By action type:"));
 
     for (const [name, count] of Object.entries(stats.actionCounts).sort((a, b) => b[1] - a[1])) {
-        console.log(`  ${name.padEnd(22)} ${count}`);
+        out.print(`  ${name.padEnd(22)} ${count}`);
     }
 }

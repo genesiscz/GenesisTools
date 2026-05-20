@@ -1,3 +1,4 @@
+import { out } from "@app/logger";
 import { parseMailDate } from "@app/macos/lib/mail/command-helpers";
 import { iMessagesDatabase } from "@app/utils/macos/iMessagesDatabase";
 import type { Command } from "commander";
@@ -22,6 +23,6 @@ export function registerMessagesShowCommand(program: Command): void {
                 groupByTime: opts.group !== false,
             });
 
-            console.log(output);
+            out.print(output);
         });
 }

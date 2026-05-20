@@ -25,6 +25,7 @@
  * Required system prompt prefix: "You are Claude Code, Anthropic's official CLI for Claude."
  */
 import { createHash } from "node:crypto";
+import { out } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 
 const BILLING_SALT = "59cf53e54c78";
@@ -109,10 +110,7 @@ export function createSubscriptionFetch(): typeof fetch {
             try {
                 body = injectBillingHeader(body);
             } catch (err) {
-                console.warn(
-                    "[subscription-billing] Failed to inject billing header — Sonnet/Opus may return 400:",
-                    err
-                );
+                out.warn("[subscription-billing] Failed to inject billing header — Sonnet/Opus may return 400:", err);
             }
         }
 

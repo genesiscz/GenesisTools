@@ -1,4 +1,5 @@
 import path from "node:path";
+import { out } from "@app/logger";
 import { glob } from "glob";
 import ts from "typescript";
 
@@ -38,7 +39,7 @@ export async function resolveFiles(patterns: string[], cwd: string = process.cwd
         else if (ts.sys.fileExists(absolutePath)) {
             files.add(absolutePath);
         } else {
-            console.warn(`Warning: File or directory not found: ${pattern}`);
+            out.warn(`Warning: File or directory not found: ${pattern}`);
         }
     }
 
@@ -51,7 +52,7 @@ export async function resolveFiles(patterns: string[], cwd: string = process.cwd
 export function filterByTsconfig(targetFiles: string[], cwd: string = process.cwd()): string[] {
     const configPath = ts.findConfigFile(cwd, ts.sys.fileExists, "tsconfig.json");
     if (!configPath) {
-        console.error("tsconfig.json not found");
+        out.error("tsconfig.json not found");
         return [];
     }
 

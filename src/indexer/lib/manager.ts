@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { logger } from "@app/logger";
 import { removeRecursive } from "@app/utils/fs";
 import { SafeJSON } from "@app/utils/json";
 import { ensureExtensionCapableSQLite } from "@app/utils/search/stores/sqlite-vec-loader";
@@ -204,7 +205,10 @@ export class IndexerManager {
 
                 db.close();
             } catch (err) {
-                console.debug(`Failed to read metadata for index "${name}":`, err);
+                // pino signature: ({obj}, msg) — the codemod converted
+                // `console.debug(str, err)` to `logger.debug(str, err)`, which
+                // doesn't match pino's overloads. Repacked as { err } context.
+                logger.debug({ err }, `Failed to read metadata for index "${name}"`);
                 result.push({
                     name,
                     config,

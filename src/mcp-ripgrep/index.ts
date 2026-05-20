@@ -1,12 +1,17 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
 import nodePath from "node:path";
+import { logger } from "@app/logger";
 import { wrapArray } from "@app/utils/array";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { escapeShellArg, stripAnsi } from "@app/utils/string";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+
+// stdio MCP server: stdout carries JSON-RPC frames, so all diagnostics MUST go
+// to the logger (file + stderr via the gated stream), never console.log.
+const log = logger.scoped("mcp-ripgrep").log;
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
@@ -19,7 +24,7 @@ function processOutput(output: string, _useColors: boolean): string {
     if (!output) {
         return output;
     }
-    console.error("searchRoot", searchRoot);
+    log.debug({ searchRoot }, "processOutput");
     return searchRoot ? output.replaceAll(searchRoot, ".") : output;
 }
 
@@ -131,7 +136,7 @@ let searchRoot = process.cwd(); // Default to current working directory
 const rootArgIndex = process.argv.indexOf("--root");
 if (rootArgIndex !== -1 && process.argv.length > rootArgIndex + 1) {
     searchRoot = nodePath.resolve(process.argv[rootArgIndex + 1]);
-    console.error(`Setting search root to: ${searchRoot}`);
+    log.info({ searchRoot }, "search root set");
 }
 
 // List available tools
@@ -290,12 +295,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request, _extra) => {
                 // Add pattern and path
                 command += ` ${escapeShellArg(pattern)} ${escapeShellArg(fullPath)}`;
 
-                console.error(`Executing: ${command}`);
+                log.debug({ command }, "executing rg");
                 const { stdout, stderr } = await exec(command);
 
                 // If there's anything in stderr, log it for debugging
                 if (stderr) {
-                    console.error(`ripgrep stderr: ${stderr}`);
+                    log.warn({ stderr }, "rg stderr");
                 }
 
                 return {
@@ -418,12 +423,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request, _extra) => {
                 // Add pattern and path
                 command += ` ${escapeShellArg(pattern)} ${escapeShellArg(fullPath)}`;
 
-                console.error(`Executing: ${command}`);
+                log.debug({ command }, "executing rg");
                 const { stdout, stderr } = await exec(command);
 
                 // If there's anything in stderr, log it for debugging
                 if (stderr) {
-                    console.error(`ripgrep stderr: ${stderr}`);
+                    log.warn({ stderr }, "rg stderr");
                 }
 
                 return {
@@ -484,12 +489,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request, _extra) => {
                 // Add pattern and path
                 command += ` ${escapeShellArg(pattern)} ${escapeShellArg(fullPath)}`;
 
-                console.error(`Executing: ${command}`);
+                log.debug({ command }, "executing rg");
                 const { stdout, stderr } = await exec(command);
 
                 // If there's anything in stderr, log it for debugging
                 if (stderr) {
-                    console.error(`ripgrep stderr: ${stderr}`);
+                    log.warn({ stderr }, "rg stderr");
                 }
 
                 return {
@@ -537,12 +542,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request, _extra) => {
                 // Add path
                 command += ` ${escapeShellArg(fullPath)}`;
 
-                console.error(`Executing: ${command}`);
+                log.debug({ command }, "executing rg");
                 const { stdout, stderr } = await exec(command);
 
                 // If there's anything in stderr, log it for debugging
                 if (stderr) {
-                    console.error(`ripgrep stderr: ${stderr}`);
+                    log.warn({ stderr }, "rg stderr");
                 }
 
                 return {
@@ -559,12 +564,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request, _extra) => {
                 // No colors for type listing
                 const command = "rg --type-list --color never";
 
-                console.error(`Executing: ${command}`);
+                log.debug({ command }, "executing rg");
                 const { stdout, stderr } = await exec(command);
 
                 // If there's anything in stderr, log it for debugging
                 if (stderr) {
-                    console.error(`ripgrep stderr: ${stderr}`);
+                    log.warn({ stderr }, "rg stderr");
                 }
 
                 return {
@@ -617,10 +622,10 @@ async function main() {
     // Start receiving messages on stdin and sending messages on stdout
     const transport = new StdioServerTransport();
     await server.connect(transport);
-    console.error("Ripgrep MCP Server running");
+    log.info("Ripgrep MCP Server running");
 }
 
 main().catch((error) => {
-    console.error("Fatal error:", error);
+    log.error({ err: error }, "fatal");
     process.exit(1);
 });

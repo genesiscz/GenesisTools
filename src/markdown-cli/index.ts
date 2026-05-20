@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { out } from "@app/logger";
 import { runTool } from "@app/utils/cli";
 import { type MarkdownRenderOptions, renderMarkdownToCli } from "@app/utils/markdown/index.js";
 import chokidar from "chokidar";
@@ -36,7 +37,7 @@ program
 
         if (!process.stdin.isTTY) {
             const markdown = readFileSync(0, "utf-8");
-            console.log(renderMarkdownToCli(markdown, renderOpts));
+            out.print(renderMarkdownToCli(markdown, renderOpts));
             return;
         }
 
@@ -47,7 +48,7 @@ program
 
         const filePath = resolve(file);
         if (!existsSync(filePath)) {
-            console.error(`File not found: ${filePath}`);
+            out.error(`File not found: ${filePath}`);
             process.exit(1);
         }
 
@@ -56,9 +57,9 @@ program
             if (opts?.watch) {
                 process.stdout.write("\x1b[2J\x1b[H"); // Clear screen
             }
-            console.log(renderMarkdownToCli(markdown, renderOpts));
+            out.print(renderMarkdownToCli(markdown, renderOpts));
             if (opts?.watch) {
-                console.log(`\n--- Watching ${filePath} for changes (Ctrl+C to stop) ---\n`);
+                out.print(`\n--- Watching ${filePath} for changes (Ctrl+C to stop) ---\n`);
             }
         }
 

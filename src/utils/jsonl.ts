@@ -1,3 +1,4 @@
+import { out } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 
 export interface JsonlParseResult<T = unknown> {
@@ -16,7 +17,7 @@ function warnFallback(): void {
     }
 
     warnedFallback = true;
-    console.error(
+    out.error(
         "[jsonl] Bun.JSONL not available — using slower JS fallback.\n" +
             "        Run `bun upgrade` to get native C++ JSONL parsing (requires Bun ≥1.3.6).\n"
     );
