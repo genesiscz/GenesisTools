@@ -1,3 +1,4 @@
+import { logger } from "@app/logger/client";
 import { SafeJSON } from "@dashboard/shared";
 import { createFileRoute } from "@tanstack/react-router";
 import { handleCallbackRoute } from "@workos/authkit-tanstack-react-start";
@@ -8,10 +9,10 @@ export const Route = createFileRoute("/auth/callback")({
             GET: handleCallbackRoute({
                 onSuccess: async () => {
                     // Do not log user.email / authenticationMethod — PII in client console.
-                    console.info("[auth] authentication successful");
+                    logger.info("[auth] authentication successful");
                 },
                 onError: ({ error }) => {
-                    console.error("Authentication failed:", error);
+                    logger.error({ err: error }, "Authentication failed");
                     return new Response(
                         SafeJSON.stringify({
                             error: {

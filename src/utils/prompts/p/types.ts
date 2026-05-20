@@ -58,3 +58,22 @@ export interface PasswordOpts {
     message: string;
     validate?: (value: string) => string | undefined; // matches TextOpts.validate convention
 }
+
+export interface SearchOpts<T = unknown> {
+    message: string;
+    options: (input: string) => Promise<{ value: T; label: string; hint?: string }[]>;
+}
+
+export interface EditorOpts {
+    message: string;
+    initialValue?: string;
+    postfix?: string; // file extension hint (e.g. ".md")
+}
+
+export interface NumberOpts {
+    message: string;
+    initialValue?: number;
+    min?: number;
+    max?: number;
+    validate?: (n: number) => string | undefined;
+}

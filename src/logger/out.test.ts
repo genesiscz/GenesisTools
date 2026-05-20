@@ -37,4 +37,44 @@ describe("out facade discipline", () => {
         const clack = await import("@clack/prompts");
         expect(out.isCancel).toBe(clack.isCancel);
     });
+
+    it("out.info/warn/error shortcuts write to STDERR like out.log.info/warn/error", async () => {
+        const { out } = await import("./out");
+        const e: string[] = [];
+        const oe = process.stderr.write.bind(process.stderr);
+        process.stderr.write = (c: string) => {
+            e.push(String(c));
+            return true;
+        };
+        try {
+            out.info("INFO_SHORTCUT");
+            out.warn("WARN_SHORTCUT");
+            out.error("ERROR_SHORTCUT");
+            await Bun.sleep(10);
+        } finally {
+            process.stderr.write = oe;
+        }
+        const combined = e.join("");
+        expect(combined).toContain("INFO_SHORTCUT");
+        expect(combined).toContain("WARN_SHORTCUT");
+        expect(combined).toContain("ERROR_SHORTCUT");
+    });
+
+    it("out.warn() passes rest args after the message", async () => {
+        const { out } = await import("./out");
+        const e: string[] = [];
+        const oe = process.stderr.write.bind(process.stderr);
+        process.stderr.write = (c: string) => {
+            e.push(String(c));
+            return true;
+        };
+        try {
+            out.warn("WARN_MSG", new Error("rest-err"));
+            await Bun.sleep(10);
+        } finally {
+            process.stderr.write = oe;
+        }
+        const combined = e.join("");
+        expect(combined).toContain("WARN_MSG");
+    });
 });
