@@ -18,11 +18,11 @@ export function printReadmeAndExit(toolDir: string): never {
     if (existsSync(readmePath)) {
         const content = readFileSync(readmePath, "utf-8");
         const rendered = renderMarkdownToCli(content);
-        out.print(rendered);
+        out.println(rendered);
         process.exit(0);
     }
 
-    out.print("No README.md found for this tool.");
+    out.println("No README.md found for this tool.");
     process.exit(1);
 }
 

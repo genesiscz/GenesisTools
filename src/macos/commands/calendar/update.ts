@@ -46,7 +46,7 @@ export function registerUpdateCommand(program: Command): void {
                         isAllDay: options.allDay,
                     });
 
-                    out.print(`${pc.green("Event updated")} — ID: ${updatedId}`);
+                    out.println(`${pc.green("Event updated")} — ID: ${updatedId}`);
                 } catch (error) {
                     out.error(error instanceof Error ? error.message : String(error));
                     process.exit(1);

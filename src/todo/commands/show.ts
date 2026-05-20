@@ -36,6 +36,6 @@ export function createShowCommand(): Command {
             }
 
             const format = resolveFormat(opts.format);
-            out.print(formatTodo(todo, format, { colors: opts.colors }));
+            out.println(formatTodo(todo, format, { colors: opts.colors }));
         });
 }

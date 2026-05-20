@@ -52,7 +52,7 @@ export function registerGraphCommand(program: Command): void {
 
                 switch (opts.format) {
                     case "mermaid":
-                        out.print(toMermaidDiagram(graph, { maxNodes: parseInt(opts.maxNodes, 10) }));
+                        out.println(toMermaidDiagram(graph, { maxNodes: parseInt(opts.maxNodes, 10) }));
                         break;
 
                     case "circular":
@@ -60,7 +60,7 @@ export function registerGraphCommand(program: Command): void {
                         break;
 
                     case "json":
-                        out.print(SafeJSON.stringify(graph));
+                        out.println(SafeJSON.stringify(graph));
                         break;
 
                     default:
@@ -105,12 +105,12 @@ function showGraphStats(graph: CodeGraph): void {
         .slice(0, 10);
 
     if (ranked.length > 0) {
-        out.print("");
+        out.println("");
         p.log.step(pc.bold("Top connected files:"));
 
         const rows = ranked.map((n) => [n.path, String(n.importCount), String(n.importedByCount), n.language]);
 
-        out.print(formatTable(rows, ["File", "Imports", "Imported By", "Language"], { alignRight: [1, 2] }));
+        out.println(formatTable(rows, ["File", "Imports", "Imported By", "Language"], { alignRight: [1, 2] }));
     }
 }
 
@@ -123,7 +123,7 @@ function showCircularDependencies(graph: CodeGraph): void {
     }
 
     p.log.warn(`Found ${cycles.length} circular ${cycles.length === 1 ? "dependency" : "dependencies"}`);
-    out.print("");
+    out.println("");
 
     for (let i = 0; i < cycles.length; i++) {
         const { cycle, length } = cycles[i];
@@ -136,7 +136,7 @@ function showCircularDependencies(graph: CodeGraph): void {
             p.log.step(`${prefix}${label}`);
         }
 
-        out.print("");
+        out.println("");
     }
 }
 

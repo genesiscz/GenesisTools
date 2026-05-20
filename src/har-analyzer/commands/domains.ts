@@ -85,7 +85,7 @@ export function registerDomainCommand(program: Command): void {
             const entries = filterEntries(session.entries, filter);
 
             if (entries.length === 0) {
-                out.print(`No entries found for domain "${name}".`);
+                out.println(`No entries found for domain "${name}".`);
                 return;
             }
 

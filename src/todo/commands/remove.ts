@@ -41,7 +41,7 @@ export function createRemoveCommand(): Command {
             const removed = await store.remove(id);
 
             if (removed) {
-                out.print(`Removed ${id}`);
+                out.println(`Removed ${id}`);
             } else {
                 out.error(`Failed to remove ${id}`);
                 process.exit(1);

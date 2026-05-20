@@ -27,7 +27,7 @@ async function handleList(): Promise<void> {
 
     if (workitemFiles.length === 0) {
         lines.push("No cached work items found.");
-        out.print(lines.join("\n"));
+        out.println(lines.join("\n"));
         return;
     }
 
@@ -81,7 +81,7 @@ async function handleList(): Promise<void> {
     lines.push("To refresh a work item:");
     lines.push("  tools azure-devops workitem <id> --force");
 
-    out.print(lines.join("\n"));
+    out.println(lines.join("\n"));
 }
 
 /**

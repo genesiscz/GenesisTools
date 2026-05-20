@@ -12,20 +12,20 @@ export async function runInteractiveAddInquirer(
     user: TimeLogUser,
     prefilledWorkItem?: string
 ): Promise<void> {
-    out.print("\n📝 TimeLog - Add Entry\n");
+    out.println("\n📝 TimeLog - Add Entry\n");
 
     try {
         const api = new TimeLogApi(config.orgId!, config.projectId, config.timelog!.functionsKey, user);
 
         // Fetch time types
-        out.print("Loading time types...");
+        out.println("Loading time types...");
         const types = await api.getTimeTypes();
 
         // Work item ID
         let workItemId: number;
         if (prefilledWorkItem) {
             workItemId = parseInt(prefilledWorkItem, 10);
-            out.print(`Work Item: #${workItemId}`);
+            out.println(`Work Item: #${workItemId}`);
         } else {
             const workItemInput = await p.text({
                 message: "Work Item ID:",
@@ -100,15 +100,15 @@ export async function runInteractiveAddInquirer(
         });
 
         // Confirm
-        out.print(`\n${"─".repeat(40)}`);
-        out.print(`Work Item: #${workItemId}`);
-        out.print(`Time: ${formatMinutes(totalMinutes)}`);
-        out.print(`Type: ${selectedType}`);
-        out.print(`Date: ${dateInput}`);
+        out.println(`\n${"─".repeat(40)}`);
+        out.println(`Work Item: #${workItemId}`);
+        out.println(`Time: ${formatMinutes(totalMinutes)}`);
+        out.println(`Type: ${selectedType}`);
+        out.println(`Date: ${dateInput}`);
         if (comment) {
-            out.print(`Comment: ${comment}`);
+            out.println(`Comment: ${comment}`);
         }
-        out.print("─".repeat(40));
+        out.println("─".repeat(40));
 
         const confirmed = await p.confirm({
             message: "Create this time log entry?",
@@ -116,15 +116,15 @@ export async function runInteractiveAddInquirer(
         });
 
         if (!confirmed) {
-            out.print("Cancelled");
+            out.println("Cancelled");
             process.exit(0);
         }
 
         // Create entry
-        out.print("\nCreating time log entry...");
+        out.println("\nCreating time log entry...");
         const ids = await api.createTimeLogEntry(workItemId, totalMinutes, selectedType, dateInput, comment);
 
-        out.print(`\n✔ Time log created! Entry ID: ${ids[0]}`);
+        out.println(`\n✔ Time log created! Entry ID: ${ids[0]}`);
     } catch (error) {
         throw error;
     }

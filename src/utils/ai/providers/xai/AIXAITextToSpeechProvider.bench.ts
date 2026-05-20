@@ -42,18 +42,18 @@ async function timeWs(): Promise<{ ttfbMs: number; totalMs: number; bytes: numbe
     return { ttfbMs: firstByteMs, totalMs: total, bytes };
 }
 
-out.print(`Sample: ${SAMPLE.length} chars`);
+out.println(`Sample: ${SAMPLE.length} chars`);
 
 const rest = await timeRest();
-out.print(
+out.println(
     `REST  /v1/tts (HTTP)  → TTFB ${rest.ttfbMs.toFixed(0)}ms, total ${rest.totalMs.toFixed(0)}ms, ${rest.bytes} bytes`
 );
 
 const ws = await timeWs();
-out.print(
+out.println(
     `WS    /v1/tts (WSS)   → TTFB ${ws.ttfbMs.toFixed(0)}ms, total ${ws.totalMs.toFixed(0)}ms, ${ws.bytes} bytes`
 );
 
 const winner = ws.ttfbMs < rest.ttfbMs ? "WS" : "REST";
 const delta = Math.abs(ws.ttfbMs - rest.ttfbMs).toFixed(0);
-out.print(`\nFirst-byte winner: ${winner} (by ${delta}ms)`);
+out.println(`\nFirst-byte winner: ${winner} (by ${delta}ms)`);

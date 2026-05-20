@@ -28,10 +28,10 @@ function renderWeekPreview(plan: WeekPlan): void {
     const start = plan.periodStart.split("T")[0];
     const end = subtractDay(plan.periodFinish.split("T")[0]);
 
-    out.print(`\n${pc.bold(`Week: ${start} to ${end}`)} (Timesheet: ${plan.timesheetId})`);
+    out.println(`\n${pc.bold(`Week: ${start} to ${end}`)} (Timesheet: ${plan.timesheetId})`);
 
     if (plan.entries.length === 0 && plan.unmappedWorkItems.length === 0) {
-        out.print(pc.dim("  No entries for this week"));
+        out.println(pc.dim("  No entries for this week"));
         return;
     }
 
@@ -86,16 +86,16 @@ function renderWeekPreview(plan: WeekPlan): void {
         table.push([name, ...dayValues, pc.bold(`${(total / 60).toFixed(2)}h`)]);
     }
 
-    out.print(table.toString());
+    out.println(table.toString());
 
     if (plan.unmappedWorkItems.length > 0) {
-        out.print(pc.yellow("\n  Unmapped work items (skipped):"));
+        out.println(pc.yellow("\n  Unmapped work items (skipped):"));
 
         for (const wi of plan.unmappedWorkItems) {
-            out.print(pc.yellow(`    #${wi.workItemId}: ${formatMinutes(wi.minutes)}`));
+            out.println(pc.yellow(`    #${wi.workItemId}: ${formatMinutes(wi.minutes)}`));
         }
 
-        out.print(pc.yellow("  Run 'tools clarity link-workitems' to create mappings"));
+        out.println(pc.yellow("  Run 'tools clarity link-workitems' to create mappings"));
     }
 }
 
@@ -147,14 +147,14 @@ export function registerFillCommand(program: Command): void {
                 cookies: clarityConfig.cookies,
             });
 
-            out.print(pc.bold(`\nFilling Clarity for ${options.month}/${year}${isDryRun ? " (DRY RUN)" : ""}`));
+            out.println(pc.bold(`\nFilling Clarity for ${options.month}/${year}${isDryRun ? " (DRY RUN)" : ""}`));
 
-            out.print("Exporting ADO timelog data...");
+            out.println("Exporting ADO timelog data...");
             const adoExport = await exportMonth(adoApi, options.month, year, adoUser.userId);
-            out.print(`  Found ${adoExport.entries.length} ADO entries (${adoExport.summary.totalHours}h total)`);
+            out.println(`  Found ${adoExport.entries.length} ADO entries (${adoExport.summary.totalHours}h total)`);
 
             if (adoExport.entries.length === 0) {
-                out.print("No ADO timelog entries found for this month.");
+                out.println("No ADO timelog entries found for this month.");
                 return;
             }
 
@@ -171,7 +171,7 @@ export function registerFillCommand(program: Command): void {
             const allDates = [...allDatesSet].sort();
 
             if (allDates.length === 0 && unmappedByWi.size > 0) {
-                out.print(pc.yellow("\nAll entries are unmapped. Run 'tools clarity link-workitems' first."));
+                out.println(pc.yellow("\nAll entries are unmapped. Run 'tools clarity link-workitems' first."));
                 return;
             }
 
@@ -198,7 +198,7 @@ export function registerFillCommand(program: Command): void {
                 process.exit(1);
             }
 
-            out.print("Loading Clarity timesheet data...");
+            out.println("Loading Clarity timesheet data...");
 
             const weekPlans: WeekPlan[] = [];
 
@@ -266,18 +266,18 @@ export function registerFillCommand(program: Command): void {
             }
 
             if (isDryRun) {
-                out.print(pc.cyan("\n  This is a DRY RUN. Use --confirm to execute."));
+                out.println(pc.cyan("\n  This is a DRY RUN. Use --confirm to execute."));
                 return;
             }
 
             // Execute
-            out.print(pc.bold("\nExecuting fill..."));
+            out.println(pc.bold("\nExecuting fill..."));
             let successCount = 0;
             let errorCount = 0;
 
             for (const plan of weekPlans) {
                 const weekLabel = `${plan.periodStart.split("T")[0]} to ${subtractDay(plan.periodFinish.split("T")[0])}`;
-                out.print(`\n${pc.dim(`TS#${plan.timesheetId} (${weekLabel})`)}`);
+                out.println(`\n${pc.dim(`TS#${plan.timesheetId} (${weekLabel})`)}`);
 
                 for (const entry of plan.entries) {
                     // periodFinish is inclusive (last day) — add 1 day for exclusive loop bound
@@ -321,15 +321,15 @@ export function registerFillCommand(program: Command): void {
                             actuals,
                         });
                         successCount++;
-                        out.print(
+                        out.println(
                             pc.green(`  ${pc.bold("OK")} ${taskName}: ${totalHours.toFixed(2)}h [${dayBreakdown}]`)
                         );
 
                         if (verbose) {
-                            out.print(pc.dim(`     PUT ${debug.url}`));
-                            out.print(pc.dim(`     Status: ${debug.responseStatus}`));
-                            out.print(pc.dim(`     Request:  ${SafeJSON.stringify(debug.requestBody)}`));
-                            out.print(pc.dim(`     Response: ${SafeJSON.stringify(debug.responseBody)}`));
+                            out.println(pc.dim(`     PUT ${debug.url}`));
+                            out.println(pc.dim(`     Status: ${debug.responseStatus}`));
+                            out.println(pc.dim(`     Request:  ${SafeJSON.stringify(debug.requestBody)}`));
+                            out.println(pc.dim(`     Response: ${SafeJSON.stringify(debug.responseBody)}`));
                         }
                     } catch (err) {
                         errorCount++;
@@ -340,14 +340,14 @@ export function registerFillCommand(program: Command): void {
                             const debug = (err as Error & { debug?: unknown }).debug;
 
                             if (debug) {
-                                out.print(pc.dim(`     Debug: ${SafeJSON.stringify(debug)}`));
+                                out.println(pc.dim(`     Debug: ${SafeJSON.stringify(debug)}`));
                             }
                         }
                     }
                 }
             }
 
-            out.print(
+            out.println(
                 `\n${pc.bold("Results:")} ${pc.green(`${successCount} updated`)}` +
                     `${errorCount > 0 ? `, ${pc.red(`${errorCount} failed`)}` : ""}`
             );

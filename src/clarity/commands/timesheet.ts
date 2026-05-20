@@ -45,13 +45,13 @@ function renderTimesheetTable(ts: TimesheetRecord, entries: TimeEntryRecord[]): 
     const start = ts.timePeriodStart.split("T")[0];
     const finish = ts.timePeriodFinish.split("T")[0];
 
-    out.print(`\n${pc.bold(`Timesheet ${ts._internalId}`)} (${start} to ${finish})`);
-    out.print(
+    out.println(`\n${pc.bold(`Timesheet ${ts._internalId}`)} (${start} to ${finish})`);
+    out.println(
         `Status: ${statusColor(ts.status.id)} | Entries: ${entries.length} | Total: ${formatSeconds(ts.actualsTotal)}`
     );
 
     if (entries.length === 0) {
-        out.print(pc.dim("  No time entries"));
+        out.println(pc.dim("  No time entries"));
         return;
     }
 
@@ -95,7 +95,7 @@ function renderTimesheetTable(ts: TimesheetRecord, entries: TimeEntryRecord[]): 
         table.push([name, ...dayValues, pc.bold(formatSeconds(entryTotal))]);
     }
 
-    out.print(table.toString());
+    out.println(table.toString());
 }
 
 export function registerTimesheetCommand(program: Command): void {
@@ -137,7 +137,7 @@ export function registerTimesheetCommand(program: Command): void {
             }
 
             if (options.format === "json") {
-                out.print(SafeJSON.stringify(data, null, 2));
+                out.println(SafeJSON.stringify(data, null, 2));
                 return;
             }
 
@@ -172,11 +172,11 @@ export function registerTimesheetCommand(program: Command): void {
             }
 
             if (options.format === "json") {
-                out.print(SafeJSON.stringify(data, null, 2));
+                out.println(SafeJSON.stringify(data, null, 2));
                 return;
             }
 
-            out.print(pc.bold("\nTimesheet Carousel:"));
+            out.println(pc.bold("\nTimesheet Carousel:"));
 
             const table = new Table({
                 head: ["Period ID", "Timesheet ID", "Start", "End", "Total", "Status"],
@@ -194,7 +194,7 @@ export function registerTimesheetCommand(program: Command): void {
                 ]);
             }
 
-            out.print(table.toString());
+            out.println(table.toString());
         });
 
     ts.command("submit <timesheetId>")

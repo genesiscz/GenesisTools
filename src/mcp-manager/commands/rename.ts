@@ -34,7 +34,7 @@ export async function renameServer(
 
     if (!finalOldName) {
         const serverNames = Object.keys(config.mcpServers).sort();
-        const selectedOldName = await inquirerBackend.search<string>({
+        const selectedOldName = await p.search<string>({
             message: "Select server to rename:",
             options: async (term) => {
                 const filtered = !term

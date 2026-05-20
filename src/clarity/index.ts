@@ -57,8 +57,8 @@ program
             out.warn("");
         }
 
-        out.print(`Starting Clarity dashboard at ${url} ...`);
-        out.print("(first start can take a few seconds; output below comes from Vite)\n");
+        out.println(`Starting Clarity dashboard at ${url} ...`);
+        out.println("(first start can take a few seconds; output below comes from Vite)\n");
 
         // Spawn vite.js directly via bun rather than relying on node_modules/.bin/vite
         // — on Windows the .bin entry is a .cmd shim that Bun.spawn can fail to resolve

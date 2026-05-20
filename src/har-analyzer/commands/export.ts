@@ -124,9 +124,9 @@ export function registerExportCommand(program: Command): void {
                 if (options.output) {
                     const outPath = resolve(options.output);
                     await Bun.write(outPath, json);
-                    out.print(`Exported ${entries.length} entries to ${outPath}`);
+                    out.println(`Exported ${entries.length} entries to ${outPath}`);
                 } else {
-                    out.print(json);
+                    out.println(json);
                 }
             }
         );

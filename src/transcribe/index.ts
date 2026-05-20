@@ -175,7 +175,7 @@ async function runTranscription(filePath: string, opts: TranscribeFlags): Promis
             }
 
             if (!opts.output && !opts.clipboard) {
-                out.print(output);
+                out.println(output);
             }
         } finally {
             transcriber.dispose();

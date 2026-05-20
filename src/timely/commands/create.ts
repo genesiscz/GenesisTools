@@ -258,11 +258,11 @@ async function runPlan(storage: Storage, service: TimelyService, options: Create
 
 function printPlanSummary(plan: CreatePlanV1): void {
     for (const day of plan.days) {
-        out.print(chalk.bold(`\n=== ${day.day} (${day.available_memories.length} memories) ===`));
+        out.println(chalk.bold(`\n=== ${day.day} (${day.available_memories.length} memories) ===`));
         if (day.suggestions.length > 0) {
-            out.print(chalk.dim("  Suggestions:"));
+            out.println(chalk.dim("  Suggestions:"));
             for (const s of day.suggestions) {
-                out.print(
+                out.println(
                     chalk.dim(
                         `    proj ${String(s.project_id).padStart(8)}  ${s.project_name.padEnd(20)}  score ${s.score.toFixed(2).padStart(5)}  ${s.reasons.join(" · ")}`
                     )
@@ -270,20 +270,20 @@ function printPlanSummary(plan: CreatePlanV1): void {
             }
         }
 
-        out.print(chalk.dim("  Memories (id  from-to  min  app  note | sub_notes):"));
+        out.println(chalk.dim("  Memories (id  from-to  min  app  note | sub_notes):"));
         for (const m of day.available_memories) {
             const f = m.from.split("T")[1]?.slice(0, 5) ?? "??:??";
             const t = m.to.split("T")[1]?.slice(0, 5) ?? "??:??";
             const app = (m.app || "").slice(0, 20).padEnd(20);
             const note = (m.note || "").slice(0, 70);
             const sub = m.sub_notes.length > 0 ? ` | ${m.sub_notes.slice(0, 2).join("; ").slice(0, 80)}` : "";
-            out.print(
+            out.println(
                 `    ${String(m.id).padStart(10)}  ${f}-${t}  ${String(m.duration_min).padStart(4)}m  ${app}  ${note}${sub}`
             );
         }
     }
 
-    out.print("");
+    out.println("");
 }
 
 function readPlanFile(path: string): CreatePlanV1 {
@@ -313,7 +313,7 @@ function printIssues(issues: PlanIssue[]): { errors: number; warnings: number } 
     for (const issue of issues) {
         const tag = issue.severity === "error" ? chalk.red("✗") : chalk.yellow("!");
         const where = issue.eventIdx !== undefined ? `${issue.day}#${issue.eventIdx}` : issue.day;
-        out.print(`${tag} ${where}: ${issue.message}`);
+        out.println(`${tag} ${where}: ${issue.message}`);
         if (issue.severity === "error") {
             errors++;
         } else {
@@ -359,8 +359,8 @@ async function runApply(storage: Storage, service: TimelyService, options: Creat
         accessToken: tokens.access_token,
         dryRun: options.dryRun ?? false,
         onPayload: (day, idx, payload) => {
-            out.print(chalk.dim(`\n--- ${day} event #${idx} ---`));
-            out.print(SafeJSON.stringify(payload, null, 2));
+            out.println(chalk.dim(`\n--- ${day} event #${idx} ---`));
+            out.println(SafeJSON.stringify(payload, null, 2));
         },
     });
 
@@ -368,16 +368,16 @@ async function runApply(storage: Storage, service: TimelyService, options: Creat
     let failed = 0;
     for (const r of results) {
         if (r.error) {
-            out.print(chalk.red(`✗ ${r.day}#${r.eventIdx} [proj ${r.project_id}]: ${r.error}`));
+            out.println(chalk.red(`✗ ${r.day}#${r.eventIdx} [proj ${r.project_id}]: ${r.error}`));
             failed++;
         } else if (options.dryRun) {
-            out.print(
+            out.println(
                 chalk.cyan(
                     `◯ ${r.day}#${r.eventIdx} [proj ${r.project_id}] DRY ${r.duration} (${r.memoryCount} memories)`
                 )
             );
         } else {
-            out.print(
+            out.println(
                 chalk.green(
                     `✓ ${r.day}#${r.eventIdx} [proj ${r.project_id}] event ${r.eventId} (${r.duration}, ${r.memoryCount} memories)`
                 )

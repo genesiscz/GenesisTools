@@ -111,7 +111,7 @@ export function registerWarmupCommand(program: Command): void {
                 process.exit(1);
             }
 
-            out.print(`Warming up ${accountNames.length} account(s)...`);
+            out.println(`Warming up ${accountNames.length} account(s)...`);
 
             let failures = 0;
 
@@ -120,7 +120,7 @@ export function registerWarmupCommand(program: Command): void {
                 const success = await sendWarmupMessage(name);
                 const duration = Math.round(performance.now() - start);
                 const icon = success ? "\u2713" : "\u2717";
-                out.print(`  ${icon} ${name} (${duration}ms)`);
+                out.println(`  ${icon} ${name} (${duration}ms)`);
 
                 if (!success) {
                     failures++;

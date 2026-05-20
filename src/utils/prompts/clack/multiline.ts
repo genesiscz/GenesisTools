@@ -133,8 +133,8 @@ export async function multilineText(options: MultilineOptions): Promise<string |
                 const error = validate(trimmed);
                 if (error) {
                     process.stdout.write(`\x1b[1A\x1b[2K`);
-                    out.print(`${S_BAR}  ${pc.red(error)}`);
-                    out.print(pc.dim("└"));
+                    out.println(`${S_BAR}  ${pc.red(error)}`);
+                    out.println(pc.dim("└"));
                     emptyEnterCount = 0;
                     return;
                 }

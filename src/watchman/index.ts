@@ -46,7 +46,7 @@ await runTool(program, { tool: "watchman" });
 const options = program.opts<{ current?: boolean; temporary?: boolean; helpFull?: boolean }>();
 
 if (options.helpFull) {
-    out.print(`
+    out.println(`
 Usage: tools watchman [options] [directory]
 
 Watch a directory for file changes using Facebook's Watchman.
@@ -125,7 +125,7 @@ async function getDirOfInterest(): Promise<string> {
     ];
 
     try {
-        const selected = await inquirerBackend.search<string>({
+        const selected = await p.search<string>({
             message: "Select a directory to watch:",
             options: async (term) => {
                 const filtered = !term

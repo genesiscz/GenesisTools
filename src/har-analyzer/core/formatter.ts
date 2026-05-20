@@ -96,14 +96,14 @@ export function formatDashboard(stats: SessionStats, sourceFile: string): string
 export async function printFormatted(text: string, format: OutputFormat): Promise<void> {
     switch (format) {
         case "json":
-            out.print(SafeJSON.stringify({ output: text }));
+            out.println(SafeJSON.stringify({ output: text }));
             break;
         case "toon": {
             const { encode } = await import("@toon-format/toon");
-            out.print(encode({ output: text }));
+            out.println(encode({ output: text }));
             break;
         }
         default:
-            out.print(text);
+            out.println(text);
     }
 }

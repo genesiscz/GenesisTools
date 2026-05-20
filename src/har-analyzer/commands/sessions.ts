@@ -13,14 +13,14 @@ export function registerSessionsCommand(program: Command): void {
 
             if (options.clean) {
                 const deleted = await sm.cleanExpiredSessions();
-                out.print(`Cleaned ${deleted} expired session${deleted === 1 ? "" : "s"}.`);
+                out.println(`Cleaned ${deleted} expired session${deleted === 1 ? "" : "s"}.`);
                 return;
             }
 
             const sessions = await sm.listSessions();
 
             if (sessions.length === 0) {
-                out.print("No sessions found. Use `load <file>` to create one.");
+                out.println("No sessions found. Use `load <file>` to create one.");
                 return;
             }
 
@@ -35,7 +35,7 @@ export function registerSessionsCommand(program: Command): void {
                     return [s.hash.slice(0, 8) + active, s.sourceFile, String(s.entryCount), created];
                 });
 
-            out.print("Sessions (* = active):");
-            out.print(formatTable(rows, headers, { alignRight: [2] }));
+            out.println("Sessions (* = active):");
+            out.println(formatTable(rows, headers, { alignRight: [2] }));
         });
 }

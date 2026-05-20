@@ -27,7 +27,7 @@ export function registerMessagesSearchCommand(program: Command): void {
             });
 
             if (messages.length === 0) {
-                out.print("No messages found.");
+                out.println("No messages found.");
                 return;
             }
 
@@ -49,11 +49,11 @@ export function registerMessagesSearchCommand(program: Command): void {
                 const chatLabel = chalk.dim(`[${msg.chatIdentifier}]`);
                 const text = msg.text ?? chalk.dim("[no text]");
 
-                out.print(`${senderName} ${chalk.dim(date)} ${chatLabel}`);
-                out.print(`  ${text}`);
-                out.print();
+                out.println(`${senderName} ${chalk.dim(date)} ${chatLabel}`);
+                out.println(`  ${text}`);
+                out.println();
             }
 
-            out.print(chalk.dim(`${messages.length} result(s)`));
+            out.println(chalk.dim(`${messages.length} result(s)`));
         });
 }

@@ -48,7 +48,7 @@ const startServer = () => {
     // Handle user input
     const promptUser = async () => {
         try {
-            const userInput = await inquirerBackend.editor({
+            const userInput = await p.editor({
                 message: "Enter your message (save and exit when done):",
                 initialValue: "",
             });

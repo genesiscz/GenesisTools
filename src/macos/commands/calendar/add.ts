@@ -47,7 +47,7 @@ export function registerAddCommand(program: Command): void {
                         isAllDay: options.allDay,
                     });
 
-                    out.print(`${pc.green("Event created")} — ID: ${eventId}`);
+                    out.println(`${pc.green("Event created")} — ID: ${eventId}`);
                 } catch (error) {
                     out.error(error instanceof Error ? error.message : String(error));
                     process.exit(1);

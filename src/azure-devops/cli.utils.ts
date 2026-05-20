@@ -125,7 +125,7 @@ export function extractAzLoginSuggestion(stderr: string): string | null {
  * Print SSL/proxy certificate guide and exit
  */
 export function exitWithSslGuide(error?: unknown): never {
-    out.print(SSL_PROXY_GUIDE);
+    out.println(SSL_PROXY_GUIDE);
 
     if (error instanceof Error && error.stack && process.env.DEBUG) {
         out.error("\nStacktrace:\n");
@@ -139,7 +139,7 @@ export function exitWithSslGuide(error?: unknown): never {
  * Print authentication guide and exit
  */
 export function exitWithAuthGuide(error?: unknown): never {
-    out.print(AUTH_GUIDE);
+    out.println(AUTH_GUIDE);
 
     if (error instanceof Error && error.stack && process.env.DEBUG) {
         out.error("\nStacktrace:\n");

@@ -51,7 +51,7 @@ export function registerWaterfallCommand(program: Command): void {
             const entries = filterEntries(session.entries, filter);
 
             if (entries.length === 0) {
-                out.print("No entries match the filter criteria.");
+                out.println("No entries match the filter criteria.");
                 return;
             }
 

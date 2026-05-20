@@ -696,7 +696,7 @@ export class ClaudeSessionFormatter {
         if (this.options.output) {
             this.options.output(indented);
         } else if (this.options.cliOutput !== false) {
-            out.print(indented);
+            out.println(indented);
         }
 
         if (this.fileStream) {

@@ -42,9 +42,9 @@ async function presentAuthUrl(authUrl: string): Promise<void> {
         "OAuth Login"
     );
 
-    out.print();
-    out.print(`  ${pc.cyan(authUrl)}`);
-    out.print();
+    out.println();
+    out.println(`  ${pc.cyan(authUrl)}`);
+    out.println();
 
     const openBrowser = await p.confirm({
         message: "Open URL in browser?",
@@ -796,26 +796,26 @@ export function registerConfigCommand(program: Command): void {
             const aiConfig = await AIConfig.load();
 
             // Generate auth URL
-            out.print(pc.dim("Generating authorization URL..."));
+            out.println(pc.dim("Generating authorization URL..."));
             const authUrl = await claudeOAuth.startLogin();
 
-            out.print();
-            out.print(pc.bold("OAuth Login"));
-            out.print(pc.dim("─".repeat(50)));
-            out.print();
-            out.print("1. Open this URL in your browser:");
-            out.print();
-            out.print(`   ${pc.cyan(authUrl)}`);
-            out.print();
-            out.print("2. Log in and click 'Authorize'");
-            out.print("3. Copy the code from the callback page");
-            out.print();
-            out.print(pc.dim("─".repeat(50)));
+            out.println();
+            out.println(pc.bold("OAuth Login"));
+            out.println(pc.dim("─".repeat(50)));
+            out.println();
+            out.println("1. Open this URL in your browser:");
+            out.println();
+            out.println(`   ${pc.cyan(authUrl)}`);
+            out.println();
+            out.println("2. Log in and click 'Authorize'");
+            out.println("3. Copy the code from the callback page");
+            out.println();
+            out.println(pc.dim("─".repeat(50)));
 
             // Open browser
             Bun.spawn(["open", authUrl], { stdio: ["ignore", "ignore", "ignore"] });
-            out.print(pc.dim("(Opening browser...)"));
-            out.print();
+            out.println(pc.dim("(Opening browser...)"));
+            out.println();
 
             // Read code from stdin
             process.stdout.write("Paste authorization code: ");
@@ -835,7 +835,7 @@ export function registerConfigCommand(program: Command): void {
             }
 
             // Exchange code
-            out.print(pc.dim("Exchanging code for tokens..."));
+            out.println(pc.dim("Exchanging code for tokens..."));
             let tokens: Awaited<ReturnType<typeof claudeOAuth.exchangeCode>>;
             try {
                 tokens = await claudeOAuth.exchangeCode(code);
@@ -847,7 +847,7 @@ export function registerConfigCommand(program: Command): void {
             // Determine account name
             const accountName = name ?? tokens.account?.email?.split("@")[0]?.toLowerCase() ?? "personal";
             if (aiConfig.getAccount(accountName)) {
-                out.print(pc.yellow(`Updating existing account "${accountName}"...`));
+                out.println(pc.yellow(`Updating existing account "${accountName}"...`));
             }
 
             // Fetch profile for label
@@ -866,13 +866,13 @@ export function registerConfigCommand(program: Command): void {
                 apps: ["claude", "ask"],
             });
 
-            out.print();
-            out.print(pc.green(`✓ Account "${accountName}" saved with auto-refresh.`));
+            out.println();
+            out.println(pc.green(`✓ Account "${accountName}" saved with auto-refresh.`));
             if (tokens.account) {
-                out.print(pc.dim(`  Email: ${tokens.account.email}`));
+                out.println(pc.dim(`  Email: ${tokens.account.email}`));
             }
             if (label) {
-                out.print(pc.dim(`  Plan: ${label}`));
+                out.println(pc.dim(`  Plan: ${label}`));
             }
         });
 }

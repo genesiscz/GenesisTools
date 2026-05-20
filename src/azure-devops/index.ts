@@ -67,7 +67,7 @@ registerTimelogCommand(program);
 registerHistoryCommand(program);
 
 function showHelpFull(): void {
-    out.print(`
+    out.println(`
 Azure DevOps Work Item Tool
 
 Usage:

@@ -206,13 +206,13 @@ function outputSmallestFormat(jsonData: unknown, verbose: boolean): void {
             out.error(`Returning TOON format`);
         }
 
-        out.print(toonOutput);
+        out.println(toonOutput);
     } else {
         if (verbose) {
             out.error(`Returning compact JSON format`);
         }
 
-        out.print(SafeJSON.stringify(jsonData));
+        out.println(SafeJSON.stringify(jsonData));
     }
 }
 
@@ -273,7 +273,7 @@ async function main(): Promise<void> {
                 process.exit(1);
             }
             // Passthrough: output original input unchanged
-            out.print(input);
+            out.println(input);
             return;
         }
 
@@ -327,7 +327,7 @@ async function main(): Promise<void> {
                 out.error(`Returning TOON format as requested by --to-toon flag`);
             }
 
-            out.print(toonOutput);
+            out.println(toonOutput);
             return;
         }
 
@@ -339,9 +339,9 @@ async function main(): Promise<void> {
             }
 
             if (detectedFormat === "toon") {
-                out.print(toonToJson(input));
+                out.println(toonToJson(input));
             } else {
-                out.print(SafeJSON.stringify(jsonData, null, 2));
+                out.println(SafeJSON.stringify(jsonData, null, 2));
             }
 
             return;
@@ -354,7 +354,7 @@ async function main(): Promise<void> {
                 out.error(`Output format: JSON`);
             }
 
-            out.print(toonToJson(input));
+            out.println(toonToJson(input));
         } else {
             if (verbose) {
                 out.error(`Detected format: ${formatLabel}`);

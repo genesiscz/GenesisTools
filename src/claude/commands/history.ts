@@ -148,7 +148,7 @@ function formatResultsAsJson(results: SearchResult[]): string {
 async function runInteractive(): Promise<SearchFilters> {
     const projects = await getAvailableProjects();
 
-    const project = await inquirerBackend.search<string>({
+    const project = await p.search<string>({
         message: "Select project (type to filter):",
         options: async (term) => {
             const filtered = term
@@ -242,7 +242,7 @@ export function registerHistoryCommand(program: Command): void {
                         if (project) {
                             // For encoded dirs like "-Users-Martin-Projects-Foo", show just the leaf
                             const displayName = project.startsWith("-") ? basename(process.cwd()) : project;
-                            out.print(
+                            out.println(
                                 chalk.dim(`Auto-detected project: ${displayName} (use --all to search all projects)`)
                             );
                         }
@@ -281,14 +281,14 @@ export function registerHistoryCommand(program: Command): void {
                     : await searchConversations(filters);
 
                 if (results.length === 0) {
-                    out.print(chalk.yellow("No conversations found matching your criteria."));
+                    out.println(chalk.yellow("No conversations found matching your criteria."));
                     return;
                 }
 
                 if (options.format === "json") {
-                    out.print(formatResultsAsJson(results));
+                    out.println(formatResultsAsJson(results));
                 } else {
-                    out.print(formatResultsAsMarkdown(results, filters));
+                    out.println(formatResultsAsMarkdown(results, filters));
                 }
 
                 // Post-search: offer to summarize a session (interactive only —
@@ -325,7 +325,7 @@ export function registerHistoryCommand(program: Command): void {
                 }
             } catch (error) {
                 if ((error as Error).message?.includes("canceled")) {
-                    out.print(chalk.dim("\nOperation cancelled."));
+                    out.println(chalk.dim("\nOperation cancelled."));
                     process.exit(0);
                 }
                 throw error;
@@ -340,9 +340,9 @@ export function registerHistoryCommand(program: Command): void {
         .action(async (options) => {
             const dashboardDir = resolve(import.meta.dir, "../../claude-history-dashboard");
 
-            out.print(chalk.cyan("Starting Claude History Dashboard..."));
-            out.print(chalk.dim(`   Port: ${options.port}`));
-            out.print();
+            out.println(chalk.cyan("Starting Claude History Dashboard..."));
+            out.println(chalk.dim(`   Port: ${options.port}`));
+            out.println();
 
             const proc = spawn({
                 cmd: [

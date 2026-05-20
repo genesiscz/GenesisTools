@@ -61,14 +61,14 @@ export function registerExpandCommand(program: Command): void {
                 output = formatSchema(data, schemaMode);
             }
 
-            out.print(`[ref:${refId}] Entry #${entryIndex} (${entry.level})`);
-            out.print(output);
+            out.println(`[ref:${refId}] Entry #${entryIndex} (${entry.level})`);
+            out.println(output);
 
             if (!opts.full && !opts.query) {
-                out.print(`\nTip: Full data → ${TOOL} expand ${refId} --full`);
-                out.print(`Tip: Query → ${TOOL} expand ${refId} --query '<jmespath>'`);
+                out.println(`\nTip: Full data → ${TOOL} expand ${refId} --full`);
+                out.println(`Tip: Query → ${TOOL} expand ${refId} --query '<jmespath>'`);
             } else if (opts.full) {
-                out.print(`\nTip: Query → ${TOOL} expand ${refId} --query '<jmespath>'`);
+                out.println(`\nTip: Query → ${TOOL} expand ${refId} --query '<jmespath>'`);
             }
         });
 }

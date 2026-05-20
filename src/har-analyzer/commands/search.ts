@@ -134,7 +134,7 @@ export function registerSearchCommand(program: Command): void {
             }
 
             if (matches.length === 0) {
-                out.print(`No matches found for "${query}" in scope "${scope}".`);
+                out.println(`No matches found for "${query}" in scope "${scope}".`);
                 return;
             }
 

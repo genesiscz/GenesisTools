@@ -388,10 +388,10 @@ async function main(fileArg: string | undefined, options: ProgramOptions) {
         filename = filePath;
     } else {
         out.error(chalk.red("No input provided."));
-        out.print("\nUsage:");
-        out.print("  tools react-compiler-debug <file.tsx>");
-        out.print('  tools react-compiler-debug --code "const Foo = () => <div />"');
-        out.print("  cat file.tsx | tools react-compiler-debug --stdin");
+        out.println("\nUsage:");
+        out.println("  tools react-compiler-debug <file.tsx>");
+        out.println('  tools react-compiler-debug --code "const Foo = () => <div />"');
+        out.println("  cat file.tsx | tools react-compiler-debug --stdin");
         process.exit(1);
     }
 
@@ -470,10 +470,10 @@ async function main(fileArg: string | undefined, options: ProgramOptions) {
         // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional ANSI escape/control character matching
         const plainText = outputText.replace(/\x1B\[[0-9;]*m/g, "");
         await copyToClipboard(plainText, { silent: true });
-        out.print(chalk.green("Output copied to clipboard!"));
-        out.print(outputText);
+        out.println(chalk.green("Output copied to clipboard!"));
+        out.println(outputText);
     } else {
-        out.print(outputText);
+        out.println(outputText);
     }
 }
 

@@ -29,21 +29,21 @@ export function registerTailCommand(program: Command): void {
             }
             const tail = existing.slice(-lastCount);
 
-            out.print(`Tailing session: ${sessionName} (${raw.length} entries, showing last ${tail.length})`);
-            out.print("");
+            out.println(`Tailing session: ${sessionName} (${raw.length} entries, showing last ${tail.length})`);
+            out.println("");
 
             let currentFile = "";
             for (const entry of tail) {
                 const file = entry.file ?? "unknown";
                 if (file !== currentFile) {
                     currentFile = file;
-                    out.print(`File: ${file}`);
+                    out.println(`File: ${file}`);
                 }
-                out.print(formatEntryLine(entry, pretty));
+                out.println(formatEntryLine(entry, pretty));
             }
 
-            out.print("");
-            out.print("--- Watching for new entries (Ctrl+C to stop) ---");
+            out.println("");
+            out.println("--- Watching for new entries (Ctrl+C to stop) ---");
 
             let offset = 0;
             try {
@@ -84,9 +84,9 @@ export function registerTailCommand(program: Command): void {
                             const file = indexed.file ?? "unknown";
                             if (file !== currentFile) {
                                 currentFile = file;
-                                out.print(`File: ${file}`);
+                                out.println(`File: ${file}`);
                             }
-                            out.print(formatEntryLine(indexed, pretty));
+                            out.println(formatEntryLine(indexed, pretty));
                         } catch {
                             const fallback: IndexedLogEntry = {
                                 level: "raw",
@@ -94,7 +94,7 @@ export function registerTailCommand(program: Command): void {
                                 ts: Date.now(),
                                 index: entryIndex,
                             };
-                            out.print(formatEntryLine(fallback, pretty));
+                            out.println(formatEntryLine(fallback, pretty));
                         }
                     }
                 } catch {
@@ -108,7 +108,7 @@ export function registerTailCommand(program: Command): void {
 
             process.on("SIGINT", () => {
                 watcher.close();
-                out.print("\nStopped tailing.");
+                out.println("\nStopped tailing.");
                 process.exit(0);
             });
 

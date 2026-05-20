@@ -308,9 +308,9 @@ async function addViaOAuthFlow(): Promise<void> {
         "OAuth Login"
     );
 
-    out.print();
-    out.print(`  ${pc.cyan(authUrl)}`);
-    out.print();
+    out.println();
+    out.println(`  ${pc.cyan(authUrl)}`);
+    out.println();
 
     const openBrowser = await p.confirm({
         message: "Open URL in browser?",
@@ -614,9 +614,9 @@ async function addViaCodexOAuth(): Promise<void> {
         "OpenAI OAuth Login"
     );
 
-    out.print();
-    out.print(`  ${pc.cyan(authUrl)}`);
-    out.print();
+    out.println();
+    out.println(`  ${pc.cyan(authUrl)}`);
+    out.println();
 
     const openBrowser = await p.confirm({
         message: "Open URL in browser?",

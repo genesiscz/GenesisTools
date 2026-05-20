@@ -335,13 +335,13 @@ export async function handleQuery(
     // Output
     switch (format) {
         case "ai":
-            out.print(formatAI(queryId, items, oldCache ? changes : [], oldCacheTime));
+            out.println(formatAI(queryId, items, oldCache ? changes : [], oldCacheTime));
             break;
         case "md":
-            out.print(formatMD(items));
+            out.println(formatMD(items));
             break;
         case "json":
-            out.print(formatJSON({ items, changes: oldCache ? changes : [] }));
+            out.println(formatJSON({ items, changes: oldCache ? changes : [] }));
             break;
     }
 

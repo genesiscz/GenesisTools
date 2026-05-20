@@ -71,7 +71,7 @@ export async function renderSessionList(options: ListSessionsOptions): Promise<v
     });
 
     if (sessions.length === 0) {
-        out.print(pc.dim("No sessions found."));
+        out.println(pc.dim("No sessions found."));
         return;
     }
 
@@ -102,12 +102,12 @@ export async function renderActiveSessionList(
 
     sortByRecency(activeSessions);
 
-    out.print(
+    out.println(
         options.colors
             ? pc.yellow(`⚠️ ${activeSessions.length} active sessions — pick one:`)
             : `⚠️ ${activeSessions.length} active sessions — pick one:`
     );
-    out.print();
+    out.println();
 
     printSuggestHeader(activeSessions[0], options);
 
@@ -131,16 +131,16 @@ async function renderCompactSession(
     if (preview.lastUserMessage) {
         const collapsed = preview.lastUserMessage.replace(/\n+/g, " ");
         const truncated = truncateText(collapsed, 120);
-        out.print(c ? `   ${pc.dim("›")} ${pc.green(truncated)}` : `   › ${truncated}`);
+        out.println(c ? `   ${pc.dim("›")} ${pc.green(truncated)}` : `   › ${truncated}`);
     }
 
     for (const excerpt of preview.assistantExcerpts) {
         const collapsed = excerpt.replace(/\n+/g, " ");
         const truncated = truncateText(collapsed, 200);
-        out.print(c ? `   ${pc.dim("│")} ${pc.dim(truncated)}` : `   │ ${truncated}`);
+        out.println(c ? `   ${pc.dim("│")} ${pc.dim(truncated)}` : `   │ ${truncated}`);
     }
 
-    out.print();
+    out.println();
 }
 
 function renderSessionHeader(session: SessionInfo, activeIds: Set<string>, options: ListSessionsOptions): void {
@@ -155,7 +155,7 @@ function renderSessionHeader(session: SessionInfo, activeIds: Set<string>, optio
     const header = c
         ? `${icon}${pc.bold(pc.white(shortId))}  ${pc.dim(timeStr.padEnd(8))} ${pc.cyan(branch)}`
         : `${icon}${shortId}  ${timeStr.padEnd(8)} ${branch}`;
-    out.print(header);
+    out.println(header);
 }
 
 // ─── Verbose List (-ll) ─────────────────────────────────────────────────────
@@ -192,10 +192,10 @@ async function renderVerboseSession(
     renderSessionHeader(session, activeIds, options);
 
     for (const line of lines) {
-        out.print(line);
+        out.println(line);
     }
 
-    out.print();
+    out.println();
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -303,12 +303,12 @@ function printSuggestHeader(firstSession: SessionInfo, options: ListSessionsOpti
     });
 
     if (options.colors) {
-        out.print(`  ${pc.dim("┌")} ${pc.cyan(hint)}`);
-        out.print(`  ${pc.dim("└")}`);
+        out.println(`  ${pc.dim("┌")} ${pc.cyan(hint)}`);
+        out.println(`  ${pc.dim("└")}`);
     } else {
-        out.print(`  ┌ ${hint}`);
-        out.print("  └");
+        out.println(`  ┌ ${hint}`);
+        out.println("  └");
     }
 
-    out.print();
+    out.println();
 }

@@ -271,7 +271,7 @@ export class Executor {
         const env = this.buildEnv(options?.env);
 
         if (this.verbose) {
-            out.print(pc.gray(`  $ ${cmd.join(" ")}`));
+            out.println(pc.gray(`  $ ${cmd.join(" ")}`));
         }
 
         const proc = Bun.spawn({
@@ -321,13 +321,13 @@ export class Executor {
 
         if (this.debug) {
             if (result.stdout) {
-                out.print(pc.dim(`  [${this.label}:out] ${result.stdout.substring(0, 200)}`));
+                out.println(pc.dim(`  [${this.label}:out] ${result.stdout.substring(0, 200)}`));
             }
             if (result.stderr) {
-                out.print(pc.dim(`  [${this.label}:err] ${result.stderr.substring(0, 200)}`));
+                out.println(pc.dim(`  [${this.label}:err] ${result.stderr.substring(0, 200)}`));
             }
             if (!result.success) {
-                out.print(pc.red(`  [${this.label}] exit ${exitCode}`));
+                out.println(pc.red(`  [${this.label}] exit ${exitCode}`));
             }
         }
 
@@ -344,7 +344,7 @@ export class Executor {
         const env = this.buildEnv(options?.env);
 
         if (this.verbose) {
-            out.print(pc.cyan(`  $ ${cmd.join(" ")}`));
+            out.println(pc.cyan(`  $ ${cmd.join(" ")}`));
         }
 
         const proc = Bun.spawn({

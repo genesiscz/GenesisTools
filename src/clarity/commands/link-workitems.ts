@@ -454,13 +454,13 @@ export function registerLinkCommand(program: Command): void {
 
                 const removed = config.mappings.splice(idx, 1)[0];
                 await saveConfig(config);
-                out.print(`Removed mapping: ADO #${removed.adoWorkItemId} -> ${removed.clarityTaskName}`);
+                out.println(`Removed mapping: ADO #${removed.adoWorkItemId} -> ${removed.clarityTaskName}`);
                 return;
             }
 
             // List
             if (options.list) {
-                out.print(SafeJSON.stringify({ mappings: config.mappings }, null, 2));
+                out.println(SafeJSON.stringify({ mappings: config.mappings }, null, 2));
                 return;
             }
 
@@ -576,7 +576,7 @@ export function registerLinkCommand(program: Command): void {
 
                 config.mappings.push(mapping);
                 await saveConfig(config);
-                out.print(`Linked: ADO #${options.azureDevopsWorkitem} -> ${project.taskName}`);
+                out.println(`Linked: ADO #${options.azureDevopsWorkitem} -> ${project.taskName}`);
                 return;
             }
 

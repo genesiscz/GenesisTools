@@ -32,7 +32,7 @@ export function registerStatusCommand(program: Command): void {
                 return;
             }
 
-            out.print("");
+            out.println("");
 
             for (const task of config.tasks) {
                 const state = task.enabled ? pc.green("enabled") : pc.dim("disabled");

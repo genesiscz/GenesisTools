@@ -130,6 +130,6 @@ export async function configJson(options: ConfigJsonOptions = {}): Promise<void>
         await copyToClipboard(jsonOutput, { silent: true });
         logger.info("✔ Configuration copied to clipboard");
     } else {
-        out.print(jsonOutput);
+        out.println(jsonOutput);
     }
 }

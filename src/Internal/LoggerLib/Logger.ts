@@ -701,10 +701,10 @@ export const consoleTransport: ITransport = {
                 break;
             case "debug":
             case "silly":
-                out.print(message);
+                out.println(message);
                 break;
             default:
-                out.print(message);
+                out.println(message);
         }
     },
 };
@@ -723,6 +723,6 @@ export const fileTransport = (options: FileTransportOptions): ITransport => ({
 
         // This is a placeholder for actual file writing
         // You would replace this with platform-specific implementation
-        out.print(`[FILE TRANSPORT] Would write to ${options.filePath}: ${message}`);
+        out.println(`[FILE TRANSPORT] Would write to ${options.filePath}: ${message}`);
     },
 });

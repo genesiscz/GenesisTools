@@ -155,7 +155,7 @@ export function registerCookiesCommand(program: Command): void {
             const cookies = analyzeCookies(har.log.entries);
 
             if (cookies.length === 0) {
-                out.print("No cookies found in HAR file.");
+                out.println("No cookies found in HAR file.");
                 return;
             }
 

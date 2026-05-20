@@ -29,11 +29,11 @@ export function registerSearchCommand(program: Command): void {
                 });
 
                 if (events.length === 0) {
-                    out.print("No events found matching your query.");
+                    out.println("No events found matching your query.");
                     return;
                 }
 
-                out.print(formatEventsTable(events));
+                out.println(formatEventsTable(events));
             } catch (error) {
                 out.error(error instanceof Error ? error.message : String(error));
                 process.exit(1);

@@ -37,7 +37,7 @@ program
 
         if (!process.stdin.isTTY) {
             const markdown = readFileSync(0, "utf-8");
-            out.print(renderMarkdownToCli(markdown, renderOpts));
+            out.println(renderMarkdownToCli(markdown, renderOpts));
             return;
         }
 
@@ -57,9 +57,9 @@ program
             if (opts?.watch) {
                 process.stdout.write("\x1b[2J\x1b[H"); // Clear screen
             }
-            out.print(renderMarkdownToCli(markdown, renderOpts));
+            out.println(renderMarkdownToCli(markdown, renderOpts));
             if (opts?.watch) {
-                out.print(`\n--- Watching ${filePath} for changes (Ctrl+C to stop) ---\n`);
+                out.println(`\n--- Watching ${filePath} for changes (Ctrl+C to stop) ---\n`);
             }
         }
 

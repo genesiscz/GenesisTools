@@ -55,9 +55,9 @@ export async function runInteractive(parentOpts: OutputOptions): Promise<void> {
     refStore = new RefStoreManager(session.sourceHash);
 
     // Show dashboard
-    out.print("");
-    out.print(formatDashboard(session.stats, session.sourceFile));
-    out.print("");
+    out.println("");
+    out.println(formatDashboard(session.stats, session.sourceFile));
+    out.println("");
 
     // Main loop
     while (true) {
@@ -86,7 +86,7 @@ export async function runInteractive(parentOpts: OutputOptions): Promise<void> {
         switch (action) {
             case "list": {
                 for (const entry of session.entries) {
-                    out.print(formatEntryLine(entry));
+                    out.println(formatEntryLine(entry));
                 }
                 break;
             }
@@ -109,10 +109,10 @@ export async function runInteractive(parentOpts: OutputOptions): Promise<void> {
                 const rawEntry = harFile.log.entries[idx];
                 const ie = session.entries[idx];
 
-                out.print(`\n${rawEntry.request.method} ${ie.url}`);
-                out.print(`Status: ${rawEntry.response.status} ${rawEntry.response.statusText}`);
-                out.print(`Time: ${formatDuration(rawEntry.time)}`);
-                out.print(`Size: ${formatBytes(ie.responseSize)}`);
+                out.println(`\n${rawEntry.request.method} ${ie.url}`);
+                out.println(`Status: ${rawEntry.response.status} ${rawEntry.response.statusText}`);
+                out.println(`Time: ${formatDuration(rawEntry.time)}`);
+                out.println(`Size: ${formatBytes(ie.responseSize)}`);
 
                 const showBody = await p.confirm({
                     message: "Show response body?",
@@ -122,16 +122,16 @@ export async function runInteractive(parentOpts: OutputOptions): Promise<void> {
                 if (!p.isCancel(showBody) && showBody) {
                     const content = rawEntry.response.content;
                     if (content.encoding === "base64") {
-                        out.print(`[binary: ${content.mimeType}, ${formatBytes(content.size)}]`);
+                        out.println(`[binary: ${content.mimeType}, ${formatBytes(content.size)}]`);
                     } else if (content.text && (isInterestingMimeType(content.mimeType) || parentOpts.includeAll)) {
                         const formatted = await refStore.formatValue(content.text, `e${idx}.rs.body`, {
                             full: parentOpts.full,
                         });
-                        out.print(formatted);
+                        out.println(formatted);
                     } else if (content.text) {
-                        out.print(`[skipped: ${content.mimeType}, ${formatBytes(content.size)}]`);
+                        out.println(`[skipped: ${content.mimeType}, ${formatBytes(content.size)}]`);
                     } else {
-                        out.print("(empty)");
+                        out.println("(empty)");
                     }
                 }
                 break;
@@ -159,7 +159,7 @@ export async function runInteractive(parentOpts: OutputOptions): Promise<void> {
 
                 const domainIndexes = session.domains[domain] ?? [];
                 for (const idx of domainIndexes) {
-                    out.print(formatEntryLine(session.entries[idx]));
+                    out.println(formatEntryLine(session.entries[idx]));
                 }
                 break;
             }
@@ -228,7 +228,7 @@ export async function runInteractive(parentOpts: OutputOptions): Promise<void> {
                 } else {
                     p.log.info(`${results.length} match${results.length === 1 ? "" : "es"}:`);
                     for (const r of results) {
-                        out.print(
+                        out.println(
                             `  [e${r.entry.index}] ${r.entry.method} ${truncatePath(r.entry.path, 30)} ${r.entry.status} → ${r.context}`
                         );
                     }
@@ -246,11 +246,11 @@ export async function runInteractive(parentOpts: OutputOptions): Promise<void> {
                 for (const e of errorEntries) {
                     const raw = harFile.log.entries[e.index];
                     const body = raw.response.content.text?.slice(0, 80) ?? "";
-                    out.print(
+                    out.println(
                         `  e${e.index}  ${e.status}  ${e.method}  ${truncatePath(e.path, 40)}  ${formatDuration(e.timeMs)}`
                     );
                     if (body) {
-                        out.print(`       ${body}`);
+                        out.println(`       ${body}`);
                     }
                 }
                 break;
@@ -275,7 +275,7 @@ export async function runInteractive(parentOpts: OutputOptions): Promise<void> {
                     const startPos = span > 0 ? Math.round((offset / span) * barW) : 0;
                     const len = span > 0 ? Math.max(1, Math.round((entry.timeMs / span) * barW)) : 1;
                     const bar = " ".repeat(startPos) + "\u2588".repeat(Math.min(len, barW - startPos));
-                    out.print(
+                    out.println(
                         `  e${entry.index}  ${entry.method.padEnd(6)}  ${truncatePath(entry.path, 20).padEnd(20)}  |${bar.padEnd(barW)}|  ${formatDuration(entry.timeMs)}`
                     );
                 }
@@ -303,7 +303,7 @@ export async function runInteractive(parentOpts: OutputOptions): Promise<void> {
                 } else {
                     p.log.warn(`${findings.length} finding(s):`);
                     for (const f of findings) {
-                        out.print(f);
+                        out.println(f);
                     }
                 }
                 break;
@@ -321,7 +321,7 @@ export async function runInteractive(parentOpts: OutputOptions): Promise<void> {
                 const rows = [...mimeMap.entries()]
                     .sort(([, a], [, b]) => b.size - a.size)
                     .map(([mime, d]) => [mime, String(d.count), formatBytes(d.size)]);
-                out.print(formatTable(rows, headers, { alignRight: [1, 2] }));
+                out.println(formatTable(rows, headers, { alignRight: [1, 2] }));
                 break;
             }
 
@@ -344,7 +344,7 @@ export async function runInteractive(parentOpts: OutputOptions): Promise<void> {
                 }
 
                 if (moreAction === "dashboard") {
-                    out.print(formatDashboard(session.stats, session.sourceFile));
+                    out.println(formatDashboard(session.stats, session.sourceFile));
                 } else if (moreAction === "diff") {
                     const e1 = await p.text({ message: "First entry (e.g. 0):", placeholder: "0" });
                     if (p.isCancel(e1)) {
@@ -376,11 +376,11 @@ export async function runInteractive(parentOpts: OutputOptions): Promise<void> {
                 harFile = await loadHarFile(session.sourceFile);
                 refStore = new RefStoreManager(session.sourceHash);
                 spinner.stop(`Loaded ${session.stats.entryCount} entries`);
-                out.print(formatDashboard(session.stats, session.sourceFile));
+                out.println(formatDashboard(session.stats, session.sourceFile));
                 break;
             }
         }
 
-        out.print("");
+        out.println("");
     }
 }

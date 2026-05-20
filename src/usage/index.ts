@@ -18,7 +18,7 @@ interface Options {
 }
 
 function showHelp() {
-    out.print(`
+    out.println(`
 Usage: tools usage [options]
 
 Display usage statistics and analytics for ASK tool.
@@ -58,18 +58,18 @@ function formatDate(dateStr: string): string {
 async function showSummary(db: UsageDatabase, days: number) {
     const total = await db.getTotalUsage(days);
 
-    out.print(chalk.bold.cyan("\n📊 USAGE SUMMARY\n"));
-    out.print(chalk.white(`Period: Last ${days} days`));
-    out.print(chalk.white(`Total Cost: ${chalk.green.bold(formatCost(total.totalCost))}`));
-    out.print(chalk.white(`Total Tokens: ${chalk.yellow(formatTokens(total.totalTokens))}`));
-    out.print(chalk.white(`Messages: ${chalk.blue(total.messageCount.toLocaleString())}`));
-    out.print(chalk.white(`Sessions: ${chalk.magenta(total.sessionCount.toLocaleString())}`));
+    out.println(chalk.bold.cyan("\n📊 USAGE SUMMARY\n"));
+    out.println(chalk.white(`Period: Last ${days} days`));
+    out.println(chalk.white(`Total Cost: ${chalk.green.bold(formatCost(total.totalCost))}`));
+    out.println(chalk.white(`Total Tokens: ${chalk.yellow(formatTokens(total.totalTokens))}`));
+    out.println(chalk.white(`Messages: ${chalk.blue(total.messageCount.toLocaleString())}`));
+    out.println(chalk.white(`Sessions: ${chalk.magenta(total.sessionCount.toLocaleString())}`));
 
     if (total.messageCount > 0) {
         const avgCostPerMessage = total.totalCost / total.messageCount;
         const avgTokensPerMessage = total.totalTokens / total.messageCount;
-        out.print(chalk.white(`Avg Cost/Message: ${chalk.green(formatCost(avgCostPerMessage))}`));
-        out.print(chalk.white(`Avg Tokens/Message: ${chalk.yellow(formatTokens(avgTokensPerMessage))}`));
+        out.println(chalk.white(`Avg Cost/Message: ${chalk.green(formatCost(avgCostPerMessage))}`));
+        out.println(chalk.white(`Avg Tokens/Message: ${chalk.yellow(formatTokens(avgTokensPerMessage))}`));
     }
 }
 
@@ -77,11 +77,11 @@ async function showDailyUsage(db: UsageDatabase, days: number) {
     const dailyUsage = await db.getDailyUsage(days);
 
     if (dailyUsage.length === 0) {
-        out.print(chalk.yellow("\nNo usage data found for the specified period."));
+        out.println(chalk.yellow("\nNo usage data found for the specified period."));
         return;
     }
 
-    out.print(chalk.bold.cyan("\n📅 DAILY USAGE\n"));
+    out.println(chalk.bold.cyan("\n📅 DAILY USAGE\n"));
 
     const table = new Table({
         head: ["Date", "Cost", "Tokens", "Messages", "Providers"],
@@ -98,7 +98,7 @@ async function showDailyUsage(db: UsageDatabase, days: number) {
         ]);
     }
 
-    out.print(table.toString());
+    out.println(table.toString());
 }
 
 async function showProviderUsage(db: UsageDatabase, days: number) {
@@ -108,7 +108,7 @@ async function showProviderUsage(db: UsageDatabase, days: number) {
         return;
     }
 
-    out.print(chalk.bold.cyan("\n🏢 BY PROVIDER\n"));
+    out.println(chalk.bold.cyan("\n🏢 BY PROVIDER\n"));
 
     const table = new Table({
         head: ["Provider", "Total Cost", "Total Tokens", "Messages", "Avg Cost/Message"],
@@ -125,7 +125,7 @@ async function showProviderUsage(db: UsageDatabase, days: number) {
         ]);
     }
 
-    out.print(table.toString());
+    out.println(table.toString());
 }
 
 async function showModelUsage(db: UsageDatabase, days: number) {
@@ -135,7 +135,7 @@ async function showModelUsage(db: UsageDatabase, days: number) {
         return;
     }
 
-    out.print(chalk.bold.cyan("\n🤖 BY MODEL\n"));
+    out.println(chalk.bold.cyan("\n🤖 BY MODEL\n"));
 
     const table = new Table({
         head: ["Provider", "Model", "Total Cost", "Total Tokens", "Messages", "Avg Cost/Message"],
@@ -156,10 +156,10 @@ async function showModelUsage(db: UsageDatabase, days: number) {
         ]);
     }
 
-    out.print(table.toString());
+    out.println(table.toString());
 
     if (modelUsage.length > 10) {
-        out.print(chalk.gray(`\n... and ${modelUsage.length - 10} more models`));
+        out.println(chalk.gray(`\n... and ${modelUsage.length - 10} more models`));
     }
 }
 
@@ -170,7 +170,7 @@ async function showCostTrend(db: UsageDatabase, days: number) {
         return;
     }
 
-    out.print(chalk.bold.cyan("\n📈 COST TREND (Last 7 Days)\n"));
+    out.println(chalk.bold.cyan("\n📈 COST TREND (Last 7 Days)\n"));
 
     const maxCost = Math.max(...trend.map((t) => t.cost));
     const barLength = 40;
@@ -178,7 +178,7 @@ async function showCostTrend(db: UsageDatabase, days: number) {
     for (const day of trend) {
         const barFill = Math.round((day.cost / maxCost) * barLength);
         const bar = chalk.green("█".repeat(barFill)) + chalk.gray("░".repeat(barLength - barFill));
-        out.print(`${formatDate(day.date).padEnd(15)} ${bar} ${chalk.green(formatCost(day.cost))}`);
+        out.println(`${formatDate(day.date).padEnd(15)} ${bar} ${chalk.green(formatCost(day.cost))}`);
     }
 }
 
@@ -207,7 +207,7 @@ async function showJSON(db: UsageDatabase, days: number, _provider?: string, _mo
         byModel: modelUsage,
     };
 
-    out.print(SafeJSON.stringify(output, null, 2));
+    out.println(SafeJSON.stringify(output, null, 2));
 }
 
 async function main() {

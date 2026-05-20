@@ -42,16 +42,16 @@ export function registerMessagesAttachmentCommand(program: Command): void {
 
             if (opts.info) {
                 const name = att.transferName ?? basename(att.resolvedPath);
-                out.print();
-                out.print(`  ${chalk.bold(name)}`);
-                out.print(`  Type:  ${att.mimeType ?? "unknown"}`);
-                out.print(`  Size:  ${formatBytes(att.totalBytes)}`);
-                out.print(`  Path:  ${att.resolvedPath}`);
-                out.print(`  ID:    #${att.rowid}`);
-                out.print();
+                out.println();
+                out.println(`  ${chalk.bold(name)}`);
+                out.println(`  Type:  ${att.mimeType ?? "unknown"}`);
+                out.println(`  Size:  ${formatBytes(att.totalBytes)}`);
+                out.println(`  Path:  ${att.resolvedPath}`);
+                out.println(`  ID:    #${att.rowid}`);
+                out.println();
                 const base = `tools macos messages attachment ${rowid}`;
-                out.print(chalk.dim(`  ${base} --download [dest]`));
-                out.print(chalk.dim(`  ${base} --open`));
+                out.println(chalk.dim(`  ${base} --download [dest]`));
+                out.println(chalk.dim(`  ${base} --open`));
             }
 
             if (opts.download) {
@@ -60,7 +60,7 @@ export function registerMessagesAttachmentCommand(program: Command): void {
                 const destPath = resolve(destDir, name);
 
                 copyFileSync(att.resolvedPath, destPath);
-                out.print(`Saved to ${destPath}`);
+                out.println(`Saved to ${destPath}`);
             }
 
             if (opts.open) {

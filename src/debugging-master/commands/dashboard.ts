@@ -27,11 +27,11 @@ export function registerDashboardCommand(program: Command): void {
             const lanIp = getLocalIpv4();
             const url = `http://${lanIp}:${port}/`;
 
-            out.print("");
-            out.print(`  ${pc.bold(pc.yellow("dashboard:"))} ${pc.bold(url)}`);
-            out.print("");
-            out.print(pc.dim("  scan from your phone:"));
-            out.print(renderQr(url, { small: true }));
+            out.println("");
+            out.println(`  ${pc.bold(pc.yellow("dashboard:"))} ${pc.bold(url)}`);
+            out.println("");
+            out.println(pc.dim("  scan from your phone:"));
+            out.println(renderQr(url, { small: true }));
 
             try {
                 const cmd = openCommand(url);
@@ -62,7 +62,7 @@ export async function runBuild(): Promise<void> {
         process.exit(1);
     }
 
-    out.print(pc.dim(`▸ Building dashboard at ${DASHBOARD_ROOT}`));
+    out.println(pc.dim(`▸ Building dashboard at ${DASHBOARD_ROOT}`));
 
     const proc = Bun.spawn(["bunx", "vite", "build", "--logLevel", "warn"], {
         cwd: DASHBOARD_ROOT,
@@ -75,7 +75,7 @@ export async function runBuild(): Promise<void> {
         process.exit(code);
     }
 
-    out.print(pc.green("✓ Dashboard built"));
+    out.println(pc.green("✓ Dashboard built"));
 }
 
 /** Used at server startup if dist/ is missing — auto-builds once so users don't see a 503. */
@@ -84,6 +84,6 @@ export async function ensureDashboardBuilt(): Promise<void> {
     if (existsSync(distIndex)) {
         return;
     }
-    out.print(pc.dim("▸ Dashboard dist/ missing — building once..."));
+    out.println(pc.dim("▸ Dashboard dist/ missing — building once..."));
     await runBuild();
 }

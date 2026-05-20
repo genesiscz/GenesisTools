@@ -111,7 +111,7 @@ async function runForegroundTimer(opts: TimerOptions): Promise<void> {
 
     for (let cycle = 1; cycle <= repeat; cycle++) {
         if (repeat > 1) {
-            out.print(pc.cyan(`\nCycle ${cycle}/${repeat}`));
+            out.println(pc.cyan(`\nCycle ${cycle}/${repeat}`));
         }
 
         const endTime = Date.now() + durationMs;
@@ -144,7 +144,7 @@ async function runForegroundTimer(opts: TimerOptions): Promise<void> {
         await fireCompletionActions({ title, notify, say, cycle, totalCycles: repeat });
 
         if (cycle < repeat) {
-            out.print(pc.dim("  Starting next cycle..."));
+            out.println(pc.dim("  Starting next cycle..."));
         }
     }
 }
@@ -205,7 +205,7 @@ async function startBackgroundTimer(opts: TimerOptions): Promise<void> {
     const pid = child.pid;
 
     if (!pid) {
-        out.print(pc.red("Failed to start background timer process."));
+        out.println(pc.red("Failed to start background timer process."));
         process.exit(1);
     }
 
@@ -223,9 +223,9 @@ async function startBackgroundTimer(opts: TimerOptions): Promise<void> {
 
     await addActiveTimer(entry);
 
-    out.print(pc.green(`Timer started in background`));
-    out.print(pc.dim(`  ID: ${id}  PID: ${pid}`));
-    out.print(pc.dim(`  Duration: ${formatDuration(durationMs)}  Title: ${title}`));
+    out.println(pc.green(`Timer started in background`));
+    out.println(pc.dim(`  ID: ${id}  PID: ${pid}`));
+    out.println(pc.dim(`  Duration: ${formatDuration(durationMs)}  Title: ${title}`));
 }
 
 async function handleBackgroundRun(args: string[]): Promise<void> {
@@ -293,7 +293,7 @@ async function listTimers(): Promise<void> {
     }
 
     if (alive.length === 0) {
-        out.print(pc.dim("No active timers."));
+        out.println(pc.dim("No active timers."));
         return;
     }
 
@@ -315,7 +315,7 @@ async function listTimers(): Promise<void> {
         return [t.id, t.title, formatCountdown(remaining), repeatLabel, actions.join(", ") || "-", String(t.pid)];
     });
 
-    out.print(formatTable(rows, ["ID", "Title", "Remaining", "Cycle", "Actions", "PID"]));
+    out.println(formatTable(rows, ["ID", "Title", "Remaining", "Cycle", "Actions", "PID"]));
 }
 
 async function cancelTimer(idOrIndex?: string): Promise<void> {
@@ -323,7 +323,7 @@ async function cancelTimer(idOrIndex?: string): Promise<void> {
     const alive = data.timers.filter((t) => isProcessAlive(t.pid));
 
     if (alive.length === 0) {
-        out.print(pc.dim("No active timers to cancel."));
+        out.println(pc.dim("No active timers to cancel."));
         return;
     }
 
@@ -341,7 +341,7 @@ async function cancelTimer(idOrIndex?: string): Promise<void> {
         }
 
         if (!target) {
-            out.print(pc.red(`Timer not found: ${idOrIndex}`));
+            out.println(pc.red(`Timer not found: ${idOrIndex}`));
             return;
         }
     } else if (alive.length === 1) {
@@ -375,7 +375,7 @@ async function cancelTimer(idOrIndex?: string): Promise<void> {
     }
 
     await removeActiveTimer(target.id);
-    out.print(pc.green(`Cancelled timer: ${target.title} (${target.id})`));
+    out.println(pc.green(`Cancelled timer: ${target.title} (${target.id})`));
 }
 
 // ============================================
@@ -500,13 +500,13 @@ program
         const durationMs = duration ? parseDuration(duration) : 0;
 
         if (durationMs <= 0 && duration && duration !== "list" && duration !== "cancel") {
-            out.print(pc.red(`Invalid duration: ${duration}`));
-            out.print(pc.dim("Use formats like: 25m, 1h30m, 90s, or a number (minutes)"));
+            out.println(pc.red(`Invalid duration: ${duration}`));
+            out.println(pc.dim("Use formats like: 25m, 1h30m, 90s, or a number (minutes)"));
             process.exit(1);
         }
 
         if (durationMs > MAX_TIMEOUT_MS) {
-            out.print(pc.red(`Duration too large (max ~24.8 days)`));
+            out.println(pc.red(`Duration too large (max ~24.8 days)`));
             process.exit(1);
         }
 
@@ -521,7 +521,7 @@ program
         const repeat = options.repeat ?? 1;
 
         if (!Number.isInteger(repeat) || repeat < 1) {
-            out.print(pc.red(`Invalid repeat value: ${options.repeat} (must be a positive integer)`));
+            out.println(pc.red(`Invalid repeat value: ${options.repeat} (must be a positive integer)`));
             process.exit(1);
         }
 

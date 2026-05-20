@@ -327,7 +327,7 @@ export async function issueCommand(input: string, options: IssueCommandOptions):
     if (inputs.length > 1) {
         for (let i = 0; i < inputs.length; i++) {
             if (i > 0) {
-                out.print(chalk.dim("\n---\n"));
+                out.println(chalk.dim("\n---\n"));
             }
             await issueSingleCommand(inputs[i], options);
         }
@@ -353,7 +353,7 @@ async function issueSingleCommand(input: string, options: IssueCommandOptions): 
     }
 
     const { owner, repo, number } = parsed;
-    out.print(chalk.dim(`Fetching ${owner}/${repo}#${number}...`));
+    out.println(chalk.dim(`Fetching ${owner}/${repo}#${number}...`));
     verbose(options, `Parsed: owner=${owner}, repo=${repo}, number=${number}`);
 
     // Get or create repo in cache
@@ -369,7 +369,7 @@ async function issueSingleCommand(input: string, options: IssueCommandOptions): 
     // Fetch issue data
     let issue: GitHubIssue;
     if (shouldRefresh) {
-        out.print(chalk.dim("Fetching issue from GitHub..."));
+        out.println(chalk.dim("Fetching issue from GitHub..."));
         issue = await fetchIssue(owner, repo, number);
 
         // Update cache
@@ -420,13 +420,13 @@ async function issueSingleCommand(input: string, options: IssueCommandOptions): 
         const negativeR = sumNegativeReactions(issue.reactions);
 
         if (options.minReactions !== undefined && totalR < options.minReactions) {
-            out.print(
+            out.println(
                 chalk.yellow(`Issue #${number} has ${totalR} reactions (threshold: ${options.minReactions}). Skipping.`)
             );
             return;
         }
         if (options.minReactionsPositive !== undefined && positiveR < options.minReactionsPositive) {
-            out.print(
+            out.println(
                 chalk.yellow(
                     `Issue #${number} has ${positiveR} positive reactions (threshold: ${options.minReactionsPositive}). Skipping.`
                 )
@@ -434,7 +434,7 @@ async function issueSingleCommand(input: string, options: IssueCommandOptions): 
             return;
         }
         if (options.minReactionsNegative !== undefined && negativeR < options.minReactionsNegative) {
-            out.print(
+            out.println(
                 chalk.yellow(
                     `Issue #${number} has ${negativeR} negative reactions (threshold: ${options.minReactionsNegative}). Skipping.`
                 )
@@ -455,7 +455,7 @@ async function issueSingleCommand(input: string, options: IssueCommandOptions): 
 
         if (shouldFetchFresh || options.all) {
             // Fetch all comments from API
-            out.print(chalk.dim("Fetching comments..."));
+            out.println(chalk.dim("Fetching comments..."));
 
             const sinceStr =
                 afterDate?.toISOString() ||
@@ -552,7 +552,7 @@ async function issueSingleCommand(input: string, options: IssueCommandOptions): 
     // Fetch timeline events if requested
     let events: TimelineEventData[] = [];
     if (options.includeEvents) {
-        out.print(chalk.dim("Fetching timeline events..."));
+        out.println(chalk.dim("Fetching timeline events..."));
         const apiEvents = await fetchTimelineEvents(owner, repo, number);
         events = apiEvents
             .filter((e) => e.event !== "commented") // Don't duplicate comments
@@ -579,7 +579,7 @@ async function issueSingleCommand(input: string, options: IssueCommandOptions): 
         const refs = detectCrossReferences(issueBody);
         if (refs.length > 0) {
             verbose(options, `Found ${refs.length} cross-references to resolve`);
-            out.print(chalk.dim(`Resolving ${refs.length} cross-references...`));
+            out.println(chalk.dim(`Resolving ${refs.length} cross-references...`));
 
             for (const ref of refs) {
                 verbose(options, `Fetching linked issue #${ref.number}`);
@@ -630,10 +630,10 @@ async function issueSingleCommand(input: string, options: IssueCommandOptions): 
             await Bun.write(filepath, fullContent);
             verbose(options, `Full content saved to: ${filepath}`);
             const summary = formatIssue(outputData, "ai", { noIndex: options.noIndex, filePath: filepath });
-            out.print(summary);
+            out.println(summary);
         } else {
             // No save — print full markdown to stdout
-            out.print(formatIssue(outputData, "md", { noIndex: options.noIndex }));
+            out.println(formatIssue(outputData, "md", { noIndex: options.noIndex }));
         }
     } else {
         // For md and json formats
@@ -641,7 +641,7 @@ async function issueSingleCommand(input: string, options: IssueCommandOptions): 
 
         if (options.output) {
             await Bun.write(options.output, output);
-            out.print(chalk.green(`✔ Output written to ${options.output}`));
+            out.println(chalk.green(`✔ Output written to ${options.output}`));
         } else if (options.save !== undefined) {
             const localDir = typeof options.save === "string" ? options.save : join(process.cwd(), ".claude", "github");
             if (!existsSync(localDir)) {
@@ -650,9 +650,9 @@ async function issueSingleCommand(input: string, options: IssueCommandOptions): 
             const filename = `${owner}-${repo}-${number}.${format === "json" ? "json" : "md"}`;
             const filepath = join(localDir, filename);
             await Bun.write(filepath, output);
-            out.print(chalk.green(`✔ Output saved to ${filepath}`));
+            out.println(chalk.green(`✔ Output saved to ${filepath}`));
         } else {
-            out.print(output);
+            out.println(output);
         }
     }
 
@@ -661,7 +661,7 @@ async function issueSingleCommand(input: string, options: IssueCommandOptions): 
         options,
         `Completed: ${comments.length} comments, ${events.length} events, ${linkedIssues.length} linked issues`
     );
-    out.print(
+    out.println(
         chalk.dim(
             `\nFetched: ${comments.length} comments${events.length > 0 ? `, ${events.length} events` : ""}${linkedIssues.length > 0 ? `, ${linkedIssues.length} linked` : ""}`
         )

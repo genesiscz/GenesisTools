@@ -99,7 +99,7 @@ async function searchLegacy(query: string, options: SearchCommandOptions): Promi
         searchQuery += " is:issue is:pr";
     }
 
-    out.print(chalk.dim(`Searching (legacy): ${searchQuery}`));
+    out.println(chalk.dim(`Searching (legacy): ${searchQuery}`));
 
     const { data } = await withRetry(
         () =>
@@ -132,7 +132,7 @@ async function searchAdvanced(query: string, options: SearchCommandOptions): Pro
         searchQuery += " type:issue type:pr";
     }
 
-    out.print(chalk.dim(`Searching (advanced): ${searchQuery}`));
+    out.println(chalk.dim(`Searching (advanced): ${searchQuery}`));
 
     const { data } = await withRetry(
         () =>
@@ -210,7 +210,7 @@ async function searchRepos(query: string, options: SearchCommandOptions): Promis
         searchQuery += ` stars:>=${options.minStars}`;
     }
 
-    out.print(chalk.dim(`Searching repos: ${searchQuery}`));
+    out.println(chalk.dim(`Searching repos: ${searchQuery}`));
 
     const { data } = await withRetry(
         () =>
@@ -259,16 +259,16 @@ export async function searchCommand(query: string, options: SearchCommandOptions
         const repos = await searchRepos(query, options);
         verbose(options, `Found ${repos.length} repositories`);
         if (repos.length === 0) {
-            out.print(chalk.yellow("No repositories found."));
+            out.println(chalk.yellow("No repositories found."));
             return;
         }
         const format = options.format || "ai";
         const output = formatRepoResults(repos, format);
         if (options.output) {
             await Bun.write(options.output, output);
-            out.print(chalk.green(`✔ Output written to ${options.output}`));
+            out.println(chalk.green(`✔ Output written to ${options.output}`));
         } else {
-            out.print(output);
+            out.println(output);
         }
         verbose(options, `Completed: ${repos.length} repos displayed`);
         return;
@@ -320,20 +320,20 @@ export async function searchCommand(query: string, options: SearchCommandOptions
         const estimatedCost = results.length * 2 + totalComments; // 2 per issue (node + connection) + 1 per comment node
         const issueList = results.map((r) => `#${r.number} (${r.comments} comments)`).join(", ");
 
-        out.print("");
-        out.print(
+        out.println("");
+        out.println(
             chalk.yellow(
                 `⚠ GraphQL comment scan: ${results.length} issues, ${totalComments} comments (~${estimatedCost} of 5,000/hr points)`
             )
         );
-        out.print(chalk.dim(`  ${issueList}`));
-        out.print(chalk.dim(`  Tip: To check specific issues instead:`));
-        out.print(
+        out.println(chalk.dim(`  ${issueList}`));
+        out.println(chalk.dim(`  Tip: To check specific issues instead:`));
+        out.println(
             chalk.cyan(
                 `    tools github issue <number>,<number> --repo ${results[0]?.repo || "owner/repo"} --min-comment-reactions ${options.minCommentReactions}`
             )
         );
-        out.print("");
+        out.println("");
 
         preFilterResults = [...results];
 
@@ -360,7 +360,7 @@ export async function searchCommand(query: string, options: SearchCommandOptions
         }
 
         results = results.filter((r) => keep.has(`${r.repo}#${r.number}`));
-        out.print(
+        out.println(
             chalk.dim(
                 `Filtered to ${results.length} of ${preFilterResults.length} results with comment reactions >= ${options.minCommentReactions}`
             )
@@ -370,14 +370,14 @@ export async function searchCommand(query: string, options: SearchCommandOptions
     if (results.length === 0) {
         // If comment-reaction filter eliminated everything, still show the original search results
         if (preFilterResults && preFilterResults.length > 0) {
-            out.print(
+            out.println(
                 chalk.yellow(
                     `\nNo issues matched --min-comment-reactions ${options.minCommentReactions}. Showing all ${preFilterResults.length} search results:\n`
                 )
             );
             results = preFilterResults;
         } else {
-            out.print(chalk.yellow("No results found."));
+            out.println(chalk.yellow("No results found."));
             return;
         }
     }
@@ -389,13 +389,13 @@ export async function searchCommand(query: string, options: SearchCommandOptions
 
     if (options.output) {
         await Bun.write(options.output, output);
-        out.print(chalk.green(`✔ Output written to ${options.output}`));
+        out.println(chalk.green(`✔ Output written to ${options.output}`));
     } else {
-        out.print(output);
+        out.println(output);
     }
 
     if (footer) {
-        out.print(chalk.dim(`\n${footer}`));
+        out.println(chalk.dim(`\n${footer}`));
     }
 
     verbose(options, `Completed: ${results.length} results displayed`);

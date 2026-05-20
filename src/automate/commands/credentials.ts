@@ -126,13 +126,13 @@ export function registerCredentialsCommand(program: Command): void {
         .action(() => {
             const names = listCredentials();
             if (names.length === 0) {
-                out.print(pc.dim("No credentials stored."));
+                out.println(pc.dim("No credentials stored."));
                 return;
             }
             for (const name of names) {
-                out.print(`  ${pc.cyan(name)}`);
+                out.println(`  ${pc.cyan(name)}`);
             }
-            out.print(pc.dim(`\n${names.length} credential(s) at ~/.genesis-tools/automate/credentials/`));
+            out.println(pc.dim(`\n${names.length} credential(s) at ~/.genesis-tools/automate/credentials/`));
         });
 
     cmd.command("show <name>")
@@ -140,11 +140,11 @@ export function registerCredentialsCommand(program: Command): void {
         .action(async (name: string) => {
             const cred = await loadCredential(name);
             if (!cred) {
-                out.print(pc.red(`Credential "${name}" not found`));
+                out.println(pc.red(`Credential "${name}" not found`));
                 process.exit(1);
             }
-            out.print(`  ${pc.bold("Name:")} ${cred.name}`);
-            out.print(`  ${pc.bold("Type:")} ${cred.type}`);
+            out.println(`  ${pc.bold("Name:")} ${cred.name}`);
+            out.println(`  ${pc.bold("Type:")} ${cred.type}`);
             for (const [key, value] of Object.entries(cred)) {
                 if (key === "name" || key === "type") {
                     continue;
@@ -156,9 +156,9 @@ export function registerCredentialsCommand(program: Command): void {
                         : value.length <= 4
                           ? "*".repeat(value.length)
                           : `${value.substring(0, 4)}${"*".repeat(value.length - 4)}`;
-                    out.print(`  ${pc.bold(`${key}:`)} ${pc.dim(masked)}`);
+                    out.println(`  ${pc.bold(`${key}:`)} ${pc.dim(masked)}`);
                 } else if (typeof value === "object" && value !== null) {
-                    out.print(`  ${pc.bold(`${key}:`)}`);
+                    out.println(`  ${pc.bold(`${key}:`)}`);
                     for (const [hk, hv] of Object.entries(value as Record<string, unknown>)) {
                         if (typeof hv !== "string") {
                             continue;
@@ -169,7 +169,7 @@ export function registerCredentialsCommand(program: Command): void {
                             : hv.length <= 4
                               ? "*".repeat(hv.length)
                               : `${hv.substring(0, 4)}${"*".repeat(hv.length - 4)}`;
-                        out.print(`    ${pc.cyan(hk)}: ${pc.dim(masked)}`);
+                        out.println(`    ${pc.cyan(hk)}: ${pc.dim(masked)}`);
                     }
                 }
             }
@@ -180,9 +180,9 @@ export function registerCredentialsCommand(program: Command): void {
         .action((name: string) => {
             const deleted = deleteCredential(name);
             if (deleted) {
-                out.print(pc.green(`Credential "${name}" deleted`));
+                out.println(pc.green(`Credential "${name}" deleted`));
             } else {
-                out.print(pc.red(`Credential "${name}" not found`));
+                out.println(pc.red(`Credential "${name}" not found`));
             }
         });
 }

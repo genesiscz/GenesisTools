@@ -13,7 +13,7 @@ export function registerListCalendarsCommand(program: Command): void {
                 const calendars = await MacCalendar.listCalendars();
 
                 if (calendars.length === 0) {
-                    out.print("No calendars found.");
+                    out.println("No calendars found.");
                     return;
                 }
 
@@ -25,7 +25,7 @@ export function registerListCalendarsCommand(program: Command): void {
                 ]);
 
                 const table = formatTable(rows, ["Title", "Source", "Type", "Editable"]);
-                out.print(table);
+                out.println(table);
             } catch (error) {
                 out.error(error instanceof Error ? error.message : String(error));
                 process.exit(1);

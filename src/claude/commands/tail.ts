@@ -156,8 +156,8 @@ async function startTailing(target: TailTarget, opts: TailOptions): Promise<void
     const cliOutput = opts.output ? opts.outputCli : true;
 
     if (opts.output && !opts.outputCli) {
-        out.print(pc.dim(`Tailing to ${opts.output}...`));
-        out.print(pc.dim(suggestCommand("tools cc", { add: ["--output-cli"] })));
+        out.println(pc.dim(`Tailing to ${opts.output}...`));
+        out.println(pc.dim(suggestCommand("tools cc", { add: ["--output-cli"] })));
     }
 
     const formatter = new ClaudeSessionFormatter({
@@ -189,7 +189,7 @@ async function startTailing(target: TailTarget, opts: TailOptions): Promise<void
             await formatter.close();
 
             if (opts.output) {
-                out.print(pc.dim(`\nOutput written to ${opts.output}`));
+                out.println(pc.dim(`\nOutput written to ${opts.output}`));
             }
 
             process.exit(0);
@@ -207,7 +207,7 @@ async function startTailing(target: TailTarget, opts: TailOptions): Promise<void
     process.on("SIGINT", async () => {
         tailer.stop();
         await formatter.close();
-        out.print(pc.dim("\nStopped tailing."));
+        out.println(pc.dim("\nStopped tailing."));
         process.exit(0);
     });
 

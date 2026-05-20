@@ -220,9 +220,9 @@ export function registerSearchCommand(program: Command): void {
                     }));
 
                     if (format === "json") {
-                        out.print(SafeJSON.stringify(output, null, 2));
+                        out.println(SafeJSON.stringify(output, null, 2));
                     } else {
-                        out.print(toToon(output));
+                        out.println(toToon(output));
                     }
 
                     return;
@@ -245,7 +245,7 @@ export function registerSearchCommand(program: Command): void {
                     baseDirs,
                     multiIndex: names.length > 1,
                 });
-                out.print(output);
+                out.println(output);
             } finally {
                 await manager.close();
             }
