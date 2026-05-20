@@ -1,3 +1,5 @@
+import { out } from "@app/logger";
+
 /**
  * Factory for creating scoped verbose loggers.
  */
@@ -24,7 +26,7 @@ export function createVerboseLogger(label?: string): VerboseLogger {
         },
         log(...args: unknown[]) {
             if (enabled) {
-                console.error(prefix, ...args);
+                out.error(prefix, ...args);
             }
         },
     };
