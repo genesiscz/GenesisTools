@@ -3,7 +3,7 @@ import type { Analyzer } from "@app/doctor/lib/analyzer";
 import { Engine } from "@app/doctor/lib/engine";
 import { executeActions } from "@app/doctor/lib/executor";
 import type { Action, EngineEvent, Finding } from "@app/doctor/lib/types";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { emptyTrash, type StageItem, stageItems } from "@app/utils/prompts/clack/trash-staging";
 import * as p from "@app/utils/prompts/p";
 import { useKeyboard, useRenderer } from "@opentui/solid";
