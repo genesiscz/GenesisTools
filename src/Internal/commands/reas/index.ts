@@ -8,7 +8,6 @@ import {
     searchDistricts,
 } from "@app/Internal/commands/reas/data/districts";
 import { resolveAddress } from "@app/Internal/commands/reas/lib/address-resolver";
-import { reasUiApp } from "@app/Internal/commands/reas/lib/ui-app";
 import {
     fetchAndAnalyze as fetchAndAnalyzeService,
     searchListings,
@@ -22,6 +21,7 @@ import {
     parsePeriod,
     resolveDistrict,
 } from "@app/Internal/commands/reas/lib/config-builder";
+import { reasUiApp } from "@app/Internal/commands/reas/lib/ui-app";
 import type { AnalysisFilters, FullAnalysis, TargetProperty } from "@app/Internal/commands/reas/types";
 import { out } from "@app/logger";
 import { isInteractive, suggestCommand } from "@app/utils/cli";
