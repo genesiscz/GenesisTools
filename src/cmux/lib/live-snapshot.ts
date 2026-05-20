@@ -151,7 +151,7 @@ async function readSurfacePreview({
     }
 
     try {
-        const response = await run(["capture-pane", "--workspace", workspace, "--surface", surface, "--lines", "40"]);
+        const response = await run(["capture-pane", "--workspace", workspace, "--surface", surface, "--lines", "200"]);
 
         if (response.code !== 0) {
             logger.debug({ workspace, surface, stderr: response.stderr.trim() }, "cmux surface preview failed");
