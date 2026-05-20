@@ -26,9 +26,9 @@ import { out } from "@app/logger";
 import { isInteractive, suggestCommand } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
 import { isPortInUse } from "@app/utils/network";
+import * as p from "@app/utils/prompts/p";
 import { stripAnsi } from "@app/utils/string";
 import { formatTable } from "@app/utils/table";
-import * as p from "@clack/prompts";
 import { Command } from "commander";
 import pc from "picocolors";
 
@@ -81,7 +81,7 @@ async function resolveDistrictFromAddress(address: string): Promise<DistrictInfo
         process.exit(0);
     }
 
-    const resolved = getDistrict(picked);
+    const resolved = getDistrict(picked as string);
 
     if (!resolved) {
         throw new Error(`District "${picked}" not found in database`);
@@ -143,7 +143,7 @@ async function runInteractiveWizard(): Promise<{ filters: AnalysisFilters; targe
                 process.exit(0);
             }
 
-            district = getDistrict(picked) ?? addressResults[0].district;
+            district = getDistrict(picked as string) ?? addressResults[0].district;
         }
     } else if (districtName === "__search__") {
         const query = await p.text({ message: "Type city/district name" });
@@ -170,7 +170,7 @@ async function runInteractiveWizard(): Promise<{ filters: AnalysisFilters; targe
             process.exit(0);
         }
 
-        district = getDistrict(picked) ?? matches[0];
+        district = getDistrict(picked as string) ?? matches[0];
     } else if (districtName === "Praha") {
         const subDistrict = await p.select({
             message: "Select Praha district (or city-wide)",
@@ -185,7 +185,7 @@ async function runInteractiveWizard(): Promise<{ filters: AnalysisFilters; targe
             process.exit(0);
         }
 
-        const resolved = getDistrict(subDistrict) ?? getDistrict("Praha");
+        const resolved = getDistrict(subDistrict as string) ?? getDistrict("Praha");
 
         if (!resolved) {
             p.cancel("Could not resolve district.");
@@ -291,12 +291,14 @@ async function runInteractiveWizard(): Promise<{ filters: AnalysisFilters; targe
         process.exit(0);
     }
 
-    const parsedDisposition = disposition === "all" ? undefined : disposition;
+    const propertyTypeStr = propertyType as string;
+    const dispositionStr = disposition as string;
+    const parsedDisposition = dispositionStr === "all" ? undefined : dispositionStr;
     const dateRanges = (periods as string[]).map((period) => parsePeriod(period));
 
     const filters: AnalysisFilters = {
         estateType: "flat",
-        constructionType: propertyType,
+        constructionType: propertyTypeStr,
         disposition: parsedDisposition,
         periods: dateRanges,
         district: district,
@@ -306,7 +308,7 @@ async function runInteractiveWizard(): Promise<{ filters: AnalysisFilters; targe
         price: Number(price),
         area: Number(area),
         disposition: parsedDisposition ?? "all",
-        constructionType: propertyType,
+        constructionType: propertyTypeStr,
         monthlyRent: Number(rent),
         monthlyCosts: Number(monthlyCosts),
         district: district.name,
