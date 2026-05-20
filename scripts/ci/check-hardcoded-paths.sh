@@ -39,7 +39,7 @@ strip_comments() {
 echo "→ Checking for hardcoded /tmp/ paths in src/..."
 # Match "/tmp/, '/tmp/, `/tmp/ string-literal starts.
 RAW_TMP=$(rg "${RG_FLAGS[@]}" -e "[\"'\\\`]/tmp/" src 2>/dev/null || true)
-TMP_HITS=$(echo "$RAW_TMP" | strip_comments)
+TMP_HITS=$(printf '%s' "$RAW_TMP" | strip_comments)
 if [ -n "$TMP_HITS" ]; then
     echo "✗ Hardcoded /tmp/ paths found — not Windows-portable."
     echo "  Use \`join(tmpdir(), '...')\` from node:os + node:path."
@@ -52,7 +52,7 @@ fi
 
 echo "→ Checking for hardcoded /Users/<name>/ paths in src/..."
 RAW_USER=$(rg "${RG_FLAGS[@]}" -e "[\"'\\\`]/Users/[^/]+/" src 2>/dev/null || true)
-USER_HITS=$(echo "$RAW_USER" | strip_comments)
+USER_HITS=$(printf '%s' "$RAW_USER" | strip_comments)
 if [ -n "$USER_HITS" ]; then
     echo "⚠ Hardcoded user-specific paths found — break on other dev machines."
     echo "  Use \`homedir()\` from node:os, \`process.env.HOME\`, or relative paths."
