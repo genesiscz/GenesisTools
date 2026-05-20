@@ -74,7 +74,7 @@
             "*.{json,mjs,cjs}",
             "!src/claude-history-dashboard",
             "!**/routeTree.gen.ts",
-            "!scripts/codemod/__fixtures__/**"
+            "!scripts/codemod/__fixtures__"
         ]
     },
     "overrides": [

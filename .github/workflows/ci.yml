@@ -126,15 +126,16 @@ jobs:
       # test signal. NOT continue-on-error: a real lint/tsc failure should
       # still turn the run red (same signal the old separate `check` job
       # gave), just without its own runner. Timeouts are fail-fast tripwires
-      # from real data (biome ~5s, dashboard ~1s, tsc ~8s) + wide headroom.
+      # from real data (biome ~12s w/ GritQL plugins on 10 cores → expect
+      # ~30–45s on 4-core GH runners, dashboard ~1s, tsc ~8s) + headroom.
       - name: Run Biome check (main)
         if: runner.os == 'Linux'
-        timeout-minutes: 1
+        timeout-minutes: 3
         run: bun run lint
 
       - name: Run Biome check (dashboard)
         if: runner.os == 'Linux'
-        timeout-minutes: 1
+        timeout-minutes: 2
         run: bun run lint:dashboard
 
       - name: TypeScript check
