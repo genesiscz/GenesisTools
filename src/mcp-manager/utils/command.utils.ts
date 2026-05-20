@@ -1,8 +1,7 @@
 import { logger } from "@app/logger";
 import { isInteractive, suggestCommand } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
-import { ExitPromptError } from "@inquirer/core";
-import { checkbox } from "@inquirer/prompts";
+import * as p from "@app/utils/prompts/p";
 import type { MCPProvider, UnifiedMCPConfig } from "./providers/types.js";
 
 interface ParsedCommand {
@@ -318,22 +317,12 @@ export async function promptForServers(config: UnifiedMCPConfig, message: string
         return null;
     }
 
-    try {
-        const selectedServers = await checkbox({
-            message,
-            choices: serverNames.map((name) => ({ value: name, name })),
-            pageSize: 30,
-            loop: false,
-        });
+    const selectedServers = await p.multiselect({
+        message,
+        options: serverNames.map((name) => ({ value: name, label: name })),
+    }) as string[];
 
-        return selectedServers;
-    } catch (error) {
-        if (error instanceof ExitPromptError) {
-            logger.info("\nOperation cancelled by user.");
-            return null;
-        }
-        throw error;
-    }
+    return selectedServers;
 }
 
 /**
@@ -387,23 +376,15 @@ export async function promptForProviders(availableProviders: MCPProvider[], mess
         return null;
     }
 
-    try {
-        const selectedProviders = await checkbox({
-            message,
-            choices: availableProviders.map((p) => ({
-                value: p.getName(),
-                name: `${p.getName()} (${p.getConfigPath()})`,
-            })),
-        });
+    const selectedProviders = await p.multiselect({
+        message,
+        options: availableProviders.map((prov) => ({
+            value: prov.getName(),
+            label: `${prov.getName()} (${prov.getConfigPath()})`,
+        })),
+    }) as string[];
 
-        return selectedProviders;
-    } catch (error) {
-        if (error instanceof ExitPromptError) {
-            logger.info("\nOperation cancelled by user.");
-            return null;
-        }
-        throw error;
-    }
+    return selectedProviders;
 }
 
 /**
@@ -423,42 +404,32 @@ export async function promptForProjects(projects: string[], message: string): Pr
         return [{ projectPath: null, displayName: "Global (all projects)" }];
     }
 
-    const choices = [
+    const options = [
         {
             value: "global",
-            name: "Global (all projects)",
+            label: "Global (all projects)",
         },
         ...projects.map((projectPath) => ({
             value: projectPath,
-            name: projectPath,
+            label: projectPath,
         })),
     ];
 
-    try {
-        const selectedProjects = await checkbox({
-            message,
-            choices,
-            pageSize: 200,
-            loop: false,
-        });
+    const selectedProjects = await p.multiselect({
+        message,
+        options,
+    }) as string[];
 
-        return selectedProjects.map((choice) => {
-            if (choice === "global") {
-                return {
-                    projectPath: null,
-                    displayName: "Global (all projects)",
-                };
-            }
+    return selectedProjects.map((choice) => {
+        if (choice === "global") {
             return {
-                projectPath: choice,
-                displayName: choice,
+                projectPath: null,
+                displayName: "Global (all projects)",
             };
-        });
-    } catch (error) {
-        if (error instanceof ExitPromptError) {
-            logger.info("\nOperation cancelled by user.");
-            return null;
         }
-        throw error;
-    }
+        return {
+            projectPath: choice,
+            displayName: choice,
+        };
+    });
 }

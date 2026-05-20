@@ -5,8 +5,7 @@ import type { MCPProviderName, PerProjectEnabledState, ProviderEnabledState } fr
 import { isInteractive, suggestCommand } from "@app/utils/cli";
 import { DiffUtil } from "@app/utils/diff";
 import { SafeJSON } from "@app/utils/json";
-import { ExitPromptError } from "@inquirer/core";
-import { checkbox, select } from "@inquirer/prompts";
+import * as p from "@app/utils/prompts/p";
 import chalk from "chalk";
 
 export interface SyncFromOptions {
@@ -49,25 +48,17 @@ export async function syncFromProviders(providers: MCPProvider[], options: SyncF
         logger.info(suggestCommand("tools mcp-manager", { add: ["--provider", "all"] }));
         process.exit(1);
     } else {
-        try {
-            selectedProviders = await checkbox({
-                message: "Select providers to sync from:",
-                choices: availableProviders.map((p) => ({
-                    value: p.getName(),
-                    name: `${p.getName()} (${p.getConfigPath()})`,
-                })),
-            });
+        selectedProviders = await p.multiselect({
+            message: "Select providers to sync from:",
+            options: availableProviders.map((prov) => ({
+                value: prov.getName(),
+                label: `${prov.getName()} (${prov.getConfigPath()})`,
+            })),
+        }) as string[];
 
-            if (selectedProviders.length === 0) {
-                logger.info("No providers selected. Cancelled.");
-                return;
-            }
-        } catch (error) {
-            if (error instanceof ExitPromptError) {
-                logger.info("\nOperation cancelled by user.");
-                return;
-            }
-            throw error;
+        if (selectedProviders.length === 0) {
+            logger.info("No providers selected. Cancelled.");
+            return;
         }
     }
 
@@ -278,27 +269,19 @@ export async function syncFromProviders(providers: MCPProvider[], options: SyncF
                 logger.info(`Non-interactive: keeping current version for '${serverName}'`);
                 choice = "current";
             } else {
-                try {
-                    choice = await select({
-                        message: `Which version should be kept for '${serverName}'?`,
-                        choices: [
-                            {
-                                value: "current",
-                                name: `Keep current (unified config)`,
-                            },
-                            {
-                                value: "incoming",
-                                name: `Use incoming (${conflict.provider})`,
-                            },
-                        ],
-                    });
-                } catch (error) {
-                    if (error instanceof ExitPromptError) {
-                        logger.info("\nOperation cancelled by user.");
-                        return;
-                    }
-                    throw error;
-                }
+                choice = await p.select({
+                    message: `Which version should be kept for '${serverName}'?`,
+                    options: [
+                        {
+                            value: "current",
+                            label: "Keep current (unified config)",
+                        },
+                        {
+                            value: "incoming",
+                            label: `Use incoming (${conflict.provider})`,
+                        },
+                    ],
+                }) as string;
             }
 
             if (choice === "incoming") {

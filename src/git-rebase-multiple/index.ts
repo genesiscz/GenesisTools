@@ -1,5 +1,10 @@
 import { runTool } from "@app/utils/cli";
 import { handleReadmeFlag } from "@app/utils/readme";
+import { inquirerBackend } from "@app/utils/prompts/p/inquirer-backend";
+import * as p from "@app/utils/prompts/p";
+
+// Use inquirer backend for this tool
+p.setBackend(inquirerBackend);
 import chalk from "chalk";
 import { Command } from "commander";
 import { backupManager } from "./backup";

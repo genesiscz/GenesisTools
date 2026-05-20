@@ -4,8 +4,7 @@
 
 import { convertToMinutes, formatMinutes, getTodayDate, TimeLogApi } from "@app/azure-devops/timelog-api";
 import type { AzureConfigWithTimeLog, TimeLogUser } from "@app/azure-devops/types";
-import { ExitPromptError } from "@inquirer/core";
-import { confirm, input, select } from "@inquirer/prompts";
+import * as p from "@app/utils/prompts/p";
 
 export async function runInteractiveAddInquirer(
     config: AzureConfigWithTimeLog,
@@ -27,7 +26,7 @@ export async function runInteractiveAddInquirer(
             workItemId = parseInt(prefilledWorkItem, 10);
             console.log(`Work Item: #${workItemId}`);
         } else {
-            const workItemInput = await input({
+            const workItemInput = await p.text({
                 message: "Work Item ID:",
                 validate: (value) => {
                     if (!value) {
@@ -36,7 +35,7 @@ export async function runInteractiveAddInquirer(
                     if (Number.isNaN(parseInt(value, 10))) {
                         return "Must be a number";
                     }
-                    return true;
+                    return undefined;
                 },
             });
             workItemId = parseInt(workItemInput, 10);
@@ -44,19 +43,19 @@ export async function runInteractiveAddInquirer(
 
         // Time type
         const defaultType = types.find((t) => t.isDefaultForProject);
-        const selectedType = await select({
+        const selectedType = await p.select({
             message: "Time Type:",
-            choices: types.map((t) => ({
+            options: types.map((t) => ({
                 value: t.description,
-                name: t.description + (t.isDefaultForProject ? " (default)" : ""),
+                label: t.description + (t.isDefaultForProject ? " (default)" : ""),
             })),
-            default: defaultType?.description,
-        });
+            initialValue: defaultType?.description,
+        }) as string;
 
         // Hours
-        const hoursInput = await input({
+        const hoursInput = await p.text({
             message: "Hours:",
-            default: "1",
+            initialValue: "1",
             validate: (value) => {
                 if (!value) {
                     return "Hours is required (use 0 for minutes only)";
@@ -65,7 +64,7 @@ export async function runInteractiveAddInquirer(
                 if (Number.isNaN(num) || num < 0) {
                     return "Must be a non-negative number";
                 }
-                return true;
+                return undefined;
             },
         });
         const hours = parseFloat(hoursInput);
@@ -73,9 +72,9 @@ export async function runInteractiveAddInquirer(
         // Minutes
         let minutes = 0;
         if (hours === Math.floor(hours)) {
-            const minutesInput = await input({
+            const minutesInput = await p.text({
                 message: "Additional minutes:",
-                default: "0",
+                initialValue: "0",
             });
             minutes = parseInt(minutesInput || "0", 10);
         }
@@ -83,19 +82,19 @@ export async function runInteractiveAddInquirer(
         const totalMinutes = convertToMinutes(hours, minutes);
 
         // Date
-        const dateInput = await input({
+        const dateInput = await p.text({
             message: "Date (YYYY-MM-DD):",
-            default: getTodayDate(),
+            initialValue: getTodayDate(),
             validate: (value) => {
                 if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
                     return "Use YYYY-MM-DD format";
                 }
-                return true;
+                return undefined;
             },
         });
 
         // Comment
-        const comment = await input({
+        const comment = await p.text({
             message: "Comment (optional):",
         });
 
@@ -110,9 +109,9 @@ export async function runInteractiveAddInquirer(
         }
         console.log("─".repeat(40));
 
-        const confirmed = await confirm({
+        const confirmed = await p.confirm({
             message: "Create this time log entry?",
-            default: true,
+            initialValue: true,
         });
 
         if (!confirmed) {
@@ -126,10 +125,6 @@ export async function runInteractiveAddInquirer(
 
         console.log(`\n✔ Time log created! Entry ID: ${ids[0]}`);
     } catch (error) {
-        if (error instanceof ExitPromptError) {
-            console.log("\nCancelled");
-            process.exit(0);
-        }
         throw error;
     }
 }

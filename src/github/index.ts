@@ -14,8 +14,11 @@ import { logger } from "@app/logger";
 import { enhanceHelp, runTool } from "@app/utils/cli";
 import { checkAuth, getRateLimit } from "@app/utils/github/octokit";
 import { detectRepoFromGit, parseGitHubUrl } from "@app/utils/github/url-parser";
-import { ExitPromptError } from "@inquirer/core";
-import { confirm, input, select } from "@inquirer/prompts";
+import { inquirerBackend as _inquirerBackend } from "@app/utils/prompts/p/inquirer-backend";
+import * as p from "@app/utils/prompts/p";
+
+// Use inquirer backend for this tool
+p.setBackend(_inquirerBackend);
 import chalk from "chalk";
 import { Command } from "commander";
 
@@ -91,22 +94,21 @@ async function interactiveMode(): Promise<void> {
     }
 
     while (true) {
-        try {
-            const action = await select({
+        const action = await p.select({
                 message: "What would you like to do?",
-                choices: [
-                    { value: "notifications", name: "🔔 Notifications" },
-                    { value: "activity", name: "📊 Activity Feed" },
-                    { value: "issue", name: "📋 Fetch Issue" },
-                    { value: "pr", name: "🔀 Fetch Pull Request" },
-                    { value: "review", name: "📝 Review PR Threads" },
-                    { value: "comments", name: "💬 Fetch Comments" },
-                    { value: "search", name: "🔍 Search Issues/PRs" },
-                    { value: "get", name: "📄 Get File Content" },
-                    { value: "status", name: "ℹ️  Show Status" },
-                    { value: "exit", name: "👋 Exit" },
+                options: [
+                    { value: "notifications", label: "🔔 Notifications" },
+                    { value: "activity", label: "📊 Activity Feed" },
+                    { value: "issue", label: "📋 Fetch Issue" },
+                    { value: "pr", label: "🔀 Fetch Pull Request" },
+                    { value: "review", label: "📝 Review PR Threads" },
+                    { value: "comments", label: "💬 Fetch Comments" },
+                    { value: "search", label: "🔍 Search Issues/PRs" },
+                    { value: "get", label: "📄 Get File Content" },
+                    { value: "status", label: "ℹ️  Show Status" },
+                    { value: "exit", label: "👋 Exit" },
                 ],
-            });
+            }) as string;
 
             if (action === "exit") {
                 console.log(chalk.dim("Goodbye!"));
@@ -122,9 +124,9 @@ async function interactiveMode(): Promise<void> {
             let urlInput: string;
 
             if (action === "search") {
-                urlInput = await input({
+                urlInput = await p.text({
                     message: "Enter search query:",
-                });
+                }) as string;
 
                 if (!urlInput.trim()) {
                     console.log(chalk.yellow("No query provided."));
@@ -132,28 +134,28 @@ async function interactiveMode(): Promise<void> {
                 }
 
                 // Search options
-                const typeFilter = await select({
+                const typeFilter = await p.select({
                     message: "Filter by type:",
-                    choices: [
-                        { value: "all", name: "All" },
-                        { value: "issue", name: "Issues only" },
-                        { value: "pr", name: "PRs only" },
+                    options: [
+                        { value: "all", label: "All" },
+                        { value: "issue", label: "Issues only" },
+                        { value: "pr", label: "PRs only" },
                     ],
-                });
+                }) as string;
 
-                const stateFilter = await select({
+                const stateFilter = await p.select({
                     message: "Filter by state:",
-                    choices: [
-                        { value: "all", name: "All" },
-                        { value: "open", name: "Open only" },
-                        { value: "closed", name: "Closed only" },
+                    options: [
+                        { value: "all", label: "All" },
+                        { value: "open", label: "Open only" },
+                        { value: "closed", label: "Closed only" },
                     ],
-                });
+                }) as string;
 
-                const limit = await input({
+                const limit = await p.text({
                     message: "Max results:",
-                    default: "30",
-                });
+                    initialValue: "30",
+                }) as string;
 
                 await searchCommand(urlInput, {
                     type: typeFilter as "issue" | "pr" | "all",
@@ -166,21 +168,21 @@ async function interactiveMode(): Promise<void> {
             }
 
             if (action === "review") {
-                const prUrl = await input({ message: "Enter PR number or URL:" });
+                const prUrl = await p.text({ message: "Enter PR number or URL:" }) as string;
                 if (!prUrl.trim()) {
                     console.log(chalk.yellow("No input provided."));
                     continue;
                 }
-                const unresolvedOnly = await confirm({ message: "Show only unresolved?", default: true });
-                const groupByFile = await confirm({ message: "Group by file?", default: true });
-                const outputFormat = await select({
+                const unresolvedOnly = await p.confirm({ message: "Show only unresolved?", initialValue: true });
+                const groupByFile = await p.confirm({ message: "Group by file?", initialValue: true });
+                const outputFormat = await p.select({
                     message: "Output format:",
-                    choices: [
-                        { value: "terminal", name: "Terminal (colorized)" },
-                        { value: "md", name: "Markdown (save to file)" },
-                        { value: "json", name: "JSON" },
+                    options: [
+                        { value: "terminal", label: "Terminal (colorized)" },
+                        { value: "md", label: "Markdown (save to file)" },
+                        { value: "json", label: "JSON" },
                     ],
-                });
+                }) as string;
                 await reviewCommand(prUrl, {
                     unresolvedOnly,
                     groupByFile,
@@ -191,32 +193,32 @@ async function interactiveMode(): Promise<void> {
             }
 
             if (action === "notifications") {
-                const stateFilter = await select({
+                const stateFilter = await p.select({
                     message: "Show notifications:",
-                    choices: [
-                        { value: "all", name: "All" },
-                        { value: "unread", name: "Unread only" },
-                        { value: "read", name: "Read only" },
+                    options: [
+                        { value: "all", label: "All" },
+                        { value: "unread", label: "Unread only" },
+                        { value: "read", label: "Read only" },
                     ],
-                });
+                }) as string;
 
-                const sinceFilter = await select({
+                const sinceFilter = await p.select({
                     message: "Time range:",
-                    choices: [
-                        { value: undefined, name: "All time" },
-                        { value: "1d", name: "Last 24 hours" },
-                        { value: "7d", name: "Last 7 days" },
-                        { value: "30d", name: "Last 30 days" },
+                    options: [
+                        { value: "", label: "All time" },
+                        { value: "1d", label: "Last 24 hours" },
+                        { value: "7d", label: "Last 7 days" },
+                        { value: "30d", label: "Last 30 days" },
                     ],
-                });
+                }) as string;
 
-                const repoFilter = await input({
+                const repoFilter = await p.text({
                     message: "Filter by repo (owner/repo, or empty for all):",
-                });
+                }) as string;
 
                 await notificationsCommand({
                     state: stateFilter as "read" | "unread" | "all",
-                    since: sinceFilter ?? undefined,
+                    since: sinceFilter || undefined,
                     repo: repoFilter.trim() || undefined,
                     format: "ai",
                 });
@@ -225,47 +227,47 @@ async function interactiveMode(): Promise<void> {
             }
 
             if (action === "activity") {
-                const sinceFilter = await select({
+                const sinceFilter = await p.select({
                     message: "Time range:",
-                    choices: [
-                        { value: "1d", name: "Last 24 hours" },
-                        { value: "7d", name: "Last 7 days" },
-                        { value: "30d", name: "Last 30 days" },
+                    options: [
+                        { value: "1d", label: "Last 24 hours" },
+                        { value: "7d", label: "Last 7 days" },
+                        { value: "30d", label: "Last 30 days" },
                     ],
-                });
+                }) as string;
 
-                const typeFilter = await select({
+                const typeFilter = await p.select({
                     message: "Event type:",
-                    choices: [
-                        { value: undefined, name: "All" },
-                        { value: "push", name: "Pushes" },
-                        { value: "pr", name: "Pull Requests" },
-                        { value: "issue", name: "Issues" },
-                        { value: "comment", name: "Comments" },
+                    options: [
+                        { value: "", label: "All" },
+                        { value: "push", label: "Pushes" },
+                        { value: "pr", label: "Pull Requests" },
+                        { value: "issue", label: "Issues" },
+                        { value: "comment", label: "Comments" },
                     ],
-                });
+                }) as string;
 
                 await activityCommand({
-                    since: sinceFilter ?? undefined,
-                    type: typeFilter ?? undefined,
+                    since: sinceFilter || undefined,
+                    type: typeFilter || undefined,
                     format: "ai",
                 });
                 continue;
             }
 
             if (action === "get") {
-                const fileUrl = await input({
+                const fileUrl = await p.text({
                     message: "Enter GitHub file URL:",
-                });
+                }) as string;
 
                 if (!fileUrl.trim()) {
                     console.log(chalk.yellow("No URL provided."));
                     continue;
                 }
 
-                const toClipboard = await confirm({
+                const toClipboard = await p.confirm({
                     message: "Copy to clipboard?",
-                    default: false,
+                    initialValue: false,
                 });
 
                 await getCommand(fileUrl, { clipboard: toClipboard });
@@ -273,9 +275,9 @@ async function interactiveMode(): Promise<void> {
             }
 
             // Issue, PR, or Comments
-            urlInput = await input({
+            urlInput = await p.text({
                 message: "Enter URL or issue/PR number:",
-            });
+            }) as string;
 
             if (!urlInput.trim()) {
                 console.log(chalk.yellow("No input provided."));
@@ -296,9 +298,9 @@ async function interactiveMode(): Promise<void> {
             }
 
             // Common options
-            const includeComments = await confirm({
+            const includeComments = await p.confirm({
                 message: "Include comments?",
-                default: true,
+                initialValue: true,
             });
 
             let limit: number | undefined;
@@ -307,20 +309,20 @@ async function interactiveMode(): Promise<void> {
             let minReactions: number | undefined;
 
             if (includeComments) {
-                const commentMode = await select({
+                const commentMode = await p.select({
                     message: "Comment selection:",
-                    choices: [
-                        { value: "limit", name: "Limit to N comments" },
-                        { value: "last", name: "Last N comments" },
-                        { value: "all", name: "All comments" },
+                    options: [
+                        { value: "limit", label: "Limit to N comments" },
+                        { value: "last", label: "Last N comments" },
+                        { value: "all", label: "All comments" },
                     ],
-                });
+                }) as string;
 
                 if (commentMode === "limit" || commentMode === "last") {
-                    const n = await input({
-                        message: `How many comments?`,
-                        default: "30",
-                    });
+                    const n = await p.text({
+                        message: "How many comments?",
+                        initialValue: "30",
+                    }) as string;
                     if (commentMode === "limit") {
                         limit = parseInt(n, 10);
                     } else {
@@ -328,37 +330,37 @@ async function interactiveMode(): Promise<void> {
                     }
                 }
 
-                noBots = await confirm({
+                noBots = !!(await p.confirm({
                     message: "Exclude bot comments?",
-                    default: false,
-                });
+                    initialValue: false,
+                }));
 
-                const filterReactions = await confirm({
+                const filterReactions = await p.confirm({
                     message: "Filter by minimum reactions?",
-                    default: false,
+                    initialValue: false,
                 });
 
                 if (filterReactions) {
-                    const n = await input({
+                    const n = await p.text({
                         message: "Minimum reactions:",
-                        default: "1",
-                    });
+                        initialValue: "1",
+                    }) as string;
                     minReactions = parseInt(n, 10);
                 }
             }
 
-            const showStats = await confirm({
+            const showStats = await p.confirm({
                 message: "Show comment statistics?",
-                default: false,
+                initialValue: false,
             });
 
-            const outputFormat = await select({
+            const outputFormat = await p.select({
                 message: "Output format:",
-                choices: [
-                    { value: "ai", name: "AI/Markdown (default)" },
-                    { value: "json", name: "JSON" },
+                options: [
+                    { value: "ai", label: "AI/Markdown (default)" },
+                    { value: "json", label: "JSON" },
                 ],
-            });
+            }) as string;
 
             // Execute command
             const options = {
@@ -376,32 +378,25 @@ async function interactiveMode(): Promise<void> {
             } else if (action === "pr") {
                 await prCommand(urlInput, {
                     ...options,
-                    reviewComments: await confirm({
+                    reviewComments: !!(await p.confirm({
                         message: "Include review comments?",
-                        default: false,
-                    }),
+                        initialValue: false,
+                    })),
                 });
             } else if (action === "comments") {
                 await commentsCommand(urlInput, options);
             }
 
             // Continue?
-            const continueSession = await confirm({
+            const continueSession = await p.confirm({
                 message: "Continue with another query?",
-                default: true,
+                initialValue: true,
             });
 
             if (!continueSession) {
                 console.log(chalk.dim("Goodbye!"));
                 break;
             }
-        } catch (error) {
-            if (error instanceof ExitPromptError) {
-                console.log(chalk.dim("\nOperation cancelled."));
-                break;
-            }
-            throw error;
-        }
     }
 }
 
@@ -411,12 +406,6 @@ async function main(): Promise<void> {
     if (process.argv.length <= 2) {
         try {
             await interactiveMode();
-        } catch (error) {
-            if (error instanceof ExitPromptError) {
-                logger.info("User cancelled");
-                process.exit(0);
-            }
-            throw error;
         } finally {
             closeDatabase();
         }

@@ -19,7 +19,8 @@ import { resolveProjectFilter } from "@app/utils/claude";
 import { isInteractive } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
 import { PROJECT_ROOT } from "@app/utils/paths";
-import { input, search, select } from "@inquirer/prompts";
+import { inquirerBackend } from "@app/utils/prompts/p/inquirer-backend";
+import * as p from "@app/utils/prompts/p";
 import { spawn } from "bun";
 import chalk from "chalk";
 import type { Command } from "commander";
@@ -147,41 +148,41 @@ function formatResultsAsJson(results: SearchResult[]): string {
 async function runInteractive(): Promise<SearchFilters> {
     const projects = await getAvailableProjects();
 
-    const project = await search({
+    const project = await inquirerBackend.search<string>({
         message: "Select project (type to filter):",
         source: async (term) => {
-            const filtered = term ? projects.filter((p) => p.toLowerCase().includes(term.toLowerCase())) : projects;
-            return [{ value: "all", name: "All projects" }, ...filtered.map((p) => ({ value: p, name: p }))];
+            const filtered = term ? projects.filter((proj) => proj.toLowerCase().includes(term.toLowerCase())) : projects;
+            return [{ value: "all", name: "All projects" }, ...filtered.map((proj) => ({ value: proj, name: proj }))];
         },
     });
 
-    const query = await input({
+    const query = await p.text({
         message: "Search query (leave empty for all):",
-    });
+    }) as string;
 
-    const toolChoice = await select({
+    const toolChoice = await p.select({
         message: "Filter by tool?",
-        choices: [
-            { value: "", name: "No filter" },
-            { value: "Edit", name: "Edit" },
-            { value: "Write", name: "Write" },
-            { value: "Read", name: "Read" },
-            { value: "Bash", name: "Bash" },
-            { value: "Task", name: "Task" },
-            { value: "Grep", name: "Grep" },
-            { value: "Glob", name: "Glob" },
+        options: [
+            { value: "", label: "No filter" },
+            { value: "Edit", label: "Edit" },
+            { value: "Write", label: "Write" },
+            { value: "Read", label: "Read" },
+            { value: "Bash", label: "Bash" },
+            { value: "Task", label: "Task" },
+            { value: "Grep", label: "Grep" },
+            { value: "Glob", label: "Glob" },
         ],
-    });
+    }) as string;
 
-    const sinceStr = await input({
+    const sinceStr = await p.text({
         message: "Since (e.g., '7 days ago', 'yesterday', or date):",
-        default: "",
-    });
+        initialValue: "",
+    }) as string;
 
-    const contextStr = await input({
+    const contextStr = await p.text({
         message: "Context lines (0 for summary only):",
-        default: "0",
-    });
+        initialValue: "0",
+    }) as string;
 
     return {
         project: project === "all" ? undefined : project,
