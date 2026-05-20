@@ -236,6 +236,9 @@
     line-height: 1.55;
     text-shadow: 0 0 10px rgba(52, 211, 153, 0.05);
     white-space: pre-wrap;
+    /* Native momentum scroll on iOS + don't yank parent scroll. */
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
 }
 
 .dd-terminal-line {
