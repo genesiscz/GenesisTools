@@ -13,11 +13,12 @@ import {
     utimesSync,
     writeFileSync as writeBin,
 } from "node:fs";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import logger from "@app/logger";
-import { dedupeFile, freeDiskSpace } from "@app/utils/fs/disk-usage";
+import { dedupeFile, freeDiskSpace, walkFiles } from "@app/utils/fs/disk-usage";
 import { SafeJSON } from "@app/utils/json";
 import { CloneUnsupportedError, isApfsCloneSupported } from "@app/utils/macos/apfs";
+import { Stopwatch } from "@app/utils/Stopwatch";
 import { Storage } from "@app/utils/storage/storage";
 import type {
     DuplicateSet,
@@ -230,6 +231,43 @@ export interface RunOptimizeArgs {
     planCacheAgeMs?: number;
 }
 
+/** Expand a DuplicateSet into the concrete (keep, replace) FILE pairs that
+ *  runOptimize will dedupe. For file-kind sets this is trivial. For dir-kind
+ *  sets (produced by collapseDuplicates when whole folders are byte-identical)
+ *  we walk the keeper's tree once and pair each file with the same-relative
+ *  path under every other member dir. dedupeFile then handles each pair
+ *  atomically with full safety-contract semantics. */
+export function expandSetToPairs(set: DuplicateSet): Array<{ keep: string; replace: string }> {
+    const pairs: Array<{ keep: string; replace: string }> = [];
+    if (set.kind === "file") {
+        for (const m of set.members) {
+            if (m !== set.keep) {
+                pairs.push({ keep: set.keep, replace: m });
+            }
+        }
+
+        return pairs;
+    }
+
+    const keepFiles: string[] = [];
+    for (const e of walkFiles(set.keep, { onError: (err) => log.debug({ err }, "DirSet walk error") })) {
+        keepFiles.push(e.path);
+    }
+
+    for (const keepFile of keepFiles) {
+        const rel = relative(set.keep, keepFile);
+        for (const memberDir of set.members) {
+            if (memberDir === set.keep) {
+                continue;
+            }
+
+            pairs.push({ keep: keepFile, replace: join(memberDir, rel) });
+        }
+    }
+
+    return pairs;
+}
+
 /** Audit wrapper (does NOT extend utils dedupeFile). Per file: capture
  *  pre-state → dedupeFile → on clone re-hash + assert byte-identity (abort
  *  on mismatch) → append ProcessOp JSONL. Per-file isolation for skips/errors.
@@ -241,6 +279,9 @@ export function runOptimize({ roots, sets, planCacheHit, planCacheAgeMs }: RunOp
 
     const id = newProcessId();
     const startedAt = new Date().toISOString();
+    const sw = new Stopwatch();
+    const totalPairs = sets.reduce((s, set) => s + expandSetToPairs(set).length, 0);
+    log.info({ id, roots, sets: sets.length, totalPairs, planCacheHit, planCacheAgeMs }, "runOptimize starting");
     writeMeta({
         id,
         state: "applied",
@@ -254,7 +295,7 @@ export function runOptimize({ roots, sets, planCacheHit, planCacheAgeMs }: RunOp
     let seq = 0;
     try {
         for (const set of sets) {
-            for (const replace of set.members.filter((m) => m !== set.keep)) {
+            for (const { keep, replace } of expandSetToPairs(set)) {
                 seq += 1;
                 const ts = new Date().toISOString();
                 let modeBefore = 0;
@@ -273,7 +314,7 @@ export function runOptimize({ roots, sets, planCacheHit, planCacheAgeMs }: RunOp
                         op: "error",
                         status: "prestate",
                         bytes: 0,
-                        keep: set.keep,
+                        keep,
                         replace,
                         modeBefore,
                         mtimeBeforeMs,
@@ -284,7 +325,7 @@ export function runOptimize({ roots, sets, planCacheHit, planCacheAgeMs }: RunOp
                 }
 
                 try {
-                    const res = dedupeFile({ keep: set.keep, replace });
+                    const res = dedupeFile({ keep, replace });
                     if (res.status === "cloned") {
                         const sha256After = sha256(replace);
                         if (sha256After !== sha256Before) {
@@ -294,7 +335,7 @@ export function runOptimize({ roots, sets, planCacheHit, planCacheAgeMs }: RunOp
                                 op: "error",
                                 status: "integrity",
                                 bytes: 0,
-                                keep: set.keep,
+                                keep,
                                 replace,
                                 modeBefore,
                                 mtimeBeforeMs,
@@ -313,7 +354,7 @@ export function runOptimize({ roots, sets, planCacheHit, planCacheAgeMs }: RunOp
                             op: "clone",
                             status: "ok",
                             bytes: res.bytesReclaimed,
-                            keep: set.keep,
+                            keep,
                             replace,
                             modeBefore,
                             mtimeBeforeMs,
@@ -327,7 +368,7 @@ export function runOptimize({ roots, sets, planCacheHit, planCacheAgeMs }: RunOp
                             op: "skip",
                             status: res.status,
                             bytes: 0,
-                            keep: set.keep,
+                            keep,
                             replace,
                             modeBefore,
                             mtimeBeforeMs,
@@ -346,7 +387,7 @@ export function runOptimize({ roots, sets, planCacheHit, planCacheAgeMs }: RunOp
                         op: "error",
                         status: isClone ? "clone-unsupported" : "errno",
                         bytes: 0,
-                        keep: set.keep,
+                        keep,
                         replace,
                         modeBefore,
                         mtimeBeforeMs,
@@ -380,6 +421,19 @@ export function runOptimize({ roots, sets, planCacheHit, planCacheAgeMs }: RunOp
         throw new Error(`runOptimize: process ${id} could not be read back`);
     }
 
+    log.info(
+        {
+            id,
+            state: rep.state,
+            totalPairs,
+            cloned: rep.totals.cloned,
+            skipped: rep.totals.skipped,
+            errors: rep.totals.errors,
+            bytesReclaimed: rep.totals.bytesReclaimed,
+            elapsedMs: Math.round(sw.elapsedMs),
+        },
+        "runOptimize complete"
+    );
     return rep;
 }
 
@@ -404,8 +458,10 @@ export function rollbackProcess(id: string): ProcessReport {
         throw new Error(`rollbackProcess: unknown process "${id}"`);
     }
 
+    const sw = new Stopwatch();
     const toUndo = rep.ops.filter((o) => o.op === "clone");
     const required = toUndo.reduce((s, o) => s + o.bytes, 0);
+    log.info({ id, toUndo: toUndo.length, requiredBytes: required }, "rollbackProcess starting");
 
     // Multi-volume preflight: group required bytes by replace's volume (dev)
     // and check freeDiskSpace per distinct volume. Falls back to root[0]/cwd
@@ -505,5 +561,11 @@ export function rollbackProcess(id: string): ProcessReport {
         throw new Error(`rollbackProcess: ${id} unreadable after rollback`);
     }
 
+    const undone = final.ops.filter((o) => o.op === "rollback-uncloned").length;
+    const failed = final.ops.filter((o) => o.op === "error" && o.status === "rollback-failed").length;
+    log.info(
+        { id, toUndo: toUndo.length, undone, failed, elapsedMs: Math.round(sw.elapsedMs) },
+        "rollbackProcess complete"
+    );
     return final;
 }
