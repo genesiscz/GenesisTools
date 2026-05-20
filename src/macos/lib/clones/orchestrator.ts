@@ -284,6 +284,12 @@ interface WalkRootResult {
     tree: MutNode;
     /** Whole-root DiskUsage aggregate. Populated in the same pass as `tree`. */
     aggregate: DiskUsage;
+    /** True iff at least one INCLUDED file in this root had `priv === null`.
+     *  Distinct from `aggregate.private === null`, which is set only when
+     *  EVERY included file had null priv; this catches the mixed-null case
+     *  where 999/1000 files have priv and 1 doesn't (the running sum is then
+     *  a misleading partial). */
+    privateUnknown: boolean;
 }
 
 /** Fold an already-materialised RootRecords into the per-dir tree AND the
@@ -307,6 +313,7 @@ function walkRoot(
         errors: records.errors,
     };
     let privateSum: number | null = null;
+    let privateUnknown = false;
     const dirs = new Set<string>();
     const rootKey = root.endsWith("/") ? root.slice(0, -1) : root;
 
@@ -330,7 +337,9 @@ function walkRoot(
             dirs.add(parent);
         }
 
-        if (priv !== null) {
+        if (priv === null) {
+            privateUnknown = true;
+        } else {
             privateSum = (privateSum ?? 0) + priv;
         }
 
@@ -376,7 +385,7 @@ function walkRoot(
     aggregate.dirCount = dirs.size;
     aggregate.private = privateSum;
     aggregate.exactReclaimable = aggregate.private;
-    return { tree: rootNode, aggregate };
+    return { tree: rootNode, aggregate, privateUnknown };
 }
 
 /** Deepest-significant keep rule (spec §5): keep D iff real(D) > minReal;
@@ -451,6 +460,11 @@ function buildCloneAnalysis(
     // needs the full picture to distinguish in-tree from cross-tree families).
     // What we filter here is the REPORT.
     const familyMembers = new Map<string, { total: number; passing: number }>();
+    // Lone clone-ids whose lone in-tree member passes the user's filters.
+    // Partner probing + the "rerun with --show-partners" count must use this
+    // subset, not the unfiltered crossTree.loneCloneIds — otherwise probing
+    // could surface partners for families the user just filtered out.
+    const visibleLoneCloneIds = new Set<string>();
     let sharedBytes = 0;
     for (const [root, { entries }] of records) {
         for (const e of entries) {
@@ -462,6 +476,9 @@ function buildCloneAnalysis(
                 acc.total += 1;
                 if (passing) {
                     acc.passing += 1;
+                    if (crossTree.loneCloneIds.has(key)) {
+                        visibleLoneCloneIds.add(key);
+                    }
                 }
 
                 familyMembers.set(key, acc);
@@ -491,7 +508,7 @@ function buildCloneAnalysis(
     // Probe is OFF by default — bun cache can be GB and the walk would add
     // seconds to every measure on a real `node_modules` tree. Opt-in via
     // `--show-partners` when the user actually wants the WHERE info.
-    const crossTreePartners = opts.probePartners ? findCrossTreePartners(crossTree.loneCloneIds) : [];
+    const crossTreePartners = opts.probePartners ? findCrossTreePartners(visibleLoneCloneIds) : [];
 
     const notes: string[] = [];
     if (sharedBytes > 0) {
@@ -504,9 +521,9 @@ function buildCloneAnalysis(
                 `partner(s) located in: ${crossTreePartners.slice(0, 3).join(", ")}` +
                     (crossTreePartners.length > 3 ? ` (+${crossTreePartners.length - 3} more)` : "")
             );
-        } else if (!opts.probePartners && crossTree.loneCloneIds.size > 0) {
+        } else if (!opts.probePartners && visibleLoneCloneIds.size > 0) {
             notes.push(
-                `${crossTree.loneCloneIds.size} clone family(ies) have partners outside the scan — rerun with --show-partners to locate them.`
+                `${visibleLoneCloneIds.size} clone family(ies) have partners outside the scan — rerun with --show-partners to locate them.`
             );
         }
     }
@@ -552,17 +569,25 @@ export function buildMeasureReport(args: BuildMeasureArgs): MeasureReport {
             continue;
         }
 
-        const { tree: rootMut, aggregate: u } = walkRoot(root, rootRecs, args, crossTree.sharedByPath);
+        const { tree: rootMut, aggregate: u, privateUnknown: rootPrivateUnknown } = walkRoot(
+            root,
+            rootRecs,
+            args,
+            crossTree.sharedByPath
+        );
         totalsAgg.logical += u.logical;
         totalsAgg.allocated += u.allocated;
         totalsAgg.fileCount += u.fileCount;
         totalsAgg.dirCount += u.dirCount;
-        if (u.private === null) {
-            // Any root that couldn't produce clone-aware sizing taints the
-            // total — a partial sum would underreport reclaim while looking
-            // definitive. Track and null out totalReal below.
+        if (rootPrivateUnknown) {
+            // Any included file with priv === null taints the total — a
+            // partial sum would underreport reclaim while looking definitive.
+            // Catches both the all-null case AND the mixed-null case (one
+            // file's priv missing among many).
             privateUnknown = true;
-        } else {
+        }
+
+        if (u.private !== null) {
             totalsAgg.private = (totalsAgg.private ?? 0) + u.private;
         }
 
