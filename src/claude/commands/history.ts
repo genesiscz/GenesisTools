@@ -17,9 +17,9 @@ import { out } from "@app/logger";
 import { getAgentRuntimeContext } from "@app/utils/agent-runtime";
 import { resolveProjectFilter } from "@app/utils/claude";
 import { isInteractive } from "@app/utils/cli";
+import { defineDashboardApp } from "@app/utils/DashboardApp";
 import { SafeJSON } from "@app/utils/json";
 import { PROJECT_ROOT } from "@app/utils/paths";
-import { spawnDashboard } from "@app/utils/process/spawnDashboard";
 import * as p from "@app/utils/prompts/p";
 import { spawn } from "bun";
 import chalk from "chalk";
@@ -332,30 +332,23 @@ export function registerHistoryCommand(program: Command): void {
             }
         });
 
-    // Dashboard command
-    historyCmd
-        .command("dashboard")
-        .description("Launch the web-based dashboard for browsing conversation history")
-        .option("-p, --port <port>", "Port to run the dashboard on", "3069")
-        .action(async (options) => {
-            const dashboardDir = resolve(import.meta.dir, "../../claude-history-dashboard");
+    const dashboardDir = resolve(import.meta.dir, "../../claude-history-dashboard");
+    const viteEntry = resolve(PROJECT_ROOT, "node_modules", "vite", "bin", "vite.js");
 
-            out.println(chalk.cyan("Starting Claude History Dashboard..."));
-            out.println(chalk.dim(`   Port: ${options.port}`));
-            out.println();
+    const claudeHistoryApp = defineDashboardApp({
+        type: "ui",
+        key: "claude-history",
+        name: "Claude History Browser",
+        description: "Search & browse Claude Code conversation history",
+        commandName: "dashboard",
+        spawn: {
+            cmd: ["bun", "--bun", viteEntry, "dev", "-c", resolve(dashboardDir, "vite.config.ts"), "--strictPort"],
+            cwd: PROJECT_ROOT,
+        },
+        readiness: { kind: "http", path: "/" },
+        openBrowser: { enabled: true },
+        launchd: { available: true },
+    });
 
-            await spawnDashboard({
-                cmd: [
-                    "bun",
-                    "--bun",
-                    "vite",
-                    "dev",
-                    "-c",
-                    resolve(dashboardDir, "vite.config.ts"),
-                    "--port",
-                    options.port,
-                ],
-                cwd: PROJECT_ROOT,
-            });
-        });
+    historyCmd.addCommand(claudeHistoryApp.commanderCommand);
 }
