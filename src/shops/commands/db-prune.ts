@@ -14,6 +14,6 @@ export function registerDbPruneCommand(program: Command): void {
         .action(async (opts: { days: number }) => {
             const days = opts.days;
             const deleted = await runDbPruneHttp(getShopsDatabase(), days);
-            out.print(`pruned ${deleted} http_requests rows older than ${days} days`);
+            out.println(`pruned ${deleted} http_requests rows older than ${days} days`);
         });
 }

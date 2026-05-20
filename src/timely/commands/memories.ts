@@ -92,7 +92,7 @@ async function memoriesAction(storage: Storage, _service: TimelyService, options
 
     // JSON output
     if (options.format === "json") {
-        out.print(SafeJSON.stringify(allEntries, null, 2));
+        out.println(SafeJSON.stringify(allEntries, null, 2));
         return;
     }
 
@@ -132,10 +132,10 @@ async function memoriesAction(storage: Storage, _service: TimelyService, options
         const sortedApps = Array.from(byApp.entries()).sort((a, b) => b[1].totalSeconds - a[1].totalSeconds);
 
         // Day header
-        out.print(chalk.bold(`${day} (${fmtDurHm(dayTotal)})`));
+        out.println(chalk.bold(`${day} (${fmtDurHm(dayTotal)})`));
 
         for (const [app, data] of sortedApps) {
-            out.print(`  ${padDur(fmtDurHm(data.totalSeconds))} ${chalk.yellow(app)}`);
+            out.println(`  ${padDur(fmtDurHm(data.totalSeconds))} ${chalk.yellow(app)}`);
 
             // Show sub-entries for each memory in this app group
             for (const entry of data.entries) {
@@ -147,25 +147,25 @@ async function memoriesAction(storage: Storage, _service: TimelyService, options
                 if (subs.length > 0) {
                     for (const sub of subs) {
                         if (sub.note) {
-                            out.print(
+                            out.println(
                                 `    ${chalk.dim(padDur(fmtDurHm(sub.duration.total_seconds)))} ${chalk.blue(sub.note)}`
                             );
                         }
                     }
                 } else if (entry.note) {
-                    out.print(
+                    out.println(
                         `    ${chalk.dim(padDur(fmtDurHm(entry.duration.total_seconds)))} ${chalk.blue(entry.note)}`
                     );
                 }
             }
         }
-        out.print();
+        out.println();
     }
 
     // Summary
-    out.print(chalk.cyan("─".repeat(60)));
-    out.print(chalk.bold(`Total: ${fmtDurHm(grandTotal)}`));
-    out.print(`Memories: ${totalEntries}, Days: ${sortedDays.length}`);
+    out.println(chalk.cyan("─".repeat(60)));
+    out.println(chalk.bold(`Total: ${fmtDurHm(grandTotal)}`));
+    out.println(`Memories: ${totalEntries}, Days: ${sortedDays.length}`);
 }
 
 /**

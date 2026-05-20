@@ -98,15 +98,15 @@ function benchmark(impl: ImplEntry, prettify: boolean, iterations: number): numb
 function printReport(label: string, reports: ImplReport[]): void {
     const total = testCases.length;
 
-    out.print(chalk.dim("─".repeat(80)));
-    out.print(chalk.bold(`  ${label}`));
-    out.print(chalk.dim("─".repeat(80)));
+    out.println(chalk.dim("─".repeat(80)));
+    out.println(chalk.bold(`  ${label}`));
+    out.println(chalk.dim("─".repeat(80)));
 
     for (const report of reports) {
         const statusIcon = report.failed === 0 && report.crashed === 0 ? chalk.green("✓") : chalk.red("✗");
         const passRate = ((report.passed / total) * 100).toFixed(1);
 
-        out.print(
+        out.println(
             `${statusIcon} ${chalk.bold(report.name.padEnd(14))} ` +
                 `${chalk.green(`${report.passed} pass`)}  ` +
                 `${report.failed > 0 ? chalk.red(`${report.failed} fail`) : chalk.dim("0 fail")}  ` +
@@ -129,27 +129,27 @@ function printFailures(reports: ImplReport[]): void {
             continue;
         }
 
-        out.print(chalk.bold.yellow(`  ${report.name}:`));
+        out.println(chalk.bold.yellow(`  ${report.name}:`));
 
         for (const f of report.failures) {
-            out.print(chalk.red(`    ✗ ${f.testName}`));
-            out.print(chalk.dim(`      tags: ${f.tags.join(", ")}`));
-            out.print(chalk.dim(`      expected: ${SafeJSON.stringify(f.expected).slice(0, 120)}`));
-            out.print(chalk.dim(`      actual:   ${SafeJSON.stringify(f.actual).slice(0, 120)}`));
+            out.println(chalk.red(`    ✗ ${f.testName}`));
+            out.println(chalk.dim(`      tags: ${f.tags.join(", ")}`));
+            out.println(chalk.dim(`      expected: ${SafeJSON.stringify(f.expected).slice(0, 120)}`));
+            out.println(chalk.dim(`      actual:   ${SafeJSON.stringify(f.actual).slice(0, 120)}`));
         }
 
         for (const c of report.crashes) {
-            out.print(chalk.yellow(`    💥 ${c.testName}: ${c.error}`));
+            out.println(chalk.yellow(`    💥 ${c.testName}: ${c.error}`));
         }
 
-        out.print();
+        out.println();
     }
 }
 
 // ── Main ─────────────────────────────────────────────────────────────────
 
 const total = testCases.length;
-out.print(chalk.bold(`\nShell Command Fixer — ${total} test cases × ${impls.length} implementations × 2 modes\n`));
+out.println(chalk.bold(`\nShell Command Fixer — ${total} test cases × ${impls.length} implementations × 2 modes\n`));
 
 // Run plain mode
 const plainReports = impls.map((impl) => runImpl(impl, false));
@@ -164,19 +164,19 @@ const allReports = [...plainReports, ...prettyReports];
 const anyFailures = allReports.some((r) => r.failed > 0 || r.crashed > 0);
 
 if (anyFailures) {
-    out.print(chalk.bold.red("\nFailures:\n"));
+    out.println(chalk.bold.red("\nFailures:\n"));
     printFailures(plainReports);
     printFailures(prettyReports);
 }
 
 // Benchmark
 const benchIterations = 100;
-out.print(chalk.bold(`\nBenchmark (${benchIterations} iterations × ${total} cases, prettify mode):\n`));
+out.println(chalk.bold(`\nBenchmark (${benchIterations} iterations × ${total} cases, prettify mode):\n`));
 
 for (const impl of impls) {
     const ms = benchmark(impl, true, benchIterations);
     const perCase = ((ms / (benchIterations * total)) * 1000).toFixed(1);
-    out.print(
+    out.println(
         `  ${chalk.bold(impl.name.padEnd(14))} ` +
             `${chalk.cyan(`${ms.toFixed(0)}ms`)} total  ` +
             `${chalk.dim(`${perCase}µs/case`)}`
@@ -184,17 +184,17 @@ for (const impl of impls) {
 }
 
 // Summary
-out.print(chalk.bold("\n\nSummary:\n"));
+out.println(chalk.bold("\n\nSummary:\n"));
 
 const plainPass = plainReports.reduce((sum, r) => sum + r.passed, 0);
 const prettyPass = prettyReports.reduce((sum, r) => sum + r.passed, 0);
 const totalTests = total * impls.length;
 
-out.print(`  Plain:    ${plainPass}/${totalTests} passed`);
-out.print(`  Prettify: ${prettyPass}/${totalTests} passed`);
+out.println(`  Plain:    ${plainPass}/${totalTests} passed`);
+out.println(`  Prettify: ${prettyPass}/${totalTests} passed`);
 
 if (!anyFailures) {
-    out.print(chalk.green.bold("\n  All implementations pass all tests in both modes! 🎉\n"));
+    out.println(chalk.green.bold("\n  All implementations pass all tests in both modes! 🎉\n"));
 }
 
 process.exit(anyFailures ? 1 : 0);

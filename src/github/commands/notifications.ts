@@ -132,20 +132,20 @@ export async function notificationsCommand(options: NotificationsCommandOptions)
     items = items.slice(0, limit);
 
     if (items.length === 0) {
-        out.print(chalk.yellow("No matching notifications found."));
+        out.println(chalk.yellow("No matching notifications found."));
         return;
     }
 
-    out.print(chalk.dim(`Found ${items.length} matching notification(s)\n`));
+    out.println(chalk.dim(`Found ${items.length} matching notification(s)\n`));
 
     // Open in browser
     if (options.open) {
         const urls = items.map((n) => n.webUrl);
-        out.print(chalk.cyan(`Opening ${urls.length} URL(s) in browser...\n`));
+        out.println(chalk.cyan(`Opening ${urls.length} URL(s) in browser...\n`));
         const results = await Browser.openAll(urls);
         const failed = results.filter((r) => !r.success);
         if (failed.length > 0) {
-            out.print(chalk.yellow(`${failed.length} URL(s) failed to open`));
+            out.println(chalk.yellow(`${failed.length} URL(s) failed to open`));
         }
     }
 
@@ -160,7 +160,7 @@ export async function notificationsCommand(options: NotificationsCommandOptions)
                 { label: `PATCH /notifications/threads/${item.id}` }
             );
         }
-        out.print(chalk.green(`Marked ${items.length} notification(s) as read`));
+        out.println(chalk.green(`Marked ${items.length} notification(s) as read`));
     }
 
     // Mark as done
@@ -174,7 +174,7 @@ export async function notificationsCommand(options: NotificationsCommandOptions)
                 { label: `DELETE /notifications/threads/${item.id}` }
             );
         }
-        out.print(chalk.green(`Marked ${items.length} notification(s) as done`));
+        out.println(chalk.green(`Marked ${items.length} notification(s) as done`));
     }
 
     // Format output
@@ -183,9 +183,9 @@ export async function notificationsCommand(options: NotificationsCommandOptions)
 
     if (options.output) {
         await Bun.write(options.output, output);
-        out.print(chalk.green(`Output written to ${options.output}`));
+        out.println(chalk.green(`Output written to ${options.output}`));
     } else {
-        out.print(output);
+        out.println(output);
     }
 }
 

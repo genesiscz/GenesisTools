@@ -30,7 +30,7 @@ for (let i = 0; i < args.length; i++) {
     } else if (arg === "--raw") {
         raw = true;
     } else if (arg === "--help" || arg === "-h") {
-        out.print(`Usage: tools cursor [options] <question>
+        out.println(`Usage: tools cursor [options] <question>
 
 Ask Cursor Agent a question about the codebase and stream the answer.
 

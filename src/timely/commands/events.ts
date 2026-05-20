@@ -236,9 +236,9 @@ function outputJson(
     if (!options.withoutDetails) {
         // Full raw event objects
         if (fetchEntries && hasUnlinked) {
-            out.print(SafeJSON.stringify({ events, unlinked: buildUnlinkedSlim(unlinkedByDay) }, null, 2));
+            out.println(SafeJSON.stringify({ events, unlinked: buildUnlinkedSlim(unlinkedByDay) }, null, 2));
         } else {
-            out.print(SafeJSON.stringify(events, null, 2));
+            out.println(SafeJSON.stringify(events, null, 2));
         }
         return;
     }
@@ -268,9 +268,9 @@ function outputJson(
     });
 
     if (fetchEntries && hasUnlinked) {
-        out.print(SafeJSON.stringify({ events: slim, unlinked: buildUnlinkedSlim(unlinkedByDay) }, null, 2));
+        out.println(SafeJSON.stringify({ events: slim, unlinked: buildUnlinkedSlim(unlinkedByDay) }, null, 2));
     } else {
-        out.print(SafeJSON.stringify(slim, null, 2));
+        out.println(SafeJSON.stringify(slim, null, 2));
     }
 }
 
@@ -310,9 +310,9 @@ function buildUnlinkedSlim(unlinkedByDay: Map<string, UnlinkedMemory[]>): Unlink
 // ─── CSV Output ───
 
 function outputCsv(events: TimelyEvent[]): void {
-    out.print("date,project,note,hours,minutes,duration_formatted");
+    out.println("date,project,note,hours,minutes,duration_formatted");
     for (const event of events) {
-        out.print(
+        out.println(
             [
                 event.day,
                 `"${event.project?.name || "No Project"}"`,
@@ -353,7 +353,7 @@ function outputTable(events: TimelyEvent[], fetchEntries: boolean, unlinkedByDay
         const dayTotal = dayEvents.reduce((sum, e) => sum + e.duration.total_seconds, 0);
         totalSeconds += dayTotal;
 
-        out.print(chalk.bold(`${day} (${formatDuration(dayTotal)})`));
+        out.println(chalk.bold(`${day} (${formatDuration(dayTotal)})`));
 
         const maxProjectLen = Math.min(
             20,
@@ -365,14 +365,14 @@ function outputTable(events: TimelyEvent[], fetchEntries: boolean, unlinkedByDay
                 const project = (event.project?.name || "No Project").padEnd(maxProjectLen);
                 const note = event.note ? ` ${chalk.dim(event.note)}` : "";
                 const fromTo = event.from && event.to ? chalk.dim(` ${event.from}-${event.to}`) : "";
-                out.print(
+                out.println(
                     `  ${chalk.bold(event.duration.formatted.padStart(5))} ${chalk.yellow(project)}${note}${fromTo}`
                 );
 
                 const entries = (event as TimelyEvent & { entries?: TimelyEntry[] }).entries;
                 if (entries && entries.length > 0) {
                     for (const ent of entries) {
-                        out.print(
+                        out.println(
                             `  ${" ".repeat(5)} ${chalk.cyan(ent.title.padEnd(maxProjectLen))} ${chalk.dim(ent.duration.formatted)}`
                         );
                         const subs = getSubEntries(ent);
@@ -381,7 +381,7 @@ function outputTable(events: TimelyEvent[], fetchEntries: boolean, unlinkedByDay
                                 if (sub.note) {
                                     const shortNote =
                                         sub.note.length > 60 ? `${sub.note.substring(0, 58)}..` : sub.note;
-                                    out.print(
+                                    out.println(
                                         `  ${" ".repeat(5)} ${" ".repeat(maxProjectLen)} ${chalk.dim(`${sub.duration.formatted} ${shortNote}`)}`
                                     );
                                 }
@@ -395,7 +395,7 @@ function outputTable(events: TimelyEvent[], fetchEntries: boolean, unlinkedByDay
             const unlinked = unlinkedByDay.get(day);
             if (unlinked && unlinked.length > 0) {
                 const unlinkedTotal = unlinked.reduce((s, m) => s + m.duration.total_seconds, 0);
-                out.print(chalk.dim(`  ── unlinked (${formatDuration(unlinkedTotal)}) ──`));
+                out.println(chalk.dim(`  ── unlinked (${formatDuration(unlinkedTotal)}) ──`));
                 for (const mem of unlinked) {
                     const dur = mem.duration.formatted.padStart(5);
                     const title = mem.title.substring(0, maxProjectLen).padEnd(maxProjectLen);
@@ -405,14 +405,14 @@ function outputTable(events: TimelyEvent[], fetchEntries: boolean, unlinkedByDay
                         const name = target?.project?.name || `#${mem.suggestedMatch.targetId}`;
                         matchHint = chalk.green(` → ${name} (${mem.suggestedMatch.reasons.join(", ")})`);
                     }
-                    out.print(`  ${chalk.dim(dur)} ${chalk.magenta(title)}${matchHint}`);
+                    out.println(`  ${chalk.dim(dur)} ${chalk.magenta(title)}${matchHint}`);
 
                     const subs = getSubEntries(mem);
                     if (subs.length > 0) {
                         for (const sub of subs) {
                             if (sub.note) {
                                 const shortNote = sub.note.length > 60 ? `${sub.note.substring(0, 58)}..` : sub.note;
-                                out.print(
+                                out.println(
                                     `  ${" ".repeat(5)} ${" ".repeat(maxProjectLen)} ${chalk.dim(`${sub.duration.formatted} ${shortNote}`)}`
                                 );
                             }
@@ -424,17 +424,17 @@ function outputTable(events: TimelyEvent[], fetchEntries: boolean, unlinkedByDay
             for (const event of dayEvents) {
                 const project = (event.project?.name || "No Project").padEnd(maxProjectLen);
                 const note = event.note || "";
-                out.print(`  ${event.duration.formatted.padStart(5)} ${project} ${note}`);
+                out.println(`  ${event.duration.formatted.padStart(5)} ${project} ${note}`);
             }
         }
-        out.print();
+        out.println();
     }
 
     // Summary
-    out.print(chalk.cyan("─".repeat(60)));
-    out.print(chalk.bold(`Total: ${formatDuration(totalSeconds)}`));
-    out.print(`Events: ${events.length}`);
-    out.print(`Days: ${sortedDays.length}`);
+    out.println(chalk.cyan("─".repeat(60)));
+    out.println(chalk.bold(`Total: ${formatDuration(totalSeconds)}`));
+    out.println(`Events: ${events.length}`);
+    out.println(`Days: ${sortedDays.length}`);
 
     if (fetchEntries) {
         const totalUnlinked = Array.from(unlinkedByDay.values()).reduce((s, arr) => s + arr.length, 0);
@@ -442,7 +442,7 @@ function outputTable(events: TimelyEvent[], fetchEntries: boolean, unlinkedByDay
             const totalUnlinkedSeconds = Array.from(unlinkedByDay.values())
                 .flat()
                 .reduce((s, m) => s + m.duration.total_seconds, 0);
-            out.print(`Unlinked: ${totalUnlinked} memories (${formatDuration(totalUnlinkedSeconds)})`);
+            out.println(`Unlinked: ${totalUnlinked} memories (${formatDuration(totalUnlinkedSeconds)})`);
         }
     }
 }

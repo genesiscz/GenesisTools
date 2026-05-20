@@ -331,9 +331,9 @@ program
                 }
                 return line;
             });
-            out.print(coloredLines.join("\n"));
+            out.println(coloredLines.join("\n"));
         } else {
-            out.print(table);
+            out.println(table);
         }
     });
 

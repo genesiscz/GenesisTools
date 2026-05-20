@@ -16,13 +16,13 @@ let cleared = 0;
 for (const dir of cacheDirs) {
     if (existsSync(dir)) {
         rmSync(dir, { recursive: true, force: true });
-        out.print(`Cleared: ${dir}`);
+        out.println(`Cleared: ${dir}`);
         cleared++;
     }
 }
 
 if (cleared === 0) {
-    out.print("No .vite cache dirs found — already clean.");
+    out.println("No .vite cache dirs found — already clean.");
 } else {
-    out.print(`Done. Cleared ${cleared} cache dir(s). Restart your dev server.`);
+    out.println(`Done. Cleared ${cleared} cache dir(s). Restart your dev server.`);
 }

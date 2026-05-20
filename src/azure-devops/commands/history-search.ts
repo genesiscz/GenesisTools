@@ -156,7 +156,7 @@ async function wiqlSearch(options: SearchOptions, api: Api, config: AzureConfig)
 
     // Output
     if (options.output === "json") {
-        out.print(formatJSON(allItems));
+        out.println(formatJSON(allItems));
     } else {
         printWorkItemsTable(allItems);
     }
@@ -205,18 +205,18 @@ function printWorkItemsTable(items: WorkItem[]): void {
     }
 
     const header = `${pad("ID", 8)} ${pad("State", 14)} ${pad("Assignee", 24)} ${pad("Title", 50)}`;
-    out.print(pc.bold(header));
-    out.print("-".repeat(header.length));
+    out.println(pc.bold(header));
+    out.println("-".repeat(header.length));
 
     for (const item of items) {
         const line = `${pad(String(item.id), 8)} ${pad(item.state, 14)} ${pad(item.assignee ?? "-", 24)} ${pad(
             item.title,
             50
         )}`;
-        out.print(line);
+        out.println(line);
     }
 
-    out.print(`\n${pc.dim(`${items.length} work items`)}`);
+    out.println(`\n${pc.dim(`${items.length} work items`)}`);
 }
 
 // ============= Mode 2: Local Search =============
@@ -356,7 +356,7 @@ async function localSearch(options: SearchOptions): Promise<void> {
     const syncDate = lastSyncTime > 0 ? formatLocalDateTimeStamp(lastSyncTime, { seconds: false }) : "?";
 
     if (options.output === "json") {
-        out.print(
+        out.println(
             formatJSON({
                 results,
                 stats: { cached: scannedCount, matched: results.length, dataFrom, dataTo, syncDate },
@@ -366,7 +366,7 @@ async function localSearch(options: SearchOptions): Promise<void> {
         printLocalResultsTable(results);
 
         // Stats
-        out.print(pc.dim(`\nCache: ${scannedCount} items, data ${dataFrom} → ${dataTo}, synced ${syncDate}`));
+        out.println(pc.dim(`\nCache: ${scannedCount} items, data ${dataFrom} → ${dataTo}, synced ${syncDate}`));
 
         // Suggest WIQL equivalent
         const wiqlCmd = suggestCommand("tools azure-devops", { add: ["--wiql"] });
@@ -417,19 +417,19 @@ function printLocalResultsTable(results: LocalSearchResult[]): void {
     }
 
     const header = `${pad("ID", 8)} ${pad("Time", 10)} ${pad("State", 14)} ${pad("Assignee", 24)} ${pad("Title", 44)}`;
-    out.print(pc.bold(header));
-    out.print("-".repeat(header.length));
+    out.println(pc.bold(header));
+    out.println("-".repeat(header.length));
 
     for (const r of results) {
         const line = `${pad(String(r.workItemId), 8)} ${pad(formatDuration(r.totalMinutes), 10)} ${pad(
             r.currentState,
             14
         )} ${pad(r.assignee, 24)} ${pad(r.title, 44)}`;
-        out.print(line);
+        out.println(line);
     }
 
     const totalTime = results.reduce((sum, r) => sum + r.totalMinutes, 0);
-    out.print(`\n${pc.dim(`${results.length} work items, total time: ${formatDuration(totalTime)}`)}`);
+    out.println(`\n${pc.dim(`${results.length} work items, total time: ${formatDuration(totalTime)}`)}`);
 }
 
 // ============= Main Handler =============

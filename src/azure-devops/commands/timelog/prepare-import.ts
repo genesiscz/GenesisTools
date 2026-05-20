@@ -100,7 +100,7 @@ function printEntry(entry: StoredEntry): void {
     }
 
     parts.push(`[${entry._id.substring(0, 8)}]`);
-    out.print(`  ${parts.join(" | ")}`);
+    out.println(`  ${parts.join(" | ")}`);
 }
 
 // ============= Subcommand Actions =============
@@ -170,7 +170,7 @@ async function handleAdd(options: TimelogAddOptions): Promise<void> {
     }
 
     if (precheck.status === "redirect") {
-        out.print(`Warning: ${precheck.message}`);
+        out.println(`Warning: ${precheck.message}`);
         effectiveWorkItemId = precheck.redirectId!;
     }
 
@@ -205,7 +205,7 @@ async function handleAdd(options: TimelogAddOptions): Promise<void> {
         };
     });
 
-    out.print("Entry added:");
+    out.println("Entry added:");
     printEntry(storedEntry);
 }
 
@@ -226,7 +226,7 @@ async function handleRemove(options: TimelogRemoveOptions): Promise<void> {
         return { ...current, entries: filtered };
     });
 
-    out.print(`Entry ${options.id} removed. ${updated.entries.length} entries remaining.`);
+    out.println(`Entry ${options.id} removed. ${updated.entries.length} entries remaining.`);
 }
 
 async function handleList(options: TimelogListOptions): Promise<void> {
@@ -239,17 +239,17 @@ async function handleList(options: TimelogListOptions): Promise<void> {
     }
 
     if (options.format === "json") {
-        out.print(SafeJSON.stringify(data, null, 2));
+        out.println(SafeJSON.stringify(data, null, 2));
         return;
     }
 
     // Table format (default)
-    out.print(`Prepare-import: ${data.name}`);
-    out.print(`Created: ${data.createdAt}`);
-    out.print(`Entries: ${data.entries.length}\n`);
+    out.println(`Prepare-import: ${data.name}`);
+    out.println(`Created: ${data.createdAt}`);
+    out.println(`Entries: ${data.entries.length}\n`);
 
     if (data.entries.length === 0) {
-        out.print("  (no entries)");
+        out.println("  (no entries)");
         return;
     }
 
@@ -268,15 +268,15 @@ async function handleList(options: TimelogListOptions): Promise<void> {
         workitemTotals.set(entry.workItemId, (workitemTotals.get(entry.workItemId) ?? 0) + mins);
     }
 
-    out.print("\nTotals per day:");
+    out.println("\nTotals per day:");
 
     const sortedDays = [...dailyTotals.entries()].sort(([a], [b]) => a.localeCompare(b));
 
     for (const [day, mins] of sortedDays) {
-        out.print(`  ${day}: ${formatMinutes(mins)}`);
+        out.println(`  ${day}: ${formatMinutes(mins)}`);
     }
 
-    out.print("\nTotals per work item:");
+    out.println("\nTotals per work item:");
 
     const workitemNames = new Map<number, string>();
 
@@ -291,17 +291,17 @@ async function handleList(options: TimelogListOptions): Promise<void> {
     for (const [id, mins] of sortedItems) {
         const name = workitemNames.get(id);
         const label = name ? `#${id} ${name}` : `#${id}`;
-        out.print(`  ${label}: ${formatMinutes(mins)}`);
+        out.println(`  ${label}: ${formatMinutes(mins)}`);
     }
 
     const grandTotal = [...dailyTotals.values()].reduce((sum, m) => sum + m, 0);
-    out.print(`\nGrand total: ${formatMinutes(grandTotal)}`);
+    out.println(`\nGrand total: ${formatMinutes(grandTotal)}`);
 }
 
 async function handleClear(options: TimelogClearOptions): Promise<void> {
     const key = cacheKey(options.name);
     await storage.deleteCacheFile(key);
-    out.print(`Prepare-import file "${options.name}" cleared.`);
+    out.println(`Prepare-import file "${options.name}" cleared.`);
 }
 
 // ============= Registration =============

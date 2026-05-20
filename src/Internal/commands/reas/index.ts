@@ -373,13 +373,13 @@ export async function fetchAndAnalyze(
             }
 
             if (progress.warnings && progress.warnings.length > 0) {
-                out.print(pc.yellow("\nSome providers returned errors (analysis continues with available data):"));
+                out.println(pc.yellow("\nSome providers returned errors (analysis continues with available data):"));
 
                 for (const w of progress.warnings) {
-                    out.print(pc.dim(`  - ${w}`));
+                    out.println(pc.dim(`  - ${w}`));
                 }
 
-                out.print();
+                out.println();
             }
         },
     });
@@ -395,9 +395,9 @@ async function outputAnalysis(analysis: FullAnalysis, format: string, outputPath
 
         if (outputPath) {
             await Bun.write(outputPath, json);
-            out.print(pc.green(`JSON export written to ${outputPath}`));
+            out.println(pc.green(`JSON export written to ${outputPath}`));
         } else {
-            out.print(json);
+            out.println(json);
         }
 
         return;
@@ -407,17 +407,17 @@ async function outputAnalysis(analysis: FullAnalysis, format: string, outputPath
         const { exportToPdf } = await import("@app/Internal/commands/reas/lib/pdf-export");
         const path = outputPath ?? `reas-report-${analysis.target.district}-${Date.now()}.pdf`;
         await exportToPdf(analysis, path);
-        out.print(pc.green(`PDF report written to ${path}`));
+        out.println(pc.green(`PDF report written to ${path}`));
         return;
     }
 
     const report = renderReport(analysis);
-    out.print(report);
+    out.println(report);
 
     if (outputPath) {
         const plain = stripAnsi(report);
         await Bun.write(outputPath, plain);
-        out.print(pc.green(`Report written to ${outputPath}`));
+        out.println(pc.green(`Report written to ${outputPath}`));
     }
 }
 
@@ -440,7 +440,7 @@ async function runSearch(query: string, options: ReasOptions): Promise<void> {
     spinner.stop(`Found ${matched.length} listing(s) matching "${query}".`);
 
     if (matched.length === 0) {
-        out.print(pc.yellow(`\nNo listings found matching "${query}".`));
+        out.println(pc.yellow(`\nNo listings found matching "${query}".`));
         return;
     }
 
@@ -466,11 +466,11 @@ async function runSearch(query: string, options: ReasOptions): Promise<void> {
         alignRight: [0, 3, 4, 5],
     });
 
-    out.print(
+    out.println(
         `\n${pc.cyan(pc.bold(`Search results for "${query}"`))} \u2014 ${pc.bold(String(matched.length))} listing${matched.length === 1 ? "" : "s"} found\n`
     );
-    out.print(table);
-    out.print();
+    out.println(table);
+    out.println();
 }
 
 async function runReasAnalysis(options: ReasOptions): Promise<void> {
@@ -490,7 +490,7 @@ async function runReasAnalysis(options: ReasOptions): Promise<void> {
 
         if (portOccupied) {
             out.error(`Port ${port} is already in use.`);
-            out.print(
+            out.println(
                 suggestCommand("tools internal reas --dashboard", {
                     add: ["--dashboard-port", "<port>"],
                 })
@@ -498,7 +498,7 @@ async function runReasAnalysis(options: ReasOptions): Promise<void> {
             return;
         }
 
-        out.print(`Starting REAS dashboard on port ${port}...`);
+        out.println(`Starting REAS dashboard on port ${port}...`);
         const child = spawn("bun", ["--bun", "vite", "dev", "--strictPort", "-c", configPath, "--port", String(port)], {
             stdio: "inherit",
         });
@@ -525,7 +525,7 @@ async function runReasAnalysis(options: ReasOptions): Promise<void> {
 
     if (options.refresh) {
         await clearCache();
-        out.print(pc.dim("Cache cleared."));
+        out.println(pc.dim("Cache cleared."));
     }
 
     if (options.search) {
@@ -544,7 +544,7 @@ async function runReasAnalysis(options: ReasOptions): Promise<void> {
 
     if (!isInteractive()) {
         out.error("Missing required flags in non-interactive mode.");
-        out.print(
+        out.println(
             suggestCommand("tools internal reas", {
                 add: ["--district", "Praha", "--type", "brick", "--price", "5000000", "--area", "80"],
             })
@@ -611,7 +611,7 @@ export function registerReasCommand(program: Command): void {
             });
 
             if (listings.length === 0) {
-                out.print(pc.yellow("No listings found."));
+                out.println(pc.yellow("No listings found."));
                 return;
             }
 
@@ -631,11 +631,11 @@ export function registerReasCommand(program: Command): void {
             const headers = ["ID", "District", "Source", "Type", "Address", "Disp", "m²", "Price", "CZK/m²", "Date"];
             const table = formatTable(rows, headers, { alignRight: [0, 6, 7, 8] });
 
-            out.print(
+            out.println(
                 `\n${pc.cyan(pc.bold("Listings"))} — page ${pc.bold(String(page))}, ${pc.bold(String(listings.length))} rows\n`
             );
-            out.print(table);
-            out.print();
+            out.println(table);
+            out.println();
         });
 
     // ---- Subcommand: districts ----
@@ -647,40 +647,40 @@ export function registerReasCommand(program: Command): void {
                 const matches = searchDistricts(query);
 
                 if (matches.length === 0) {
-                    out.print(pc.yellow(`No districts matching "${query}".`));
+                    out.println(pc.yellow(`No districts matching "${query}".`));
                     return;
                 }
 
-                out.print(`\n${pc.cyan(pc.bold("District search"))} — "${query}" → ${matches.length} match(es)\n`);
+                out.println(`\n${pc.cyan(pc.bold("District search"))} — "${query}" → ${matches.length} match(es)\n`);
 
                 for (const d of matches) {
-                    out.print(`  ${pc.bold(d.name)}  ${pc.dim(`reasId=${d.reasId}  srealityId=${d.srealityId}`)}`);
+                    out.println(`  ${pc.bold(d.name)}  ${pc.dim(`reasId=${d.reasId}  srealityId=${d.srealityId}`)}`);
                 }
 
-                out.print();
+                out.println();
                 return;
             }
 
             const prahaNames = getPrahaDistrictNames();
             const allNames = getAllDistrictNames();
 
-            out.print(
+            out.println(
                 `\n${pc.cyan(pc.bold("Available districts"))} (${allNames.length} districts + ${prahaNames.length} Praha wards)\n`
             );
-            out.print(pc.bold("Praha districts:"));
+            out.println(pc.bold("Praha districts:"));
 
             for (const name of prahaNames) {
-                out.print(`  ${name}`);
+                out.println(`  ${name}`);
             }
 
-            out.print();
-            out.print(pc.bold("All districts (alphabetical):"));
+            out.println();
+            out.println(pc.bold("All districts (alphabetical):"));
 
             for (const name of allNames) {
-                out.print(`  ${name}`);
+                out.println(`  ${name}`);
             }
 
-            out.print();
+            out.println();
         });
 
     // ---- Subcommand: history ----
@@ -700,7 +700,7 @@ export function registerReasCommand(program: Command): void {
             }
 
             if (rows.length === 0) {
-                out.print(pc.yellow("No analysis history found."));
+                out.println(pc.yellow("No analysis history found."));
                 return;
             }
 
@@ -718,9 +718,9 @@ export function registerReasCommand(program: Command): void {
             const headers = ["Date", "District", "Type", "Disp", "Score", "Grade", "Net Yield", "Median CZK/m²"];
             const table = formatTable(tableRows, headers, { alignRight: [4, 6, 7] });
 
-            out.print(`\n${pc.cyan(pc.bold("Analysis history"))} — ${pc.bold(String(rows.length))} entries\n`);
-            out.print(table);
-            out.print();
+            out.println(`\n${pc.cyan(pc.bold("Analysis history"))} — ${pc.bold(String(rows.length))} entries\n`);
+            out.println(table);
+            out.println();
         });
 
     // ---- Subcommand: health ----
@@ -735,7 +735,7 @@ export function registerReasCommand(program: Command): void {
             const recentLog = reasDatabase.getRecentFetchLog(20);
 
             if (health.length === 0) {
-                out.print(pc.yellow("No provider health data found."));
+                out.println(pc.yellow("No provider health data found."));
                 return;
             }
 
@@ -751,8 +751,8 @@ export function registerReasCommand(program: Command): void {
             const healthHeaders = ["Provider", "Success%", "Avg Count", "Fetches", "Last Error"];
             const healthTable = formatTable(healthRows, healthHeaders, { alignRight: [1, 2, 3] });
 
-            out.print(`\n${pc.cyan(pc.bold("Provider health"))} — last ${pc.bold(String(days))} days\n`);
-            out.print(healthTable);
+            out.println(`\n${pc.cyan(pc.bold("Provider health"))} — last ${pc.bold(String(days))} days\n`);
+            out.println(healthTable);
 
             // Recent fetch log table
             if (recentLog.length > 0) {
@@ -771,11 +771,11 @@ export function registerReasCommand(program: Command): void {
                 const logHeaders = ["Timestamp", "Provider", "Contract", "District", "Status", "Count"];
                 const logTable = formatTable(logRows, logHeaders, { alignRight: [5] });
 
-                out.print(`\n${pc.cyan(pc.bold("Recent fetches"))} — last ${pc.bold(String(recentLog.length))}\n`);
-                out.print(logTable);
+                out.println(`\n${pc.cyan(pc.bold("Recent fetches"))} — last ${pc.bold(String(recentLog.length))}\n`);
+                out.println(logTable);
             }
 
-            out.print();
+            out.println();
         });
 
     // ---- Subcommand: compare ----
@@ -805,7 +805,7 @@ export function registerReasCommand(program: Command): void {
                 spinner.stop(`Compared ${results.length} district(s).`);
 
                 if (results.length === 0) {
-                    out.print(pc.yellow("No comparison results."));
+                    out.println(pc.yellow("No comparison results."));
                     return;
                 }
 
@@ -821,11 +821,11 @@ export function registerReasCommand(program: Command): void {
                 const headers = ["District", "Median CZK/m²", "Gross Yield", "Net Yield", "Sales", "Rentals"];
                 const table = formatTable(rows, headers, { alignRight: [1, 2, 3, 4, 5] });
 
-                out.print(
+                out.println(
                     `\n${pc.cyan(pc.bold("District comparison"))} — ${opts.type}, ${formatCzk(Number(opts.price))} CZK, ${opts.area} m²\n`
                 );
-                out.print(table);
-                out.print();
+                out.println(table);
+                out.println();
             }
         );
 
@@ -838,14 +838,14 @@ export function registerReasCommand(program: Command): void {
             const id = Number(idStr);
 
             if (Number.isNaN(id)) {
-                out.print(pc.red(`Invalid ID: "${idStr}"`));
+                out.println(pc.red(`Invalid ID: "${idStr}"`));
                 return;
             }
 
             const result = await getListingDetail(id);
 
             if (result === null) {
-                out.print(pc.yellow(`Listing ${id} not found.`));
+                out.println(pc.yellow(`Listing ${id} not found.`));
                 return;
             }
 
@@ -866,20 +866,20 @@ export function registerReasCommand(program: Command): void {
                 ["Fetched", l.fetched_at],
             ];
 
-            out.print(`\n${pc.cyan(pc.bold(`Listing #${l.id}`))}\n`);
-            out.print(formatTable(rows, [], {}));
+            out.println(`\n${pc.cyan(pc.bold(`Listing #${l.id}`))}\n`);
+            out.println(formatTable(rows, [], {}));
 
             if (result.linkedProperty !== null) {
-                out.print(pc.dim(`Linked property: #${result.linkedProperty.id} ${result.linkedProperty.name}`));
+                out.println(pc.dim(`Linked property: #${result.linkedProperty.id} ${result.linkedProperty.name}`));
             }
 
             if (result.hydratedDetail !== null) {
                 const raw = SafeJSON.stringify(result.hydratedDetail);
                 const truncated = raw.length > 300 ? `${raw.slice(0, 300)}…` : raw;
-                out.print(`\nLive detail: ${truncated}`);
+                out.println(`\nLive detail: ${truncated}`);
             }
 
-            out.print();
+            out.println();
         });
 
     // ---- Subcommand: property ----
@@ -891,14 +891,14 @@ export function registerReasCommand(program: Command): void {
             const id = Number(idStr);
 
             if (Number.isNaN(id)) {
-                out.print(pc.red(`Invalid ID: "${idStr}"`));
+                out.println(pc.red(`Invalid ID: "${idStr}"`));
                 return;
             }
 
             const result = getPropertyDetail(id);
 
             if (result === null) {
-                out.print(pc.yellow(`Property ${id} not found.`));
+                out.println(pc.yellow(`Property ${id} not found.`));
                 return;
             }
 
@@ -924,11 +924,11 @@ export function registerReasCommand(program: Command): void {
                 ["Last analyzed", prop.last_analyzed_at ?? "—"],
             ];
 
-            out.print(`\n${pc.cyan(pc.bold(`Property #${prop.id} — ${prop.name}`))}\n`);
-            out.print(formatTable(rows, [], {}));
+            out.println(`\n${pc.cyan(pc.bold(`Property #${prop.id} — ${prop.name}`))}\n`);
+            out.println(formatTable(rows, [], {}));
 
             if (result.history.length > 0) {
-                out.print(pc.bold("\nAnalysis history:\n"));
+                out.println(pc.bold("\nAnalysis history:\n"));
 
                 const historyRows = result.history.map((h) => [
                     h.analyzed_at.slice(0, 10),
@@ -949,10 +949,10 @@ export function registerReasCommand(program: Command): void {
                     "Median CZK/m²",
                     "Comparables",
                 ];
-                out.print(formatTable(historyRows, historyHeaders, { alignRight: [2, 3, 4, 5, 6] }));
+                out.println(formatTable(historyRows, historyHeaders, { alignRight: [2, 3, 4, 5, 6] }));
             }
 
-            out.print();
+            out.println();
         });
 
     // ---- Subcommand: backfill ----
@@ -987,7 +987,7 @@ export function registerReasCommand(program: Command): void {
                 const resolution = opts.resolution;
 
                 if (resolution !== "daily" && resolution !== "monthly") {
-                    out.print(pc.red(`Invalid resolution "${resolution}". Use "daily" or "monthly".`));
+                    out.println(pc.red(`Invalid resolution "${resolution}". Use "daily" or "monthly".`));
                     return;
                 }
 
@@ -1003,7 +1003,7 @@ export function registerReasCommand(program: Command): void {
                 });
 
                 if (snapshots.length === 0) {
-                    out.print(pc.yellow(`No snapshots found for ${opts.district}.`));
+                    out.println(pc.yellow(`No snapshots found for ${opts.district}.`));
                     return;
                 }
 
@@ -1019,11 +1019,11 @@ export function registerReasCommand(program: Command): void {
 
                 const headers = ["Date", "Median CZK/m²", "Trend", "YoY%", "Gross Yield%", "Net Yield%", "Count"];
 
-                out.print(
+                out.println(
                     `\n${pc.cyan(pc.bold(`District snapshots — ${opts.district} (${opts.type})`))} — ${snapshots.length} entries (${opts.resolution})\n`
                 );
-                out.print(formatTable(tableRows, headers, { alignRight: [1, 3, 4, 5, 6] }));
-                out.print();
+                out.println(formatTable(tableRows, headers, { alignRight: [1, 3, 4, 5, 6] }));
+                out.println();
             }
         );
 }

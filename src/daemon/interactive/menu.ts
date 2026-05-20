@@ -49,7 +49,7 @@ export async function runInteractiveMenu(): Promise<void> {
                 break;
         }
 
-        out.print("");
+        out.println("");
     }
 }
 

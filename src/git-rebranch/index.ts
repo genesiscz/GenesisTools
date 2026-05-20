@@ -20,7 +20,7 @@ interface Options {
 }
 
 function showHelpFull() {
-    out.print(`
+    out.println(`
 Usage: tools git-rebranch [options]
 
 Description:

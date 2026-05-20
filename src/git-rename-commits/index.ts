@@ -20,12 +20,12 @@ handleReadmeFlag(import.meta.url);
 
 // Simple logger that doesn't interfere with prompts
 const logger = {
-    info: (msg: string) => out.print(chalk.blue("ℹ"), msg),
-    warn: (msg: string) => out.print(chalk.yellow("⚠"), msg),
-    error: (msg: string) => out.print(chalk.red("✖"), msg),
+    info: (msg: string) => out.println(chalk.blue("ℹ"), msg),
+    warn: (msg: string) => out.println(chalk.yellow("⚠"), msg),
+    error: (msg: string) => out.println(chalk.red("✖"), msg),
     debug: (msg: string) => {
         if (process.env.DEBUG) {
-            out.print(chalk.dim("🐛"), msg);
+            out.println(chalk.dim("🐛"), msg);
         }
     },
 };
@@ -404,10 +404,10 @@ async function promptForNewMessage(
 ): Promise<string> {
     // Show current message clearly before the prompt
     const suggestion = suggestCommitName(commit, allCommits, defaultScope);
-    out.print(chalk.dim(`\n  Current message: ${chalk.reset(commit.message)}`));
+    out.println(chalk.dim(`\n  Current message: ${chalk.reset(commit.message)}`));
 
     if (suggestion !== commit.message) {
-        out.print(chalk.dim(`  💡 Suggestion: ${chalk.green(suggestion)}`));
+        out.println(chalk.dim(`  💡 Suggestion: ${chalk.green(suggestion)}`));
     }
 
     const newMessageRaw = await p.text({
@@ -876,10 +876,10 @@ async function main() {
         const currentDir = process.cwd();
 
         // Show current context
-        out.print(chalk.bold("\n📋 Current Context:"));
-        out.print(`  Branch: ${chalk.cyan(currentBranch)}`);
-        out.print(`  Directory: ${chalk.cyan(currentDir)}`);
-        out.print(`  Repository: ${chalk.cyan(repoDir)}\n`);
+        out.println(chalk.bold("\n📋 Current Context:"));
+        out.println(`  Branch: ${chalk.cyan(currentBranch)}`);
+        out.println(`  Directory: ${chalk.cyan(currentDir)}`);
+        out.println(`  Repository: ${chalk.cyan(repoDir)}\n`);
 
         // Safety check: ensure commits are pushed before rewriting
         if (!opts.force) {
@@ -918,27 +918,27 @@ async function main() {
 
             // Show detection info
             if (recentCommitsResult.detectionMethod && recentCommitsResult.baseBranchName) {
-                out.print(
+                out.println(
                     chalk.dim(
                         `\n📍 Base branch detection: ${recentCommitsResult.detectionMethod} (${chalk.cyan(
                             recentCommitsResult.baseBranchName
                         )})`
                     )
                 );
-                out.print(chalk.dim(`   Showing ${recentCommits.length} commit(s) unique to current branch\n`));
+                out.println(chalk.dim(`   Showing ${recentCommits.length} commit(s) unique to current branch\n`));
             }
 
-            out.print(chalk.bold("\n📝 Recent commits (showing last 50, newest first):\n"));
+            out.println(chalk.bold("\n📝 Recent commits (showing last 50, newest first):\n"));
             recentCommits.forEach((commit, index) => {
-                out.print(
+                out.println(
                     chalk.dim(`${String(index + 1).padStart(2)}.`) +
                         ` ${chalk.cyan(commit.shortHash)} - ${commit.message}`
                 );
             });
-            out.print();
+            out.println();
 
             const maxCommits = recentCommits.length;
-            commitCount = await inquirerBackend.number({
+            commitCount = await p.number({
                 message: `How many commits do you want to rename? (1-${maxCommits})`,
                 min: 1,
                 max: maxCommits,
@@ -966,21 +966,21 @@ async function main() {
 
         // Show detection info
         if (commitsResult.detectionMethod && commitsResult.baseBranchName) {
-            out.print(
+            out.println(
                 chalk.dim(
                     `\n📍 Base branch: ${chalk.cyan(commitsResult.baseBranchName)} (detected via ${
                         commitsResult.detectionMethod
                     })`
                 )
             );
-            out.print(chalk.dim(`   Showing ${commits.length} commit(s) unique to current branch\n`));
+            out.println(chalk.dim(`   Showing ${commits.length} commit(s) unique to current branch\n`));
         }
 
         logger.info(`📝 Found ${commits.length} commit(s). Let's rename them:`);
-        out.print(chalk.dim("\n💡 Tip: You can use placeholders in your commit messages:"));
-        out.print(chalk.dim("   <suggested> - will be replaced with the suggested commit message"));
-        out.print(chalk.dim("   <original>  - will be replaced with the original commit message"));
-        out.print(chalk.dim('   Example: "feat(vouchers): <suggested>" or "refactor: <original>"\n'));
+        out.println(chalk.dim("\n💡 Tip: You can use placeholders in your commit messages:"));
+        out.println(chalk.dim("   <suggested> - will be replaced with the suggested commit message"));
+        out.println(chalk.dim("   <original>  - will be replaced with the original commit message"));
+        out.println(chalk.dim('   Example: "feat(vouchers): <suggested>" or "refactor: <original>"\n'));
 
         // Check if we can determine a scope from existing commits
         let defaultScope: string | null = null;
@@ -1013,7 +1013,7 @@ async function main() {
         }
 
         // Show confirmation
-        out.print(showConfirmation(commits));
+        out.println(showConfirmation(commits));
 
         const confirmed = await p.confirm({
             message: "Do you want to proceed with renaming these commits?",

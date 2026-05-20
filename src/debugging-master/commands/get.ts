@@ -81,6 +81,6 @@ export function registerGetCommand(program: Command): void {
 
             const content = formatL1(sessionName, entries, stats, pretty);
             const tip = formatTip(entries);
-            out.print(wrapOutput(content, format, tip));
+            out.println(wrapOutput(content, format, tip));
         });
 }

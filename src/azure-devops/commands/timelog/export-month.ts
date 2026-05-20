@@ -36,9 +36,9 @@ export function registerExportMonthSubcommand(parent: Command): void {
 
                 if (options.output) {
                     await Bun.write(options.output, jsonOutput);
-                    out.print(`Exported to ${options.output}`);
+                    out.println(`Exported to ${options.output}`);
                 } else {
-                    out.print(jsonOutput);
+                    out.println(jsonOutput);
                 }
                 return;
             }
@@ -60,12 +60,12 @@ export function registerExportMonthSubcommand(parent: Command): void {
             ];
             const monthName = monthNames[options.month - 1];
 
-            out.print(`\n${pc.bold(`${monthName} ${year} - Time Log Export`)}`);
-            out.print(
+            out.println(`\n${pc.bold(`${monthName} ${year} - Time Log Export`)}`);
+            out.println(
                 `Total: ${pc.bold(formatMinutes(result.summary.totalMinutes))} ` +
                     `(${result.summary.totalHours}h) across ${result.entries.length} entries`
             );
-            out.print(`Period: ${result.fromDate} to ${result.toDate}\n`);
+            out.println(`Period: ${result.fromDate} to ${result.toDate}\n`);
 
             // By Work Item table
             const wiEntries = Object.entries(result.summary.entriesByWorkItem).sort(
@@ -73,7 +73,7 @@ export function registerExportMonthSubcommand(parent: Command): void {
             );
 
             if (wiEntries.length > 0) {
-                out.print(pc.bold("By Work Item:"));
+                out.println(pc.bold("By Work Item:"));
                 const wiTable = new Table({
                     head: ["ID", "Title", "Hours", "Entries"],
                     style: { head: ["cyan"] },
@@ -88,14 +88,14 @@ export function registerExportMonthSubcommand(parent: Command): void {
                     ]);
                 }
 
-                out.print(wiTable.toString());
+                out.println(wiTable.toString());
             }
 
             // By Day table
             const dayEntries = Object.entries(result.summary.entriesByDay).sort(([a], [b]) => a.localeCompare(b));
 
             if (dayEntries.length > 0) {
-                out.print(`\n${pc.bold("By Day:")}`);
+                out.println(`\n${pc.bold("By Day:")}`);
                 const dayTable = new Table({
                     head: ["Date", "Hours"],
                     style: { head: ["cyan"] },
@@ -105,12 +105,12 @@ export function registerExportMonthSubcommand(parent: Command): void {
                     dayTable.push([date, formatMinutes(minutes)]);
                 }
 
-                out.print(dayTable.toString());
+                out.println(dayTable.toString());
             }
 
             if (options.output) {
                 await Bun.write(options.output, SafeJSON.stringify(result, null, 2));
-                out.print(`\nFull data exported to ${options.output}`);
+                out.println(`\nFull data exported to ${options.output}`);
             }
         });
 }

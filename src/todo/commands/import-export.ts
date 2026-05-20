@@ -61,7 +61,7 @@ export function createExportCommand(): Command {
                 await Bun.write(outPath, output);
                 out.error(`Exported ${todos.length} todo(s) to ${outPath}`);
             } else {
-                out.print(output);
+                out.println(output);
             }
         });
 }
@@ -96,6 +96,6 @@ export function createImportCommand(): Command {
             const store = TodoStore.forProject(projectRoot);
             const count = await store.bulkImport(todos);
 
-            out.print(`Imported ${count} todo(s)`);
+            out.println(`Imported ${count} todo(s)`);
         });
 }

@@ -43,8 +43,8 @@ export function registerWatchCommand(program: Command): void {
                 [[String(result.favorite_id), String(result.master_product_id), result.auto_ingested ? "yes" : "no"]],
                 ["favorite_id", "master_product_id", "auto-ingested"]
             );
-            out.print(table);
-            out.print(
+            out.println(table);
+            out.println(
                 `Will notify on: ${[
                     targetPrice !== null ? `target ≤ ${targetPrice} CZK` : null,
                     dropPercent !== null ? `${(dropPercent * 100).toFixed(1)}% drop` : null,
@@ -62,11 +62,11 @@ export function registerWatchCommand(program: Command): void {
         .action(async (opts: { json?: boolean }) => {
             const rows = await getWatchlist(LOCAL_USER_ID);
             if (opts.json) {
-                out.print(SafeJSON.stringify(rows, null, 2));
+                out.println(SafeJSON.stringify(rows, null, 2));
                 return;
             }
 
-            out.print(
+            out.println(
                 formatTable(
                     rows.map((r) => [
                         String(r.id),
@@ -88,7 +88,7 @@ export function registerWatchCommand(program: Command): void {
         .action(async (idStr: string) => {
             const id = Number(idStr);
             await removeFavorite(LOCAL_USER_ID, id);
-            out.print(`removed favorite #${id}`);
+            out.println(`removed favorite #${id}`);
         });
 
     watch
@@ -128,7 +128,7 @@ export function registerWatchCommand(program: Command): void {
             }
 
             const updated = await editFavorite(LOCAL_USER_ID, id, patch);
-            out.print(SafeJSON.stringify(updated, null, 2));
+            out.println(SafeJSON.stringify(updated, null, 2));
         });
 
     watch
@@ -137,7 +137,7 @@ export function registerWatchCommand(program: Command): void {
         .option("--json", "Output the TickReport as JSON", true)
         .action(async () => {
             const report = await runWatchlistTick();
-            out.print(SafeJSON.stringify(report));
+            out.println(SafeJSON.stringify(report));
             log.info(report, "tick complete");
         });
 }

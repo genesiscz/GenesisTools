@@ -271,9 +271,9 @@ async function main(): Promise<void> {
     const args = program.args;
 
     if (opts.listEngines) {
-        out.print("Available engines:");
+        out.println("Available engines:");
         for (const engine of listEngines()) {
-            out.print(`  ${chalk.cyan(engine.name)}: ${engine.description}`);
+            out.println(`  ${chalk.cyan(engine.name)}: ${engine.description}`);
         }
         return;
     }
@@ -283,10 +283,10 @@ async function main(): Promise<void> {
         const status = await checkLLMModel();
         if (status.available) {
             log.ok(`Model available: ${status.path}`);
-            out.print(`  Size: ${status.sizeFormatted}`);
+            out.println(`  Size: ${status.sizeFormatted}`);
         } else {
             log.warn("Model not downloaded");
-            out.print("  Run with --download-model to download (~1GB)");
+            out.println("  Run with --download-model to download (~1GB)");
         }
         return;
     }
@@ -297,8 +297,8 @@ async function main(): Promise<void> {
             log.ok(`Model already downloaded: ${status.path}`);
         } else {
             log.info("Downloading ReaderLM-v2 (~1GB)");
-            out.print(`  Model: ${chalk.cyan("https://huggingface.co/jinaai/ReaderLM-v2")}`);
-            out.print(`  HTML-to-Markdown conversion optimized for LLMs (512K tokens, 29 languages)`);
+            out.println(`  Model: ${chalk.cyan("https://huggingface.co/jinaai/ReaderLM-v2")}`);
+            out.println(`  HTML-to-Markdown conversion optimized for LLMs (512K tokens, 29 languages)`);
             let lastUpdate = 0;
             await downloadLLMModel({
                 onProgress: (downloaded, total, pct) => {
@@ -314,7 +314,7 @@ async function main(): Promise<void> {
                     );
                 },
             });
-            out.print("");
+            out.println("");
             log.ok("Model downloaded successfully!");
         }
         // If no URL provided, just exit after download

@@ -23,40 +23,40 @@ export function registerStatusCommand(program: Command, storage: Storage, client
                         ? { ...config.tokens, access_token: "***", refresh_token: "***" }
                         : undefined,
                 };
-                out.print(SafeJSON.stringify(safeConfig, null, 2));
+                out.println(SafeJSON.stringify(safeConfig, null, 2));
                 return;
             }
 
-            out.print(chalk.cyan("\nTimely CLI Status\n"));
+            out.println(chalk.cyan("\nTimely CLI Status\n"));
 
             // Authentication status
             const isAuth = await client.isAuthenticated();
-            out.print(`Authentication: ${isAuth ? chalk.green("Logged in") : chalk.red("Not logged in")}`);
+            out.println(`Authentication: ${isAuth ? chalk.green("Logged in") : chalk.red("Not logged in")}`);
 
             if (config?.user) {
-                out.print(`User: ${config.user.name} (${config.user.email})`);
+                out.println(`User: ${config.user.name} (${config.user.email})`);
             }
 
             if (config?.tokens?.created_at && config?.tokens?.expires_in) {
                 const expiresAt = new Date((config.tokens.created_at + config.tokens.expires_in) * 1000);
                 const isExpired = Date.now() > expiresAt.getTime();
-                out.print(`Token expires: ${expiresAt.toISOString()} ${isExpired ? chalk.red("(expired)") : ""}`);
+                out.println(`Token expires: ${expiresAt.toISOString()} ${isExpired ? chalk.red("(expired)") : ""}`);
             }
 
             // Selected account/project
-            out.print();
-            out.print(`Selected Account ID: ${config?.selectedAccountId || chalk.gray("(none)")}`);
-            out.print(`Selected Project ID: ${config?.selectedProjectId || chalk.gray("(none)")}`);
+            out.println();
+            out.println(`Selected Account ID: ${config?.selectedAccountId || chalk.gray("(none)")}`);
+            out.println(`Selected Project ID: ${config?.selectedProjectId || chalk.gray("(none)")}`);
 
             // Cache stats
             const cacheStats = await storage.getCacheStats();
-            out.print();
-            out.print(`Cache files: ${cacheStats.count}`);
-            out.print(`Cache size: ${(cacheStats.totalSizeBytes / 1024).toFixed(1)} KB`);
+            out.println();
+            out.println(`Cache files: ${cacheStats.count}`);
+            out.println(`Cache size: ${(cacheStats.totalSizeBytes / 1024).toFixed(1)} KB`);
 
             // Config location
-            out.print();
-            out.print(chalk.gray(`Config: ${storage.getConfigPath()}`));
-            out.print(chalk.gray(`Cache: ${storage.getCacheDir()}`));
+            out.println();
+            out.println(chalk.gray(`Config: ${storage.getConfigPath()}`));
+            out.println(chalk.gray(`Cache: ${storage.getCacheDir()}`));
         });
 }

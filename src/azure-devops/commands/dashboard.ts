@@ -49,10 +49,10 @@ async function handleDashboard(input: string, format: OutputFormat): Promise<voi
     switch (format) {
         case "ai":
         case "md":
-            out.print(lines.join("\n"));
+            out.println(lines.join("\n"));
             break;
         case "json":
-            out.print(formatJSON(dashboard));
+            out.println(formatJSON(dashboard));
             break;
     }
 }

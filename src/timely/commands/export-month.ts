@@ -165,16 +165,16 @@ async function exportMonthAction(
  * Export events as JSON format
  */
 function exportAsJson(events: TimelyEvent[]): void {
-    out.print(SafeJSON.stringify(events, null, 2));
+    out.println(SafeJSON.stringify(events, null, 2));
 }
 
 /**
  * Export events as CSV format
  */
 function exportAsCsv(events: TimelyEvent[]): void {
-    out.print("date,project,note,hours,minutes,duration_formatted");
+    out.println("date,project,note,hours,minutes,duration_formatted");
     for (const event of events) {
-        out.print(
+        out.println(
             [
                 event.day,
                 `"${event.project?.name || "No Project"}"`,
@@ -218,9 +218,9 @@ async function exportAsRaw(
         const dayTotal = dayEvents.reduce((sum, e) => sum + e.duration.total_seconds, 0);
         totalSeconds += dayTotal;
 
-        out.print(chalk.bold.cyan(`\n${"=".repeat(100)}`));
-        out.print(chalk.bold.cyan(`${day} - Total: ${formatDuration(dayTotal)}`));
-        out.print(chalk.bold.cyan(`${"=".repeat(100)}\n`));
+        out.println(chalk.bold.cyan(`\n${"=".repeat(100)}`));
+        out.println(chalk.bold.cyan(`${day} - Total: ${formatDuration(dayTotal)}`));
+        out.println(chalk.bold.cyan(`${"=".repeat(100)}\n`));
 
         // Create detailed table for each event
         for (const event of dayEvents) {
@@ -387,7 +387,7 @@ async function exportAsRaw(
                             }
                         }
                     } else {
-                        out.print(entries);
+                        out.println(entries);
                         process.exit(1);
                         table.push([
                             chalk.bold(`Entry ${entryId}`),
@@ -426,19 +426,19 @@ async function exportAsRaw(
             // Manage flag
             table.push([chalk.bold("Manage"), event.manage ? "Yes" : "No"]);
 
-            out.print(table.toString());
-            out.print(); // Empty line between events
+            out.println(table.toString());
+            out.println(); // Empty line between events
         }
     }
 
     // Summary
-    out.print(chalk.bold.cyan(`\n${"=".repeat(100)}`));
-    out.print(chalk.bold.cyan("SUMMARY"));
-    out.print(chalk.bold.cyan(`${"=".repeat(100)}`));
-    out.print(chalk.bold(`Total Duration: ${formatDuration(totalSeconds)}`));
-    out.print(`Total Events: ${events.length}`);
-    out.print(`Total Days: ${sortedDays.length}`);
-    out.print();
+    out.println(chalk.bold.cyan(`\n${"=".repeat(100)}`));
+    out.println(chalk.bold.cyan("SUMMARY"));
+    out.println(chalk.bold.cyan(`${"=".repeat(100)}`));
+    out.println(chalk.bold(`Total Duration: ${formatDuration(totalSeconds)}`));
+    out.println(`Total Events: ${events.length}`);
+    out.println(`Total Days: ${sortedDays.length}`);
+    out.println();
 }
 
 /**
@@ -463,11 +463,11 @@ async function exportAsReport(
     const { content, filePath } = await generateReportMarkdown(monthArg, storage, detailMode);
 
     // Output absolute path (always shown)
-    out.print(filePath);
+    out.println(filePath);
 
     // Output content to console unless silent
     if (!silent) {
-        out.print(content);
+        out.println(content);
     }
 }
 
@@ -496,19 +496,19 @@ function exportAsTable(events: TimelyEvent[], monthArg: string): void {
         const dayTotal = dayEvents.reduce((sum, e) => sum + e.duration.total_seconds, 0);
         totalSeconds += dayTotal;
 
-        out.print(chalk.bold(`${day} (${formatDuration(dayTotal)})`));
+        out.println(chalk.bold(`${day} (${formatDuration(dayTotal)})`));
 
         for (const event of dayEvents) {
             const project = event.project?.name || "No Project";
             const note = event.note.substring(0, 50) + (event.note.length > 50 ? "..." : "");
-            out.print(`  ${event.duration.formatted.padStart(8)} | ${project.padEnd(20)} | ${note}`);
+            out.println(`  ${event.duration.formatted.padStart(8)} | ${project.padEnd(20)} | ${note}`);
         }
-        out.print();
+        out.println();
     }
 
     // Summary
-    out.print(chalk.cyan("─".repeat(60)));
-    out.print(chalk.bold(`Total: ${formatDuration(totalSeconds)}`));
-    out.print(`Events: ${events.length}`);
-    out.print(`Days: ${sortedDays.length}`);
+    out.println(chalk.cyan("─".repeat(60)));
+    out.println(chalk.bold(`Total: ${formatDuration(totalSeconds)}`));
+    out.println(`Events: ${events.length}`);
+    out.println(`Days: ${sortedDays.length}`);
 }

@@ -105,6 +105,42 @@ export function setupInquirerMock(): void {
             }
             return value ?? "";
         },
+        // Production code now uses p.search/editor/number via the facade
+        // (the inquirerBackend.* direct-call form was removed in favor of
+        // p.X dispatching through setBackend(inquirerBackend) at startup).
+        // Mock the same response keys the inquirer-backend mock used so
+        // existing test fixtures keep working.
+        search: async (_config: unknown) => {
+            const responses = getResponses();
+            const searchKeys = ["selectedOldName", "selectedServerName", "inputServerName"];
+            for (const key of searchKeys) {
+                if (responses[key] instanceof Error) {
+                    throw responses[key];
+                }
+            }
+
+            if (responses.selectedOldName !== undefined) {
+                return responses.selectedOldName;
+            }
+
+            if (responses.selectedServerName !== undefined) {
+                return responses.selectedServerName;
+            }
+
+            if (responses.inputServerName !== undefined) {
+                return responses.inputServerName;
+            }
+
+            return "";
+        },
+        editor: async (_config: unknown) => {
+            const responses = getResponses();
+            return responses.editorContent ?? "";
+        },
+        number: async (config: { initialValue?: number }) => {
+            const responses = getResponses();
+            return responses.numberValue ?? config?.initialValue ?? 0;
+        },
     }));
 
     // Mock inquirerBackend.search (used for server/provider search prompts)

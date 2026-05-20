@@ -36,7 +36,7 @@ export function registerDeleteCommand(parent: Command): void {
                     }
                 }
                 store.delete(name);
-                out.print(`${pc.green("✓")} Deleted profile "${name}".`);
+                out.println(`${pc.green("✓")} Deleted profile "${name}".`);
             } catch (error) {
                 if (error instanceof ProfileNotFoundError) {
                     out.error(error.message);

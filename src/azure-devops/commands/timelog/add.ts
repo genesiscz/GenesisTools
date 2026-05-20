@@ -29,7 +29,7 @@ async function runInteractiveAdd(
 }
 
 function showAddHelp(): void {
-    out.print(`
+    out.println(`
 Usage: tools azure-devops timelog add [options]
 
 Required (unless -i):
@@ -166,16 +166,16 @@ ${types.map((t) => `  - ${t.description}`).join("\n")}
                     const result = await precheckWorkItem(workItemId, config.org, allowedTypeConfig);
 
                     if (result.status === "redirect") {
-                        out.print(pc.yellow(`\u26A0 ${result.message}`));
+                        out.println(pc.yellow(`\u26A0 ${result.message}`));
                         effectiveWorkItemId = result.redirectId!;
                     } else if (result.status === "error") {
                         out.error(pc.red(`\u2716 ${result.message}`));
 
                         if (result.suggestCommands?.length) {
-                            out.print("\nSuggested commands:");
+                            out.println("\nSuggested commands:");
 
                             for (const cmd of result.suggestCommands) {
-                                out.print(`  ${cmd}`);
+                                out.println(`  ${cmd}`);
                             }
                         }
 
@@ -192,24 +192,24 @@ ${types.map((t) => `  - ${t.description}`).join("\n")}
                     comment
                 );
 
-                out.print(`\u2714 Time logged successfully!`);
-                out.print(`  Work Item: #${effectiveWorkItemId}`);
-                out.print(`  Time: ${formatMinutes(totalMinutes)}`);
-                out.print(`  Type: ${validType.description}`);
-                out.print(`  Date: ${date}`);
+                out.println(`\u2714 Time logged successfully!`);
+                out.println(`  Work Item: #${effectiveWorkItemId}`);
+                out.println(`  Time: ${formatMinutes(totalMinutes)}`);
+                out.println(`  Type: ${validType.description}`);
+                out.println(`  Date: ${date}`);
 
                 if (comment) {
-                    out.print(`  Comment: ${comment}`);
+                    out.println(`  Comment: ${comment}`);
                 }
 
-                out.print(`  Entry ID: ${ids[0]}`);
+                out.println(`  Entry ID: ${ids[0]}`);
 
                 // Update Remaining/Completed Work on the work item
                 const devopsApi = new Api(config);
                 const effort = await updateWorkItemEffort(devopsApi, effectiveWorkItemId, totalMinutes);
 
                 if (effort) {
-                    out.print(`  Remaining: ${effort.remaining}h | Completed: ${effort.completed}h`);
+                    out.println(`  Remaining: ${effort.remaining}h | Completed: ${effort.completed}h`);
                 }
 
                 // Evict timelog cache for affected work item

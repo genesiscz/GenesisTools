@@ -21,7 +21,7 @@ export const prompts = {
             name: b.name + (b.isCurrent ? chalk.dim(" (current)") : ""),
         }));
 
-        return inquirerBackend.search({
+        return p.search({
             message: "Which branch do you want to rebase?",
             options: async (term) => {
                 const filtered = !term
@@ -45,7 +45,7 @@ export const prompts = {
                 name: b.name,
             }));
 
-        return inquirerBackend.search({
+        return p.search({
             message: "Onto which branch?",
             options: async (term) => {
                 const filtered = !term
@@ -64,11 +64,11 @@ export const prompts = {
         potentialChildren: Array<{ name: string; commitsAhead: number }>
     ): Promise<string[]> {
         if (potentialChildren.length === 0) {
-            out.print(chalk.yellow("\nNo dependent branches found."));
+            out.println(chalk.yellow("\nNo dependent branches found."));
             return [];
         }
 
-        out.print(chalk.dim(`\nFound ${potentialChildren.length} branches that may depend on ${parentBranch}:`));
+        out.println(chalk.dim(`\nFound ${potentialChildren.length} branches that may depend on ${parentBranch}:`));
 
         return p.multiselect({
             message: "Select child branches to rebase (space to toggle):",
@@ -84,16 +84,16 @@ export const prompts = {
      * Show execution plan and confirm
      */
     async confirmPlan(_config: unknown, steps: PlanStep[]): Promise<boolean> {
-        out.print(chalk.bold("\n📝 Execution Plan:\n"));
+        out.println(chalk.bold("\n📝 Execution Plan:\n"));
 
         for (const step of steps) {
-            out.print(`${chalk.cyan(`  Step ${step.stepNumber}:`)} ${step.description}`);
+            out.println(`${chalk.cyan(`  Step ${step.stepNumber}:`)} ${step.description}`);
             if (step.command) {
-                out.print(chalk.dim(`         ${step.command}`));
+                out.println(chalk.dim(`         ${step.command}`));
             }
         }
 
-        out.print(chalk.yellow("\n⚠️  You can abort at ANY step with: tools git-rebase-multiple --abort"));
+        out.println(chalk.yellow("\n⚠️  You can abort at ANY step with: tools git-rebase-multiple --abort"));
 
         return p.confirm({
             message: "Continue?",

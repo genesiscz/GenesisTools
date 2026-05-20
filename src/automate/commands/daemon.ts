@@ -62,7 +62,7 @@ function showRecentLogs(lines = 20): void {
     const output = proc.stdout.toString().trim();
     if (output) {
         p.log.step(pc.underline("Recent logs:"));
-        out.print(pc.dim(output));
+        out.println(pc.dim(output));
     }
 }
 

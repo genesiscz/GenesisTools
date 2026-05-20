@@ -24,16 +24,16 @@ export function registerListCommand(program: Command): void {
                 });
 
                 if (reminders.length === 0) {
-                    out.print("No reminders found.");
+                    out.println("No reminders found.");
                     return;
                 }
 
                 const format = options.format ?? "table";
 
                 if (format === "json") {
-                    out.print(SafeJSON.stringify(reminders, null, 2));
+                    out.println(SafeJSON.stringify(reminders, null, 2));
                 } else {
-                    out.print(formatRemindersTable(reminders));
+                    out.println(formatRemindersTable(reminders));
                 }
             } catch (error) {
                 out.error(error instanceof Error ? error.message : String(error));

@@ -12,7 +12,7 @@ export function registerDeleteCommand(program: Command): void {
                 const ok = await MacCalendar.deleteEvent({ eventId });
 
                 if (ok) {
-                    out.print(`${pc.green("Event deleted")} — ID: ${eventId}`);
+                    out.println(`${pc.green("Event deleted")} — ID: ${eventId}`);
                 } else {
                     out.error(`${pc.red("Failed to delete event")} — ID: ${eventId}`);
                     process.exit(1);

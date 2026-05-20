@@ -21,7 +21,7 @@ export function registerErrorsCommand(program: Command): void {
             const errorEntries = filterEntries(session.entries, {}).filter((e) => e.isError);
 
             if (errorEntries.length === 0) {
-                out.print("No error responses found.");
+                out.println("No error responses found.");
                 return;
             }
 

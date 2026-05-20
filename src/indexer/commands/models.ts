@@ -32,7 +32,7 @@ function printGroupedByProvider(models: ReadonlyArray<ModelEntry>, mm: ModelMana
     for (const provider of sortedProviders) {
         const group = grouped.get(provider)!;
         const label = PROVIDER_DISPLAY[provider] ?? provider;
-        out.print(`  ${pc.bold(label)}`);
+        out.println(`  ${pc.bold(label)}`);
 
         for (const m of group) {
             const dims = m.dimensions ? `${m.dimensions}-dim` : "";
@@ -41,15 +41,15 @@ function printGroupedByProvider(models: ReadonlyArray<ModelEntry>, mm: ModelMana
             const downloaded = m.provider === "local-hf" && mm.isDownloaded(m.id);
             const status = downloaded ? pc.green(" ✓") : m.provider === "local-hf" ? pc.dim(" (not downloaded)") : "";
 
-            out.print(`    ${m.name}${status}`);
-            out.print(`      ${pc.dim(m.id)}  ${pc.dim(meta)}`);
+            out.println(`    ${m.name}${status}`);
+            out.println(`      ${pc.dim(m.id)}  ${pc.dim(meta)}`);
 
             if (m.installCmd) {
-                out.print(`      ${pc.dim("$")} ${pc.cyan(m.installCmd)}`);
+                out.println(`      ${pc.dim("$")} ${pc.cyan(m.installCmd)}`);
             }
         }
 
-        out.print("");
+        out.println("");
     }
 }
 
@@ -70,7 +70,7 @@ export function registerModelsCommand(program: Command): void {
             const models = type ? getModelsForType(type) : MODEL_REGISTRY;
             const mm = new ModelManager();
 
-            out.print("");
+            out.println("");
 
             if (type) {
                 p.log.info(`Models for ${pc.bold(type)} indexes (best matches first):`);
@@ -78,15 +78,15 @@ export function registerModelsCommand(program: Command): void {
                 p.log.info("All available embedding models:");
             }
 
-            out.print("");
+            out.println("");
 
             if (opts.flat) {
-                out.print(formatModelTable(models));
+                out.println(formatModelTable(models));
             } else {
                 printGroupedByProvider(models, mm);
             }
 
-            out.print("");
+            out.println("");
         });
 
     cmd.command("download")
@@ -100,7 +100,7 @@ export function registerModelsCommand(program: Command): void {
                 p.log.info("Available model IDs:");
 
                 for (const m of MODEL_REGISTRY) {
-                    out.print(`  ${m.id}`);
+                    out.println(`  ${m.id}`);
                 }
 
                 process.exit(1);

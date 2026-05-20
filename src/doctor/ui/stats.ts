@@ -37,18 +37,18 @@ export async function runStats(opts: StatsOpts): Promise<void> {
     const stats = aggregate(entries);
 
     if (opts.json) {
-        out.print(SafeJSON.stringify(stats, null, 2));
+        out.println(SafeJSON.stringify(stats, null, 2));
         return;
     }
 
-    out.print(pc.bold(`Doctor stats — since ${since.toISOString().slice(0, 10)}`));
-    out.print(`  ${pc.cyan("Reclaimed:")}   ${pc.green(formatBytes(stats.totalReclaimedBytes))}`);
-    out.print(`  ${pc.cyan("Actions:")}     ${stats.totalActions}`);
-    out.print(`  ${pc.cyan("Runs:")}        ${stats.runsCount}`);
-    out.print();
-    out.print(pc.bold("By action type:"));
+    out.println(pc.bold(`Doctor stats — since ${since.toISOString().slice(0, 10)}`));
+    out.println(`  ${pc.cyan("Reclaimed:")}   ${pc.green(formatBytes(stats.totalReclaimedBytes))}`);
+    out.println(`  ${pc.cyan("Actions:")}     ${stats.totalActions}`);
+    out.println(`  ${pc.cyan("Runs:")}        ${stats.runsCount}`);
+    out.println();
+    out.println(pc.bold("By action type:"));
 
     for (const [name, count] of Object.entries(stats.actionCounts).sort((a, b) => b[1] - a[1])) {
-        out.print(`  ${name.padEnd(22)} ${count}`);
+        out.println(`  ${name.padEnd(22)} ${count}`);
     }
 }

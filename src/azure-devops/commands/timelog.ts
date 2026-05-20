@@ -10,7 +10,7 @@ import { registerPrepareImportSubcommand } from "./timelog/prepare-import";
 import { registerTypesSubcommand } from "./timelog/types";
 
 function showHelpFull(): void {
-    out.print(`
+    out.println(`
 Usage: tools azure-devops timelog <command> [options]
 
 Commands:

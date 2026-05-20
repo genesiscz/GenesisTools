@@ -50,11 +50,11 @@ async function handleConfigureAuthors(storage: Storage, options: ConfigureAuthor
     // --list flag
     if (options.list) {
         if (currentAuthors.length === 0) {
-            out.print(chalk.dim("No authors configured."));
+            out.println(chalk.dim("No authors configured."));
         } else {
-            out.print(chalk.bold("Configured authors:"));
+            out.println(chalk.bold("Configured authors:"));
             for (const author of currentAuthors) {
-                out.print(`  ${chalk.green("*")} ${author}`);
+                out.println(`  ${chalk.green("*")} ${author}`);
             }
         }
         return;
@@ -67,12 +67,12 @@ async function handleConfigureAuthors(storage: Storage, options: ConfigureAuthor
         const added = options.add.filter((a) => !currentAuthors.includes(a));
 
         if (added.length > 0) {
-            out.print(chalk.green(`Added: ${added.join(", ")}`));
+            out.println(chalk.green(`Added: ${added.join(", ")}`));
         } else {
-            out.print(chalk.dim("All specified authors were already configured."));
+            out.println(chalk.dim("All specified authors were already configured."));
         }
 
-        out.print(chalk.dim(`Total authors: ${newAuthors.length}`));
+        out.println(chalk.dim(`Total authors: ${newAuthors.length}`));
         return;
     }
 
@@ -81,13 +81,13 @@ async function handleConfigureAuthors(storage: Storage, options: ConfigureAuthor
         const filtered = currentAuthors.filter((a) => a !== options.remove);
 
         if (filtered.length === currentAuthors.length) {
-            out.print(chalk.yellow(`Author "${options.remove}" not found in config.`));
+            out.println(chalk.yellow(`Author "${options.remove}" not found in config.`));
             return;
         }
 
         await storage.setConfigValue("authors", filtered);
-        out.print(chalk.green(`Removed: ${options.remove}`));
-        out.print(chalk.dim(`Remaining authors: ${filtered.length}`));
+        out.println(chalk.green(`Removed: ${options.remove}`));
+        out.println(chalk.dim(`Remaining authors: ${filtered.length}`));
         return;
     }
 

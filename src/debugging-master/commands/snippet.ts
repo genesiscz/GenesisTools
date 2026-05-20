@@ -210,20 +210,20 @@ export function registerSnippetCommand(program: Command): void {
                 const session = (await configManager.getRecentSession()) ?? "default";
 
                 if (language === "typescript") {
-                    out.print(tsHttpSnippet(snippetType, label, session));
+                    out.println(tsHttpSnippet(snippetType, label, session));
                 } else {
                     const guzzle = await hasGuzzle(process.cwd());
                     if (guzzle) {
-                        out.print(phpHttpGuzzleSnippet(snippetType, label, session));
+                        out.println(phpHttpGuzzleSnippet(snippetType, label, session));
                     } else {
-                        out.print(phpHttpNativeSnippet(snippetType, label, session));
+                        out.println(phpHttpNativeSnippet(snippetType, label, session));
                     }
                 }
             } else {
                 if (language === "typescript") {
-                    out.print(tsImportSnippet(snippetType, label));
+                    out.println(tsImportSnippet(snippetType, label));
                 } else {
-                    out.print(phpImportSnippet(snippetType, label));
+                    out.println(phpImportSnippet(snippetType, label));
                 }
             }
         });

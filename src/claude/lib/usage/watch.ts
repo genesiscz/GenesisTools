@@ -167,7 +167,7 @@ export async function watchUsage(accountFilter?: string, notifications?: Notific
     const intervalMs = (notifications.watchInterval || 60) * 1000;
 
     const cleanup = () => {
-        out.print("\nStopping watch mode...");
+        out.println("\nStopping watch mode...");
         process.exit(0);
     };
     process.on("SIGINT", cleanup);
@@ -181,8 +181,8 @@ export async function watchUsage(accountFilter?: string, notifications?: Notific
 
         // Clear and render fresh data
         process.stdout.write("\x1B[2J\x1B[H");
-        out.print(renderAllAccounts(results));
-        out.print(
+        out.println(renderAllAccounts(results));
+        out.println(
             `\n${new Date().toLocaleTimeString()} — refreshing every ${notifications.watchInterval}s (Ctrl+C to stop)`
         );
 

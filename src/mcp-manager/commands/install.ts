@@ -53,7 +53,7 @@ export async function installServer(
             ...existingServers.map((name) => ({ value: name, name })),
         ];
 
-        const inputServerName = await inquirerBackend.search<string>({
+        const inputServerName = await p.search<string>({
             message: "Select server to install or create new:",
             options: async (term) => {
                 const filtered = !term

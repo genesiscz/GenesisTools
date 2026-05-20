@@ -702,19 +702,19 @@ function formatFileList<T extends string | IgnoredFile>(
 
 function printStatistics(stats: Statistics): void {
     // Use console.log to avoid timestamps in console output
-    out.print(`\n${"=".repeat(60)}`);
-    out.print("DRY RUN STATISTICS");
-    out.print("=".repeat(60));
-    out.print(`\nFiles to process: ${stats.fileCount}`);
-    out.print(`Directories found: ${stats.directoryCount}`);
-    out.print(`Total size: ${formatFileSize(stats.totalSize)}`);
-    out.print(`Estimated tokens: ${formatTokens(stats.totalTokens)}`);
+    out.println(`\n${"=".repeat(60)}`);
+    out.println("DRY RUN STATISTICS");
+    out.println("=".repeat(60));
+    out.println(`\nFiles to process: ${stats.fileCount}`);
+    out.println(`Directories found: ${stats.directoryCount}`);
+    out.println(`Total size: ${formatFileSize(stats.totalSize)}`);
+    out.println(`Estimated tokens: ${formatTokens(stats.totalTokens)}`);
 
     // Group ignored files by directory
     const _ignoredByDir = groupIgnoredFilesByDirectory(stats.ignoredFiles, stats.basePath);
 
     if (stats.ignoredFiles.length > 0) {
-        out.print(`\nIgnored files: ${stats.ignoredFiles.length}`);
+        out.println(`\nIgnored files: ${stats.ignoredFiles.length}`);
 
         // Group by reason
         const byReason = {
@@ -727,43 +727,43 @@ function printStatistics(stats: Statistics): void {
             const dirs = byReason.gitignore.filter((f) => f.isDirectory);
             const files = byReason.gitignore.filter((f) => !f.isDirectory);
             const totalCount = dirs.length + files.length;
-            out.print(
+            out.println(
                 `\n  By gitignore (${totalCount}${
                     dirs.length > 0 ? `: ${dirs.length} directories, ${files.length} files` : ""
                 }):`
             );
             const items = formatFileList(byReason.gitignore, stats.basePath, 100, "    ");
             items.forEach((item) => {
-                out.print(item);
+                out.println(item);
             });
         }
 
         if (byReason.extension.length > 0) {
-            out.print(`\n  By extension filter (${byReason.extension.length}):`);
+            out.println(`\n  By extension filter (${byReason.extension.length}):`);
             const items = formatFileList(byReason.extension, stats.basePath, 100, "    ");
             items.forEach((item) => {
-                out.print(item);
+                out.println(item);
             });
         }
 
         if (byReason.pattern.length > 0) {
-            out.print(`\n  By ignore pattern (${byReason.pattern.length}):`);
+            out.println(`\n  By ignore pattern (${byReason.pattern.length}):`);
             const items = formatFileList(byReason.pattern, stats.basePath, 100, "    ");
             items.forEach((item) => {
-                out.print(item);
+                out.println(item);
             });
         }
     }
 
     if (stats.files.length > 0) {
-        out.print(`\nFiles that would be processed (${stats.files.length}):`);
+        out.println(`\nFiles that would be processed (${stats.files.length}):`);
 
         const allFiles = stats.files.map((f) => toRelativePath(f, stats.basePath)).sort();
         const items = formatFileList(allFiles, stats.basePath, 100, "  ");
-        out.print(items.join("\n"));
+        out.println(items.join("\n"));
     }
 
-    out.print(`\n${"=".repeat(60)}\n`);
+    out.println(`\n${"=".repeat(60)}\n`);
 }
 
 function showHelp(): void {

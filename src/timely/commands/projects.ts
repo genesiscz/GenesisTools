@@ -54,7 +54,7 @@ async function projectsAction(storage: Storage, service: TimelyService, options:
 
     // Output based on format
     if (options.format === "json") {
-        out.print(SafeJSON.stringify(projects, null, 2));
+        out.println(SafeJSON.stringify(projects, null, 2));
         return;
     }
 
@@ -75,13 +75,13 @@ async function projectsAction(storage: Storage, service: TimelyService, options:
     }
 
     for (const [clientName, clientProjects] of byClient) {
-        out.print(chalk.bold(clientName));
+        out.println(chalk.bold(clientName));
         for (const project of clientProjects) {
             const selected = project.id === selectedId ? chalk.green(" (selected)") : "";
             const status = project.active ? "" : chalk.gray("[inactive]");
-            out.print(`  ${project.name} (ID: ${project.id}) ${status}${selected}`);
+            out.println(`  ${project.name} (ID: ${project.id}) ${status}${selected}`);
         }
-        out.print();
+        out.println();
     }
 
     // Interactive selection

@@ -117,7 +117,7 @@ export function registerImportSubcommand(parent: Command): void {
                     process.exit(1);
                 }
 
-                out.print(`\n${validEntries.length} entries are valid.\n`);
+                out.println(`\n${validEntries.length} entries are valid.\n`);
             }
 
             // ---- Precheck phase: validate work item types ----
@@ -144,10 +144,12 @@ export function registerImportSubcommand(parent: Command): void {
 
             if (!allowedTypeConfig) {
                 logger.debug("[import] allowedWorkItemTypes not configured, skipping precheck");
-                out.print(pc.yellow("Note: allowedWorkItemTypes not configured — skipping work item type precheck.\n"));
+                out.println(
+                    pc.yellow("Note: allowedWorkItemTypes not configured — skipping work item type precheck.\n")
+                );
                 precheckPassed = validEntries;
             } else {
-                out.print("Pre-checking work item types...");
+                out.println("Pre-checking work item types...");
 
                 // Deduplicate work item IDs to avoid redundant API calls
                 const uniqueWorkItemIds = [...new Set(validEntries.map((e) => e.workItemId))];
@@ -180,17 +182,19 @@ export function registerImportSubcommand(parent: Command): void {
                 }
 
                 // Show precheck summary
-                out.print("\nPre-check results:");
+                out.println("\nPre-check results:");
 
                 if (precheckPassed.length - precheckRedirected.length > 0) {
-                    out.print(pc.green(`  \u2714 ${precheckPassed.length - precheckRedirected.length} entries passed`));
+                    out.println(
+                        pc.green(`  \u2714 ${precheckPassed.length - precheckRedirected.length} entries passed`)
+                    );
                 }
 
                 if (precheckRedirected.length > 0) {
-                    out.print(pc.yellow(`  \u26A0 ${precheckRedirected.length} entries redirected`));
+                    out.println(pc.yellow(`  \u26A0 ${precheckRedirected.length} entries redirected`));
 
                     for (const r of precheckRedirected) {
-                        out.print(
+                        out.println(
                             pc.dim(
                                 `    #${r.original} ${r.originalTitle} (${r.originalType}) -> #${r.redirected} ${r.redirectedTitle} (${r.redirectedType})`
                             )
@@ -199,10 +203,10 @@ export function registerImportSubcommand(parent: Command): void {
                 }
 
                 if (precheckFailed.length > 0) {
-                    out.print(pc.red(`  \u2716 ${precheckFailed.length} entries failed`));
+                    out.println(pc.red(`  \u2716 ${precheckFailed.length} entries failed`));
 
                     for (const f of precheckFailed) {
-                        out.print(pc.dim(`    ${f}`));
+                        out.println(pc.dim(`    ${f}`));
                     }
                 }
 
@@ -215,7 +219,7 @@ export function registerImportSubcommand(parent: Command): void {
                     }
                 }
 
-                out.print();
+                out.println();
 
                 if (precheckPassed.length === 0) {
                     out.error("No entries passed precheck. Aborting.");
@@ -224,19 +228,21 @@ export function registerImportSubcommand(parent: Command): void {
             }
 
             if (options.dryRun) {
-                out.print("\u2714 Dry run complete. Valid entries:");
+                out.println("\u2714 Dry run complete. Valid entries:");
 
                 for (const e of precheckPassed) {
                     const title = workitemTitles.get(e.workItemId);
                     const titlePart = title ? ` ${title}` : "";
-                    out.print(`  #${e.workItemId}${titlePart}: ${formatMinutes(e.minutes)} ${e.timeType} on ${e.date}`);
+                    out.println(
+                        `  #${e.workItemId}${titlePart}: ${formatMinutes(e.minutes)} ${e.timeType} on ${e.date}`
+                    );
                 }
 
                 return;
             }
 
             // Create entries
-            out.print(`Creating ${precheckPassed.length} time log entries...`);
+            out.println(`Creating ${precheckPassed.length} time log entries...`);
             let created = 0;
             const failed: string[] = [];
             const createdWorkItemIds: number[] = [];
@@ -266,13 +272,13 @@ export function registerImportSubcommand(parent: Command): void {
                     }
 
                     parts.push(`[${ids[0].substring(0, 8)}]`);
-                    out.print(`  \u2714 ${parts.join(" | ")}`);
+                    out.println(`  \u2714 ${parts.join(" | ")}`);
                 } catch (e) {
                     failed.push(`#${entry.workItemId}: ${(e as Error).message}`);
                 }
             }
 
-            out.print(`\n\u2714 Created ${created}/${precheckPassed.length} entries`);
+            out.println(`\n\u2714 Created ${created}/${precheckPassed.length} entries`);
 
             if (failed.length > 0) {
                 out.error("\nFailed:");
@@ -284,14 +290,14 @@ export function registerImportSubcommand(parent: Command): void {
 
             // Update Remaining/Completed Work on affected work items (one update per unique work item)
             if (minutesPerWorkItem.size > 0) {
-                out.print("\nUpdating work item effort...");
+                out.println("\nUpdating work item effort...");
                 const devopsApi = new Api(config);
 
                 for (const [workItemId, totalMins] of minutesPerWorkItem) {
                     const effort = await updateWorkItemEffort(devopsApi, workItemId, totalMins);
 
                     if (effort) {
-                        out.print(
+                        out.println(
                             `  \u2714 #${workItemId}: Remaining ${effort.remaining}h | Completed ${effort.completed}h`
                         );
                     }

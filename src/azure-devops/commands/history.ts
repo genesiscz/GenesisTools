@@ -121,18 +121,18 @@ function printSummary(workItemId: number, filtered: FilteredHistory, history: Wo
     if (filtered.assignmentPeriods.length > 0) {
         p.log.step(pc.bold("Assignment Periods"));
         const header = `${pad("Assignee", 30)} ${pad("Start", 18)} ${pad("End", 18)} Duration`;
-        out.print(pc.dim(header));
-        out.print(pc.dim("-".repeat(header.length)));
+        out.println(pc.dim(header));
+        out.println(pc.dim("-".repeat(header.length)));
 
         for (const period of filtered.assignmentPeriods) {
             const endStr = period.endDate ? formatDate(period.endDate) : pc.yellow("(current)");
             const durStr =
                 period.durationMinutes != null ? formatDuration(period.durationMinutes) : pc.yellow("ongoing");
-            out.print(
+            out.println(
                 `${pad(period.assignee, 30)} ${pad(formatDate(period.startDate), 18)} ${pad(endStr, 18)} ${durStr}`
             );
         }
-        out.print();
+        out.println();
     } else {
         p.log.warn("No assignment periods found.");
     }
@@ -141,19 +141,19 @@ function printSummary(workItemId: number, filtered: FilteredHistory, history: Wo
     if (filtered.statePeriods.length > 0) {
         p.log.step(pc.bold("State Periods"));
         const header = `${pad("State", 20)} ${pad("Start", 18)} ${pad("End", 18)} ${pad("Duration", 10)} Assignee`;
-        out.print(pc.dim(header));
-        out.print(pc.dim("-".repeat(header.length)));
+        out.println(pc.dim(header));
+        out.println(pc.dim("-".repeat(header.length)));
 
         for (const period of filtered.statePeriods) {
             const endStr = period.endDate ? formatDate(period.endDate) : pc.yellow("(current)");
             const durStr =
                 period.durationMinutes != null ? formatDuration(period.durationMinutes) : pc.yellow("ongoing");
             const assignee = period.assigneeDuring ?? pc.dim("(none)");
-            out.print(
+            out.println(
                 `${pad(period.state, 20)} ${pad(formatDate(period.startDate), 18)} ${pad(endStr, 18)} ${pad(durStr, 10)} ${assignee}`
             );
         }
-        out.print();
+        out.println();
     } else {
         p.log.warn("No state periods found.");
     }
@@ -163,18 +163,18 @@ function printSummary(workItemId: number, filtered: FilteredHistory, history: Wo
     if (timeInState.size > 0) {
         p.log.step(pc.bold("Time in State Summary"));
         const header = `${pad("State", 20)} ${pad("Total", 12)} Breakdown by Assignee`;
-        out.print(pc.dim(header));
-        out.print(pc.dim("-".repeat(header.length)));
+        out.println(pc.dim(header));
+        out.println(pc.dim("-".repeat(header.length)));
 
         for (const [state, entry] of timeInState) {
             const byAssigneeStr = Array.from(entry.byAssignee.entries())
                 .map(([assignee, mins]) => `${assignee}: ${formatDuration(mins)}`)
                 .join(", ");
-            out.print(
+            out.println(
                 `${pad(state, 20)} ${pad(formatDuration(entry.totalMinutes), 12)} ${byAssigneeStr || pc.dim("(no assignee)")}`
             );
         }
-        out.print();
+        out.println();
     }
 
     p.outro(pc.green("Done"));
@@ -235,11 +235,11 @@ function printTimeline(workItemId: number, filtered: FilteredHistory): void {
     } else {
         for (const event of events) {
             const icon = event.type === "assignment" ? pc.blue("[A]") : pc.magenta("[S]");
-            out.print(`${pc.dim(formatDate(event.date))}  ${icon} ${event.description}`);
+            out.println(`${pc.dim(formatDate(event.date))}  ${icon} ${event.description}`);
         }
     }
 
-    out.print();
+    out.println();
     p.outro(pc.green("Done"));
 }
 
@@ -261,7 +261,7 @@ function printJson(workItemId: number, filtered: FilteredHistory, history: WorkI
             ])
         ),
     };
-    out.print(formatJSON(output));
+    out.println(formatJSON(output));
 }
 
 // ============= Show Handler =============

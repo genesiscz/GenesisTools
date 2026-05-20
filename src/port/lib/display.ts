@@ -106,24 +106,24 @@ function formatCpu(cpu: number): string {
 export function renderHeader(title: string, subtitle: string): void {
     const border = pc.cyan(pc.bold(" │"));
 
-    out.print();
-    out.print(pc.cyan(pc.bold(" ┌─────────────────────────────────────┐")));
-    out.print(
+    out.println();
+    out.println(pc.cyan(pc.bold(" ┌─────────────────────────────────────┐")));
+    out.println(
         `${border}${pc.white(pc.bold(`  ${truncate(title, HEADER_TEXT_MAX_WIDTH).padEnd(HEADER_TEXT_MAX_WIDTH)}`))}${pc.cyan(pc.bold("│"))}`
     );
-    out.print(
+    out.println(
         `${border}${pc.dim(`  ${truncate(subtitle, HEADER_TEXT_MAX_WIDTH).padEnd(HEADER_TEXT_MAX_WIDTH)}`)}${pc.cyan(pc.bold("│"))}`
     );
-    out.print(pc.cyan(pc.bold(" └─────────────────────────────────────┘")));
-    out.print();
+    out.println(pc.cyan(pc.bold(" └─────────────────────────────────────┘")));
+    out.println();
 }
 
 export function displayPortTable(ports: PortSnapshot[], filtered: boolean): void {
     renderHeader("Port Overview", "listen to your ports");
 
     if (ports.length === 0) {
-        out.print(pc.dim("  No matching listening ports found.\n"));
-        out.print(pc.dim(`  Try ${pc.cyan("tools port --all")} to include system services.\n`));
+        out.println(pc.dim("  No matching listening ports found.\n"));
+        out.println(pc.dim(`  Try ${pc.cyan("tools port --all")} to include system services.\n`));
         return;
     }
 
@@ -141,22 +141,22 @@ export function displayPortTable(ports: PortSnapshot[], filtered: boolean): void
         ]);
     }
 
-    out.print(table.toString());
-    out.print();
+    out.println(table.toString());
+    out.println();
     const filterHint = filtered ? `${pc.dim("  ·  ")}${pc.cyan("--all")}${pc.dim(" to show everything")}` : "";
-    out.print(
+    out.println(
         `${pc.dim(`  ${ports.length} port${ports.length === 1 ? "" : "s"} active  ·  `)}${pc.dim("Run ")}${pc.cyan(
             "tools port <number>"
         )}${pc.dim(" for details")}${filterHint}`
     );
-    out.print();
+    out.println();
 }
 
 export function displayPortDetail(port: number, snapshots: PortSnapshot[], gitBranch: string | null): void {
     renderHeader(`Port :${port}`, "inspect and manage processes");
 
     if (snapshots.length === 0) {
-        out.print(pc.red("  No process found on that port.\n"));
+        out.println(pc.red("  No process found on that port.\n"));
         return;
     }
 
@@ -175,32 +175,32 @@ export function displayPortDetail(port: number, snapshots: PortSnapshot[], gitBr
         ]);
     }
 
-    out.print(table.toString());
-    out.print();
+    out.println(table.toString());
+    out.println();
 
     const primary = snapshots[0];
-    out.print(pc.cyan(pc.bold("  Location")));
-    out.print(pc.dim("  ──────────────────────"));
-    out.print(`  ${pc.dim("Directory".padEnd(14))} ${primary.cwd ? pc.blue(primary.cwd) : pc.dim("—")}`);
-    out.print(`  ${pc.dim("Command".padEnd(14))} ${pc.white(truncate(primary.command, 80))}`);
-    out.print(
+    out.println(pc.cyan(pc.bold("  Location")));
+    out.println(pc.dim("  ──────────────────────"));
+    out.println(`  ${pc.dim("Directory".padEnd(14))} ${primary.cwd ? pc.blue(primary.cwd) : pc.dim("—")}`);
+    out.println(`  ${pc.dim("Command".padEnd(14))} ${pc.white(truncate(primary.command, 80))}`);
+    out.println(
         `  ${pc.dim("Started".padEnd(14))} ${primary.startTime ? pc.dim(primary.startTime.toLocaleString()) : pc.dim("—")}`
     );
-    out.print(`  ${pc.dim("Memory".padEnd(14))} ${primary.memory ? pc.green(primary.memory) : pc.dim("—")}`);
-    out.print(`  ${pc.dim("Git Branch".padEnd(14))} ${gitBranch ? pc.magenta(gitBranch) : pc.dim("—")}`);
-    out.print();
-    out.print(
+    out.println(`  ${pc.dim("Memory".padEnd(14))} ${primary.memory ? pc.green(primary.memory) : pc.dim("—")}`);
+    out.println(`  ${pc.dim("Git Branch".padEnd(14))} ${gitBranch ? pc.magenta(gitBranch) : pc.dim("—")}`);
+    out.println();
+    out.println(
         `${pc.dim("  Tip: use ")}${pc.cyan("tools port --kill <number>")}${pc.dim(" to skip the prompt and terminate every matching PID.")}`
     );
-    out.print();
+    out.println();
 }
 
 export function displayProcessTable(processes: ProcessSnapshot[], filtered: boolean): void {
     renderHeader("Process Overview", "beautiful ps for dev workflows");
 
     if (processes.length === 0) {
-        out.print(pc.dim("  No matching processes found.\n"));
-        out.print(pc.dim(`  Try ${pc.cyan("tools port ps --all")} to include system processes.\n`));
+        out.println(pc.dim("  No matching processes found.\n"));
+        out.println(pc.dim(`  Try ${pc.cyan("tools port ps --all")} to include system processes.\n`));
         return;
     }
 
@@ -224,18 +224,18 @@ export function displayProcessTable(processes: ProcessSnapshot[], filtered: bool
         ]);
     }
 
-    out.print(table.toString());
-    out.print();
+    out.println(table.toString());
+    out.println();
     const filterHint = filtered ? `${pc.dim("  ·  ")}${pc.cyan("--all")}${pc.dim(" to show everything")}` : "";
-    out.print(`${pc.dim(`  ${processes.length} process${processes.length === 1 ? "" : "es"}`)}${filterHint}`);
-    out.print();
+    out.println(`${pc.dim(`  ${processes.length} process${processes.length === 1 ? "" : "es"}`)}${filterHint}`);
+    out.println();
 }
 
 export function displayCleanPreview(orphaned: PortSnapshot[]): void {
     renderHeader("Port Cleanup", "find orphaned and zombie listeners");
 
     if (orphaned.length === 0) {
-        out.print(pc.green("  ✓ No orphaned or zombie listeners found.\n"));
+        out.println(pc.green("  ✓ No orphaned or zombie listeners found.\n"));
         return;
     }
 
@@ -251,15 +251,15 @@ export function displayCleanPreview(orphaned: PortSnapshot[]): void {
         ]);
     }
 
-    out.print(table.toString());
-    out.print();
+    out.println(table.toString());
+    out.println();
 }
 
 export function displayCleanResults(orphaned: PortSnapshot[], results: KillResult[]): void {
     renderHeader("Port Cleanup", "cleanup results");
 
     if (orphaned.length === 0) {
-        out.print(pc.green("  ✓ No orphaned or zombie listeners found.\n"));
+        out.println(pc.green("  ✓ No orphaned or zombie listeners found.\n"));
         return;
     }
 
@@ -267,33 +267,33 @@ export function displayCleanResults(orphaned: PortSnapshot[], results: KillResul
         const result = results.find((entry) => entry.pid === portInfo.pid);
 
         if (!result || result.status === "killed") {
-            out.print(
+            out.println(
                 `  ${pc.green("✓")} :${pc.white(pc.bold(String(portInfo.port)))} ${pc.dim("—")} ${portInfo.processName} ${pc.dim(`(PID ${portInfo.pid})`)}`
             );
             continue;
         }
 
         if (result.status === "force-killed") {
-            out.print(
+            out.println(
                 `  ${pc.yellow("!")} :${pc.white(pc.bold(String(portInfo.port)))} ${pc.dim("—")} ${portInfo.processName} ${pc.dim(`(PID ${portInfo.pid})`)} ${pc.yellow("forced")}`
             );
             continue;
         }
 
-        out.print(
+        out.println(
             `  ${pc.red("✕")} :${pc.white(pc.bold(String(portInfo.port)))} ${pc.dim("—")} ${portInfo.processName} ${pc.dim(`(PID ${portInfo.pid})`)}`
         );
-        out.print(`    ${pc.red(result.error ?? "Failed to kill process")}`);
+        out.println(`    ${pc.red(result.error ?? "Failed to kill process")}`);
     }
 
-    out.print();
+    out.println();
 }
 
 export function displayWatchHeader(includeSystem: boolean, intervalMs: number): void {
     renderHeader("Port Watch", "monitor port activity in real time");
-    out.print(pc.cyan(pc.bold("  Watching for port changes...")));
-    out.print(pc.dim(`  Scope: ${includeSystem ? "all listeners" : "dev-focused listeners"} · poll ${intervalMs}ms`));
-    out.print(pc.dim("  Press Ctrl+C to stop.\n"));
+    out.println(pc.cyan(pc.bold("  Watching for port changes...")));
+    out.println(pc.dim(`  Scope: ${includeSystem ? "all listeners" : "dev-focused listeners"} · poll ${intervalMs}ms`));
+    out.println(pc.dim("  Press Ctrl+C to stop.\n"));
 }
 
 export function displayWatchEvent(event: "new" | "removed", snapshot: PortSnapshot): void {
@@ -302,11 +302,11 @@ export function displayWatchEvent(event: "new" | "removed", snapshot: PortSnapsh
     if (event === "new") {
         const details = snapshot.projectName ? pc.blue(` [${snapshot.projectName}]`) : "";
         const framework = snapshot.framework ? ` ${formatFramework(snapshot.framework)}` : "";
-        out.print(
+        out.println(
             `  ${timestamp} ${pc.green("▲ OPEN")}   :${pc.white(pc.bold(String(snapshot.port)))} ← ${pc.white(snapshot.processName)}${details}${framework}`
         );
         return;
     }
 
-    out.print(`  ${timestamp} ${pc.red("▼ CLOSED")} :${pc.white(pc.bold(String(snapshot.port)))}`);
+    out.println(`  ${timestamp} ${pc.red("▼ CLOSED")} :${pc.white(pc.bold(String(snapshot.port)))}`);
 }

@@ -27,7 +27,7 @@ export function createStartCommand(): Command {
         .action(async (id, opts) => {
             const store = TodoStore.forProject(resolveProjectRoot());
             const todo = await store.update(id, { status: "in-progress" });
-            out.print(formatTodo(todo, resolveFormat(opts.format), { colors: opts.colors }));
+            out.println(formatTodo(todo, resolveFormat(opts.format), { colors: opts.colors }));
         });
 }
 
@@ -40,7 +40,7 @@ export function createBlockCommand(): Command {
         .action(async (id, opts) => {
             const store = TodoStore.forProject(resolveProjectRoot());
             const todo = await store.update(id, { status: "blocked" });
-            out.print(formatTodo(todo, resolveFormat(opts.format), { colors: opts.colors }));
+            out.println(formatTodo(todo, resolveFormat(opts.format), { colors: opts.colors }));
         });
 }
 
@@ -55,7 +55,7 @@ export function createCompleteCommand(): Command {
         .action(async (id, opts) => {
             const store = TodoStore.forProject(resolveProjectRoot());
             const todo = await store.complete(id, opts.note);
-            out.print(formatTodo(todo, resolveFormat(opts.format), { colors: opts.colors }));
+            out.println(formatTodo(todo, resolveFormat(opts.format), { colors: opts.colors }));
         });
 }
 
@@ -72,6 +72,6 @@ export function createReopenCommand(): Command {
                 completedAt: undefined,
                 completionNote: undefined,
             });
-            out.print(formatTodo(todo, resolveFormat(opts.format), { colors: opts.colors }));
+            out.println(formatTodo(todo, resolveFormat(opts.format), { colors: opts.colors }));
         });
 }

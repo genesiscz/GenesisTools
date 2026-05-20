@@ -121,12 +121,12 @@ export function registerListSubcommand(parent: Command): void {
 
                 // JSON output
                 if (options.format === "json") {
-                    out.print(SafeJSON.stringify(entries, null, 2));
+                    out.println(SafeJSON.stringify(entries, null, 2));
                     return;
                 }
 
                 if (entries.length === 0) {
-                    out.print("No time logs found.");
+                    out.println("No time logs found.");
                     return;
                 }
 
@@ -162,12 +162,12 @@ export function registerListSubcommand(parent: Command): void {
                         ]);
                     }
 
-                    out.print(table.toString());
-                    out.print(`\n${pc.bold(`Total: ${formatMinutes(totalMinutes)}`)} (${entries.length} entries)`);
-                    out.print("\nBy Type:");
+                    out.println(table.toString());
+                    out.println(`\n${pc.bold(`Total: ${formatMinutes(totalMinutes)}`)} (${entries.length} entries)`);
+                    out.println("\nBy Type:");
 
                     for (const [type, mins] of Object.entries(byType)) {
-                        out.print(`  ${type}: ${formatMinutes(mins)}`);
+                        out.println(`  ${type}: ${formatMinutes(mins)}`);
                     }
 
                     return;
@@ -176,42 +176,42 @@ export function registerListSubcommand(parent: Command): void {
                 if (options.format === "md") {
                     const title =
                         hasWorkItem && !hasDateFilter ? `## Time Logs for #${options.workitem}\n` : `## Time Logs\n`;
-                    out.print(title);
-                    out.print(`| ID | Date | WI | Type | Time | User | Comment |`);
-                    out.print(`|----|------|-----|------|------|------|---------|`);
+                    out.println(title);
+                    out.println(`| ID | Date | WI | Type | Time | User | Comment |`);
+                    out.println(`|----|------|-----|------|------|------|---------|`);
 
                     for (const e of entries) {
                         const wi = e.workItemId ? `#${e.workItemId}` : "-";
-                        out.print(
+                        out.println(
                             `| ${e.timeLogId.substring(0, 8)} | ${e.date} | ${wi} | ${e.timeTypeDescription} | ${formatMinutes(e.minutes)} | ${e.userName} | ${e.comment || "-"} |`
                         );
                     }
 
-                    out.print(`\n**Total: ${formatMinutes(totalMinutes)}**`);
+                    out.println(`\n**Total: ${formatMinutes(totalMinutes)}**`);
                 } else {
                     // AI format
                     const title =
                         hasWorkItem && !hasDateFilter ? `Time Logs for Work Item #${options.workitem}` : "Time Logs";
-                    out.print(title);
-                    out.print("=".repeat(40));
+                    out.println(title);
+                    out.println("=".repeat(40));
 
                     for (const e of entries) {
                         const wi = e.workItemId ? ` [#${e.workItemId}]` : "";
-                        out.print(`\n${e.date} - ${formatMinutes(e.minutes)} (${e.timeTypeDescription})${wi}`);
-                        out.print(`  ID: ${e.timeLogId}`);
-                        out.print(`  User: ${e.userName}`);
+                        out.println(`\n${e.date} - ${formatMinutes(e.minutes)} (${e.timeTypeDescription})${wi}`);
+                        out.println(`  ID: ${e.timeLogId}`);
+                        out.println(`  User: ${e.userName}`);
 
                         if (e.comment) {
-                            out.print(`  Comment: ${e.comment}`);
+                            out.println(`  Comment: ${e.comment}`);
                         }
                     }
 
-                    out.print(`\n${"=".repeat(40)}`);
-                    out.print(`Total: ${formatMinutes(totalMinutes)}`);
-                    out.print("\nBy Type:");
+                    out.println(`\n${"=".repeat(40)}`);
+                    out.println(`Total: ${formatMinutes(totalMinutes)}`);
+                    out.println("\nBy Type:");
 
                     for (const [type, mins] of Object.entries(byType)) {
-                        out.print(`  ${type}: ${formatMinutes(mins)}`);
+                        out.println(`  ${type}: ${formatMinutes(mins)}`);
                     }
                 }
             }

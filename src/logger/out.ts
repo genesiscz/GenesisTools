@@ -7,22 +7,19 @@ import * as p from "@app/utils/prompts/p";
 import { isCancel } from "@clack/prompts";
 import { type Logger, logger } from "../logger";
 
+/**
+ * Trimmed to only the fields that actually affect behavior. The previous
+ * version exposed `clack` / `console` / `mirrorPrompts` / `timestamps` /
+ * `showComponent` switches that were never read anywhere — `configureOut()`
+ * promised behavior the module never delivered (PR #176 t21). Add them back
+ * one at a time when they're actually wired through the output pipeline.
+ */
 export interface OutConfig {
-    clack: "auto" | "off";
-    console: "chalk" | "plain";
     mirrorToLogger: boolean;
-    mirrorPrompts: boolean;
-    timestamps: boolean;
-    showComponent: boolean;
 }
 
 const cfg: OutConfig = {
-    clack: "auto",
-    console: "chalk",
     mirrorToLogger: true,
-    mirrorPrompts: true,
-    timestamps: false,
-    showComponent: false,
 };
 
 export function configureOut(patch: Partial<OutConfig>): void {
@@ -69,7 +66,15 @@ export interface Out {
     // `out.print()`, and `console.log(someObject)` becomes `out.print(someObject)`.
     // Non-string values are serialized internally. Codemod emits these literally
     // so the surface must accept what console.* accepts.
+    // print is the RAW stdout path — bytes go to stdout unchanged, no
+    // serialization, no trailing newline added. Codemod from console.log
+    // does NOT target this (it uses println below to match console.log's
+    // auto-newline). PR #176 t22.
     print(raw?: unknown, ...rest: unknown[]): void;
+    // println is the "console.log-ergonomic" stdout path: wraps the joined
+    // text through asResult so a trailing newline is guaranteed (matching
+    // console.log). The console-sweep codemod targets this for console.log.
+    println(raw?: unknown, ...rest: unknown[]): void;
     detail(m: string): void;
     // Convenience shortcuts — match console.* ergonomics (rest args appended).
     // out.info/warn/error forward to out.log.info/warn/error but also accept
@@ -159,11 +164,16 @@ export function makeOut(component: string | null, mirror: "component" | "config"
         password: (o) => p.password(o),
         isCancel,
         result: (data) => emitResult(asResult(data)),
-        // print accepts optional first arg of any type + rest (matches
-        // console.log ergonomics including trailing newline). Wraps the joined
-        // text in asResult so the stdout-parity gate vs. pre-sweep goldens
-        // holds — console.log always appends a newline; out.print must too.
+        // print: RAW stdout path — bytes pass through unchanged. No newline
+        // added, no serialization. Caller owns the bytes (PR #176 t22).
         print: (raw?: unknown, ...rest: unknown[]) => {
+            const head = raw === undefined ? "" : stringify(raw);
+            const text = rest.length > 0 ? `${head} ${rest.map(stringify).join(" ")}` : head;
+            emitResult(text);
+        },
+        // println: console.log-ergonomic — auto-appends newline via asResult
+        // so console.log(x) → out.println(x) preserves stdout-parity.
+        println: (raw?: unknown, ...rest: unknown[]) => {
             const head = raw === undefined ? "" : stringify(raw);
             const text = rest.length > 0 ? `${head} ${rest.map(stringify).join(" ")}` : head;
             emitResult(asResult(text));

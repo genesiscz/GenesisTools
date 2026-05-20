@@ -14,6 +14,6 @@ export function registerLoadCommand(program: Command): void {
             const session = await sm.createSession(filePath);
             // Auto-cleanup old sessions (fire and forget)
             sm.cleanExpiredSessions().catch(() => {});
-            out.print(formatDashboard(session.stats, session.sourceFile));
+            out.println(formatDashboard(session.stats, session.sourceFile));
         });
 }

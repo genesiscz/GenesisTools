@@ -27,7 +27,7 @@ export function createSyncCommand(): Command {
                 const withReminders = todos.filter((t) => t.reminders.length > 0);
 
                 if (withReminders.length === 0) {
-                    out.print("No open todos with reminders to sync.");
+                    out.println("No open todos with reminders to sync.");
                     return;
                 }
 
@@ -39,7 +39,7 @@ export function createSyncCommand(): Command {
                     const count = countSynced(result);
 
                     if (count > 0) {
-                        out.print(pc.green(`  ✓ ${todo.id}: ${todo.title} (${count} synced)`));
+                        out.println(pc.green(`  ✓ ${todo.id}: ${todo.title} (${count} synced)`));
                         totalSynced += count;
                     }
 
@@ -54,7 +54,7 @@ export function createSyncCommand(): Command {
                     }
                 }
 
-                out.print(`\nSynced ${totalSynced} item(s) to ${target}.`);
+                out.println(`\nSynced ${totalSynced} item(s) to ${target}.`);
 
                 if (failed.length > 0) {
                     out.error(pc.red(`SYNC_FAILED ${target}: ${failed.length} todo(s) had failures`));
@@ -85,7 +85,7 @@ export function createSyncCommand(): Command {
             const count = countSynced(result);
 
             if (count > 0) {
-                out.print(pc.green(`Synced ${count} item(s) to ${target} for ${todo.id}.`));
+                out.println(pc.green(`Synced ${count} item(s) to ${target} for ${todo.id}.`));
             }
 
             const failures = describeSyncFailures(result);

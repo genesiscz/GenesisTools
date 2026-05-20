@@ -464,7 +464,7 @@ function registerExportCommand(history: Command): void {
                     await Bun.write(outputPath, output);
                     p.log.success(`Exported ${formatNumber(messages.length)} messages to ${outputPath}`);
                 } else {
-                    out.print(output);
+                    out.println(output);
                 }
             }
         );
@@ -547,13 +547,13 @@ function registerStatsCommand(history: Command): void {
                     const totalMessages = allStats.reduce((sum, s) => sum + s.totalMessages, 0);
                     const totalEmbedded = allStats.reduce((sum, s) => sum + s.embeddedMessages, 0);
 
-                    out.print();
-                    out.print(
+                    out.println();
+                    out.println(
                         formatTable(rows, ["Contact", "Total", "In", "Out", "Embedded", "First", "Last"], {
                             alignRight: [1, 2, 3, 4],
                         })
                     );
-                    out.print();
+                    out.println();
 
                     p.log.info(
                         `${pc.bold("Summary")}: ${formatNumber(totalMessages)} messages across ${allStats.length} contact(s), ` +
@@ -647,10 +647,10 @@ function registerQueryCommand(history: Command): void {
                             const direction = msg.is_outgoing ? "\u2192" : "\u2190";
                             const date = new Date(msg.date_unix * 1000).toLocaleString();
                             const text = msg.text ?? "[media]";
-                            out.print(`${date} ${direction} ${text}`);
+                            out.println(`${date} ${direction} ${text}`);
                         }
 
-                        out.print(`\n${results.length} message(s) found`);
+                        out.println(`\n${results.length} message(s) found`);
                     } else {
                         const results = store.queryMessages(contact.userId, {
                             sender: opts.sender as "me" | "them" | "any",
@@ -664,10 +664,10 @@ function registerQueryCommand(history: Command): void {
                             const direction = msg.is_outgoing ? "\u2192" : "\u2190";
                             const date = new Date(msg.date_unix * 1000).toLocaleString();
                             const text = msg.text ?? "[media]";
-                            out.print(`${date} ${direction} ${text}`);
+                            out.println(`${date} ${direction} ${text}`);
                         }
 
-                        out.print(`\n${results.length} message(s) found`);
+                        out.println(`\n${results.length} message(s) found`);
                     }
                 } finally {
                     store.close();
@@ -719,7 +719,7 @@ function registerAttachmentsCommand(history: Command): void {
 
                     for (const att of atts) {
                         const dl = att.is_downloaded ? "dl" : "--";
-                        out.print(
+                        out.println(
                             `  [${dl}] ${att.kind} idx=${att.attachment_index} ${att.file_name ?? ""} ${att.file_size ? `(${att.file_size}b)` : ""}`
                         );
                     }
@@ -730,12 +730,12 @@ function registerAttachmentsCommand(history: Command): void {
 
                     for (const att of atts) {
                         const dl = att.is_downloaded ? "dl" : "--";
-                        out.print(
+                        out.println(
                             `msg:${att.message_id} [${dl}] ${att.kind} idx=${att.attachment_index} ${att.file_name ?? ""}`
                         );
                     }
 
-                    out.print(`\n${atts.length} attachment(s)`);
+                    out.println(`\n${atts.length} attachment(s)`);
                 }
             } finally {
                 store.close();
@@ -785,9 +785,9 @@ function registerAttachmentsCommand(history: Command): void {
                     opts.output
                 );
 
-                out.print(`Downloaded to: ${result.path}`);
-                out.print(`Size: ${result.size} bytes`);
-                out.print(`SHA-256: ${result.sha256}`);
+                out.println(`Downloaded to: ${result.path}`);
+                out.println(`Size: ${result.size} bytes`);
+                out.println(`SHA-256: ${result.sha256}`);
             } finally {
                 store.close();
                 await client.disconnect();

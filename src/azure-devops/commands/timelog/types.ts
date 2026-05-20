@@ -36,19 +36,19 @@ export function registerTypesSubcommand(parent: Command): void {
 
             // Output
             if (options.format === "json") {
-                out.print(SafeJSON.stringify(types, null, 2));
+                out.println(SafeJSON.stringify(types, null, 2));
                 return;
             }
 
             // AI-friendly format
-            out.print("Available Time Types:");
-            out.print("=====================");
+            out.println("Available Time Types:");
+            out.println("=====================");
 
             for (const type of types) {
                 const defaultMark = type.isDefaultForProject ? " (default)" : "";
-                out.print(`  - ${type.description}${defaultMark}`);
+                out.println(`  - ${type.description}${defaultMark}`);
             }
 
-            out.print(`\nTotal: ${types.length} time types`);
+            out.println(`\nTotal: ${types.length} time types`);
         });
 }

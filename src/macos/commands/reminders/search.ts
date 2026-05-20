@@ -17,11 +17,11 @@ export function registerSearchCommand(program: Command): void {
                 const reminders = await MacReminders.searchReminders(query, options.list);
 
                 if (reminders.length === 0) {
-                    out.print("No reminders found matching your query.");
+                    out.println("No reminders found matching your query.");
                     return;
                 }
 
-                out.print(formatRemindersTable(reminders));
+                out.println(formatRemindersTable(reminders));
             } catch (error) {
                 out.error(error instanceof Error ? error.message : String(error));
                 process.exit(1);

@@ -30,16 +30,16 @@ export async function runLog(opts: LogOpts): Promise<void> {
     const filtered = opts.analyzer ? entries.filter((e) => e.action.findingId.includes(opts.analyzer ?? "")) : entries;
 
     if (opts.json) {
-        out.print(SafeJSON.stringify(filtered, null, 2));
+        out.println(SafeJSON.stringify(filtered, null, 2));
         return;
     }
 
     if (filtered.length === 0) {
-        out.print(pc.dim("No history entries in the given window."));
+        out.println(pc.dim("No history entries in the given window."));
         return;
     }
 
-    out.print(pc.bold(`${filtered.length} actions since ${formatLocalDate(since)}:`));
+    out.println(pc.bold(`${filtered.length} actions since ${formatLocalDate(since)}:`));
 
     for (const entry of filtered.slice(-50).reverse()) {
         const s = entry.action.status;
@@ -47,7 +47,7 @@ export async function runLog(opts: LogOpts): Promise<void> {
         const bytes = entry.action.actualReclaimedBytes
             ? pc.dim(` · ${formatBytes(entry.action.actualReclaimedBytes)}`)
             : "";
-        out.print(
+        out.println(
             `${pc.dim(formatLocalDateTimeStamp(entry.timestamp))} ${statusColor(s.padEnd(7))} ${entry.action.actionId.padEnd(20)} ${entry.action.findingId}${bytes}`
         );
     }

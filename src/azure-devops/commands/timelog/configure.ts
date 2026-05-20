@@ -450,10 +450,10 @@ function handleNonInteractive(options: ConfigureOptions): void {
 
         if (types.length === 0) {
             delete fullConfig.timelog.allowedWorkItemTypes;
-            out.print("Cleared allowedWorkItemTypes");
+            out.println("Cleared allowedWorkItemTypes");
         } else {
             fullConfig.timelog.allowedWorkItemTypes = types;
-            out.print(`Set allowedWorkItemTypes: ${types.join(", ")}`);
+            out.println(`Set allowedWorkItemTypes: ${types.join(", ")}`);
         }
     }
 
@@ -463,10 +463,10 @@ function handleNonInteractive(options: ConfigureOptions): void {
             ...fullConfig.timelog.allowedStatesPerType,
             ...statesPerType,
         };
-        out.print("Updated allowedStatesPerType:");
+        out.println("Updated allowedStatesPerType:");
 
         for (const [type, states] of Object.entries(statesPerType)) {
-            out.print(`  ${type}: ${states.join(", ")}`);
+            out.println(`  ${type}: ${states.join(", ")}`);
         }
     }
 
@@ -478,15 +478,15 @@ function handleNonInteractive(options: ConfigureOptions): void {
 
         if (states.length === 0) {
             delete fullConfig.timelog.deprioritizedStates;
-            out.print("Cleared deprioritizedStates (using defaults: Closed, Done, Resolved, Removed)");
+            out.println("Cleared deprioritizedStates (using defaults: Closed, Done, Resolved, Removed)");
         } else {
             fullConfig.timelog.deprioritizedStates = states;
-            out.print(`Set deprioritizedStates: ${states.join(", ")}`);
+            out.println(`Set deprioritizedStates: ${states.join(", ")}`);
         }
     }
 
     saveConfig(configPath, fullConfig);
-    out.print("\nConfiguration saved.");
+    out.println("\nConfiguration saved.");
 }
 
 function collectOption(value: string, previous: string[]): string[] {

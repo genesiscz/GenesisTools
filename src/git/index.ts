@@ -39,7 +39,7 @@ registerConfigureWorkitemPatternsCommand(program, storage);
 enhanceHelp(program);
 
 function showHelpFull(): void {
-    out.print(`
+    out.println(`
 Git Analysis Tool
 
 Usage:

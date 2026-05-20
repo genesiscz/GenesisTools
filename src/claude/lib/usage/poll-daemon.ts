@@ -76,7 +76,7 @@ async function main(): Promise<void> {
             { accounts: results.length, accountNames, errorCount, duration_ms: Date.now() - startedAt },
             "[claude-usage] daemon poll completed"
         );
-        out.print(
+        out.println(
             `Polled ${results.length} account(s): ${accountNames}${errorCount > 0 ? ` (${errorCount} error(s))` : ""}`
         );
     } finally {

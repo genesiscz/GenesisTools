@@ -47,51 +47,51 @@ program
     .command("status")
     .description("Show authentication and cache status")
     .action(async () => {
-        out.print(chalk.bold("GitHub Tool Status\n"));
+        out.println(chalk.bold("GitHub Tool Status\n"));
 
         // Auth status
-        out.print(chalk.underline("Authentication:"));
+        out.println(chalk.underline("Authentication:"));
         const auth = await checkAuth();
         if (auth.authenticated) {
-            out.print(chalk.green(`  ✔ Authenticated as @${auth.user}`));
+            out.println(chalk.green(`  ✔ Authenticated as @${auth.user}`));
             if (auth.scopes && auth.scopes.length > 0) {
-                out.print(chalk.dim(`  Scopes: ${auth.scopes.join(", ")}`));
+                out.println(chalk.dim(`  Scopes: ${auth.scopes.join(", ")}`));
             }
         } else {
-            out.print(chalk.yellow("  ✘ Not authenticated (limited access)"));
+            out.println(chalk.yellow("  ✘ Not authenticated (limited access)"));
         }
 
         // Rate limit
-        out.print(chalk.underline("\nRate Limit:"));
+        out.println(chalk.underline("\nRate Limit:"));
         try {
             const rateLimit = await getRateLimit();
-            out.print(`  Remaining: ${rateLimit.remaining}/${rateLimit.limit}`);
-            out.print(`  Resets: ${rateLimit.reset.toLocaleTimeString()}`);
+            out.println(`  Remaining: ${rateLimit.remaining}/${rateLimit.limit}`);
+            out.println(`  Resets: ${rateLimit.reset.toLocaleTimeString()}`);
         } catch {
-            out.print(chalk.dim("  Could not fetch rate limit"));
+            out.println(chalk.dim("  Could not fetch rate limit"));
         }
 
         // Cache stats
-        out.print(chalk.underline("\nCache:"));
+        out.println(chalk.underline("\nCache:"));
         const stats = getCacheStats();
-        out.print(`  Repos: ${stats.repos}`);
-        out.print(`  Issues/PRs: ${stats.issues}`);
-        out.print(`  Comments: ${stats.comments}`);
-        out.print(`  Events: ${stats.events}`);
+        out.println(`  Repos: ${stats.repos}`);
+        out.println(`  Issues/PRs: ${stats.issues}`);
+        out.println(`  Comments: ${stats.comments}`);
+        out.println(`  Events: ${stats.events}`);
     });
 
 enhanceHelp(program);
 
 // Interactive mode (no subcommand)
 async function interactiveMode(): Promise<void> {
-    out.print(chalk.bold.blue("🔧 GitHub Tool - Interactive Mode\n"));
+    out.println(chalk.bold.blue("🔧 GitHub Tool - Interactive Mode\n"));
 
     // Check auth first
     const auth = await checkAuth();
     if (auth.authenticated) {
-        out.print(chalk.dim(`Authenticated as @${auth.user}\n`));
+        out.println(chalk.dim(`Authenticated as @${auth.user}\n`));
     } else {
-        out.print(chalk.yellow("Not authenticated. Some features may be limited.\n"));
+        out.println(chalk.yellow("Not authenticated. Some features may be limited.\n"));
     }
 
     while (true) {
@@ -112,7 +112,7 @@ async function interactiveMode(): Promise<void> {
         })) as string;
 
         if (action === "exit") {
-            out.print(chalk.dim("Goodbye!"));
+            out.println(chalk.dim("Goodbye!"));
             break;
         }
 
@@ -130,7 +130,7 @@ async function interactiveMode(): Promise<void> {
             })) as string;
 
             if (!urlInput.trim()) {
-                out.print(chalk.yellow("No query provided."));
+                out.println(chalk.yellow("No query provided."));
                 continue;
             }
 
@@ -171,7 +171,7 @@ async function interactiveMode(): Promise<void> {
         if (action === "review") {
             const prUrl = (await p.text({ message: "Enter PR number or URL:" })) as string;
             if (!prUrl.trim()) {
-                out.print(chalk.yellow("No input provided."));
+                out.println(chalk.yellow("No input provided."));
                 continue;
             }
             const unresolvedOnly = await p.confirm({ message: "Show only unresolved?", initialValue: true });
@@ -262,7 +262,7 @@ async function interactiveMode(): Promise<void> {
             })) as string;
 
             if (!fileUrl.trim()) {
-                out.print(chalk.yellow("No URL provided."));
+                out.println(chalk.yellow("No URL provided."));
                 continue;
             }
 
@@ -281,7 +281,7 @@ async function interactiveMode(): Promise<void> {
         })) as string;
 
         if (!urlInput.trim()) {
-            out.print(chalk.yellow("No input provided."));
+            out.println(chalk.yellow("No input provided."));
             continue;
         }
 
@@ -290,7 +290,7 @@ async function interactiveMode(): Promise<void> {
         const parsed = parseGitHubUrl(urlInput, defaultRepo);
 
         if (!parsed && !defaultRepo) {
-            out.print(
+            out.println(
                 chalk.red("Could not parse input. Please provide a full GitHub URL or use --repo owner/repo option.")
             );
             continue;
@@ -393,7 +393,7 @@ async function interactiveMode(): Promise<void> {
         });
 
         if (!continueSession) {
-            out.print(chalk.dim("Goodbye!"));
+            out.println(chalk.dim("Goodbye!"));
             break;
         }
     }

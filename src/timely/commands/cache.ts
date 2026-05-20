@@ -20,13 +20,13 @@ export function registerCacheCommand(program: Command, storage: Storage): void {
             }
 
             if (options.format === "json") {
-                out.print(SafeJSON.stringify(files, null, 2));
+                out.println(SafeJSON.stringify(files, null, 2));
                 return;
             }
 
             logger.info(chalk.cyan(`\nCached files (${files.length}):\n`));
             for (const file of files) {
-                out.print(`  ${file}`);
+                out.println(`  ${file}`);
             }
         });
 

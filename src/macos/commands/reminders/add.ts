@@ -45,7 +45,7 @@ export function registerAddCommand(program: Command): void {
                         url: options.url,
                     });
 
-                    out.print(`${pc.green("Reminder created")} — ID: ${reminderId}`);
+                    out.println(`${pc.green("Reminder created")} — ID: ${reminderId}`);
                 } catch (error) {
                     out.error(error instanceof Error ? error.message : String(error));
                     process.exit(1);
