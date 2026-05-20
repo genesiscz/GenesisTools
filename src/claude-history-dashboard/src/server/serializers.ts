@@ -107,12 +107,12 @@ export function serializeSessionMetadata(record: SessionMetadataRecord): Seriali
 
 	return {
 		filePath: record.filePath,
-		project: record.project,
+		project: record.project ?? "",
 		sessionId,
 		timestamp: record.firstTimestamp ?? new Date(record.mtime).toISOString(),
-		summary: record.summary,
-		customTitle: record.customTitle,
-		gitBranch: record.gitBranch,
+		summary: record.summary ?? undefined,
+		customTitle: record.customTitle ?? undefined,
+		gitBranch: record.gitBranch ?? undefined,
 		messageCount: fileIndex?.messageCount ?? 0,
 		isSubagent: record.isSubagent,
 	};
