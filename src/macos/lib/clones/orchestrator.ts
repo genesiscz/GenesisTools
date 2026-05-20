@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { basename, dirname, relative, resolve } from "node:path";
 import logger from "@app/logger";
 import { formatBytes } from "@app/utils/format";
-import { type DiskUsage, findCloneFamilies, freeDiskSpace, walkFiles } from "@app/utils/fs/disk-usage";
+import { type DiskUsage, freeDiskSpace, walkFiles, type WalkError } from "@app/utils/fs/disk-usage";
 import { getCloneId, getPrivateSize } from "@app/utils/macos/apfs";
 import { Stopwatch } from "@app/utils/Stopwatch";
 import { passesGlobs } from "./filters";
@@ -100,21 +100,66 @@ interface CrossTreeData {
     loneCloneIds: Set<string>;
 }
 
-/** First pass: build path → cross-tree-shared bytes + the lone clone-id set.
- *  Cross-tree = the clone-id appears EXACTLY once in the measured roots, so
- *  the family's other members are external. shared = allocated - private for
- *  those lone in-tree files. */
-function detectCrossTreeShared(roots: string[]): CrossTreeData {
-    const byCloneId = new Map<string, { path: string; allocated: number; priv: number }[]>();
+/** Per-file record materialised by the single walk. Carries the two
+ *  getattrlist attrs alongside the regular logical/allocated sizes so the
+ *  downstream reductions (cross-tree, tree-build, clone-analysis) don't have
+ *  to re-walk or re-syscall. `cloneId`/`priv` are null when getattrlist
+ *  returned an error (off-darwin or syscall failure for that path). */
+interface EnrichedEntry {
+    path: string;
+    logical: number;
+    allocated: number;
+    cloneId: bigint | null;
+    priv: number | null;
+}
+
+interface RootRecords {
+    entries: EnrichedEntry[];
+    errors: WalkError[];
+}
+
+/** Single walk per root. Captures (logical, allocated, cloneId, priv) per
+ *  file in one pass — no filters applied here so the cross-tree pass that
+ *  follows can see the full picture. Includes are honoured later when each
+ *  per-root record set is folded into the per-dir tree + totals. */
+function gatherEnrichedRecords(roots: string[]): Map<string, RootRecords> {
+    const out = new Map<string, RootRecords>();
+    let totalEntries = 0;
     for (const root of roots) {
-        for (const e of walkFiles(root, { onError: (err) => log.debug({ err }, "cross-tree walk") })) {
-            const id = getCloneId(e.path);
-            if (id === null || id === 0n) {
+        const errors: WalkError[] = [];
+        const entries: EnrichedEntry[] = [];
+        for (const e of walkFiles(root, { onError: (err) => errors.push(err) })) {
+            entries.push({
+                path: e.path,
+                logical: e.logical,
+                allocated: e.allocated,
+                cloneId: getCloneId(e.path),
+                priv: getPrivateSize(e.path),
+            });
+        }
+
+        out.set(root, { entries, errors });
+        totalEntries += entries.length;
+    }
+
+    log.debug({ rootCount: roots.length, totalEntries }, "enriched records gathered");
+    return out;
+}
+
+/** Build path → cross-tree-shared bytes + the lone clone-id set, from already
+ *  materialised records. Cross-tree = the clone-id appears EXACTLY once in
+ *  the measured roots, so the family's other members are external.
+ *  shared = allocated - private for those lone in-tree files. */
+function detectCrossTreeShared(records: Map<string, RootRecords>): CrossTreeData {
+    const byCloneId = new Map<string, { path: string; allocated: number; priv: number }[]>();
+    for (const { entries } of records.values()) {
+        for (const e of entries) {
+            if (e.cloneId === null || e.cloneId === 0n) {
                 continue;
             }
 
-            const key = id.toString(16);
-            const priv = getPrivateSize(e.path) ?? e.allocated;
+            const key = e.cloneId.toString(16);
+            const priv = e.priv ?? e.allocated;
             const list = byCloneId.get(key) ?? [];
             list.push({ path: e.path, allocated: e.allocated, priv });
             byCloneId.set(key, list);
@@ -241,10 +286,16 @@ interface WalkRootResult {
     aggregate: DiskUsage;
 }
 
-/** Single-pass walk: collect both the per-dir tree AND the whole-root DiskUsage
- *  aggregate. Honors include/exclude so the TOTAL line matches the displayed
- *  tree exactly (a filtered-out file contributes to neither). */
-function walkRoot(root: string, args: BuildMeasureArgs, crossTreeShared: Map<string, number>): WalkRootResult {
+/** Fold an already-materialised RootRecords into the per-dir tree AND the
+ *  whole-root DiskUsage aggregate. Honors include/exclude so the TOTAL line
+ *  matches the displayed tree exactly (a filtered-out file contributes to
+ *  neither). */
+function walkRoot(
+    root: string,
+    records: RootRecords,
+    args: BuildMeasureArgs,
+    crossTreeShared: Map<string, number>
+): WalkRootResult {
     const rootNode = emptyNode(root, 0);
     const aggregate: DiskUsage = {
         logical: 0,
@@ -253,13 +304,13 @@ function walkRoot(root: string, args: BuildMeasureArgs, crossTreeShared: Map<str
         exactReclaimable: null,
         fileCount: 0,
         dirCount: 0,
-        errors: [],
+        errors: records.errors,
     };
     let privateSum: number | null = null;
     const dirs = new Set<string>();
     const rootKey = root.endsWith("/") ? root.slice(0, -1) : root;
 
-    for (const e of walkFiles(root, { onError: (err) => aggregate.errors.push(err) })) {
+    for (const e of records.entries) {
         const rel = relative(root, e.path);
         if (!passesGlobs(rel, args.include, args.exclude, basename(e.path))) {
             continue;
@@ -267,7 +318,7 @@ function walkRoot(root: string, args: BuildMeasureArgs, crossTreeShared: Map<str
 
         const parts = dirname(rel) === "." ? [] : dirname(rel).split("/");
 
-        const priv = getPrivateSize(e.path);
+        const priv = e.priv;
         const fileShared = crossTreeShared.get(e.path) ?? 0;
 
         // Whole-root aggregate (always populated, even when !args.breakdown).
@@ -386,17 +437,32 @@ function pruneTree(node: MutNode, minReal: number): DirNode[] {
 }
 
 function buildCloneAnalysis(
-    roots: string[],
+    records: Map<string, RootRecords>,
     crossTree: CrossTreeData,
     opts: { probePartners: boolean }
 ): CloneAnalysis {
+    // Per-root family detection from the records we already gathered — same
+    // semantics as findCloneFamilies(root) but without a third FS walk.
     let families = 0;
     let clonedFiles = 0;
-    for (const root of roots) {
-        const fams = findCloneFamilies(root);
-        families += fams.size;
-        for (const members of fams.values()) {
-            clonedFiles += members.length;
+    for (const { entries } of records.values()) {
+        const fams = new Map<string, number>();
+        for (const e of entries) {
+            if (e.cloneId === null || e.cloneId === 0n) {
+                continue;
+            }
+
+            const key = e.cloneId.toString(16);
+            fams.set(key, (fams.get(key) ?? 0) + 1);
+        }
+
+        for (const count of fams.values()) {
+            if (count < 2) {
+                continue;
+            }
+
+            families += 1;
+            clonedFiles += count;
         }
     }
 
@@ -450,12 +516,25 @@ export function buildMeasureReport(args: BuildMeasureArgs): MeasureReport {
     };
     const tree: DirNode[] = [];
 
+    // Materialise once → reduce three times. Each root is walked exactly once;
+    // each file pays for exactly one getCloneId + one getPrivateSize. The three
+    // downstream passes (cross-tree, tree-build, clone-analysis) consume the
+    // resulting records map without touching the filesystem.
+    const swWalk = new Stopwatch();
+    const records = gatherEnrichedRecords(args.roots);
+    const walkMs = Math.round(swWalk.elapsedMs);
+
     const swCross = new Stopwatch();
-    const crossTree = detectCrossTreeShared(args.roots);
+    const crossTree = detectCrossTreeShared(records);
     const crossTreeMs = Math.round(swCross.elapsedMs);
 
     for (const root of args.roots) {
-        const { tree: rootMut, aggregate: u } = walkRoot(root, args, crossTree.sharedByPath);
+        const rootRecs = records.get(root);
+        if (!rootRecs) {
+            continue;
+        }
+
+        const { tree: rootMut, aggregate: u } = walkRoot(root, rootRecs, args, crossTree.sharedByPath);
         totalsAgg.logical += u.logical;
         totalsAgg.allocated += u.allocated;
         totalsAgg.fileCount += u.fileCount;
@@ -476,8 +555,13 @@ export function buildMeasureReport(args: BuildMeasureArgs): MeasureReport {
     const fs = freeDiskSpace(args.roots[0]);
     const sorted = args.breakdown ? sortTree(tree, args.sort ?? "overcount") : [];
     const swPartners = new Stopwatch();
-    const cloneAnalysis = buildCloneAnalysis(args.roots, crossTree, { probePartners: Boolean(args.probePartners) });
+    const cloneAnalysis = buildCloneAnalysis(records, crossTree, { probePartners: Boolean(args.probePartners) });
     const partnerProbeMs = args.probePartners ? Math.round(swPartners.elapsedMs) : 0;
+
+    let recordCount = 0;
+    for (const { entries } of records.values()) {
+        recordCount += entries.length;
+    }
 
     log.info(
         {
@@ -486,8 +570,10 @@ export function buildMeasureReport(args: BuildMeasureArgs): MeasureReport {
             breakdown: args.breakdown,
             probePartners: Boolean(args.probePartners),
             totalMs: Math.round(sw.elapsedMs),
+            walkMs,
             crossTreeDetectMs: crossTreeMs,
             partnerProbeMs,
+            recordCount,
             loneCloneIds: crossTree.loneCloneIds.size,
             sharedBytes: cloneAnalysis.sharedBytes,
             partners: cloneAnalysis.crossTreePartners.length,
