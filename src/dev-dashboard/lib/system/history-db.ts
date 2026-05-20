@@ -5,6 +5,26 @@ import { dirname, join } from "node:path";
 import type { PulsePoint } from "./types";
 
 const DEFAULT_DB_PATH = join(homedir(), ".genesis-tools", "dev-dashboard", "pulse.db");
+export const MAX_SERIES_POINTS = 360;
+
+export function downsamplePoints(points: PulsePoint[], maxPoints: number = MAX_SERIES_POINTS): PulsePoint[] {
+    if (points.length <= maxPoints || maxPoints < 1) {
+        return points;
+    }
+
+    const bucketSize = Math.ceil(points.length / maxPoints);
+    const result: PulsePoint[] = [];
+
+    for (let i = 0; i < points.length; i += bucketSize) {
+        const bucket = points.slice(i, i + bucketSize);
+        const avg = bucket.reduce((sum, point) => sum + point.value, 0) / bucket.length;
+        const mid = bucket[Math.floor(bucket.length / 2)];
+
+        result.push({ ts: mid.ts, value: Math.round(avg * 100) / 100 });
+    }
+
+    return result;
+}
 
 interface PointRow {
     ts: string;
@@ -44,12 +64,15 @@ export class PulseHistoryDb {
         this.db.prepare("INSERT INTO pulse_points (metric, ts, value) VALUES (?, ?, ?)").run(metric, ts, value);
     }
 
-    series(metric: string, minutes: number): PulsePoint[] {
+    series(metric: string, minutes: number, maxPoints: number = MAX_SERIES_POINTS): PulsePoint[] {
         const cutoff = new Date(Date.now() - minutes * 60_000).toISOString();
         const rows = this.db
             .prepare("SELECT ts, value FROM pulse_points WHERE metric = ? AND ts >= ? ORDER BY ts ASC")
             .all(metric, cutoff) as PointRow[];
-        return rows.map((r) => ({ ts: r.ts, value: r.value }));
+        return downsamplePoints(
+            rows.map((r) => ({ ts: r.ts, value: r.value })),
+            maxPoints
+        );
     }
 
     pruneOlderThan(hours: number): number {
