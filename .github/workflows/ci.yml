@@ -141,3 +141,8 @@ jobs:
         if: runner.os == 'Linux'
         timeout-minutes: 2
         run: bun run typecheck:all
+
+      - name: Logging & output convention guard
+        if: runner.os == 'Linux'
+        timeout-minutes: 1
+        run: bash scripts/ci/logging-guard.sh
