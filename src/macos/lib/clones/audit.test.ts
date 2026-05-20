@@ -155,9 +155,49 @@ describe.skipIf(skip.unlessMac)("runOptimize apply round-trip", () => {
     });
 });
 
-import { statSync as statS } from "node:fs";
+import { mkdirSync, statSync as statS } from "node:fs";
 import { rollbackProcess } from "@app/macos/lib/clones/audit";
 import { getCloneId } from "@app/utils/macos/apfs";
+
+describe.skipIf(skip.unlessMac)("runOptimize DirSet expansion", () => {
+    it("dir-kind DuplicateSet: walks both members, clones each matching file pair", () => {
+        const dir = mkdtempSync(j(tmpdir(), "gt-cl-dirset-"));
+        try {
+            const payload1 = Buffer.alloc(64 * 1024, 0xa1);
+            const payload2 = Buffer.alloc(48 * 1024, 0xb2);
+            mkdirSync(j(dir, "x1", "nested"), { recursive: true });
+            mkdirSync(j(dir, "x2", "nested"), { recursive: true });
+            writeFileSync(j(dir, "x1", "a.bin"), payload1);
+            writeFileSync(j(dir, "x2", "a.bin"), payload1);
+            writeFileSync(j(dir, "x1", "nested", "b.bin"), payload2);
+            writeFileSync(j(dir, "x2", "nested", "b.bin"), payload2);
+            const sets: DuplicateSet[] = [
+                {
+                    kind: "dir",
+                    what: "x1",
+                    copies: 2,
+                    eachBytes: payload1.length + payload2.length,
+                    reclaimable: payload1.length + payload2.length,
+                    members: [j(dir, "x1"), j(dir, "x2")],
+                    keep: j(dir, "x1"),
+                },
+            ];
+            const rep = runOptimize({ roots: [dir], sets, planCacheHit: false });
+            // x2/a.bin and x2/nested/b.bin should each clone from x1's matching file
+            expect(rep.totals.cloned).toBe(2);
+            expect(rep.totals.errors).toBe(0);
+            expect(getCloneId(j(dir, "x2", "a.bin"))).toBe(getCloneId(j(dir, "x1", "a.bin")));
+            expect(getCloneId(j(dir, "x2", "nested", "b.bin"))).toBe(getCloneId(j(dir, "x1", "nested", "b.bin")));
+            // each per-file op recorded distinctly
+            const cloneOps = rep.ops.filter((o) => o.op === "clone");
+            expect(cloneOps.length).toBe(2);
+            const replaces = cloneOps.map((o) => o.replace).sort();
+            expect(replaces).toEqual([j(dir, "x2", "a.bin"), j(dir, "x2", "nested", "b.bin")].sort());
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+});
 
 describe.skipIf(skip.unlessMac)("rollbackProcess un-shares clones", () => {
     it("apply then rollback: replace no longer shares keep's clone id, content unchanged, audit chained", () => {
