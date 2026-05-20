@@ -1,0 +1,37 @@
+// no-hardcoded-user-paths.grit — Warn about `/Users/<name>/...` literals.
+//
+// Hardcoded user-specific paths break the moment a different developer runs the
+// code. Use `homedir()` from node:os, `process.env.HOME`, or resolve relative
+// to a known repo/project root.
+//
+// Lessons learned: the dev-dashboard's `obsidianVault` default was hardcoded
+// to `/Users/Martin/Tresors/Projects/GenesisBrain` for months. The codemod
+// experience this session also caught a vite.config alias regression that
+// was rooted in a similar "hardcoded path" pattern.
+//
+// Same LIMITATION + workaround as no-hardcoded-tmp.grit — see that file for
+// the full explanation.
+//
+// Suppression: `// biome-ignore lint/plugin: test fixture` above the line.
+
+engine biome(1.0)
+language js(typescript, jsx)
+
+or {
+    `const $_ = $val` as $match,
+    `let $_ = $val` as $match,
+    `var $_ = $val` as $match,
+    `$_ = $val` as $match,
+    `return $val` as $match,
+    `$_($val)` as $match,
+    `$_($val, $_)` as $match,
+    `$_($_, $val)` as $match,
+    `$_($_, $_, $val)` as $match,
+} where {
+    $val <: r"^[\"'`]/Users/[^/]+/",
+    register_diagnostic(
+        span = $match,
+        message = "Hardcoded user-specific path. Use `homedir()` from node:os, `process.env.HOME`, or resolve relative to the repo/project root.",
+        severity = "warn"
+    )
+}

@@ -1,0 +1,44 @@
+// no-hardcoded-tmp.grit — Flag `/tmp/...` string literals in common binding contexts.
+//
+// /tmp doesn't exist on Windows. Use `join(tmpdir(), '...')` from node:os + path.
+//
+// Lessons learned: PR #179 t2/t3/t4/t13 — 4 hardcoded /tmp paths that would
+// crash on Windows shipped because none of our existing lint rules caught them.
+//
+// LIMITATION (biome 2.3): GritQL cannot match arbitrary string literals via a
+// bare metavariable — the metavar must be BOUND by a containing context. So we
+// enumerate the common binding contexts that show up in practice:
+//   - const/let/var initializer
+//   - assignment RHS
+//   - call argument (any position via `$_($args)` then regex on $args)
+//   - return statement
+//   - template literal
+//
+// Regex must include `['\"\`]` because GritQL captures the string-literal SOURCE
+// (with surrounding quotes) — workaround documented in
+// GenesisBrain/GenesisTools/Biome/GritQLPluginIdioms.md (section 3, workaround
+// "Metavar in string literal").
+//
+// Suppression: `// biome-ignore lint/plugin: legitimate /tmp use` above the line.
+
+engine biome(1.0)
+language js(typescript, jsx)
+
+or {
+    `const $_ = $val` as $match,
+    `let $_ = $val` as $match,
+    `var $_ = $val` as $match,
+    `$_ = $val` as $match,
+    `return $val` as $match,
+    `$_($val)` as $match,
+    `$_($val, $_)` as $match,
+    `$_($_, $val)` as $match,
+    `$_($_, $_, $val)` as $match,
+} where {
+    $val <: r"^[\"'`]/tmp/.+",
+    register_diagnostic(
+        span = $match,
+        message = "Hardcoded `/tmp/...` is not Windows-portable. Use `join(tmpdir(), '...')` from node:os + node:path. PR #179 t2/t3/t4/t13.",
+        severity = "error"
+    )
+}
