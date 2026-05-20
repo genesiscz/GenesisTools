@@ -150,6 +150,90 @@ describe("duplicate detection", () => {
         }
     });
 
+    it("reuses cached sha256 on warm scan; sentinel sha proves the comparison fires", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-fmc-"));
+        try {
+            const payload = Buffer.alloc(64_000, 0xab);
+            writeFileSync(join(dir, "one.bin"), payload);
+            writeFileSync(join(dir, "two.bin"), payload);
+
+            // Tiny in-memory fake of FileMetaCache (the real one is in
+            // src/macos/lib/clones/, but this test stays in utils/ for layering).
+            type Entry = {
+                size: bigint;
+                mtimeNs: bigint;
+                sha256: string;
+                cloneId: string;
+                lastSeenAt: number;
+            };
+            const mem = new Map<string, Entry>();
+            const fakeCache = {
+                get: (p: string) => mem.get(p) ?? null,
+                set: (p: string, e: Entry) => {
+                    mem.set(p, e);
+                },
+            };
+
+            // Cold run: cache is empty, both files hash, both get cached.
+            const cold = await findDuplicateFiles(dir, { cache: fakeCache });
+            expect(cold.length).toBe(1);
+            expect(mem.size).toBe(2); // both reps cached
+
+            // Inject a sentinel sha for one of the files. If the cache lookup
+            // honors size+mtime correctly, the warm scan reuses this sentinel
+            // → "two.bin"'s sha mismatches "one.bin" → no group emitted.
+            const twoPath = join(dir, "two.bin");
+            const original = mem.get(twoPath);
+            expect(original).toBeDefined();
+            mem.set(twoPath, { ...(original as Entry), sha256: "00".repeat(32) });
+
+            const warm = await findDuplicateFiles(dir, { cache: fakeCache });
+            expect(warm.length).toBe(0); // sentinel forced a mismatch → proves the cache fires
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("cache miss on size/mtime change re-hashes and overwrites the row", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-fmc-miss-"));
+        try {
+            const payload = Buffer.alloc(32_000, 0x55);
+            writeFileSync(join(dir, "one.bin"), payload);
+            writeFileSync(join(dir, "two.bin"), payload);
+
+            type Entry = {
+                size: bigint;
+                mtimeNs: bigint;
+                sha256: string;
+                cloneId: string;
+                lastSeenAt: number;
+            };
+            const mem = new Map<string, Entry>();
+            const fakeCache = {
+                get: (p: string) => mem.get(p) ?? null,
+                set: (p: string, e: Entry) => {
+                    mem.set(p, e);
+                },
+            };
+
+            await findDuplicateFiles(dir, { cache: fakeCache });
+            const twoPath = join(dir, "two.bin");
+            const beforeSha = mem.get(twoPath)?.sha256;
+            expect(beforeSha).toBeDefined();
+
+            // Poison the cache with a mtimeNs that won't match: warm scan should
+            // detect the mismatch and re-hash, overwriting the row with the
+            // real sha (same as cold).
+            const original = mem.get(twoPath) as Entry;
+            mem.set(twoPath, { ...original, mtimeNs: 999n, sha256: "deadbeef" });
+
+            await findDuplicateFiles(dir, { cache: fakeCache });
+            expect(mem.get(twoPath)?.sha256).toBe(beforeSha);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
     it("findDedupeCandidates projects savings for non-clone duplicates", async () => {
         const dir = mkdtempSync(join(tmpdir(), "gt-dupc-"));
         try {

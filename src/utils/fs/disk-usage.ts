@@ -25,6 +25,10 @@ export interface WalkEntry {
     path: string;
     logical: number;
     allocated: number;
+    /** mtime in nanoseconds (APFS resolution). The walk's stat is already
+     *  bigint, so this is free to expose. Past Number.MAX_SAFE_INTEGER, so
+     *  must remain a bigint — converting to number loses precision. */
+    mtimeNs: bigint;
 }
 
 export interface WalkError {
@@ -120,6 +124,7 @@ export function* walkFiles(root: string, opts: WalkOptions = {}): Generator<Walk
                     path: p,
                     logical: Number(st.size),
                     allocated: Number(st.blocks) * BLOCK_SIZE,
+                    mtimeNs: st.mtimeNs,
                 };
             } catch (err) {
                 opts.onError?.({ path: p, errno: errnoOf(err) });
@@ -461,6 +466,29 @@ export function emptyFindDuplicatesStats(): FindDuplicatesStats {
     };
 }
 
+/** Minimal duck-type for the FileMetaCache so utils/fs/ doesn't depend on
+ *  macos/lib/clones/. The real implementation lives in
+ *  `src/macos/lib/clones/file-meta-cache.ts` and is structurally compatible. */
+export interface FileMetaCacheLike {
+    get(path: string): {
+        size: bigint;
+        mtimeNs: bigint;
+        sha256: string;
+        cloneId: string;
+        lastSeenAt: number;
+    } | null;
+    set(
+        path: string,
+        entry: {
+            size: bigint;
+            mtimeNs: bigint;
+            sha256: string;
+            cloneId: string;
+            lastSeenAt: number;
+        }
+    ): void;
+}
+
 export interface FindDuplicatesOptions {
     /** Ignore files whose logical size is below this. Pruned during the walk. */
     minSize?: number;
@@ -475,6 +503,10 @@ export interface FindDuplicatesOptions {
     /** Optional out-param: this function adds-to (does NOT reset) these counters
      *  so a caller scanning N roots in sequence gets aggregate totals. */
     stats?: FindDuplicatesStats;
+    /** Per-file metadata cache. When provided, the hash phase reuses
+     *  (sha256, cloneId) for any file whose (size, mtimeNs) matches the
+     *  cached entry. Missing/changed files re-hash and write back. */
+    cache?: FileMetaCacheLike;
 }
 
 /** How often we yield to the event loop during the size-bucket loop.
@@ -527,18 +559,26 @@ const HASH_HEARTBEAT_EVERY = 1_000;
 
 export async function findDuplicateFiles(root: string, opts: FindDuplicatesOptions = {}): Promise<DuplicateGroup[]> {
     const minSize = Math.max(1, opts.minSize ?? 1);
-    const { signal, shouldEnter, onDirEntered, stats } = opts;
+    const { signal, shouldEnter, onDirEntered, stats, cache } = opts;
 
     const sw = new Stopwatch();
     let phaseStartMs = sw.elapsedMs;
 
-    logger.info({ event: "findDuplicateFiles.start", root, minSize }, "findDuplicateFiles start");
+    logger.info(
+        { event: "findDuplicateFiles.start", root, minSize, cacheAttached: cache !== undefined },
+        "findDuplicateFiles start"
+    );
 
     let walkedFiles = 0;
     let walkedDirs = 0;
     let lastDir = "";
 
     const bySize = new Map<number, string[]>();
+    // Parallel side-map so the value type of `bySize` stays `string[]` and the
+    // existing destructuring throughout the hash loop is unchanged. Populated
+    // during the walk (bigint mtimeNs comes from the already-bigint statSync
+    // in walkFiles — no extra syscall).
+    const mtimeByPath = new Map<string, bigint>();
     const walkOpts: WalkOptions = {};
     if (signal !== undefined) {
         walkOpts.signal = signal;
@@ -582,6 +622,7 @@ export async function findDuplicateFiles(root: string, opts: FindDuplicatesOptio
         const list = bySize.get(e.logical) ?? [];
         list.push(e.path);
         bySize.set(e.logical, list);
+        mtimeByPath.set(e.path, e.mtimeNs);
     }
 
     const walkMs = sw.elapsedMs - phaseStartMs;
@@ -604,6 +645,8 @@ export async function findDuplicateFiles(root: string, opts: FindDuplicatesOptio
     let byteCompareCalls = 0;
     let bucketsDroppedByClone = 0;
     let bucketsHashed = 0;
+    let cacheHits = 0;
+    let cacheMisses = 0;
 
     const groups: DuplicateGroup[] = [];
     let bucketIndex = 0;
@@ -625,6 +668,8 @@ export async function findDuplicateFiles(root: string, opts: FindDuplicatesOptio
                     bucketsDroppedByClone,
                     sha256Calls,
                     sha256BytesMB: Math.round(sha256Bytes / 1e6),
+                    cacheHits,
+                    cacheMisses,
                     elapsedMs: Math.round(sw.elapsedMs - phaseStartMs),
                 },
                 "hash progress"
@@ -668,9 +713,36 @@ export async function findDuplicateFiles(root: string, opts: FindDuplicatesOptio
 
         const byHash = new Map<string, string[]>();
         for (const p of reps) {
-            sha256Calls += 1;
-            sha256Bytes += size;
-            const h = sha256File(p, signal !== undefined ? { signal } : {});
+            const mtimeNs = mtimeByPath.get(p);
+            const hit = cache?.get(p);
+            let h: string;
+            // Cache hit only if size AND mtimeNs both match. Both are bigint
+            // (cache uses safeIntegers; walk returns bigint mtimeNs). size in
+            // bySize is `number` so we promote to bigint for the compare.
+            // If mtimeNs is undefined (shouldn't happen — every walked path
+            // is in the side-map) we conservatively force a miss.
+            if (hit && mtimeNs !== undefined && hit.size === BigInt(size) && hit.mtimeNs === mtimeNs) {
+                cacheHits += 1;
+                h = hit.sha256;
+            } else {
+                cacheMisses += 1;
+                sha256Calls += 1;
+                sha256Bytes += size;
+                h = sha256File(p, signal !== undefined ? { signal } : {});
+                if (cache && mtimeNs !== undefined) {
+                    // cloneId reuse is deferred to a follow-up phase — for now
+                    // we always recompute getCloneId in the pre-filter loop
+                    // (above) and store '' here. Storing the real cloneId
+                    // here would let a future patch wire the pre-filter cache.
+                    cache.set(p, {
+                        size: BigInt(size),
+                        mtimeNs,
+                        sha256: h,
+                        cloneId: "",
+                        lastSeenAt: 0,
+                    });
+                }
+            }
             const list = byHash.get(h) ?? [];
             list.push(p);
             byHash.set(h, list);
@@ -716,6 +788,8 @@ export async function findDuplicateFiles(root: string, opts: FindDuplicatesOptio
         stats.sha256Bytes += sha256Bytes;
         stats.byteCompareCalls += byteCompareCalls;
         stats.hashMs += hashMs;
+        stats.cacheHits += cacheHits;
+        stats.cacheMisses += cacheMisses;
     }
 
     logger.info(
@@ -733,8 +807,8 @@ export async function findDuplicateFiles(root: string, opts: FindDuplicatesOptio
             sha256Bytes,
             byteCompareCalls,
             hashMs: Math.round(hashMs),
-            cacheHits: stats?.cacheHits ?? 0,
-            cacheMisses: stats?.cacheMisses ?? 0,
+            cacheHits,
+            cacheMisses,
             groupsEmitted: groups.length,
         },
         "findDuplicateFiles complete"
