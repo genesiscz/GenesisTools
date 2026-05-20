@@ -3,9 +3,13 @@ import type { QaEntry } from "@app/question/lib/types";
 import { playDingInBrowser } from "@app/utils/audio/runner.client";
 import { SafeJSON } from "@app/utils/json";
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { LiveSseIndicator } from "@/components/LiveSseIndicator";
+import { QaClockProvider } from "@/components/QaClockProvider";
+import { QaRecencyTime } from "@/components/QaRecencyTime";
 import { QaSectionHeading } from "@/components/QaSectionHeading";
+
+const READ_PERSIST_DEBOUNCE_MS = 400;
 
 interface AudioEntry {
     id: string;
@@ -133,20 +137,57 @@ function tagClass(tag: string): string {
     return "border-[#2a3445] text-[var(--dd-text-secondary)]";
 }
 
-function QaCard({ entry }: { entry: QaRow }) {
+const QaCard = memo(function QaCard({
+    entry,
+    unread,
+    onSeen,
+}: {
+    entry: QaRow;
+    unread: boolean;
+    onSeen: (id: string) => void;
+}) {
+    const cardRef = useRef<HTMLDivElement>(null);
     const [open, setOpen] = useState(true);
-    const when = new Date(entry.ts).toISOString().slice(0, 16).replace("T", " ");
     const truncated = isQaAnswerTruncated(entry.answerMd);
     const answerHtml = open || !truncated ? entry.answerHtml : entry.answerHtmlPreview;
 
+    useEffect(() => {
+        if (!unread) {
+            return;
+        }
+
+        const el = cardRef.current;
+        if (!el) {
+            return;
+        }
+
+        const observer = new IntersectionObserver(
+            ([hit]) => {
+                if (hit?.isIntersecting) {
+                    onSeen(entry.id);
+                }
+            },
+            { threshold: 0.25, rootMargin: "0px 0px -8% 0px" }
+        );
+        observer.observe(el);
+
+        return () => observer.disconnect();
+    }, [entry.id, onSeen, unread]);
+
     return (
-        <div className="dd-panel flex flex-col gap-3 p-4" data-qa-id={entry.id}>
+        <div
+            ref={cardRef}
+            className={`dd-panel flex flex-col gap-3 p-4${unread ? " dd-qa-card--unread" : ""}`}
+            data-qa-id={entry.id}
+            data-qa-unread={unread ? "1" : "0"}
+        >
             <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--dd-text-muted)]">
+                <span className="dd-qa-unread-badge">new</span>
                 <span className="text-[var(--dd-text-secondary)]">{entry.project}</span>
                 <span>·</span>
                 <span>{entry.branch ?? "-"}</span>
                 <span className={`rounded-full border px-2 py-[1px] ${tagClass(entry.tag)}`}>{entry.tag}</span>
-                <span className="ml-auto">{when}</span>
+                <QaRecencyTime ts={entry.ts} />
             </div>
             <QaSectionHeading label="Question" />
             <div className="dd-qa-section-body text-[var(--dd-text-primary)] font-medium leading-relaxed">
@@ -169,13 +210,109 @@ function QaCard({ entry }: { entry: QaRow }) {
             ) : null}
         </div>
     );
-}
+});
 
 export function QaRoute() {
     const logQuery = useQuery({ queryKey: ["qa-log"], queryFn: fetchQaLog, retry: false });
     const [live, setLive] = useState<QaRow[]>([]);
     const [sseDown, setSseDown] = useState(false);
+    const [seenIds, setSeenIds] = useState<Set<string>>(() => new Set());
     const seen = useRef<Set<string>>(new Set());
+    const markedReadRef = useRef<Set<string>>(new Set());
+    const pendingReadIds = useRef<Set<string>>(new Set());
+    const readFlushTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+    const readApiDisabledRef = useRef(false);
+
+    const flushReadIds = useCallback(() => {
+        readFlushTimer.current = undefined;
+
+        if (readApiDisabledRef.current) {
+            pendingReadIds.current.clear();
+            return;
+        }
+
+        const ids = [...pendingReadIds.current];
+        pendingReadIds.current.clear();
+
+        if (ids.length === 0) {
+            return;
+        }
+
+        void fetch("/api/qa/read", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: SafeJSON.stringify({ ids }),
+        })
+            .then((res) => {
+                if (res.status === 404) {
+                    readApiDisabledRef.current = true;
+                }
+            })
+            .catch(() => {
+                /* best-effort — unread styling is client-side until next load */
+            });
+    }, []);
+
+    const markSeen = useCallback(
+        (id: string) => {
+            if (markedReadRef.current.has(id)) {
+                return;
+            }
+
+            markedReadRef.current.add(id);
+            setSeenIds((prev) => {
+                if (prev.has(id)) {
+                    return prev;
+                }
+
+                const next = new Set(prev);
+                next.add(id);
+                return next;
+            });
+            pendingReadIds.current.add(id);
+
+            if (readFlushTimer.current) {
+                return;
+            }
+
+            readFlushTimer.current = setTimeout(flushReadIds, READ_PERSIST_DEBOUNCE_MS);
+        },
+        [flushReadIds]
+    );
+
+    useEffect(() => {
+        return () => {
+            if (readFlushTimer.current) {
+                clearTimeout(readFlushTimer.current);
+            }
+
+            flushReadIds();
+        };
+    }, [flushReadIds]);
+
+    useEffect(() => {
+        if (!logQuery.data) {
+            return;
+        }
+
+        setSeenIds((prev) => {
+            const next = new Set(prev);
+            let changed = false;
+
+            for (const row of logQuery.data) {
+                if (row.readAt != null) {
+                    markedReadRef.current.add(row.id);
+
+                    if (!next.has(row.id)) {
+                        next.add(row.id);
+                        changed = true;
+                    }
+                }
+            }
+
+            return changed ? next : prev;
+        });
+    }, [logQuery.data]);
 
     useEffect(() => {
         const es = new EventSource("/api/qa/stream");
@@ -227,11 +364,13 @@ export function QaRoute() {
                     No questions recorded yet.
                 </div>
             ) : (
-                <div className="flex flex-col gap-3">
-                    {all.map((entry) => (
-                        <QaCard key={entry.id} entry={entry} />
-                    ))}
-                </div>
+                <QaClockProvider>
+                    <div className="flex flex-col gap-3">
+                        {all.map((entry) => (
+                            <QaCard key={entry.id} entry={entry} unread={!seenIds.has(entry.id)} onSeen={markSeen} />
+                        ))}
+                    </div>
+                </QaClockProvider>
             )}
         </div>
     );

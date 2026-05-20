@@ -163,3 +163,23 @@ export function queryEntries(db: Database, opts: QueryOpts = {}): QaRow[] {
         readAt: r.read_at as number | null,
     }));
 }
+
+export function markEntriesRead(db: Database, ids: string[], opts: Pick<QueryOpts, "logBase"> = {}): number {
+    if (ids.length === 0) {
+        return 0;
+    }
+
+    catchUp(db, opts.logBase);
+    const now = Date.now();
+    const stmt = db.prepare("UPDATE entries SET read_at = ? WHERE id = ? AND read_at IS NULL");
+    let updated = 0;
+
+    const tx = db.transaction((rowIds: string[]) => {
+        for (const id of rowIds) {
+            updated += stmt.run(now, id).changes;
+        }
+    });
+    tx(ids);
+
+    return updated;
+}

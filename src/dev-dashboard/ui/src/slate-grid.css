@@ -52,6 +52,80 @@
     border-left: 1px solid var(--dd-border);
 }
 
+.dd-qa-card--unread {
+    border-color: rgba(52, 211, 153, 0.28);
+    background:
+        linear-gradient(180deg, rgba(52, 211, 153, 0.07), transparent 55%),
+        var(--dd-bg-panel);
+    box-shadow: 0 0 0 1px rgba(52, 211, 153, 0.06);
+}
+
+.dd-qa-card--unread .dd-qa-unread-badge {
+    display: inline-flex;
+}
+
+.dd-qa-unread-badge {
+    display: none;
+    align-items: center;
+    border-radius: 9999px;
+    border: 1px solid rgba(52, 211, 153, 0.35);
+    background: rgba(52, 211, 153, 0.1);
+    color: #6ee7b7;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    padding: 1px 7px;
+    text-transform: uppercase;
+}
+
+.dd-qa-recency {
+    font-weight: 600;
+    letter-spacing: 0.01em;
+}
+
+.dd-qa-recency--hot {
+    color: #34d399;
+    text-shadow: 0 0 12px rgba(52, 211, 153, 0.65);
+    animation: dd-qa-recency-pulse 1.4s ease-in-out infinite;
+}
+
+.dd-qa-recency--fresh {
+    color: #2dd4bf;
+}
+
+.dd-qa-recency--recent {
+    color: #22d3ee;
+}
+
+.dd-qa-recency--warm {
+    color: #38bdf8;
+}
+
+.dd-qa-recency--cool {
+    color: #7dd3fc;
+}
+
+.dd-qa-recency--muted {
+    color: var(--dd-text-secondary);
+    font-weight: 500;
+}
+
+.dd-qa-recency--stale {
+    color: var(--dd-text-muted);
+    font-weight: 400;
+}
+
+@keyframes dd-qa-recency-pulse {
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.72;
+    }
+}
+
 .dd-mosaic .mosaic-window {
     background: var(--dd-bg-panel);
     border: 1px solid var(--dd-border);
