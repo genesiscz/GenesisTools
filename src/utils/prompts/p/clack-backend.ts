@@ -1,4 +1,8 @@
+import { unlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { handleCancel, isCancelled } from "@app/utils/prompts/clack/helpers";
+import { multilineText } from "@app/utils/prompts/clack/multiline";
 import { searchSelect } from "@app/utils/prompts/clack/search-select";
 import type { TextOptions } from "@clack/prompts";
 import * as clack from "@clack/prompts";
@@ -169,7 +173,8 @@ export const clackBackend: PromptBackend = {
         const editor = process.env.EDITOR ?? process.env.VISUAL;
 
         if (editor) {
-            const tmpPath = `/tmp/clack-editor-${Date.now()}${opts.postfix ?? ".txt"}`;
+            // PR #179 t13: use os.tmpdir() — /tmp doesn't exist on Windows.
+            const tmpPath = join(tmpdir(), `clack-editor-${Date.now()}${opts.postfix ?? ".txt"}`);
             if (opts.initialValue !== undefined) {
                 await Bun.write(tmpPath, opts.initialValue);
             }
@@ -182,22 +187,28 @@ export const clackBackend: PromptBackend = {
             await proc.exited;
 
             const content = await Bun.file(tmpPath).text();
-            // Clean up the temp file
+            // PR #179 t14: the previous `Bun.file().writer().end()` closes a
+            // writer handle but does NOT delete the file — leaving stale
+            // editor scratch files in tmpdir. Use unlinkSync to actually
+            // remove the file. Wrapped in try/catch so a missing file (e.g.
+            // editor moved it) doesn't propagate.
             try {
-                await Bun.file(tmpPath).writer().end();
+                unlinkSync(tmpPath);
             } catch {
-                // ignore cleanup errors
+                // ignore — file may have been moved/deleted by the editor
             }
+
             return content;
         }
 
-        // No $EDITOR available — fall back to clack.text multiline
-        // Note: @clack/prompts text does not have a multiline option at v1.0.0;
-        // this is a plain text prompt as fallback.
+        // PR #179 t15: $EDITOR-less fallback uses multilineText from
+        // @app/utils/prompts/clack/multiline — gives the user a real
+        // multi-line editing surface (Enter twice to submit) instead of a
+        // single-line clack.text. Strictly better UX for "edit a message"
+        // semantics that an editor prompt implies.
         return unwrap(
-            await clack.text({
-                message: `${opts.message} ${pc.dim("($EDITOR not set — type inline)")}`,
-                initialValue: opts.initialValue,
+            await multilineText({
+                message: `${opts.message} ${pc.dim("($EDITOR not set — multiline; press Enter twice to submit)")}`,
             })
         );
     },
@@ -208,6 +219,14 @@ export const clackBackend: PromptBackend = {
                 message: opts.message,
                 initialValue: opts.initialValue !== undefined ? String(opts.initialValue) : undefined,
                 validate: (value) => {
+                    // PR #179 t16: explicitly reject empty input — Number("")
+                    // evaluates to 0 (a finite number), which would silently
+                    // accept an empty submission. inquirerBackend requires
+                    // input via its validate wrapper; match that semantic.
+                    if (value === undefined || value.trim() === "") {
+                        return "A number is required";
+                    }
+
                     const n = Number(value);
                     if (!Number.isFinite(n)) {
                         return "Please enter a valid number";
