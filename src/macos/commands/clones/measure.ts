@@ -23,6 +23,7 @@ interface MeasureOpts {
     sort?: string;
     verbose?: boolean;
     silent?: boolean;
+    showPartners?: boolean;
 }
 
 export function applySharedMeasureFlags(cmd: Command): Command {
@@ -36,6 +37,12 @@ export function applySharedMeasureFlags(cmd: Command): Command {
         .option("--no-breakdown", "Totals + clone analysis only (no per-dir tree)")
         .option("--include <glob>", "Include glob (repeatable)", collect, [])
         .option("--exclude <glob>", "Exclude glob (repeatable, wins over --include)", collect, [])
+        .option(
+            "--show-partners",
+            "Probe known clone-aware locations (~/.bun/install/cache) to resolve cross-tree partner paths. " +
+                "Off by default; the probe can take seconds on large caches.",
+            false
+        )
         .option("-v, --verbose", "Verbose logging", false)
         .option("--silent", "Suppress non-essential output", false);
 }
@@ -65,6 +72,7 @@ export function createMeasureCommand(): Command {
             include: parseVariadic(opts.include),
             exclude: parseVariadic(opts.exclude),
             sort: (opts.sort as "overcount" | "real" | "du") ?? "overcount",
+            probePartners: Boolean(opts.showPartners),
         });
         report.nodeModulesMode = Boolean(opts.nodeModules);
 
@@ -109,6 +117,7 @@ export function createDuCommand(): Command {
             exclude: parseVariadic(opts.exclude),
             sort: (opts.sort as "overcount" | "real" | "du") ?? "overcount",
             maxDepth: depth !== undefined && !Number.isNaN(depth) ? depth : undefined,
+            probePartners: Boolean(opts.showPartners),
         });
 
         if (opts.top) {

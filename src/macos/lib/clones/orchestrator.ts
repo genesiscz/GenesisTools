@@ -1,9 +1,12 @@
 import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, relative, resolve } from "node:path";
 import logger from "@app/logger";
 import { formatBytes } from "@app/utils/format";
 import { type DiskUsage, findCloneFamilies, freeDiskSpace, measureTree, walkFiles } from "@app/utils/fs/disk-usage";
 import { getCloneId, getPrivateSize } from "@app/utils/macos/apfs";
+import { Stopwatch } from "@app/utils/Stopwatch";
 import { matchGlob } from "@app/utils/string";
 import type { CloneAnalysis, DirNode, MeasureReport } from "./render/types";
 
@@ -17,6 +20,11 @@ export interface BuildMeasureArgs {
     exclude?: string[];
     sort?: "overcount" | "real" | "du";
     maxDepth?: number;
+    /** When true, walk known external clone-aware locations (bun cache) to
+     *  resolve `cloneAnalysis.crossTreePartners` and the partner note. Off by
+     *  default — the probe can take seconds on large caches and is purely
+     *  informational (doesn't change reclaim totals). Wire from `--show-partners`. */
+    probePartners?: boolean;
 }
 
 /** Resolve scan roots: explicit → configured watchedDirs → cwd (spec §1). */
@@ -83,11 +91,19 @@ function emptyNode(path: string, depth: number): MutNode {
     };
 }
 
-/** First pass: build path → cross-tree-shared bytes map. Cross-tree = the
- *  clone-id appears EXACTLY once in the measured roots, so the family's
- *  other members are external. shared = allocated - private for those lone
- *  in-tree files. Used for both DirNode.sharedNote and cloneAnalysis.sharedBytes. */
-function detectCrossTreeShared(roots: string[]): Map<string, number> {
+interface CrossTreeData {
+    /** path → bytes its lone family contributes to cross-tree shared total. */
+    sharedByPath: Map<string, number>;
+    /** Hex clone-ids whose only in-tree member is in `sharedByPath` — these
+     *  are the families whose sharing partners live outside the scan roots. */
+    loneCloneIds: Set<string>;
+}
+
+/** First pass: build path → cross-tree-shared bytes + the lone clone-id set.
+ *  Cross-tree = the clone-id appears EXACTLY once in the measured roots, so
+ *  the family's other members are external. shared = allocated - private for
+ *  those lone in-tree files. */
+function detectCrossTreeShared(roots: string[]): CrossTreeData {
     const byCloneId = new Map<string, { path: string; allocated: number; priv: number }[]>();
     for (const root of roots) {
         for (const e of walkFiles(root, { onError: (err) => log.debug({ err }, "cross-tree walk") })) {
@@ -105,7 +121,8 @@ function detectCrossTreeShared(roots: string[]): Map<string, number> {
     }
 
     const sharedByPath = new Map<string, number>();
-    for (const files of byCloneId.values()) {
+    const loneCloneIds = new Set<string>();
+    for (const [key, files] of byCloneId) {
         if (files.length !== 1) {
             continue;
         }
@@ -114,10 +131,106 @@ function detectCrossTreeShared(roots: string[]): Map<string, number> {
         const shared = Math.max(0, f.allocated - f.priv);
         if (shared > 0) {
             sharedByPath.set(f.path, shared);
+            loneCloneIds.add(key);
         }
     }
 
-    return sharedByPath;
+    return { sharedByPath, loneCloneIds };
+}
+
+/** Known external locations that DO use APFS clonefile — the only places
+ *  worth probing to discover the WHERE of cross-tree partners. Bun is the
+ *  primary suspect (`bun install` clones from cache to node_modules). */
+function partnerProbePaths(): string[] {
+    const home = homedir();
+    return [`${home}/.bun/install/cache`, `${home}/.bun/install/global`].filter((p) => existsSync(p));
+}
+
+/** Wall-clock budget for the partner probe. The probe is best-effort; if we
+ *  blow the budget we report whatever partners we found so far + log it.
+ *  10s lets us walk a typical bun cache (~50k files × ~100µs getattrlist). */
+const PARTNER_PROBE_BUDGET_MS = 10_000;
+
+/** Walk known cache locations to find files with a clone-id matching any of
+ *  `loneIds`. Returns the deduplicated DIRS where matches were found (more
+ *  useful than per-file paths for the user-facing "cross-tree partners" list).
+ *  Each probe path uses a wall-clock budget; partial results are returned on
+ *  timeout. Empty when `loneIds` is empty or no probe location exists. */
+function findCrossTreePartners(loneIds: Set<string>): string[] {
+    if (loneIds.size === 0) {
+        return [];
+    }
+
+    const probes = partnerProbePaths();
+    if (probes.length === 0) {
+        log.info({ loneIds: loneIds.size }, "partner probe skipped — no known cache locations exist");
+        return [];
+    }
+
+    const sw = new Stopwatch();
+    const start = Date.now();
+    const partnerDirs = new Set<string>();
+    const remaining = new Set(loneIds);
+    let filesScanned = 0;
+
+    for (const probe of probes) {
+        if (remaining.size === 0) {
+            break;
+        }
+
+        let timedOut = false;
+        for (const e of walkFiles(probe, { onError: (err) => log.debug({ err }, "partner probe walk") })) {
+            if (remaining.size === 0) {
+                break;
+            }
+
+            if (Date.now() - start > PARTNER_PROBE_BUDGET_MS) {
+                timedOut = true;
+                break;
+            }
+
+            filesScanned += 1;
+            const id = getCloneId(e.path);
+            if (id === null || id === 0n) {
+                continue;
+            }
+
+            const key = id.toString(16);
+            if (!remaining.has(key)) {
+                continue;
+            }
+
+            remaining.delete(key);
+            partnerDirs.add(dirname(e.path));
+        }
+
+        if (timedOut) {
+            log.warn(
+                {
+                    probe,
+                    foundCount: partnerDirs.size,
+                    remainingIds: remaining.size,
+                    filesScanned,
+                    elapsedMs: Math.round(sw.elapsedMs),
+                },
+                "partner probe budget exhausted — partial results"
+            );
+            break;
+        }
+    }
+
+    log.info(
+        {
+            probes,
+            wanted: loneIds.size,
+            found: partnerDirs.size,
+            unresolved: remaining.size,
+            filesScanned,
+            elapsedMs: Math.round(sw.elapsedMs),
+        },
+        "partner probe complete"
+    );
+    return [...partnerDirs].sort();
 }
 
 function anySegmentMatches(rel: string, glob: string): boolean {
@@ -245,7 +358,11 @@ function pruneTree(node: MutNode, minReal: number): DirNode[] {
     ];
 }
 
-function buildCloneAnalysis(roots: string[], crossTreeShared: Map<string, number>): CloneAnalysis {
+function buildCloneAnalysis(
+    roots: string[],
+    crossTree: CrossTreeData,
+    opts: { probePartners: boolean }
+): CloneAnalysis {
     let families = 0;
     let clonedFiles = 0;
     for (const root of roots) {
@@ -257,22 +374,34 @@ function buildCloneAnalysis(roots: string[], crossTreeShared: Map<string, number
     }
 
     let sharedBytes = 0;
-    for (const v of crossTreeShared.values()) {
+    for (const v of crossTree.sharedByPath.values()) {
         sharedBytes += v;
     }
+
+    // Probe is OFF by default — bun cache can be GB and the walk would add
+    // seconds to every measure on a real `node_modules` tree. Opt-in via
+    // `--show-partners` when the user actually wants the WHERE info.
+    const crossTreePartners = opts.probePartners ? findCrossTreePartners(crossTree.loneCloneIds) : [];
 
     const notes: string[] = [];
     if (sharedBytes > 0) {
         notes.push(
             `${formatBytes(sharedBytes)} of measured bytes are shared with files OUTSIDE the scan roots ` +
-                "(typically ~/.bun/install/cache) and won't be freed by deleting these dirs."
+                "and won't be freed by deleting these dirs."
         );
+        if (crossTreePartners.length > 0) {
+            notes.push(
+                `partner(s) located in: ${crossTreePartners.slice(0, 3).join(", ")}` +
+                    (crossTreePartners.length > 3 ? ` (+${crossTreePartners.length - 3} more)` : "")
+            );
+        } else if (!opts.probePartners && crossTree.loneCloneIds.size > 0) {
+            notes.push(
+                `${crossTree.loneCloneIds.size} clone family(ies) have partners outside the scan — rerun with --show-partners to locate them.`
+            );
+        }
     }
 
-    // crossTreePartners is opaque without probing known external locations
-    // (bun cache, npm cache, …). The lone-family signal above already tells
-    // the user HOW MANY bytes are stuck — the WHERE is a future enhancement.
-    return { families, clonedFiles, sharedBytes, crossTreePartners: [], notes };
+    return { families, clonedFiles, sharedBytes, crossTreePartners, notes };
 }
 
 function sortTree(nodes: DirNode[], by: "overcount" | "real" | "du"): DirNode[] {
@@ -282,6 +411,7 @@ function sortTree(nodes: DirNode[], by: "overcount" | "real" | "du"): DirNode[] 
 }
 
 export function buildMeasureReport(args: BuildMeasureArgs): MeasureReport {
+    const sw = new Stopwatch();
     const totalsAgg: DiskUsage = {
         logical: 0,
         allocated: 0,
@@ -293,7 +423,10 @@ export function buildMeasureReport(args: BuildMeasureArgs): MeasureReport {
     };
     let realSeen = false;
     const tree: DirNode[] = [];
-    const crossTreeShared = detectCrossTreeShared(args.roots);
+
+    const swCross = new Stopwatch();
+    const crossTree = detectCrossTreeShared(args.roots);
+    const crossTreeMs = Math.round(swCross.elapsedMs);
 
     for (const root of args.roots) {
         const u = measureTree(root);
@@ -307,7 +440,7 @@ export function buildMeasureReport(args: BuildMeasureArgs): MeasureReport {
         totalsAgg.errors.push(...u.errors);
 
         if (args.breakdown) {
-            const rootMut = buildRootTree(root, args, crossTreeShared);
+            const rootMut = buildRootTree(root, args, crossTree.sharedByPath);
             tree.push(...pruneTree(rootMut, args.minReal));
         }
     }
@@ -316,6 +449,30 @@ export function buildMeasureReport(args: BuildMeasureArgs): MeasureReport {
     const totalOvercount = totalReal !== null && totalReal > 0 ? totalsAgg.allocated / totalReal : null;
     const fs = freeDiskSpace(args.roots[0]);
     const sorted = args.breakdown ? sortTree(tree, args.sort ?? "overcount") : [];
+    const swPartners = new Stopwatch();
+    const cloneAnalysis = buildCloneAnalysis(args.roots, crossTree, { probePartners: Boolean(args.probePartners) });
+    const partnerProbeMs = args.probePartners ? Math.round(swPartners.elapsedMs) : 0;
+
+    log.info(
+        {
+            roots: args.roots,
+            rootCount: args.roots.length,
+            breakdown: args.breakdown,
+            probePartners: Boolean(args.probePartners),
+            totalMs: Math.round(sw.elapsedMs),
+            crossTreeDetectMs: crossTreeMs,
+            partnerProbeMs,
+            loneCloneIds: crossTree.loneCloneIds.size,
+            sharedBytes: cloneAnalysis.sharedBytes,
+            partners: cloneAnalysis.crossTreePartners.length,
+            files: totalsAgg.fileCount,
+            logical: totalsAgg.logical,
+            allocated: totalsAgg.allocated,
+            real: totalReal,
+            errors: totalsAgg.errors.length,
+        },
+        "buildMeasureReport complete"
+    );
 
     return {
         roots: args.roots,
@@ -328,7 +485,7 @@ export function buildMeasureReport(args: BuildMeasureArgs): MeasureReport {
             real: totalReal,
             overcount: totalOvercount,
         },
-        cloneAnalysis: buildCloneAnalysis(args.roots, crossTreeShared),
+        cloneAnalysis,
         freeSpace: { total: fs.total, free: fs.free, available: fs.available },
         errors: totalsAgg.errors.map((e) => ({ path: e.path, errno: e.errno })),
     };
