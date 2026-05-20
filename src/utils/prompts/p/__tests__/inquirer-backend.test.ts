@@ -1,3 +1,5 @@
+// biome-ignore-all lint/plugin: This file IS the backend test — it legitimately calls inquirerBackend.X directly and mocks @inquirer/prompts. The no-direct-prompt-backend and no-mock-module-prompts plugins target callers, not the backend's own tests.
+
 import { beforeEach, describe, expect, it, mock } from "bun:test";
 
 // Track calls for assertions

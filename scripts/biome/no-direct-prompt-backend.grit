@@ -1,0 +1,33 @@
+// no-direct-prompt-backend.grit — Force tools to use the `p.X(...)` facade
+// instead of calling `inquirerBackend.X(...)` / `clackBackend.X(...)` /
+// `opentuiBackend.X(...)` directly.
+//
+// Why: the whole point of `setBackend()` is that call sites are
+// backend-agnostic. Direct-backend calls leak abstraction and break the
+// pattern where one `p.setBackend(...)` at entrypoint reroutes the whole tool.
+//
+// Lessons learned: PR #179 t5-t8 — 4 separate files called
+// `inquirerBackend.search/editor/number` directly. Fix was mechanical
+// but easy to miss when adding new prompts.
+//
+// Legitimate uses (backend test files) opt out with:
+//   // biome-ignore lint/plugin/no-direct-prompt-backend: <reason>
+// The backend impl files never write `inquirerBackend.X(` since they BUILD
+// that object via factory functions; only direct CALLERS hit this pattern.
+
+engine biome(1.0)
+language js(typescript, jsx)
+
+`$backend.$method($args)` as $match where {
+    $backend <: or { `inquirerBackend`, `clackBackend`, `opentuiBackend` },
+    $method <: or {
+        `text`, `confirm`, `typedConfirm`,
+        `select`, `multiselect`, `password`,
+        `search`, `editor`, `number`
+    },
+    register_diagnostic(
+        span = $match,
+        message = "Direct prompt-backend call. Use `p.X(...)` facade from `@app/utils/prompts/p` + `p.setBackend(inquirerBackend)` once at the tool's entrypoint. PR #179 t5-t8.",
+        severity = "error"
+    )
+}
