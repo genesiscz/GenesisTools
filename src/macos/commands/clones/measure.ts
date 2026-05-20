@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import logger from "@app/logger";
+import { applyLogLevel } from "@app/macos/commands/clones/log-level";
 import { buildMeasureReport, expandNodeModules, resolveRoots } from "@app/macos/lib/clones/orchestrator";
 import { resolveFormat, resolveRenderer } from "@app/macos/lib/clones/render/index";
 import { loadClonesConfig } from "@app/macos/lib/clones/store";
@@ -55,6 +56,7 @@ export function createMeasureCommand(): Command {
         new Option("--sort <by>", "Sort rows").choices(["overcount", "real", "du"]).default("overcount")
     );
     cmd.action(async (rootsArg: string[], opts: MeasureOpts) => {
+        applyLogLevel(opts);
         const minReal = Number.parseInt(opts.minReal, 10);
         const cfg = await loadClonesConfig();
         const roots0 = resolveRoots(rootsArg ?? [], cfg.watchedDirs);
@@ -105,6 +107,7 @@ export function createDuCommand(): Command {
         .addOption(new Option("--sort <by>", "Sort rows").choices(["overcount", "real", "du"]).default("overcount"))
         .option("--depth <N>", "Max tree depth below the folder (default: unlimited)");
     cmd.action(async (folderArg: string | undefined, opts: DuOpts) => {
+        applyLogLevel(opts);
         const folder = resolve(folderArg ?? process.cwd());
         const minReal = Number.parseInt(opts.minReal, 10);
         const depth = opts.depth ? Number.parseInt(opts.depth, 10) : undefined;
