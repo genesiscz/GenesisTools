@@ -28,7 +28,7 @@
         "@babel/preset-typescript": "^7.28.5",
         "@clack/prompts": "^1.0.0",
         "@crawlee/utils": "^3.16.0",
-        "@genesiscz/darwinkit": "0.7.4",
+        "@genesiscz/darwinkit": "0.7.5",
         "@gitbeaker/rest": "^43.5.0",
         "@hlidac-shopu/actors-common": "^3.2.5",
         "@hlidac-shopu/lib": "^1.5.3",
@@ -478,7 +478,7 @@
 
     "@floating-ui/utils": ["@floating-ui/utils@0.2.11", "", {}, "sha512-RiB/yIh78pcIxl6lLMG0CgBXAZ2Y0eVHqMPYugu+9U0AeT6YBeiJpf7lbdJNIugFP5SIjwNRgo4DhR1Qxi26Gg=="],
 
-    "@genesiscz/darwinkit": ["@genesiscz/darwinkit@0.7.4", "", { "dependencies": { "tar": "^7.0.0" } }, "sha512-yfzSIsJjH5AOF+LKz4/YXPXD8u8xT9U4tfjdbSUMXVTXmVOyEeYhBFfTsAwmbdYtL8m2sNmgi4uwXGQH18boDg=="],
+    "@genesiscz/darwinkit": ["@genesiscz/darwinkit@0.7.5", "", { "dependencies": { "tar": "^7.0.0" } }, "sha512-2bMDALD7rbq8onG+1B66jHK8SgB4fYCpt7+QQYJa5rljzhRkXZ1PLRSdiNlk98soVwvwnmgNzssyKUni6ck5Tw=="],
 
     "@gitbeaker/core": ["@gitbeaker/core@43.5.0", "", { "dependencies": { "@gitbeaker/requester-utils": "^43.5.0", "qs": "^6.14.0", "xcase": "^2.0.1" } }, "sha512-Lfsl6DE/2RkFvpSEhMEnN6sNuY0IeR68UEQq2qzR0MkUF1RMCmOFlD3OydnT9yY+fkWjB4FPSG4SA/oBVZYTFQ=="],
 

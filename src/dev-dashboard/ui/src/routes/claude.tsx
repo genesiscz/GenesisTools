@@ -22,10 +22,7 @@ export function ClaudeRoute() {
     // One window end shared by every chart so their time axes align exactly.
     // Recomputed on each poll tick and on range change, not per chart render
     // (per-render Date.now() would drift the two charts apart again).
-    const rangeEndMs = useMemo(
-        () => Date.now(),
-        [rangeMinutes, usageQuery.dataUpdatedAt]
-    );
+    const rangeEndMs = useMemo(() => Date.now(), [rangeMinutes, usageQuery.dataUpdatedAt]);
 
     const accounts = usageQuery.data ?? [];
 
