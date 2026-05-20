@@ -84,7 +84,12 @@ export function sendKeyToIframe(iframe: HTMLIFrameElement | null, key: IframeKey
 
 /**
  * Scrolls the terminal's scrollback buffer. Positive amount = down, negative = up.
- * Prefers xterm's native scrollLines API; falls back to Shift+PageUp/Down.
+ *
+ * xterm.js doesn't bind PageUp/PageDown to scrollback by default — only host
+ * apps do, and ttyd doesn't. So the reliable path is: prefer the xterm.js
+ * `term.scrollLines()` API if exposed, else scroll the `.xterm-viewport`
+ * element directly (xterm.js owns this div and its scrollTop drives the
+ * scrollback view).
  */
 export function scrollIframeTerminal(iframe: HTMLIFrameElement | null, amount: number): boolean {
     if (!iframe || amount === 0) {
@@ -97,13 +102,29 @@ export function scrollIframeTerminal(iframe: HTMLIFrameElement | null, amount: n
         return true;
     }
 
-    const textarea = getHelperTextarea(iframe);
-    if (!textarea) {
-        return false;
+    const viewport = getXtermViewport(iframe);
+    if (viewport) {
+        // ~17px per line is xterm.js's default; close enough for a tap step.
+        const lineHeight = estimateLineHeight(viewport);
+        viewport.scrollTop = Math.max(0, viewport.scrollTop + amount * lineHeight);
+        return true;
     }
 
-    const key: IframeKey = amount < 0 ? "PageUp" : "PageDown";
-    return dispatchKey(textarea, key, true);
+    return false;
+}
+
+function getXtermViewport(iframe: HTMLIFrameElement): HTMLElement | null {
+    try {
+        return iframe.contentDocument?.querySelector<HTMLElement>(".xterm-viewport") ?? null;
+    } catch {
+        return null;
+    }
+}
+
+function estimateLineHeight(viewport: HTMLElement): number {
+    const rowEl = viewport.parentElement?.querySelector<HTMLElement>(".xterm-rows > div");
+    const measured = rowEl?.getBoundingClientRect().height;
+    return measured && measured > 4 ? measured : 17;
 }
 
 export function findIframeByTitle(title: string): HTMLIFrameElement | null {
