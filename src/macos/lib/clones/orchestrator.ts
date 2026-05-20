@@ -262,15 +262,13 @@ function passesGlobs(rel: string, base: string, include?: string[], exclude?: st
 interface WalkRootResult {
     /** Per-dir aggregation tree. Only meaningful when args.breakdown is true. */
     tree: MutNode;
-    /** Whole-root DiskUsage aggregate. Replaces the separate measureTree(root)
-     *  call so we only walk the FS once per root (was 2x — perf win on large
-     *  trees where each walk pays for thousands of getattrlist syscalls). */
+    /** Whole-root DiskUsage aggregate. Populated in the same pass as `tree`. */
     aggregate: DiskUsage;
 }
 
 /** Single-pass walk: collect both the per-dir tree AND the whole-root DiskUsage
- *  aggregate. Honors include/exclude — so the TOTAL line matches the displayed
- *  tree (previously the totals ignored filters, which was confusing). */
+ *  aggregate. Honors include/exclude so the TOTAL line matches the displayed
+ *  tree exactly (a filtered-out file contributes to neither). */
 function walkRoot(root: string, args: BuildMeasureArgs, crossTreeShared: Map<string, number>): WalkRootResult {
     const rootNode = emptyNode(root, 0);
     const aggregate: DiskUsage = {
@@ -389,7 +387,15 @@ function pruneTree(node: MutNode, minReal: number): DirNode[] {
         return keptChildren;
     }
 
-    const overcount = real !== null && real > 0 ? node.allocated / real : real === 0 ? 1 : null;
+    let overcount: number | null;
+    if (real === null) {
+        overcount = null;
+    } else if (real === 0) {
+        overcount = 1;
+    } else {
+        overcount = node.allocated / real;
+    }
+
     return [
         {
             path: node.path,
@@ -479,10 +485,6 @@ export function buildMeasureReport(args: BuildMeasureArgs): MeasureReport {
     const crossTreeMs = Math.round(swCross.elapsedMs);
 
     for (const root of args.roots) {
-        // Single walk per root — produces both the totals and (when breakdown
-        // is requested) the per-dir tree. Previously each call to measureTree
-        // + buildRootTree was a separate full FS walk doing the same getattrlist
-        // syscalls twice.
         const { tree: rootMut, aggregate: u } = walkRoot(root, args, crossTree.sharedByPath);
         totalsAgg.logical += u.logical;
         totalsAgg.allocated += u.allocated;

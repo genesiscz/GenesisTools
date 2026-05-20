@@ -48,10 +48,17 @@ function isMetaLine(v: unknown): v is MetaLine {
 }
 
 /** The process/ audit dir — sibling of cache/ under the tool's base dir.
- *  NOT a Storage cache helper (those write under cache/). */
+ *  NOT a Storage cache helper (those write under cache/). Cached after first
+ *  call to avoid re-running mkdirSync on every appendOp/writeMeta. */
+let cachedProcessDir: string | null = null;
 export function processDir(): string {
+    if (cachedProcessDir !== null) {
+        return cachedProcessDir;
+    }
+
     const dir = join(storage.getBaseDir(), "process");
     mkdirSync(dir, { recursive: true });
+    cachedProcessDir = dir;
     return dir;
 }
 
@@ -162,9 +169,9 @@ function firstMeta(path: string): ProcessMeta | null {
     return null;
 }
 
-/** Summary-only read: same parse loop as readProcess but skips materializing
+/** Summary-only read: same parse loop as readProcess but skips materialising
  *  the ops[] array. Totals are accumulated incrementally → constant memory
- *  per process even on huge audit logs. Used by listProcesses. */
+ *  per process even on huge audit logs. */
 function readProcessSummary(id: string): Omit<ProcessReport, "ops"> | null {
     const path = processJsonlPath(id);
     if (!existsSync(path)) {
@@ -237,7 +244,6 @@ export function listProcesses(): ProcessListReport {
         }
 
         const id = name.slice(0, -".jsonl".length);
-        // Summary read — no ops array materialized. Cheap on long audit logs.
         const rep = readProcessSummary(id);
         if (!rep) {
             continue;
@@ -345,9 +351,8 @@ export function runOptimize({ roots, sets, planCacheHit, planCacheAgeMs }: RunOp
     const id = newProcessId();
     const startedAt = new Date().toISOString();
     const sw = new Stopwatch();
-    // Materialize pairs ONCE per set — for dir-kind sets this walks the keep
-    // tree, which can be expensive on large dirs; recomputing in both the log
-    // preamble and the loop was a real perf regression on every run.
+    // dir-kind sets walk the keep tree to enumerate pairs — keep one materialised
+    // copy and reuse it for both the log preamble and the per-pair loop.
     const pairsBySet = sets.map((s) => expandSetToPairs(s));
     const totalPairs = pairsBySet.reduce((s, p) => s + p.length, 0);
     log.info({ id, roots, sets: sets.length, totalPairs, planCacheHit, planCacheAgeMs }, "runOptimize starting");

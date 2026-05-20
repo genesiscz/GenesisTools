@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { type Dirent, readdirSync, statSync } from "node:fs";
+import { type Dirent, readdirSync } from "node:fs";
 import { basename, dirname, join, relative, sep } from "node:path";
 import logger from "@app/logger";
 import { findDuplicateFiles } from "@app/utils/fs/disk-usage";
@@ -119,11 +119,11 @@ function dirInfo(dir: string, shaOf: Map<string, string>, sizeOf: Map<string, nu
     const h = createHash("sha256");
     for (const f of files) {
         const sha = shaOf.get(f);
-        if (sha === undefined) {
+        const size = sizeOf.get(f);
+        if (sha === undefined || size === undefined) {
             return { fileCount: files.length, hash: null, bytes };
         }
 
-        const size = sizeOf.get(f) ?? statSync(f).size;
         bytes += size;
         // dir identity = (relpath, sha) per file. Mode is intentionally NOT
         // hashed: cloning preserves each replace's original mode via dedupeFile's
@@ -150,13 +150,12 @@ export function collapseDuplicates({ roots, minSize, include, exclude }: Collaps
 
     for (const root of roots) {
         for (const g of findDuplicateFiles(root)) {
-            // Filter 1: minSize. Drop groups smaller than the user's threshold.
             if (minSize !== undefined && g.size < minSize) {
                 continue;
             }
 
-            // Filter 2: include/exclude. Keep only paths passing the globs; if
-            // the surviving set drops below 2, the group is no longer a duplicate.
+            // If include/exclude prunes the group below 2 paths it is no
+            // longer a duplicate — drop it.
             const filtered =
                 (include && include.length > 0) || (exclude && exclude.length > 0)
                     ? g.paths.filter((p) => {

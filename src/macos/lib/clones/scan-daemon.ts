@@ -31,10 +31,8 @@ export async function runDaemonScan(args: DaemonScanArgs = {}): Promise<DaemonSc
     }
 
     const minReal = cfg.minReal ?? 10485760;
-    // The daemon's job is to surface ACTIONABLE reclaim (what `optimize` would
-    // free) — that's what collapseDuplicates gives us. A separate measure pass
-    // here would only inform the log line, not the user-facing notification,
-    // and doubles the I/O of every daemon tick. Drop it.
+    // Surface only the actionable reclaim (what `optimize` would free) — a
+    // measure pass would inflate the I/O without changing the notification.
     const sets = collapseDuplicates({ roots }).sets;
     const reclaimable = sets.reduce((s, x) => s + x.reclaimable, 0);
 

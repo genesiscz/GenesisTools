@@ -238,7 +238,6 @@ export function createOptimizeCommand(): Command {
                         planCacheHit: Boolean(cached),
                         ...(cached ? { planCacheAgeMs: cached.ageMs } : {}),
                     });
-                    rep.planCache = { hit: Boolean(cached), ...(cached ? { ageMs: cached.ageMs } : {}) };
                     console.log(resolveRenderer(resolveFormat(opts.format)).processReport(rep));
                     process.exitCode = rep.totals.errors > 0 ? 1 : 0;
                 } catch (err) {
