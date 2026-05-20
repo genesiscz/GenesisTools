@@ -1,10 +1,15 @@
 {
     "$schema": "https://biomejs.dev/schemas/2.3.12/schema.json",
+    "root": true,
     "vcs": {
         "enabled": true,
         "clientKind": "git",
         "useIgnoreFile": true
     },
+    "plugins": [
+        "./scripts/biome/no-direct-prompt-backend.grit",
+        "./scripts/biome/no-mock-module-prompts.grit"
+    ],
     "formatter": {
         "enabled": true,
         "indentStyle": "space",
@@ -69,5 +74,36 @@
             "!src/claude-history-dashboard",
             "!**/routeTree.gen.ts"
         ]
-    }
+    },
+    "overrides": [
+        {
+            "includes": [
+                "src/clarity/ui/**",
+                "src/claude-history-dashboard/**",
+                "src/dashboard/apps/web/**",
+                "src/debugging-master/dashboard/**",
+                "src/dev-dashboard/ui/**",
+                "src/shops/ui/**",
+                "src/youtube/extension/**",
+                "src/youtube/ui/**",
+                "src/Internal/commands/reas/ui/**",
+                "src/logger/client.ts"
+            ],
+            "linter": {
+                "rules": {
+                    "style": {
+                        "noRestrictedImports": {
+                            "level": "error",
+                            "options": {
+                                "paths": {
+                                    "picocolors": "Browser-safe code must not import picocolors — its ANSI escape output renders as garbage in browser DevTools. Use plain Unicode glyphs (◆ ✔ ▲ ✖ ■). See PR #179 t11.",
+                                    "chalk": "Browser-safe code must not import chalk — pulls Node deps and emits ANSI that browsers can't render. Use plain Unicode glyphs."
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    ]
 }
