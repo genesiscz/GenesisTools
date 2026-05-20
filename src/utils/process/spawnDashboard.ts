@@ -16,7 +16,7 @@
  * Returns the child's exit code so callers can `process.exit(code)` themselves
  * — we deliberately do NOT call `process.exit` here so callers can run cleanup.
  */
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 
 export interface SpawnDashboardOptions {
     /** Argv. First element is the executable. */
