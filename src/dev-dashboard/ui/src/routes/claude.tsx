@@ -1,6 +1,6 @@
 import type { AccountUsage } from "@app/claude/lib/usage/api";
 import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { AccountCard } from "@/components/claude-usage/AccountCard";
 import { AccountUsageChart } from "@/components/claude-usage/AccountUsageChart";
 import { fetchJson } from "@/lib/api";
@@ -18,6 +18,14 @@ export function ClaudeRoute() {
         refetchInterval: 30000,
     });
     const [rangeMinutes, setRangeMinutes] = useState<number>(10080);
+
+    // One window end shared by every chart so their time axes align exactly.
+    // Recomputed on each poll tick and on range change, not per chart render
+    // (per-render Date.now() would drift the two charts apart again).
+    const rangeEndMs = useMemo(
+        () => Date.now(),
+        [rangeMinutes, usageQuery.dataUpdatedAt]
+    );
 
     const accounts = usageQuery.data ?? [];
 
@@ -76,6 +84,7 @@ export function ClaudeRoute() {
                         label={account.label}
                         accountError={account.error}
                         rangeMinutes={rangeMinutes}
+                        rangeEndMs={rangeEndMs}
                     />
                 ))}
             </div>
