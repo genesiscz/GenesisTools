@@ -621,12 +621,18 @@ export async function logs(ctx: LifecycleContext, opts: { lines?: number; sessio
     }
 }
 
-function shouldOpenBrowser(config: DashboardAppConfig, opts: UpOptions): boolean {
+export function shouldOpenBrowser(config: DashboardAppConfig, opts: UpOptions): boolean {
     if (config.type !== "ui") {
         return false;
     }
 
-    return opts.open ?? config.openBrowser?.enabled ?? false;
+    if (opts.open === false) {
+        return false;
+    }
+
+    // Commander's `--no-open` negatable flag defaults `open` to true; per-app
+    // `openBrowser.enabled` is the source of truth (dev-dashboard: false).
+    return config.openBrowser?.enabled ?? false;
 }
 
 async function openBrowserWhenReady(config: DashboardAppConfig, port: number): Promise<void> {

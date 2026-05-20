@@ -167,7 +167,6 @@ const devDashboardApp = defineDashboardApp({
     spawn: {
         cmd: [process.execPath, process.argv[1], "__ui-server"],
         cwd: PROJECT_ROOT,
-        env: process.env as Record<string, string | undefined>,
     },
     readiness: { kind: "http", path: "/" },
     openBrowser: { enabled: false },
