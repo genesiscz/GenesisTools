@@ -213,8 +213,52 @@ async function spawnAndCaptureStderr(args: string[], workspaceRoot: string): Pro
             }
         });
 
-        child.on("error", reject);
+        // Orphan detection: macOS does not propagate parent death (no
+        // PR_SET_PDEATHSIG). If the launching shell dies, both we and our child
+        // get reparented to launchd (PPID=1) — without this poll, a long-lived
+        // dashboard (`tools <foo> --dashboard`) survives invisibly and burns
+        // CPU/holds DB locks for days. Detect reparent → kill child → exit.
+        const orphanTimer = setInterval(() => {
+            if (process.ppid === 1) {
+                try {
+                    child.kill("SIGTERM");
+                } catch {}
+                setTimeout(() => {
+                    if (!child.killed) {
+                        try {
+                            child.kill("SIGKILL");
+                        } catch {}
+                    }
+                }, 5000).unref();
+            }
+        }, 2000);
+        orphanTimer.unref();
+
+        // Forward standard signals to the child so it can clean up before exit.
+        const forward = (sig: NodeJS.Signals) => () => {
+            try {
+                child.kill(sig);
+            } catch {}
+        };
+        const signals: readonly NodeJS.Signals[] = ["SIGHUP", "SIGINT", "SIGTERM", "SIGQUIT"];
+
+        for (const sig of signals) {
+            process.on(sig, forward(sig));
+        }
+
+        const cleanup = () => {
+            clearInterval(orphanTimer);
+            for (const sig of signals) {
+                process.removeAllListeners(sig);
+            }
+        };
+
+        child.on("error", (err) => {
+            cleanup();
+            reject(err);
+        });
         child.on("close", (code, signal) => {
+            cleanup();
             if (signal) {
                 resolvePromise(128 + (signalToNumber(signal) ?? 0));
                 return;

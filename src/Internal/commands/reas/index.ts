@@ -476,7 +476,7 @@ async function runSearch(query: string, options: ReasOptions): Promise<void> {
 async function runReasAnalysis(options: ReasOptions): Promise<void> {
     if (options.dashboard) {
         const { resolve } = await import("node:path");
-        const { spawn } = await import("node:child_process");
+        const { spawnDashboard } = await import("@app/utils/process/spawnDashboard");
         const configPath = resolve(import.meta.dir, "ui/vite.config.ts");
         const portStr = options.dashboardPort ?? "3072";
         const port = Number.parseInt(portStr, 10);
@@ -499,18 +499,8 @@ async function runReasAnalysis(options: ReasOptions): Promise<void> {
         }
 
         out.println(`Starting REAS dashboard on port ${port}...`);
-        const child = spawn("bun", ["--bun", "vite", "dev", "--strictPort", "-c", configPath, "--port", String(port)], {
-            stdio: "inherit",
-        });
-
-        const exitCode = await new Promise<number>((resolveExit) => {
-            child.once("error", (err: Error) => {
-                out.error("Dashboard failed:", err);
-                resolveExit(1);
-            });
-            child.once("close", (code) => {
-                resolveExit(code ?? 0);
-            });
+        const exitCode = await spawnDashboard({
+            cmd: ["bun", "--bun", "vite", "dev", "--strictPort", "-c", configPath, "--port", String(port)],
         });
 
         process.exit(exitCode);

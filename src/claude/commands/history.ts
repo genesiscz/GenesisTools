@@ -19,6 +19,7 @@ import { resolveProjectFilter } from "@app/utils/claude";
 import { isInteractive } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
 import { PROJECT_ROOT } from "@app/utils/paths";
+import { spawnDashboard } from "@app/utils/process/spawnDashboard";
 import * as p from "@app/utils/prompts/p";
 import { spawn } from "bun";
 import chalk from "chalk";
@@ -343,7 +344,7 @@ export function registerHistoryCommand(program: Command): void {
             out.println(chalk.dim(`   Port: ${options.port}`));
             out.println();
 
-            const proc = spawn({
+            await spawnDashboard({
                 cmd: [
                     "bun",
                     "--bun",
@@ -355,9 +356,6 @@ export function registerHistoryCommand(program: Command): void {
                     options.port,
                 ],
                 cwd: PROJECT_ROOT,
-                stdio: ["inherit", "inherit", "inherit"],
             });
-
-            await proc.exited;
         });
 }

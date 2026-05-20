@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import { PROJECT_ROOT } from "@app/utils/paths";
+import { spawnDashboard } from "@app/utils/process/spawnDashboard";
 import { DASHBOARDS } from "@app/utils/ui/dashboards";
 import { getYoutube } from "@app/youtube/commands/_shared/ensure-pipeline";
 import type { Command } from "commander";
@@ -23,8 +24,9 @@ export function registerUiCommand(program: Command): void {
             }
 
             const uiDir = resolve(import.meta.dirname, "..", "ui");
-            const proc = Bun.spawn(
-                [
+            setTimeout(() => openBrowser(`http://localhost:${opts.port}`), 2000);
+            await spawnDashboard({
+                cmd: [
                     "bun",
                     "--bun",
                     "vite",
@@ -35,14 +37,9 @@ export function registerUiCommand(program: Command): void {
                     String(opts.port),
                     "--strictPort",
                 ],
-                {
-                    cwd: PROJECT_ROOT,
-                    stdio: ["inherit", "inherit", "inherit"],
-                    env: { ...process.env, YOUTUBE_PROJECT_CWD: process.cwd() },
-                }
-            );
-            setTimeout(() => openBrowser(`http://localhost:${opts.port}`), 2000);
-            await proc.exited;
+                cwd: PROJECT_ROOT,
+                env: { YOUTUBE_PROJECT_CWD: process.cwd() },
+            });
         });
 }
 

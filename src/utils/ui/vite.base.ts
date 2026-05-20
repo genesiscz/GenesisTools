@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import tailwindcss from "@tailwindcss/vite";
 import { tanstackStart } from "@tanstack/react-start/plugin/vite";
 import viteReact from "@vitejs/plugin-react";
@@ -161,6 +161,30 @@ function deriveWatchDirs(root: string, appDir: string, extraDirs: string[]): str
     return dirs;
 }
 
+/**
+ * Per-dashboard cacheDir under `<repo>/node_modules/.vite-cache/<slug>/`.
+ *
+ * Default Vite cacheDir is `<root>/node_modules/.vite`, which from
+ * `src/<tool>/ui` resolves to the repo-root `node_modules/.vite` for every
+ * dashboard — so running ≥2 in parallel makes their optimize-deps versioners
+ * race, rewriting the same `?v=<hash>` files and breaking already-open tabs
+ * with 504 "Outdated Optimize Dep" + "Failed to fetch dynamically imported
+ * module". Isolating per dashboard prevents the collision.
+ */
+function resolveDashboardCacheDir(root: string): string {
+    let dir = root;
+    while (dir !== dirname(dir)) {
+        if (existsSync(join(dir, "node_modules")) && existsSync(join(dir, "package.json"))) {
+            const slug = relative(dir, root).split(sep).filter(Boolean).join("-") || "root";
+
+            return join(dir, "node_modules", ".vite-cache", slug);
+        }
+        dir = dirname(dir);
+    }
+
+    return join(root, "node_modules", ".vite");
+}
+
 export function createDashboardViteConfig({
     root,
     port,
@@ -193,6 +217,7 @@ export function createDashboardViteConfig({
 
     return defineConfig({
         root,
+        cacheDir: resolveDashboardCacheDir(root),
         plugins: [...corePlugins, ...extraPlugins],
         server: {
             port,
