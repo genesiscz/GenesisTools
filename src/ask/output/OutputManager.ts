@@ -91,10 +91,10 @@ export class OutputManager {
         if (metadata) {
             // Add metadata as header for text format
             const metadataText = this.formatMetadata(metadata, "text");
-            out.print(metadataText);
+            out.println(metadataText);
         }
 
-        out.print(content);
+        out.println(content);
     }
 
     private async outputJSON(content: string, metadata?: ResponseMetadata): Promise<void> {
@@ -105,7 +105,7 @@ export class OutputManager {
         };
 
         const jsonOutput = SafeJSON.stringify(response, null, 2);
-        out.print(jsonOutput);
+        out.println(jsonOutput);
     }
 
     private async outputJSONL(content: string, metadata?: ResponseMetadata): Promise<void> {
@@ -114,7 +114,7 @@ export class OutputManager {
             timestamp: new Date().toISOString(),
             ...(metadata && { metadata }),
         });
-        out.print(line);
+        out.println(line);
     }
 
     private async outputMarkdown(content: string, metadata?: ResponseMetadata): Promise<void> {
@@ -127,7 +127,7 @@ export class OutputManager {
         // Convert content to markdown if it's not already
         markdown += this.ensureMarkdownFormat(content);
 
-        out.print(markdown);
+        out.println(markdown);
     }
 
     private async outputToClipboard(content: string, metadata?: ResponseMetadata): Promise<void> {
@@ -141,10 +141,10 @@ export class OutputManager {
             }
 
             await copyToClipboard(clipboardContent, { silent: true });
-            out.print(pc.green("✓ Content copied to clipboard"));
+            out.println(pc.green("✓ Content copied to clipboard"));
 
             if (metadata) {
-                out.print(pc.dim("Metadata included in clipboard content"));
+                out.println(pc.dim("Metadata included in clipboard content"));
             }
         } catch (error) {
             logger.error(`Failed to copy to clipboard: ${error}`);
@@ -181,12 +181,12 @@ export class OutputManager {
             }
 
             await write(filePath, fileContent);
-            out.print(pc.green(`✓ Content saved to ${filePath}`));
+            out.println(pc.green(`✓ Content saved to ${filePath}`));
 
             // Show file size
             const stats = Bun.file(filePath);
             const size = this.formatFileSize(stats.size);
-            out.print(pc.dim(`File size: ${size}`));
+            out.println(pc.dim(`File size: ${size}`));
         } catch (error) {
             logger.error(`Failed to write to file ${filename}: ${error}`);
             throw error;
@@ -408,23 +408,23 @@ export class OutputManager {
     }
 
     showOutputHelp(): void {
-        out.print(pc.cyan("\n📤 Output Formats:"));
-        out.print();
+        out.println(pc.cyan("\n📤 Output Formats:"));
+        out.println();
 
-        out.print(`${pc.white("  text") + pc.dim("        ")}Plain text output with metadata header`);
-        out.print(`${pc.white("  json") + pc.dim("        ")}Structured JSON with metadata`);
-        out.print(`${pc.white("  markdown") + pc.dim("    ")}Markdown formatted with metadata`);
-        out.print(`${pc.white("  clipboard") + pc.dim("   ")}Copy to system clipboard`);
-        out.print(`${pc.white("  file") + pc.dim("         ")}Save to file (format based on extension)`);
-        out.print();
+        out.println(`${pc.white("  text") + pc.dim("        ")}Plain text output with metadata header`);
+        out.println(`${pc.white("  json") + pc.dim("        ")}Structured JSON with metadata`);
+        out.println(`${pc.white("  markdown") + pc.dim("    ")}Markdown formatted with metadata`);
+        out.println(`${pc.white("  clipboard") + pc.dim("   ")}Copy to system clipboard`);
+        out.println(`${pc.white("  file") + pc.dim("         ")}Save to file (format based on extension)`);
+        out.println();
 
-        out.print(pc.yellow("💡 Examples:"));
-        out.print(pc.dim("  /output text           # Plain text"));
-        out.print(pc.dim("  /output json           # JSON format"));
-        out.print(pc.dim("  /output file chat.txt  # Save to file"));
-        out.print(pc.dim("  /output file resp.json # Save as JSON"));
-        out.print(pc.dim("  /output file out.md    # Save as Markdown"));
-        out.print();
+        out.println(pc.yellow("💡 Examples:"));
+        out.println(pc.dim("  /output text           # Plain text"));
+        out.println(pc.dim("  /output json           # JSON format"));
+        out.println(pc.dim("  /output file chat.txt  # Save to file"));
+        out.println(pc.dim("  /output file resp.json # Save as JSON"));
+        out.println(pc.dim("  /output file out.md    # Save as Markdown"));
+        out.println();
     }
 
     isTTY(): boolean {

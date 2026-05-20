@@ -59,6 +59,6 @@ export function createListCommand(): Command {
             }
 
             const format = resolveFormat(opts.format);
-            out.print(formatTodoList(todos, format, { colors: opts.colors }));
+            out.println(formatTodoList(todos, format, { colors: opts.colors }));
         });
 }

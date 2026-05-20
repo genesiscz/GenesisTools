@@ -373,22 +373,22 @@ function printTimeline(days: ActivityDay[]): void {
     }
 
     for (const day of days) {
-        out.print();
-        out.print(pc.bold(`${day.date} (${day.dayName})`));
-        out.print(pc.dim("-".repeat(60)));
+        out.println();
+        out.println(pc.bold(`${day.date} (${day.dayName})`));
+        out.println(pc.dim("-".repeat(60)));
 
         for (const event of day.events) {
             const time = formatTime(event.date);
             const icon = TYPE_COLORS[event.type](TYPE_ICONS[event.type]);
             const id = pc.dim(`#${event.workItemId}`);
             const shortTitle = event.title;
-            out.print(`  ${pc.dim(time)}  ${icon} ${id} ${event.description}`);
+            out.println(`  ${pc.dim(time)}  ${icon} ${id} ${event.description}`);
             if (event.type !== "field_edit") {
-                out.print(`  ${" ".repeat(8)}${pc.dim(shortTitle)}`);
+                out.println(`  ${" ".repeat(8)}${pc.dim(shortTitle)}`);
             }
         }
     }
-    out.print();
+    out.println();
 }
 
 function printSummary(days: ActivityDay[]): void {
@@ -422,19 +422,19 @@ function printSummary(days: ActivityDay[]): void {
         }
 
         const uniqueItems = new Set(day.events.map((e) => e.workItemId));
-        out.print(
+        out.println(
             `  ${pc.bold(day.date)} (${day.dayName}): ${day.events.length} actions across ${uniqueItems.size} items — ${parts.join(", ")}`
         );
     }
 
     const totalEvents = days.reduce((sum, d) => sum + d.events.length, 0);
     const allItems = new Set(days.flatMap((d) => d.events.map((e) => e.workItemId)));
-    out.print();
-    out.print(pc.dim(`Total: ${totalEvents} actions across ${allItems.size} work items over ${days.length} days`));
+    out.println();
+    out.println(pc.dim(`Total: ${totalEvents} actions across ${allItems.size} work items over ${days.length} days`));
 }
 
 function printJson(days: ActivityDay[]): void {
-    out.print(formatJSON(days));
+    out.println(formatJSON(days));
 }
 
 // ============= Main Handler =============

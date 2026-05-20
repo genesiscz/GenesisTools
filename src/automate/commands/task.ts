@@ -35,7 +35,7 @@ export function registerTaskCommand(parent: Command): void {
                 s.last_run_at ?? pc.dim("never"),
                 s.enabled ? s.next_run_at : pc.dim("—"),
             ]);
-            out.print(formatTable(rows, headers));
+            out.println(formatTable(rows, headers));
         });
 
     // task create — interactive schedule creation
@@ -158,7 +158,7 @@ export function registerTaskCommand(parent: Command): void {
                     formatDuration(l.duration_ms),
                     l.error ? pc.red(l.error.slice(0, 80)) : "",
                 ]);
-                out.print(formatTable(logRows, headers));
+                out.println(formatTable(logRows, headers));
                 return;
             }
 
@@ -193,7 +193,7 @@ export function registerTaskCommand(parent: Command): void {
                     r.started_at,
                     r.duration_ms != null ? formatDuration(r.duration_ms) : pc.dim("running..."),
                 ]);
-                out.print(formatTable(rows, headers));
+                out.println(formatTable(rows, headers));
             }
         });
 
@@ -332,6 +332,6 @@ export function registerTaskCommand(parent: Command): void {
                 r.duration_ms != null ? formatDuration(r.duration_ms) : pc.dim("running..."),
                 String(r.step_count),
             ]);
-            out.print(formatTable(rows, headers));
+            out.println(formatTable(rows, headers));
         });
 }

@@ -84,7 +84,7 @@ export async function runCommandInteractive(
 
         const format = formatOverride ?? defaultFormat();
         const output = formatOutput(result, format);
-        out.print(output);
+        out.println(output);
     } catch (error) {
         spin.stop(pc.red(`${cmd.name} failed`));
         p.log.error(error instanceof Error ? error.message : String(error));

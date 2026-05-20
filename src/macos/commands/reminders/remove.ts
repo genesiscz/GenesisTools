@@ -20,7 +20,7 @@ export function registerRemoveCommand(program: Command): void {
                     });
 
                     if (ok) {
-                        out.print(`${pc.green("Reminder completed")} — ID: ${id}`);
+                        out.println(`${pc.green("Reminder completed")} — ID: ${id}`);
                     } else {
                         out.error(`${pc.red("Failed to complete reminder")} — ID: ${id}`);
                         process.exit(1);
@@ -34,7 +34,7 @@ export function registerRemoveCommand(program: Command): void {
                 });
 
                 if (ok) {
-                    out.print(`${pc.green("Reminder deleted")} — ID: ${id}`);
+                    out.println(`${pc.green("Reminder deleted")} — ID: ${id}`);
                 } else {
                     out.error(`${pc.red("Failed to delete reminder")} — ID: ${id}`);
                     process.exit(1);

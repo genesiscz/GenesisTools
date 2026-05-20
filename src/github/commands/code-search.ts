@@ -47,7 +47,7 @@ async function searchCode(query: string, options: CodeSearchOptions): Promise<Co
         searchQuery += ` language:${options.language}`;
     }
 
-    out.print(chalk.dim(`Searching code: ${searchQuery}`));
+    out.println(chalk.dim(`Searching code: ${searchQuery}`));
 
     const { data } = await withRetry(
         () =>
@@ -103,7 +103,7 @@ export async function codeSearchCommand(query: string, options: CodeSearchOption
     verbose(options, `Found ${results.length} results`);
 
     if (results.length === 0) {
-        out.print(chalk.yellow("No code results found."));
+        out.println(chalk.yellow("No code results found."));
         return;
     }
 
@@ -112,9 +112,9 @@ export async function codeSearchCommand(query: string, options: CodeSearchOption
 
     if (options.output) {
         await Bun.write(options.output, output);
-        out.print(chalk.green(`✔ Output written to ${options.output}`));
+        out.println(chalk.green(`✔ Output written to ${options.output}`));
     } else {
-        out.print(output);
+        out.println(output);
     }
 }
 

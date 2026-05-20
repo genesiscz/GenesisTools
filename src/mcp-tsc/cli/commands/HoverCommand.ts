@@ -102,18 +102,18 @@ export class HoverCommand {
                 if (hover.raw) {
                     output.raw = hover.raw;
                 }
-                out.print(SafeJSON.stringify(output, null, 2));
+                out.println(SafeJSON.stringify(output, null, 2));
             } else {
-                out.print(`File: ${filePath}`);
-                out.print(`Line: ${lineNumber}`);
-                out.print(`Character: ${character}`);
-                out.print(`Content: ${lineContent}`);
-                out.print();
+                out.println(`File: ${filePath}`);
+                out.println(`Line: ${lineNumber}`);
+                out.println(`Character: ${character}`);
+                out.println(`Content: ${lineContent}`);
+                out.println();
                 if (hover.contents) {
-                    out.print("Hover Information:");
-                    out.print(hover.contents);
+                    out.println("Hover Information:");
+                    out.println(hover.contents);
                 } else {
-                    out.print("No hover information available at this location");
+                    out.println("No hover information available at this location");
                 }
             }
         } catch (error) {

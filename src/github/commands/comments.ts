@@ -205,7 +205,7 @@ export async function commentsCommand(input: string, options: CommentsCommandOpt
 
     const { owner, repo, number, commentId } = parsed;
     verbose(options, `Parsed: owner=${owner}, repo=${repo}, number=${number}, commentId=${commentId || "none"}`);
-    out.print(chalk.dim(`Fetching comments for ${owner}/${repo}#${number}...`));
+    out.println(chalk.dim(`Fetching comments for ${owner}/${repo}#${number}...`));
 
     // Get or create repo and issue in cache
     const repoRecord = getOrCreateRepo(owner, repo);
@@ -347,7 +347,7 @@ export async function commentsCommand(input: string, options: CommentsCommandOpt
         const lastFull = metadata?.last_full_fetch ? formatCacheDate(metadata.last_full_fetch) : "never";
         const lastIncr = metadata?.last_incremental_fetch ? formatCacheDate(metadata.last_incremental_fetch) : "never";
         const ageMin = Math.round(cacheAgeMs / 60000);
-        out.print(
+        out.println(
             chalk.dim(`Using cached comments (${ageMin}m old, last full: ${lastFull}, last update: ${lastIncr})`)
         );
 
@@ -455,14 +455,14 @@ export async function commentsCommand(input: string, options: CommentsCommandOpt
         verbose(options, `Full content saved to: ${filename}`);
 
         const summary = formatIssue(outputData, "ai", { noIndex: options.noIndex, filePath: filename });
-        out.print(summary);
+        out.println(summary);
     } else {
         const output = formatIssue(outputData, format, { noIndex: options.noIndex });
         if (options.output) {
             await Bun.write(options.output, output);
-            out.print(chalk.green(`✔ Output written to ${options.output}`));
+            out.println(chalk.green(`✔ Output written to ${options.output}`));
         } else {
-            out.print(output);
+            out.println(output);
         }
     }
     verbose(options, `Completed: ${comments.length} comments`);
@@ -482,7 +482,7 @@ export async function commentsCommand(input: string, options: CommentsCommandOpt
         const ageMin = Math.round(cacheAgeMs / 60000);
         cacheStatus = `(cached, ${ageMin}m old)`;
     }
-    out.print(
+    out.println(
         chalk.dim(
             `\nFetched: ${comments.length} comments ${cacheStatus}${sinceId ? ` (since comment ${sinceId})` : ""}`
         )

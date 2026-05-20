@@ -11,7 +11,7 @@ export function registerMemoryCommand(program: Command): void {
         .command("path")
         .description("Print the absolute path to MEMORY.md for the current project")
         .action(() => {
-            out.print(getMemoryPath());
+            out.println(getMemoryPath());
         });
 
     memory
@@ -25,7 +25,7 @@ export function registerMemoryCommand(program: Command): void {
                 return;
             }
 
-            out.print(content);
+            out.println(content);
         });
 
     memory
@@ -40,7 +40,7 @@ export function registerMemoryCommand(program: Command): void {
             }
 
             for (const line of matches) {
-                out.print(line);
+                out.println(line);
             }
         });
 

@@ -75,10 +75,10 @@ async function main(): Promise<void> {
         logger.error(`Error: ${message}`);
 
         if (message.includes("not authorized") || message.includes("permission")) {
-            out.print("\nTo fix permission issues:");
-            out.print("  1. Open System Settings > Privacy & Security > Full Disk Access");
-            out.print("  2. Enable access for your terminal app");
-            out.print("  3. Restart the terminal and try again");
+            out.println("\nTo fix permission issues:");
+            out.println("  1. Open System Settings > Privacy & Security > Full Disk Access");
+            out.println("  2. Enable access for your terminal app");
+            out.println("  3. Restart the terminal and try again");
         }
 
         process.exit(1);

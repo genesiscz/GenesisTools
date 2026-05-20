@@ -79,7 +79,7 @@ export function parseCLIArguments(): Args {
 }
 
 export function showHelp(): void {
-    out.print(`
+    out.println(`
 ASK Tool - Multi-Router LLM Chat Application
 
 Usage:
@@ -178,8 +178,8 @@ Environment Variables:
 }
 
 export function showVersion(): void {
-    out.print("ASK Tool v1.0.0");
-    out.print("Multi-provider LLM chat application for GenesisTools");
+    out.println("ASK Tool v1.0.0");
+    out.println("Multi-provider LLM chat application for GenesisTools");
 }
 
 export function validateOptions(options: CLIOptions): ValidationResult {

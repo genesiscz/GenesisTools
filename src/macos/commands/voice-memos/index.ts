@@ -140,8 +140,8 @@ function printMemoTable(memos: VoiceMemo[]): void {
     const headers = ["#", "Title", "Date", "Duration", "Transcript"];
     const rows = memos.map(formatMemoRow);
 
-    out.print(formatTable(rows, headers, { alignRight: [0, 3] }));
-    out.print(pc.dim(`\n${memos.length} memo${memos.length === 1 ? "" : "s"}`));
+    out.println(formatTable(rows, headers, { alignRight: [0, 3] }));
+    out.println(pc.dim(`\n${memos.length} memo${memos.length === 1 ? "" : "s"}`));
 }
 
 function resolveMemo(id: number): VoiceMemo {
@@ -451,14 +451,14 @@ async function transcribeOne(opts: {
 
         if (transcript) {
             p.log.info(`${pc.bold(memo.title)} — embedded transcript found`);
-            out.print();
+            out.println();
 
             for (const segment of transcript.segments) {
                 const timePrefix =
                     segment.startTime !== undefined
                         ? pc.dim(`[${formatDuration(segment.startTime * 1000, "ms", "tiered")}] `)
                         : "";
-                out.print(`${timePrefix}${segment.text}`);
+                out.println(`${timePrefix}${segment.text}`);
             }
 
             return;
@@ -577,14 +577,14 @@ async function transcribeOne(opts: {
 
         if (!opts.output) {
             if (format === "text" && result.segments?.length) {
-                out.print();
+                out.println();
 
                 for (const seg of result.segments) {
                     const start = formatDuration(seg.start * 1000, "ms", "tiered");
-                    out.print(`${pc.dim(`[${start}]`)} ${seg.text.trim()}`);
+                    out.println(`${pc.dim(`[${start}]`)} ${seg.text.trim()}`);
                 }
             } else {
-                out.print(formatted);
+                out.println(formatted);
             }
         }
     } finally {
@@ -625,7 +625,7 @@ function transcribeAll(force: boolean): void {
         }
     }
 
-    out.print();
+    out.println();
     p.log.info(
         `${pc.bold(String(transcribed))} transcribed, ${pc.bold(String(noTranscript))} without transcript, ${pc.bold(String(skipped))} skipped (missing file)`
     );

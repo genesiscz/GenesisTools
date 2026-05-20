@@ -110,7 +110,7 @@ const program = new Command()
         // do not enter interactive mode.
         if (opts.save && text == null) {
             await applySave({ mgr, app: saveApp as string, patch: patch as Partial<SayAppConfig>, unsetList });
-            out.print(pc.green(`[say] saved profile "${saveApp}"`));
+            out.println(pc.green(`[say] saved profile "${saveApp}"`));
             return;
         }
 
@@ -207,7 +207,7 @@ const program = new Command()
 
         if (opts.save && saveApp && patch) {
             await applySave({ mgr, app: saveApp, patch, unsetList });
-            out.print(pc.green(`[say] saved profile "${saveApp}"`));
+            out.println(pc.green(`[say] saved profile "${saveApp}"`));
         }
     });
 
@@ -235,14 +235,14 @@ program
                 continue;
             }
 
-            out.print();
-            out.print(pc.bold(pc.cyan(`[${provider}] ${task} models`)));
+            out.println();
+            out.println(pc.bold(pc.cyan(`[${provider}] ${task} models`)));
             const rows = models.map((m) => [m.id, m.name, m.description.slice(0, 80)]);
-            out.print(formatTable(rows, ["ID", "Name", "Description"]));
+            out.println(formatTable(rows, ["ID", "Name", "Description"]));
         }
 
-        out.print();
-        out.print(pc.dim("Download with: tools ai models download <id>"));
+        out.println();
+        out.println(pc.dim("Download with: tools ai models download <id>"));
     });
 
 program
@@ -582,8 +582,8 @@ async function printVoiceList(filter?: SayProvider): Promise<void> {
                   : providerType === "openai"
                     ? "OpenAI"
                     : providerType;
-        out.print();
-        out.print(pc.bold(pc.cyan(`[${label}] (${voices.length} voices)`)));
+        out.println();
+        out.println(pc.bold(pc.cyan(`[${label}] (${voices.length} voices)`)));
 
         if (voices.length === 0) {
             out.error(pc.dim("  (no voices)"));
@@ -591,7 +591,7 @@ async function printVoiceList(filter?: SayProvider): Promise<void> {
         }
 
         const rows = voices.map((v) => [v.id, v.name, v.locale ?? "", (v.description ?? "").slice(0, 60)]);
-        out.print(formatTable(rows, ["ID", "Name", "Locale", "Description"]));
+        out.println(formatTable(rows, ["ID", "Name", "Locale", "Description"]));
     }
 }
 
@@ -677,7 +677,7 @@ async function manageTextOverridesTUI(mgr: SayConfigManager): Promise<void> {
         p.log.info("Current overrides:");
 
         for (const [i, o] of overrides.entries()) {
-            out.print(`  ${pc.dim(`${i + 1}.`)} "${o.match}" → ${pc.cyan(o.provider)}`);
+            out.println(`  ${pc.dim(`${i + 1}.`)} "${o.match}" → ${pc.cyan(o.provider)}`);
         }
     } else {
         p.log.info("No text overrides configured.");
@@ -883,7 +883,7 @@ async function listAppsTUI(mgr: SayConfigManager): Promise<void> {
         ]);
     }
 
-    out.print(formatTable(rows, ["App", "Voice", "Volume", "Provider", "Mute"]));
+    out.println(formatTable(rows, ["App", "Voice", "Volume", "Provider", "Mute"]));
 }
 
 /**
@@ -946,11 +946,11 @@ async function editAppFields(mgr: SayConfigManager, app: string): Promise<void> 
 
 function renderProfileHeader(app: string, profile: SayAppConfig): void {
     const rows = SETTABLE_FIELDS.map((f) => [f, formatFieldValue(profile, f)]);
-    out.print();
-    out.print(pc.bold(`Edit "${app}"`));
-    out.print(formatTable(rows, ["Field", "Current"]));
-    out.print(pc.dim("  ⏎ keep  ·  - inherit (clear)  ·  any value to set"));
-    out.print();
+    out.println();
+    out.println(pc.bold(`Edit "${app}"`));
+    out.println(formatTable(rows, ["Field", "Current"]));
+    out.println(pc.dim("  ⏎ keep  ·  - inherit (clear)  ·  any value to set"));
+    out.println();
 }
 
 function formatFieldValue(profile: SayAppConfig, field: SettableField): string {

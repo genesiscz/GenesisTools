@@ -62,9 +62,9 @@ function showOverview(manager: IndexerManager): void {
         ];
     });
 
-    out.print("");
-    out.print(formatTable(rows, headers, { alignRight: [2, 3, 4, 7] }));
-    out.print("");
+    out.println("");
+    out.println(formatTable(rows, headers, { alignRight: [2, 3, 4, 7] }));
+    out.println("");
 }
 
 async function showDetailedStatus(manager: IndexerManager, name: string): Promise<void> {

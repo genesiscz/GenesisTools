@@ -111,7 +111,7 @@ async function getAndSelectCommit(git: Executor): Promise<string | undefined> {
     }
 
     try {
-        const selectedCommit = await inquirerBackend.search<string>({
+        const selectedCommit = await p.search<string>({
             message: "Select a commit (type to filter). The diff will be from this commit to HEAD:",
             options: async (term) => {
                 const filtered = !term

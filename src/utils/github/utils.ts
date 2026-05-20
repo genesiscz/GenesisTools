@@ -23,7 +23,7 @@ export function isGlobalVerbose(): boolean {
  */
 export function verboseLog(message: string): void {
     if (globalVerbose) {
-        out.print(chalk.cyan(message));
+        out.println(chalk.cyan(message));
     }
 }
 
@@ -40,7 +40,7 @@ export interface VerboseOptions {
  */
 export function verbose<T extends VerboseOptions>(options: T, message: string): void {
     if (options.verbose) {
-        out.print(chalk.cyan(message));
+        out.println(chalk.cyan(message));
     }
 }
 

@@ -71,7 +71,7 @@ export function registerDiffCommand(program: Command): void {
                 entries2 = filterByLevel(entries2, levels);
             }
 
-            out.print(`Comparing: ${name1} (${entries1.length} entries) vs ${name2} (${entries2.length} entries)`);
+            out.println(`Comparing: ${name1} (${entries1.length} entries) vs ${name2} (${entries2.length} entries)`);
 
             const groups1 = groupByLabel(entries1);
             const groups2 = groupByLabel(entries2);
@@ -116,9 +116,9 @@ export function registerDiffCommand(program: Command): void {
                 }
 
                 if (matches.length > 0) {
-                    out.print(`\nMatching ${level}s:`);
+                    out.println(`\nMatching ${level}s:`);
                     for (const m of matches) {
-                        out.print(m);
+                        out.println(m);
                     }
                 }
             }
@@ -128,14 +128,14 @@ export function registerDiffCommand(program: Command): void {
             const timerLabels = new Set([...timers1.map((t) => t.label), ...timers2.map((t) => t.label)]);
 
             if (timerLabels.size > 0) {
-                out.print("\nTimer comparison:");
+                out.println("\nTimer comparison:");
                 for (const label of timerLabels) {
                     const t1 = timers1.find((t) => t.label === label);
                     const t2 = timers2.find((t) => t.label === label);
                     const d1 = t1 ? formatDuration(t1.durationMs, "ms") : "N/A";
                     const d2 = t2 ? formatDuration(t2.durationMs, "ms") : "N/A";
                     const pct = t1 && t2 ? `  (${percentChange(t1.durationMs, t2.durationMs)})` : "";
-                    out.print(`  ${label.padEnd(20)} ${name1}: ${d1}  ${name2}: ${d2}${pct}`);
+                    out.println(`  ${label.padEnd(20)} ${name1}: ${d1}  ${name2}: ${d2}${pct}`);
                 }
             }
 
@@ -151,7 +151,7 @@ export function registerDiffCommand(program: Command): void {
             });
 
             if (only1.length > 0 || only2.length > 0) {
-                out.print("");
+                out.println("");
                 if (only1.length > 0) {
                     const byLevel: Record<string, number> = {};
                     for (const e of only1) {
@@ -160,7 +160,7 @@ export function registerDiffCommand(program: Command): void {
                     const summary = Object.entries(byLevel)
                         .map(([l, c]) => `${c} ${l}`)
                         .join(", ");
-                    out.print(`Only in ${name1}: ${only1.length} entries (${summary})`);
+                    out.println(`Only in ${name1}: ${only1.length} entries (${summary})`);
                 }
                 if (only2.length > 0) {
                     const byLevel: Record<string, number> = {};
@@ -170,7 +170,7 @@ export function registerDiffCommand(program: Command): void {
                     const summary = Object.entries(byLevel)
                         .map(([l, c]) => `${c} ${l}`)
                         .join(", ");
-                    out.print(`Only in ${name2}: ${only2.length} entries (${summary})`);
+                    out.println(`Only in ${name2}: ${only2.length} entries (${summary})`);
                 }
             }
         });

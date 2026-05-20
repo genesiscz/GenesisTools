@@ -107,15 +107,15 @@ async function handleList(storage: Storage): Promise<void> {
     const patterns = (await storage.getConfigValue<WorkitemPattern[]>("workitemPatterns")) ?? [];
 
     if (patterns.length === 0) {
-        out.print(chalk.dim("No custom patterns configured. Using defaults:"));
+        out.println(chalk.dim("No custom patterns configured. Using defaults:"));
         const defaults = await loadWorkitemPatternsAsync();
         for (let i = 0; i < defaults.length; i++) {
-            out.print(formatPatternForDisplay(defaults[i], i));
+            out.println(formatPatternForDisplay(defaults[i], i));
         }
     } else {
-        out.print(chalk.bold("Configured workitem patterns:"));
+        out.println(chalk.bold("Configured workitem patterns:"));
         for (let i = 0; i < patterns.length; i++) {
-            out.print(formatPatternForDisplay(patterns[i], i));
+            out.println(formatPatternForDisplay(patterns[i], i));
         }
     }
 }
@@ -124,7 +124,7 @@ async function handleAdd(storage: Storage, regex: string): Promise<void> {
     const validation = validatePattern(regex);
 
     if (!validation.valid) {
-        out.print(chalk.red(`Invalid pattern: ${validation.error}`));
+        out.println(chalk.red(`Invalid pattern: ${validation.error}`));
         process.exit(1);
     }
 
@@ -139,14 +139,14 @@ async function handleAdd(storage: Storage, regex: string): Promise<void> {
     const alreadyExists = currentPatterns.some((p) => p.regex === regex);
 
     if (alreadyExists) {
-        out.print(chalk.yellow(`Pattern "${regex}" already exists.`));
+        out.println(chalk.yellow(`Pattern "${regex}" already exists.`));
         return;
     }
 
     currentPatterns.push(newPattern);
     await storage.setConfigValue("workitemPatterns", currentPatterns);
-    out.print(chalk.green(`Added pattern: ${regex}`));
-    out.print(chalk.dim(`Total patterns: ${currentPatterns.length}`));
+    out.println(chalk.green(`Added pattern: ${regex}`));
+    out.println(chalk.dim(`Total patterns: ${currentPatterns.length}`));
 }
 
 async function handleRemove(storage: Storage, indexStr: string): Promise<void> {
@@ -154,14 +154,14 @@ async function handleRemove(storage: Storage, indexStr: string): Promise<void> {
     const currentPatterns = (await storage.getConfigValue<WorkitemPattern[]>("workitemPatterns")) ?? [];
 
     if (Number.isNaN(index) || index < 0 || index >= currentPatterns.length) {
-        out.print(chalk.red(`Invalid index: ${indexStr}. Valid range: 0-${currentPatterns.length - 1}`));
+        out.println(chalk.red(`Invalid index: ${indexStr}. Valid range: 0-${currentPatterns.length - 1}`));
         process.exit(1);
     }
 
     const removed = currentPatterns.splice(index, 1)[0];
     await storage.setConfigValue("workitemPatterns", currentPatterns);
-    out.print(chalk.green(`Removed pattern: ${removed.regex}`));
-    out.print(chalk.dim(`Remaining patterns: ${currentPatterns.length}`));
+    out.println(chalk.green(`Removed pattern: ${removed.regex}`));
+    out.println(chalk.dim(`Remaining patterns: ${currentPatterns.length}`));
 }
 
 async function handleInteractive(storage: Storage): Promise<void> {

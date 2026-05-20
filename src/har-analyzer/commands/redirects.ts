@@ -141,7 +141,7 @@ export function registerRedirectsCommand(program: Command): void {
             const chains = buildRedirectChains(session.entries);
 
             if (chains.length === 0) {
-                out.print("No redirect chains found.");
+                out.println("No redirect chains found.");
                 return;
             }
 

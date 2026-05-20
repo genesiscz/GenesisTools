@@ -144,40 +144,40 @@ export function registerStartCommand(program: Command): void {
             const relSnippet = relative(projectPath, snippetDest);
             const importPath = `./${relSnippet.replace(/\.(ts|php)$/, "")}`;
 
-            out.print("");
+            out.println("");
             if (reused) {
                 const lastLog = reused.lastLogAt
                     ? `${formatRelativeTime(new Date(reused.lastLogAt))} (${reused.totalLogs} total)`
                     : "no logs yet";
                 const startup = formatRelativeTime(new Date(reused.createdAt));
-                out.print(pc.yellow(`⚠ Session re-used. Last log ${lastLog}, started ${startup}`));
+                out.println(pc.yellow(`⚠ Session re-used. Last log ${lastLog}, started ${startup}`));
             } else {
-                out.print(pc.green(pc.bold("Session created")));
+                out.println(pc.green(pc.bold("Session created")));
             }
 
-            out.print("");
-            out.print(`  ${pc.dim("Session:")}   ${sessionName}`);
-            out.print(`  ${pc.dim("Project:")}   ${projectPath}`);
-            out.print(`  ${pc.dim("Language:")}  ${language}`);
-            out.print(`  ${pc.dim("Snippet:")}   ${relSnippet}`);
-            out.print(`  ${pc.dim("Log file:")}  ${jsonlPath}`);
-            out.print("");
+            out.println("");
+            out.println(`  ${pc.dim("Session:")}   ${sessionName}`);
+            out.println(`  ${pc.dim("Project:")}   ${projectPath}`);
+            out.println(`  ${pc.dim("Language:")}  ${language}`);
+            out.println(`  ${pc.dim("Snippet:")}   ${relSnippet}`);
+            out.println(`  ${pc.dim("Log file:")}  ${jsonlPath}`);
+            out.println("");
 
             if (language === "typescript") {
-                out.print(pc.dim("Add to your code:"));
-                out.print(`  import { dbg } from '${importPath}';`);
-                out.print(`  dbg.session('${sessionName}');`);
+                out.println(pc.dim("Add to your code:"));
+                out.println(`  import { dbg } from '${importPath}';`);
+                out.println(`  dbg.session('${sessionName}');`);
             } else {
-                out.print(pc.dim("Add to your code:"));
-                out.print(`  require_once __DIR__ . '/${relSnippet}';`);
-                out.print(`  LlmLog::session('${sessionName}');`);
+                out.println(pc.dim("Add to your code:"));
+                out.println(`  require_once __DIR__ . '/${relSnippet}';`);
+                out.println(`  LlmLog::session('${sessionName}');`);
             }
 
-            out.print("");
-            out.print(pc.dim("Next steps:"));
-            out.print(`  ${suggestCommand(TOOL_NAME, { replaceCommand: ["tail", "--session", sessionName] })}`);
-            out.print(`  ${suggestCommand(TOOL_NAME, { replaceCommand: ["get", "--session", sessionName] })}`);
-            out.print("");
+            out.println("");
+            out.println(pc.dim("Next steps:"));
+            out.println(`  ${suggestCommand(TOOL_NAME, { replaceCommand: ["tail", "--session", sessionName] })}`);
+            out.println(`  ${suggestCommand(TOOL_NAME, { replaceCommand: ["get", "--session", sessionName] })}`);
+            out.println("");
 
             // --- Optionally start HTTP server ---
             if (opts.serve) {
@@ -208,19 +208,19 @@ export function registerStartCommand(program: Command): void {
                 }
 
                 if (serverReused) {
-                    out.print(pc.green(`Reusing HTTP server on port ${actualPort}`));
+                    out.println(pc.green(`Reusing HTTP server on port ${actualPort}`));
                 } else {
-                    out.print(pc.green(`HTTP server listening on port ${actualPort}`));
+                    out.println(pc.green(`HTTP server listening on port ${actualPort}`));
                 }
 
                 const lanIp = getLocalIpv4();
                 const dashboardUrl = `http://${lanIp}:${actualPort}/`;
-                out.print(pc.dim(`  ingest:    POST http://${lanIp}:${actualPort}/log/${sessionName}`));
-                out.print(pc.dim(`  health:    GET  http://${lanIp}:${actualPort}/health`));
-                out.print(`  ${pc.bold(pc.yellow("dashboard:"))} ${pc.bold(dashboardUrl)}`);
-                out.print("");
-                out.print(pc.dim("  scan from your phone:"));
-                out.print(renderQr(dashboardUrl, { small: true }));
+                out.println(pc.dim(`  ingest:    POST http://${lanIp}:${actualPort}/log/${sessionName}`));
+                out.println(pc.dim(`  health:    GET  http://${lanIp}:${actualPort}/health`));
+                out.println(`  ${pc.bold(pc.yellow("dashboard:"))} ${pc.bold(dashboardUrl)}`);
+                out.println("");
+                out.println(pc.dim("  scan from your phone:"));
+                out.println(renderQr(dashboardUrl, { small: true }));
 
                 if (!serverReused) {
                     // Keep process alive only if we own the server

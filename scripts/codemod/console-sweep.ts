@@ -44,7 +44,10 @@ import {
 const REPO_ROOT = resolve(import.meta.dir, "..", "..");
 
 const MAPPING: Record<string, { target: "out" | "logger"; method: string }> = {
-    log: { target: "out", method: "print" },
+    // console.log auto-appends a newline; map to out.println (asResult-wrapped)
+    // to preserve that semantic. out.print stays as the raw stdout path
+    // (PR #176 t22 — keep print raw, add println for console.log parity).
+    log: { target: "out", method: "println" },
     info: { target: "out", method: "info" },
     warn: { target: "out", method: "warn" },
     error: { target: "out", method: "error" },

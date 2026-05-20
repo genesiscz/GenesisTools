@@ -405,7 +405,7 @@ export async function handleWorktreeOption(options: HandleWorktreeOptions): Prom
             out.error(pc.yellow(`⚠️  IMPORTANT: \`cd ${result.path}\` to work in the worktree.`));
         }
 
-        out.print(`WORKTREE_PATH: ${result.path}`);
+        out.println(`WORKTREE_PATH: ${result.path}`);
     } catch (err) {
         out.error(pc.red(`Worktree error: ${err instanceof Error ? err.message : String(err)}`));
         throw err;

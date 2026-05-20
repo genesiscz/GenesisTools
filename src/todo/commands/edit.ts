@@ -104,7 +104,7 @@ export function createEditCommand(): Command {
             }
 
             const todo = await store.update(id, patch);
-            out.print(formatTodo(todo, resolveFormat(opts.format), { colors: opts.colors }));
+            out.println(formatTodo(todo, resolveFormat(opts.format), { colors: opts.colors }));
 
             if (opts.syncTo) {
                 const target = opts.syncTo as SyncTarget;

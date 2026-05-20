@@ -12,9 +12,9 @@ import { Command } from "commander";
 handleReadmeFlag(import.meta.url);
 
 const log = {
-    info: (msg: string) => out.print(msg),
-    ok: (msg: string) => out.print(chalk.green("✔ ") + msg),
-    warn: (msg: string) => out.print(chalk.yellow("⚠ ") + msg),
+    info: (msg: string) => out.println(msg),
+    ok: (msg: string) => out.println(chalk.green("✔ ") + msg),
+    warn: (msg: string) => out.println(chalk.yellow("⚠ ") + msg),
     err: (msg: string, e?: unknown) => out.error(chalk.red("✖ ") + msg + (e ? `: ${String(e)}` : "")),
 };
 

@@ -13,14 +13,14 @@ export function registerListListsCommand(program: Command): void {
                 const lists = await MacReminders.listLists();
 
                 if (lists.length === 0) {
-                    out.print("No reminder lists found.");
+                    out.println("No reminder lists found.");
                     return;
                 }
 
                 const rows = lists.map((list) => [chalk.hex(list.color)(`● ${list.title}`), list.source]);
 
                 const table = formatTable(rows, ["Title", "Source"]);
-                out.print(table);
+                out.println(table);
             } catch (error) {
                 out.error(error instanceof Error ? error.message : String(error));
                 process.exit(1);

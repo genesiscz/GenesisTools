@@ -21,9 +21,9 @@ const LOGO = `${pc.bold(pc.cyan("  DarwinKit"))} ${pc.dim("— Apple on-device M
 // ─── Help Generator ─────────────────────────────────────────────────────────────
 
 function printFullHelp(): void {
-    out.print();
-    out.print(LOGO);
-    out.print();
+    out.println();
+    out.println(LOGO);
+    out.println();
 
     const grouped = getCommandsByGroup();
 
@@ -34,21 +34,21 @@ function printFullHelp(): void {
             continue;
         }
 
-        out.print(pc.bold(pc.yellow(`  ${GROUP_LABELS[group] ?? group}`)));
+        out.println(pc.bold(pc.yellow(`  ${GROUP_LABELS[group] ?? group}`)));
 
         for (const cmd of cmds) {
             const positionals = cmd.params.filter((pm) => pm.positional);
             const posStr = positionals.map((pm) => (pm.required ? `<${pm.name}>` : `[${pm.name}]`)).join(" ");
             const nameCol = `    ${pc.green(cmd.name)}${posStr ? ` ${pc.dim(posStr)}` : ""}`;
-            out.print(`${nameCol.padEnd(50)}${pc.dim(cmd.description)}`);
+            out.println(`${nameCol.padEnd(50)}${pc.dim(cmd.description)}`);
         }
 
-        out.print();
+        out.println();
     }
 
-    out.print(pc.dim("  Options: --format json|pretty|raw"));
-    out.print(pc.dim("  Run without args for interactive mode (TTY only)"));
-    out.print();
+    out.println(pc.dim("  Options: --format json|pretty|raw"));
+    out.println(pc.dim("  Run without args for interactive mode (TTY only)"));
+    out.println();
 }
 
 // ─── Commander Setup ────────────────────────────────────────────────────────────
@@ -160,7 +160,7 @@ async function handleCommandAction(cmd: CommandDef, sub: Command, actionArgs: un
 
     try {
         const result = await cmd.run(args);
-        out.print(formatOutput(result, format));
+        out.println(formatOutput(result, format));
     } catch (error) {
         if (process.stdout.isTTY) {
             p.log.error(error instanceof Error ? error.message : String(error));

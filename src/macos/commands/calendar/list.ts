@@ -47,16 +47,16 @@ export function registerListCommand(program: Command): void {
                 const format = options.format ?? "table";
 
                 if (events.length === 0) {
-                    out.print(format === "json" ? "[]" : "No events found.");
+                    out.println(format === "json" ? "[]" : "No events found.");
                     return;
                 }
 
                 if (format === "json") {
-                    out.print(SafeJSON.stringify(events, null, 2));
+                    out.println(SafeJSON.stringify(events, null, 2));
                 } else if (format === "md") {
-                    out.print(formatEventsMd(events));
+                    out.println(formatEventsMd(events));
                 } else {
-                    out.print(formatEventsTable(events));
+                    out.println(formatEventsTable(events));
                 }
             } catch (error) {
                 out.error(error instanceof Error ? error.message : String(error));

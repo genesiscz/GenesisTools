@@ -204,10 +204,10 @@ export function registerMonitorCommand(program: Command): void {
                     }
 
                     const importantMsgs = important.map((i) => i.msg);
-                    out.print("");
-                    out.print(formatResultsTable(importantMsgs, ["date", "from", "subject", "flagged"]));
+                    out.println("");
+                    out.println(formatResultsTable(importantMsgs, ["date", "from", "subject", "flagged"]));
 
-                    out.print("");
+                    out.println("");
                     for (const { msg, ruleName } of important) {
                         const from = msg.senderName || msg.senderAddress;
                         const subj = msg.subject.length > 50 ? `${msg.subject.slice(0, 50)}...` : msg.subject;

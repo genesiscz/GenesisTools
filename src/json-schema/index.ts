@@ -57,7 +57,7 @@ program
         if (options.clipboard) {
             await copyToClipboard(output, { label: `${options.mode} mode` });
         } else {
-            out.print(output);
+            out.println(output);
         }
     });
 

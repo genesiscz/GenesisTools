@@ -500,12 +500,12 @@ export async function handleWorkItem(
         const cacheTime = cacheTimes.get(item.id);
 
         if (i > 0) {
-            out.print("\n---\n");
+            out.println("\n---\n");
         }
 
         switch (format) {
             case "ai":
-                out.print(
+                out.println(
                     formatWorkItemAI(
                         item,
                         taskPath,
@@ -516,12 +516,12 @@ export async function handleWorkItem(
                 );
                 break;
             case "md":
-                out.print(
+                out.println(
                     `# ${item.title}\n\n${item.description || "No description"}\n\n## Comments\n${item.comments.map((c) => `- **${c.author}**: ${c.text}`).join("\n")}`
                 );
                 break;
             case "json":
-                out.print(formatJSON(item));
+                out.println(formatJSON(item));
                 break;
         }
     }

@@ -9,9 +9,9 @@ export function registerPathCommand(parent: Command): void {
         .action((name: string | undefined) => {
             const store = new ProfileStore();
             if (!name) {
-                out.print(store.getProfilesDir());
+                out.println(store.getProfilesDir());
                 return;
             }
-            out.print(store.pathFor(name));
+            out.println(store.pathFor(name));
         });
 }

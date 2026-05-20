@@ -41,8 +41,8 @@ async function runUiServer(): Promise<void> {
     // upgrade socket is broken (oven-sh/bun#28396).
     const internalPort = await findFreePort();
 
-    out.print(`Starting dev-dashboard at ${url} ...`);
-    out.print("(first start can take a few seconds; output below comes from Vite)\n");
+    out.println(`Starting dev-dashboard at ${url} ...`);
+    out.println("(first start can take a few seconds; output below comes from Vite)\n");
 
     const child = spawn(
         "bun",
@@ -217,18 +217,18 @@ async function stopRunningDashboard(port: number): Promise<void> {
     const pids = await pidsListeningOn(port);
 
     if (pids.length === 0) {
-        out.print(`No dev-dashboard listening on :${port}.`);
+        out.println(`No dev-dashboard listening on :${port}.`);
         return;
     }
 
-    out.print(`Stopping dev-dashboard (pid ${pids.join(", ")}) on :${port} ...`);
+    out.println(`Stopping dev-dashboard (pid ${pids.join(", ")}) on :${port} ...`);
     // SIGTERM lets index.ts's handler stop the front-proxy and reap its Vite
     // child gracefully; SIGKILL is the fallback if the port is still held.
     signalPids(pids, "SIGTERM");
 
     if (!(await waitForPortFree(port, 6000))) {
         const stuck = await pidsListeningOn(port);
-        out.print(`Port :${port} still held by ${stuck.join(", ")}; sending SIGKILL.`);
+        out.println(`Port :${port} still held by ${stuck.join(", ")}; sending SIGKILL.`);
         signalPids(stuck, "SIGKILL");
 
         if (!(await waitForPortFree(port, 4000))) {
@@ -301,10 +301,10 @@ program
                 clearTimeout(deadline);
             }
 
-            out.print(`\n${note}`);
-            out.print(`dev-dashboard running in background → ${url}  (pid ${child.pid})`);
-            out.print(`logs → ${logFile}`);
-            out.print(`stop it with: kill ${child.pid}  (\`tools dev-dashboard restart\` relaunches a new one)`);
+            out.println(`\n${note}`);
+            out.println(`dev-dashboard running in background → ${url}  (pid ${child.pid})`);
+            out.println(`logs → ${logFile}`);
+            out.println(`stop it with: kill ${child.pid}  (\`tools dev-dashboard restart\` relaunches a new one)`);
             child.unref();
             process.exit(0);
         };
@@ -378,9 +378,9 @@ auth.command("reset")
         });
         await saveConfig({ ...config, auth: nextAuth });
 
-        out.print("dev-dashboard Basic Auth updated");
-        out.print(`username: ${nextAuth.username}`);
-        out.print(`password: ${password}`);
+        out.println("dev-dashboard Basic Auth updated");
+        out.println(`username: ${nextAuth.username}`);
+        out.println(`password: ${password}`);
     });
 
 await runTool(program, { tool: "dev-dashboard" }).catch((err) => {

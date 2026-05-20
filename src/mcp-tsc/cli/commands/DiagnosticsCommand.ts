@@ -31,10 +31,10 @@ export class DiagnosticsCommand {
         }
 
         if (filteredFiles.length < targetFiles.length) {
-            out.print(`Note: ${targetFiles.length - filteredFiles.length} file(s) excluded (not in tsconfig.json)`);
+            out.println(`Note: ${targetFiles.length - filteredFiles.length} file(s) excluded (not in tsconfig.json)`);
         }
 
-        out.print(`Checking ${filteredFiles.length} file(s)...`);
+        out.println(`Checking ${filteredFiles.length} file(s)...`);
 
         // Initialize server if needed
         if (this.tsServer.initialize) {
@@ -49,19 +49,19 @@ export class DiagnosticsCommand {
         // Format and display diagnostics
         const formattedLines = this.tsServer.formatDiagnostics(result, argv.warnings);
         formattedLines.forEach((line) => {
-            out.print(line);
+            out.println(line);
         });
 
         // Summary
-        out.print();
+        out.println();
         if (result.errors === 0 && result.warnings === 0) {
-            out.print("✓ No issues found");
+            out.println("✓ No issues found");
         } else {
             if (result.errors > 0) {
-                out.print(`✗ Found ${result.errors} error(s)`);
+                out.println(`✗ Found ${result.errors} error(s)`);
             }
             if (result.warnings > 0) {
-                out.print(`⚠ Found ${result.warnings} warning(s)`);
+                out.println(`⚠ Found ${result.warnings} warning(s)`);
             }
         }
 

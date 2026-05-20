@@ -37,7 +37,7 @@ export function registerDeleteSubcommand(parent: Command): void {
                 const entries = await api.getWorkItemTimeLogs(workItemId);
 
                 if (entries.length === 0) {
-                    out.print(`No time logs found for #${workItemId}`);
+                    out.println(`No time logs found for #${workItemId}`);
                     return;
                 }
 
@@ -68,6 +68,6 @@ export function registerDeleteSubcommand(parent: Command): void {
             }
 
             await api.deleteTimeLogEntry(timeLogId);
-            out.print(`\u2714 Deleted time log entry ${timeLogId.substring(0, 8)}...`);
+            out.println(`\u2714 Deleted time log entry ${timeLogId.substring(0, 8)}...`);
         });
 }

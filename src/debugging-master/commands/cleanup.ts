@@ -130,11 +130,11 @@ export function registerCleanupCommand(program: Command): void {
             }
 
             if (allWarnings.length > 0) {
-                out.print(pc.yellow(`\n${allWarnings.length} unclosed/orphan @dbg region(s) found:`));
+                out.println(pc.yellow(`\n${allWarnings.length} unclosed/orphan @dbg region(s) found:`));
                 for (const { file, warning } of allWarnings) {
-                    out.print(`  ${pc.dim(relative(projectPath, file))}: ${warning}`);
+                    out.println(`  ${pc.dim(relative(projectPath, file))}: ${warning}`);
                 }
-                out.print(pc.dim("\nThese regions were skipped. Fix the markers manually, then re-run cleanup."));
+                out.println(pc.dim("\nThese regions were skipped. Fix the markers manually, then re-run cleanup."));
             }
 
             // --- B. Remove blocks ---
@@ -148,15 +148,15 @@ export function registerCleanupCommand(program: Command): void {
             }
 
             if (totalBlocks > 0) {
-                out.print(pc.green(`Removed ${totalBlocks} @dbg block(s) from ${modifiedFiles.length} file(s):`));
+                out.println(pc.green(`Removed ${totalBlocks} @dbg block(s) from ${modifiedFiles.length} file(s):`));
                 for (const file of modifiedFiles) {
                     const blocks = fileBlockMap.get(file)!;
-                    out.print(
+                    out.println(
                         `  ${pc.dim(relative(projectPath, file))} (${blocks.length} block${blocks.length > 1 ? "s" : ""})`
                     );
                 }
             } else {
-                out.print(pc.dim("No @dbg blocks found."));
+                out.println(pc.dim("No @dbg blocks found."));
             }
 
             // --- C. Git diff check ---
@@ -174,9 +174,9 @@ export function registerCleanupCommand(program: Command): void {
                 }
 
                 if (realDiffFiles.length > 0) {
-                    out.print(`\n${pc.yellow(`${realDiffFiles.length} file(s) have real diffs remaining:`)}`);
+                    out.println(`\n${pc.yellow(`${realDiffFiles.length} file(s) have real diffs remaining:`)}`);
                     for (const { file } of realDiffFiles) {
-                        out.print(`  ${relative(projectPath, file)}`);
+                        out.println(`  ${relative(projectPath, file)}`);
                     }
                 }
 
@@ -185,13 +185,13 @@ export function registerCleanupCommand(program: Command): void {
                         for (const file of formatOnlyFiles) {
                             await repairFile(file);
                         }
-                        out.print(pc.green(`\nRepaired formatting in ${formatOnlyFiles.length} file(s).`));
+                        out.println(pc.green(`\nRepaired formatting in ${formatOnlyFiles.length} file(s).`));
                     } else {
-                        out.print(`\n${pc.yellow(`${formatOnlyFiles.length} file(s) have formatting-only diffs:`)}`);
+                        out.println(`\n${pc.yellow(`${formatOnlyFiles.length} file(s) have formatting-only diffs:`)}`);
                         for (const file of formatOnlyFiles) {
-                            out.print(`  ${pc.dim(relative(projectPath, file))}`);
+                            out.println(`  ${pc.dim(relative(projectPath, file))}`);
                         }
-                        out.print(`\n${pc.dim("Tip:")} ${suggestCommand(TOOL, { add: ["--repair-formatting"] })}`);
+                        out.println(`\n${pc.dim("Tip:")} ${suggestCommand(TOOL, { add: ["--repair-formatting"] })}`);
                     }
                 }
             }
@@ -230,17 +230,17 @@ export function registerCleanupCommand(program: Command): void {
                         unlinkSync(metaPath);
                     }
 
-                    out.print(`\n${pc.green("Logs archived to:")} ${archivePath}`);
+                    out.println(`\n${pc.green("Logs archived to:")} ${archivePath}`);
                     if (!opts.keepLogs) {
-                        out.print(
+                        out.println(
                             `${pc.dim("Tip: Keep logs permanently →")} ${suggestCommand(TOOL, { add: ["--keep-logs", "./debug-logs/"] })}`
                         );
                     }
                 } else {
-                    out.print(pc.dim("\nNo session log file to archive."));
+                    out.println(pc.dim("\nNo session log file to archive."));
                 }
             } else {
-                out.print(pc.dim("\nNo active session found — skipping log archival."));
+                out.println(pc.dim("\nNo active session found — skipping log archival."));
             }
         });
 }

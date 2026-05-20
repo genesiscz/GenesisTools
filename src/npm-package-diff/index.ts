@@ -34,11 +34,11 @@ const createSimpleLogger = () => {
         info: (msg: string) => {
             if (!isSilent) {
                 if (isTTY) {
-                    out.print(msg);
+                    out.println(msg);
                 } else {
                     // Strip ANSI codes for non-TTY output
                     // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional ANSI escape/control character matching
-                    out.print(msg.replace(/\u001b\[[0-9;]*m/g, ""));
+                    out.println(msg.replace(/\u001b\[[0-9;]*m/g, ""));
                 }
             }
         },
@@ -53,17 +53,17 @@ const createSimpleLogger = () => {
         debug: (msg: string) => {
             if ((v || isDebug) && !isSilent) {
                 if (isTTY) {
-                    out.print(chalk.gray(`[DEBUG] ${msg}`));
+                    out.println(chalk.gray(`[DEBUG] ${msg}`));
                 } else {
-                    out.print(`[DEBUG] ${msg}`);
+                    out.println(`[DEBUG] ${msg}`);
                 }
             }
         },
         success: (msg: string) => {
             if (!isSilent && isTTY) {
-                out.print(chalk.green(msg));
+                out.println(chalk.green(msg));
             } else if (!isSilent) {
-                out.print(msg);
+                out.println(msg);
             }
         },
         warn: (msg: string) => {
@@ -742,7 +742,7 @@ class EnhancedPackageComparison {
         ) {
             this.outputBuffer.push(text);
         } else {
-            out.print(text);
+            out.println(text);
         }
     }
 
@@ -765,7 +765,7 @@ class EnhancedPackageComparison {
                 logger.debug(`Failed to start pager: ${err}`);
                 // Fallback to normal output
                 this.outputBuffer.forEach((line) => {
-                    out.print(line);
+                    out.println(line);
                 });
                 this.outputBuffer = [];
             });
@@ -778,7 +778,7 @@ class EnhancedPackageComparison {
         } catch (_e) {
             // Fallback to normal output
             this.outputBuffer.forEach((line) => {
-                out.print(line);
+                out.println(line);
             });
             this.outputBuffer = [];
         }
@@ -1260,7 +1260,7 @@ class EnhancedPackageComparison {
             logger.success(`Output written to: ${outputPath}`);
         } else if (format !== "terminal" && format !== "side-by-side") {
             // For non-terminal formats, output to stdout
-            out.print(output);
+            out.println(output);
         }
 
         // Terminal output

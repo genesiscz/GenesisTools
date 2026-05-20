@@ -470,7 +470,7 @@ class ASKTool {
                             },
                         ];
 
-                        out.print(await outputManager.formatCostBreakdown(breakdown, chat.getResolvedAccount()));
+                        out.println(await outputManager.formatCostBreakdown(breakdown, chat.getResolvedAccount()));
                     }
                 }
             }
@@ -582,7 +582,7 @@ class ASKTool {
                 }
 
                 // Regular chat message
-                out.print(pc.yellow("\nAssistant:"));
+                out.println(pc.yellow("\nAssistant:"));
 
                 // Set up tools
                 const tools = this.getAvailableTools();
@@ -639,13 +639,13 @@ class ASKTool {
                         },
                     ];
 
-                    out.print(await outputManager.formatCostBreakdown(breakdown, modelChoice.provider.account));
+                    out.println(await outputManager.formatCostBreakdown(breakdown, modelChoice.provider.account));
                 }
 
-                out.print(); // Add spacing
+                out.println(); // Add spacing
             } catch (error) {
                 logger.error(`Chat error: ${error}`);
-                out.print(pc.red("Error occurred. Type /quit to exit or continue chatting."));
+                out.println(pc.red("Error occurred. Type /quit to exit or continue chatting."));
             }
         }
 

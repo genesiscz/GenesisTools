@@ -10,17 +10,17 @@ export class KillServerCommand {
             // Kill all servers
             const killed = await killAllServers();
             if (killed > 0) {
-                out.print(`✓ Killed ${killed} server(s)`);
+                out.println(`✓ Killed ${killed} server(s)`);
             } else {
-                out.print("No servers running");
+                out.println("No servers running");
             }
         } else {
             // Kill server for current directory
             const killed = await killServerForDir(this.cwd);
             if (killed) {
-                out.print(`✓ Killed server for ${this.cwd}`);
+                out.println(`✓ Killed server for ${this.cwd}`);
             } else {
-                out.print("No server running for current directory");
+                out.println("No server running for current directory");
             }
         }
     }

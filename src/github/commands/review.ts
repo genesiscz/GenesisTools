@@ -75,7 +75,7 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
                     `Failed to reply to or resolve any of ${result.failed.length} thread(s): ${result.failed.join(", ")}`
                 );
             }
-            out.print(chalk.green(`Replied to ${result.replied}, resolved ${result.resolved} thread(s)`));
+            out.println(chalk.green(`Replied to ${result.replied}, resolved ${result.resolved} thread(s)`));
             if (result.failed.length) {
                 out.error(chalk.red(`Failed: ${result.failed.join(", ")}`));
             }
@@ -88,7 +88,7 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
                     `Failed to resolve any of ${result.failed.length} thread(s): ${result.failed.join(", ")}`
                 );
             }
-            out.print(chalk.green(`Resolved ${result.resolved} thread(s)`));
+            out.println(chalk.green(`Resolved ${result.resolved} thread(s)`));
             if (result.failed.length) {
                 out.error(chalk.red(`Failed: ${result.failed.join(", ")}`));
             }
@@ -101,7 +101,7 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
                     `Failed to reply to any of ${result.failed.length} thread(s): ${result.failed.join(", ")}`
                 );
             }
-            out.print(chalk.green(`Replied to ${result.replied} thread(s)`));
+            out.println(chalk.green(`Replied to ${result.replied} thread(s)`));
             if (result.failed.length) {
                 out.error(chalk.red(`Failed: ${result.failed.join(", ")}`));
             }
@@ -206,7 +206,7 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
             }
         }
 
-        out.print(output);
+        out.println(output);
         return;
     }
 
@@ -226,13 +226,13 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
             repo: `${owner}-${repo}`,
             originalCwd: process.cwd(),
         });
-        out.print(filePath);
+        out.println(filePath);
         out.error(`  View: tools markdown-cli ${filePath}`);
         return;
     }
 
     // Terminal output (default)
-    out.print(formatReviewTerminal(reviewData, options.groupByFile ?? false));
+    out.println(formatReviewTerminal(reviewData, options.groupByFile ?? false));
 }
 
 async function expandCommand(refs: string, options: { session?: string; repo?: string }): Promise<void> {
@@ -259,7 +259,7 @@ async function expandCommand(refs: string, options: { session?: string; repo?: s
             continue;
         }
 
-        out.print(formatThreadExpanded(thread, sessionId));
+        out.println(formatThreadExpanded(thread, sessionId));
     }
 }
 
@@ -310,7 +310,7 @@ async function respondCommand(
             throw new Error(`All thread mutations failed: ${result.failed.join(", ")}`);
         }
 
-        out.print(chalk.green(`Replied to ${result.replied}, resolved ${result.resolved} thread(s)`));
+        out.println(chalk.green(`Replied to ${result.replied}, resolved ${result.resolved} thread(s)`));
     } else {
         const result = await batchReply(threadIds, message, {
             onProgress: showProgress ? (done, total) => out.error(chalk.dim(`  [${done}/${total}]`)) : undefined,
@@ -324,7 +324,7 @@ async function respondCommand(
             throw new Error(`All thread mutations failed: ${result.failed.join(", ")}`);
         }
 
-        out.print(chalk.green(`Replied to ${result.replied} thread(s)`));
+        out.println(chalk.green(`Replied to ${result.replied} thread(s)`));
     }
 }
 
@@ -361,7 +361,7 @@ async function resolveCommand(refs: string, options: { session?: string }): Prom
         onProgress: showProgress ? (done, total) => out.error(chalk.dim(`  [${done}/${total}]`)) : undefined,
     });
 
-    out.print(chalk.green(`Resolved ${result.resolved} thread(s)`));
+    out.println(chalk.green(`Resolved ${result.resolved} thread(s)`));
     if (result.failed.length) {
         out.error(chalk.red(`Failed: ${result.failed.join(", ")}`));
     }
@@ -372,14 +372,14 @@ async function sessionsCommand(): Promise<void> {
     const sessions = await sessionMgr.listSessions();
 
     if (sessions.length === 0) {
-        out.print("No review sessions found.");
+        out.println("No review sessions found.");
         return;
     }
 
-    out.print(`Review Sessions (${sessions.length}):\n`);
+    out.println(`Review Sessions (${sessions.length}):\n`);
     for (const s of sessions) {
         const age = formatRelativeTime(new Date(s.createdAt), { compact: true });
-        out.print(
+        out.println(
             `  ${s.sessionId.padEnd(30)}  PR #${String(s.prNumber).padEnd(6)}  ${s.owner}/${s.repo}  ${String(s.threadCount).padEnd(3)} threads  ${age}`
         );
     }
@@ -398,7 +398,7 @@ async function summaryCommand(options: { session?: string }): Promise<void> {
     }
 
     const prComments = sessionData.prComments ?? [];
-    out.print(formatPrCommentsLLM(prComments, sessionId));
+    out.println(formatPrCommentsLLM(prComments, sessionId));
 }
 
 /**

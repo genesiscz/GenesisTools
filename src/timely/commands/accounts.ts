@@ -45,7 +45,7 @@ async function accountsAction(storage: Storage, service: TimelyService, options:
 
     // Display accounts
     if (options.format === "json") {
-        out.print(SafeJSON.stringify(accounts, null, 2));
+        out.println(SafeJSON.stringify(accounts, null, 2));
         return;
     }
 
@@ -54,11 +54,11 @@ async function accountsAction(storage: Storage, service: TimelyService, options:
     for (const account of accounts) {
         const selected = account.id === selectedId ? chalk.green(" (selected)") : "";
         const status = account.expired ? chalk.red("[expired]") : account.trial ? chalk.yellow("[trial]") : "";
-        out.print(`  ${chalk.bold(account.name)} (ID: ${account.id}) ${status}${selected}`);
-        out.print(`    Plan: ${account.plan_name}`);
-        out.print(`    Users: ${account.num_users}/${account.max_users}`);
-        out.print(`    Projects: ${account.active_projects_count}/${account.max_projects}`);
-        out.print();
+        out.println(`  ${chalk.bold(account.name)} (ID: ${account.id}) ${status}${selected}`);
+        out.println(`    Plan: ${account.plan_name}`);
+        out.println(`    Users: ${account.num_users}/${account.max_users}`);
+        out.println(`    Projects: ${account.active_projects_count}/${account.max_projects}`);
+        out.println();
     }
 
     // Interactive selection

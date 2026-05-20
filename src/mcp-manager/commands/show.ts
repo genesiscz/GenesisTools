@@ -26,10 +26,10 @@ export async function showServerConfig(serverName: string, providers: MCPProvide
     // `mcp-manager show <server>` — the config dump is the command's
     // machine result, so it goes to stdout via out.print (Task-17's
     // mechanical consoleLog→logger rename had mis-routed it to stderr).
-    out.print(`\nConfiguration for '${serverName}':\n`);
+    out.println(`\nConfiguration for '${serverName}':\n`);
     for (const { provider, config } of configs) {
-        out.print(`${chalk.bold(provider)}:`);
-        out.print(SafeJSON.stringify(config, null, 2));
-        out.print("");
+        out.println(`${chalk.bold(provider)}:`);
+        out.println(SafeJSON.stringify(config, null, 2));
+        out.println("");
     }
 }

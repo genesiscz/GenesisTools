@@ -731,7 +731,7 @@ function formatEvent(event: ESLoggerEvent): string {
 
 // Show help message
 function showHelp() {
-    out.print(`
+    out.println(`
 ${chalk.bold("macOS ESLogger Monitor")}
 
 Monitor macOS Endpoint Security events in real-time using eslogger.
@@ -799,28 +799,28 @@ function monitorWithESF(
     filterExpression?: string
 ) {
     if (!silent) {
-        out.print(chalk.blue("🚀 Starting ESLogger monitor..."));
-        out.print(`📊 Monitoring ${eventTypes.length} event type(s):`);
+        out.println(chalk.blue("🚀 Starting ESLogger monitor..."));
+        out.println(`📊 Monitoring ${eventTypes.length} event type(s):`);
 
         // Display in columns for better readability
         const columns = 4;
         for (let i = 0; i < eventTypes.length; i += columns) {
             const row = eventTypes.slice(i, i + columns);
-            out.print(`   ${row.map((e) => e.padEnd(30)).join("")}`);
+            out.println(`   ${row.map((e) => e.padEnd(30)).join("")}`);
         }
 
         if (filterExpression) {
-            out.print(`\n🔍 Filter: ${filterExpression}`);
+            out.println(`\n🔍 Filter: ${filterExpression}`);
         }
 
         if (dryRun) {
-            out.print(chalk.green("\n✅ Dry run complete - would monitor the events above."));
-            out.print("─".repeat(80));
+            out.println(chalk.green("\n✅ Dry run complete - would monitor the events above."));
+            out.println("─".repeat(80));
             return;
         }
 
-        out.print(chalk.yellow("\n⌨️  Press Ctrl+C to stop."));
-        out.print(`${"─".repeat(80)}\n`);
+        out.println(chalk.yellow("\n⌨️  Press Ctrl+C to stop."));
+        out.println(`${"─".repeat(80)}\n`);
     }
 
     const args = ["eslogger", ...eventTypes];
@@ -847,9 +847,9 @@ function monitorWithESF(
                 eventCount++;
 
                 if (debug) {
-                    out.print(chalk.gray("--- RAW EVENT ---"));
-                    out.print(SafeJSON.stringify(event, null, 2));
-                    out.print(chalk.gray("--- END RAW ---"));
+                    out.println(chalk.gray("--- RAW EVENT ---"));
+                    out.println(SafeJSON.stringify(event, null, 2));
+                    out.println(chalk.gray("--- END RAW ---"));
                 }
 
                 // Apply filter if specified
@@ -863,7 +863,7 @@ function monitorWithESF(
                     if (outputPath) {
                         outputBuffer += `${formatted}\n`;
                     } else {
-                        out.print(formatted);
+                        out.println(formatted);
                     }
                 } catch (formatErr: unknown) {
                     // Formatting error - event parsed but couldn't format it
@@ -1023,9 +1023,9 @@ async function main() {
         // Validate event types
         const invalid = eventTypes.filter((e) => !ALL_EVENTS.includes(e));
         if (invalid.length > 0) {
-            out.print(`❌ Unknown event type(s): ${invalid.join(", ")}`);
-            out.print("\n💡 Use one of the following event types:");
-            out.print(ALL_EVENTS.join(", "));
+            out.println(`❌ Unknown event type(s): ${invalid.join(", ")}`);
+            out.println("\n💡 Use one of the following event types:");
+            out.println(ALL_EVENTS.join(", "));
             process.exit(1);
         }
     } else if (options.category) {
@@ -1033,8 +1033,8 @@ async function main() {
         if (EVENT_CATEGORIES[category as keyof typeof EVENT_CATEGORIES]) {
             eventTypes = EVENT_CATEGORIES[category as keyof typeof EVENT_CATEGORIES];
         } else {
-            out.print(`❌ Unknown category: ${category}`);
-            out.print(`📚 Available categories: ${Object.keys(EVENT_CATEGORIES).join(", ")}`);
+            out.println(`❌ Unknown category: ${category}`);
+            out.println(`📚 Available categories: ${Object.keys(EVENT_CATEGORIES).join(", ")}`);
             process.exit(1);
         }
     } else {
@@ -1043,7 +1043,7 @@ async function main() {
     }
 
     if (eventTypes.length === 0) {
-        out.print("❌ No event types specified.");
+        out.println("❌ No event types specified.");
         showHelp();
         process.exit(1);
     }

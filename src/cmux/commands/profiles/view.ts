@@ -15,10 +15,10 @@ export function registerViewCommand(parent: Command): void {
             try {
                 const profile = store.read(name);
                 if (opts.json) {
-                    out.print(SafeJSON.stringify(profile, null, 2));
+                    out.println(SafeJSON.stringify(profile, null, 2));
                     return;
                 }
-                out.print(renderProfileTree(profile));
+                out.println(renderProfileTree(profile));
             } catch (error) {
                 if (error instanceof ProfileNotFoundError) {
                     out.error(error.message);

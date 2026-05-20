@@ -59,14 +59,14 @@ export async function runCli(argv: string[]): Promise<void> {
             const snap = await getStages(loadClient(), ref.jobPath, ref.buildNumber, {
                 expand: opts.expand,
             });
-            out.print(`Build ${ref.buildNumber} — ${snap.status}`);
+            out.println(`Build ${ref.buildNumber} — ${snap.status}`);
 
             for (const stage of snap.stages) {
-                out.print(`  ${formatStageLine(stage)}`);
+                out.println(`  ${formatStageLine(stage)}`);
 
                 if (opts.expand) {
                     for (const branch of stage.stageFlowNodes ?? []) {
-                        out.print(`    ├ ${formatStageLine(branch)}`);
+                        out.println(`    ├ ${formatStageLine(branch)}`);
                     }
                 }
             }
@@ -94,7 +94,7 @@ export async function runCli(argv: string[]): Promise<void> {
                 const r = await fetchLog(loadClient(), ref.jobPath, ref.buildNumber, {
                     nodeId: ref.nodeId,
                 });
-                out.print(
+                out.println(
                     `saved: ${r.path} (${r.sizeBytes}B, ${r.lineCount} lines${
                         r.nodeStatus ? `, status=${r.nodeStatus}` : ""
                     }${r.truncated ? ", TRUNCATED" : ""})`
@@ -104,20 +104,20 @@ export async function runCli(argv: string[]): Promise<void> {
 
                 if (opts.head !== undefined) {
                     const first = lines.slice(0, opts.head);
-                    out.print(`--- head (${first.length}) ---`);
-                    out.print(first.join("\n"));
+                    out.println(`--- head (${first.length}) ---`);
+                    out.println(first.join("\n"));
                 }
 
                 if (opts.grep) {
                     const matches = grepLog(r.content, opts.grep);
-                    out.print(`--- grep (${matches.length} matches) ---`);
-                    out.print(matches.join("\n"));
+                    out.println(`--- grep (${matches.length} matches) ---`);
+                    out.println(matches.join("\n"));
                 }
 
                 const tailN = opts.tail ?? 20;
                 const last = lines.slice(-tailN);
-                out.print(`--- tail (${last.length}) ---`);
-                out.print(last.join("\n"));
+                out.println(`--- tail (${last.length}) ---`);
+                out.println(last.join("\n"));
             }
         );
 
@@ -132,7 +132,7 @@ export async function runCli(argv: string[]): Promise<void> {
             const res = await loadClient().get(
                 `/${ref.jobPath}/${ref.buildNumber ?? "lastBuild"}/api/json?tree=${tree}`
             );
-            out.print(SafeJSON.stringify(res.data, null, 2));
+            out.println(SafeJSON.stringify(res.data, null, 2));
         });
 
     program
@@ -146,7 +146,7 @@ export async function runCli(argv: string[]): Promise<void> {
             const res = await loadClient().get(
                 `/${ref.jobPath}/${ref.buildNumber ?? "lastBuild"}/api/json?tree=${tree}`
             );
-            out.print(SafeJSON.stringify(res.data, null, 2));
+            out.println(SafeJSON.stringify(res.data, null, 2));
         });
 
     program
@@ -161,7 +161,7 @@ export async function runCli(argv: string[]): Promise<void> {
             const limited = opts.limit !== undefined ? all.slice(0, opts.limit) : all;
 
             for (const j of limited) {
-                out.print(`${j.name}\t${j.color}\t${j.url}`);
+                out.println(`${j.name}\t${j.color}\t${j.url}`);
             }
         });
 

@@ -20,7 +20,7 @@ async function readMultilineCurl(): Promise<string> {
     let finishTimer: ReturnType<typeof setTimeout> | null = null;
 
     return new Promise((resolve) => {
-        out.print(pc.gray("  (paste cURL, press Enter on blank line to finish)"));
+        out.println(pc.gray("  (paste cURL, press Enter on blank line to finish)"));
         process.stdout.write(pc.cyan("  > "));
 
         function finish() {
@@ -176,19 +176,19 @@ async function runInteractiveSetup(): Promise<void> {
 }
 
 function showConfig(config: ClarityConfig): void {
-    out.print("\nClarity Configuration:");
-    out.print(`  Base URL:     ${config.baseUrl}`);
-    out.print(`  Auth Token:   [configured]`);
-    out.print(`  Session ID:   [configured]`);
-    out.print(`  Resource ID:  ${config.resourceId ?? "not set"}`);
-    out.print(`  User:         ${config.uniqueName ?? "not set"}`);
-    out.print(`  Mappings:     ${config.mappings.length}`);
+    out.println("\nClarity Configuration:");
+    out.println(`  Base URL:     ${config.baseUrl}`);
+    out.println(`  Auth Token:   [configured]`);
+    out.println(`  Session ID:   [configured]`);
+    out.println(`  Resource ID:  ${config.resourceId ?? "not set"}`);
+    out.println(`  User:         ${config.uniqueName ?? "not set"}`);
+    out.println(`  Mappings:     ${config.mappings.length}`);
 
     if (config.mappings.length > 0) {
-        out.print("\n  ADO Work Item -> Clarity Task:");
+        out.println("\n  ADO Work Item -> Clarity Task:");
 
         for (const m of config.mappings) {
-            out.print(
+            out.println(
                 `    #${m.adoWorkItemId} (${m.adoWorkItemTitle}) -> ${m.clarityTaskName} [${m.clarityInvestmentName}]`
             );
         }

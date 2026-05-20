@@ -26,9 +26,9 @@ export function registerUsageLegacyCommand(program: Command): void {
                 const account = { accountName: "token", usage };
 
                 if (opts.json) {
-                    out.print(SafeJSON.stringify(account, null, 2));
+                    out.println(SafeJSON.stringify(account, null, 2));
                 } else {
-                    out.print(renderAccountUsage(account));
+                    out.println(renderAccountUsage(account));
                 }
 
                 return;
@@ -78,9 +78,9 @@ export function registerUsageLegacyCommand(program: Command): void {
             const results = await getSharedAccountsUsage({ accountFilter: accountArg, force: opts.fresh === true });
 
             if (opts.json) {
-                out.print(SafeJSON.stringify(results, null, 2));
+                out.println(SafeJSON.stringify(results, null, 2));
             } else {
-                out.print(renderAllAccounts(results));
+                out.println(renderAllAccounts(results));
             }
         });
 }

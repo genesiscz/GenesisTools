@@ -35,7 +35,7 @@ const service = new TimelyService(client, storage);
 export { storage, client, service };
 
 function showHelpFull(): void {
-    out.print(`
+    out.println(`
 ${chalk.bold("Timely CLI")} - Interact with Timely time tracking
 
 ${chalk.cyan("Usage:")}

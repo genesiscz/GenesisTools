@@ -27,7 +27,7 @@ export function registerMessagesListCommand(program: Command): void {
             });
 
             if (chats.length === 0) {
-                out.print("No conversations found.");
+                out.println("No conversations found.");
                 return;
             }
 
@@ -53,14 +53,14 @@ export function registerMessagesListCommand(program: Command): void {
                 const count = chalk.dim(`${chat.messageCount} msgs`);
                 const style = chat.style === "group" ? chalk.dim(" [group]") : "";
 
-                out.print(`  ${displayName}${style}  ${service}  ${count}  ${chalk.dim(lastMsg)}`);
+                out.println(`  ${displayName}${style}  ${service}  ${count}  ${chalk.dim(lastMsg)}`);
 
                 if (chat.displayName && chat.participants.length > 0) {
-                    out.print(chalk.dim(`    ${participantNames}`));
+                    out.println(chalk.dim(`    ${participantNames}`));
                 }
 
-                out.print(chalk.dim(`    ID: ${chat.chatIdentifier}`));
-                out.print();
+                out.println(chalk.dim(`    ID: ${chat.chatIdentifier}`));
+                out.println();
             }
         });
 }

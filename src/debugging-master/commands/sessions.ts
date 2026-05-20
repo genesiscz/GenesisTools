@@ -18,8 +18,8 @@ export function registerSessionsCommand(program: Command): void {
             const names = await sm.listSessionNames();
 
             if (names.length === 0) {
-                out.print("No sessions found.");
-                out.print(`Start one: ${suggestCommand(TOOL, { add: ["start", "--session", "<name>"] })}`);
+                out.println("No sessions found.");
+                out.println(`Start one: ${suggestCommand(TOOL, { add: ["start", "--session", "<name>"] })}`);
                 return;
             }
 
@@ -51,7 +51,7 @@ export function registerSessionsCommand(program: Command): void {
                 ]);
             }
 
-            out.print(pc.bold("Sessions:\n"));
-            out.print(formatTable(rows, headers, { alignRight: [1] }));
+            out.println(pc.bold("Sessions:\n"));
+            out.println(formatTable(rows, headers, { alignRight: [1] }));
         });
 }

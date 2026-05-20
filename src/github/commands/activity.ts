@@ -202,7 +202,7 @@ export async function activityCommand(options: ActivityCommandOptions): Promise<
     items = items.slice(0, limit);
 
     if (items.length === 0) {
-        out.print(chalk.yellow("No matching activity found."));
+        out.println(chalk.yellow("No matching activity found."));
         return;
     }
 
@@ -212,9 +212,9 @@ export async function activityCommand(options: ActivityCommandOptions): Promise<
 
     if (options.output) {
         await Bun.write(options.output, output);
-        out.print(chalk.green(`Output written to ${options.output}`));
+        out.println(chalk.green(`Output written to ${options.output}`));
     } else {
-        out.print(output);
+        out.println(output);
     }
 }
 

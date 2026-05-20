@@ -23,6 +23,6 @@ export function registerMessagesShowCommand(program: Command): void {
                 groupByTime: opts.group !== false,
             });
 
-            out.print(output);
+            out.println(output);
         });
 }

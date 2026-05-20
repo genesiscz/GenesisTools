@@ -100,7 +100,7 @@ async function cmdTranslate(text: string | undefined, opts: TranslateFlags): Pro
                 await copyToClipboard(result.text, { label: "translation" });
             }
 
-            out.print(result.text);
+            out.println(result.text);
         } finally {
             translator.dispose();
         }
@@ -165,7 +165,7 @@ async function cmdSummarize(file: string | undefined, opts: SummarizeFlags): Pro
             await copyToClipboard(result.summary, { label: "summary" });
         }
 
-        out.print(result.summary);
+        out.println(result.summary);
     } catch (error) {
         s.stop(pc.red("Summarization failed"));
         out.error(pc.red(error instanceof Error ? error.message : String(error)));
@@ -224,7 +224,7 @@ async function cmdImage(prompt: string, opts: ImageFlags): Promise<void> {
         s.stop(pc.green("Image generated"));
         out.error(pc.dim(`Model: ${model}`));
         out.error(pc.dim(`Size: ${formatBytes(arrayBuffer.byteLength)}`));
-        out.print(outputPath);
+        out.println(outputPath);
     } catch (error) {
         s.stop(pc.red("Image generation failed"));
         out.error(pc.red(error instanceof Error ? error.message : String(error)));
@@ -279,7 +279,7 @@ async function cmdClassify(text: string | undefined, opts: ClassifyFlags): Promi
         ]);
 
         const table = formatTable(rows, ["Category", "Confidence"], { alignRight: [1] });
-        out.print(table);
+        out.println(table);
     } catch (error) {
         s.stop(pc.red("Classification failed"));
         out.error(pc.red(error instanceof Error ? error.message : String(error)));
@@ -304,7 +304,7 @@ async function cmdModelsList(): Promise<void> {
     const table = formatTable(rows, ["Model", "Size"], { alignRight: [1] });
 
     const cacheInfo = await manager.getCacheSize();
-    out.print(table);
+    out.println(table);
     out.error(pc.dim(`\nTotal: ${cacheInfo.modelCount} models, ${cacheInfo.formatted}`));
 }
 

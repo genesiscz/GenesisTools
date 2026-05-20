@@ -505,7 +505,7 @@ export async function main() {
     }
 
     // 7. Results
-    out.print();
+    out.println();
     p.log.success(`Done! ${pc.bold(String(totals.inserted))} new listings inserted.`);
 
     if (totals.skipped > 0) {
@@ -518,7 +518,7 @@ export async function main() {
 
     // Price trend summary
     if (priceStatsMap.size > 0) {
-        out.print();
+        out.println();
         const header = ["Year", "Type", "Count", "Median", "Avg", "Min", "Max"].join("  ");
         const divider = "─".repeat(65);
 

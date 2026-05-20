@@ -19,7 +19,7 @@ const client = new Client({
 await client.connect(transport);
 
 const tools = await client.listTools();
-out.print(tools);
+out.println(tools);
 
 const dir = await client.callTool({
     name: "list_directory",
@@ -28,4 +28,4 @@ const dir = await client.callTool({
     },
 });
 
-out.print(dir);
+out.println(dir);

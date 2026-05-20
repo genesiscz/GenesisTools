@@ -29,9 +29,9 @@ export interface SettingsEntry {
 export function printSettingsSummary(entries: SettingsEntry[]): void {
     for (const entry of entries) {
         const hint = entry.hint ? ` ${pc.dim(`(${entry.hint})`)}` : "";
-        out.print(`${S_BAR}`);
-        out.print(`${S_STEP_SUBMIT}  ${pc.dim(`${entry.label}:`)} ${entry.value}${hint}`);
+        out.println(`${S_BAR}`);
+        out.println(`${S_STEP_SUBMIT}  ${pc.dim(`${entry.label}:`)} ${entry.value}${hint}`);
     }
 
-    out.print(`${S_BAR}`);
+    out.println(`${S_BAR}`);
 }

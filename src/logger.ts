@@ -254,11 +254,15 @@ export const logger: LoggerFacade = {
     error: (...a: Parameters<pino.LogFn>) => eff().error(...a),
     fatal: (...a: Parameters<pino.LogFn>) => eff().fatal(...a),
     child: (b: pino.Bindings, o?: pino.ChildLoggerOptions) => eff().child(b, o),
+    // logger.level reads/writes the MUTABLE console threshold (consoleLevel),
+    // not the pino root. Spec §3.1: the pino root must stay "trace" so the
+    // file sink never starves. Proxying get().level would let callers raise
+    // the root and silently drop debug/trace from the file (PR #176 t20).
     get level() {
-        return get().level;
+        return consoleLevel;
     },
     set level(v: string) {
-        get().level = v;
+        setConsoleLevel(v as pino.LevelWithSilent);
     },
     flush: () => eff().flush(),
     scoped(component, opts) {

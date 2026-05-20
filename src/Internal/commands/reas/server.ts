@@ -84,8 +84,8 @@ export async function startServer(port = DEFAULT_PORT): Promise<void> {
         },
     });
 
-    out.print(`REAS Dashboard API running at http://localhost:${server.port}`);
-    out.print(`  GET /api/districts  - list all districts`);
-    out.print(`  GET /api/search?q=  - search districts`);
-    out.print(`  GET /api/analysis?district=Praha&type=brick&... - run analysis`);
+    out.println(`REAS Dashboard API running at http://localhost:${server.port}`);
+    out.println(`  GET /api/districts  - list all districts`);
+    out.println(`  GET /api/search?q=  - search districts`);
+    out.println(`  GET /api/analysis?district=Praha&type=brick&... - run analysis`);
 }

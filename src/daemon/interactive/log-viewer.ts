@@ -68,7 +68,7 @@ async function showTaskRuns(taskName: string): Promise<void> {
 function showLogContent(logFile: string): void {
     const entries = parseLogFile(logFile);
 
-    out.print("");
+    out.println("");
 
     for (const entry of entries) {
         switch (entry.type) {
@@ -78,20 +78,20 @@ function showLogContent(logFile: string): void {
                 );
                 break;
             case "stdout":
-                out.print(entry.data);
+                out.println(entry.data);
                 break;
             case "stderr":
-                out.print(pc.yellow(entry.data));
+                out.println(pc.yellow(entry.data));
                 break;
             case "exit": {
                 const color = entry.code === 0 ? pc.green : pc.red;
-                out.print(color(`\n[exit ${entry.code ?? "killed"} in ${formatDuration(entry.duration_ms)}]`));
+                out.println(color(`\n[exit ${entry.code ?? "killed"} in ${formatDuration(entry.duration_ms)}]`));
                 break;
             }
         }
     }
 
-    out.print("");
+    out.println("");
 }
 
 function formatRunLabel(

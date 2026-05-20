@@ -415,9 +415,9 @@ async function runCompareProviders(opts: {
         alignRight: [2, 3],
     });
 
-    out.print();
-    out.print(table);
-    out.print();
+    out.println();
+    out.println(table);
+    out.println();
 
     const best = results[0];
     p.log.success(`Recommendation: ${best.provider}/${best.model} at ${best.embPerSec.toLocaleString()} emb/s`);
@@ -533,9 +533,9 @@ async function runCompareModels(opts: {
         alignRight: [1, 2],
     });
 
-    out.print();
-    out.print(table);
-    out.print();
+    out.println();
+    out.println(table);
+    out.println();
 
     const best = results[0];
     p.log.success(`Best model: ${best.model} at ${best.embPerSec.toLocaleString()} emb/s`);
@@ -667,7 +667,7 @@ async function runDirBenchmark(
         p.log.info(`  DB size:          ${formatBytes(result.dbSizeBytes)}`);
 
         const json = SafeJSON.stringify(result, null, 2);
-        out.print(json);
+        out.println(json);
 
         if (opts.output) {
             const outPath = resolve(opts.output);

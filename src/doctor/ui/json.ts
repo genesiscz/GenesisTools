@@ -58,5 +58,5 @@ export async function runJson(opts: JsonRunOpts): Promise<void> {
         errors,
     };
 
-    out.print(SafeJSON.stringify(output, null, 2));
+    out.println(SafeJSON.stringify(output, null, 2));
 }

@@ -115,7 +115,7 @@ export class AskUILogger {
             return;
         }
 
-        out.print(pc.dim(`\nResponse time: ${duration}`));
+        out.println(pc.dim(`\nResponse time: ${duration}`));
     }
 
     logSessionSummary({ id, messages, duration }: { id: string; messages: number; duration: string }): void {
@@ -144,7 +144,7 @@ export class AskUILogger {
         }
 
         if (this.suppressUI) {
-            out.print(message ?? "Goodbye!");
+            out.println(message ?? "Goodbye!");
         } else {
             p.outro(pc.green(message ?? "Goodbye!"));
         }

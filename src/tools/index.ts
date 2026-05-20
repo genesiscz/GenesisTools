@@ -53,7 +53,7 @@ async function handleToolAction(tool: ToolInfo, srcDir: string): Promise<void> {
     if (action === "readme") {
         const readme = getReadme(srcDir, tool.name);
         if (readme) {
-            out.print(`\n${renderMarkdownToCli(readme)}\n`);
+            out.println(`\n${renderMarkdownToCli(readme)}\n`);
         } else {
             p.log.warn("No README.md found for this tool.");
         }
@@ -95,9 +95,9 @@ async function handleToolAction(tool: ToolInfo, srcDir: string): Promise<void> {
         if (help.options.length > 0) {
             p.log.info(pc.bold("Options:"));
             for (const opt of help.options) {
-                out.print(`  ${pc.cyan(opt.flags)}  ${pc.dim(opt.description)}`);
+                out.println(`  ${pc.cyan(opt.flags)}  ${pc.dim(opt.description)}`);
             }
-            out.print();
+            out.println();
         }
 
         await handleToolAction(tool, srcDir);
@@ -114,7 +114,7 @@ async function handleToolAction(tool: ToolInfo, srcDir: string): Promise<void> {
 async function main(): Promise<void> {
     const srcDir = resolve(import.meta.dirname, "..");
 
-    out.print(LOGO);
+    out.println(LOGO);
     p.intro(pc.bgCyan(pc.black(" Tools Browser ")));
 
     const tools = discoverTools(srcDir);

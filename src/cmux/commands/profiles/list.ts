@@ -15,13 +15,13 @@ export function registerListCommand(parent: Command): void {
             const store = new ProfileStore();
             const summaries = store.list();
             if (opts.json) {
-                out.print(SafeJSON.stringify(summaries, null, 2));
+                out.println(SafeJSON.stringify(summaries, null, 2));
                 return;
             }
-            out.print(renderProfileList(summaries));
+            out.println(renderProfileList(summaries));
             if (summaries.length > 0) {
-                out.print("");
-                out.print(pc.dim(`profiles dir: ${store.getProfilesDir()}`));
+                out.println("");
+                out.println(pc.dim(`profiles dir: ${store.getProfilesDir()}`));
             }
         });
 }

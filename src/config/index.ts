@@ -23,7 +23,7 @@ program
         p.log.info(`${rejected.length} package(s) currently rejected:`);
 
         for (const pkg of rejected) {
-            out.print(`  ${chalk.red("✗")} ${pkg}`);
+            out.println(`  ${chalk.red("✗")} ${pkg}`);
         }
 
         const action = await p.select({

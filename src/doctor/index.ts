@@ -135,7 +135,7 @@ program
     .description("Delete the analyzer cache so next run is fresh")
     .action(async () => {
         await wipeCache();
-        out.print("Analyzer cache wiped.");
+        out.println("Analyzer cache wiped.");
     });
 
 enhanceHelp(program);

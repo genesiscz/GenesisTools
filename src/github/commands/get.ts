@@ -261,13 +261,13 @@ export async function getCommand(input: string, options: GetOptions): Promise<vo
 
             if (options.clipboard) {
                 await copyToClipboard(content, { silent: true });
-                out.print(chalk.green(`✔ Copied directory ${parsed.path} to clipboard`));
+                out.println(chalk.green(`✔ Copied directory ${parsed.path} to clipboard`));
             } else if (options.output) {
                 const outputPath = resolve(options.output);
                 await Bun.write(outputPath, content);
-                out.print(chalk.green(`✔ Written to ${outputPath}`));
+                out.println(chalk.green(`✔ Written to ${outputPath}`));
             } else {
-                out.print(content);
+                out.println(content);
             }
 
             return;
@@ -282,17 +282,17 @@ export async function getCommand(input: string, options: GetOptions): Promise<vo
         // Output
         if (options.clipboard) {
             await copyToClipboard(content, { silent: true });
-            out.print(chalk.green(`✔ Copied ${file.path} to clipboard`));
+            out.println(chalk.green(`✔ Copied ${file.path} to clipboard`));
             if (lineStart) {
-                out.print(chalk.dim(`  Lines: ${lineStart}${lineEnd ? `-${lineEnd}` : ""}`));
+                out.println(chalk.dim(`  Lines: ${lineStart}${lineEnd ? `-${lineEnd}` : ""}`));
             }
         } else if (options.output) {
             const outputPath = resolve(options.output);
             await Bun.write(outputPath, content);
-            out.print(chalk.green(`✔ Written to ${outputPath}`));
+            out.println(chalk.green(`✔ Written to ${outputPath}`));
         } else {
             // Output to stdout
-            out.print(content);
+            out.println(content);
         }
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -372,13 +372,13 @@ async function handleCommitUrl(parsed: GitHubCommitUrl, options: GetOptions): Pr
 
     if (options.clipboard) {
         await copyToClipboard(content, { silent: true });
-        out.print(chalk.green(`✔ Copied commit ${commit.sha.slice(0, 7)} to clipboard`));
+        out.println(chalk.green(`✔ Copied commit ${commit.sha.slice(0, 7)} to clipboard`));
     } else if (options.output) {
         const outputPath = resolve(options.output);
         await Bun.write(outputPath, content);
-        out.print(chalk.green(`✔ Written to ${outputPath}`));
+        out.println(chalk.green(`✔ Written to ${outputPath}`));
     } else {
-        out.print(content);
+        out.println(content);
     }
 }
 
