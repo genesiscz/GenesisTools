@@ -2,8 +2,12 @@
  * @app/logger/client — browser-safe facade mirroring the @app/logger surface.
  *
  * Zero Node-only imports: no pino, no pino-pretty, no @clack/prompts, no
- * node:stream, no chalk. Uses picocolors for ANSI prefixes (browser-safe:
- * picocolors is a pure-JS package with no Node-only deps).
+ * node:stream, no chalk, no picocolors.
+ *
+ * Earlier versions used picocolors for ANSI prefixes — that's a pure-JS
+ * package import-wise, but the OUTPUT (ANSI escape codes) renders as garbage
+ * in browser DevTools (e.g. `[36m`). PR #179 t11 fix: use plain
+ * Unicode glyphs (◆ ✔ ▲ ✖ ℹ ■) — they render fine without any escapes.
  *
  * Intended for .tsx / browser-context files that need logger/out but cannot
  * pull the server-side @app/logger bundle.
@@ -13,7 +17,6 @@
  * console.log (DevTools console = stdout equivalent in browsers).
  */
 import { SafeJSON } from "@app/utils/json";
-import pc from "picocolors";
 
 // ─── Types (mirrored from @app/logger, without pino) ──────────────────────────
 
@@ -109,45 +112,57 @@ function noopSpinner() {
     };
 }
 
-function formatArgs(args: unknown[]): string {
-    return args.map((a) => (typeof a === "object" ? SafeJSON.stringify(a) : String(a))).join(" ");
-}
-
 function makeLogFn(consoleFn: (...args: unknown[]) => void, prefix: string): LogFn {
     return (objOrMsg: string | Record<string, unknown>, ...rest: unknown[]) => {
+        // PR #179 t10 fix: pass objects directly to consoleFn so browser
+        // DevTools can render an interactive inspector. Pre-stringifying via
+        // SafeJSON loses that capability. The pino-style signature accepts
+        // either (msg, ...args) or (obj, msg?, ...args) — keep object as a
+        // separate arg in both branches so DevTools sees it as a structured
+        // value, not a string.
         if (typeof objOrMsg === "string") {
-            const extra = rest.length > 0 ? ` ${formatArgs(rest)}` : "";
-            consoleFn(`${prefix}${objOrMsg}${extra}`);
+            if (rest.length > 0) {
+                consoleFn(`${prefix}${objOrMsg}`, ...rest);
+            } else {
+                consoleFn(`${prefix}${objOrMsg}`);
+            }
+        } else if (typeof rest[0] === "string") {
+            // pino-style (obj, msg, ...args) — emit "[prefix]msg" + obj + extras
+            consoleFn(`${prefix}${rest[0]}`, objOrMsg, ...rest.slice(1));
         } else {
-            const msg = rest[0] !== undefined ? ` ${String(rest[0])}` : "";
-            consoleFn(`${prefix}${SafeJSON.stringify(objOrMsg)}${msg}`);
+            // (obj, ...args) with no string message — emit prefix + obj + extras
+            consoleFn(prefix.trim() || "", objOrMsg, ...rest);
         }
     };
 }
 
 // ─── Scoped Out (for scoped logger's .log.out / .log.tee / .out) ─────────────
 
+// Plain Unicode prefixes — render cleanly in browser DevTools without ANSI
+// escape sequences (PR #179 t11 fix). Browser consoles ignore ANSI; pre-fix
+// they showed `[36m◆[39m` instead of `◆`. These constants make
+// the intent of "no ANSI here" obvious to future readers.
+const ICON_INFO = "◆";
+const ICON_OK = "✔";
+const ICON_WARN = "▲";
+const ICON_ERR = "✖";
+const ICON_CANCEL = "■";
+
 function makeScopedOut(scope: string): Out {
     const tag = `[${scope}] `;
 
-    const L =
-        (prefix: string, fn: (...a: unknown[]) => void) =>
-        (m: string): void => {
-            fn(`${prefix}${tag}${m}`);
-        };
-
     return {
-        intro: (t) => console.log(`${pc.cyan("◆")} ${tag}${t}`),
-        outro: (m) => console.log(`${pc.green("◆")} ${tag}${m}`),
-        cancel: (m) => console.warn(`${pc.red("■")} ${tag}${m ?? ""}`),
-        note: (c, t) => console.log(`${pc.dim(t ? `[${t}]` : "note")} ${tag}${c}`),
+        intro: (t) => console.info(`${ICON_INFO} ${tag}${t}`),
+        outro: (m) => console.info(`${ICON_INFO} ${tag}${m}`),
+        cancel: (m) => console.warn(`${ICON_CANCEL} ${tag}${m ?? ""}`),
+        note: (c, t) => console.info(`${t ? `[${t}]` : "note"} ${tag}${c}`),
         log: {
-            info: L(pc.cyan("◆") + " ", console.log),
-            success: L(pc.green("✔") + " ", console.log),
-            warn: L(pc.yellow("▲") + " ", console.warn),
-            warning: L(pc.yellow("▲") + " ", console.warn),
-            error: L(pc.red("✖") + " ", console.error),
-            step: L(pc.cyan("◆") + " ", console.log),
+            info: (m) => console.info(`${ICON_INFO} ${tag}${m}`),
+            success: (m) => console.info(`${ICON_OK} ${tag}${m}`),
+            warn: (m) => console.warn(`${ICON_WARN} ${tag}${m}`),
+            warning: (m) => console.warn(`${ICON_WARN} ${tag}${m}`),
+            error: (m) => console.error(`${ICON_ERR} ${tag}${m}`),
+            step: (m) => console.info(`${ICON_INFO} ${tag}${m}`),
             message: (m) => console.log(`${tag}${Array.isArray(m) ? m.join("\n") : m}`),
         },
         spinner: noopSpinner,
@@ -160,18 +175,11 @@ function makeScopedOut(scope: string): Out {
         result: (data) => console.log(SafeJSON.stringify(data)),
         print: (raw) => console.log(raw),
         detail: (m) => console.log(`  ${tag}${m}`),
-        info: (msg, ...rest) => {
-            const extra = rest.length > 0 ? ` ${formatArgs(rest)}` : "";
-            console.log(`${pc.cyan("◆")} ${tag}${msg}${extra}`);
-        },
-        warn: (msg, ...rest) => {
-            const extra = rest.length > 0 ? ` ${formatArgs(rest)}` : "";
-            console.warn(`${pc.yellow("▲")} ${tag}${msg}${extra}`);
-        },
-        error: (msg, ...rest) => {
-            const extra = rest.length > 0 ? ` ${formatArgs(rest)}` : "";
-            console.error(`${pc.red("✖")} ${tag}${msg}${extra}`);
-        },
+        // Pass rest-args directly to console so DevTools keeps inspectors
+        // (PR #179 t10 fix — same rationale as makeLogFn).
+        info: (msg, ...rest) => console.info(`${ICON_INFO} ${tag}${msg}`, ...rest),
+        warn: (msg, ...rest) => console.warn(`${ICON_WARN} ${tag}${msg}`, ...rest),
+        error: (msg, ...rest) => console.error(`${ICON_ERR} ${tag}${msg}`, ...rest),
     };
 }
 
@@ -179,17 +187,17 @@ function makeScopedOut(scope: string): Out {
 
 function makeTopLevelOut(): Out {
     return {
-        intro: (t) => console.log(`${pc.cyan("◆")}  ${t}`),
-        outro: (m) => console.log(`${pc.green("◆")}  ${m}`),
-        cancel: (m) => console.warn(`${pc.red("■")}  ${m ?? ""}`),
-        note: (c, t) => console.log(`${pc.dim(t ? `[${t}]` : "note")}  ${c}`),
+        intro: (t) => console.info(`${ICON_INFO}  ${t}`),
+        outro: (m) => console.info(`${ICON_INFO}  ${m}`),
+        cancel: (m) => console.warn(`${ICON_CANCEL}  ${m ?? ""}`),
+        note: (c, t) => console.info(`${t ? `[${t}]` : "note"}  ${c}`),
         log: {
-            info: (m) => console.log(`${pc.cyan("◆")}  ${m}`),
-            success: (m) => console.log(`${pc.green("✔")}  ${m}`),
-            warn: (m) => console.warn(`${pc.yellow("▲")}  ${m}`),
-            warning: (m) => console.warn(`${pc.yellow("▲")}  ${m}`),
-            error: (m) => console.error(`${pc.red("✖")}  ${m}`),
-            step: (m) => console.log(`${pc.cyan("◆")}  ${m}`),
+            info: (m) => console.info(`${ICON_INFO}  ${m}`),
+            success: (m) => console.info(`${ICON_OK}  ${m}`),
+            warn: (m) => console.warn(`${ICON_WARN}  ${m}`),
+            warning: (m) => console.warn(`${ICON_WARN}  ${m}`),
+            error: (m) => console.error(`${ICON_ERR}  ${m}`),
+            step: (m) => console.info(`${ICON_INFO}  ${m}`),
             message: (m) => console.log(Array.isArray(m) ? m.join("\n") : m),
         },
         spinner: noopSpinner,
@@ -202,18 +210,9 @@ function makeTopLevelOut(): Out {
         result: (data) => console.log(SafeJSON.stringify(data)),
         print: (raw) => console.log(raw),
         detail: (m) => console.log(`  ${m}`),
-        info: (msg, ...rest) => {
-            const extra = rest.length > 0 ? ` ${formatArgs(rest)}` : "";
-            console.log(`${pc.cyan("◆")}  ${msg}${extra}`);
-        },
-        warn: (msg, ...rest) => {
-            const extra = rest.length > 0 ? ` ${formatArgs(rest)}` : "";
-            console.warn(`${pc.yellow("▲")}  ${msg}${extra}`);
-        },
-        error: (msg, ...rest) => {
-            const extra = rest.length > 0 ? ` ${formatArgs(rest)}` : "";
-            console.error(`${pc.red("✖")}  ${msg}${extra}`);
-        },
+        info: (msg, ...rest) => console.info(`${ICON_INFO}  ${msg}`, ...rest),
+        warn: (msg, ...rest) => console.warn(`${ICON_WARN}  ${msg}`, ...rest),
+        error: (msg, ...rest) => console.error(`${ICON_ERR}  ${msg}`, ...rest),
     };
 }
 
@@ -226,7 +225,11 @@ function makeLogger(scope?: string): LoggerFacade {
     return {
         trace: makeLogFn(console.debug, prefix),
         debug: makeLogFn(console.debug, prefix),
-        info: makeLogFn(console.debug, prefix),
+        // PR #179 t1+t9 fix: info → console.info (not console.debug). Browser
+        // DevTools hide console.debug by default ("Verbose" log level required);
+        // info is a higher severity than debug and should be visible in default
+        // views — matches the server-side logger's stream semantics.
+        info: makeLogFn(console.info, prefix),
         warn: makeLogFn(console.warn, prefix),
         error: makeLogFn(console.error, prefix),
         fatal: makeLogFn(console.error, prefix),

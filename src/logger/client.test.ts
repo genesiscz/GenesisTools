@@ -21,17 +21,21 @@ describe("@app/logger/client", () => {
     let errors: any[][];
     // biome-ignore lint/suspicious/noExplicitAny: test spy needs flexible capture
     let debugs: any[][];
+    // biome-ignore lint/suspicious/noExplicitAny: test spy needs flexible capture
+    let infos: any[][];
 
     let logSpy: ReturnType<typeof spyOn>;
     let warnSpy: ReturnType<typeof spyOn>;
     let errorSpy: ReturnType<typeof spyOn>;
     let debugSpy: ReturnType<typeof spyOn>;
+    let infoSpy: ReturnType<typeof spyOn>;
 
     beforeEach(() => {
         logs = [];
         warns = [];
         errors = [];
         debugs = [];
+        infos = [];
         logSpy = spyOn(console, "log").mockImplementation((...args) => {
             logs.push(args);
         });
@@ -44,6 +48,9 @@ describe("@app/logger/client", () => {
         debugSpy = spyOn(console, "debug").mockImplementation((...args) => {
             debugs.push(args);
         });
+        infoSpy = spyOn(console, "info").mockImplementation((...args) => {
+            infos.push(args);
+        });
     });
 
     afterEach(() => {
@@ -51,6 +58,7 @@ describe("@app/logger/client", () => {
         warnSpy.mockRestore();
         errorSpy.mockRestore();
         debugSpy.mockRestore();
+        infoSpy.mockRestore();
     });
 
     describe("key-set parity", () => {
@@ -100,11 +108,13 @@ describe("@app/logger/client", () => {
     });
 
     describe("logger.scoped()", () => {
-        it("log.info() calls console.debug with [scope] prefix", async () => {
+        it("log.info() calls console.info with [scope] prefix", async () => {
+            // PR #179 t1+t9: info maps to console.info (not console.debug),
+            // because most browser DevTools hide debug by default.
             const { logger } = await import("./client");
             const { log } = logger.scoped("foo");
             log.info("bar");
-            const combined = debugs.flat().join(" ");
+            const combined = infos.flat().join(" ");
             expect(combined).toContain("[foo]");
             expect(combined).toContain("bar");
         });
@@ -134,10 +144,11 @@ describe("@app/logger/client", () => {
     });
 
     describe("out.info/warn/error shortcuts", () => {
-        it("out.info() calls console.log with styled prefix", async () => {
+        it("out.info() calls console.info (visible in default DevTools view)", async () => {
+            // PR #179 t1+t9: info goes to console.info, not console.log/.debug.
             const { out } = await import("./client");
             out.info("hello info");
-            const combined = logs.flat().join(" ");
+            const combined = infos.flat().join(" ");
             expect(combined).toContain("hello info");
         });
 
@@ -153,12 +164,17 @@ describe("@app/logger/client", () => {
             expect(errors.flat().join(" ")).toContain("hello error");
         });
 
-        it("out.info() passes rest args as formatted string", async () => {
+        it("out.info() passes objects as separate console args (preserves DevTools inspector)", async () => {
+            // PR #179 t10: objects must be passed to console as separate args
+            // (not pre-stringified) so DevTools renders an interactive inspector.
             const { out } = await import("./client");
-            out.info("msg", { extra: true });
-            const combined = logs.flat().join(" ");
-            expect(combined).toContain("msg");
-            expect(combined).toContain("extra");
+            const obj = { extra: true };
+            out.info("msg", obj);
+            const call = infos[0];
+            expect(call).toBeDefined();
+            expect(String(call[0])).toContain("msg");
+            // The object must appear as a structured arg, not in the prefix string.
+            expect(call.some((a: unknown) => a === obj)).toBe(true);
         });
     });
 

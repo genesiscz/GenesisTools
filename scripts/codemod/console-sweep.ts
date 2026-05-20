@@ -29,6 +29,7 @@
  */
 
 import { existsSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
 import {
     type CallExpression,
@@ -328,8 +329,9 @@ async function main(): Promise<void> {
         await project.save();
     }
 
-    // Emit manifest
-    const manifestPath = "/tmp/console-sweep-manifest.json";
+    // Emit manifest — use os.tmpdir() for Windows portability (/tmp doesn't
+    // exist on Windows). PR #179 t2+t3.
+    const manifestPath = join(tmpdir(), "console-sweep-manifest.json");
     writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
 
     if (diff) {
