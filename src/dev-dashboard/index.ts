@@ -9,6 +9,7 @@ import { findFreePort } from "@app/dev-dashboard/lib/ttyd/free-port";
 import { logger, out } from "@app/logger";
 import { runTool } from "@app/utils/cli";
 import { defineDashboardApp } from "@app/utils/DashboardApp";
+import { waitForUrlReady } from "@app/utils/DashboardApp/readiness";
 import { PROJECT_ROOT } from "@app/utils/paths";
 import { Command } from "commander";
 
@@ -121,37 +122,28 @@ async function runUiServer(): Promise<void> {
         killChild();
     });
 
-    // Open the browser only AFTER Vite is actually serving — the page load is
-    // what triggers /api/ttyd/spawn, so a blind 2s timer opened it before Vite
-    // was up and the proxy spammed ECONNREFUSED for Vite + the just-spawned
-    // ttyd. Poll the internal Vite port; ttyd is now effectively deferred until
-    // Vite is ready (no extra ttyd-lifecycle changes needed).
-    void (async () => {
-        const deadline = Date.now() + 20_000;
-        const internalUrl = `http://127.0.0.1:${internalPort}/`;
-        while (Date.now() < deadline) {
-            try {
-                await fetch(internalUrl, { signal: AbortSignal.timeout(1000) });
-                break; // any response (even 404) means Vite is listening
-            } catch (err) {
-                logger.debug({ err, internalUrl }, "vite readiness probe retry (not up yet)");
-                await new Promise((r) => setTimeout(r, 250));
-            }
-        }
+    // Foreground-only browser open (launchd/background restarts must not pop a tab).
+    // Lifecycle sets DASHBOARD_OPEN_BROWSER=1 when the user asked for --open.
+    if (process.env.DASHBOARD_OPEN_BROWSER === "1") {
+        void (async () => {
+            const ready = await waitForUrlReady(url, 20_000);
 
-        // Best-effort browser open. Detached spawns have no "error" listener by
-        // default; an unhandled "error" (opener binary missing) would crash the
-        // dashboard, so swallow it.
-        const [cmd, args] =
-            process.platform === "darwin"
-                ? (["open", [url]] as const)
-                : process.platform === "win32"
-                  ? (["cmd", ["/c", "start", "", url]] as const)
-                  : (["xdg-open", [url]] as const);
-        const opener = spawn(cmd, args, { stdio: "ignore", detached: true });
-        opener.on("error", (err) => logger.debug({ err, cmd }, "failed to auto-open browser"));
-        opener.unref();
-    })();
+            if (!ready.ready) {
+                logger.warn({ url, detail: ready.detail }, "dev-dashboard browser open skipped — page not ready");
+                return;
+            }
+
+            const [cmd, args] =
+                process.platform === "darwin"
+                    ? (["open", [url]] as const)
+                    : process.platform === "win32"
+                      ? (["cmd", ["/c", "start", "", url]] as const)
+                      : (["xdg-open", [url]] as const);
+            const opener = spawn(cmd, args, { stdio: "ignore", detached: true });
+            opener.on("error", (err) => logger.debug({ err, cmd }, "failed to auto-open browser"));
+            opener.unref();
+        })();
+    }
 
     const exitCode: number = await new Promise((resolveExit) => {
         child.on("exit", (code) => resolveExit(code ?? 1));
@@ -177,11 +169,7 @@ const devDashboardApp = defineDashboardApp({
         cwd: PROJECT_ROOT,
         env: process.env as Record<string, string | undefined>,
     },
-    readiness: {
-        kind: "log",
-        regex: /ready in \d+\s*m?s|Local:\s*http|localhost:\d+|press h \+ enter/i,
-        timeoutMs: 30_000,
-    },
+    readiness: { kind: "http", path: "/" },
     openBrowser: { enabled: false },
     launchd: { available: true },
 });
