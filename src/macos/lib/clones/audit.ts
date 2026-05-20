@@ -327,6 +327,24 @@ export function runOptimize({ roots, sets, planCacheHit, planCacheAgeMs }: RunOp
         ...(planCacheAgeMs !== undefined ? { planCacheAgeMs } : {}),
     });
 
+    // Build the ProcessReport in-memory so we don't have to re-read the
+    // JSONL we just wrote. Each recordOp() persists to disk AND accumulates
+    // into the in-memory ops + totals.
+    const ops: ProcessOp[] = [];
+    const totals: ProcessTotals = { cloned: 0, skipped: 0, errors: 0, bytesReclaimed: 0 };
+    const recordOp = (op: ProcessOp): void => {
+        appendOp(id, op);
+        ops.push(op);
+        if (op.op === "clone") {
+            totals.cloned += 1;
+            totals.bytesReclaimed += op.bytes;
+        } else if (op.op === "skip") {
+            totals.skipped += 1;
+        } else if (op.op === "error") {
+            totals.errors += 1;
+        }
+    };
+
     let seq = 0;
     try {
         for (let i = 0; i < sets.length; i++) {
@@ -352,7 +370,7 @@ export function runOptimize({ roots, sets, planCacheHit, planCacheAgeMs }: RunOp
                     sha256Before = sha256(replace);
                 } catch (err) {
                     log.warn({ err, replace }, "pre-state capture failed");
-                    appendOp(id, {
+                    recordOp({
                         seq,
                         ts,
                         op: "error",
@@ -373,7 +391,7 @@ export function runOptimize({ roots, sets, planCacheHit, planCacheAgeMs }: RunOp
                     if (res.status === "cloned") {
                         const sha256After = sha256(replace);
                         if (sha256After !== sha256Before) {
-                            appendOp(id, {
+                            recordOp({
                                 seq,
                                 ts,
                                 op: "error",
@@ -392,7 +410,7 @@ export function runOptimize({ roots, sets, planCacheHit, planCacheAgeMs }: RunOp
                             );
                         }
 
-                        appendOp(id, {
+                        recordOp({
                             seq,
                             ts,
                             op: "clone",
@@ -406,7 +424,7 @@ export function runOptimize({ roots, sets, planCacheHit, planCacheAgeMs }: RunOp
                             sha256After,
                         });
                     } else {
-                        appendOp(id, {
+                        recordOp({
                             seq,
                             ts,
                             op: "skip",
@@ -425,7 +443,7 @@ export function runOptimize({ roots, sets, planCacheHit, planCacheAgeMs }: RunOp
                     }
 
                     const isClone = err instanceof CloneUnsupportedError;
-                    appendOp(id, {
+                    recordOp({
                         seq,
                         ts,
                         op: "error",
@@ -460,10 +478,19 @@ export function runOptimize({ roots, sets, planCacheHit, planCacheAgeMs }: RunOp
         throw err;
     }
 
-    const rep = readProcess(id);
-    if (!rep) {
-        throw new Error(`runOptimize: process ${id} could not be read back`);
-    }
+    const rep: ProcessReport = {
+        id,
+        state: "applied",
+        roots,
+        startedAt,
+        endedAt: startedAt,
+        planCache: {
+            hit: planCacheHit,
+            ...(planCacheAgeMs !== undefined ? { ageMs: planCacheAgeMs } : {}),
+        },
+        ops,
+        totals,
+    };
 
     log.info(
         {
