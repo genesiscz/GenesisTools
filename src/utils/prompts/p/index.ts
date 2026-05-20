@@ -1,8 +1,12 @@
 import { getBackend, setBackend } from "./backend";
 import type {
     ConfirmOpts,
+    EditorOpts,
     Log,
     MultiSelectOpts,
+    NumberOpts,
+    PasswordOpts,
+    SearchOpts,
     SelectOpts,
     SelectValue,
     Spinner,
@@ -10,8 +14,11 @@ import type {
     TypedConfirmOpts,
 } from "./types";
 
+export { isCancel } from "@clack/prompts";
 export { setBackend };
 export type { PromptBackend } from "./backend";
+export type { InquirerBackend } from "./inquirer-backend";
+export { inquirerBackend } from "./inquirer-backend";
 export type * from "./types";
 
 export function intro(msg: string): void {
@@ -50,6 +57,22 @@ export function multiselect(opts: MultiSelectOpts): Promise<SelectValue[]> {
     return getBackend().multiselect(opts);
 }
 
+export function password(opts: PasswordOpts): Promise<string> {
+    return getBackend().password(opts);
+}
+
+export function search<T>(opts: SearchOpts<T>): Promise<T> {
+    return getBackend().search(opts);
+}
+
+export function editor(opts: EditorOpts): Promise<string> {
+    return getBackend().editor(opts);
+}
+
+export function number(opts: NumberOpts): Promise<number> {
+    return getBackend().number(opts);
+}
+
 export function spinner(): Spinner {
     return getBackend().spinner();
 }
@@ -58,8 +81,10 @@ export const log: Log = {
     info: (msg) => getBackend().log.info(msg),
     success: (msg) => getBackend().log.success(msg),
     warn: (msg) => getBackend().log.warn(msg),
+    warning: (msg) => getBackend().log.warning(msg),
     error: (msg) => getBackend().log.error(msg),
     step: (msg) => getBackend().log.step(msg),
+    message: (msg) => getBackend().log.message(msg),
 };
 
 export type { OfferInstallOpts } from "./offer-install";
