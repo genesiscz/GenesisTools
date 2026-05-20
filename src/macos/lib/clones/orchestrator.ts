@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { basename, dirname, relative, resolve } from "node:path";
 import logger from "@app/logger";
 import { formatBytes } from "@app/utils/format";
-import { type DiskUsage, freeDiskSpace, walkFiles, type WalkError } from "@app/utils/fs/disk-usage";
+import { type DiskUsage, freeDiskSpace, type WalkError, walkFiles } from "@app/utils/fs/disk-usage";
 import { getCloneId, getPrivateSize } from "@app/utils/macos/apfs";
 import { Stopwatch } from "@app/utils/Stopwatch";
 import { passesGlobs } from "./filters";
@@ -569,12 +569,11 @@ export function buildMeasureReport(args: BuildMeasureArgs): MeasureReport {
             continue;
         }
 
-        const { tree: rootMut, aggregate: u, privateUnknown: rootPrivateUnknown } = walkRoot(
-            root,
-            rootRecs,
-            args,
-            crossTree.sharedByPath
-        );
+        const {
+            tree: rootMut,
+            aggregate: u,
+            privateUnknown: rootPrivateUnknown,
+        } = walkRoot(root, rootRecs, args, crossTree.sharedByPath);
         totalsAgg.logical += u.logical;
         totalsAgg.allocated += u.allocated;
         totalsAgg.fileCount += u.fileCount;
