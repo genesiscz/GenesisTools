@@ -1,4 +1,4 @@
-import type { EnrichedQaEntry } from "@app/dev-dashboard/lib/qa-render";
+import { type EnrichedQaEntry, isQaAnswerTruncated } from "@app/dev-dashboard/lib/qa-render";
 import type { QaEntry } from "@app/question/lib/types";
 import { playDingInBrowser } from "@app/utils/audio/runner.client";
 import { SafeJSON } from "@app/utils/json";
@@ -133,11 +133,10 @@ function tagClass(tag: string): string {
     return "border-[#2a3445] text-[var(--dd-text-secondary)]";
 }
 
-function QaCard({ entry, defaultOpen = true }: { entry: QaRow; defaultOpen?: boolean }) {
-    const [open, setOpen] = useState(defaultOpen);
+function QaCard({ entry }: { entry: QaRow }) {
+    const [open, setOpen] = useState(true);
     const when = new Date(entry.ts).toISOString().slice(0, 16).replace("T", " ");
-    const lines = entry.answerMd.split("\n");
-    const truncated = lines.length > 3;
+    const truncated = isQaAnswerTruncated(entry.answerMd);
     const answerHtml = open || !truncated ? entry.answerHtml : entry.answerHtmlPreview;
 
     return (
@@ -230,7 +229,7 @@ export function QaRoute() {
             ) : (
                 <div className="flex flex-col gap-3">
                     {all.map((entry) => (
-                        <QaCard key={entry.id} entry={entry} defaultOpen={live.some((row) => row.id === entry.id)} />
+                        <QaCard key={entry.id} entry={entry} />
                     ))}
                 </div>
             )}
