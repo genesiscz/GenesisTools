@@ -27,6 +27,7 @@ import {
 } from "@app/dev-dashboard/lib/obsidian/publish";
 import { listVault, readNote } from "@app/dev-dashboard/lib/obsidian/reader";
 import { renderSharePage } from "@app/dev-dashboard/lib/obsidian/share-template";
+import { enrichQaEntry } from "@app/dev-dashboard/lib/qa-render";
 import { createQaStream, todayLogFile } from "@app/dev-dashboard/lib/qa-sse";
 import { configureRetention, getCachedPulse, getSeries, startPulsePolling } from "@app/dev-dashboard/lib/system/poller";
 import { addTodo, completeTodo, deleteTodo, listTodos } from "@app/dev-dashboard/lib/todos/service";
@@ -353,7 +354,7 @@ export function attachDevDashboardMiddleware(middlewares: Connect.Server): void 
                     unread: url.searchParams.get("unread") === "1",
                     limit: Number.parseInt(url.searchParams.get("limit") ?? "100", 10),
                 });
-                sendJson(res, 200, { entries: rows });
+                sendJson(res, 200, { entries: rows.map((row) => enrichQaEntry(row)) });
             } catch (err) {
                 sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
             } finally {
@@ -425,7 +426,7 @@ export function attachDevDashboardMiddleware(middlewares: Connect.Server): void 
             });
             res.write(": qa stream open\n\n");
             const stream = createQaStream(todayLogFile(), (entry) => {
-                res.write(`data: ${SafeJSON.stringify(entry)}\n\n`);
+                res.write(`data: ${SafeJSON.stringify(enrichQaEntry(entry))}\n\n`);
             });
             const keepAlive = setInterval(() => res.write(": ping\n\n"), 25000);
             const shutdown = (): void => {

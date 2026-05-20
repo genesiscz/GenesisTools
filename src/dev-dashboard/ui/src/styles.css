@@ -1,6 +1,7 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "@ui/theme/styles.css";
+@import "highlight.js/styles/atom-one-dark.css";
 @import "./slate-grid.css";
 @source "../../../utils/ui";
 

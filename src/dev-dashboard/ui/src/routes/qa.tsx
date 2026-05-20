@@ -1,8 +1,10 @@
+import type { EnrichedQaEntry } from "@app/dev-dashboard/lib/qa-render";
 import type { QaEntry } from "@app/question/lib/types";
 import { playDingInBrowser } from "@app/utils/audio/runner.client";
 import { SafeJSON } from "@app/utils/json";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
+import { LiveSseIndicator } from "@/components/LiveSseIndicator";
 
 interface AudioEntry {
     id: string;
@@ -103,7 +105,7 @@ function SoundControl() {
     );
 }
 
-interface QaRow extends QaEntry {
+interface QaRow extends QaEntry, EnrichedQaEntry {
     supersededBy: string | null;
     readAt: number | null;
 }
@@ -130,15 +132,15 @@ function tagClass(tag: string): string {
     return "border-[#2a3445] text-[var(--dd-text-secondary)]";
 }
 
-function QaCard({ entry }: { entry: QaRow }) {
-    const [open, setOpen] = useState(false);
+function QaCard({ entry, defaultOpen = true }: { entry: QaRow; defaultOpen?: boolean }) {
+    const [open, setOpen] = useState(defaultOpen);
     const when = new Date(entry.ts).toISOString().slice(0, 16).replace("T", " ");
     const lines = entry.answerMd.split("\n");
-    const preview = lines.slice(0, 3).join("\n");
     const truncated = lines.length > 3;
+    const answerHtml = open || !truncated ? entry.answerHtml : entry.answerHtmlPreview;
 
     return (
-        <div className="dd-panel flex flex-col gap-2 p-4">
+        <div className="dd-panel flex flex-col gap-2 p-4" data-qa-id={entry.id}>
             <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--dd-text-muted)]">
                 <span className="text-[var(--dd-text-secondary)]">{entry.project}</span>
                 <span>·</span>
@@ -147,9 +149,7 @@ function QaCard({ entry }: { entry: QaRow }) {
                 <span className="ml-auto">{when}</span>
             </div>
             <div className="font-bold text-[var(--dd-text-primary)]">❯ {entry.question}</div>
-            <pre className="whitespace-pre-wrap break-words text-sm text-[var(--dd-text-secondary)]">
-                {open ? entry.answerMd : preview}
-            </pre>
+            <article className="dd-markdown text-sm" dangerouslySetInnerHTML={{ __html: answerHtml }} />
             {truncated ? (
                 <button type="button" className="dd-accent-text self-start text-xs" onClick={() => setOpen((v) => !v)}>
                     {open ? "▴ collapse" : "▾ expand full answer (rationale · refs · links)"}
@@ -187,7 +187,6 @@ export function QaRoute() {
                 /* ignore malformed frame */
             }
         };
-        // Without this the indicator stays green forever on a dropped stream (t8).
         es.onerror = () => setSseDown(true);
         return () => es.close();
     }, []);
@@ -211,13 +210,7 @@ export function QaRoute() {
             <div className="flex flex-wrap items-center justify-between gap-3">
                 <h2 className="dd-accent-text text-xl font-bold">Q&amp;A</h2>
                 <SoundControl />
-                <span
-                    className="text-xs"
-                    style={{ color: sseDown ? "#f87171" : "var(--dd-text-muted)" }}
-                    title={sseDown ? "SSE stream disconnected — reconnecting…" : "live stream connected"}
-                >
-                    {sseDown ? "○ disconnected" : "● live (SSE)"} · {all.length} shown
-                </span>
+                <LiveSseIndicator live={!sseDown} count={all.length} />
             </div>
 
             {logQuery.isLoading ? (
@@ -229,7 +222,7 @@ export function QaRoute() {
             ) : (
                 <div className="flex flex-col gap-3">
                     {all.map((entry) => (
-                        <QaCard key={entry.id} entry={entry} />
+                        <QaCard key={entry.id} entry={entry} defaultOpen={live.some((row) => row.id === entry.id)} />
                     ))}
                 </div>
             )}
