@@ -1,3 +1,4 @@
+import { homedir } from "node:os";
 import { basename } from "node:path";
 import { logger } from "@app/logger";
 import { applyLogLevel } from "@app/macos/commands/clones/log-level";
@@ -5,9 +6,24 @@ import { collapseDuplicates } from "@app/macos/lib/clones/collapse";
 import { expandNodeModules, resolveRoots } from "@app/macos/lib/clones/orchestrator";
 import { resolveFormat, resolveRenderer } from "@app/macos/lib/clones/render/index";
 import { loadClonesConfig } from "@app/macos/lib/clones/store";
-import { parseVariadic } from "@app/utils/cli";
+import { isInteractive, parseVariadic } from "@app/utils/cli";
 import { formatBytes } from "@app/utils/format";
+import * as p from "@app/utils/prompts/p";
 import { Command, Option } from "commander";
+
+/** Replace HOME with `~` and truncate the middle of long paths so the spinner
+ *  line fits a typical terminal width. */
+function shortenForSpinner(dir: string): string {
+    const home = homedir();
+    const rel = dir.startsWith(home) ? `~${dir.slice(home.length)}` : dir;
+    if (rel.length <= 80) {
+        return rel;
+    }
+
+    const head = rel.slice(0, 24);
+    const tail = rel.slice(-50);
+    return `${head}…${tail}`;
+}
 
 const log = logger.child({ component: "clones:duplicates-cmd" });
 
@@ -90,6 +106,29 @@ export function createDuplicatesCommand(): Command {
 
             const minSize = opts.minReal ? Number.parseInt(opts.minReal, 10) : undefined;
 
+            // Live progress spinner — only when stderr is a TTY and we're
+            // not piped/silent. The walk just bumps counters via onDirEntered
+            // (called per-directory at high rate); the spinner ticks on
+            // setInterval and reads the latest dir, so display rate stays
+            // human-readable even when thousands of dirs/sec are scanned.
+            const showSpinner = isInteractive() && !opts.silent;
+            const spinner = showSpinner ? p.spinner() : null;
+            let dirsSeen = 0;
+            let lastDir = "";
+            let tickTimer: ReturnType<typeof setInterval> | null = null;
+            const onDirEntered = (dir: string): void => {
+                dirsSeen += 1;
+                lastDir = dir;
+            };
+            if (spinner) {
+                spinner.start(`Scanning… ${roots.map(shortenForSpinner).join(", ")}`);
+                tickTimer = setInterval(() => {
+                    if (lastDir) {
+                        spinner.message(`Scanned ${dirsSeen} dirs · in ${shortenForSpinner(lastDir)}`);
+                    }
+                }, 100);
+            }
+
             try {
                 const report = await collapseDuplicates({
                     roots,
@@ -98,7 +137,13 @@ export function createDuplicatesCommand(): Command {
                     exclude: parseVariadic(opts.exclude),
                     signal: controller.signal,
                     shouldEnter: shouldEnterByDefault,
+                    onDirEntered,
                 });
+                if (tickTimer) {
+                    clearInterval(tickTimer);
+                    tickTimer = null;
+                }
+                spinner?.stop(`Scanned ${dirsSeen} dirs · ${report.sets.length} set(s) found`);
                 report.grouped = Boolean(opts.group);
 
                 const fmt = resolveFormat(opts.format);
@@ -138,15 +183,23 @@ export function createDuplicatesCommand(): Command {
 
                 process.exitCode = 0;
             } catch (err) {
+                if (tickTimer) {
+                    clearInterval(tickTimer);
+                    tickTimer = null;
+                }
                 if (controller.signal.aborted) {
+                    spinner?.stop("aborted.");
                     log.warn({ err }, "scan aborted");
-                    console.error("\naborted.");
                     process.exitCode = 130;
                     return;
                 }
 
+                spinner?.stop("scan failed");
                 throw err;
             } finally {
+                if (tickTimer) {
+                    clearInterval(tickTimer);
+                }
                 process.off("SIGINT", onSigint);
                 process.off("SIGTERM", onSigint);
             }

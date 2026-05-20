@@ -41,6 +41,11 @@ export interface WalkOptions {
     /** Aborts the walk between dirent reads. On abort the generator throws
      *  `signal.reason` (or a generic `AbortError` if reason is unset). */
     signal?: AbortSignal;
+    /** Called once per directory we successfully read, with its absolute
+     *  path. Use a cheap callback (e.g. assign to a ref) — directories are
+     *  enumerated at high rate; the CLI throttles spinner updates on top of
+     *  this with a setInterval. */
+    onDirEntered?: (dir: string) => void;
 }
 
 export interface DiskUsage {
@@ -92,6 +97,8 @@ export function* walkFiles(root: string, opts: WalkOptions = {}): Generator<Walk
         opts.onError?.({ path: root, errno: errnoOf(err) });
         return;
     }
+
+    opts.onDirEntered?.(root);
 
     for (const entry of entries) {
         const p = join(root, entry.name);
@@ -414,6 +421,9 @@ export interface FindDuplicatesOptions {
     /** Directory predicate forwarded to `walkFiles`. Returning false skips
      *  the subtree entirely (no `stat` cost on its contents). */
     shouldEnter?: (dir: string) => boolean;
+    /** Forwarded to `walkFiles` — called per directory entered. CLI uses
+     *  this to drive a live spinner. */
+    onDirEntered?: (dir: string) => void;
 }
 
 /** How often we yield to the event loop during the size-bucket loop.
@@ -444,20 +454,21 @@ function yieldToLoop(): Promise<void> {
  *  on each yield, so abort latency is bounded by (yield interval × bucket
  *  cost) — typically well under one second.
  *
- *  **Clone-family pre-filter (huge speedup for bun-installed node_modules):**
- *  before hashing, same-size files are pre-bucketed by APFS clone-id. Files
- *  already sharing a non-zero clone-id are by construction byte-identical AND
- *  share their physical extents — re-cloning would reclaim zero bytes. So we
- *  pick ONE representative per clone-family, sha just the reps, then expand
- *  each matched rep back to its full family in the returned groups. Same-size
- *  groups that collapse to a single rep (everyone's already in one family)
- *  are dropped entirely.
+ *  **The contract: each returned group's `paths` is exactly one
+ *  representative per APFS clone-family.** Files inside the same clone
+ *  family share their physical extents — they're not duplicates from a
+ *  reclaim perspective and are NOT included individually in the group
+ *  (otherwise `reclaimable = (paths.length - 1) * size` overcounts the
+ *  cloned members at zero-actual-reclaim). To recover the full set of
+ *  paths backing a group's content, the caller can walk the file system
+ *  separately; for dedupe purposes only reps matter. Same-size groups
+ *  whose members all collapse to one clone family are dropped entirely.
  *
  *  `minSize` is applied during the walk so large trees don't materialise
  *  paths for every below-threshold file. */
 export async function findDuplicateFiles(root: string, opts: FindDuplicatesOptions = {}): Promise<DuplicateGroup[]> {
     const minSize = Math.max(1, opts.minSize ?? 1);
-    const { signal, shouldEnter } = opts;
+    const { signal, shouldEnter, onDirEntered } = opts;
 
     const bySize = new Map<number, string[]>();
     const walkOpts: WalkOptions = {};
@@ -466,6 +477,9 @@ export async function findDuplicateFiles(root: string, opts: FindDuplicatesOptio
     }
     if (shouldEnter !== undefined) {
         walkOpts.shouldEnter = shouldEnter;
+    }
+    if (onDirEntered !== undefined) {
+        walkOpts.onDirEntered = onDirEntered;
     }
     let walkCount = 0;
     for (const e of walkFiles(root, walkOpts)) {
@@ -518,10 +532,8 @@ export async function findDuplicateFiles(root: string, opts: FindDuplicatesOptio
         }
 
         const reps: string[] = [];
-        const repToFamily = new Map<string, string[]>();
         for (const family of byClone.values()) {
             reps.push(family[0]);
-            repToFamily.set(family[0], family);
         }
 
         const byHash = new Map<string, string[]>();
@@ -543,18 +555,11 @@ export async function findDuplicateFiles(root: string, opts: FindDuplicatesOptio
             const bytesOpts = signal !== undefined ? { signal } : {};
             const confirmed = group.filter((p) => p === group[0] || bytesEqualStreaming(group[0], p, bytesOpts));
             if (confirmed.length >= 2) {
-                // Expand reps back to their full clone-families.
-                const all: string[] = [];
-                for (const rep of confirmed) {
-                    const fam = repToFamily.get(rep);
-                    if (fam) {
-                        all.push(...fam);
-                    } else {
-                        all.push(rep);
-                    }
-                }
-
-                groups.push({ size, sha256, paths: all.sort() });
+                // Per the contract above: paths are exactly the confirmed
+                // reps (one per clone-family). We do NOT expand back to the
+                // full family — that would let the reclaim math overcount
+                // by counting the cloned members at zero-actual-reclaim.
+                groups.push({ size, sha256, paths: [...confirmed].sort() });
             }
         }
     }

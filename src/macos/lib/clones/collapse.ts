@@ -23,6 +23,9 @@ export interface CollapseArgs {
      *  entire `node_modules` / `.git` subtrees before any syscall is spent
      *  on them — far cheaper than post-filtering globs. */
     shouldEnter?: (dir: string) => boolean;
+    /** Forwarded to `walkFiles` — called per directory entered (high rate;
+     *  cheap callback only). CLI uses this to drive a live spinner. */
+    onDirEntered?: (dir: string) => void;
 }
 
 /** Which root contains `absPath`? Used to relativize for glob matching across
@@ -122,6 +125,7 @@ export async function collapseDuplicates({
     exclude,
     signal,
     shouldEnter,
+    onDirEntered,
 }: CollapseArgs): Promise<DuplicatesReport> {
     const sw = new Stopwatch();
     const shaOf = new Map<string, string>();
@@ -138,6 +142,9 @@ export async function collapseDuplicates({
         }
         if (shouldEnter !== undefined) {
             findOpts.shouldEnter = shouldEnter;
+        }
+        if (onDirEntered !== undefined) {
+            findOpts.onDirEntered = onDirEntered;
         }
         for (const g of await findDuplicateFiles(root, findOpts)) {
             // If include/exclude prunes the group below 2 paths it is no
