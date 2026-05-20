@@ -39,6 +39,14 @@ const getLogLevel = (): LogLevel => {
     if (args.verbose) {
         return "debug";
     }
+    // Generic, opt-in console-level override. Unset by default (global default
+    // stays "info"); a tool may set LOG_CONSOLE_LEVEL before this module is
+    // imported to scope its own console verbosity without changing other tools.
+    // Explicit verbose/trace/debug signals above still win.
+    const envLevel = process.env.LOG_CONSOLE_LEVEL as LogLevel | undefined;
+    if (envLevel && envLevel in LOG_LEVELS) {
+        return envLevel;
+    }
     return "info";
 };
 

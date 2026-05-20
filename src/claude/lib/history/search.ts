@@ -13,6 +13,7 @@ import { discoverSessionFiles, discoverSessionFilesInDir } from "@app/utils/clau
 import { extractProjectName, PROJECTS_DIR, resolveProjectDir } from "@app/utils/claude/projects";
 import { Executor } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
+import { Stopwatch } from "@app/utils/Stopwatch";
 import { glob } from "glob";
 import {
     invalidateToday as _invalidateToday,
@@ -86,6 +87,7 @@ export { CLAUDE_DIR, PROJECTS_DIR } from "@app/utils/claude/projects";
 
 export async function findConversationFiles(filters: SearchFilters): Promise<string[]> {
     const isAll = !filters.project || filters.project === "all";
+    const sw = new Stopwatch();
 
     const files = await discoverSessionFiles({
         project: isAll ? undefined : filters.project,
@@ -93,6 +95,7 @@ export async function findConversationFiles(filters: SearchFilters): Promise<str
         subagentsOnly: filters.agentsOnly,
         excludeSubagents: filters.excludeAgents,
     });
+    const discoverMs = sw.elapsedMs;
 
     // Sort by modification time (most recent first)
     const fileStats = await Promise.all(
@@ -102,6 +105,17 @@ export async function findConversationFiles(filters: SearchFilters): Promise<str
         })
     );
     fileStats.sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
+
+    logger.info(
+        {
+            project: isAll ? "all" : filters.project,
+            isAll,
+            fileCount: fileStats.length,
+            discoverMs: Math.round(discoverMs),
+            statSortMs: Math.round(sw.elapsedMs - discoverMs),
+        },
+        "findConversationFiles: completed"
+    );
 
     return fileStats.map((f) => f.path);
 }
@@ -774,24 +788,63 @@ function searchSessionMetadataCache(filters: SearchFilters): SearchResult[] {
 }
 
 export async function searchConversations(filters: SearchFilters): Promise<SearchResult[]> {
+    const sw = new Stopwatch();
+    logger.info(
+        {
+            query: filters.query,
+            project: filters.project ?? "all",
+            summaryOnly: !!filters.summaryOnly,
+            sortByRelevance: !!filters.sortByRelevance,
+            commitHash: filters.commitHash,
+            commitMessage: filters.commitMessage,
+            limit: filters.limit,
+        },
+        "searchConversations: start"
+    );
+
     // Fast path: summary-only searches use SQLite cache (no JSONL parsing)
     if (filters.summaryOnly && !filters.commitHash && !filters.commitMessage) {
-        return searchSessionMetadataCache(filters);
+        logger.info("searchConversations: fast path = summary-only SQLite cache");
+        const r = await searchSessionMetadataCache(filters);
+        logger.info(
+            { fastPath: "summary-only", matched: r.length, elapsedMs: Math.round(sw.elapsedMs) },
+            "searchConversations: done"
+        );
+        return r;
     }
 
     // Fast path: commit hash search uses git log + cache + raw text scanning
     if (filters.commitHash) {
-        return searchCommitHashFast(filters.commitHash, filters);
+        logger.info("searchConversations: fast path = commit-hash");
+        const r = await searchCommitHashFast(filters.commitHash, filters);
+        logger.info(
+            { fastPath: "commit-hash", matched: r.length, elapsedMs: Math.round(sw.elapsedMs) },
+            "searchConversations: done"
+        );
+        return r;
     }
 
     let results: SearchResult[] = [];
     const files = await findConversationFiles(filters);
     const total = files.length;
     let processed = 0;
+    logger.info(
+        { fastPath: "none (full JSONL parse)", fileCount: total, findFilesMs: Math.round(sw.elapsedMs) },
+        "searchConversations: scanning files — no fast path, parsing every conversation"
+    );
+    let lastProgressLogMs = sw.elapsedMs;
 
     for (const filePath of files) {
         processed++;
         filters.onProgress?.(processed, total, basename(filePath, ".jsonl"));
+
+        if (processed % 500 === 0 || sw.elapsedMs - lastProgressLogMs >= 5000) {
+            lastProgressLogMs = sw.elapsedMs;
+            logger.info(
+                { processed, total, matched: results.length, elapsedMs: Math.round(sw.elapsedMs) },
+                "searchConversations: progress"
+            );
+        }
 
         const messages = await parseJsonlFile(filePath);
         if (messages.length === 0) {
@@ -993,6 +1046,17 @@ export async function searchConversations(filters: SearchFilters): Promise<Searc
     if (filters.limit && results.length > filters.limit) {
         results = results.slice(0, filters.limit);
     }
+
+    logger.info(
+        {
+            fastPath: "none (full JSONL parse)",
+            fileCount: total,
+            matched: results.length,
+            elapsedMs: Math.round(sw.elapsedMs),
+            sortByRelevance: !!filters.sortByRelevance,
+        },
+        "searchConversations: done"
+    );
 
     return results;
 }

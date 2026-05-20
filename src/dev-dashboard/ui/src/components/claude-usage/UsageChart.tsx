@@ -6,6 +6,8 @@ interface UsageChartProps {
     title: string;
     series: BucketSeries[];
     rangeMinutes: number;
+    /** End of the shared time window (epoch ms). Same value across all charts so their axes align. */
+    rangeEndMs: number;
     loading?: boolean;
     hint?: string;
 }
@@ -22,13 +24,14 @@ function bucketMeta(bucket: string): { label: string; color: string } {
     return BUCKET_META[bucket] ?? { label: bucket, color: "#94a3b8" };
 }
 
-function formatTick(timestamp: string, rangeMinutes: number): string {
+function formatTick(timestamp: number | string, rangeMinutes: number): string {
     return formatClock(timestamp, rangeMinutes <= 1440 ? {} : { date: "numeric" });
 }
 
 interface Row {
-    t: string;
-    [bucket: string]: string | number;
+    /** Epoch ms (minute-bucketed) — a real time value so the X axis is time-scaled, not categorical. */
+    t: number;
+    [bucket: string]: number;
 }
 
 interface Sample {
@@ -46,7 +49,7 @@ interface Sample {
  * sample, so at any x the nearest value of all three lines is well-defined
  * and the tooltip always shows all of them.
  */
-function mergeSeries(series: BucketSeries[], rangeMinutes: number): Row[] {
+function mergeSeries(series: BucketSeries[]): Row[] {
     const samples: Sample[] = [];
 
     for (const s of series) {
@@ -75,7 +78,7 @@ function mergeSeries(series: BucketSeries[], rangeMinutes: number): Row[] {
     for (const sample of samples) {
         if (sample.minute !== currentMinute) {
             currentMinute = sample.minute;
-            currentRow = { t: formatTick(sample.ts, rangeMinutes), ...last };
+            currentRow = { t: sample.minute * 60_000, ...last };
             rows.push(currentRow);
         }
 
@@ -88,7 +91,7 @@ function mergeSeries(series: BucketSeries[], rangeMinutes: number): Row[] {
     return rows;
 }
 
-export function UsageChart({ title, series, rangeMinutes, loading, hint }: UsageChartProps) {
+export function UsageChart({ title, series, rangeMinutes, rangeEndMs, loading, hint }: UsageChartProps) {
     const present = series.filter((s) => s.snapshots.length > 0);
 
     if (loading) {
@@ -109,7 +112,17 @@ export function UsageChart({ title, series, rangeMinutes, loading, hint }: Usage
         );
     }
 
-    const data = mergeSeries(present, rangeMinutes);
+    const data = mergeSeries(present);
+    const domainStart = rangeEndMs - rangeMinutes * 60_000;
+
+    // Fixed, evenly-spaced ticks across the shared domain so every chart shows
+    // the SAME labels at the SAME x positions — without this, recharts places
+    // ticks on each series' own sample points and stacked charts drift apart.
+    const TICK_COUNT = 6;
+    const ticks = Array.from(
+        { length: TICK_COUNT },
+        (_, i) => domainStart + ((rangeEndMs - domainStart) * i) / (TICK_COUNT - 1)
+    );
 
     return (
         <div className="dd-panel p-4">
@@ -117,7 +130,18 @@ export function UsageChart({ title, series, rangeMinutes, loading, hint }: Usage
             <ResponsiveContainer width="100%" height={256}>
                 <LineChart data={data}>
                     <CartesianGrid stroke="var(--dd-border)" strokeDasharray="3 3" />
-                    <XAxis dataKey="t" stroke="var(--dd-text-muted)" fontSize={11} minTickGap={28} />
+                    <XAxis
+                        dataKey="t"
+                        type="number"
+                        scale="time"
+                        domain={[domainStart, rangeEndMs]}
+                        ticks={ticks}
+                        allowDataOverflow={false}
+                        tickFormatter={(ms: number) => formatTick(ms, rangeMinutes)}
+                        stroke="var(--dd-text-muted)"
+                        fontSize={11}
+                        minTickGap={28}
+                    />
                     <YAxis domain={[0, 100]} stroke="var(--dd-text-muted)" fontSize={11} unit="%" width={38} />
                     <Tooltip
                         contentStyle={{
@@ -125,6 +149,7 @@ export function UsageChart({ title, series, rangeMinutes, loading, hint }: Usage
                             border: "1px solid var(--dd-border)",
                             color: "var(--dd-text-primary)",
                         }}
+                        labelFormatter={(ms) => formatTick(ms as number, rangeMinutes)}
                         formatter={(value, name) => [`${value}%`, name]}
                     />
                     <Legend wrapperStyle={{ fontSize: 12 }} />

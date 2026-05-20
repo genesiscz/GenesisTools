@@ -14,11 +14,19 @@ interface AccountUsageChartProps {
     /** Current poll error for this account, if any (from /api/claude/usage). */
     accountError?: string;
     rangeMinutes: number;
+    /** Shared end of the time window (epoch ms) — identical across all charts so axes align. */
+    rangeEndMs: number;
 }
 
 // One independent query per account so each chart shows its own loader and
 // renders as soon as its data arrives — no waiting on the slowest account.
-export function AccountUsageChart({ accountName, label, accountError, rangeMinutes }: AccountUsageChartProps) {
+export function AccountUsageChart({
+    accountName,
+    label,
+    accountError,
+    rangeMinutes,
+    rangeEndMs,
+}: AccountUsageChartProps) {
     const query = useQuery({
         queryKey: ["claude", "usage", "history", accountName, rangeMinutes],
         queryFn: () =>
@@ -39,6 +47,7 @@ export function AccountUsageChart({ accountName, label, accountError, rangeMinut
             title={formatAccountTitle(accountName, label)}
             series={query.data?.series ?? []}
             rangeMinutes={rangeMinutes}
+            rangeEndMs={rangeEndMs}
             loading={query.isLoading}
             hint={hint}
         />
