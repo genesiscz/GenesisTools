@@ -19,6 +19,7 @@ import { join, resolve } from "node:path";
 import { logger } from "@app/logger";
 import { formatBytes } from "@app/utils/format";
 import { CloneUnsupportedError, cloneFile, getCloneId, getFsType, getPrivateSize } from "@app/utils/macos/apfs";
+import { Stopwatch } from "@app/utils/Stopwatch";
 
 export interface WalkEntry {
     path: string;
@@ -413,6 +414,53 @@ export function bytesEqualStreaming(a: string, b: string, opts: { signal?: Abort
     }
 }
 
+export interface FindDuplicatesStats {
+    /** Files yielded by walkFiles (pre-minSize filter). */
+    walkedFiles: number;
+    /** Directories entered (callback fires after a successful readdirSync). */
+    walkedDirs: number;
+    /** Wall-clock ms spent in the walk phase. */
+    walkMs: number;
+    /** Distinct file-size buckets (post-minSize). */
+    bucketsTotal: number;
+    /** Buckets dropped because all members share one APFS clone-family (reclaim=0). */
+    bucketsDroppedByClone: number;
+    /** Buckets where at least one rep got hashed. */
+    bucketsHashed: number;
+    /** `getCloneId` syscall count. */
+    cloneIdCalls: number;
+    /** `sha256File` call count (one per rep). */
+    sha256Calls: number;
+    /** Logical bytes hashed (sum of sizes for hashed reps). */
+    sha256Bytes: number;
+    /** `bytesEqualStreaming` call count (sha tiebreaker). */
+    byteCompareCalls: number;
+    /** Wall-clock ms spent in the hash + byte-compare phase. */
+    hashMs: number;
+    /** Per-file cache hits (size+mtime_ns match → sha+cloneId reused). Wired in Phase 3. */
+    cacheHits: number;
+    /** Per-file cache misses (new file or size/mtime changed → recomputed). Wired in Phase 3. */
+    cacheMisses: number;
+}
+
+export function emptyFindDuplicatesStats(): FindDuplicatesStats {
+    return {
+        walkedFiles: 0,
+        walkedDirs: 0,
+        walkMs: 0,
+        bucketsTotal: 0,
+        bucketsDroppedByClone: 0,
+        bucketsHashed: 0,
+        cloneIdCalls: 0,
+        sha256Calls: 0,
+        sha256Bytes: 0,
+        byteCompareCalls: 0,
+        hashMs: 0,
+        cacheHits: 0,
+        cacheMisses: 0,
+    };
+}
+
 export interface FindDuplicatesOptions {
     /** Ignore files whose logical size is below this. Pruned during the walk. */
     minSize?: number;
@@ -424,6 +472,9 @@ export interface FindDuplicatesOptions {
     /** Forwarded to `walkFiles` — called per directory entered. CLI uses
      *  this to drive a live spinner. */
     onDirEntered?: (dir: string) => void;
+    /** Optional out-param: this function adds-to (does NOT reset) these counters
+     *  so a caller scanning N roots in sequence gets aggregate totals. */
+    stats?: FindDuplicatesStats;
 }
 
 /** How often we yield to the event loop during the size-bucket loop.
@@ -466,9 +517,26 @@ function yieldToLoop(): Promise<void> {
  *
  *  `minSize` is applied during the walk so large trees don't materialise
  *  paths for every below-threshold file. */
+/** Emit a heartbeat log every N walk entries / N hash buckets. Count-based,
+ *  not time-based — integers don't drift and don't need wall-clock checks per
+ *  iteration. For a 148GB scan with hundreds of thousands of files and a few
+ *  thousand buckets, these give ~5-10 lines per phase: sparse enough to read,
+ *  dense enough to confirm the scan is moving when tailed via `Monitor`. */
+const WALK_HEARTBEAT_EVERY = 50_000;
+const HASH_HEARTBEAT_EVERY = 1_000;
+
 export async function findDuplicateFiles(root: string, opts: FindDuplicatesOptions = {}): Promise<DuplicateGroup[]> {
     const minSize = Math.max(1, opts.minSize ?? 1);
-    const { signal, shouldEnter, onDirEntered } = opts;
+    const { signal, shouldEnter, onDirEntered, stats } = opts;
+
+    const sw = new Stopwatch();
+    let phaseStartMs = sw.elapsedMs;
+
+    logger.info({ event: "findDuplicateFiles.start", root, minSize }, "findDuplicateFiles start");
+
+    let walkedFiles = 0;
+    let walkedDirs = 0;
+    let lastDir = "";
 
     const bySize = new Map<number, string[]>();
     const walkOpts: WalkOptions = {};
@@ -478,14 +546,33 @@ export async function findDuplicateFiles(root: string, opts: FindDuplicatesOptio
     if (shouldEnter !== undefined) {
         walkOpts.shouldEnter = shouldEnter;
     }
-    if (onDirEntered !== undefined) {
-        walkOpts.onDirEntered = onDirEntered;
-    }
+    // Wrap caller's onDirEntered so we can count dirs walked even with no caller hook.
+    const userDirEntered = onDirEntered;
+    walkOpts.onDirEntered = (dir) => {
+        walkedDirs += 1;
+        lastDir = dir;
+        userDirEntered?.(dir);
+    };
     let walkCount = 0;
     for (const e of walkFiles(root, walkOpts)) {
         if ((walkCount++ & (YIELD_EVERY_WALK_ENTRIES - 1)) === 0) {
             await yieldToLoop();
             signal?.throwIfAborted();
+        }
+
+        walkedFiles += 1;
+        if (walkedFiles % WALK_HEARTBEAT_EVERY === 0) {
+            logger.info(
+                {
+                    event: "walk.progress",
+                    root,
+                    files: walkedFiles,
+                    dirs: walkedDirs,
+                    elapsedMs: Math.round(sw.elapsedMs - phaseStartMs),
+                    currentDir: lastDir,
+                },
+                "walk progress"
+            );
         }
 
         if (e.logical < minSize) {
@@ -497,13 +584,52 @@ export async function findDuplicateFiles(root: string, opts: FindDuplicatesOptio
         bySize.set(e.logical, list);
     }
 
+    const walkMs = sw.elapsedMs - phaseStartMs;
+    logger.info(
+        {
+            event: "walk.complete",
+            root,
+            files: walkedFiles,
+            dirs: walkedDirs,
+            buckets: bySize.size,
+            walkMs: Math.round(walkMs),
+        },
+        "walk complete"
+    );
+    phaseStartMs = sw.elapsedMs;
+
+    let cloneIdCalls = 0;
+    let sha256Calls = 0;
+    let sha256Bytes = 0;
+    let byteCompareCalls = 0;
+    let bucketsDroppedByClone = 0;
+    let bucketsHashed = 0;
+
     const groups: DuplicateGroup[] = [];
     let bucketIndex = 0;
     for (const [size, paths] of bySize) {
-        if ((bucketIndex++ & (YIELD_EVERY_BUCKETS - 1)) === 0) {
+        if ((bucketIndex & (YIELD_EVERY_BUCKETS - 1)) === 0) {
             await yieldToLoop();
         }
+        bucketIndex += 1;
         signal?.throwIfAborted();
+
+        if (bucketIndex % HASH_HEARTBEAT_EVERY === 0) {
+            logger.info(
+                {
+                    event: "hash.progress",
+                    root,
+                    bucketsTotal: bySize.size,
+                    bucketsSeen: bucketIndex,
+                    bucketsHashed,
+                    bucketsDroppedByClone,
+                    sha256Calls,
+                    sha256BytesMB: Math.round(sha256Bytes / 1e6),
+                    elapsedMs: Math.round(sw.elapsedMs - phaseStartMs),
+                },
+                "hash progress"
+            );
+        }
 
         if (paths.length < 2) {
             continue;
@@ -514,6 +640,7 @@ export async function findDuplicateFiles(root: string, opts: FindDuplicatesOptio
         // singleton family so they all get hashed).
         const byClone = new Map<string, string[]>();
         for (let i = 0; i < paths.length; i++) {
+            cloneIdCalls += 1;
             const id = getCloneId(paths[i]);
             const key = id !== null && id !== 0n ? `id:${id.toString(16)}` : `solo:${i}`;
             const arr = byClone.get(key);
@@ -528,8 +655,11 @@ export async function findDuplicateFiles(root: string, opts: FindDuplicatesOptio
         // this size bucket is already part of a single clone family — nothing
         // reclaimable, skip the whole bucket without hashing.
         if (byClone.size < 2) {
+            bucketsDroppedByClone += 1;
             continue;
         }
+
+        bucketsHashed += 1;
 
         const reps: string[] = [];
         for (const family of byClone.values()) {
@@ -538,6 +668,8 @@ export async function findDuplicateFiles(root: string, opts: FindDuplicatesOptio
 
         const byHash = new Map<string, string[]>();
         for (const p of reps) {
+            sha256Calls += 1;
+            sha256Bytes += size;
             const h = sha256File(p, signal !== undefined ? { signal } : {});
             const list = byHash.get(h) ?? [];
             list.push(p);
@@ -553,7 +685,13 @@ export async function findDuplicateFiles(root: string, opts: FindDuplicatesOptio
             // astronomical but Safety Contract invariant 1 requires actual
             // byte-equality, not just sha-equality, before cloning.
             const bytesOpts = signal !== undefined ? { signal } : {};
-            const confirmed = group.filter((p) => p === group[0] || bytesEqualStreaming(group[0], p, bytesOpts));
+            const confirmed = group.filter((p) => {
+                if (p === group[0]) {
+                    return true;
+                }
+                byteCompareCalls += 1;
+                return bytesEqualStreaming(group[0], p, bytesOpts);
+            });
             if (confirmed.length >= 2) {
                 // Per the contract above: paths are exactly the confirmed
                 // reps (one per clone-family). We do NOT expand back to the
@@ -563,6 +701,44 @@ export async function findDuplicateFiles(root: string, opts: FindDuplicatesOptio
             }
         }
     }
+
+    const hashMs = sw.elapsedMs - phaseStartMs;
+
+    if (stats) {
+        stats.walkedFiles += walkedFiles;
+        stats.walkedDirs += walkedDirs;
+        stats.walkMs += walkMs;
+        stats.bucketsTotal += bySize.size;
+        stats.bucketsHashed += bucketsHashed;
+        stats.bucketsDroppedByClone += bucketsDroppedByClone;
+        stats.cloneIdCalls += cloneIdCalls;
+        stats.sha256Calls += sha256Calls;
+        stats.sha256Bytes += sha256Bytes;
+        stats.byteCompareCalls += byteCompareCalls;
+        stats.hashMs += hashMs;
+    }
+
+    logger.info(
+        {
+            event: "findDuplicateFiles.complete",
+            root,
+            walkedFiles,
+            walkedDirs,
+            walkMs: Math.round(walkMs),
+            bucketsTotal: bySize.size,
+            bucketsDroppedByClone,
+            bucketsHashed,
+            cloneIdCalls,
+            sha256Calls,
+            sha256Bytes,
+            byteCompareCalls,
+            hashMs: Math.round(hashMs),
+            cacheHits: stats?.cacheHits ?? 0,
+            cacheMisses: stats?.cacheMisses ?? 0,
+            groupsEmitted: groups.length,
+        },
+        "findDuplicateFiles complete"
+    );
 
     return groups;
 }
