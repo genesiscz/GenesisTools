@@ -19,6 +19,11 @@ import type { Server, ServerWebSocket } from "bun";
 
 const TTYD_PATH = /^\/ttyd\/([0-9a-fA-F-]{36})(?:\/|$)/;
 
+/** SSE and other streaming routes must not use the short upstream fetch timeout. */
+export function isLongLivedProxiedStream(pathname: string): boolean {
+    return pathname === "/api/qa/stream";
+}
+
 // LOCAL_ORIGIN_HEADER is the single source of truth in auth.ts (set/stripped
 // here, trusted by the Vite middleware — they must never desync).
 
@@ -223,7 +228,7 @@ export function startFrontProxy(opts: {
             try {
                 upstream = await fetch(forwarded, {
                     redirect: "manual",
-                    signal: AbortSignal.timeout(15_000),
+                    ...(isLongLivedProxiedStream(url.pathname) ? {} : { signal: AbortSignal.timeout(15_000) }),
                 });
             } catch (err) {
                 // A refused connection is almost always the benign startup race

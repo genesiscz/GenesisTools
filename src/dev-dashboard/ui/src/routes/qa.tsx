@@ -331,7 +331,13 @@ export function QaRoute() {
                 /* ignore malformed frame */
             }
         };
-        es.onerror = () => setSseDown(true);
+        es.onerror = () => {
+            // EventSource auto-reconnects while CONNECTING — only show disconnected when
+            // the browser has given up (CLOSED). Avoid flicker on transient proxy blips.
+            if (es.readyState === EventSource.CLOSED) {
+                setSseDown(true);
+            }
+        };
         return () => es.close();
     }, []);
 
