@@ -33,7 +33,7 @@ import {
 import { clearPid, logFilePath, pidFilePath, pidFileStartTime, readPid, writePid } from "./pidFile";
 import { checkPortConflict, killPortOwner, waitForPortFree } from "./portConflict";
 import { readPreferences, writePreferences } from "./preferences";
-import { waitForReady } from "./readiness";
+import { waitForReady, waitForUrlReady } from "./readiness";
 import type {
     DashboardAppConfig,
     DependencyStatus,
@@ -126,7 +126,10 @@ export async function up(ctx: LifecycleContext, opts: UpOptions = {}): Promise<U
             const exitCode = await spawnDashboard({
                 cmd: [...config.spawn.cmd],
                 cwd: config.spawn.cwd,
-                env: spawnEnv(config),
+                env: {
+                    ...spawnEnv(config),
+                    ...(shouldOpenBrowser(config, opts) ? { DASHBOARD_OPEN_BROWSER: "1" } : {}),
+                },
             });
             clearPid(config.key);
             process.exit(exitCode);
@@ -162,12 +165,9 @@ export async function up(ctx: LifecycleContext, opts: UpOptions = {}): Promise<U
         }
     }
 
-    // Browser-open (UI only).
+    // Browser-open (UI only) — wait until the URL actually serves (not 502 gateway).
     if (config.type === "ui" && shouldOpenBrowser(config, opts)) {
-        const browserUrl = config.openBrowser?.url ? config.openBrowser.url(port) : `http://localhost:${port}`;
-        await Browser.open(browserUrl).catch((err) => {
-            logger.warn({ err }, `[${config.key}] browser open failed`);
-        });
+        await openBrowserWhenReady(config, port);
     }
 
     return { started: true, port, mode, pid, logPath: ctx.logFile };
@@ -316,10 +316,7 @@ async function finishLaunchdStart(ctx: LifecycleContext, port: number, opts: UpO
         }
 
         if (config.type === "ui" && shouldOpenBrowser(config, opts)) {
-            const browserUrl = config.openBrowser?.url ? config.openBrowser.url(port) : `http://localhost:${port}`;
-            await Browser.open(browserUrl).catch((err) => {
-                logger.warn({ err }, `[${config.key}] browser open failed`);
-            });
+            await openBrowserWhenReady(config, port);
         }
     } else {
         out.warn(
@@ -370,10 +367,7 @@ async function handleMineMenu(ctx: LifecycleContext, pid: number, opts: UpOption
     }
     if (choice === "open") {
         if (config.type === "ui") {
-            const browserUrl = config.openBrowser?.url ? config.openBrowser.url(port) : `http://localhost:${port}`;
-            await Browser.open(browserUrl).catch((err) => {
-                logger.warn({ err }, `[${config.key}] browser open failed`);
-            });
+            await openBrowserWhenReady(config, port);
         }
         return { started: false, port, mode: "background", pid };
     }
@@ -633,6 +627,23 @@ function shouldOpenBrowser(config: DashboardAppConfig, opts: UpOptions): boolean
     }
 
     return opts.open ?? config.openBrowser?.enabled ?? false;
+}
+
+async function openBrowserWhenReady(config: DashboardAppConfig, port: number): Promise<void> {
+    const browserUrl = config.openBrowser?.url ? config.openBrowser.url(port) : `http://localhost:${port}`;
+    const ready = await waitForUrlReady(browserUrl, 20_000);
+
+    if (!ready.ready) {
+        logger.warn({ browserUrl, detail: ready.detail }, `[${config.key}] browser open skipped — URL not ready`);
+        out.warn(
+            `Skipping browser open — page not ready yet (${ready.detail ?? "timeout"})\n  Open manually: ${browserUrl}`
+        );
+        return;
+    }
+
+    await Browser.open(browserUrl).catch((err) => {
+        logger.warn({ err }, `[${config.key}] browser open failed`);
+    });
 }
 
 export async function install(ctx: LifecycleContext, opts: InstallOptions = {}): Promise<void> {

@@ -2,7 +2,9 @@
  * Readiness probes — wait until the spawned child is ready to serve.
  *
  * Three probe kinds match the `ReadinessProbe` union in `types.ts`:
- *  - **http** — fetch(`http://localhost:<port><path>`) until any HTTP response.
+ *  - **http** — fetch(`http://localhost:<port><path>`) until a serving response
+ *    (2xx–4xx; 502/503/504 gateway statuses keep polling — front-proxy can bind
+ *    before Vite/ttyd upstream is up).
  *  - **log** — tail the bg log until the regex matches.
  *  - **port** — wait for the TCP port to bind (simplest, used as fallback).
  *
@@ -17,6 +19,13 @@ import type { ReadinessProbe } from "./types";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const POLL_INTERVAL_MS = 250;
+
+/** Gateway statuses: TCP listener is up but upstream is not serving yet. */
+const GATEWAY_UNAVAILABLE = new Set([502, 503, 504]);
+
+export function isHttpServingStatus(status: number): boolean {
+    return status > 0 && !GATEWAY_UNAVAILABLE.has(status);
+}
 
 export interface ReadinessResult {
     ready: boolean;
@@ -58,14 +67,21 @@ async function waitForHttp(
     probe: { kind: "http"; path?: string; timeoutMs?: number },
     port: number
 ): Promise<ReadinessResult> {
-    const deadline = Date.now() + (probe.timeoutMs ?? DEFAULT_TIMEOUT_MS);
     const url = `http://localhost:${port}${probe.path ?? "/"}`;
+    return waitForUrlReady(url, probe.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+}
+
+export async function waitForUrlReady(url: string, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<ReadinessResult> {
+    const deadline = Date.now() + timeoutMs;
+    let lastStatus: number | undefined;
 
     while (Date.now() < deadline) {
         try {
             const res = await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(2_000) });
-            // Any HTTP response means the server is up; even 4xx is "ready".
-            if (res.status > 0) {
+            lastStatus = res.status;
+
+            // 4xx still means the app is serving; 502/503/504 means proxy-without-upstream.
+            if (isHttpServingStatus(res.status)) {
                 return { ready: true, detail: `http ${res.status}` };
             }
         } catch {
@@ -74,7 +90,8 @@ async function waitForHttp(
         await Bun.sleep(POLL_INTERVAL_MS);
     }
 
-    return { ready: false, detail: `http ${url} did not respond in ${probe.timeoutMs ?? DEFAULT_TIMEOUT_MS}ms` };
+    const suffix = lastStatus !== undefined ? ` (last status ${lastStatus})` : "";
+    return { ready: false, detail: `http ${url} did not respond in ${timeoutMs}ms${suffix}` };
 }
 
 async function waitForLog(
