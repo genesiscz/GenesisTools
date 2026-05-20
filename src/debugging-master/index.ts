@@ -1,3 +1,4 @@
+import { runTool } from "@app/utils/cli";
 import { Command } from "commander";
 import { registerCleanupCommand } from "./commands/cleanup";
 import { registerDashboardCommand } from "./commands/dashboard";
@@ -29,4 +30,4 @@ registerCleanupCommand(program);
 registerDiffCommand(program);
 registerDashboardCommand(program);
 
-program.parse();
+await runTool(program, { tool: "debugging-master" });

@@ -1,9 +1,8 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import type { OAuth2Tokens, OAuthApplication } from "@app/timely/types";
 import { SafeJSON } from "@app/utils/json";
+import * as p from "@app/utils/prompts/p";
 import type { Storage } from "@app/utils/storage";
-import { ExitPromptError } from "@inquirer/core";
-import { input, password } from "@inquirer/prompts";
 import chalk from "chalk";
 
 export interface RequestOptions {
@@ -33,30 +32,21 @@ export class TimelyApiClient {
         if (!oauth?.client_id || !oauth?.client_secret || !oauth?.redirect_uri) {
             logger.info(chalk.yellow("\nOAuth application credentials not found."));
             logger.info("Create an OAuth application at: https://app.timelyapp.com/settings/oauth_applications\n");
+            const clientId = await p.text({ message: "Client ID (App ID):" });
+            const clientSecret = await p.password({ message: "Client Secret:" });
+            const redirectUri = await p.text({
+                message: "Callback URL (Redirect URI):",
+                initialValue: "urn:ietf:wg:oauth:2.0:oob",
+            });
 
-            try {
-                const clientId = await input({ message: "Client ID (App ID):" });
-                const clientSecret = await password({ message: "Client Secret:" });
-                const redirectUri = await input({
-                    message: "Callback URL (Redirect URI):",
-                    default: "urn:ietf:wg:oauth:2.0:oob",
-                });
+            oauth = {
+                client_id: clientId,
+                client_secret: clientSecret,
+                redirect_uri: redirectUri || "urn:ietf:wg:oauth:2.0:oob",
+            };
 
-                oauth = {
-                    client_id: clientId,
-                    client_secret: clientSecret,
-                    redirect_uri: redirectUri || "urn:ietf:wg:oauth:2.0:oob",
-                };
-
-                await this.storage.setConfigValue("oauth", oauth);
-                logger.info(chalk.green("✓ OAuth credentials saved to config.\n"));
-            } catch (error) {
-                if (error instanceof ExitPromptError) {
-                    logger.info("\nOperation cancelled by user.");
-                    process.exit(0);
-                }
-                throw error;
-            }
+            await this.storage.setConfigValue("oauth", oauth);
+            logger.info(chalk.green("✓ OAuth credentials saved to config.\n"));
         }
 
         return oauth;

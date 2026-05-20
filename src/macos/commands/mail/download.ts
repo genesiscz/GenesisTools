@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { exportMessages, parseMailIds } from "@app/macos/lib/mail/export";
 import { rowToMessage } from "@app/macos/lib/mail/transform";
 import { MailDatabase } from "@app/utils/macos/MailDatabase";

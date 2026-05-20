@@ -1,3 +1,4 @@
+import { out } from "@app/logger";
 import type { CliArgs } from "@app/mcp-tsc/core/interfaces.js";
 import { killAllServers, killServerForDir } from "@app/mcp-tsc/utils/ServerManager.js";
 
@@ -9,17 +10,17 @@ export class KillServerCommand {
             // Kill all servers
             const killed = await killAllServers();
             if (killed > 0) {
-                console.log(`✓ Killed ${killed} server(s)`);
+                out.println(`✓ Killed ${killed} server(s)`);
             } else {
-                console.log("No servers running");
+                out.println("No servers running");
             }
         } else {
             // Kill server for current directory
             const killed = await killServerForDir(this.cwd);
             if (killed) {
-                console.log(`✓ Killed server for ${this.cwd}`);
+                out.println(`✓ Killed server for ${this.cwd}`);
             } else {
-                console.log("No server running for current directory");
+                out.println("No server running for current directory");
             }
         }
     }

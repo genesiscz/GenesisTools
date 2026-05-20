@@ -1,3 +1,4 @@
+import { out } from "@app/logger";
 import {
     ackAllNotifications,
     ackNotification,
@@ -32,11 +33,11 @@ export function registerNotifyCommand(program: Command): void {
             };
             const rows = await getRecentNotifications(LOCAL_USER_ID, args);
             if (opts.json) {
-                console.log(SafeJSON.stringify(rows, null, 2));
+                out.println(SafeJSON.stringify(rows, null, 2));
                 return;
             }
 
-            console.log(
+            out.println(
                 formatTable(
                     rows.map((r) => [
                         String(r.id),
@@ -59,7 +60,7 @@ export function registerNotifyCommand(program: Command): void {
         .action(async (idArg: string | undefined, opts: { all?: boolean }) => {
             if (opts.all) {
                 await ackAllNotifications(LOCAL_USER_ID);
-                console.log("acknowledged all pending");
+                out.println("acknowledged all pending");
                 return;
             }
 
@@ -68,6 +69,6 @@ export function registerNotifyCommand(program: Command): void {
             }
 
             await ackNotification(LOCAL_USER_ID, Number(idArg));
-            console.log(`acknowledged #${idArg}`);
+            out.println(`acknowledged #${idArg}`);
         });
 }

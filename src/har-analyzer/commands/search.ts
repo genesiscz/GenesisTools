@@ -3,6 +3,7 @@ import { loadHarFile } from "@app/har-analyzer/core/parser";
 import { filterEntries } from "@app/har-analyzer/core/query-engine";
 import { SessionManager } from "@app/har-analyzer/core/session-manager";
 import type { EntryFilter, HarFile, IndexedEntry, OutputOptions } from "@app/har-analyzer/types";
+import { out } from "@app/logger";
 import type { Command } from "commander";
 
 type SearchScope = "url" | "body" | "header" | "all";
@@ -133,7 +134,7 @@ export function registerSearchCommand(program: Command): void {
             }
 
             if (matches.length === 0) {
-                console.log(`No matches found for "${query}" in scope "${scope}".`);
+                out.println(`No matches found for "${query}" in scope "${scope}".`);
                 return;
             }
 

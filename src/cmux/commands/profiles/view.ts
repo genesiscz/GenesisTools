@@ -1,5 +1,6 @@
 import { renderProfileTree } from "@app/cmux/lib/format";
 import { ProfileNotFoundError, ProfileStore } from "@app/cmux/lib/store";
+import { out } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import type { Command } from "commander";
 
@@ -14,13 +15,13 @@ export function registerViewCommand(parent: Command): void {
             try {
                 const profile = store.read(name);
                 if (opts.json) {
-                    console.log(SafeJSON.stringify(profile, null, 2));
+                    out.println(SafeJSON.stringify(profile, null, 2));
                     return;
                 }
-                console.log(renderProfileTree(profile));
+                out.println(renderProfileTree(profile));
             } catch (error) {
                 if (error instanceof ProfileNotFoundError) {
-                    console.error(error.message);
+                    out.error(error.message);
                     process.exitCode = 1;
                     return;
                 }

@@ -1,7 +1,7 @@
 import type { Database as BunDatabase } from "bun:sqlite";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import type { RawProduct } from "@app/shops/api/ShopApiClient.types";
 import { SHOPS_MIGRATIONS } from "@app/shops/db/migrations";
 import type {

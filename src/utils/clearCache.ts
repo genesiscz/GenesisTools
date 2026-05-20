@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { existsSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
+import { out } from "@app/logger";
 
 const root = resolve(import.meta.dir, "../../..");
 
@@ -15,13 +16,13 @@ let cleared = 0;
 for (const dir of cacheDirs) {
     if (existsSync(dir)) {
         rmSync(dir, { recursive: true, force: true });
-        console.log(`Cleared: ${dir}`);
+        out.println(`Cleared: ${dir}`);
         cleared++;
     }
 }
 
 if (cleared === 0) {
-    console.log("No .vite cache dirs found — already clean.");
+    out.println("No .vite cache dirs found — already clean.");
 } else {
-    console.log(`Done. Cleared ${cleared} cache dir(s). Restart your dev server.`);
+    out.println(`Done. Cleared ${cleared} cache dir(s). Restart your dev server.`);
 }

@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger, out } from "@app/logger";
 import { parseCooldown, parsePercent } from "@app/shops/lib/watch-parsing";
 import { addFavorite, editFavorite, getWatchlist, removeFavorite } from "@app/shops/lib/watchlist-api";
 import { runWatchlistTick } from "@app/shops/lib/watchlist-tick";
@@ -43,8 +43,8 @@ export function registerWatchCommand(program: Command): void {
                 [[String(result.favorite_id), String(result.master_product_id), result.auto_ingested ? "yes" : "no"]],
                 ["favorite_id", "master_product_id", "auto-ingested"]
             );
-            console.log(table);
-            console.log(
+            out.println(table);
+            out.println(
                 `Will notify on: ${[
                     targetPrice !== null ? `target ≤ ${targetPrice} CZK` : null,
                     dropPercent !== null ? `${(dropPercent * 100).toFixed(1)}% drop` : null,
@@ -62,11 +62,11 @@ export function registerWatchCommand(program: Command): void {
         .action(async (opts: { json?: boolean }) => {
             const rows = await getWatchlist(LOCAL_USER_ID);
             if (opts.json) {
-                console.log(SafeJSON.stringify(rows, null, 2));
+                out.println(SafeJSON.stringify(rows, null, 2));
                 return;
             }
 
-            console.log(
+            out.println(
                 formatTable(
                     rows.map((r) => [
                         String(r.id),
@@ -88,7 +88,7 @@ export function registerWatchCommand(program: Command): void {
         .action(async (idStr: string) => {
             const id = Number(idStr);
             await removeFavorite(LOCAL_USER_ID, id);
-            console.log(`removed favorite #${id}`);
+            out.println(`removed favorite #${id}`);
         });
 
     watch
@@ -128,7 +128,7 @@ export function registerWatchCommand(program: Command): void {
             }
 
             const updated = await editFavorite(LOCAL_USER_ID, id, patch);
-            console.log(SafeJSON.stringify(updated, null, 2));
+            out.println(SafeJSON.stringify(updated, null, 2));
         });
 
     watch
@@ -137,7 +137,7 @@ export function registerWatchCommand(program: Command): void {
         .option("--json", "Output the TickReport as JSON", true)
         .action(async () => {
             const report = await runWatchlistTick();
-            console.log(SafeJSON.stringify(report));
+            out.println(SafeJSON.stringify(report));
             log.info(report, "tick complete");
         });
 }

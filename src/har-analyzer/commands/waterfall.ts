@@ -2,6 +2,7 @@ import { printFormatted, truncatePath } from "@app/har-analyzer/core/formatter";
 import { filterEntries } from "@app/har-analyzer/core/query-engine";
 import { SessionManager } from "@app/har-analyzer/core/session-manager";
 import type { EntryFilter, IndexedEntry, OutputOptions } from "@app/har-analyzer/types";
+import { out } from "@app/logger";
 import { formatDuration } from "@app/utils/format";
 import type { Command } from "commander";
 
@@ -50,7 +51,7 @@ export function registerWaterfallCommand(program: Command): void {
             const entries = filterEntries(session.entries, filter);
 
             if (entries.length === 0) {
-                console.log("No entries match the filter criteria.");
+                out.println("No entries match the filter criteria.");
                 return;
             }
 

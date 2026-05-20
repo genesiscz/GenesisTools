@@ -2,12 +2,12 @@ import { spawn } from "node:child_process";
 import { unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import logger, { consoleLog } from "@app/logger";
+import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import chalk from "chalk";
 
-// Use consoleLog for clean diff output (no timestamps, no level for info)
-const diffLogger = consoleLog;
+// Use logger for clean diff output (no timestamps, no level for info)
+const diffLogger = logger;
 
 /**
  * Utility for showing diffs using system diff command

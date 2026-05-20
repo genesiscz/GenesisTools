@@ -1,3 +1,4 @@
+import { out } from "@app/logger";
 import type { Command } from "commander";
 import { registerAddSubcommand } from "./timelog/add";
 import { registerConfigureSubcommand } from "./timelog/configure";
@@ -9,7 +10,7 @@ import { registerPrepareImportSubcommand } from "./timelog/prepare-import";
 import { registerTypesSubcommand } from "./timelog/types";
 
 function showHelpFull(): void {
-    console.log(`
+    out.println(`
 Usage: tools azure-devops timelog <command> [options]
 
 Commands:

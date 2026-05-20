@@ -5,8 +5,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import type { AzureConfig, AzureConfigWithTimeLog, TimeLogUser } from "@app/azure-devops/types";
+import { out } from "@app/logger";
 import { formatRelativeTime } from "@app/utils/format";
-
 import { SafeJSON } from "@app/utils/json";
 
 export function getRelativeTime(date: Date): string {
@@ -90,7 +90,7 @@ export function requireConfig(): AzureConfig {
     const config = loadConfig();
 
     if (!config) {
-        console.error(`
+        out.error(`
 ❌ No Azure DevOps configuration found.
 
 Run configure with any Azure DevOps URL from your project:
@@ -113,7 +113,7 @@ export function requireTimeLogConfig(): AzureConfigWithTimeLog {
     const config = loadConfig() as AzureConfigWithTimeLog | null;
 
     if (!config) {
-        console.error(`
+        out.error(`
 ❌ No Azure DevOps configuration found.
 
 Run configure with any Azure DevOps URL from your project:
@@ -124,7 +124,7 @@ Run configure with any Azure DevOps URL from your project:
     }
 
     if (!config.orgId) {
-        console.error(`
+        out.error(`
 ❌ Organization ID missing from config.
 
 Re-run configure to fetch the org ID:
@@ -135,7 +135,7 @@ Re-run configure to fetch the org ID:
     }
 
     if (!config.timelog?.functionsKey) {
-        console.error(`
+        out.error(`
 ❌ TimeLog configuration not found.
 
 Run the auto-configure command to fetch TimeLog settings:
@@ -157,7 +157,7 @@ export function requireTimeLogUser(config: AzureConfigWithTimeLog): TimeLogUser 
     const user = config.timelog?.defaultUser;
 
     if (!user) {
-        console.error(`
+        out.error(`
 ❌ TimeLog user not configured.
 
 Add defaultUser to .claude/azure/config.json timelog section:

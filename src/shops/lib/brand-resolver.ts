@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import type { BrandAliasesRepository } from "@app/shops/db/BrandAliasesRepository";
 import { normalizeBrand } from "@app/shops/lib/normalize";
 

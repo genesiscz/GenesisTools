@@ -8,13 +8,13 @@
 import { exitWithAuthGuide } from "@app/azure-devops/cli.utils";
 import { buildAdoConfig, saveAdoConfig } from "@app/azure-devops/lib/ado-configure";
 import { getLocalConfigDir } from "@app/azure-devops/utils";
-import logger from "@app/logger";
+import { logger, out } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import { $ } from "bun";
 import type { Command } from "commander";
 
 async function handleConfigure(url: string): Promise<void> {
-    console.log("🔧 Configuring Azure DevOps CLI...\n");
+    out.println("🔧 Configuring Azure DevOps CLI...\n");
     logger.debug(`[configure] Starting configuration with URL: ${url}`);
 
     logger.debug("[configure] Checking Azure CLI login status...");
@@ -31,7 +31,7 @@ async function handleConfigure(url: string): Promise<void> {
         const extList = await $`az extension list --query "[?name=='azure-devops'].name" -o tsv`.quiet();
 
         if (!extList.text().trim()) {
-            console.log(
+            out.println(
                 "⚠️  Azure DevOps CLI extension not installed. Install it with:\n\n" +
                     "    az extension add --name azure-devops\n"
             );
@@ -40,27 +40,27 @@ async function handleConfigure(url: string): Promise<void> {
         logger.debug("[configure] Could not check azure-devops extension status");
     }
 
-    console.log(`Parsing URL and fetching project ID: ${url}\n`);
+    out.println(`Parsing URL and fetching project ID: ${url}\n`);
 
     const newConfig = await buildAdoConfig(url);
     logger.debug(
         `[configure] Config built: org="${newConfig.org}", project="${newConfig.project}", projectId="${newConfig.projectId}"`
     );
 
-    console.log(`  Organization: ${newConfig.org}`);
-    console.log(`  Project: ${newConfig.project}`);
-    console.log(`  Project ID: ${newConfig.projectId}`);
+    out.println(`  Organization: ${newConfig.org}`);
+    out.println(`  Project: ${newConfig.project}`);
+    out.println(`  Project ID: ${newConfig.projectId}`);
 
     const configDir = getLocalConfigDir();
     const configPath = saveAdoConfig(newConfig, configDir);
 
-    console.log(`\n✅ Configuration saved to: ${configPath}`);
-    console.log("\nConfig values:");
-    console.log("```json");
-    console.log(SafeJSON.stringify(newConfig, null, 2));
-    console.log("```");
+    out.println(`\n✅ Configuration saved to: ${configPath}`);
+    out.println("\nConfig values:");
+    out.println("```json");
+    out.println(SafeJSON.stringify(newConfig, null, 2));
+    out.println("```");
 
-    console.log("\nConfiguring az devops defaults...");
+    out.println("\nConfiguring az devops defaults...");
     try {
         const result =
             await $`az devops configure --defaults organization=${newConfig.org} project=${newConfig.project}`
@@ -68,33 +68,33 @@ async function handleConfigure(url: string): Promise<void> {
                 .nothrow();
 
         if (result.exitCode === 0) {
-            console.log("✅ az devops defaults configured");
+            out.println("✅ az devops defaults configured");
         } else {
             const stderr = result.stderr.toString().trim();
             const stdout = result.stdout.toString().trim();
-            console.log(`⚠️  Could not configure az devops defaults (exit ${result.exitCode})`);
+            out.println(`⚠️  Could not configure az devops defaults (exit ${result.exitCode})`);
 
             if (stderr) {
-                console.log(`   stderr: ${stderr}`);
+                out.println(`   stderr: ${stderr}`);
             }
 
             if (stdout) {
-                console.log(`   stdout: ${stdout}`);
+                out.println(`   stdout: ${stdout}`);
             }
 
-            console.log(
+            out.println(
                 `   You can run this manually:\n     az devops configure --defaults organization="${newConfig.org}" project="${newConfig.project}"`
             );
         }
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        console.log(`⚠️  Could not configure az devops defaults: ${message}`);
-        console.log(
+        out.println(`⚠️  Could not configure az devops defaults: ${message}`);
+        out.println(
             `   You can run this manually:\n     az devops configure --defaults organization="${newConfig.org}" project="${newConfig.project}"`
         );
     }
 
-    console.log(`
+    out.println(`
 🎉 Done! You can now use the tool:
 
   tools azure-devops query <id>

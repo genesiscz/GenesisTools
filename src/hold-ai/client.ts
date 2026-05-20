@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger, out } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import WebSocket from "ws";
 
@@ -51,7 +51,7 @@ const waitForCompletion = async (): Promise<string> => {
                         logger.info(`Instruction: ${message.message}`);
                     }
                 } catch (err) {
-                    console.error("Error parsing message:", err);
+                    out.error("Error parsing message:", err);
                 }
             });
 

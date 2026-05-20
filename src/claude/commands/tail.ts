@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, resolve, sep } from "node:path";
+import { out } from "@app/logger";
 import { ClaudeSessionFormatter } from "@app/utils/claude/ClaudeSessionFormatter";
 import { ClaudeSessionTailer } from "@app/utils/claude/ClaudeSessionTailer";
 import { INCLUDE_HELP, IncludeSpec } from "@app/utils/claude/cli/dsl";
@@ -23,7 +24,7 @@ function validatePositiveInt(value: string | undefined, name: string): number | 
     const parsed = Number.parseInt(value, 10);
 
     if (Number.isNaN(parsed) || parsed <= 0) {
-        console.error(pc.red(`--${name} must be a positive integer, got "${value}"`));
+        out.error(pc.red(`--${name} must be a positive integer, got "${value}"`));
         process.exit(1);
     }
 
@@ -92,7 +93,7 @@ export function registerTailCommand(program: Command): void {
                 const target = await resolveTarget(query, opts);
 
                 if (!target) {
-                    console.error(pc.red("No matching session or agent found."));
+                    out.error(pc.red("No matching session or agent found."));
                     process.exit(1);
                 }
 
@@ -119,14 +120,14 @@ export function registerTailCommand(program: Command): void {
                 });
 
                 if (!opts.raw) {
-                    console.error(
+                    out.error(
                         useColors
                             ? pc.yellow(
                                   `⚠️ Auto-selected ${pc.bold(shortId)} (${name}). Run \`${listCmd}\` to pick another.`
                               )
                             : `⚠️ Auto-selected ${shortId} (${name}). Run \`${listCmd}\` to pick another.`
                     );
-                    console.error();
+                    out.error();
                 }
 
                 await startTailing(target, opts);
@@ -155,8 +156,8 @@ async function startTailing(target: TailTarget, opts: TailOptions): Promise<void
     const cliOutput = opts.output ? opts.outputCli : true;
 
     if (opts.output && !opts.outputCli) {
-        console.log(pc.dim(`Tailing to ${opts.output}...`));
-        console.log(pc.dim(suggestCommand("tools cc", { add: ["--output-cli"] })));
+        out.println(pc.dim(`Tailing to ${opts.output}...`));
+        out.println(pc.dim(suggestCommand("tools cc", { add: ["--output-cli"] })));
     }
 
     const formatter = new ClaudeSessionFormatter({
@@ -188,7 +189,7 @@ async function startTailing(target: TailTarget, opts: TailOptions): Promise<void
             await formatter.close();
 
             if (opts.output) {
-                console.log(pc.dim(`\nOutput written to ${opts.output}`));
+                out.println(pc.dim(`\nOutput written to ${opts.output}`));
             }
 
             process.exit(0);
@@ -206,7 +207,7 @@ async function startTailing(target: TailTarget, opts: TailOptions): Promise<void
     process.on("SIGINT", async () => {
         tailer.stop();
         await formatter.close();
-        console.log(pc.dim("\nStopped tailing."));
+        out.println(pc.dim("\nStopped tailing."));
         process.exit(0);
     });
 
@@ -424,10 +425,10 @@ function findMostRecentSession(projectPath?: string): TailTarget | null {
 
 async function promptSelectTarget(targets: TailTarget[]): Promise<TailTarget | null> {
     if (!process.stdout.isTTY) {
-        console.error(pc.yellow("Multiple matches found. Use a more specific query or run in a TTY."));
+        out.error(pc.yellow("Multiple matches found. Use a more specific query or run in a TTY."));
 
         for (const t of targets) {
-            console.error(`  ${t.label} — ${t.agentDescription ?? t.filePath}`);
+            out.error(`  ${t.label} — ${t.agentDescription ?? t.filePath}`);
         }
 
         return null;
@@ -472,7 +473,7 @@ async function resolveIncludeSpec(opts: TailOptions): Promise<IncludeSpec> {
 async function runInteractiveSetup(explicit: boolean): Promise<IncludeSpec> {
     if (!process.stdout.isTTY) {
         if (explicit) {
-            console.error(pc.red("--interactive requires a TTY. Pipe-friendly alternative: --include <spec>"));
+            out.error(pc.red("--interactive requires a TTY. Pipe-friendly alternative: --include <spec>"));
             process.exit(1);
         }
 

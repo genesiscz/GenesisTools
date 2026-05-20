@@ -4,6 +4,7 @@ import { extractOrgName } from "@app/azure-devops/config";
 import { fetchTimeLogFunctionsKey } from "@app/azure-devops/lib/timelog-configure";
 import type { AzureConfigWithTimeLog, IdentityRef, TimeLogConfig } from "@app/azure-devops/types";
 import { findConfigPath, loadConfig } from "@app/azure-devops/utils";
+import { out } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
@@ -36,14 +37,14 @@ function loadExistingConfig(): { config: AzureConfigWithTimeLog; configPath: str
     const config = loadConfig() as AzureConfigWithTimeLog | null;
 
     if (!config?.org) {
-        console.error("Run 'tools azure-devops configure <url>' first");
+        out.error("Run 'tools azure-devops configure <url>' first");
         process.exit(1);
     }
 
     const configPath = findConfigPath();
 
     if (!configPath) {
-        console.error("Config file not found");
+        out.error("Config file not found");
         process.exit(1);
     }
 
@@ -58,7 +59,7 @@ function extractOrgNameOrExit(config: AzureConfigWithTimeLog): string {
     const orgName = extractOrgName(config.org);
 
     if (!orgName) {
-        console.error("Could not extract organization name from config.org");
+        out.error("Could not extract organization name from config.org");
         process.exit(1);
     }
 
@@ -414,7 +415,7 @@ function parseStatesForType(mappings: string[]): Record<string, string[]> {
         const colonIndex = mapping.indexOf(":");
 
         if (colonIndex === -1) {
-            console.error(`Invalid format: "${mapping}". Expected "Type:State1,State2"`);
+            out.error(`Invalid format: "${mapping}". Expected "Type:State1,State2"`);
             process.exit(1);
         }
 
@@ -426,7 +427,7 @@ function parseStatesForType(mappings: string[]): Record<string, string[]> {
             .filter(Boolean);
 
         if (!type || states.length === 0) {
-            console.error(`Invalid format: "${mapping}". Expected "Type:State1,State2"`);
+            out.error(`Invalid format: "${mapping}". Expected "Type:State1,State2"`);
             process.exit(1);
         }
 
@@ -449,10 +450,10 @@ function handleNonInteractive(options: ConfigureOptions): void {
 
         if (types.length === 0) {
             delete fullConfig.timelog.allowedWorkItemTypes;
-            console.log("Cleared allowedWorkItemTypes");
+            out.println("Cleared allowedWorkItemTypes");
         } else {
             fullConfig.timelog.allowedWorkItemTypes = types;
-            console.log(`Set allowedWorkItemTypes: ${types.join(", ")}`);
+            out.println(`Set allowedWorkItemTypes: ${types.join(", ")}`);
         }
     }
 
@@ -462,10 +463,10 @@ function handleNonInteractive(options: ConfigureOptions): void {
             ...fullConfig.timelog.allowedStatesPerType,
             ...statesPerType,
         };
-        console.log("Updated allowedStatesPerType:");
+        out.println("Updated allowedStatesPerType:");
 
         for (const [type, states] of Object.entries(statesPerType)) {
-            console.log(`  ${type}: ${states.join(", ")}`);
+            out.println(`  ${type}: ${states.join(", ")}`);
         }
     }
 
@@ -477,15 +478,15 @@ function handleNonInteractive(options: ConfigureOptions): void {
 
         if (states.length === 0) {
             delete fullConfig.timelog.deprioritizedStates;
-            console.log("Cleared deprioritizedStates (using defaults: Closed, Done, Resolved, Removed)");
+            out.println("Cleared deprioritizedStates (using defaults: Closed, Done, Resolved, Removed)");
         } else {
             fullConfig.timelog.deprioritizedStates = states;
-            console.log(`Set deprioritizedStates: ${states.join(", ")}`);
+            out.println(`Set deprioritizedStates: ${states.join(", ")}`);
         }
     }
 
     saveConfig(configPath, fullConfig);
-    console.log("\nConfiguration saved.");
+    out.println("\nConfiguration saved.");
 }
 
 function collectOption(value: string, previous: string[]): string[] {

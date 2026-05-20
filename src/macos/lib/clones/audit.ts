@@ -10,7 +10,7 @@ import {
     utimesSync,
 } from "node:fs";
 import { join, relative } from "node:path";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { copyFileStreaming, dedupeFile, freeDiskSpace, sha256File, walkFiles } from "@app/utils/fs/disk-usage";
 import { SafeJSON } from "@app/utils/json";
 import { CloneUnsupportedError, isApfsCloneSupported } from "@app/utils/macos/apfs";

@@ -1,3 +1,4 @@
+import { out } from "@app/logger";
 import { findProjectRoot } from "@app/todo/lib/context";
 import { TodoStore } from "@app/todo/lib/store";
 import { isInteractive, suggestCommand } from "@app/utils/cli";
@@ -16,13 +17,13 @@ export function createRemoveCommand(): Command {
             const existing = await store.get(id);
 
             if (!existing) {
-                console.error(`Todo not found: ${id}`);
+                out.error(`Todo not found: ${id}`);
                 process.exit(1);
             }
 
             if (!isInteractive() && !opts.yes) {
-                console.error("Error: --yes required for non-interactive removal.");
-                console.error(suggestCommand("tools todo remove", { add: [id, "--yes"] }));
+                out.error("Error: --yes required for non-interactive removal.");
+                out.error(suggestCommand("tools todo remove", { add: [id, "--yes"] }));
                 process.exit(1);
             }
 
@@ -40,9 +41,9 @@ export function createRemoveCommand(): Command {
             const removed = await store.remove(id);
 
             if (removed) {
-                console.log(`Removed ${id}`);
+                out.println(`Removed ${id}`);
             } else {
-                console.error(`Failed to remove ${id}`);
+                out.error(`Failed to remove ${id}`);
                 process.exit(1);
             }
         });

@@ -1,10 +1,9 @@
 import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { copyFile } from "node:fs/promises";
 import path from "node:path";
-import logger, { consoleLog } from "@app/logger";
+import { logger } from "@app/logger";
 import { DiffUtil } from "@app/utils/diff";
-import { ExitPromptError } from "@inquirer/core";
-import { confirm } from "@inquirer/prompts";
+import * as p from "@app/utils/prompts/p";
 import chalk from "chalk";
 import { getGlobalOptions } from "./config.utils.js";
 
@@ -50,17 +49,17 @@ export class BackupManager {
     async showDiff(oldContent: string, newContent: string, configPath: string): Promise<boolean> {
         // Check if there are actual changes by comparing content
         if (oldContent === newContent) {
-            consoleLog.info(chalk.gray("No changes detected."));
+            logger.info(chalk.gray("No changes detected."));
             return false;
         }
 
         // Show prominent warning at TOP so it's visible even in truncated output
         const globalOpts = getGlobalOptions();
         if (!globalOpts.yes && !process.stdout.isTTY) {
-            consoleLog.info(chalk.bgYellow.black.bold(" >>> REVIEW CHANGES BELOW - CONFIRMATION REQUIRED AT END <<< "));
+            logger.info(chalk.bgYellow.black.bold(" >>> REVIEW CHANGES BELOW - CONFIRMATION REQUIRED AT END <<< "));
         }
 
-        consoleLog.info(chalk.bold(`\nChanges to ${configPath}:\n`));
+        logger.info(chalk.bold(`\nChanges to ${configPath}:\n`));
 
         // Use DiffUtil to show diff using system diff command
         await DiffUtil.showDiff(oldContent, newContent, "old", "new");
@@ -102,25 +101,17 @@ export class BackupManager {
 
         // Check if we're in non-interactive mode (no TTY)
         if (!process.stdout.isTTY) {
-            consoleLog.info(chalk.bgRed.white.bold("\n !!! CHANGES NOT APPLIED !!! "));
-            consoleLog.info(chalk.yellow("To auto-confirm, re-run with --yes or -y flag."));
+            logger.info(chalk.bgRed.white.bold("\n !!! CHANGES NOT APPLIED !!! "));
+            logger.info(chalk.yellow("To auto-confirm, re-run with --yes or -y flag."));
             return false;
         }
 
-        try {
-            const confirmed = await confirm({
-                message: "Are these changes okay?",
-                default: true,
-            });
+        const confirmed = await p.confirm({
+            message: "Are these changes okay?",
+            initialValue: true,
+        });
 
-            return confirmed;
-        } catch (error) {
-            if (error instanceof ExitPromptError) {
-                logger.info("\nOperation cancelled by user.");
-                return false;
-            }
-            throw error;
-        }
+        return !!confirmed;
     }
 
     /**

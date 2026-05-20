@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { out } from "@app/logger";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { shutdownManager } from "./mcp/shared";
@@ -35,7 +36,7 @@ async function main(): Promise<void> {
     // ── Process-level error handlers ─────────────────────────
     process.on("unhandledRejection", (reason) => {
         const msg = reason instanceof Error ? reason.message : String(reason);
-        console.error(`Unhandled rejection: ${msg}`);
+        out.error(`Unhandled rejection: ${msg}`);
     });
 
     // ── Graceful shutdown ────────────────────────────────────
@@ -47,7 +48,7 @@ async function main(): Promise<void> {
         }
 
         shuttingDown = true;
-        console.error(`Shutting down (${signal})...`);
+        out.error(`Shutting down (${signal})...`);
 
         try {
             await shutdownManager();
@@ -64,6 +65,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-    console.error("Fatal error:", err);
+    out.error("Fatal error:", err);
     process.exit(1);
 });

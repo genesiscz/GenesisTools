@@ -1,3 +1,4 @@
+import { out } from "@app/logger";
 import { parseDate } from "@app/utils/date";
 import { MacReminders, ReminderPriority } from "@app/utils/macos/apple-reminders";
 import { type Command, Option } from "commander";
@@ -44,9 +45,9 @@ export function registerAddCommand(program: Command): void {
                         url: options.url,
                     });
 
-                    console.log(`${pc.green("Reminder created")} — ID: ${reminderId}`);
+                    out.println(`${pc.green("Reminder created")} — ID: ${reminderId}`);
                 } catch (error) {
-                    console.error(error instanceof Error ? error.message : String(error));
+                    out.error(error instanceof Error ? error.message : String(error));
                     process.exit(1);
                 }
             }

@@ -2,8 +2,10 @@
 
 // src/timely/index.ts
 
-import logger from "@app/logger";
-import { enhanceHelp } from "@app/utils/cli";
+import { logger, out } from "@app/logger";
+import { enhanceHelp, runTool } from "@app/utils/cli";
+import * as p from "@app/utils/prompts/p";
+import { inquirerBackend } from "@app/utils/prompts/p/inquirer-backend";
 import { Storage } from "@app/utils/storage";
 import chalk from "chalk";
 import { Command } from "commander";
@@ -21,6 +23,9 @@ import { registerMemoriesCommand } from "./commands/memories";
 import { registerProjectsCommand } from "./commands/projects";
 import { registerStatusCommand } from "./commands/status";
 
+// Use inquirer backend for this tool
+p.setBackend(inquirerBackend);
+
 // Initialize shared dependencies
 const storage = new Storage("timely");
 const client = new TimelyApiClient(storage);
@@ -30,7 +35,7 @@ const service = new TimelyService(client, storage);
 export { storage, client, service };
 
 function showHelpFull(): void {
-    console.log(`
+    out.println(`
 ${chalk.bold("Timely CLI")} - Interact with Timely time tracking
 
 ${chalk.cyan("Usage:")}
@@ -108,7 +113,7 @@ async function main(): Promise<void> {
     enhanceHelp(program);
 
     // Parse and execute
-    await program.parseAsync(process.argv);
+    await runTool(program, { tool: "timely" });
 }
 
 main().catch((err) => {

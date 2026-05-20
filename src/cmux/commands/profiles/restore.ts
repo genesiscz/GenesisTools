@@ -1,7 +1,7 @@
 import { buildPlan, type RestoreOptions, restoreProfile } from "@app/cmux/lib/restore";
 import { ProfileNotFoundError, ProfileStore } from "@app/cmux/lib/store";
 import type { Profile } from "@app/cmux/lib/types";
-import logger from "@app/logger";
+import { logger, out } from "@app/logger";
 import { isInteractive, suggestCommand } from "@app/utils/cli";
 import { withCancel } from "@app/utils/prompts/clack/helpers";
 import * as p from "@clack/prompts";
@@ -35,7 +35,7 @@ async function runRestore(name: string, flags: RestoreFlags): Promise<void> {
         profile = store.read(name);
     } catch (error) {
         if (error instanceof ProfileNotFoundError) {
-            console.error(error.message);
+            out.error(error.message);
             process.exitCode = 1;
             return;
         }
@@ -64,7 +64,7 @@ async function runRestore(name: string, flags: RestoreFlags): Promise<void> {
 
     if (!opts.yes) {
         if (!isInteractive()) {
-            console.error(
+            out.error(
                 `Pass --yes to skip the confirmation in non-interactive mode. ${suggestCommand(`tools cmux profiles restore ${name} --yes`)}`
             );
             process.exitCode = 1;

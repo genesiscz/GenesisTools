@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { getShopsDatabase, type ShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import { SafeJSON } from "@app/utils/json";
 // @ts-expect-error -- @hlidac-shopu/lib ships ESM with no .d.ts coverage

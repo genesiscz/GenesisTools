@@ -1,3 +1,5 @@
+import { out } from "@app/logger";
+import { runTool } from "@app/utils/cli";
 import { enhanceHelp } from "@app/utils/cli/executor";
 import { registerAnalyzeCommand } from "@app/youtube/commands/analyze";
 import { registerCacheCommand } from "@app/youtube/commands/cache";
@@ -39,7 +41,7 @@ export function buildYoutubeProgram(): Command {
 
 const program = buildYoutubeProgram();
 
-program.parseAsync(process.argv).catch((error) => {
-    console.error(error instanceof Error ? error.message : String(error));
+await runTool(program, { tool: "youtube" }).catch((error) => {
+    out.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;
 });

@@ -1,6 +1,6 @@
 import { statSync } from "node:fs";
 import { resolve } from "node:path";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import {
     addWatchedDirs,
     loadClonesConfig,

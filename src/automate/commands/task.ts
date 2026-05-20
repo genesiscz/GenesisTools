@@ -3,6 +3,7 @@ import { runPreset } from "@app/automate/lib/engine";
 import { computeNextRunAt, parseInterval } from "@app/automate/lib/interval-parser";
 import { createRunLogger } from "@app/automate/lib/run-logger";
 import { listPresets, loadPreset } from "@app/automate/lib/storage";
+import { out } from "@app/logger";
 import { formatDuration } from "@app/utils/format";
 import { SafeJSON } from "@app/utils/json";
 import { formatTable } from "@app/utils/table";
@@ -34,7 +35,7 @@ export function registerTaskCommand(parent: Command): void {
                 s.last_run_at ?? pc.dim("never"),
                 s.enabled ? s.next_run_at : pc.dim("—"),
             ]);
-            console.log(formatTable(rows, headers));
+            out.println(formatTable(rows, headers));
         });
 
     // task create — interactive schedule creation
@@ -157,7 +158,7 @@ export function registerTaskCommand(parent: Command): void {
                     formatDuration(l.duration_ms),
                     l.error ? pc.red(l.error.slice(0, 80)) : "",
                 ]);
-                console.log(formatTable(logRows, headers));
+                out.println(formatTable(logRows, headers));
                 return;
             }
 
@@ -192,7 +193,7 @@ export function registerTaskCommand(parent: Command): void {
                     r.started_at,
                     r.duration_ms != null ? formatDuration(r.duration_ms) : pc.dim("running..."),
                 ]);
-                console.log(formatTable(rows, headers));
+                out.println(formatTable(rows, headers));
             }
         });
 
@@ -331,6 +332,6 @@ export function registerTaskCommand(parent: Command): void {
                 r.duration_ms != null ? formatDuration(r.duration_ms) : pc.dim("running..."),
                 String(r.step_count),
             ]);
-            console.log(formatTable(rows, headers));
+            out.println(formatTable(rows, headers));
         });
 }

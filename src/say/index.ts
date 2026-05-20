@@ -2,12 +2,13 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import logger from "@app/logger";
+import { logger, out } from "@app/logger";
 import { AI } from "@app/utils/ai/index.ts";
 import { getModelsForTask } from "@app/utils/ai/ModelManager";
 import { getProvidersForTask } from "@app/utils/ai/providers";
 import type { AIProviderType } from "@app/utils/ai/types.ts";
 import { playBuffer } from "@app/utils/audio/playback";
+import { runTool } from "@app/utils/cli";
 import { isInteractive, suggestCommand } from "@app/utils/cli/executor";
 import { parseVariadic } from "@app/utils/cli/variadic";
 import {
@@ -82,7 +83,7 @@ const program = new Command()
         const mgr = new SayConfigManager();
 
         if (opts.mute && opts.unmute) {
-            console.error(pc.red("[say] --mute and --unmute are mutually exclusive."));
+            out.error(pc.red("[say] --mute and --unmute are mutually exclusive."));
             process.exit(1);
         }
 
@@ -94,9 +95,9 @@ const program = new Command()
         }
 
         if ((opts.mute || opts.unmute) && !opts.save) {
-            console.error(pc.red("[say] --mute / --unmute now require --save to persist."));
-            console.error(pc.dim("  e.g.: tools say --app claude --mute --save"));
-            console.error(pc.dim("  or:   tools say config   (interactive)"));
+            out.error(pc.red("[say] --mute / --unmute now require --save to persist."));
+            out.error(pc.dim("  e.g.: tools say --app claude --mute --save"));
+            out.error(pc.dim("  or:   tools say config   (interactive)"));
             process.exit(1);
         }
 
@@ -109,15 +110,15 @@ const program = new Command()
         // do not enter interactive mode.
         if (opts.save && text == null) {
             await applySave({ mgr, app: saveApp as string, patch: patch as Partial<SayAppConfig>, unsetList });
-            console.log(pc.green(`[say] saved profile "${saveApp}"`));
+            out.println(pc.green(`[say] saved profile "${saveApp}"`));
             return;
         }
 
         // No text and no save: open the unified config TUI (TTY only).
         if (text == null) {
             if (!isInteractive()) {
-                console.error(pc.red("[say] no message provided."));
-                console.error(pc.dim(suggestCommand("tools say", { add: ["<message>"] })));
+                out.error(pc.red("[say] no message provided."));
+                out.error(pc.dim(suggestCommand("tools say", { add: ["<message>"] })));
                 process.exit(1);
             }
 
@@ -166,8 +167,8 @@ const program = new Command()
         }
 
         if (provider !== "macos" && !envForProvider(provider)) {
-            console.error(pc.red(`[say] env var for ${provider} is not set.`));
-            console.error(pc.dim(suggestCommand("tools say", { add: ["--provider", "macos"] })));
+            out.error(pc.red(`[say] env var for ${provider} is not set.`));
+            out.error(pc.dim(suggestCommand("tools say", { add: ["--provider", "macos"] })));
             process.exit(1);
         }
 
@@ -179,19 +180,19 @@ const program = new Command()
             const message = err instanceof Error ? err.message : String(err);
 
             if (isVoiceNotFoundError(message)) {
-                console.error(pc.red(`[say] TTS failed: ${message}`));
+                out.error(pc.red(`[say] TTS failed: ${message}`));
                 await printVoiceList(provider);
                 process.exit(1);
             }
 
             // Cloud TTS is transient; macos is always available — drop provider-specific voice/model in the retry.
             if (provider === "macos" || opts.fallback === false) {
-                console.error(pc.red(`[say] TTS failed: ${message}`));
+                out.error(pc.red(`[say] TTS failed: ${message}`));
                 process.exit(1);
             }
 
-            console.error(pc.yellow(`[say] ${provider} failed: ${message.slice(0, 200)}`));
-            console.error(pc.yellow("[say] falling back to macos"));
+            out.error(pc.yellow(`[say] ${provider} failed: ${message.slice(0, 200)}`));
+            out.error(pc.yellow("[say] falling back to macos"));
 
             const macosRun: EffectiveSettings = { ...effectiveForRun, voice: null, model: null };
 
@@ -199,14 +200,14 @@ const program = new Command()
                 await speakCached({ mgr, text, provider: "macos", effective: macosRun, opts, stream });
             } catch (fallbackErr) {
                 const fmsg = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
-                console.error(pc.red(`[say] macos fallback also failed: ${fmsg}`));
+                out.error(pc.red(`[say] macos fallback also failed: ${fmsg}`));
                 process.exit(1);
             }
         }
 
         if (opts.save && saveApp && patch) {
             await applySave({ mgr, app: saveApp, patch, unsetList });
-            console.log(pc.green(`[say] saved profile "${saveApp}"`));
+            out.println(pc.green(`[say] saved profile "${saveApp}"`));
         }
     });
 
@@ -234,14 +235,14 @@ program
                 continue;
             }
 
-            console.log();
-            console.log(pc.bold(pc.cyan(`[${provider}] ${task} models`)));
+            out.println();
+            out.println(pc.bold(pc.cyan(`[${provider}] ${task} models`)));
             const rows = models.map((m) => [m.id, m.name, m.description.slice(0, 80)]);
-            console.log(formatTable(rows, ["ID", "Name", "Description"]));
+            out.println(formatTable(rows, ["ID", "Name", "Description"]));
         }
 
-        console.log();
-        console.log(pc.dim("Download with: tools ai models download <id>"));
+        out.println();
+        out.println(pc.dim("Download with: tools ai models download <id>"));
     });
 
 program
@@ -249,8 +250,8 @@ program
     .description("Manage per-app TTS profiles (add/edit/delete) interactively")
     .action(async () => {
         if (!isInteractive()) {
-            console.error(pc.red("[say] config requires a TTY."));
-            console.error(pc.dim(suggestCommand("tools say", { add: ["--app", "<name>", "--save"] })));
+            out.error(pc.red("[say] config requires a TTY."));
+            out.error(pc.dim(suggestCommand("tools say", { add: ["--app", "<name>", "--save"] })));
             process.exit(1);
         }
 
@@ -272,19 +273,22 @@ interface EffectiveSettings {
 }
 
 function validateUnsetFields(raw: string[]): SettableField[] {
-    const out: SettableField[] = [];
+    // Renamed from `out` to avoid shadowing the `@app/logger` `out` import
+    // added by the console-sweep codemod (the `out.error(...)` calls below
+    // use the imported writer, not this local accumulator).
+    const fields: SettableField[] = [];
 
     for (const u of raw) {
         if (!isSettableField(u)) {
-            console.error(pc.red(`[say] --unset: unknown field "${u}"`));
-            console.error(pc.dim(`  valid: ${SETTABLE_FIELDS.join(", ")}`));
+            out.error(pc.red(`[say] --unset: unknown field "${u}"`));
+            out.error(pc.dim(`  valid: ${SETTABLE_FIELDS.join(", ")}`));
             process.exit(1);
         }
 
-        out.push(u);
+        fields.push(u);
     }
 
-    return out;
+    return fields;
 }
 
 async function resolveText(messageParts: string[], filePath?: string): Promise<string | null> {
@@ -292,7 +296,7 @@ async function resolveText(messageParts: string[], filePath?: string): Promise<s
         const abs = resolve(filePath);
 
         if (!existsSync(abs)) {
-            console.error(pc.red(`[say] file not found: ${abs}`));
+            out.error(pc.red(`[say] file not found: ${abs}`));
             process.exit(1);
         }
 
@@ -427,8 +431,8 @@ async function resolveSaveApp(app: string | undefined, mgr: SayConfigManager): P
     }
 
     if (!isInteractive()) {
-        console.error(pc.red("[say] --save requires --app <name> in non-interactive mode."));
-        console.error(pc.dim(suggestCommand("tools say", { add: ["--app", "<name>"] })));
+        out.error(pc.red("[say] --save requires --app <name> in non-interactive mode."));
+        out.error(pc.dim(suggestCommand("tools say", { add: ["--app", "<name>"] })));
         process.exit(1);
     }
 
@@ -578,25 +582,25 @@ async function printVoiceList(filter?: SayProvider): Promise<void> {
                   : providerType === "openai"
                     ? "OpenAI"
                     : providerType;
-        console.log();
-        console.log(pc.bold(pc.cyan(`[${label}] (${voices.length} voices)`)));
+        out.println();
+        out.println(pc.bold(pc.cyan(`[${label}] (${voices.length} voices)`)));
 
         if (voices.length === 0) {
-            console.error(pc.dim("  (no voices)"));
+            out.error(pc.dim("  (no voices)"));
             continue;
         }
 
         const rows = voices.map((v) => [v.id, v.name, v.locale ?? "", (v.description ?? "").slice(0, 60)]);
-        console.log(formatTable(rows, ["ID", "Name", "Locale", "Description"]));
+        out.println(formatTable(rows, ["ID", "Name", "Locale", "Description"]));
     }
 }
 
 async function main(): Promise<void> {
     try {
-        await program.parseAsync(process.argv);
+        await runTool(program, { tool: "say" });
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        console.error(message);
+        out.error(message);
         process.exit(1);
     }
 }
@@ -673,7 +677,7 @@ async function manageTextOverridesTUI(mgr: SayConfigManager): Promise<void> {
         p.log.info("Current overrides:");
 
         for (const [i, o] of overrides.entries()) {
-            console.log(`  ${pc.dim(`${i + 1}.`)} "${o.match}" → ${pc.cyan(o.provider)}`);
+            out.println(`  ${pc.dim(`${i + 1}.`)} "${o.match}" → ${pc.cyan(o.provider)}`);
         }
     } else {
         p.log.info("No text overrides configured.");
@@ -879,7 +883,7 @@ async function listAppsTUI(mgr: SayConfigManager): Promise<void> {
         ]);
     }
 
-    console.log(formatTable(rows, ["App", "Voice", "Volume", "Provider", "Mute"]));
+    out.println(formatTable(rows, ["App", "Voice", "Volume", "Provider", "Mute"]));
 }
 
 /**
@@ -942,11 +946,11 @@ async function editAppFields(mgr: SayConfigManager, app: string): Promise<void> 
 
 function renderProfileHeader(app: string, profile: SayAppConfig): void {
     const rows = SETTABLE_FIELDS.map((f) => [f, formatFieldValue(profile, f)]);
-    console.log();
-    console.log(pc.bold(`Edit "${app}"`));
-    console.log(formatTable(rows, ["Field", "Current"]));
-    console.log(pc.dim("  ⏎ keep  ·  - inherit (clear)  ·  any value to set"));
-    console.log();
+    out.println();
+    out.println(pc.bold(`Edit "${app}"`));
+    out.println(formatTable(rows, ["Field", "Current"]));
+    out.println(pc.dim("  ⏎ keep  ·  - inherit (clear)  ·  any value to set"));
+    out.println();
 }
 
 function formatFieldValue(profile: SayAppConfig, field: SettableField): string {

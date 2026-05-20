@@ -1,6 +1,7 @@
 import { lstatSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { Executor } from "@app/utils/cli";
+import { logger, out } from "@app/logger";
+import { Executor, runTool } from "@app/utils/cli";
 import { formatDateTime } from "@app/utils/date";
 import { formatRelativeTime as _formatRelativeTime } from "@app/utils/format";
 import { handleReadmeFlag } from "@app/utils/readme";
@@ -11,11 +12,10 @@ import { Command } from "commander";
 handleReadmeFlag(import.meta.url);
 
 const log = {
-    info: (msg: string) => console.log(msg),
-    ok: (msg: string) => console.log(chalk.green("✔ ") + msg),
-    warn: (msg: string) => console.log(chalk.yellow("⚠ ") + msg),
-    err: (msg: string, e?: unknown) => console.error(chalk.red("✖ ") + msg + (e ? `: ${String(e)}` : "")),
-    debug: (_msg: string) => {},
+    info: (msg: string) => out.println(msg),
+    ok: (msg: string) => out.println(chalk.green("✔ ") + msg),
+    warn: (msg: string) => out.println(chalk.yellow("⚠ ") + msg),
+    err: (msg: string, e?: unknown) => out.error(chalk.red("✖ ") + msg + (e ? `: ${String(e)}` : "")),
 };
 
 interface FileChange {
@@ -196,7 +196,7 @@ function getFilesInDirectory(dirPath: string, basePath: string): FileChange[] {
     return result;
 }
 
-async function getUncommittedFiles(verbose: boolean): Promise<FileChange[]> {
+async function getUncommittedFiles(): Promise<FileChange[]> {
     const git = new Executor({ prefix: "git" });
     const { stdout } = await git.execOrThrow(["status", "--porcelain"], "git status failed");
 
@@ -257,9 +257,7 @@ async function getUncommittedFiles(verbose: boolean): Promise<FileChange[]> {
                     mtime: new Date(),
                 });
             } else {
-                if (verbose) {
-                    log.debug(`Skipping file "${filePath}": ${error instanceof Error ? error.message : String(error)}`);
-                }
+                logger.debug(`Skipping file "${filePath}": ${error instanceof Error ? error.message : String(error)}`);
             }
         }
     }
@@ -269,7 +267,7 @@ async function getUncommittedFiles(verbose: boolean): Promise<FileChange[]> {
     return files;
 }
 
-async function getCommittedFiles(numCommits: number, verbose: boolean): Promise<FileChange[]> {
+async function getCommittedFiles(numCommits: number): Promise<FileChange[]> {
     // Get commit info and file changes
     // Format: --format="%H|%ct" outputs commit hash and timestamp, --name-status outputs file changes
     const git = new Executor({ prefix: "git" });
@@ -294,9 +292,7 @@ async function getCommittedFiles(numCommits: number, verbose: boolean): Promise<
         if (trimmedLine.includes("|") && /^[a-f0-9]{40}\|\d+$/.test(trimmedLine)) {
             const [hash, timestamp] = trimmedLine.split("|");
             currentCommitDate = new Date(parseInt(timestamp, 10) * 1000);
-            if (verbose) {
-                log.debug(`Processing commit ${hash.substring(0, 7)} from ${currentCommitDate.toISOString()}`);
-            }
+            logger.debug(`Processing commit ${hash.substring(0, 7)} from ${currentCommitDate.toISOString()}`);
             continue;
         }
 
@@ -353,19 +349,13 @@ async function main() {
         .description(
             "Shows uncommitted git changes grouped by modification time to help you understand what files were updated and when."
         )
-        .option("-c, --commits <n>", "Show changes from the last N commits instead of uncommitted changes")
-        .option("-v, --verbose", "Enable verbose logging")
-        .parse();
+        .option("-c, --commits <n>", "Show changes from the last N commits instead of uncommitted changes");
+
+    await runTool(program, { tool: "last-changes" });
 
     const options = program.opts<{
         commits?: string;
-        verbose?: boolean;
     }>();
-
-    const verbose = options.verbose ?? false;
-    if (verbose) {
-        log.debug = (msg: string) => console.log(chalk.gray(`🔍 ${msg}`));
-    }
 
     try {
         let files: FileChange[];
@@ -380,12 +370,12 @@ async function main() {
                 process.exit(1);
             }
 
-            files = await getCommittedFiles(numCommits, verbose);
+            files = await getCommittedFiles(numCommits);
             title = `Last ${numCommits} Commit${numCommits !== 1 ? "s" : ""}`;
             emptyMessage = `No changes found in the last ${numCommits} commit${numCommits !== 1 ? "s" : ""}.`;
             isCommitMode = true;
         } else {
-            files = await getUncommittedFiles(verbose);
+            files = await getUncommittedFiles();
             title = "Uncommitted Changes";
             emptyMessage = "No uncommitted changes found.";
         }
@@ -424,9 +414,10 @@ async function main() {
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         log.err(`Error: ${message}`);
-        if (error instanceof Error && error.stack && verbose) {
-            log.err(error.stack);
+        if (error instanceof Error && error.stack) {
+            logger.debug(error.stack);
         }
+
         process.exit(1);
     }
 }

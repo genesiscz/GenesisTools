@@ -14,7 +14,8 @@
  */
 
 import { registerProfilesCommand } from "@app/cmux/commands/profiles";
-import { enhanceHelp } from "@app/utils/cli";
+import { out } from "@app/logger";
+import { enhanceHelp, runTool } from "@app/utils/cli";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { Command } from "commander";
 
@@ -33,7 +34,7 @@ registerProfilesCommand(program);
 
 enhanceHelp(program);
 
-program.parseAsync(process.argv).catch((error) => {
-    console.error(error instanceof Error ? error.message : String(error));
+await runTool(program, { tool: "cmux" }).catch((error) => {
+    out.error(error instanceof Error ? error.message : String(error));
     process.exit(1);
 });

@@ -1,10 +1,9 @@
-import logger from "@app/logger";
+import { logger, out } from "@app/logger";
 import type { TimelyService } from "@app/timely/api/service";
 import type { TimelyClient, TimelyProject } from "@app/timely/types";
 import { SafeJSON } from "@app/utils/json";
+import * as p from "@app/utils/prompts/p";
 import type { Storage } from "@app/utils/storage";
-import { ExitPromptError } from "@inquirer/core";
-import { select } from "@inquirer/prompts";
 import chalk from "chalk";
 import type { Command } from "commander";
 
@@ -16,15 +15,7 @@ export function registerProjectsCommand(program: Command, storage: Storage, serv
         .option("-s, --select", "Interactively select default project")
         .option("-a, --account <id>", "Override account ID")
         .action(async (options) => {
-            try {
-                await projectsAction(storage, service, options);
-            } catch (error) {
-                if (error instanceof ExitPromptError) {
-                    logger.info("\nOperation cancelled.");
-                    process.exit(0);
-                }
-                throw error;
-            }
+            await projectsAction(storage, service, options);
         });
 }
 
@@ -59,7 +50,7 @@ async function projectsAction(storage: Storage, service: TimelyService, options:
 
     // Output based on format
     if (options.format === "json") {
-        console.log(SafeJSON.stringify(projects, null, 2));
+        out.println(SafeJSON.stringify(projects, null, 2));
         return;
     }
 
@@ -80,13 +71,13 @@ async function projectsAction(storage: Storage, service: TimelyService, options:
     }
 
     for (const [clientName, clientProjects] of byClient) {
-        console.log(chalk.bold(clientName));
+        out.println(chalk.bold(clientName));
         for (const project of clientProjects) {
             const selected = project.id === selectedId ? chalk.green(" (selected)") : "";
             const status = project.active ? "" : chalk.gray("[inactive]");
-            console.log(`  ${project.name} (ID: ${project.id}) ${status}${selected}`);
+            out.println(`  ${project.name} (ID: ${project.id}) ${status}${selected}`);
         }
-        console.log();
+        out.println();
     }
 
     // Interactive selection
@@ -101,10 +92,10 @@ async function projectsAction(storage: Storage, service: TimelyService, options:
                 };
             });
 
-        const projectId = await select({
+        const projectId = (await p.select({
             message: "Select default project:",
-            choices,
-        });
+            options: choices.map((c) => ({ value: c.value, label: c.name })),
+        })) as string;
 
         await storage.setConfigValue("selectedProjectId", parseInt(projectId, 10));
         logger.info(chalk.green(`Default project set to ID: ${projectId}`));

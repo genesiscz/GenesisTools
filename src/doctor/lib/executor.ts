@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { appendHistory } from "./history";
 import type { Action, ActionResult, ExecutorContext, Finding } from "./types";
 

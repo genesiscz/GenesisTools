@@ -6,6 +6,7 @@ import {
     updateConfig,
 } from "@app/claude/lib/config";
 import { fetchUsage } from "@app/claude/lib/usage/api";
+import { out } from "@app/logger";
 import { AIConfig } from "@app/utils/ai/AIConfig";
 import { claudeOAuth, fetchOAuthProfile, getClaudeJsonAccount } from "@app/utils/claude/auth";
 import { copyToClipboard } from "@app/utils/clipboard";
@@ -41,9 +42,9 @@ async function presentAuthUrl(authUrl: string): Promise<void> {
         "OAuth Login"
     );
 
-    console.log();
-    console.log(`  ${pc.cyan(authUrl)}`);
-    console.log();
+    out.println();
+    out.println(`  ${pc.cyan(authUrl)}`);
+    out.println();
 
     const openBrowser = await p.confirm({
         message: "Open URL in browser?",
@@ -795,26 +796,26 @@ export function registerConfigCommand(program: Command): void {
             const aiConfig = await AIConfig.load();
 
             // Generate auth URL
-            console.log(pc.dim("Generating authorization URL..."));
+            out.println(pc.dim("Generating authorization URL..."));
             const authUrl = await claudeOAuth.startLogin();
 
-            console.log();
-            console.log(pc.bold("OAuth Login"));
-            console.log(pc.dim("─".repeat(50)));
-            console.log();
-            console.log("1. Open this URL in your browser:");
-            console.log();
-            console.log(`   ${pc.cyan(authUrl)}`);
-            console.log();
-            console.log("2. Log in and click 'Authorize'");
-            console.log("3. Copy the code from the callback page");
-            console.log();
-            console.log(pc.dim("─".repeat(50)));
+            out.println();
+            out.println(pc.bold("OAuth Login"));
+            out.println(pc.dim("─".repeat(50)));
+            out.println();
+            out.println("1. Open this URL in your browser:");
+            out.println();
+            out.println(`   ${pc.cyan(authUrl)}`);
+            out.println();
+            out.println("2. Log in and click 'Authorize'");
+            out.println("3. Copy the code from the callback page");
+            out.println();
+            out.println(pc.dim("─".repeat(50)));
 
             // Open browser
             Bun.spawn(["open", authUrl], { stdio: ["ignore", "ignore", "ignore"] });
-            console.log(pc.dim("(Opening browser...)"));
-            console.log();
+            out.println(pc.dim("(Opening browser...)"));
+            out.println();
 
             // Read code from stdin
             process.stdout.write("Paste authorization code: ");
@@ -829,24 +830,24 @@ export function registerConfigCommand(program: Command): void {
             const code = new TextDecoder().decode(value ?? new Uint8Array()).trim();
 
             if (!code) {
-                console.error(pc.red("No code provided."));
+                out.error(pc.red("No code provided."));
                 process.exit(1);
             }
 
             // Exchange code
-            console.log(pc.dim("Exchanging code for tokens..."));
+            out.println(pc.dim("Exchanging code for tokens..."));
             let tokens: Awaited<ReturnType<typeof claudeOAuth.exchangeCode>>;
             try {
                 tokens = await claudeOAuth.exchangeCode(code);
             } catch (err) {
-                console.error(pc.red(`Token exchange failed: ${err}`));
+                out.error(pc.red(`Token exchange failed: ${err}`));
                 process.exit(1);
             }
 
             // Determine account name
             const accountName = name ?? tokens.account?.email?.split("@")[0]?.toLowerCase() ?? "personal";
             if (aiConfig.getAccount(accountName)) {
-                console.log(pc.yellow(`Updating existing account "${accountName}"...`));
+                out.println(pc.yellow(`Updating existing account "${accountName}"...`));
             }
 
             // Fetch profile for label
@@ -865,13 +866,13 @@ export function registerConfigCommand(program: Command): void {
                 apps: ["claude", "ask"],
             });
 
-            console.log();
-            console.log(pc.green(`✓ Account "${accountName}" saved with auto-refresh.`));
+            out.println();
+            out.println(pc.green(`✓ Account "${accountName}" saved with auto-refresh.`));
             if (tokens.account) {
-                console.log(pc.dim(`  Email: ${tokens.account.email}`));
+                out.println(pc.dim(`  Email: ${tokens.account.email}`));
             }
             if (label) {
-                console.log(pc.dim(`  Plan: ${label}`));
+                out.println(pc.dim(`  Plan: ${label}`));
             }
         });
 }

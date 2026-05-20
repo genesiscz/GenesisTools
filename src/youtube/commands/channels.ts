@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { out } from "@app/logger";
 import { isInteractive, suggestCommand } from "@app/utils/cli/executor";
 import { renderColumns } from "@app/youtube/commands/_shared/columns";
 import { confirmDestructive } from "@app/youtube/commands/_shared/confirm";
@@ -43,8 +44,8 @@ export function registerChannelsCommand(program: Command): void {
 
             if (!inputs.length) {
                 if (!isInteractive()) {
-                    console.error(pc.red("channels add requires at least one handle, or --from-file."));
-                    console.error(`Try: ${suggestCommand("tools youtube channels add", { add: ["@mkbhd"] })}`);
+                    out.error(pc.red("channels add requires at least one handle, or --from-file."));
+                    out.error(`Try: ${suggestCommand("tools youtube channels add", { add: ["@mkbhd"] })}`);
                     process.exitCode = 1;
                     return;
                 }
@@ -194,15 +195,15 @@ async function resolveSyncTargets({
     }
 
     if (!isInteractive()) {
-        console.error(pc.red("channels sync requires <handle> or --all in non-interactive mode."));
-        console.error(`Try: ${suggestCommand("tools youtube channels sync", { add: ["--all"] })}`);
+        out.error(pc.red("channels sync requires <handle> or --all in non-interactive mode."));
+        out.error(`Try: ${suggestCommand("tools youtube channels sync", { add: ["--all"] })}`);
         process.exitCode = 1;
         return [];
     }
 
     const channels = yt.channels.list();
     if (!channels.length) {
-        console.error(pc.yellow("No saved channels."));
+        out.error(pc.yellow("No saved channels."));
         return [];
     }
 

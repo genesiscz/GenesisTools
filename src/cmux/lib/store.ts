@@ -10,7 +10,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { PROFILE_VERSION, type Profile, type ProfileSummary } from "@app/cmux/lib/types";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import { Storage } from "@app/utils/storage";
 

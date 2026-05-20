@@ -5,7 +5,7 @@
 import { existsSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { Api } from "@app/azure-devops/api";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { concurrentMap } from "@app/utils/async";
 
 /** Parsed inline image reference from HTML */

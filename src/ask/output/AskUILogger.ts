@@ -1,3 +1,4 @@
+import { out } from "@app/logger";
 import { colorizeProvider } from "@ask/utils/helpers";
 import * as p from "@clack/prompts";
 import pc from "picocolors";
@@ -114,7 +115,7 @@ export class AskUILogger {
             return;
         }
 
-        console.log(pc.dim(`\nResponse time: ${duration}`));
+        out.println(pc.dim(`\nResponse time: ${duration}`));
     }
 
     logSessionSummary({ id, messages, duration }: { id: string; messages: number; duration: string }): void {
@@ -143,7 +144,7 @@ export class AskUILogger {
         }
 
         if (this.suppressUI) {
-            console.log(message ?? "Goodbye!");
+            out.println(message ?? "Goodbye!");
         } else {
             p.outro(pc.green(message ?? "Goodbye!"));
         }

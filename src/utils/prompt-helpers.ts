@@ -1,3 +1,4 @@
+import { out } from "@app/logger";
 import { ExitPromptError } from "@inquirer/core";
 
 /**
@@ -6,7 +7,7 @@ import { ExitPromptError } from "@inquirer/core";
  */
 export function handlePromptCancel(error: unknown): never {
     if (error instanceof ExitPromptError) {
-        console.log("\nOperation cancelled.");
+        out.println("\nOperation cancelled.");
         process.exit(0);
     }
     throw error;

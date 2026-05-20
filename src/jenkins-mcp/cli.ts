@@ -1,3 +1,4 @@
+import { out } from "@app/logger";
 import { enhanceHelp } from "@app/utils/cli";
 import { parseDuration as parseDurationUtil } from "@app/utils/format";
 import { SafeJSON } from "@app/utils/json";
@@ -58,14 +59,14 @@ export async function runCli(argv: string[]): Promise<void> {
             const snap = await getStages(loadClient(), ref.jobPath, ref.buildNumber, {
                 expand: opts.expand,
             });
-            console.log(`Build ${ref.buildNumber} — ${snap.status}`);
+            out.println(`Build ${ref.buildNumber} — ${snap.status}`);
 
             for (const stage of snap.stages) {
-                console.log(`  ${formatStageLine(stage)}`);
+                out.println(`  ${formatStageLine(stage)}`);
 
                 if (opts.expand) {
                     for (const branch of stage.stageFlowNodes ?? []) {
-                        console.log(`    ├ ${formatStageLine(branch)}`);
+                        out.println(`    ├ ${formatStageLine(branch)}`);
                     }
                 }
             }
@@ -93,7 +94,7 @@ export async function runCli(argv: string[]): Promise<void> {
                 const r = await fetchLog(loadClient(), ref.jobPath, ref.buildNumber, {
                     nodeId: ref.nodeId,
                 });
-                console.log(
+                out.println(
                     `saved: ${r.path} (${r.sizeBytes}B, ${r.lineCount} lines${
                         r.nodeStatus ? `, status=${r.nodeStatus}` : ""
                     }${r.truncated ? ", TRUNCATED" : ""})`
@@ -103,20 +104,20 @@ export async function runCli(argv: string[]): Promise<void> {
 
                 if (opts.head !== undefined) {
                     const first = lines.slice(0, opts.head);
-                    console.log(`--- head (${first.length}) ---`);
-                    console.log(first.join("\n"));
+                    out.println(`--- head (${first.length}) ---`);
+                    out.println(first.join("\n"));
                 }
 
                 if (opts.grep) {
                     const matches = grepLog(r.content, opts.grep);
-                    console.log(`--- grep (${matches.length} matches) ---`);
-                    console.log(matches.join("\n"));
+                    out.println(`--- grep (${matches.length} matches) ---`);
+                    out.println(matches.join("\n"));
                 }
 
                 const tailN = opts.tail ?? 20;
                 const last = lines.slice(-tailN);
-                console.log(`--- tail (${last.length}) ---`);
-                console.log(last.join("\n"));
+                out.println(`--- tail (${last.length}) ---`);
+                out.println(last.join("\n"));
             }
         );
 
@@ -131,7 +132,7 @@ export async function runCli(argv: string[]): Promise<void> {
             const res = await loadClient().get(
                 `/${ref.jobPath}/${ref.buildNumber ?? "lastBuild"}/api/json?tree=${tree}`
             );
-            console.log(SafeJSON.stringify(res.data, null, 2));
+            out.println(SafeJSON.stringify(res.data, null, 2));
         });
 
     program
@@ -145,7 +146,7 @@ export async function runCli(argv: string[]): Promise<void> {
             const res = await loadClient().get(
                 `/${ref.jobPath}/${ref.buildNumber ?? "lastBuild"}/api/json?tree=${tree}`
             );
-            console.log(SafeJSON.stringify(res.data, null, 2));
+            out.println(SafeJSON.stringify(res.data, null, 2));
         });
 
     program
@@ -160,7 +161,7 @@ export async function runCli(argv: string[]): Promise<void> {
             const limited = opts.limit !== undefined ? all.slice(0, opts.limit) : all;
 
             for (const j of limited) {
-                console.log(`${j.name}\t${j.color}\t${j.url}`);
+                out.println(`${j.name}\t${j.color}\t${j.url}`);
             }
         });
 

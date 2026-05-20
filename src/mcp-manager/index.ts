@@ -1,8 +1,12 @@
-import logger, { configureLogger } from "@app/logger";
+import { configureLogger, logger } from "@app/logger";
 import { enhanceHelp, isInteractive } from "@app/utils/cli";
+import * as p from "@app/utils/prompts/p";
+import { inquirerBackend } from "@app/utils/prompts/p/inquirer-backend";
 import { handleReadmeFlag } from "@app/utils/readme";
-import { ExitPromptError } from "@inquirer/core";
-import { input, select } from "@inquirer/prompts";
+
+// Use inquirer backend for this tool
+p.setBackend(inquirerBackend);
+
 import { Command } from "commander";
 import { showHelp } from "./utils/command.utils.js";
 import { ClaudeProvider } from "./utils/providers/claude.js";
@@ -14,6 +18,7 @@ import type { MCPProvider } from "./utils/providers/types.js";
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
 
+import { runTool } from "@app/utils/cli";
 import {
     backupAllConfigs,
     configJson,
@@ -29,12 +34,12 @@ import {
 } from "./commands/index.js";
 import { setGlobalOptions } from "./utils/config.utils.js";
 
-// Configure logger to include timestamps in console output and enable sync mode
-// Sync mode ensures logs appear before Inquirer prompts
+// Include timestamps in console output. The console stream is now always
+// sync (pino-pretty sync:true in createLogger), so logs reliably appear
+// before Inquirer prompts without an explicit sync flag.
 configureLogger({
     includeTimestamp: true,
     timestampFormat: "HH:MM:ss",
-    sync: true,
 });
 
 /**
@@ -251,65 +256,57 @@ program.action(async () => {
         process.exit(1);
     }
 
-    try {
-        const action = await select({
-            message: "What would you like to do?",
-            choices: [
-                { value: "config", name: "Open/edit unified configuration" },
-                { value: "sync", name: "Sync servers to providers" },
-                { value: "syncFromProviders", name: "Sync servers from providers" },
-                { value: "list", name: "List all servers" },
-                { value: "enable", name: "Enable servers" },
-                { value: "disable", name: "Disable servers" },
-                { value: "install", name: "Install a server" },
-                { value: "show", name: "Show server configuration" },
-                { value: "backupAll", name: "Backup all configs" },
-                { value: "rename", name: "Rename a server" },
-            ],
-        });
+    const action = (await p.select({
+        message: "What would you like to do?",
+        options: [
+            { value: "config", label: "Open/edit unified configuration" },
+            { value: "sync", label: "Sync servers to providers" },
+            { value: "syncFromProviders", label: "Sync servers from providers" },
+            { value: "list", label: "List all servers" },
+            { value: "enable", label: "Enable servers" },
+            { value: "disable", label: "Disable servers" },
+            { value: "install", label: "Install a server" },
+            { value: "show", label: "Show server configuration" },
+            { value: "backupAll", label: "Backup all configs" },
+            { value: "rename", label: "Rename a server" },
+        ],
+    })) as string;
 
-        switch (action) {
-            case "config":
-                await openConfig();
-                break;
-            case "sync":
-                await syncServers(providers);
-                break;
-            case "syncFromProviders":
-                await syncFromProviders(providers);
-                break;
-            case "list":
-                await listServers(providers);
-                break;
-            case "enable":
-                await enableServer(undefined, providers);
-                break;
-            case "disable":
-                await disableServer(undefined, providers);
-                break;
-            case "install":
-                await installServer(undefined, undefined, providers);
-                break;
-            case "show": {
-                const serverName = await input({
-                    message: "Server name:",
-                });
-                await showServerConfig(serverName, providers);
-                break;
-            }
-            case "backupAll":
-                await backupAllConfigs(providers);
-                break;
-            case "rename":
-                await renameServer(undefined, undefined, providers);
-                break;
+    switch (action) {
+        case "config":
+            await openConfig();
+            break;
+        case "sync":
+            await syncServers(providers);
+            break;
+        case "syncFromProviders":
+            await syncFromProviders(providers);
+            break;
+        case "list":
+            await listServers(providers);
+            break;
+        case "enable":
+            await enableServer(undefined, providers);
+            break;
+        case "disable":
+            await disableServer(undefined, providers);
+            break;
+        case "install":
+            await installServer(undefined, undefined, providers);
+            break;
+        case "show": {
+            const serverName = (await p.text({
+                message: "Server name:",
+            })) as string;
+            await showServerConfig(serverName, providers);
+            break;
         }
-    } catch (error) {
-        if (error instanceof ExitPromptError) {
-            logger.info("\nOperation cancelled by user.");
-            process.exit(0);
-        }
-        throw error;
+        case "backupAll":
+            await backupAllConfigs(providers);
+            break;
+        case "rename":
+            await renameServer(undefined, undefined, providers);
+            break;
     }
 });
 
@@ -318,7 +315,7 @@ enhanceHelp(program);
 // Main function
 async function main() {
     try {
-        await program.parseAsync();
+        await runTool(program, { tool: "mcp-manager" });
     } catch (error: unknown) {
         const opts = program.opts();
         if (error instanceof Error) {

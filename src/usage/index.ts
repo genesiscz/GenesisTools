@@ -1,7 +1,8 @@
 #!/usr/bin/env bun
 import { UsageDatabase } from "@app/ask/output/UsageDatabase";
 import { dynamicPricingManager } from "@app/ask/providers/DynamicPricing";
-import logger from "@app/logger";
+import { logger, out } from "@app/logger";
+import { runTool } from "@app/utils/cli";
 import { formatDateTime } from "@app/utils/date";
 import { SafeJSON } from "@app/utils/json";
 import chalk from "chalk";
@@ -17,7 +18,7 @@ interface Options {
 }
 
 function showHelp() {
-    console.log(`
+    out.println(`
 Usage: tools usage [options]
 
 Display usage statistics and analytics for ASK tool.
@@ -57,18 +58,18 @@ function formatDate(dateStr: string): string {
 async function showSummary(db: UsageDatabase, days: number) {
     const total = await db.getTotalUsage(days);
 
-    console.log(chalk.bold.cyan("\n📊 USAGE SUMMARY\n"));
-    console.log(chalk.white(`Period: Last ${days} days`));
-    console.log(chalk.white(`Total Cost: ${chalk.green.bold(formatCost(total.totalCost))}`));
-    console.log(chalk.white(`Total Tokens: ${chalk.yellow(formatTokens(total.totalTokens))}`));
-    console.log(chalk.white(`Messages: ${chalk.blue(total.messageCount.toLocaleString())}`));
-    console.log(chalk.white(`Sessions: ${chalk.magenta(total.sessionCount.toLocaleString())}`));
+    out.println(chalk.bold.cyan("\n📊 USAGE SUMMARY\n"));
+    out.println(chalk.white(`Period: Last ${days} days`));
+    out.println(chalk.white(`Total Cost: ${chalk.green.bold(formatCost(total.totalCost))}`));
+    out.println(chalk.white(`Total Tokens: ${chalk.yellow(formatTokens(total.totalTokens))}`));
+    out.println(chalk.white(`Messages: ${chalk.blue(total.messageCount.toLocaleString())}`));
+    out.println(chalk.white(`Sessions: ${chalk.magenta(total.sessionCount.toLocaleString())}`));
 
     if (total.messageCount > 0) {
         const avgCostPerMessage = total.totalCost / total.messageCount;
         const avgTokensPerMessage = total.totalTokens / total.messageCount;
-        console.log(chalk.white(`Avg Cost/Message: ${chalk.green(formatCost(avgCostPerMessage))}`));
-        console.log(chalk.white(`Avg Tokens/Message: ${chalk.yellow(formatTokens(avgTokensPerMessage))}`));
+        out.println(chalk.white(`Avg Cost/Message: ${chalk.green(formatCost(avgCostPerMessage))}`));
+        out.println(chalk.white(`Avg Tokens/Message: ${chalk.yellow(formatTokens(avgTokensPerMessage))}`));
     }
 }
 
@@ -76,11 +77,11 @@ async function showDailyUsage(db: UsageDatabase, days: number) {
     const dailyUsage = await db.getDailyUsage(days);
 
     if (dailyUsage.length === 0) {
-        console.log(chalk.yellow("\nNo usage data found for the specified period."));
+        out.println(chalk.yellow("\nNo usage data found for the specified period."));
         return;
     }
 
-    console.log(chalk.bold.cyan("\n📅 DAILY USAGE\n"));
+    out.println(chalk.bold.cyan("\n📅 DAILY USAGE\n"));
 
     const table = new Table({
         head: ["Date", "Cost", "Tokens", "Messages", "Providers"],
@@ -97,7 +98,7 @@ async function showDailyUsage(db: UsageDatabase, days: number) {
         ]);
     }
 
-    console.log(table.toString());
+    out.println(table.toString());
 }
 
 async function showProviderUsage(db: UsageDatabase, days: number) {
@@ -107,7 +108,7 @@ async function showProviderUsage(db: UsageDatabase, days: number) {
         return;
     }
 
-    console.log(chalk.bold.cyan("\n🏢 BY PROVIDER\n"));
+    out.println(chalk.bold.cyan("\n🏢 BY PROVIDER\n"));
 
     const table = new Table({
         head: ["Provider", "Total Cost", "Total Tokens", "Messages", "Avg Cost/Message"],
@@ -124,7 +125,7 @@ async function showProviderUsage(db: UsageDatabase, days: number) {
         ]);
     }
 
-    console.log(table.toString());
+    out.println(table.toString());
 }
 
 async function showModelUsage(db: UsageDatabase, days: number) {
@@ -134,7 +135,7 @@ async function showModelUsage(db: UsageDatabase, days: number) {
         return;
     }
 
-    console.log(chalk.bold.cyan("\n🤖 BY MODEL\n"));
+    out.println(chalk.bold.cyan("\n🤖 BY MODEL\n"));
 
     const table = new Table({
         head: ["Provider", "Model", "Total Cost", "Total Tokens", "Messages", "Avg Cost/Message"],
@@ -155,10 +156,10 @@ async function showModelUsage(db: UsageDatabase, days: number) {
         ]);
     }
 
-    console.log(table.toString());
+    out.println(table.toString());
 
     if (modelUsage.length > 10) {
-        console.log(chalk.gray(`\n... and ${modelUsage.length - 10} more models`));
+        out.println(chalk.gray(`\n... and ${modelUsage.length - 10} more models`));
     }
 }
 
@@ -169,7 +170,7 @@ async function showCostTrend(db: UsageDatabase, days: number) {
         return;
     }
 
-    console.log(chalk.bold.cyan("\n📈 COST TREND (Last 7 Days)\n"));
+    out.println(chalk.bold.cyan("\n📈 COST TREND (Last 7 Days)\n"));
 
     const maxCost = Math.max(...trend.map((t) => t.cost));
     const barLength = 40;
@@ -177,7 +178,7 @@ async function showCostTrend(db: UsageDatabase, days: number) {
     for (const day of trend) {
         const barFill = Math.round((day.cost / maxCost) * barLength);
         const bar = chalk.green("█".repeat(barFill)) + chalk.gray("░".repeat(barLength - barFill));
-        console.log(`${formatDate(day.date).padEnd(15)} ${bar} ${chalk.green(formatCost(day.cost))}`);
+        out.println(`${formatDate(day.date).padEnd(15)} ${bar} ${chalk.green(formatCost(day.cost))}`);
     }
 }
 
@@ -206,7 +207,7 @@ async function showJSON(db: UsageDatabase, days: number, _provider?: string, _mo
         byModel: modelUsage,
     };
 
-    console.log(SafeJSON.stringify(output, null, 2));
+    out.println(SafeJSON.stringify(output, null, 2));
 }
 
 async function main() {
@@ -217,8 +218,9 @@ async function main() {
         .option("-p, --provider <name>", "Filter by provider name")
         .option("-m, --model <name>", "Filter by model name")
         .option("-f, --format <format>", "Output format: table, json, summary", "table")
-        .option("-?, --help-full", "Show detailed help message")
-        .parse();
+        .option("-?, --help-full", "Show detailed help message");
+
+    await runTool(program, { tool: "usage" });
 
     const options = program.opts<Options>();
 

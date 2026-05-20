@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 
+import { out } from "@app/logger";
 import { createAddCommand } from "@app/todo/commands/add";
 import { createEditCommand } from "@app/todo/commands/edit";
 import { createExportCommand, createImportCommand } from "@app/todo/commands/import-export";
@@ -14,7 +15,7 @@ import {
     createStartCommand,
 } from "@app/todo/commands/status";
 import { createSyncCommand } from "@app/todo/commands/sync";
-import { enhanceHelp } from "@app/utils/cli";
+import { enhanceHelp, runTool } from "@app/utils/cli";
 import { Command } from "commander";
 
 const program = new Command();
@@ -39,15 +40,15 @@ enhanceHelp(program);
 
 async function main(): Promise<void> {
     try {
-        await program.parseAsync(process.argv);
+        await runTool(program, { tool: "todo" });
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        console.error(`Error: ${message}`);
+        out.error(`Error: ${message}`);
         process.exit(1);
     }
 }
 
 main().catch((err) => {
-    console.error(`Unexpected error: ${err}`);
+    out.error(`Unexpected error: ${err}`);
     process.exit(1);
 });

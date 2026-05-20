@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
-import logger from "@app/logger";
-import { isInteractive, suggestCommand } from "@app/utils/cli";
+import { logger, out } from "@app/logger";
+import { isInteractive, runTool, suggestCommand } from "@app/utils/cli";
 import type { ChannelConfigs } from "@app/utils/notifications";
 import { dispatchNotification, notificationsConfig } from "@app/utils/notifications";
 import { withCancel } from "@app/utils/prompts/clack/helpers";
@@ -204,8 +204,8 @@ function showCurrentConfig(channels: ChannelConfigs): void {
 
 async function configCommand(): Promise<void> {
     if (!isInteractive()) {
-        console.error("notify config requires an interactive terminal.");
-        console.info(suggestCommand("tools notify", { add: ["--title", "Test", "Hello"] }));
+        out.error("notify config requires an interactive terminal.");
+        out.info(suggestCommand("tools notify", { add: ["--title", "Test", "Hello"] }));
         return;
     }
 
@@ -307,7 +307,7 @@ program.command("config").description("Configure default notification settings")
 
 async function main(): Promise<void> {
     try {
-        await program.parseAsync(process.argv);
+        await runTool(program, { tool: "notify" });
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         p.log.error(message);

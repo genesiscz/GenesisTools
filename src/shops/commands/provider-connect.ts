@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { KosikAuthClient } from "@app/shops/api/shops/KosikAuthClient";
 import { RohlikAuthClient } from "@app/shops/api/shops/RohlikAuthClient";
 import { ShopsDatabase } from "@app/shops/db/ShopsDatabase";

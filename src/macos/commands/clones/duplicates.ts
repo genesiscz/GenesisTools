@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { applyLogLevel } from "@app/macos/commands/clones/log-level";
 import { collapseDuplicates } from "@app/macos/lib/clones/collapse";
 import { expandNodeModules, resolveRoots } from "@app/macos/lib/clones/orchestrator";

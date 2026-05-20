@@ -1,5 +1,5 @@
 import type { AccountUsage, UsageResponse } from "@app/claude/lib/usage/api";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { formatLocalDate } from "@app/utils/date";
 
 function currentHour(): number {

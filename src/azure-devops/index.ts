@@ -14,8 +14,14 @@
  */
 
 import { exitWithAuthGuide, exitWithSslGuide, isAuthError, isSslError } from "@app/azure-devops/cli.utils";
-import logger from "@app/logger";
+import { logger, out } from "@app/logger";
+import * as p from "@app/utils/prompts/p";
+import { inquirerBackend } from "@app/utils/prompts/p/inquirer-backend";
 import { handleReadmeFlag } from "@app/utils/readme";
+
+// Use inquirer backend for this tool
+p.setBackend(inquirerBackend);
+
 import { Command } from "commander";
 
 // Handle --readme flag early (before Commander parses)
@@ -30,6 +36,7 @@ import { registerTimelogCommand } from "@app/azure-devops/commands/timelog";
 import { handleWorkItem, registerWorkitemCommand } from "@app/azure-devops/commands/workitem";
 import { registerWorkitemCacheCommand } from "@app/azure-devops/commands/workitem-cache";
 import { registerWorkitemCreateCommand } from "@app/azure-devops/commands/workitem-create";
+import { runTool } from "@app/utils/cli";
 
 // Wire up cross-command dependencies
 // Query command needs to call workitem handler for --download-workitems
@@ -60,7 +67,7 @@ registerTimelogCommand(program);
 registerHistoryCommand(program);
 
 function showHelpFull(): void {
-    console.log(`
+    out.println(`
 Azure DevOps Work Item Tool
 
 Usage:
@@ -172,7 +179,7 @@ Documentation: https://learn.microsoft.com/en-us/azure/devops/cli/?view=azure-de
 
 async function main(): Promise<void> {
     try {
-        await program.parseAsync(process.argv);
+        await runTool(program, { tool: "azure-devops" });
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
 

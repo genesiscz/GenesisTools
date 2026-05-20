@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import * as p from "@app/utils/prompts/p";
 
 export interface StageItem {

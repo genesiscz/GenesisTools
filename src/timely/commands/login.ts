@@ -1,10 +1,9 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import type { TimelyApiClient } from "@app/timely/api/client";
 import type { OAuthApplication } from "@app/timely/types";
 import { Browser } from "@app/utils/browser";
+import * as p from "@app/utils/prompts/p";
 import type { Storage } from "@app/utils/storage";
-import { ExitPromptError } from "@inquirer/core";
-import { confirm, input, password } from "@inquirer/prompts";
 import chalk from "chalk";
 import type { Command } from "commander";
 
@@ -13,24 +12,16 @@ export function registerLoginCommand(program: Command, storage: Storage, client:
         .command("login")
         .description("Authenticate with Timely via OAuth2")
         .action(async () => {
-            try {
-                await loginAction(storage, client);
-            } catch (error) {
-                if (error instanceof ExitPromptError) {
-                    logger.info("\nOperation cancelled.");
-                    process.exit(0);
-                }
-                throw error;
-            }
+            await loginAction(storage, client);
         });
 }
 
 async function loginAction(storage: Storage, client: TimelyApiClient): Promise<void> {
     // Check if already logged in
     if (await client.isAuthenticated()) {
-        const shouldReauth = await confirm({
+        const shouldReauth = await p.confirm({
             message: "You are already logged in. Do you want to re-authenticate?",
-            default: false,
+            initialValue: false,
         });
 
         if (!shouldReauth) {
@@ -46,17 +37,17 @@ async function loginAction(storage: Storage, client: TimelyApiClient): Promise<v
         logger.info(chalk.yellow("\nOAuth application credentials not found."));
         logger.info("Create an OAuth application at: https://app.timelyapp.com/settings/oauth_applications\n");
 
-        const clientId = await input({
+        const clientId = await p.text({
             message: "Client ID:",
         });
 
-        const clientSecret = await password({
+        const clientSecret = await p.password({
             message: "Client Secret:",
         });
 
-        const redirectUri = await input({
+        const redirectUri = await p.text({
             message: "Redirect URI (press Enter for default):",
-            default: "urn:ietf:wg:oauth:2.0:oob",
+            initialValue: "urn:ietf:wg:oauth:2.0:oob",
         });
 
         oauth = {
@@ -81,7 +72,7 @@ async function loginAction(storage: Storage, client: TimelyApiClient): Promise<v
     await Browser.open(authUrl.toString());
 
     // Prompt for authorization code
-    const code = await input({
+    const code = await p.text({
         message: "Paste the authorization code:",
     });
 

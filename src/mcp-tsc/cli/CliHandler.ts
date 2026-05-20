@@ -1,3 +1,4 @@
+import { out } from "@app/logger";
 import type { CliArgs, CommandType, TSServer } from "@app/mcp-tsc/core/interfaces.js";
 import { LspServer } from "@app/mcp-tsc/providers/LspServer.js";
 import { TscServer } from "@app/mcp-tsc/providers/TscServer.js";
@@ -44,7 +45,7 @@ export class CliHandler {
         // Convert timeout to number and validate
         let timeoutValue = opts.timeout ? Number(opts.timeout) : 30;
         if (!Number.isFinite(timeoutValue) || timeoutValue <= 0) {
-            console.error(`Invalid timeout: ${opts.timeout}. Using default of 30 seconds.`);
+            out.error(`Invalid timeout: ${opts.timeout}. Using default of 30 seconds.`);
             timeoutValue = 30;
         }
 
@@ -104,44 +105,44 @@ export class CliHandler {
      * Show help message
      */
     showHelp(): void {
-        console.error("Usage: mcp-tsc [options] <file|directory|pattern> [...more]");
-        console.error("");
-        console.error("Commands:");
-        console.error("  -d, --diagnostics    Check TypeScript files for errors (default)");
-        console.error("  --hover              Get hover information at a specific location");
-        console.error("  --mcp                Run as MCP server");
-        console.error("  -k, --kill-server    Kill persistent LSP server(s)");
-        console.error("");
-        console.error("Options:");
-        console.error("  --use-tsc            Use TypeScript Compiler API instead of LSP");
-        console.error("  -w, --warnings       Show warnings in addition to errors");
-        console.error("  -r, --root <path>    Override working directory (default: current directory)");
-        console.error("  --timeout <seconds>  Timeout for diagnostics in seconds (default: 30)");
-        console.error("");
-        console.error("Hover Command Options:");
-        console.error("  -l, --line <num>     Line number (required with --hover)");
-        console.error("  -c, --char <num>     Character position (optional)");
-        console.error("  -t, --text <string>  Text to search for on line (optional)");
-        console.error("  --raw                Show full JSON with raw LSP data");
-        console.error("");
-        console.error("Examples:");
-        console.error("  # Diagnostics");
-        console.error("  mcp-tsc src/app.ts                            # single file (default command)");
-        console.error("  mcp-tsc -d src                                # all TS files in src/");
-        console.error("  mcp-tsc --diagnostics 'src/**/*.ts'           # glob pattern");
-        console.error("  mcp-tsc -d -w src/app.ts                      # show warnings");
-        console.error("  mcp-tsc --use-tsc src/app.ts                  # use compiler API");
-        console.error("");
-        console.error("  # Hover / Type Introspection");
-        console.error("  mcp-tsc --hover -l 10 src/app.ts              # hover at line 10");
-        console.error("  mcp-tsc --hover -l 10 -t myVar src/app.ts     # hover on 'myVar'");
-        console.error("  mcp-tsc --hover -l 10 --raw src/app.ts        # include raw LSP data");
-        console.error("");
-        console.error("  # Server Management");
-        console.error("  mcp-tsc --kill-server                         # kill server for current dir");
-        console.error("  mcp-tsc -k --all                              # kill all servers");
-        console.error("  mcp-tsc --mcp /path/to/project                # run as MCP server");
-        console.error("");
-        console.error("Note: LSP servers are persistent and reused across runs for better performance.");
+        out.error("Usage: mcp-tsc [options] <file|directory|pattern> [...more]");
+        out.error("");
+        out.error("Commands:");
+        out.error("  -d, --diagnostics    Check TypeScript files for errors (default)");
+        out.error("  --hover              Get hover information at a specific location");
+        out.error("  --mcp                Run as MCP server");
+        out.error("  -k, --kill-server    Kill persistent LSP server(s)");
+        out.error("");
+        out.error("Options:");
+        out.error("  --use-tsc            Use TypeScript Compiler API instead of LSP");
+        out.error("  -w, --warnings       Show warnings in addition to errors");
+        out.error("  -r, --root <path>    Override working directory (default: current directory)");
+        out.error("  --timeout <seconds>  Timeout for diagnostics in seconds (default: 30)");
+        out.error("");
+        out.error("Hover Command Options:");
+        out.error("  -l, --line <num>     Line number (required with --hover)");
+        out.error("  -c, --char <num>     Character position (optional)");
+        out.error("  -t, --text <string>  Text to search for on line (optional)");
+        out.error("  --raw                Show full JSON with raw LSP data");
+        out.error("");
+        out.error("Examples:");
+        out.error("  # Diagnostics");
+        out.error("  mcp-tsc src/app.ts                            # single file (default command)");
+        out.error("  mcp-tsc -d src                                # all TS files in src/");
+        out.error("  mcp-tsc --diagnostics 'src/**/*.ts'           # glob pattern");
+        out.error("  mcp-tsc -d -w src/app.ts                      # show warnings");
+        out.error("  mcp-tsc --use-tsc src/app.ts                  # use compiler API");
+        out.error("");
+        out.error("  # Hover / Type Introspection");
+        out.error("  mcp-tsc --hover -l 10 src/app.ts              # hover at line 10");
+        out.error("  mcp-tsc --hover -l 10 -t myVar src/app.ts     # hover on 'myVar'");
+        out.error("  mcp-tsc --hover -l 10 --raw src/app.ts        # include raw LSP data");
+        out.error("");
+        out.error("  # Server Management");
+        out.error("  mcp-tsc --kill-server                         # kill server for current dir");
+        out.error("  mcp-tsc -k --all                              # kill all servers");
+        out.error("  mcp-tsc --mcp /path/to/project                # run as MCP server");
+        out.error("");
+        out.error("Note: LSP servers are persistent and reused across runs for better performance.");
     }
 }

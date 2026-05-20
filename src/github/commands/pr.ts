@@ -16,7 +16,7 @@ import type {
     ReviewCommentData,
     ReviewThreadStats,
 } from "@app/github/types";
-import logger from "@app/logger";
+import { logger, out } from "@app/logger";
 import { getOctokit } from "@app/utils/github/octokit";
 import { withRetry } from "@app/utils/github/rate-limit";
 import { detectRepoFromGit, parseGitHubUrl } from "@app/utils/github/url-parser";
@@ -253,19 +253,19 @@ export async function prCommand(input: string, options: PRCommandOptions): Promi
     const parsed = parseGitHubUrl(input, defaultRepo);
 
     if (!parsed) {
-        console.error(chalk.red("Invalid input. Please provide a GitHub PR URL or number."));
+        out.error(chalk.red("Invalid input. Please provide a GitHub PR URL or number."));
         process.exit(1);
     }
 
     const { owner, repo, number } = parsed;
     verbose(options, `Parsed: owner=${owner}, repo=${repo}, number=${number}`);
-    console.log(chalk.dim(`Fetching PR ${owner}/${repo}#${number}...`));
+    out.println(chalk.dim(`Fetching PR ${owner}/${repo}#${number}...`));
 
     // Get or create repo in cache
     const repoRecord = getOrCreateRepo(owner, repo);
 
     // Fetch PR details
-    console.log(chalk.dim("Fetching PR details..."));
+    out.println(chalk.dim("Fetching PR details..."));
     const pr = await fetchPR(owner, repo, number);
 
     // Update cache with PR info
@@ -294,7 +294,7 @@ export async function prCommand(input: string, options: PRCommandOptions): Promi
     let reviewComments: ReviewCommentData[] = [];
     if (options.reviewComments) {
         verbose(options, "Fetching review comments (REST)...");
-        console.log(chalk.dim("Fetching review comments..."));
+        out.println(chalk.dim("Fetching review comments..."));
         const apiReviewComments = await fetchReviewComments(owner, repo, number);
         reviewComments = apiReviewComments.map(toReviewCommentData);
         verbose(options, `Fetched ${reviewComments.length} review comments`);
@@ -304,7 +304,7 @@ export async function prCommand(input: string, options: PRCommandOptions): Promi
     let reviewThreadStats: ReviewThreadStats | undefined;
     if (options.reviews) {
         verbose(options, "Fetching review threads (GraphQL)...");
-        console.log(chalk.dim("Fetching review threads..."));
+        out.println(chalk.dim("Fetching review threads..."));
         const prInfo = await fetchPRReviewThreads(owner, repo, number);
         const allThreads = parseThreads(prInfo.threads);
         reviewThreadStats = calculateReviewStats(allThreads);
@@ -315,7 +315,7 @@ export async function prCommand(input: string, options: PRCommandOptions): Promi
     let commits: CommitData[] = [];
     if (options.commits) {
         verbose(options, "Fetching commits...");
-        console.log(chalk.dim("Fetching commits..."));
+        out.println(chalk.dim("Fetching commits..."));
         commits = await fetchCommits(owner, repo, number);
         verbose(options, `Fetched ${commits.length} commits`);
     }
@@ -323,7 +323,7 @@ export async function prCommand(input: string, options: PRCommandOptions): Promi
     let checks: CheckData[] = [];
     if (options.checks && pr.head.sha) {
         verbose(options, `Fetching checks for ref ${pr.head.sha}...`);
-        console.log(chalk.dim("Fetching checks..."));
+        out.println(chalk.dim("Fetching checks..."));
         checks = await fetchChecks(owner, repo, pr.head.sha);
         verbose(options, `Fetched ${checks.length} checks`);
     }
@@ -331,7 +331,7 @@ export async function prCommand(input: string, options: PRCommandOptions): Promi
     let diff: string | undefined;
     if (options.diff) {
         verbose(options, "Fetching diff...");
-        console.log(chalk.dim("Fetching diff..."));
+        out.println(chalk.dim("Fetching diff..."));
         diff = await fetchDiff(owner, repo, number);
         verbose(options, `Fetched diff (${diff.length} bytes)`);
     }
@@ -364,7 +364,7 @@ export async function prCommand(input: string, options: PRCommandOptions): Promi
     // Handle output destination
     if (options.output) {
         await Bun.write(options.output, output);
-        console.log(chalk.green(`✔ Output written to ${options.output}`));
+        out.println(chalk.green(`✔ Output written to ${options.output}`));
     } else if (options.save !== undefined) {
         const localDir = typeof options.save === "string" ? options.save : join(process.cwd(), ".claude", "github");
         if (!existsSync(localDir)) {
@@ -373,9 +373,9 @@ export async function prCommand(input: string, options: PRCommandOptions): Promi
         const filename = `${owner}-${repo}-pr-${number}.${format === "json" ? "json" : "md"}`;
         const filepath = join(localDir, filename);
         await Bun.write(filepath, output);
-        console.log(chalk.green(`✔ Output saved to ${filepath}`));
+        out.println(chalk.green(`✔ Output saved to ${filepath}`));
     } else {
-        console.log(output);
+        out.println(output);
     }
 
     // Show summary
@@ -383,7 +383,7 @@ export async function prCommand(input: string, options: PRCommandOptions): Promi
         options,
         `Completed: PR #${number}, ${reviewComments.length} review comments, ${commits.length} commits, ${checks.length} checks`
     );
-    console.log(
+    out.println(
         chalk.dim(
             `\nFetched: PR #${number}${reviewThreads ? `, ${reviewThreads.length} review threads` : ""}${reviewComments.length > 0 ? `, ${reviewComments.length} review comments` : ""}${commits.length > 0 ? `, ${commits.length} commits` : ""}`
         )
@@ -435,7 +435,7 @@ export function createPRCommand(): Command {
                 await prCommand(input, opts);
             } catch (error) {
                 logger.error({ error }, "PR command failed");
-                console.error(chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`));
+                out.error(chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`));
                 process.exit(1);
             }
         });

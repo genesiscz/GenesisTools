@@ -1,3 +1,4 @@
+import { out } from "@app/logger";
 import { parseDate } from "@app/utils/date";
 import { MacCalendar } from "@app/utils/macos/apple-calendar";
 import type { Command } from "commander";
@@ -46,9 +47,9 @@ export function registerAddCommand(program: Command): void {
                         isAllDay: options.allDay,
                     });
 
-                    console.log(`${pc.green("Event created")} — ID: ${eventId}`);
+                    out.println(`${pc.green("Event created")} — ID: ${eventId}`);
                 } catch (error) {
-                    console.error(error instanceof Error ? error.message : String(error));
+                    out.error(error instanceof Error ? error.message : String(error));
                     process.exit(1);
                 }
             }

@@ -2,6 +2,8 @@
 
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { out } from "@app/logger";
+import { runTool } from "@app/utils/cli";
 import { Storage } from "@app/utils/storage/storage.ts";
 import { formatTable } from "@app/utils/table.ts";
 import * as p from "@clack/prompts";
@@ -329,9 +331,9 @@ program
                 }
                 return line;
             });
-            console.log(coloredLines.join("\n"));
+            out.println(coloredLines.join("\n"));
         } else {
-            console.log(table);
+            out.println(table);
         }
     });
 
@@ -344,7 +346,7 @@ program
     });
 
 async function main(): Promise<void> {
-    await program.parseAsync(process.argv);
+    await runTool(program, { tool: "zsh" });
 }
 
 main().catch((err) => {

@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 
 /** Shared --verbose / --silent wiring for every `tools macos clones` command.
  *  --silent → only warn/error lines reach any stream (no INFO timing/benchmark

@@ -1,6 +1,6 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import appLogger from "@app/logger";
+import { logger as appLogger } from "@app/logger";
 import { formatLocalFileTimestamp } from "@app/utils/date";
 import { SafeJSON } from "@app/utils/json";
 import type { DaemonTask, RunResult } from "./types";

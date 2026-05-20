@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 
+import { runTool } from "@app/utils/cli";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { Command } from "commander";
 import { registerConfigureCommand } from "./commands/configure";
@@ -19,4 +20,4 @@ registerConfigureCommand(program);
 registerSendCommand(program);
 registerStartCommand(program);
 
-program.parse();
+await runTool(program, { tool: "telegram-bot" });

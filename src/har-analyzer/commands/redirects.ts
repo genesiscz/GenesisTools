@@ -1,6 +1,7 @@
 import { printFormatted, truncatePath } from "@app/har-analyzer/core/formatter";
 import { SessionManager } from "@app/har-analyzer/core/session-manager";
 import type { IndexedEntry, OutputOptions } from "@app/har-analyzer/types";
+import { out } from "@app/logger";
 import type { Command } from "commander";
 
 function urlMatches(fullUrl: string, target: string): boolean {
@@ -140,7 +141,7 @@ export function registerRedirectsCommand(program: Command): void {
             const chains = buildRedirectChains(session.entries);
 
             if (chains.length === 0) {
-                console.log("No redirect chains found.");
+                out.println("No redirect chains found.");
                 return;
             }
 

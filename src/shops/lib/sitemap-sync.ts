@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { SITEMAP_STRATEGIES, type SitemapStrategy } from "@app/shops/api/sitemap-strategies";
 import type { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import { walkSitemap } from "@app/shops/lib/sitemap-fetcher";

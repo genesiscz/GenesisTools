@@ -1,4 +1,5 @@
 import path from "node:path";
+import { out } from "@app/logger";
 import type { CliArgs, HoverResult, TSServer } from "@app/mcp-tsc/core/interfaces.js";
 import { SafeJSON } from "@app/utils/json";
 import ts from "typescript";
@@ -12,12 +13,12 @@ export class HoverCommand {
     async execute(argv: CliArgs): Promise<void> {
         // Validate hover-specific requirements
         if (!argv.line) {
-            console.error("Error: --line is required with --hover");
+            out.error("Error: --line is required with --hover");
             process.exit(1);
         }
 
         if (argv._.length !== 1) {
-            console.error("Error: --hover requires exactly one file");
+            out.error("Error: --hover requires exactly one file");
             process.exit(1);
         }
 
@@ -25,26 +26,26 @@ export class HoverCommand {
         const absolutePath = path.resolve(this.cwd, filePath);
 
         if (!ts.sys.fileExists(absolutePath)) {
-            console.error(`Error: File not found: ${filePath}`);
+            out.error(`Error: File not found: ${filePath}`);
             process.exit(1);
         }
 
         const lineNumber = parseInt(argv.line, 10);
         if (Number.isNaN(lineNumber) || lineNumber < 1) {
-            console.error(`Error: Invalid line number: ${argv.line}`);
+            out.error(`Error: Invalid line number: ${argv.line}`);
             process.exit(1);
         }
 
         // Read file to get line content
         const fileContent = ts.sys.readFile(absolutePath);
         if (!fileContent) {
-            console.error(`Error: Could not read file: ${filePath}`);
+            out.error(`Error: Could not read file: ${filePath}`);
             process.exit(1);
         }
 
         const lines = fileContent.split("\n");
         if (lineNumber > lines.length) {
-            console.error(`Error: Line ${lineNumber} is out of range (file has ${lines.length} lines)`);
+            out.error(`Error: Line ${lineNumber} is out of range (file has ${lines.length} lines)`);
             process.exit(1);
         }
 
@@ -55,14 +56,14 @@ export class HoverCommand {
         if (argv.text) {
             const index = lineContent.indexOf(argv.text);
             if (index === -1) {
-                console.error(`Error: Text "${argv.text}" not found on line ${lineNumber}`);
+                out.error(`Error: Text "${argv.text}" not found on line ${lineNumber}`);
                 process.exit(1);
             }
             character = index + 1;
         } else if (argv.char) {
             character = parseInt(argv.char, 10);
             if (Number.isNaN(character) || character < 1) {
-                console.error(`Error: Invalid character position: ${argv.char}`);
+                out.error(`Error: Invalid character position: ${argv.char}`);
                 process.exit(1);
             }
         } else {
@@ -101,22 +102,22 @@ export class HoverCommand {
                 if (hover.raw) {
                     output.raw = hover.raw;
                 }
-                console.log(SafeJSON.stringify(output, null, 2));
+                out.println(SafeJSON.stringify(output, null, 2));
             } else {
-                console.log(`File: ${filePath}`);
-                console.log(`Line: ${lineNumber}`);
-                console.log(`Character: ${character}`);
-                console.log(`Content: ${lineContent}`);
-                console.log();
+                out.println(`File: ${filePath}`);
+                out.println(`Line: ${lineNumber}`);
+                out.println(`Character: ${character}`);
+                out.println(`Content: ${lineContent}`);
+                out.println();
                 if (hover.contents) {
-                    console.log("Hover Information:");
-                    console.log(hover.contents);
+                    out.println("Hover Information:");
+                    out.println(hover.contents);
                 } else {
-                    console.log("No hover information available at this location");
+                    out.println("No hover information available at this location");
                 }
             }
         } catch (error) {
-            console.error(`Error getting hover information: ${error instanceof Error ? error.message : String(error)}`);
+            out.error(`Error getting hover information: ${error instanceof Error ? error.message : String(error)}`);
             process.exit(1);
         }
     }

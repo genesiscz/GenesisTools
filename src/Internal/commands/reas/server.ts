@@ -6,6 +6,7 @@ import {
 import { fetchAndAnalyze } from "@app/Internal/commands/reas/lib/analysis-service";
 import { buildDashboardExport } from "@app/Internal/commands/reas/lib/api-export";
 import { buildConfig, resolveDistrict } from "@app/Internal/commands/reas/lib/config-builder";
+import { out } from "@app/logger";
 
 const DEFAULT_PORT = 3456;
 
@@ -74,7 +75,7 @@ export async function startServer(port = DEFAULT_PORT): Promise<void> {
 
                     return Response.json(exportData, { headers: CORS_HEADERS });
                 } catch (error) {
-                    console.error("Analysis error:", error);
+                    out.error("Analysis error:", error);
                     return Response.json({ error: "Analysis failed" }, { status: 500, headers: CORS_HEADERS });
                 }
             }
@@ -83,8 +84,8 @@ export async function startServer(port = DEFAULT_PORT): Promise<void> {
         },
     });
 
-    console.log(`REAS Dashboard API running at http://localhost:${server.port}`);
-    console.log(`  GET /api/districts  - list all districts`);
-    console.log(`  GET /api/search?q=  - search districts`);
-    console.log(`  GET /api/analysis?district=Praha&type=brick&... - run analysis`);
+    out.println(`REAS Dashboard API running at http://localhost:${server.port}`);
+    out.println(`  GET /api/districts  - list all districts`);
+    out.println(`  GET /api/search?q=  - search districts`);
+    out.println(`  GET /api/analysis?district=Praha&type=brick&... - run analysis`);
 }

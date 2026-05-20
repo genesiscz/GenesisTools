@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { ENVELOPE_INDEX_PATH } from "@app/macos/lib/mail/constants";
 import type { MailDB } from "@app/macos/lib/mail/db-types";
 import type {

@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { Storage } from "@app/utils/storage";
 
 export type BrowserName = "brave" | "safari" | "chrome" | "firefox" | "edge" | "arc";

@@ -14,7 +14,7 @@ import type {
     TimeLogUser,
     TimeType,
 } from "@app/azure-devops/types";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import type { QueryParams } from "@app/utils/url";
 import { buildUrl } from "@app/utils/url";

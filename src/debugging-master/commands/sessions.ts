@@ -1,5 +1,6 @@
 import { basename } from "node:path";
 import { ACTIVE_THRESHOLD_MS, SessionManager } from "@app/debugging-master/core/session-manager";
+import { out } from "@app/logger";
 import { suggestCommand } from "@app/utils/cli/executor";
 import { formatDuration, formatRelativeTime } from "@app/utils/format";
 import { formatTable } from "@app/utils/table";
@@ -17,8 +18,8 @@ export function registerSessionsCommand(program: Command): void {
             const names = await sm.listSessionNames();
 
             if (names.length === 0) {
-                console.log("No sessions found.");
-                console.log(`Start one: ${suggestCommand(TOOL, { add: ["start", "--session", "<name>"] })}`);
+                out.println("No sessions found.");
+                out.println(`Start one: ${suggestCommand(TOOL, { add: ["start", "--session", "<name>"] })}`);
                 return;
             }
 
@@ -50,7 +51,7 @@ export function registerSessionsCommand(program: Command): void {
                 ]);
             }
 
-            console.log(pc.bold("Sessions:\n"));
-            console.log(formatTable(rows, headers, { alignRight: [1] }));
+            out.println(pc.bold("Sessions:\n"));
+            out.println(formatTable(rows, headers, { alignRight: [1] }));
         });
 }

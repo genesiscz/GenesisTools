@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
+import { out } from "@app/logger";
 import { formatBytes, formatDuration, formatRelativeTime } from "@app/utils/format";
 import { formatTable } from "@app/utils/table";
 import * as p from "@clack/prompts";
@@ -61,9 +62,9 @@ function showOverview(manager: IndexerManager): void {
         ];
     });
 
-    console.log("");
-    console.log(formatTable(rows, headers, { alignRight: [2, 3, 4, 7] }));
-    console.log("");
+    out.println("");
+    out.println(formatTable(rows, headers, { alignRight: [2, 3, 4, 7] }));
+    out.println("");
 }
 
 async function showDetailedStatus(manager: IndexerManager, name: string): Promise<void> {

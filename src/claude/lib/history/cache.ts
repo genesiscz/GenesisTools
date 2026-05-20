@@ -8,7 +8,7 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, sep } from "node:path";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 
 import { SafeJSON } from "@app/utils/json";
 

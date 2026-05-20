@@ -1,4 +1,4 @@
-import appLogger, { createLogger } from "@app/logger";
+import { logger as appLogger, createLogger } from "@app/logger";
 import { dispatchNotification } from "@app/utils/notifications";
 import { loadConfig } from "./config";
 import { computeNextRunAt, parseInterval } from "./interval";

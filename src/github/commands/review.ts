@@ -19,7 +19,7 @@ import {
     parseThreads,
 } from "@app/github/lib/review-threads";
 import type { ReviewCommandOptions, ReviewData, ReviewSessionData } from "@app/github/types";
-import logger from "@app/logger";
+import { logger, out } from "@app/logger";
 import { formatRelativeTime } from "@app/utils/format";
 import { detectRepoFromGit, parseGitHubUrl } from "@app/utils/github/url-parser";
 import { setGlobalVerbose } from "@app/utils/github/utils";
@@ -68,48 +68,42 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
 
         if (options.respond && resolveThreadOpt) {
             const result = await batchReplyAndResolve(threadIds, options.respond, {
-                onProgress: showProgress
-                    ? (done, total) => console.error(chalk.dim(`  [${done}/${total}]`))
-                    : undefined,
+                onProgress: showProgress ? (done, total) => out.error(chalk.dim(`  [${done}/${total}]`)) : undefined,
             });
             if (result.replied === 0 && result.failed.length > 0) {
                 throw new Error(
                     `Failed to reply to or resolve any of ${result.failed.length} thread(s): ${result.failed.join(", ")}`
                 );
             }
-            console.log(chalk.green(`Replied to ${result.replied}, resolved ${result.resolved} thread(s)`));
+            out.println(chalk.green(`Replied to ${result.replied}, resolved ${result.resolved} thread(s)`));
             if (result.failed.length) {
-                console.error(chalk.red(`Failed: ${result.failed.join(", ")}`));
+                out.error(chalk.red(`Failed: ${result.failed.join(", ")}`));
             }
         } else if (resolveThreadOpt) {
             const result = await batchResolveThreads(threadIds, {
-                onProgress: showProgress
-                    ? (done, total) => console.error(chalk.dim(`  [${done}/${total}]`))
-                    : undefined,
+                onProgress: showProgress ? (done, total) => out.error(chalk.dim(`  [${done}/${total}]`)) : undefined,
             });
             if (result.resolved === 0 && result.failed.length > 0) {
                 throw new Error(
                     `Failed to resolve any of ${result.failed.length} thread(s): ${result.failed.join(", ")}`
                 );
             }
-            console.log(chalk.green(`Resolved ${result.resolved} thread(s)`));
+            out.println(chalk.green(`Resolved ${result.resolved} thread(s)`));
             if (result.failed.length) {
-                console.error(chalk.red(`Failed: ${result.failed.join(", ")}`));
+                out.error(chalk.red(`Failed: ${result.failed.join(", ")}`));
             }
         } else {
             const result = await batchReply(threadIds, options.respond ?? "", {
-                onProgress: showProgress
-                    ? (done, total) => console.error(chalk.dim(`  [${done}/${total}]`))
-                    : undefined,
+                onProgress: showProgress ? (done, total) => out.error(chalk.dim(`  [${done}/${total}]`)) : undefined,
             });
             if (result.replied === 0 && result.failed.length > 0) {
                 throw new Error(
                     `Failed to reply to any of ${result.failed.length} thread(s): ${result.failed.join(", ")}`
                 );
             }
-            console.log(chalk.green(`Replied to ${result.replied} thread(s)`));
+            out.println(chalk.green(`Replied to ${result.replied} thread(s)`));
             if (result.failed.length) {
-                console.error(chalk.red(`Failed: ${result.failed.join(", ")}`));
+                out.error(chalk.red(`Failed: ${result.failed.join(", ")}`));
             }
         }
 
@@ -118,7 +112,7 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
 
     // Fetch PR review threads
     if (!options.json) {
-        console.error(chalk.dim(`Fetching PR #${prNumber} from ${owner}/${repo}...`));
+        out.error(chalk.dim(`Fetching PR #${prNumber} from ${owner}/${repo}...`));
     }
 
     const prInfo = await fetchPRReviewThreads(owner, repo, prNumber);
@@ -212,7 +206,7 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
             }
         }
 
-        console.log(output);
+        out.println(output);
         return;
     }
 
@@ -232,13 +226,13 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
             repo: `${owner}-${repo}`,
             originalCwd: process.cwd(),
         });
-        console.log(filePath);
-        console.error(`  View: tools markdown-cli ${filePath}`);
+        out.println(filePath);
+        out.error(`  View: tools markdown-cli ${filePath}`);
         return;
     }
 
     // Terminal output (default)
-    console.log(formatReviewTerminal(reviewData, options.groupByFile ?? false));
+    out.println(formatReviewTerminal(reviewData, options.groupByFile ?? false));
 }
 
 async function expandCommand(refs: string, options: { session?: string; repo?: string }): Promise<void> {
@@ -261,11 +255,11 @@ async function expandCommand(refs: string, options: { session?: string; repo?: s
 
     for (const { refId, thread } of resolved) {
         if (!thread) {
-            console.error(`Warning: ref ${refId} not found in session`);
+            out.error(`Warning: ref ${refId} not found in session`);
             continue;
         }
 
-        console.log(formatThreadExpanded(thread, sessionId));
+        out.println(formatThreadExpanded(thread, sessionId));
     }
 }
 
@@ -292,7 +286,7 @@ async function respondCommand(
     const resolved = sessionMgr.resolveRefIds(sessionData, refIds);
     const missing = resolved.filter((r) => !r.thread);
     if (missing.length > 0) {
-        console.error(chalk.yellow(`Warning: could not resolve ref(s): ${missing.map((r) => r.refId).join(", ")}`));
+        out.error(chalk.yellow(`Warning: could not resolve ref(s): ${missing.map((r) => r.refId).join(", ")}`));
     }
 
     const threadIds = [...new Set(resolved.filter((r) => r.thread).map((r) => r.threadId))];
@@ -305,32 +299,32 @@ async function respondCommand(
 
     if (options.resolve) {
         const result = await batchReplyAndResolve(threadIds, message, {
-            onProgress: showProgress ? (done, total) => console.error(chalk.dim(`  [${done}/${total}]`)) : undefined,
+            onProgress: showProgress ? (done, total) => out.error(chalk.dim(`  [${done}/${total}]`)) : undefined,
         });
 
         if (result.failed.length) {
-            console.error(chalk.red(`Failed: ${result.failed.join(", ")}`));
+            out.error(chalk.red(`Failed: ${result.failed.join(", ")}`));
         }
 
         if (result.replied === 0 && result.failed.length > 0) {
             throw new Error(`All thread mutations failed: ${result.failed.join(", ")}`);
         }
 
-        console.log(chalk.green(`Replied to ${result.replied}, resolved ${result.resolved} thread(s)`));
+        out.println(chalk.green(`Replied to ${result.replied}, resolved ${result.resolved} thread(s)`));
     } else {
         const result = await batchReply(threadIds, message, {
-            onProgress: showProgress ? (done, total) => console.error(chalk.dim(`  [${done}/${total}]`)) : undefined,
+            onProgress: showProgress ? (done, total) => out.error(chalk.dim(`  [${done}/${total}]`)) : undefined,
         });
 
         if (result.failed.length) {
-            console.error(chalk.red(`Failed: ${result.failed.join(", ")}`));
+            out.error(chalk.red(`Failed: ${result.failed.join(", ")}`));
         }
 
         if (result.replied === 0 && result.failed.length > 0) {
             throw new Error(`All thread mutations failed: ${result.failed.join(", ")}`);
         }
 
-        console.log(chalk.green(`Replied to ${result.replied} thread(s)`));
+        out.println(chalk.green(`Replied to ${result.replied} thread(s)`));
     }
 }
 
@@ -353,7 +347,7 @@ async function resolveCommand(refs: string, options: { session?: string }): Prom
     const resolved = sessionMgr.resolveRefIds(sessionData, refIds);
     const missing = resolved.filter((r) => !r.thread);
     if (missing.length > 0) {
-        console.error(chalk.yellow(`Warning: could not resolve ref(s): ${missing.map((r) => r.refId).join(", ")}`));
+        out.error(chalk.yellow(`Warning: could not resolve ref(s): ${missing.map((r) => r.refId).join(", ")}`));
     }
 
     const threadIds = [...new Set(resolved.filter((r) => r.thread).map((r) => r.threadId))];
@@ -364,12 +358,12 @@ async function resolveCommand(refs: string, options: { session?: string }): Prom
 
     const showProgress = threadIds.length > 1;
     const result = await batchResolveThreads(threadIds, {
-        onProgress: showProgress ? (done, total) => console.error(chalk.dim(`  [${done}/${total}]`)) : undefined,
+        onProgress: showProgress ? (done, total) => out.error(chalk.dim(`  [${done}/${total}]`)) : undefined,
     });
 
-    console.log(chalk.green(`Resolved ${result.resolved} thread(s)`));
+    out.println(chalk.green(`Resolved ${result.resolved} thread(s)`));
     if (result.failed.length) {
-        console.error(chalk.red(`Failed: ${result.failed.join(", ")}`));
+        out.error(chalk.red(`Failed: ${result.failed.join(", ")}`));
     }
 }
 
@@ -378,14 +372,14 @@ async function sessionsCommand(): Promise<void> {
     const sessions = await sessionMgr.listSessions();
 
     if (sessions.length === 0) {
-        console.log("No review sessions found.");
+        out.println("No review sessions found.");
         return;
     }
 
-    console.log(`Review Sessions (${sessions.length}):\n`);
+    out.println(`Review Sessions (${sessions.length}):\n`);
     for (const s of sessions) {
         const age = formatRelativeTime(new Date(s.createdAt), { compact: true });
-        console.log(
+        out.println(
             `  ${s.sessionId.padEnd(30)}  PR #${String(s.prNumber).padEnd(6)}  ${s.owner}/${s.repo}  ${String(s.threadCount).padEnd(3)} threads  ${age}`
         );
     }
@@ -404,7 +398,7 @@ async function summaryCommand(options: { session?: string }): Promise<void> {
     }
 
     const prComments = sessionData.prComments ?? [];
-    console.log(formatPrCommentsLLM(prComments, sessionId));
+    out.println(formatPrCommentsLLM(prComments, sessionId));
 }
 
 /**
@@ -462,7 +456,7 @@ Examples:
                 await reviewCommand(input, opts);
             } catch (error) {
                 logger.error({ error }, "Review command failed");
-                console.error(chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`));
+                out.error(chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`));
                 process.exit(1);
             }
         });
@@ -477,7 +471,7 @@ Examples:
                 try {
                     await expandCommand(refs, opts);
                 } catch (error) {
-                    console.error(chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`));
+                    out.error(chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`));
                     process.exit(1);
                 }
             })
@@ -494,7 +488,7 @@ Examples:
                 try {
                     await respondCommand(refs, message, opts);
                 } catch (error) {
-                    console.error(chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`));
+                    out.error(chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`));
                     process.exit(1);
                 }
             })
@@ -509,7 +503,7 @@ Examples:
                 try {
                     await resolveCommand(refs, opts);
                 } catch (error) {
-                    console.error(chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`));
+                    out.error(chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`));
                     process.exit(1);
                 }
             })
@@ -520,7 +514,7 @@ Examples:
             try {
                 await sessionsCommand();
             } catch (error) {
-                console.error(chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`));
+                out.error(chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`));
                 process.exit(1);
             }
         })
@@ -534,7 +528,7 @@ Examples:
                 try {
                     await summaryCommand(opts);
                 } catch (error) {
-                    console.error(chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`));
+                    out.error(chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`));
                     process.exit(1);
                 }
             })

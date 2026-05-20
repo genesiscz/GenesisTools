@@ -1,5 +1,6 @@
 import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
+import { out } from "@app/logger";
 import {
     confirmLanguage as promptLanguage,
     selectAction,
@@ -139,8 +140,8 @@ function printMemoTable(memos: VoiceMemo[]): void {
     const headers = ["#", "Title", "Date", "Duration", "Transcript"];
     const rows = memos.map(formatMemoRow);
 
-    console.log(formatTable(rows, headers, { alignRight: [0, 3] }));
-    console.log(pc.dim(`\n${memos.length} memo${memos.length === 1 ? "" : "s"}`));
+    out.println(formatTable(rows, headers, { alignRight: [0, 3] }));
+    out.println(pc.dim(`\n${memos.length} memo${memos.length === 1 ? "" : "s"}`));
 }
 
 function resolveMemo(id: number): VoiceMemo {
@@ -238,8 +239,8 @@ async function ensureTranscribeProvider(opts: TranscribeOpts): Promise<string> {
 
     if (isInteractive()) {
         if (available.length === 0) {
-            console.error(pc.red("No transcription providers are available."));
-            console.error(pc.dim("Set one of: OPENAI_API_KEY, GROQ_API_KEY, OPENROUTER_API_KEY, X_AI_API_KEY"));
+            out.error(pc.red("No transcription providers are available."));
+            out.error(pc.dim("Set one of: OPENAI_API_KEY, GROQ_API_KEY, OPENROUTER_API_KEY, X_AI_API_KEY"));
             process.exit(1);
         }
 
@@ -256,8 +257,8 @@ async function ensureTranscribeProvider(opts: TranscribeOpts): Promise<string> {
     }
 
     const choices = available.length > 0 ? available.join("|") : "local-hf|cloud|openai|groq|openrouter|xai";
-    console.error(pc.red("No --provider specified and not in an interactive terminal."));
-    console.error(
+    out.error(pc.red("No --provider specified and not in an interactive terminal."));
+    out.error(
         pc.dim(
             suggestCommand("tools macos voice-memos transcribe", {
                 // The 'tools macos' wrapper passes argv as ["voice-memos", "transcribe", ...]
@@ -450,14 +451,14 @@ async function transcribeOne(opts: {
 
         if (transcript) {
             p.log.info(`${pc.bold(memo.title)} — embedded transcript found`);
-            console.log();
+            out.println();
 
             for (const segment of transcript.segments) {
                 const timePrefix =
                     segment.startTime !== undefined
                         ? pc.dim(`[${formatDuration(segment.startTime * 1000, "ms", "tiered")}] `)
                         : "";
-                console.log(`${timePrefix}${segment.text}`);
+                out.println(`${timePrefix}${segment.text}`);
             }
 
             return;
@@ -576,14 +577,14 @@ async function transcribeOne(opts: {
 
         if (!opts.output) {
             if (format === "text" && result.segments?.length) {
-                console.log();
+                out.println();
 
                 for (const seg of result.segments) {
                     const start = formatDuration(seg.start * 1000, "ms", "tiered");
-                    console.log(`${pc.dim(`[${start}]`)} ${seg.text.trim()}`);
+                    out.println(`${pc.dim(`[${start}]`)} ${seg.text.trim()}`);
                 }
             } else {
-                console.log(formatted);
+                out.println(formatted);
             }
         }
     } finally {
@@ -624,7 +625,7 @@ function transcribeAll(force: boolean): void {
         }
     }
 
-    console.log();
+    out.println();
     p.log.info(
         `${pc.bold(String(transcribed))} transcribed, ${pc.bold(String(noTranscript))} without transcript, ${pc.bold(String(skipped))} skipped (missing file)`
     );

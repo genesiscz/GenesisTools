@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger, out } from "@app/logger";
 import { modelSelector } from "@ask/providers/ModelSelector";
 import type { OutputConfig, OutputFormat, ProviderChoice } from "@ask/types";
 import { getLanguageModel } from "@ask/types";
@@ -125,14 +125,14 @@ export class CommandHandler {
     }
 
     private showOutputFormats(): void {
-        console.log(pc.cyan("\nAvailable output formats:"));
-        console.log(pc.bold("  text        ") + pc.dim("Plain text output (default)"));
-        console.log(pc.bold("  json        ") + pc.dim("Structured JSON responses"));
-        console.log(pc.bold("  markdown    ") + pc.dim("Markdown formatted output"));
-        console.log(pc.bold("  clipboard   ") + pc.dim("Auto-copy responses to clipboard"));
-        console.log(pc.bold("  file <name> ") + pc.dim("Save responses to specified file"));
-        console.log(pc.dim("\nUsage: /output <format>"));
-        console.log(pc.dim("Example: /output file responses.txt"));
+        out.println(pc.cyan("\nAvailable output formats:"));
+        out.println(pc.bold("  text        ") + pc.dim("Plain text output (default)"));
+        out.println(pc.bold("  json        ") + pc.dim("Structured JSON responses"));
+        out.println(pc.bold("  markdown    ") + pc.dim("Markdown formatted output"));
+        out.println(pc.bold("  clipboard   ") + pc.dim("Auto-copy responses to clipboard"));
+        out.println(pc.bold("  file <name> ") + pc.dim("Save responses to specified file"));
+        out.println(pc.dim("\nUsage: /output <format>"));
+        out.println(pc.dim("Example: /output file responses.txt"));
     }
 
     private async handleSSTCommand(args: string[]): Promise<CommandResult> {
@@ -158,113 +158,113 @@ export class CommandHandler {
     }
 
     private handleContextCommand(state?: ChatState): void {
-        console.log(pc.cyan("\nLoaded Context:"));
+        out.println(pc.cyan("\nLoaded Context:"));
 
         if (!state?.contextBlock) {
-            console.log(pc.dim("  No context artifacts loaded."));
-            console.log(pc.dim("  Add a .genesistoolscontext.json to your project root."));
+            out.println(pc.dim("  No context artifacts loaded."));
+            out.println(pc.dim("  Add a .genesistoolscontext.json to your project root."));
         } else {
             const lines = state.contextBlock.split("\n");
             const preview = lines.slice(0, 15).join("\n");
-            console.log(pc.dim(preview));
+            out.println(pc.dim(preview));
 
             if (lines.length > 15) {
-                console.log(pc.dim(`  ... (${lines.length - 15} more lines)`));
+                out.println(pc.dim(`  ... (${lines.length - 15} more lines)`));
             }
         }
 
-        console.log();
+        out.println();
     }
 
     private handleToolsCommand(state?: ChatState): void {
-        console.log(pc.cyan("\nAvailable Tools:"));
+        out.println(pc.cyan("\nAvailable Tools:"));
 
         if (!state?.toolNames.length) {
-            console.log(pc.dim("  No tools enabled. Use --no-tools to disable tools."));
+            out.println(pc.dim("  No tools enabled. Use --no-tools to disable tools."));
         } else {
             for (const name of state.toolNames) {
-                console.log(pc.bold(`  ${name}`));
+                out.println(pc.bold(`  ${name}`));
             }
         }
 
-        console.log();
+        out.println();
     }
 
     private handleHistoryCommand(state?: ChatState): void {
-        console.log(pc.cyan("\nConversation History:"));
+        out.println(pc.cyan("\nConversation History:"));
 
         if (!state) {
-            console.log(pc.dim("  No state available."));
+            out.println(pc.dim("  No state available."));
         } else {
-            console.log(`${pc.bold("  Messages: ")}${state.conversationLength}`);
-            console.log(`${pc.bold("  Est. tokens: ")}${state.totalTokens.toLocaleString()}`);
+            out.println(`${pc.bold("  Messages: ")}${state.conversationLength}`);
+            out.println(`${pc.bold("  Est. tokens: ")}${state.totalTokens.toLocaleString()}`);
         }
 
-        console.log();
+        out.println();
     }
 
     private handleSystemCommand(state?: ChatState): void {
-        console.log(pc.cyan("\nSystem Prompt:"));
+        out.println(pc.cyan("\nSystem Prompt:"));
 
         if (!state?.systemPrompt) {
-            console.log(pc.dim("  No system prompt set."));
+            out.println(pc.dim("  No system prompt set."));
         } else {
             const truncated =
                 state.systemPrompt.length > 500
                     ? `${state.systemPrompt.slice(0, 500)}\n... (truncated)`
                     : state.systemPrompt;
-            console.log(pc.dim(truncated));
+            out.println(pc.dim(truncated));
         }
 
-        console.log();
+        out.println();
     }
 
     showHelp(): void {
-        console.log(pc.cyan("\nAvailable Commands:"));
-        console.log();
+        out.println(pc.cyan("\nAvailable Commands:"));
+        out.println();
 
-        console.log(pc.bold("  /model") + pc.dim("              Switch to a different AI model"));
-        console.log(pc.dim("    Opens interactive model selection with autocomplete"));
+        out.println(pc.bold("  /model") + pc.dim("              Switch to a different AI model"));
+        out.println(pc.dim("    Opens interactive model selection with autocomplete"));
 
-        console.log(pc.bold("  /output <format>") + pc.dim("     Change output format"));
-        console.log(pc.dim("    Formats: text, json, markdown, clipboard, file <filename>"));
-        console.log(pc.dim("    Example: /output file chat.txt"));
+        out.println(pc.bold("  /output <format>") + pc.dim("     Change output format"));
+        out.println(pc.dim("    Formats: text, json, markdown, clipboard, file <filename>"));
+        out.println(pc.dim("    Example: /output file chat.txt"));
 
-        console.log(pc.bold("  /clear") + pc.dim("              Clear conversation history"));
-        console.log(pc.dim("    Removes all messages from current session"));
+        out.println(pc.bold("  /clear") + pc.dim("              Clear conversation history"));
+        out.println(pc.dim("    Removes all messages from current session"));
 
-        console.log(pc.bold("  /save") + pc.dim("               Save current conversation"));
-        console.log(pc.dim("    Manually saves conversation to disk"));
+        out.println(pc.bold("  /save") + pc.dim("               Save current conversation"));
+        out.println(pc.dim("    Manually saves conversation to disk"));
 
-        console.log(pc.bold("  /sst <file>") + pc.dim("           Transcribe audio file"));
-        console.log(pc.dim("    Supports MP3, WAV, M4A, FLAC, OGG, WebM"));
-        console.log(pc.dim("    Example: /sst recording.mp3"));
+        out.println(pc.bold("  /sst <file>") + pc.dim("           Transcribe audio file"));
+        out.println(pc.dim("    Supports MP3, WAV, M4A, FLAC, OGG, WebM"));
+        out.println(pc.dim("    Example: /sst recording.mp3"));
 
-        console.log(pc.bold("  /context") + pc.dim("            Show loaded context artifacts"));
-        console.log(pc.dim("    Displays .genesistoolscontext.json content"));
+        out.println(pc.bold("  /context") + pc.dim("            Show loaded context artifacts"));
+        out.println(pc.dim("    Displays .genesistoolscontext.json content"));
 
-        console.log(pc.bold("  /tools") + pc.dim("              List available AI tools"));
-        console.log(pc.dim("    Shows readFile, grep, bash, searchWeb, etc."));
+        out.println(pc.bold("  /tools") + pc.dim("              List available AI tools"));
+        out.println(pc.dim("    Shows readFile, grep, bash, searchWeb, etc."));
 
-        console.log(pc.bold("  /history") + pc.dim("            Show conversation stats"));
-        console.log(pc.dim("    Message count and estimated token usage"));
+        out.println(pc.bold("  /history") + pc.dim("            Show conversation stats"));
+        out.println(pc.dim("    Message count and estimated token usage"));
 
-        console.log(pc.bold("  /system") + pc.dim("             Show current system prompt"));
-        console.log(pc.dim("    Displays the system prompt (truncated to 500 chars)"));
+        out.println(pc.bold("  /system") + pc.dim("             Show current system prompt"));
+        out.println(pc.dim("    Displays the system prompt (truncated to 500 chars)"));
 
-        console.log(pc.bold("  /help") + pc.dim("               Show this help message"));
-        console.log(pc.dim("    Displays all available commands"));
+        out.println(pc.bold("  /help") + pc.dim("               Show this help message"));
+        out.println(pc.dim("    Displays all available commands"));
 
-        console.log(pc.bold("  /quit") + pc.dim("               Exit the chat session"));
-        console.log(pc.bold("  /exit") + pc.dim("               Exit the chat session"));
-        console.log();
+        out.println(pc.bold("  /quit") + pc.dim("               Exit the chat session"));
+        out.println(pc.bold("  /exit") + pc.dim("               Exit the chat session"));
+        out.println();
 
-        console.log(pc.yellow("Tips:"));
-        console.log(pc.dim("  - Commands can be entered at any time during chat"));
-        console.log(pc.dim("  - Use Tab to autocomplete in model selection"));
-        console.log(pc.dim("  - Audio files are automatically transcribed with optimal provider"));
-        console.log(pc.dim("  - Conversations are auto-saved every 5 messages"));
-        console.log();
+        out.println(pc.yellow("Tips:"));
+        out.println(pc.dim("  - Commands can be entered at any time during chat"));
+        out.println(pc.dim("  - Use Tab to autocomplete in model selection"));
+        out.println(pc.dim("  - Audio files are automatically transcribed with optimal provider"));
+        out.println(pc.dim("  - Conversations are auto-saved every 5 messages"));
+        out.println();
     }
 
     isValidCommand(message: string): boolean {

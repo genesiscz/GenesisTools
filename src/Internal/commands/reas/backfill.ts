@@ -10,6 +10,7 @@
 
 import { Database } from "bun:sqlite";
 import { join } from "node:path";
+import { out } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import * as p from "@clack/prompts";
 import pc from "picocolors";
@@ -504,7 +505,7 @@ export async function main() {
     }
 
     // 7. Results
-    console.log();
+    out.println();
     p.log.success(`Done! ${pc.bold(String(totals.inserted))} new listings inserted.`);
 
     if (totals.skipped > 0) {
@@ -517,7 +518,7 @@ export async function main() {
 
     // Price trend summary
     if (priceStatsMap.size > 0) {
-        console.log();
+        out.println();
         const header = ["Year", "Type", "Count", "Median", "Avg", "Min", "Max"].join("  ");
         const divider = "─".repeat(65);
 

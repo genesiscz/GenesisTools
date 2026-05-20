@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
+import { runTool } from "@app/utils/cli";
 import { handleReadmeFlag } from "@app/utils/readme";
 import axios from "axios";
 import { Command } from "commander";
@@ -173,7 +174,7 @@ Note:
     process.exit(0);
 }
 
-function parseCommandLineArgs(): ScriptOptions {
+async function main(): Promise<void> {
     const program = new Command()
         .name("github-release-notes")
         .description("Fetch release notes from GitHub repositories")
@@ -181,8 +182,9 @@ function parseCommandLineArgs(): ScriptOptions {
         .argument("[output]", "Output file path")
         .option("--limit <n>", "Limit number of releases")
         .option("--oldest", "Start from oldest releases")
-        .option("-?, --help-full", "Show extended help")
-        .parse();
+        .option("-?, --help-full", "Show extended help");
+
+    await runTool(program, { tool: "github-release-notes" });
 
     const opts = program.opts();
 
@@ -218,8 +220,10 @@ function parseCommandLineArgs(): ScriptOptions {
         options.oldest = true;
     }
 
-    return options;
+    await fetchReleaseNotes(options);
 }
 
-const options = parseCommandLineArgs();
-fetchReleaseNotes(options).catch(logger.error);
+main().catch((err) => {
+    logger.error(err);
+    process.exit(1);
+});

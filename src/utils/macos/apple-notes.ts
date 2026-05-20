@@ -4,6 +4,8 @@
  */
 
 import { unlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { SafeJSON } from "@app/utils/json";
 
@@ -50,8 +52,11 @@ JSON.stringify(result);
 export function createAppleNote(options: { folderId: string; title: string; body: string }): string {
     ensureMacOS();
 
-    // Write body to temp file to avoid shell escaping issues with large content
-    const tmpFile = `/tmp/apple-note-${Date.now()}.txt`;
+    // Write body to temp file to avoid shell escaping issues with large content.
+    // Use os.tmpdir() — /tmp doesn't exist on Windows. (Apple Notes is macOS-only
+    // so practically Windows isn't a concern here, but consistency with the rest
+    // of the codebase + the no-hardcoded-tmp lint rule.)
+    const tmpFile = join(tmpdir(), `apple-note-${Date.now()}.txt`);
     writeFileSync(tmpFile, options.body, "utf-8");
 
     const escapedTitle = escapeJxa(options.title);

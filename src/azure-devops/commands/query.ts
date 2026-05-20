@@ -25,7 +25,7 @@ import {
     isQueryIdOrUrl,
     requireConfig,
 } from "@app/azure-devops/utils";
-import logger, { consoleLog } from "@app/logger";
+import { logger, out } from "@app/logger";
 import { formatLocalDateTimeStamp } from "@app/utils/date";
 import type { Command } from "commander";
 
@@ -33,7 +33,7 @@ import type { Command } from "commander";
 let silentMode = false;
 const log = (msg: string): void => {
     if (!silentMode) {
-        consoleLog.info(msg);
+        logger.info(msg);
     }
 };
 
@@ -335,13 +335,13 @@ export async function handleQuery(
     // Output
     switch (format) {
         case "ai":
-            console.log(formatAI(queryId, items, oldCache ? changes : [], oldCacheTime));
+            out.println(formatAI(queryId, items, oldCache ? changes : [], oldCacheTime));
             break;
         case "md":
-            console.log(formatMD(items));
+            out.println(formatMD(items));
             break;
         case "json":
-            console.log(formatJSON({ items, changes: oldCache ? changes : [] }));
+            out.println(formatJSON({ items, changes: oldCache ? changes : [] }));
             break;
     }
 

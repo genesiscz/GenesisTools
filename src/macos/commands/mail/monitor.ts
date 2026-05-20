@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
+import { out } from "@app/logger";
 import { formatResultsTable } from "@app/macos/lib/mail/format";
 import { MailStorage } from "@app/macos/lib/mail/mail-storage";
 import { rowToMessage, truncateBody } from "@app/macos/lib/mail/transform";
@@ -203,10 +204,10 @@ export function registerMonitorCommand(program: Command): void {
                     }
 
                     const importantMsgs = important.map((i) => i.msg);
-                    console.log("");
-                    console.log(formatResultsTable(importantMsgs, ["date", "from", "subject", "flagged"]));
+                    out.println("");
+                    out.println(formatResultsTable(importantMsgs, ["date", "from", "subject", "flagged"]));
 
-                    console.log("");
+                    out.println("");
                     for (const { msg, ruleName } of important) {
                         const from = msg.senderName || msg.senderAddress;
                         const subj = msg.subject.length > 50 ? `${msg.subject.slice(0, 50)}...` : msg.subject;

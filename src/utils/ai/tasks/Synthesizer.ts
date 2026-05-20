@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { playBuffer, playStream } from "@app/utils/audio/playback";
 import { isInteractive } from "@app/utils/cli/executor";
 import type { AIProviderType } from "@app/utils/config/ai.types";

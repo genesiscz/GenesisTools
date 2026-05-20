@@ -1,9 +1,14 @@
 import { type ChildProcess, spawn } from "node:child_process";
-import logger, { consoleLog } from "@app/logger";
+import { logger, out } from "@app/logger";
+import { runTool } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
+import * as p from "@app/utils/prompts/p";
+import { inquirerBackend } from "@app/utils/prompts/p/inquirer-backend";
 import { handleReadmeFlag } from "@app/utils/readme";
-import { ExitPromptError } from "@inquirer/core";
-import { checkbox, select } from "@inquirer/prompts";
+
+// Use inquirer backend for this tool
+p.setBackend(inquirerBackend);
+
 import chalk from "chalk";
 import { Command } from "commander";
 
@@ -464,7 +469,7 @@ function evaluateFilterExpression(event: ESLoggerEvent, expression: string): boo
         // Parse expression like: '.event.fork.child.executable.path == ".*Cursor.*"'
         const match = expression.trim().match(/^([^=!<>~]+)\s*([=!<>~]+)\s*(.+)$/);
         if (!match) {
-            consoleLog.warn(`Invalid filter expression: ${expression}`);
+            logger.warn(`Invalid filter expression: ${expression}`);
             return true; // Don't filter if expression is invalid
         }
 
@@ -483,7 +488,7 @@ function evaluateFilterExpression(event: ESLoggerEvent, expression: string): boo
                         const regex = new RegExp(expectedValue);
                         return regex.test(String(actualValue || ""));
                     } catch (regexError) {
-                        consoleLog.warn(`Invalid regex pattern "${expectedValue}": ${regexError}`);
+                        logger.warn(`Invalid regex pattern "${expectedValue}": ${regexError}`);
                         return false;
                     }
                 }
@@ -495,7 +500,7 @@ function evaluateFilterExpression(event: ESLoggerEvent, expression: string): boo
                         const regex = new RegExp(expectedValue);
                         return !regex.test(String(actualValue || ""));
                     } catch (regexError) {
-                        consoleLog.warn(`Invalid regex pattern "${expectedValue}": ${regexError}`);
+                        logger.warn(`Invalid regex pattern "${expectedValue}": ${regexError}`);
                         return true;
                     }
                 }
@@ -506,7 +511,7 @@ function evaluateFilterExpression(event: ESLoggerEvent, expression: string): boo
                     const regex = new RegExp(expectedValue);
                     return regex.test(String(actualValue || ""));
                 } catch (regexError) {
-                    consoleLog.warn(`Invalid regex pattern "${expectedValue}": ${regexError}`);
+                    logger.warn(`Invalid regex pattern "${expectedValue}": ${regexError}`);
                     return false;
                 }
 
@@ -515,16 +520,16 @@ function evaluateFilterExpression(event: ESLoggerEvent, expression: string): boo
                     const negRegex = new RegExp(expectedValue);
                     return !negRegex.test(String(actualValue || ""));
                 } catch (regexError) {
-                    consoleLog.warn(`Invalid regex pattern "${expectedValue}": ${regexError}`);
+                    logger.warn(`Invalid regex pattern "${expectedValue}": ${regexError}`);
                     return true;
                 }
 
             default:
-                consoleLog.warn(`Unsupported operator: ${operator}`);
+                logger.warn(`Unsupported operator: ${operator}`);
                 return true;
         }
     } catch (error) {
-        consoleLog.warn(`Error evaluating filter expression "${expression}": ${error}`);
+        logger.warn(`Error evaluating filter expression "${expression}": ${error}`);
         return true; // Don't filter on error
     }
 }
@@ -726,7 +731,7 @@ function formatEvent(event: ESLoggerEvent): string {
 
 // Show help message
 function showHelp() {
-    console.log(`
+    out.println(`
 ${chalk.bold("macOS ESLogger Monitor")}
 
 Monitor macOS Endpoint Security events in real-time using eslogger.
@@ -794,28 +799,28 @@ function monitorWithESF(
     filterExpression?: string
 ) {
     if (!silent) {
-        console.log(chalk.blue("🚀 Starting ESLogger monitor..."));
-        console.log(`📊 Monitoring ${eventTypes.length} event type(s):`);
+        out.println(chalk.blue("🚀 Starting ESLogger monitor..."));
+        out.println(`📊 Monitoring ${eventTypes.length} event type(s):`);
 
         // Display in columns for better readability
         const columns = 4;
         for (let i = 0; i < eventTypes.length; i += columns) {
             const row = eventTypes.slice(i, i + columns);
-            console.log(`   ${row.map((e) => e.padEnd(30)).join("")}`);
+            out.println(`   ${row.map((e) => e.padEnd(30)).join("")}`);
         }
 
         if (filterExpression) {
-            console.log(`\n🔍 Filter: ${filterExpression}`);
+            out.println(`\n🔍 Filter: ${filterExpression}`);
         }
 
         if (dryRun) {
-            console.log(chalk.green("\n✅ Dry run complete - would monitor the events above."));
-            console.log("─".repeat(80));
+            out.println(chalk.green("\n✅ Dry run complete - would monitor the events above."));
+            out.println("─".repeat(80));
             return;
         }
 
-        console.log(chalk.yellow("\n⌨️  Press Ctrl+C to stop."));
-        console.log(`${"─".repeat(80)}\n`);
+        out.println(chalk.yellow("\n⌨️  Press Ctrl+C to stop."));
+        out.println(`${"─".repeat(80)}\n`);
     }
 
     const args = ["eslogger", ...eventTypes];
@@ -842,9 +847,9 @@ function monitorWithESF(
                 eventCount++;
 
                 if (debug) {
-                    console.log(chalk.gray("--- RAW EVENT ---"));
-                    console.log(SafeJSON.stringify(event, null, 2));
-                    console.log(chalk.gray("--- END RAW ---"));
+                    out.println(chalk.gray("--- RAW EVENT ---"));
+                    out.println(SafeJSON.stringify(event, null, 2));
+                    out.println(chalk.gray("--- END RAW ---"));
                 }
 
                 // Apply filter if specified
@@ -858,25 +863,25 @@ function monitorWithESF(
                     if (outputPath) {
                         outputBuffer += `${formatted}\n`;
                     } else {
-                        console.log(formatted);
+                        out.println(formatted);
                     }
                 } catch (formatErr: unknown) {
                     // Formatting error - event parsed but couldn't format it
                     if (!silent) {
                         const eventTypeName = getEventTypeName(event.event_type);
-                        consoleLog.warn(
+                        logger.warn(
                             `[FORMAT_ERROR] Failed to format ${eventTypeName}: ${formatErr instanceof Error ? formatErr.message : String(formatErr)}`
                         );
                         if (debug) {
-                            consoleLog.warn(`Event data: ${SafeJSON.stringify(event, null, 2)}`);
+                            logger.warn(`Event data: ${SafeJSON.stringify(event, null, 2)}`);
                         }
                     }
                 }
             } catch (err) {
                 // JSON parsing error
                 if (!silent) {
-                    consoleLog.warn(`[JSON_PARSE_ERROR] ${err instanceof Error ? err.message : String(err)}`);
-                    consoleLog.warn(`Line: ${line.substring(0, 1000)}...`);
+                    logger.warn(`[JSON_PARSE_ERROR] ${err instanceof Error ? err.message : String(err)}`);
+                    logger.warn(`Line: ${line.substring(0, 1000)}...`);
                 }
             }
         }
@@ -894,26 +899,26 @@ function monitorWithESF(
         if (outputPath && outputBuffer) {
             try {
                 await Bun.write(outputPath, outputBuffer);
-                consoleLog.info(`✔ Output written to ${outputPath}`);
+                logger.info(`✔ Output written to ${outputPath}`);
             } catch (err) {
                 logger.error(`Failed to write output file: ${err}`);
             }
         }
 
         if (!silent) {
-            consoleLog.info(`\n${"─".repeat(80)}`);
-            consoleLog.info(`📈 Total events captured: ${eventCount}`);
+            logger.info(`\n${"─".repeat(80)}`);
+            logger.info(`📈 Total events captured: ${eventCount}`);
             if (code !== 0) {
                 logger.warn(`⚠️  Monitor process exited with code ${code}.`);
             } else {
-                consoleLog.info(chalk.green("✓ Process monitor stopped."));
+                logger.info(chalk.green("✓ Process monitor stopped."));
             }
         }
     });
 
     process.on("SIGINT", () => {
         if (!silent) {
-            consoleLog.info(chalk.red("\n\n🛑 Stopping eslogger monitor..."));
+            logger.info(chalk.red("\n\n🛑 Stopping eslogger monitor..."));
         }
         monitor.kill("SIGINT");
         setTimeout(() => process.exit(0), 500);
@@ -925,33 +930,33 @@ function monitorWithESF(
 // ============================================================================
 
 async function getEventTypesInteractively(): Promise<string[]> {
-    consoleLog.info(chalk.cyan("🔍 macOS ESLogger Real-time Event Monitor\n"));
+    logger.info(chalk.cyan("🔍 macOS ESLogger Real-time Event Monitor\n"));
 
-    const mode = await select({
+    const mode = (await p.select({
         message: "Choose monitoring mode:",
-        choices: [
-            { value: "category", name: "📂 Category (pre-defined event groups)" },
-            { value: "custom", name: "🎯 Custom (select specific events)" },
-            { value: "popular", name: "🔥 Popular (most commonly monitored)" },
+        options: [
+            { value: "category", label: "📂 Category (pre-defined event groups)" },
+            { value: "custom", label: "🎯 Custom (select specific events)" },
+            { value: "popular", label: "🔥 Popular (most commonly monitored)" },
         ],
-    });
+    })) as string;
 
     if (mode === "popular") {
         return ["exec", "fork", "exit", "open", "write", "authentication", "sudo"];
     } else if (mode === "category") {
-        const categories = await checkbox({
+        const categories = (await p.multiselect({
             message: "Select event categories to monitor:",
-            choices: Object.keys(EVENT_CATEGORIES).map((cat) => ({
+            options: Object.keys(EVENT_CATEGORIES).map((cat) => ({
                 value: cat,
-                name: `${cat.charAt(0).toUpperCase() + cat.slice(1)} (${
+                label: `${cat.charAt(0).toUpperCase() + cat.slice(1)} (${
                     EVENT_CATEGORIES[cat as keyof typeof EVENT_CATEGORIES].length
                 } events)`,
-                checked: cat === "process", // Default select process
             })),
-        });
+            initialValues: Object.keys(EVENT_CATEGORIES).filter((cat) => cat === "process"),
+        })) as string[];
 
         if (!categories || categories.length === 0) {
-            consoleLog.info("No categories selected. Exiting.");
+            logger.info("No categories selected. Exiting.");
             process.exit(0);
         }
 
@@ -962,17 +967,17 @@ async function getEventTypesInteractively(): Promise<string[]> {
         return eventTypes;
     } else {
         // Custom event selection
-        const events = await checkbox({
+        const events = (await p.multiselect({
             message: "Select events to monitor (type to filter):",
-            choices: ALL_EVENTS.map((evt) => ({
+            options: ALL_EVENTS.map((evt) => ({
                 value: evt,
-                name: evt,
-                checked: evt === "exec", // Default select exec
+                label: evt,
             })),
-        });
+            initialValues: ALL_EVENTS.filter((evt) => evt === "exec"),
+        })) as string[];
 
         if (!events || events.length === 0) {
-            consoleLog.info("No events selected. Exiting.");
+            logger.info("No events selected. Exiting.");
             process.exit(0);
         }
 
@@ -997,8 +1002,9 @@ async function main() {
         .option("--debug", "Show raw JSON for each event (useful for debugging)")
         .option("--include-fork", "Automatically include 'fork' events when monitoring 'exec'")
         .option("--filter-event <expr>", "Filter events using JSON path expression")
-        .option("-?, --help-full", "Show this help message")
-        .parse();
+        .option("-?, --help-full", "Show this help message");
+
+    await runTool(program, { tool: "macos-eslogger" });
 
     const options = program.opts();
 
@@ -1017,9 +1023,9 @@ async function main() {
         // Validate event types
         const invalid = eventTypes.filter((e) => !ALL_EVENTS.includes(e));
         if (invalid.length > 0) {
-            console.log(`❌ Unknown event type(s): ${invalid.join(", ")}`);
-            console.log("\n💡 Use one of the following event types:");
-            console.log(ALL_EVENTS.join(", "));
+            out.println(`❌ Unknown event type(s): ${invalid.join(", ")}`);
+            out.println("\n💡 Use one of the following event types:");
+            out.println(ALL_EVENTS.join(", "));
             process.exit(1);
         }
     } else if (options.category) {
@@ -1027,25 +1033,17 @@ async function main() {
         if (EVENT_CATEGORIES[category as keyof typeof EVENT_CATEGORIES]) {
             eventTypes = EVENT_CATEGORIES[category as keyof typeof EVENT_CATEGORIES];
         } else {
-            console.log(`❌ Unknown category: ${category}`);
-            console.log(`📚 Available categories: ${Object.keys(EVENT_CATEGORIES).join(", ")}`);
+            out.println(`❌ Unknown category: ${category}`);
+            out.println(`📚 Available categories: ${Object.keys(EVENT_CATEGORIES).join(", ")}`);
             process.exit(1);
         }
     } else {
         // Interactive mode
-        try {
-            eventTypes = await getEventTypesInteractively();
-        } catch (error) {
-            if (error instanceof ExitPromptError) {
-                logger.info("\nOperation cancelled by user.");
-                process.exit(0);
-            }
-            throw error;
-        }
+        eventTypes = await getEventTypesInteractively();
     }
 
     if (eventTypes.length === 0) {
-        console.log("❌ No event types specified.");
+        out.println("❌ No event types specified.");
         showHelp();
         process.exit(1);
     }
@@ -1057,14 +1055,14 @@ async function main() {
     if (options.includeFork && eventTypes.includes("exec") && !eventTypes.includes("fork")) {
         eventTypes.push("fork");
         if (!options.silent) {
-            consoleLog.info(chalk.yellow("ℹ️  Added 'fork' event monitoring (fork happens before exec)"));
+            logger.info(chalk.yellow("ℹ️  Added 'fork' event monitoring (fork happens before exec)"));
         }
     }
 
     // Warn about shell builtins if monitoring exec
     if (eventTypes.includes("exec") && !options.silent) {
-        consoleLog.info(chalk.yellow("💡 Tip: Shell builtins (like 'which' in zsh) don't trigger exec events."));
-        consoleLog.info(chalk.yellow("   Use external executables like /usr/bin/which or add --include-fork"));
+        logger.info(chalk.yellow("💡 Tip: Shell builtins (like 'which' in zsh) don't trigger exec events."));
+        logger.info(chalk.yellow("   Use external executables like /usr/bin/which or add --include-fork"));
     }
 
     // Start monitoring

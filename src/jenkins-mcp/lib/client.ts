@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import axios, { type AxiosInstance, type InternalAxiosRequestConfig } from "axios";
 
 export interface JenkinsAuth {

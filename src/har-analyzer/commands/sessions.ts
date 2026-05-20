@@ -1,4 +1,5 @@
 import { SessionManager } from "@app/har-analyzer/core/session-manager";
+import { out } from "@app/logger";
 import { formatTable } from "@app/utils/table";
 import type { Command } from "commander";
 
@@ -12,14 +13,14 @@ export function registerSessionsCommand(program: Command): void {
 
             if (options.clean) {
                 const deleted = await sm.cleanExpiredSessions();
-                console.log(`Cleaned ${deleted} expired session${deleted === 1 ? "" : "s"}.`);
+                out.println(`Cleaned ${deleted} expired session${deleted === 1 ? "" : "s"}.`);
                 return;
             }
 
             const sessions = await sm.listSessions();
 
             if (sessions.length === 0) {
-                console.log("No sessions found. Use `load <file>` to create one.");
+                out.println("No sessions found. Use `load <file>` to create one.");
                 return;
             }
 
@@ -34,7 +35,7 @@ export function registerSessionsCommand(program: Command): void {
                     return [s.hash.slice(0, 8) + active, s.sourceFile, String(s.entryCount), created];
                 });
 
-            console.log("Sessions (* = active):");
-            console.log(formatTable(rows, headers, { alignRight: [2] }));
+            out.println("Sessions (* = active):");
+            out.println(formatTable(rows, headers, { alignRight: [2] }));
         });
 }

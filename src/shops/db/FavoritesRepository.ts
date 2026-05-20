@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import type { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import type { FavoritesTable } from "@app/shops/db/types";
 import { freshnessFor } from "@app/shops/lib/analytics/freshness";

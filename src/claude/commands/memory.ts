@@ -1,3 +1,4 @@
+import { out } from "@app/logger";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -10,7 +11,7 @@ export function registerMemoryCommand(program: Command): void {
         .command("path")
         .description("Print the absolute path to MEMORY.md for the current project")
         .action(() => {
-            console.log(getMemoryPath());
+            out.println(getMemoryPath());
         });
 
     memory
@@ -24,7 +25,7 @@ export function registerMemoryCommand(program: Command): void {
                 return;
             }
 
-            console.log(content);
+            out.println(content);
         });
 
     memory
@@ -39,7 +40,7 @@ export function registerMemoryCommand(program: Command): void {
             }
 
             for (const line of matches) {
-                console.log(line);
+                out.println(line);
             }
         });
 

@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { BackupManager } from "@app/mcp-manager/utils/backup.js";
 import { getUnifiedConfigPath } from "@app/mcp-manager/utils/config.utils.js";
 import type { UnifiedMCPConfig } from "@app/mcp-manager/utils/providers/types.js";

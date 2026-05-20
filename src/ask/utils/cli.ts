@@ -1,3 +1,4 @@
+import { out } from "@app/logger";
 import { formatDuration as _formatDuration } from "@app/utils/format";
 import { SafeJSON } from "@app/utils/json";
 import type { Args, CLIOptions, OutputFormat } from "@ask/types";
@@ -78,7 +79,7 @@ export function parseCLIArguments(): Args {
 }
 
 export function showHelp(): void {
-    console.log(`
+    out.println(`
 ASK Tool - Multi-Router LLM Chat Application
 
 Usage:
@@ -177,8 +178,8 @@ Environment Variables:
 }
 
 export function showVersion(): void {
-    console.log("ASK Tool v1.0.0");
-    console.log("Multi-provider LLM chat application for GenesisTools");
+    out.println("ASK Tool v1.0.0");
+    out.println("Multi-provider LLM chat application for GenesisTools");
 }
 
 export function validateOptions(options: CLIOptions): ValidationResult {

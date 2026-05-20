@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import { spawn } from "bun";
 

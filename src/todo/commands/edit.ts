@@ -1,3 +1,4 @@
+import { out } from "@app/logger";
 import { findProjectRoot } from "@app/todo/lib/context";
 import { formatTodo } from "@app/todo/lib/format";
 import { parseLink } from "@app/todo/lib/links";
@@ -43,7 +44,7 @@ export function createEditCommand(): Command {
             const existing = await store.get(id);
 
             if (!existing) {
-                console.error(`Todo not found: ${id}`);
+                out.error(`Todo not found: ${id}`);
                 process.exit(1);
             }
 
@@ -103,7 +104,7 @@ export function createEditCommand(): Command {
             }
 
             const todo = await store.update(id, patch);
-            console.log(formatTodo(todo, resolveFormat(opts.format), { colors: opts.colors }));
+            out.println(formatTodo(todo, resolveFormat(opts.format), { colors: opts.colors }));
 
             if (opts.syncTo) {
                 const target = opts.syncTo as SyncTarget;
@@ -111,14 +112,14 @@ export function createEditCommand(): Command {
                 const count = countSynced(result);
 
                 if (count > 0) {
-                    console.error(pc.green(`Synced ${count} reminder(s) to ${target}.`));
+                    out.error(pc.green(`Synced ${count} reminder(s) to ${target}.`));
                 }
 
                 const failures = describeSyncFailures(result);
 
                 if (failures.length > 0) {
                     for (const line of failures) {
-                        console.error(pc.red(`SYNC_FAILED ${target} ${todo.id}: ${line}`));
+                        out.error(pc.red(`SYNC_FAILED ${target} ${todo.id}: ${line}`));
                     }
                 }
 

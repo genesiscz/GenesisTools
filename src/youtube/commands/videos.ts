@@ -1,3 +1,4 @@
+import { out } from "@app/logger";
 import { formatDuration } from "@app/utils/format";
 import { renderColumns } from "@app/youtube/commands/_shared/columns";
 import { getYoutube } from "@app/youtube/commands/_shared/ensure-pipeline";
@@ -77,7 +78,7 @@ export function registerVideosCommand(program: Command): void {
             const video = yt.videos.show(id as VideoId);
 
             if (!video) {
-                console.error(pc.red(`Unknown video: ${id}`));
+                out.error(pc.red(`Unknown video: ${id}`));
                 process.exitCode = 1;
                 return;
             }

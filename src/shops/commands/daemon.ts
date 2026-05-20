@@ -1,5 +1,5 @@
 import { type RegisterTaskOptions, registerTask, unregisterTask } from "@app/daemon/lib/register";
-import logger from "@app/logger";
+import { logger, out } from "@app/logger";
 import { Executor } from "@app/utils/cli";
 import type { Command } from "commander";
 
@@ -33,7 +33,7 @@ export function registerDaemonCommand(program: Command): void {
         .action(async (opts: { overwrite?: boolean }) => {
             for (const t of SHOPS_DAEMON_TASKS) {
                 const created = await registerTask({ ...t, overwrite: opts.overwrite });
-                console.log(created ? `registered ${t.name}` : `${t.name} already registered (use --overwrite)`);
+                out.println(created ? `registered ${t.name}` : `${t.name} already registered (use --overwrite)`);
             }
         });
 
@@ -43,7 +43,7 @@ export function registerDaemonCommand(program: Command): void {
         .action(async () => {
             for (const t of SHOPS_DAEMON_TASKS) {
                 const removed = await unregisterTask(t.name);
-                console.log(removed ? `unregistered ${t.name}` : `${t.name} was not registered`);
+                out.println(removed ? `unregistered ${t.name}` : `${t.name} was not registered`);
             }
         });
 
@@ -56,7 +56,7 @@ export function registerDaemonCommand(program: Command): void {
                 .split("\n")
                 .filter((line: string) => line.includes("shops:") || line.startsWith("name") || line.trim() === "")
                 .join("\n");
-            console.log(filtered);
+            out.println(filtered);
             if (result.exitCode !== 0) {
                 log.warn({ exitCode: result.exitCode }, "daemon status returned non-zero");
             }

@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 
 /**
  * `Database.setCustomSQLite()` is a *process-global, one-shot* native call.
