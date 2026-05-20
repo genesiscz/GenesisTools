@@ -146,40 +146,36 @@ const QaCard = memo(function QaCard({
     unread: boolean;
     onSeen: (id: string) => void;
 }) {
-    const cardRef = useRef<HTMLDivElement>(null);
     const [open, setOpen] = useState(true);
     const truncated = isQaAnswerTruncated(entry.answerMd);
     const answerHtml = open || !truncated ? entry.answerHtml : entry.answerHtmlPreview;
 
-    useEffect(() => {
+    const handleMarkRead = useCallback(() => {
         if (!unread) {
             return;
         }
 
-        const el = cardRef.current;
-        if (!el) {
-            return;
-        }
-
-        const observer = new IntersectionObserver(
-            ([hit]) => {
-                if (hit?.isIntersecting) {
-                    onSeen(entry.id);
-                }
-            },
-            { threshold: 0.25, rootMargin: "0px 0px -8% 0px" }
-        );
-        observer.observe(el);
-
-        return () => observer.disconnect();
+        onSeen(entry.id);
     }, [entry.id, onSeen, unread]);
 
     return (
         <div
-            ref={cardRef}
-            className={`dd-panel flex flex-col gap-3 p-4${unread ? " dd-qa-card--unread" : ""}`}
+            role={unread ? "button" : undefined}
+            tabIndex={unread ? 0 : undefined}
+            className={`dd-panel flex flex-col gap-3 p-4${unread ? " dd-qa-card--unread dd-qa-card--clickable" : ""}`}
             data-qa-id={entry.id}
             data-qa-unread={unread ? "1" : "0"}
+            onClick={handleMarkRead}
+            onKeyDown={(ev) => {
+                if (!unread) {
+                    return;
+                }
+
+                if (ev.key === "Enter" || ev.key === " ") {
+                    ev.preventDefault();
+                    onSeen(entry.id);
+                }
+            }}
         >
             <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--dd-text-muted)]">
                 <span className="dd-qa-unread-badge">new</span>

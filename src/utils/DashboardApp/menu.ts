@@ -91,7 +91,7 @@ export async function promptLaunchdInstall(key: string): Promise<boolean | null>
     return Boolean(picked);
 }
 
-export type DependencyMenuChoice = "start" | "skip";
+export type DependencyMenuChoice = "start" | "skip" | "abort";
 
 export async function promptDependencyStart(depKey: string, parentKey: string): Promise<DependencyMenuChoice | null> {
     if (!isInteractive()) {
@@ -107,7 +107,7 @@ export async function promptDependencyStart(depKey: string, parentKey: string): 
     });
 
     if (p.isCancel(picked)) {
-        return "skip";
+        return "abort";
     }
 
     return picked as DependencyMenuChoice;

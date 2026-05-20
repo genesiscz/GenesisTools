@@ -13,6 +13,7 @@
  * does this on `restart` after 30s — see plan §Decisions).
  */
 import { closeSync, existsSync, openSync, readSync, statSync } from "node:fs";
+import { logger } from "@app/logger";
 import { isPortInUse } from "@app/utils/network";
 import { stripAnsi } from "@app/utils/string";
 import type { ReadinessProbe } from "./types";
@@ -74,6 +75,7 @@ async function waitForHttp(
 export async function waitForUrlReady(url: string, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<ReadinessResult> {
     const deadline = Date.now() + timeoutMs;
     let lastStatus: number | undefined;
+    let lastError: unknown;
 
     while (Date.now() < deadline) {
         try {
@@ -84,14 +86,19 @@ export async function waitForUrlReady(url: string, timeoutMs = DEFAULT_TIMEOUT_M
             if (isHttpServingStatus(res.status)) {
                 return { ready: true, detail: `http ${res.status}` };
             }
-        } catch {
-            // ECONNREFUSED while booting — keep polling.
+        } catch (err) {
+            lastError = err;
+            logger.debug({ err, url }, "http readiness probe failed");
         }
         await Bun.sleep(POLL_INTERVAL_MS);
     }
 
-    const suffix = lastStatus !== undefined ? ` (last status ${lastStatus})` : "";
-    return { ready: false, detail: `http ${url} did not respond in ${timeoutMs}ms${suffix}` };
+    const statusSuffix = lastStatus !== undefined ? ` (last status ${lastStatus})` : "";
+    const errorSuffix =
+        lastError !== undefined
+            ? ` (last error: ${lastError instanceof Error ? lastError.message : String(lastError)})`
+            : "";
+    return { ready: false, detail: `http ${url} did not respond in ${timeoutMs}ms${statusSuffix}${errorSuffix}` };
 }
 
 async function waitForLog(
@@ -115,6 +122,7 @@ async function waitForLog(
                     if (acc.length > 8_000) {
                         acc = acc.slice(-4_000);
                     }
+                    probe.regex.lastIndex = 0;
                     if (probe.regex.test(acc)) {
                         return { ready: true, detail: `log matched ${probe.regex}` };
                     }

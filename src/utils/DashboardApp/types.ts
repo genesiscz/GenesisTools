@@ -6,8 +6,7 @@
  * repo is being migrated to consume this contract so port handling, lifecycle
  * verbs, readiness probes, and launchd integration are all done once.
  *
- * See `/Users/Martin/.claude/plans/golden-wandering-pillow.md` for the
- * design context and decisions log.
+ * See the DashboardApp design notes in the repo docs for design context.
  */
 import type { Command } from "commander";
 

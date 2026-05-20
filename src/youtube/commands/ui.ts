@@ -9,6 +9,9 @@ import type { Command } from "commander";
 const UI_DIR = resolve(import.meta.dirname, "..", "ui");
 const CONFIG_PATH = resolve(UI_DIR, "vite.config.ts");
 
+const API_URL_OPTION = "--api-url <url>";
+const API_URL_DESC = "Override the API base URL written to server.json on first run";
+
 export const youtubeUiApp = defineDashboardApp({
     type: "ui",
     key: "youtube",
@@ -30,15 +33,34 @@ export const youtubeUiApp = defineDashboardApp({
     launchd: { available: true },
 });
 
+async function applyApiUrlOverride(command: Command): Promise<void> {
+    const opts = command.opts() as { apiUrl?: string };
+
+    if (opts.apiUrl) {
+        const yt = await getYoutube();
+        await yt.config.update({ apiBaseUrl: opts.apiUrl, firstRunComplete: true });
+    }
+}
+
+function wireApiUrlOption(command: Command): void {
+    command.option(API_URL_OPTION, API_URL_DESC);
+    command.hook("preAction", async (thisCommand) => {
+        await applyApiUrlOverride(thisCommand);
+    });
+}
+
 export function registerUiCommand(program: Command): void {
     const cmd = youtubeUiApp.commanderCommand;
-    cmd.option("--api-url <url>", "Override the API base URL written to server.json on first run");
-    cmd.hook("preAction", async (thisCommand) => {
-        const opts = thisCommand.opts() as { apiUrl?: string };
-        if (opts.apiUrl) {
-            const yt = await getYoutube();
-            await yt.config.update({ apiBaseUrl: opts.apiUrl, firstRunComplete: true });
+
+    wireApiUrlOption(cmd);
+
+    for (const name of ["up", "restart"]) {
+        const sub = cmd.commands.find((c) => c.name() === name);
+
+        if (sub) {
+            wireApiUrlOption(sub);
         }
-    });
+    }
+
     program.addCommand(cmd);
 }

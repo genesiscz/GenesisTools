@@ -1,4 +1,5 @@
 import { closeSync, existsSync, openSync, readFileSync, readSync, statSync, writeFileSync } from "node:fs";
+import { out } from "@app/logger";
 import { getLocalIpv4 } from "@app/utils/network";
 import { stripAnsi } from "@app/utils/string";
 import pc from "picocolors";
@@ -35,6 +36,7 @@ export function readLogTail(logFile: string, lines: number, sessionOnly = true):
         return "";
     }
 
+    const lineCount = Number.isFinite(lines) && lines > 0 ? Math.floor(lines) : 50;
     const start = sessionOnly ? currentLogSessionOffset(logFile) : 0;
     const size = statSync(logFile).size;
 
@@ -48,7 +50,7 @@ export function readLogTail(logFile: string, lines: number, sessionOnly = true):
         const read = readSync(fd, buf, 0, buf.length, start);
         const text = buf.subarray(0, read).toString();
         const allLines = text.split("\n");
-        return allLines.slice(-lines).join("\n");
+        return allLines.slice(-lineCount).join("\n");
     } finally {
         closeSync(fd);
     }
@@ -84,13 +86,13 @@ export function printDevServerBanner(
 
     if (bannerLines.length === 0) {
         const local = bindHost === "0.0.0.0" ? `http://localhost:${port}/` : `http://127.0.0.1:${port}/`;
-        process.stdout.write(
+        out.print(
             `\n  ${color ? pc.cyan("➜") : "➜"}  ${color ? pc.bold("Local:") : "Local:"}   ${color ? pc.cyan(local) : local}\n`
         );
 
         if (bindHost === "0.0.0.0") {
             const network = `http://${getLocalIpv4()}:${port}/`;
-            process.stdout.write(
+            out.print(
                 `  ${color ? pc.cyan("➜") : "➜"}  ${color ? pc.bold("Network:") : "Network:"} ${color ? pc.cyan(network) : network}\n`
             );
         }
@@ -107,5 +109,5 @@ export function printDevServerBanner(
         );
     }
 
-    process.stdout.write(`\n${rendered.join("\n")}\n`);
+    out.print(`\n${rendered.join("\n")}\n`);
 }

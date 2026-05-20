@@ -1,5 +1,6 @@
 import { createServer } from "node:net";
 import { networkInterfaces, userInfo } from "node:os";
+import { logger } from "@app/logger";
 
 /**
  * Returns the first non-internal IPv4 address (LAN IP).
@@ -64,47 +65,62 @@ export async function getPortOwner(port: number): Promise<PortOwner | null> {
         return null;
     }
 
-    // /usr/sbin/lsof on macOS; some sandboxed PATHs don't include /usr/sbin.
-    const lsofBinary = process.platform === "darwin" ? "/usr/sbin/lsof" : "lsof";
-    const lsofProc = Bun.spawn([lsofBinary, "-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-t"], {
-        stdout: "pipe",
-        stderr: "pipe",
-    });
-    const lsofOut = await new Response(lsofProc.stdout).text();
-    await lsofProc.exited;
+    try {
+        // /usr/sbin/lsof on macOS; some sandboxed PATHs don't include /usr/sbin.
+        const lsofBinary = process.platform === "darwin" ? "/usr/sbin/lsof" : "lsof";
+        const lsofProc = Bun.spawn([lsofBinary, "-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-t"], {
+            stdout: "pipe",
+            stderr: "pipe",
+        });
+        const lsofOut = await new Response(lsofProc.stdout).text();
+        const lsofExit = await lsofProc.exited;
 
-    const pid = Number.parseInt(
-        lsofOut
-            .split("\n")
-            .map((line) => line.trim())
-            .find((line) => line.length > 0) ?? "",
-        10
-    );
-    if (Number.isNaN(pid) || pid <= 0) {
+        if (lsofExit !== 0) {
+            logger.debug({ port, exitCode: lsofExit }, "lsof returned non-zero exit");
+            return null;
+        }
+
+        const pid = Number.parseInt(
+            lsofOut
+                .split("\n")
+                .map((line) => line.trim())
+                .find((line) => line.length > 0) ?? "",
+            10
+        );
+        if (Number.isNaN(pid) || pid <= 0) {
+            return null;
+        }
+
+        const psProc = Bun.spawn(["ps", "-p", String(pid), "-o", "command=,uid="], {
+            stdout: "pipe",
+            stderr: "pipe",
+        });
+        const psOut = (await new Response(psProc.stdout).text()).trim();
+        const psExit = await psProc.exited;
+
+        if (psExit !== 0) {
+            logger.debug({ port, pid, exitCode: psExit }, "ps returned non-zero exit");
+            return { pid, command: "(unknown)", sameUser: false };
+        }
+
+        if (!psOut) {
+            return { pid, command: "(unknown)", sameUser: false };
+        }
+
+        // `ps -p N -o command=,uid=` prints "<cmd...> <uid>" — uid is the last token.
+        const lastSpace = psOut.lastIndexOf(" ");
+        let command = psOut;
+        let uid = Number.NaN;
+        if (lastSpace > 0) {
+            command = psOut.slice(0, lastSpace).trim();
+            uid = Number.parseInt(psOut.slice(lastSpace + 1).trim(), 10);
+        }
+
+        const myUid = userInfo().uid;
+
+        return { pid, command, sameUser: !Number.isNaN(uid) && uid === myUid };
+    } catch (err) {
+        logger.debug({ err, port }, "getPortOwner failed");
         return null;
     }
-
-    const psProc = Bun.spawn(["ps", "-p", String(pid), "-o", "command=,uid="], {
-        stdout: "pipe",
-        stderr: "pipe",
-    });
-    const psOut = (await new Response(psProc.stdout).text()).trim();
-    await psProc.exited;
-
-    if (!psOut) {
-        return { pid, command: "(unknown)", sameUser: false };
-    }
-
-    // `ps -p N -o command=,uid=` prints "<cmd...> <uid>" — uid is the last token.
-    const lastSpace = psOut.lastIndexOf(" ");
-    let command = psOut;
-    let uid = Number.NaN;
-    if (lastSpace > 0) {
-        command = psOut.slice(0, lastSpace).trim();
-        uid = Number.parseInt(psOut.slice(lastSpace + 1).trim(), 10);
-    }
-
-    const myUid = userInfo().uid;
-
-    return { pid, command, sameUser: !Number.isNaN(uid) && uid === myUid };
 }

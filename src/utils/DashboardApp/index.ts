@@ -19,8 +19,7 @@
  *
  *   parentCommand.addCommand(app.commanderCommand);
  *
- * See `/Users/Martin/.claude/plans/golden-wandering-pillow.md` for the
- * full design.
+ * See the DashboardApp design notes in the repo docs for the full design.
  */
 import { DASHBOARDS } from "@app/utils/ui/dashboards";
 import { buildCommanderCommand } from "./commander";

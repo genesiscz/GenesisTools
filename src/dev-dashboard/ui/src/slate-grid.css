@@ -9,6 +9,8 @@
     --dd-text-primary: #e6edf3;
     --dd-text-secondary: #8b96a0;
     --dd-text-muted: #5b6670;
+    --dd-danger: #f87171;
+    --dd-accent-glow: rgba(52, 211, 153, 0.35);
 }
 
 .dd-grid-bg {
@@ -43,7 +45,7 @@
     height: 0.875rem;
     border-radius: 9999px;
     background: var(--dd-accent-gradient);
-    box-shadow: 0 0 8px rgba(52, 211, 153, 0.35);
+    box-shadow: 0 0 8px var(--dd-accent-glow);
 }
 
 .dd-qa-section-body {
@@ -58,6 +60,15 @@
         linear-gradient(180deg, rgba(52, 211, 153, 0.07), transparent 55%),
         var(--dd-bg-panel);
     box-shadow: 0 0 0 1px rgba(52, 211, 153, 0.06);
+}
+
+.dd-qa-card--clickable {
+    cursor: pointer;
+}
+
+.dd-qa-card--clickable:focus-visible {
+    outline: 2px solid rgba(52, 211, 153, 0.45);
+    outline-offset: 2px;
 }
 
 .dd-qa-card--unread .dd-qa-unread-badge {

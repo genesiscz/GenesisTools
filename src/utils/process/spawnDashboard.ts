@@ -71,9 +71,14 @@ export async function spawnDashboard(opts: SpawnDashboardOptions): Promise<numbe
     };
 
     const signalsToForward: readonly NodeJS.Signals[] = ["SIGHUP", "SIGINT", "SIGTERM", "SIGQUIT"];
+    const signalHandlers = new Map<NodeJS.Signals, () => void>();
 
     for (const sig of signalsToForward) {
-        process.on(sig, () => handleSignal(sig));
+        const handler = () => {
+            handleSignal(sig);
+        };
+        signalHandlers.set(sig, handler);
+        process.on(sig, handler);
     }
 
     const orphanTimer = setInterval(() => {
@@ -89,8 +94,8 @@ export async function spawnDashboard(opts: SpawnDashboardOptions): Promise<numbe
     const exitCode = await child.exited;
     clearInterval(orphanTimer);
 
-    for (const sig of signalsToForward) {
-        process.removeAllListeners(sig);
+    for (const [sig, handler] of signalHandlers) {
+        process.off(sig, handler);
     }
 
     return exitCode;

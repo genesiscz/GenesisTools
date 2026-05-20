@@ -10,7 +10,7 @@
  * unloads the plist before SIGTERM so the user's intent to stop isn't
  * defeated by launchd respawning the process immediately.
  */
-import { existsSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
@@ -111,10 +111,12 @@ export async function installLaunchd(opts: LaunchdInstallOptions): Promise<void>
 
     // Load it. Idempotent: if already loaded, unload first.
     await launchctl(["unload", path]).catch(() => undefined);
-    const { exitCode } = await launchctl(["load", path]);
+    const { exitCode, stderr } = await launchctl(["load", path]);
 
     if (exitCode !== 0) {
-        throw new Error(`launchctl load ${path} failed with exit code ${exitCode}`);
+        throw new Error(
+            `launchctl load ${path} failed with exit code ${exitCode}${stderr.trim() ? `: ${stderr.trim()}` : ""}`
+        );
     }
 
     await kickstartLaunchd(opts.label);
@@ -170,6 +172,7 @@ ${envEntries}
 </plist>
 `;
 
+    mkdirSync(LAUNCH_AGENTS_DIR, { recursive: true });
     writeFileSync(path, plist);
 }
 
@@ -214,7 +217,9 @@ export async function startLaunchd(label: string): Promise<void> {
     const loaded = await launchctl(["load", path]);
 
     if (loaded.exitCode !== 0) {
-        throw new Error(`launchctl load ${path} failed with exit code ${loaded.exitCode}`);
+        throw new Error(
+            `launchctl load ${path} failed with exit code ${loaded.exitCode}${loaded.stderr.trim() ? `: ${loaded.stderr.trim()}` : ""}`
+        );
     }
 
     await kickstartLaunchd(label);

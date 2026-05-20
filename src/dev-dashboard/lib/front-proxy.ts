@@ -59,7 +59,7 @@ export async function fetchProxiedUpstream(forwarded: Request, longLived: boolea
         }
     }
 
-    throw new Error("fetchProxiedUpstream exhausted retries");
+    throw new Error("fetchProxiedUpstream exhausted retries without a response");
 }
 
 // LOCAL_ORIGIN_HEADER is the single source of truth in auth.ts (set/stripped

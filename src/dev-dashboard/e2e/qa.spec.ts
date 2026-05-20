@@ -1,4 +1,4 @@
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -38,9 +38,21 @@ Follow-up paragraph after the code fence.
     const answerFile = join(dir, "answer.md");
     writeFileSync(answerFile, answerMd, "utf8");
 
-    execSync(
-        `tools question answer --q "Does Playwright see rendered markdown for ${marker}?" --a-file "${answerFile}" --tag question --project GenesisTools`,
-        { cwd: "/Users/Martin/Tresors/Projects/GenesisTools", stdio: "pipe" }
+    execFileSync(
+        "tools",
+        [
+            "question",
+            "answer",
+            "--q",
+            `Does Playwright see rendered markdown for ${marker}?`,
+            "--a-file",
+            answerFile,
+            "--tag",
+            "question",
+            "--project",
+            "GenesisTools",
+        ],
+        { cwd: process.cwd(), stdio: "pipe" }
     );
 
     const card = page.locator(".dd-panel", { hasText: marker });

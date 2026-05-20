@@ -15,7 +15,7 @@
 import { logger } from "@app/logger";
 import { getPortOwner, type PortOwner } from "@app/utils/network";
 import { defaultPlistLabel, isLaunchdInstalled } from "./launchd";
-import { readPid } from "./pidFile";
+import { readPid, readPidRaw } from "./pidFile";
 import { readPreferences } from "./preferences";
 
 export type PortConflict =
@@ -38,12 +38,17 @@ export async function checkPortConflict(key: string, port: number): Promise<Port
     }
 
     const ourPid = readPid(key);
+    const rawPid = readPidRaw(key);
 
     if (owner.sameUser && isOwnedPortHolder(key, owner, ourPid)) {
         return { state: "mine", pid: owner.pid, owner };
     }
 
-    if (owner.sameUser) {
+    const label = defaultPlistLabel(key);
+    const hasOwnershipSignal =
+        rawPid !== null || (isLaunchdInstalled(label) && (readPreferences(key).launchdInstalled ?? false));
+
+    if (owner.sameUser && hasOwnershipSignal) {
         return { state: "stale", owner };
     }
 
@@ -156,8 +161,8 @@ export async function killPortOwner(owner: PortOwner, opts: { force?: boolean } 
 
     try {
         process.kill(owner.pid, "SIGTERM");
-    } catch {
-        // Process may already be gone.
+    } catch (error) {
+        logger.debug({ pid: owner.pid, signal: "SIGTERM", error }, "failed to signal process");
     }
 
     const graceDeadline = Date.now() + 5_000;
@@ -176,8 +181,8 @@ export async function killPortOwner(owner: PortOwner, opts: { force?: boolean } 
 
     try {
         process.kill(owner.pid, "SIGKILL");
-    } catch {
-        // Process may already be gone.
+    } catch (error) {
+        logger.debug({ pid: owner.pid, signal: "SIGKILL", error }, "failed to force-kill process");
     }
 
     await Bun.sleep(500);
@@ -187,7 +192,8 @@ function isProcessAlive(pid: number): boolean {
     try {
         process.kill(pid, 0);
         return true;
-    } catch {
+    } catch (error) {
+        logger.debug({ pid, error }, "process liveness probe failed");
         return false;
     }
 }

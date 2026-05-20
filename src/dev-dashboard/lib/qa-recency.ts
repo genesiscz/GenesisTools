@@ -53,9 +53,5 @@ export function resolveQaRecency(ts: number, now = Date.now()): QaRecency {
 
     const ageDays = Math.floor(ageMs / DAY);
 
-    if (ageDays < 7) {
-        return { tier: "stale", relative: `${ageDays}d ago`, ageMs };
-    }
-
     return { tier: "stale", relative: `${ageDays}d ago`, ageMs };
 }
