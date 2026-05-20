@@ -358,13 +358,12 @@ export class DarwinKitTextDriver implements TextLanguageDetectionDriver {
     readonly name = "darwinkit";
 
     async isAvailable(): Promise<boolean> {
-        try {
-            const { getDarwinKit } = await import("@app/utils/macos/darwinkit");
-            const dk = getDarwinKit();
-            return dk !== null;
-        } catch {
-            return false;
-        }
+        // Cheap, no-spawn availability check. The real DarwinKit handle is
+        // created lazily in detectFromText() via getDarwinKit(). Spawning a
+        // child here used to leak a darwinkit serve process every time the
+        // provider registry probed for available drivers — a common path
+        // for short-lived CLIs that never reached an actual detection call.
+        return process.platform === "darwin";
     }
 
     async detectFromText(text: string): Promise<LanguageDetectionResult> {
