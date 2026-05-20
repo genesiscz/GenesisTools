@@ -18,6 +18,20 @@ export const FILE_META_DB_PATH = join(homedir(), ".genesis-tools", "macos-clones
  *  cap. Using 5000 leaves headroom and rounds nicely. */
 const FLUSH_BATCH_ROWS = 5_000;
 
+/** Time-to-live for cached rows. After this much time without a refresh (i.e.
+ *  the file was never set() again — meaning it either vanished from disk or
+ *  changed content so a new row replaced it… but kept its old `last_seen_at`
+ *  because cache *hits* don't bump the timestamp), we garbage-collect the row.
+ *
+ *  Stale rows are HARMLESS for correctness — the (size, mtime_ns) hit check
+ *  catches divergence and re-hashes. The TTL exists purely to keep the DB
+ *  from growing unboundedly on heavy-churn trees (e.g. dev directories where
+ *  `dist/` regenerates every build).
+ *
+ *  30 days is conservative: short enough to GC dev churn, long enough that
+ *  someone who scans monthly still sees a hot cache. */
+const PRUNE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
 export interface FileMetaEntry {
     size: bigint;
     mtimeNs: bigint;
@@ -240,15 +254,26 @@ export class FileMetaCache {
         this.dirty.clear();
     }
 
-    /** Drop rows under `root` whose `last_seen_at` is below `cutoff` — files
-     *  that disappeared from disk during this scan. Scoped because the same
-     *  db backs every scan root; an unscoped prune would delete entries from
-     *  scan-roots that just weren't walked this run. */
-    async pruneScope(root: string, cutoff: number): Promise<void> {
+    /** Garbage-collect cached rows older than PRUNE_TTL_MS within `root`.
+     *
+     *  CRITICAL FIX vs. the original implementation: pruning by
+     *  `last_seen_at < scanStartedAt` (the previous design) deleted every
+     *  cache HIT on every warm run, because hits don't refresh
+     *  `last_seen_at` — the timestamp only gets written when a `set()` (i.e.
+     *  a miss) happens. That meant alternating warm/cold every other run.
+     *
+     *  TTL-based pruning is correct: stale rows are harmless for correctness
+     *  (the (size, mtime_ns) check catches divergence and re-hashes), so the
+     *  only purpose of prune is bounded DB growth. 30 days is the cutoff. */
+    async pruneScope(root: string, nowMs: number): Promise<void> {
         const { kysely } = this.getClient();
         const sw = new Stopwatch();
+        const cutoff = nowMs - PRUNE_TTL_MS;
         const { lo, hi } = FileMetaCache.prefixRange(root);
-        log.info({ event: "cache.prune.start", root, cutoff, lo, hi }, "FileMetaCache pruneScope start");
+        log.info(
+            { event: "cache.prune.start", root, nowMs, cutoff, ttlDays: PRUNE_TTL_MS / 86_400_000, lo, hi },
+            "FileMetaCache pruneScope start"
+        );
 
         const res = await kysely
             .deleteFrom("file_meta")

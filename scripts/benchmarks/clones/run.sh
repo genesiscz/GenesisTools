@@ -62,22 +62,35 @@ COLD_TOTAL=$SECONDS
 echo "[bench] cold finished in ${COLD_TOTAL}s" >&2
 
 WARM_START=$(count_lines)
-echo "[bench] === WARM run ===" >&2
+echo "[bench] === WARM run (1st warm) ===" >&2
 SECONDS=0
 bun run src/macos/index.ts clones duplicates "$ROOT" --verbose --format json >/dev/null 2>/dev/null
 WARM_TOTAL=$SECONDS
-echo "[bench] warm finished in ${WARM_TOTAL}s" >&2
+echo "[bench] warm1 finished in ${WARM_TOTAL}s" >&2
 
-WARM_END=$(count_lines)
+WARM2_START=$(count_lines)
+# 3rd run regression check: detects the P0 "cache suicide" bug — if the
+# second warm has the same speed as the first warm, the cache truly persists.
+# If it's anywhere near cold time, the prune is nuking hits.
+echo "[bench] === WARM run (2nd warm — P0 regression check) ===" >&2
+SECONDS=0
+bun run src/macos/index.ts clones duplicates "$ROOT" --verbose --format json >/dev/null 2>/dev/null
+WARM2_TOTAL=$SECONDS
+echo "[bench] warm2 finished in ${WARM2_TOTAL}s" >&2
+
+WARM2_END=$(count_lines)
 
 COLD_JSON=$(extract_complete "$COLD_START" "$WARM_START")
-WARM_JSON=$(extract_complete "$WARM_START" "$WARM_END")
+WARM_JSON=$(extract_complete "$WARM_START" "$WARM2_START")
+WARM2_JSON=$(extract_complete "$WARM2_START" "$WARM2_END")
 
 # Sentinel for empty captures so jq doesn't choke.
 COLD_JSON="${COLD_JSON:-}"
 WARM_JSON="${WARM_JSON:-}"
+WARM2_JSON="${WARM2_JSON:-}"
 [[ -z "$COLD_JSON" ]] && COLD_JSON="{}"
 [[ -z "$WARM_JSON" ]] && WARM_JSON="{}"
+[[ -z "$WARM2_JSON" ]] && WARM2_JSON="{}"
 
 mkdir -p "$(dirname "$RESULTS")"
 
@@ -86,7 +99,25 @@ jq -nc \
     --arg root "$ROOT" \
     --argjson coldTotal "$COLD_TOTAL" \
     --argjson warmTotal "$WARM_TOTAL" \
+    --argjson warm2Total "$WARM2_TOTAL" \
     --argjson cold "$COLD_JSON" \
     --argjson warm "$WARM_JSON" \
-    '{label:$label, root:$root, ts:(now|todate), coldTotalSec:$coldTotal, warmTotalSec:$warmTotal, cold:$cold, warm:$warm}' \
+    --argjson warm2 "$WARM2_JSON" \
+    '{label:$label, root:$root, ts:(now|todate),
+      coldTotalSec:$coldTotal, warmTotalSec:$warmTotal, warm2TotalSec:$warm2Total,
+      cold:$cold, warm:$warm, warm2:$warm2}' \
     | tee -a "$RESULTS"
+
+# P0 regression assertion: warm2.sha256Calls must be ≤ 1% of cold.sha256Calls
+# (allowing for trivial edits during the bench). If warm2 hashes nearly as
+# many files as cold, the cache is being nuked between runs.
+COLD_SHA=$(jq -r '.sha256Calls // 0' <<<"$COLD_JSON")
+WARM2_SHA=$(jq -r '.sha256Calls // 0' <<<"$WARM2_JSON")
+if [[ "$COLD_SHA" -gt 100 ]]; then
+    THRESHOLD=$((COLD_SHA / 100))
+    if [[ "$WARM2_SHA" -gt "$THRESHOLD" ]]; then
+        echo "[bench] FAIL: P0 cache-suicide regression — warm2 sha256Calls=${WARM2_SHA} > 1% of cold=${COLD_SHA}" >&2
+        exit 3
+    fi
+    echo "[bench] PASS: warm2 sha256Calls=${WARM2_SHA} / cold=${COLD_SHA} (cache persists across runs)" >&2
+fi

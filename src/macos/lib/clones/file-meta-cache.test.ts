@@ -84,29 +84,55 @@ describe("FileMetaCache", () => {
         });
     });
 
-    it("pruneScope drops only the scoped root's stale rows", async () => {
-        await withTmpDb("prune", async (dbPath, dir) => {
+    it("pruneScope (TTL-based) only drops rows older than the 30-day TTL", async () => {
+        await withTmpDb("prune-ttl", async (dbPath, dir) => {
             const c = FileMetaCache.resetForTests(dbPath);
-            // First scan (timestamp=100) writes three rows.
-            c.set(`${dir}/scope-a/old`, { size: 1n, mtimeNs: 1n, sha256: "x", cloneId: "", lastSeenAt: 0 });
-            c.set(`${dir}/scope-b/old`, { size: 1n, mtimeNs: 1n, sha256: "z", cloneId: "", lastSeenAt: 0 });
-            await c.flush(100);
+            const NOW = 1_000_000_000_000; // arbitrary "current" timestamp
+            const OLD = NOW - 31 * 86_400_000; // 31 days ago — > TTL
+            const FRESH = NOW - 1 * 86_400_000; // 1 day ago — < TTL
 
-            // Second scan (timestamp=500) refreshes one row.
-            c.set(`${dir}/scope-a/new`, { size: 1n, mtimeNs: 1n, sha256: "y", cloneId: "", lastSeenAt: 0 });
-            await c.flush(500);
+            // Two rows in scope-a, one ancient one fresh.
+            c.set(`${dir}/scope-a/ancient`, { size: 1n, mtimeNs: 1n, sha256: "x", cloneId: "", lastSeenAt: 0 });
+            await c.flush(OLD);
+            c.set(`${dir}/scope-a/fresh`, { size: 1n, mtimeNs: 1n, sha256: "y", cloneId: "", lastSeenAt: 0 });
+            await c.flush(FRESH);
+            // One row in scope-b, also ancient — but pruning scope-a must NOT touch it.
+            c.set(`${dir}/scope-b/ancient`, { size: 1n, mtimeNs: 1n, sha256: "z", cloneId: "", lastSeenAt: 0 });
+            await c.flush(OLD);
 
-            // Prune scope-a rows that weren't seen this scan (cutoff=200).
-            // Only scope-a/old (last_seen_at=100 < 200) should go.
-            await c.pruneScope(`${dir}/scope-a`, 200);
+            await c.pruneScope(`${dir}/scope-a`, NOW);
             c.close();
 
             const c2 = FileMetaCache.resetForTests(dbPath);
             await c2.loadScope(`${dir}/scope-a`);
             await c2.loadScope(`${dir}/scope-b`);
-            expect(c2.get(`${dir}/scope-a/old`)).toBeNull(); // pruned
-            expect(c2.get(`${dir}/scope-a/new`)?.sha256).toBe("y"); // kept (fresh)
-            expect(c2.get(`${dir}/scope-b/old`)?.sha256).toBe("z"); // kept (other scope)
+            expect(c2.get(`${dir}/scope-a/ancient`)).toBeNull(); // pruned (TTL exceeded)
+            expect(c2.get(`${dir}/scope-a/fresh`)?.sha256).toBe("y"); // kept (within TTL)
+            expect(c2.get(`${dir}/scope-b/ancient`)?.sha256).toBe("z"); // kept (other scope)
+            c2.close();
+        });
+    });
+
+    it("pruneScope does NOT delete cache rows after a pure-hit warm rerun (P0 regression)", async () => {
+        // The bug fixed here: pruneScope used to take scanStartedAt as cutoff
+        // and delete every row not refreshed *this* scan — but cache HITS
+        // don't refresh last_seen_at, so warm reruns silently nuked the cache.
+        // Reproducing with two synthetic scans 1ms apart proves the fix.
+        await withTmpDb("p0-no-suicide", async (dbPath, dir) => {
+            const c = FileMetaCache.resetForTests(dbPath);
+            const NOW = Date.now();
+            // Scan 1: fill cache.
+            c.set(`${dir}/a`, { size: 1n, mtimeNs: 1n, sha256: "h1", cloneId: "", lastSeenAt: 0 });
+            c.set(`${dir}/b`, { size: 1n, mtimeNs: 1n, sha256: "h2", cloneId: "", lastSeenAt: 0 });
+            await c.flush(NOW);
+            // Scan 2: pure cache hits — nothing dirty, nothing set. Then prune.
+            await c.pruneScope(dir, NOW + 1); // 1ms later; well within TTL
+            c.close();
+
+            const c2 = FileMetaCache.resetForTests(dbPath);
+            await c2.loadScope(dir);
+            expect(c2.get(`${dir}/a`)?.sha256).toBe("h1"); // would have been deleted under the old design
+            expect(c2.get(`${dir}/b`)?.sha256).toBe("h2");
             c2.close();
         });
     });
