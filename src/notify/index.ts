@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 
+import logger from "@app/logger";
 import { isInteractive, suggestCommand } from "@app/utils/cli";
 import type { ChannelConfigs } from "@app/utils/notifications";
 import { dispatchNotification, notificationsConfig } from "@app/utils/notifications";
@@ -310,7 +311,10 @@ async function main(): Promise<void> {
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         p.log.error(message);
-        process.exit(1);
+        // Use exitCode rather than process.exit() so the finally block below
+        // runs and closes the DarwinKit child. process.exit() terminates
+        // synchronously and would skip finally — defeating the whole point.
+        process.exitCode = 1;
     } finally {
         // sendViaDarwinKit() spawns a long-lived Swift child via the
         // module-level singleton in @app/utils/macos/darwinkit. Without
@@ -323,8 +327,10 @@ async function main(): Promise<void> {
             if (hasDarwinKit()) {
                 closeDarwinKit();
             }
-        } catch {
-            // DarwinKit not used in this invocation; ignore
+        } catch (error) {
+            // Cleanup is best-effort; log so a real failure (e.g. SDK API
+            // change) is visible in debug output without breaking the CLI.
+            logger.debug(`DarwinKit cleanup skipped: ${error instanceof Error ? error.message : String(error)}`);
         }
     }
 }
