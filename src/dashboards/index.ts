@@ -151,6 +151,6 @@ program
     });
 
 await runTool(program, { tool: "dashboards" }).catch((err: unknown) => {
-    logger.error("dashboards orchestration failed", err);
+    logger.error({ err }, "dashboards orchestration failed");
     process.exit(1);
 });
