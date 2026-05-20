@@ -33,7 +33,7 @@ const config = defineConfig({
         },
     },
     plugins: [
-        devtools(),
+        ...(process.env.DASHBOARD_DEVTOOLS === "1" ? [devtools()] : []),
         nitro(nitroConfig),
         // this is the plugin that enables path aliases
         viteTsConfigPaths({
