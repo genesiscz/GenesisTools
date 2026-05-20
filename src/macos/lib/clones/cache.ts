@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, statSync } from "node:fs";
+import { statSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@app/utils/json";
 import { Storage } from "@app/utils/storage/storage";
@@ -47,7 +47,16 @@ export async function getCachedPlan(p: PlanCacheParams): Promise<CachedPlan | nu
     }
 
     const filePath = join(storage.getCacheDir(), key);
-    const rawAge = existsSync(filePath) ? Date.now() - statSync(filePath).mtimeMs : 0;
+    // Single statSync (no existsSync prelude) to avoid the TOCTOU window where
+    // the file is removed between existsSync and statSync. On ENOENT we treat
+    // the plan as fresh (ageMs=0) since storage.getCacheFile already validated it.
+    let rawAge = 0;
+    try {
+        rawAge = Date.now() - statSync(filePath).mtimeMs;
+    } catch {
+        rawAge = 0;
+    }
+
     const ageMs = Math.max(0, rawAge);
     return { plan, ageMs };
 }

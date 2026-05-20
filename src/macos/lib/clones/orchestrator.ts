@@ -268,9 +268,6 @@ function buildRootTree(root: string, args: BuildMeasureArgs, crossTreeShared: Ma
         }
 
         const parts = dirname(rel) === "." ? [] : dirname(rel).split("/");
-        if (args.maxDepth !== undefined && parts.length > args.maxDepth) {
-            continue;
-        }
 
         const priv = getPrivateSize(e.path);
         const fileShared = crossTreeShared.get(e.path) ?? 0;
@@ -283,9 +280,15 @@ function buildRootTree(root: string, args: BuildMeasureArgs, crossTreeShared: Ma
             node.realSeen = true;
         }
 
+        // Stop CREATING child nodes past maxDepth, but the totals above were
+        // already accumulated into the root + every ancestor that still exists.
+        // Effect: `du --depth N` tree rows show their full subtree totals
+        // (matching the TOTAL line), while only the rendered tree is depth-capped.
+        const partsToWalk = args.maxDepth !== undefined ? parts.slice(0, args.maxDepth) : parts;
+
         let acc = root;
         let depth = 0;
-        for (const part of parts) {
+        for (const part of partsToWalk) {
             acc = `${acc}/${part}`;
             depth += 1;
             let child = node.children.get(part);

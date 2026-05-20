@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import logger from "@app/logger";
 import {
@@ -32,12 +32,22 @@ function validateExisting(paths: string[]): string[] {
     const ok: string[] = [];
     for (const raw of paths) {
         const abs = resolve(raw);
-        if (existsSync(abs)) {
-            ok.push(abs);
-        } else {
+        let st: ReturnType<typeof statSync> | null = null;
+        try {
+            st = statSync(abs);
+        } catch {
             console.error(`Skipping non-existent path: ${raw}`);
             log.warn({ path: raw }, "config add: path does not exist");
+            continue;
         }
+
+        if (!st.isDirectory()) {
+            console.error(`Skipping non-directory path: ${raw}`);
+            log.warn({ path: raw }, "config add: path is not a directory");
+            continue;
+        }
+
+        ok.push(abs);
     }
 
     return ok;

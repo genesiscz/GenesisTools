@@ -54,10 +54,18 @@ export async function runDaemonScan(args: DaemonScanArgs = {}): Promise<DaemonSc
     writeMeta({ id, state: "dry-run", roots, startedAt: now, endedAt: now, planCacheHit: false });
 
     if (args.notify !== false) {
-        await sendNotification({
-            title: "macos clones",
-            message: `${formatBytes(reclaimable)} reclaimable across ${roots.length} dir(s) — run \`tools macos clones optimize --apply\``,
-        });
+        // Notification delivery can fail (missing permissions, Do Not Disturb,
+        // notification-center daemon not running). Treat as best-effort — the
+        // scan itself succeeded and recorded a dry-run meta line; the user can
+        // always see the result via `tools macos clones optimize --list`.
+        try {
+            await sendNotification({
+                title: "macos clones",
+                message: `${formatBytes(reclaimable)} reclaimable across ${roots.length} dir(s) — run \`tools macos clones optimize --apply\``,
+            });
+        } catch (err) {
+            log.warn({ err }, "scan-daemon: notification delivery failed (scan results still recorded)");
+        }
     }
 
     log.info({ reclaimable, dirs: roots.length, id }, "scan-daemon dry-run complete");

@@ -193,7 +193,14 @@ export function createOptimizeCommand(): Command {
 
             if (opts.apply) {
                 const cached = opts.cache === false ? null : await getCachedPlan(cacheParams);
-                const sets = cached?.plan ?? collapseDuplicates({ roots }).sets;
+                const sets =
+                    cached?.plan ??
+                    collapseDuplicates({
+                        roots,
+                        minSize: cacheParams.minSize,
+                        include: cacheParams.include,
+                        exclude: cacheParams.exclude,
+                    }).sets;
                 const projected = sets.reduce((s, x) => s + x.reclaimable, 0);
 
                 if (isInteractive()) {
@@ -249,7 +256,12 @@ export function createOptimizeCommand(): Command {
                 return;
             }
 
-            const sets = collapseDuplicates({ roots }).sets;
+            const sets = collapseDuplicates({
+                roots,
+                minSize: cacheParams.minSize,
+                include: cacheParams.include,
+                exclude: cacheParams.exclude,
+            }).sets;
             await cachePlan(cacheParams, sets);
             console.log(resolveRenderer(resolveFormat(opts.format)).processReport(dryRunReport(roots, sets)));
             process.exitCode = 0;

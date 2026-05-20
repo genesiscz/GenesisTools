@@ -280,7 +280,11 @@ export function runOptimize({ roots, sets, planCacheHit, planCacheAgeMs }: RunOp
     const id = newProcessId();
     const startedAt = new Date().toISOString();
     const sw = new Stopwatch();
-    const totalPairs = sets.reduce((s, set) => s + expandSetToPairs(set).length, 0);
+    // Materialize pairs ONCE per set — for dir-kind sets this walks the keep
+    // tree, which can be expensive on large dirs; recomputing in both the log
+    // preamble and the loop was a real perf regression on every run.
+    const pairsBySet = sets.map((s) => expandSetToPairs(s));
+    const totalPairs = pairsBySet.reduce((s, p) => s + p.length, 0);
     log.info({ id, roots, sets: sets.length, totalPairs, planCacheHit, planCacheAgeMs }, "runOptimize starting");
     writeMeta({
         id,
@@ -294,8 +298,9 @@ export function runOptimize({ roots, sets, planCacheHit, planCacheAgeMs }: RunOp
 
     let seq = 0;
     try {
-        for (const set of sets) {
-            for (const { keep, replace } of expandSetToPairs(set)) {
+        for (let i = 0; i < sets.length; i++) {
+            const pairs = pairsBySet[i];
+            for (const { keep, replace } of pairs) {
                 seq += 1;
                 const ts = new Date().toISOString();
                 let modeBefore = 0;

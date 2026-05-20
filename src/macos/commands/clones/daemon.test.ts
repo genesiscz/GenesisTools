@@ -17,15 +17,17 @@ describe("createDaemonCommand", () => {
         expect(subs).toEqual(["disable", "enable", "status"]);
     });
 
-    it("enable registers an ABSOLUTE-path command for macos-clones-scan", async () => {
+    it("enable registers an ABSOLUTE-path command for macos-clones-scan (shell-quoted)", async () => {
         await createDaemonCommand().parseAsync(["node", "daemon", "enable"], { from: "node" });
         expect(registerSpy).toHaveBeenCalled();
         const calls = registerSpy.mock.calls as unknown as Array<[{ name: string; command: string; every: string }]>;
         const arg = calls[0][0];
         expect(arg.name).toBe("macos-clones-scan");
-        expect(arg.command.split(" ")[0]).toMatch(/^\//);
+        // Paths are POSIX-shell-quoted: `'/abs/path' run '/abs/path'`. Both
+        // paths must be absolute and quoted so spaces/quotes in dev paths
+        // (~/Library/...) don't inject into the shell `tools daemon` runs.
+        expect(arg.command).toMatch(/^'\/.+' run '\/.+\/scan-daemon\.ts'$/);
         expect(arg.command).toContain("scan-daemon.ts");
-        expect(arg.command).toMatch(/^\/.*\/scan-daemon\.ts$|^\/\S+ run \/.*scan-daemon\.ts$/);
         expect(arg.every).toBe("every day at 03:00");
     });
 });

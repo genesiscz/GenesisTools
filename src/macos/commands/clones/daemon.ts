@@ -7,10 +7,19 @@ import { Command } from "commander";
 const log = logger.child({ component: "clones:daemon-cmd" });
 const TASK_NAME = "macos-clones-scan";
 
+/** POSIX shell single-quote: wrap in single quotes and escape embedded ones.
+ *  Safe for any path including spaces, quotes, dollar signs, backticks. */
+function shellQuote(s: string): string {
+    return `'${s.replace(/'/g, "'\\''")}'`;
+}
+
 function resolveScanCommand(): string {
     const absBun = Bun.which("bun") ?? process.execPath;
     const absScanScript = fileURLToPath(new URL("../../lib/clones/scan-daemon.ts", import.meta.url));
-    return `${absBun} run ${absScanScript}`;
+    // The registered command is run via shell by `tools daemon`. Quote BOTH
+    // paths so spaces / quotes / shell metachars in absBun or absScanScript
+    // can't inject. macOS dev paths often contain spaces (e.g. ~/Library/...).
+    return `${shellQuote(absBun)} run ${shellQuote(absScanScript)}`;
 }
 
 export function createDaemonCommand(): Command {

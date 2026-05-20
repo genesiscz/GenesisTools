@@ -4,12 +4,63 @@ import { basename, dirname, join, relative, sep } from "node:path";
 import logger from "@app/logger";
 import { findDuplicateFiles } from "@app/utils/fs/disk-usage";
 import { Stopwatch } from "@app/utils/Stopwatch";
+import { matchGlob } from "@app/utils/string";
 import type { DuplicateSet, DuplicatesReport } from "./render/types";
 
 const log = logger.child({ component: "clones:collapse" });
 
 export interface CollapseArgs {
     roots: string[];
+    /** Drop file-groups whose per-file size is below this (bytes). */
+    minSize?: number;
+    /** Glob patterns: keep only files whose RELPATH or any path-segment matches. */
+    include?: string[];
+    /** Glob patterns: exclude files whose RELPATH or any path-segment matches (wins). */
+    exclude?: string[];
+}
+
+function pathMatches(rel: string, glob: string): boolean {
+    if (matchGlob(rel, glob)) {
+        return true;
+    }
+
+    for (const seg of rel.split(sep)) {
+        if (matchGlob(seg, glob)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function passesFilters(
+    absPath: string,
+    root: string,
+    include: string[] | undefined,
+    exclude: string[] | undefined,
+): boolean {
+    const rel = relative(root, absPath);
+    if (exclude && exclude.length > 0 && exclude.some((g) => pathMatches(rel, g))) {
+        return false;
+    }
+
+    if (include && include.length > 0) {
+        return include.some((g) => pathMatches(rel, g));
+    }
+
+    return true;
+}
+
+/** Which root contains `absPath`? Used to relativize for glob matching across
+ *  multi-root scans. Returns the first root that's an ancestor. */
+function rootOf(absPath: string, roots: string[]): string | null {
+    for (const r of roots) {
+        if (absPath === r || absPath.startsWith(`${r}${sep}`)) {
+            return r;
+        }
+    }
+
+    return null;
 }
 
 interface DirInfo {
@@ -91,7 +142,7 @@ function isAtOrAboveRoot(dir: string, roots: string[]): boolean {
     return roots.some((root) => dir === root || !relative(dir, root).startsWith(".."));
 }
 
-export function collapseDuplicates({ roots }: CollapseArgs): DuplicatesReport {
+export function collapseDuplicates({ roots, minSize, include, exclude }: CollapseArgs): DuplicatesReport {
     const sw = new Stopwatch();
     const shaOf = new Map<string, string>();
     const sizeOf = new Map<string, number>();
@@ -99,12 +150,30 @@ export function collapseDuplicates({ roots }: CollapseArgs): DuplicatesReport {
 
     for (const root of roots) {
         for (const g of findDuplicateFiles(root)) {
-            for (const p of g.paths) {
+            // Filter 1: minSize. Drop groups smaller than the user's threshold.
+            if (minSize !== undefined && g.size < minSize) {
+                continue;
+            }
+
+            // Filter 2: include/exclude. Keep only paths passing the globs; if
+            // the surviving set drops below 2, the group is no longer a duplicate.
+            const filtered =
+                (include && include.length > 0) || (exclude && exclude.length > 0)
+                    ? g.paths.filter((p) => {
+                          const containingRoot = rootOf(p, roots) ?? root;
+                          return passesFilters(p, containingRoot, include, exclude);
+                      })
+                    : g.paths;
+            if (filtered.length < 2) {
+                continue;
+            }
+
+            for (const p of filtered) {
                 shaOf.set(p, g.sha256);
                 sizeOf.set(p, g.size);
             }
 
-            fileGroups.push({ sha256: g.sha256, size: g.size, paths: g.paths });
+            fileGroups.push({ sha256: g.sha256, size: g.size, paths: filtered });
         }
     }
 
