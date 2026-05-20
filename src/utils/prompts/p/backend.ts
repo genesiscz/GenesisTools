@@ -1,7 +1,12 @@
+import { clackBackend } from "./clack-backend"; // STATIC: clack only, no opentui (verified separate file)
 import type {
     ConfirmOpts,
+    EditorOpts,
     Log,
     MultiSelectOpts,
+    NumberOpts,
+    PasswordOpts,
+    SearchOpts,
     SelectOpts,
     SelectValue,
     Spinner,
@@ -20,21 +25,25 @@ export interface PromptBackend {
     typedConfirm(opts: TypedConfirmOpts): Promise<boolean>;
     select(opts: SelectOpts): Promise<SelectValue>;
     multiselect(opts: MultiSelectOpts): Promise<SelectValue[]>;
+    password(opts: PasswordOpts): Promise<string>;
+    search<T>(opts: SearchOpts<T>): Promise<T>;
+    editor(opts: EditorOpts): Promise<string>;
+    number(opts: NumberOpts): Promise<number>;
 
     spinner(): Spinner;
     log: Log;
 }
 
-let active: PromptBackend | null = null;
+// Default to clack at module load (advisor: getBackend stays SYNC — 700+
+// sync p.log.*/p.spinner() callers; an async/buffered shim would reorder the
+// first log line of every process). clack-backend.ts does not import @opentui
+// (separate file), so the "no opentui/solid pulled" constraint holds.
+let active: PromptBackend = clackBackend;
 
 export function setBackend(backend: PromptBackend): void {
-    active = backend;
+    active = backend; // doctor's plain/tui paths override the clack default
 }
 
 export function getBackend(): PromptBackend {
-    if (!active) {
-        throw new Error("p.* backend not set. Call setBackend(...) during startup.");
-    }
-
     return active;
 }
