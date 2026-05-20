@@ -31,11 +31,14 @@ export async function runDaemonScan(args: DaemonScanArgs = {}): Promise<DaemonSc
     }
 
     const minReal = cfg.minReal ?? 10485760;
-    // The daemon's job is to surface ACTIONABLE reclaim (what `optimize` would
-    // free) — that's what collapseDuplicates gives us. A separate measure pass
-    // here would only inform the log line, not the user-facing notification,
-    // and doubles the I/O of every daemon tick. Drop it.
-    const sets = collapseDuplicates({ roots }).sets;
+    const exclude = cfg.exclude ?? [];
+    // Surface only the actionable reclaim (what `optimize` would free) — a
+    // measure pass would inflate the I/O without changing the notification.
+    // The same filters threaded into cachePlan MUST be passed to
+    // collapseDuplicates so the cached plan matches its cache key — otherwise
+    // a follow-up `optimize` cache hit serves an unfiltered plan against a
+    // filter-aware request.
+    const sets = collapseDuplicates({ roots, minSize: minReal, exclude }).sets;
     const reclaimable = sets.reduce((s, x) => s + x.reclaimable, 0);
 
     await cachePlan(
@@ -43,7 +46,7 @@ export async function runDaemonScan(args: DaemonScanArgs = {}): Promise<DaemonSc
             roots,
             minSize: minReal,
             include: [],
-            exclude: cfg.exclude ?? [],
+            exclude,
             nodeModules: Boolean(cfg.nodeModules),
         },
         sets
