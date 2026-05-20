@@ -421,6 +421,12 @@ export interface FindDuplicatesOptions {
  *  starves the event loop and the user's Ctrl+C never gets delivered. */
 const YIELD_EVERY_BUCKETS = 64;
 
+/** How often we yield to the event loop while consuming `walkFiles` —
+ *  for 100+GB trees the walk dominates and without this SIGINT can't be
+ *  delivered until the entire walk finishes. 1024 entries is roughly
+ *  10ms of stat work between yields. */
+const YIELD_EVERY_WALK_ENTRIES = 1024;
+
 function yieldToLoop(): Promise<void> {
     return new Promise((resolve) => {
         setImmediate(resolve);
@@ -461,7 +467,13 @@ export async function findDuplicateFiles(root: string, opts: FindDuplicatesOptio
     if (shouldEnter !== undefined) {
         walkOpts.shouldEnter = shouldEnter;
     }
+    let walkCount = 0;
     for (const e of walkFiles(root, walkOpts)) {
+        if ((walkCount++ & (YIELD_EVERY_WALK_ENTRIES - 1)) === 0) {
+            await yieldToLoop();
+            signal?.throwIfAborted();
+        }
+
         if (e.logical < minSize) {
             continue;
         }
