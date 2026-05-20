@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { type Dirent, readdirSync } from "node:fs";
 import { basename, dirname, join, relative, sep } from "node:path";
 import { logger } from "@app/logger";
-import { findDuplicateFiles } from "@app/utils/fs/disk-usage";
+import { emptyFindDuplicatesStats, type FileMetaCacheLike, findDuplicateFiles } from "@app/utils/fs/disk-usage";
 import { Stopwatch } from "@app/utils/Stopwatch";
 import { passesGlobs } from "./filters";
 import type { DuplicateSet, DuplicatesReport } from "./render/types";
@@ -26,6 +26,9 @@ export interface CollapseArgs {
     /** Forwarded to `walkFiles` — called per directory entered (high rate;
      *  cheap callback only). CLI uses this to drive a live spinner. */
     onDirEntered?: (dir: string) => void;
+    /** Forwarded to `findDuplicateFiles`. When provided, the hash phase
+     *  reuses cached sha for unchanged files. */
+    cache?: FileMetaCacheLike;
 }
 
 /** Which root contains `absPath`? Used to relativize for glob matching across
@@ -126,14 +129,18 @@ export async function collapseDuplicates({
     signal,
     shouldEnter,
     onDirEntered,
+    cache,
 }: CollapseArgs): Promise<DuplicatesReport> {
     const sw = new Stopwatch();
     const shaOf = new Map<string, string>();
     const sizeOf = new Map<string, number>();
     const fileGroups: { sha256: string; size: number; paths: string[] }[] = [];
+    // One stats accumulator across all roots — findDuplicateFiles ADDS to its
+    // counters, so we get sum-of-roots in `stats` at the end.
+    const stats = emptyFindDuplicatesStats();
 
     for (const root of roots) {
-        const findOpts: Parameters<typeof findDuplicateFiles>[1] = {};
+        const findOpts: Parameters<typeof findDuplicateFiles>[1] = { stats };
         if (minSize !== undefined) {
             findOpts.minSize = minSize;
         }
@@ -145,6 +152,9 @@ export async function collapseDuplicates({
         }
         if (onDirEntered !== undefined) {
             findOpts.onDirEntered = onDirEntered;
+        }
+        if (cache !== undefined) {
+            findOpts.cache = cache;
         }
         for (const g of await findDuplicateFiles(root, findOpts)) {
             // If include/exclude prunes the group below 2 paths it is no
@@ -280,9 +290,12 @@ export async function collapseDuplicates({
             dirSets,
             fileSets,
             totalReclaimable,
+            cacheHits: stats.cacheHits,
+            cacheMisses: stats.cacheMisses,
+            sha256Calls: stats.sha256Calls,
             elapsedMs: Math.round(sw.elapsedMs),
         },
         "collapseDuplicates complete"
     );
-    return { roots, sets, totalReclaimable, grouped: false, hardStop: roots };
+    return { roots, sets, totalReclaimable, grouped: false, hardStop: roots, stats };
 }

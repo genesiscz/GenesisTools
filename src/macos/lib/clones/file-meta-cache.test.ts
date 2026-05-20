@@ -144,6 +144,33 @@ describe("FileMetaCache", () => {
         });
     });
 
+    it("flush chunks rows past the SQLite parameter limit (>5000 rows)", async () => {
+        await withTmpDb("batch", async (dbPath, dir) => {
+            const c = FileMetaCache.resetForTests(dbPath);
+            // 6,000 rows × 6 cols = 36,000 params > SQLite's 32,766 cap.
+            // Without chunking this would throw "too many SQL variables".
+            const N = 6_000;
+            for (let i = 0; i < N; i++) {
+                c.set(`${dir}/f-${i.toString().padStart(5, "0")}`, {
+                    size: BigInt(100 + i),
+                    mtimeNs: BigInt(1_000_000 + i),
+                    sha256: `sha-${i}`,
+                    cloneId: "",
+                    lastSeenAt: 0,
+                });
+            }
+            await c.flush(123);
+            c.close();
+
+            const c2 = FileMetaCache.resetForTests(dbPath);
+            await c2.loadScope(dir);
+            expect(c2.size()).toBe(N);
+            expect(c2.get(`${dir}/f-00000`)?.sha256).toBe("sha-0");
+            expect(c2.get(`${dir}/f-05999`)?.sha256).toBe("sha-5999");
+            c2.close();
+        });
+    });
+
     it("upsert via set+flush overwrites existing rows", async () => {
         await withTmpDb("upsert", async (dbPath, dir) => {
             const c1 = FileMetaCache.resetForTests(dbPath);

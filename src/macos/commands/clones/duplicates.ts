@@ -3,6 +3,7 @@ import { basename } from "node:path";
 import { logger } from "@app/logger";
 import { applyLogLevel } from "@app/macos/commands/clones/log-level";
 import { collapseDuplicates } from "@app/macos/lib/clones/collapse";
+import { FileMetaCache } from "@app/macos/lib/clones/file-meta-cache";
 import { expandNodeModules, resolveRoots } from "@app/macos/lib/clones/orchestrator";
 import { resolveFormat, resolveRenderer } from "@app/macos/lib/clones/render/index";
 import { loadClonesConfig } from "@app/macos/lib/clones/store";
@@ -129,6 +130,17 @@ export function createDuplicatesCommand(): Command {
                 }, 100);
             }
 
+            // Open the singleton cache + bulk-load the rows for each scan
+            // root. `getInstance` lazy-opens; the first scan after a
+            // fresh install creates the DB+migration. Cache is closed in
+            // `finally` so SIGINT/exception paths still release the WAL.
+            const cache = FileMetaCache.getInstance();
+            for (const root of roots) {
+                await cache.loadScope(root);
+            }
+            const scanStartedAt = Date.now();
+            log.info({ scanStartedAt, roots, cacheSize: cache.size() }, "duplicates scan starting with cache");
+
             try {
                 const report = await collapseDuplicates({
                     roots,
@@ -138,12 +150,26 @@ export function createDuplicatesCommand(): Command {
                     signal: controller.signal,
                     shouldEnter: shouldEnterByDefault,
                     onDirEntered,
+                    cache,
                 });
+                // Flush dirty rows + prune missing-from-disk entries per root.
+                // Both run BEFORE rendering so a slow-render path doesn't leak
+                // an unflushed cache on Ctrl+C — but AFTER the report comes
+                // back so we know the walk completed cleanly.
+                await cache.flush(scanStartedAt);
+                for (const root of roots) {
+                    await cache.pruneScope(root, scanStartedAt);
+                }
+
                 if (tickTimer) {
                     clearInterval(tickTimer);
                     tickTimer = null;
                 }
-                spinner?.stop(`Scanned ${dirsSeen} dirs · ${report.sets.length} set(s) found`);
+                const s = report.stats;
+                const hitTotal = s ? s.cacheHits + s.cacheMisses : 0;
+                const hitRate = s && hitTotal > 0 ? Math.round((s.cacheHits / hitTotal) * 100) : 0;
+                const hitLabel = s ? ` · cache hit ${hitRate}%` : "";
+                spinner?.stop(`Scanned ${dirsSeen} dirs · ${report.sets.length} set(s) found${hitLabel}`);
                 report.grouped = Boolean(opts.group);
 
                 const fmt = resolveFormat(opts.format);
@@ -200,6 +226,10 @@ export function createDuplicatesCommand(): Command {
                 if (tickTimer) {
                     clearInterval(tickTimer);
                 }
+                // Always release the cache handle — leaving the WAL open
+                // across process exit can leave -wal/-shm files lying around
+                // that the next scan has to re-open.
+                cache.close();
                 process.off("SIGINT", onSigint);
                 process.off("SIGTERM", onSigint);
             }

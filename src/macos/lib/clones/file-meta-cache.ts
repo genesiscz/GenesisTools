@@ -13,6 +13,11 @@ const log = logger.child({ component: "clones:file-meta-cache" });
  *  reuses rows from the first scan. ONE db per machine, not per scan-root. */
 export const FILE_META_DB_PATH = join(homedir(), ".genesis-tools", "macos-clones", "cache", "file-meta.db");
 
+/** SQLite caps bound parameters at 32766 (SQLITE_MAX_VARIABLE_NUMBER since
+ *  3.32.0). Our flush rows have 6 columns, so 32766 / 6 = 5461 is the hard
+ *  cap. Using 5000 leaves headroom and rounds nicely. */
+const FLUSH_BATCH_ROWS = 5_000;
+
 export interface FileMetaEntry {
     size: bigint;
     mtimeNs: bigint;
@@ -152,9 +157,11 @@ export class FileMetaCache {
         this.dirty.add(path);
     }
 
-    /** Bulk-write dirty rows in one transaction (Kysely emits one multi-row
-     *  INSERT). `lastSeenAt` is stamped on every dirty row so a follow-up
-     *  `pruneScope(cutoff)` drops rows whose files weren't seen this run. */
+    /** Bulk-write dirty rows. Kysely emits one multi-row INSERT per batch;
+     *  we chunk because SQLite caps bound parameters at 32766 and we use 6
+     *  columns per row (32766/6 = 5461). `lastSeenAt` is stamped on every
+     *  dirty row so a follow-up `pruneScope(cutoff)` drops rows whose files
+     *  weren't seen this run. */
     async flush(lastSeenAt: number): Promise<void> {
         if (this.dirty.size === 0) {
             log.info({ event: "cache.flush.skip", reason: "no-dirty" }, "FileMetaCache flush skipped (clean)");
@@ -180,21 +187,40 @@ export class FileMetaCache {
             ];
         });
 
-        log.info({ event: "cache.flush.start", rows: rows.length }, "FileMetaCache flush start");
+        log.info(
+            { event: "cache.flush.start", rows: rows.length, batchSize: FLUSH_BATCH_ROWS },
+            "FileMetaCache flush start"
+        );
 
-        await kysely
-            .insertInto("file_meta")
-            .values(rows)
-            .onConflict((oc) =>
-                oc.column("path").doUpdateSet((eb) => ({
-                    size: eb.ref("excluded.size"),
-                    mtime_ns: eb.ref("excluded.mtime_ns"),
-                    sha256: eb.ref("excluded.sha256"),
-                    clone_id: eb.ref("excluded.clone_id"),
-                    last_seen_at: eb.ref("excluded.last_seen_at"),
-                }))
-            )
-            .execute();
+        let batchIndex = 0;
+        for (let i = 0; i < rows.length; i += FLUSH_BATCH_ROWS) {
+            const batch = rows.slice(i, i + FLUSH_BATCH_ROWS);
+            batchIndex += 1;
+            await kysely
+                .insertInto("file_meta")
+                .values(batch)
+                .onConflict((oc) =>
+                    oc.column("path").doUpdateSet((eb) => ({
+                        size: eb.ref("excluded.size"),
+                        mtime_ns: eb.ref("excluded.mtime_ns"),
+                        sha256: eb.ref("excluded.sha256"),
+                        clone_id: eb.ref("excluded.clone_id"),
+                        last_seen_at: eb.ref("excluded.last_seen_at"),
+                    }))
+                )
+                .execute();
+            if (batchIndex % 4 === 0 || i + FLUSH_BATCH_ROWS >= rows.length) {
+                log.info(
+                    {
+                        event: "cache.flush.progress",
+                        batch: batchIndex,
+                        written: Math.min(i + FLUSH_BATCH_ROWS, rows.length),
+                        total: rows.length,
+                    },
+                    "FileMetaCache flush progress"
+                );
+            }
+        }
 
         for (const path of this.dirty) {
             const e = this.mem.get(path);
@@ -203,7 +229,12 @@ export class FileMetaCache {
             }
         }
         log.info(
-            { event: "cache.flush.complete", rows: rows.length, flushMs: Math.round(sw.elapsedMs) },
+            {
+                event: "cache.flush.complete",
+                rows: rows.length,
+                batches: batchIndex,
+                flushMs: Math.round(sw.elapsedMs),
+            },
             "FileMetaCache flush complete"
         );
         this.dirty.clear();
