@@ -81,8 +81,7 @@ function listFiles(dir: string): string[] {
     return out;
 }
 
-function dirInfo(dir: string, shaOf: Map<string, string>, sizeOf: Map<string, number>): DirInfo {
-    const files = listFiles(dir).sort();
+function dirInfo(dir: string, files: string[], shaOf: Map<string, string>, sizeOf: Map<string, number>): DirInfo {
     let bytes = 0;
     const h = createHash("sha256");
     for (const f of files) {
@@ -117,11 +116,7 @@ export function collapseDuplicates({ roots, minSize, include, exclude }: Collaps
     const fileGroups: { sha256: string; size: number; paths: string[] }[] = [];
 
     for (const root of roots) {
-        for (const g of findDuplicateFiles(root)) {
-            if (minSize !== undefined && g.size < minSize) {
-                continue;
-            }
-
+        for (const g of findDuplicateFiles(root, minSize !== undefined ? { minSize } : {})) {
             // If include/exclude prunes the group below 2 paths it is no
             // longer a duplicate — drop it.
             const filtered =
@@ -144,6 +139,21 @@ export function collapseDuplicates({ roots, minSize, include, exclude }: Collaps
         }
     }
 
+    // The ancestor walk re-enumerates the same dirs many times — once per
+    // file group, once per cursor level. Memoise both the sorted file list
+    // and the derived DirInfo so each dir is walked exactly once.
+    const filesCache = new Map<string, string[]>();
+    const listFilesCached = (dir: string): string[] => {
+        const hit = filesCache.get(dir);
+        if (hit) {
+            return hit;
+        }
+
+        const out = listFiles(dir).sort();
+        filesCache.set(dir, out);
+        return out;
+    };
+
     const dirCache = new Map<string, DirInfo>();
     const infoFor = (dir: string): DirInfo => {
         const cached = dirCache.get(dir);
@@ -151,7 +161,7 @@ export function collapseDuplicates({ roots, minSize, include, exclude }: Collaps
             return cached;
         }
 
-        const info = dirInfo(dir, shaOf, sizeOf);
+        const info = dirInfo(dir, listFilesCached(dir), shaOf, sizeOf);
         dirCache.set(dir, info);
         return info;
     };
@@ -190,7 +200,7 @@ export function collapseDuplicates({ roots, minSize, include, exclude }: Collaps
             const members = [...new Set(bestDirs)].sort();
             if (members.length >= 2) {
                 for (const m of members) {
-                    for (const f of listFiles(m)) {
+                    for (const f of listFilesCached(m)) {
                         consumed.add(f);
                     }
                 }
