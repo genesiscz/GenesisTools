@@ -1,3 +1,4 @@
+import { logger, out } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import type { Command } from "commander";
 import { render } from "ink";
@@ -27,9 +28,9 @@ export function registerUsageCommand(program: Command): void {
                     const account = { accountName: "token", usage };
 
                     if (opts.json) {
-                        console.log(SafeJSON.stringify(account, null, 2));
+                        out.print(SafeJSON.stringify(account, null, 2));
                     } else {
-                        console.log(renderAccountUsage(account));
+                        out.print(renderAccountUsage(account));
                     }
 
                     return;
@@ -44,7 +45,7 @@ export function registerUsageCommand(program: Command): void {
                         .some((a) => a.name === accountFilter);
 
                     if (!exists) {
-                        console.error(`Unknown account: ${accountFilter}`);
+                        logger.error({ accountFilter }, "Unknown account");
                         process.exit(1);
                     }
                 }
@@ -58,9 +59,9 @@ export function registerUsageCommand(program: Command): void {
                 const results = await getSharedAccountsUsage({ accountFilter, force: opts.fresh === true });
 
                 if (opts.json) {
-                    console.log(SafeJSON.stringify(results, null, 2));
+                    out.print(SafeJSON.stringify(results, null, 2));
                 } else {
-                    console.log(renderAllAccounts(results));
+                    out.print(renderAllAccounts(results));
                 }
 
                 return;
