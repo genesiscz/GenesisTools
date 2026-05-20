@@ -35,7 +35,7 @@ import { killTtyd, listTtyd, renameTtyd, spawnTtyd } from "@app/dev-dashboard/li
 import { fetchWeather } from "@app/dev-dashboard/lib/weather/client";
 import { logger } from "@app/logger";
 import { defaultDbPath } from "@app/question/commands/log";
-import { openReadModel, queryEntries } from "@app/question/lib/read-model";
+import { markEntriesRead, openReadModel, queryEntries } from "@app/question/lib/read-model";
 import { getAudioLibrary } from "@app/utils/audio/library";
 import { resolveSoundBuffer } from "@app/utils/audio/runner.server";
 import { SafeJSON } from "@app/utils/json";
@@ -359,6 +359,23 @@ export function attachDevDashboardMiddleware(middlewares: Connect.Server): void 
                 sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
             } finally {
                 db?.close(); // bun:sqlite has no GC finalizer — close every request or leak an FD (t1)
+            }
+
+            return;
+        }
+
+        if (req.method === "POST" && url.pathname === "/api/qa/read") {
+            let db: ReturnType<typeof openReadModel> | undefined;
+            try {
+                const body = await readJson<{ ids?: string[] }>(req);
+                const ids = body.ids?.filter((id) => typeof id === "string" && id.length > 0) ?? [];
+                db = openReadModel(defaultDbPath());
+                const updated = markEntriesRead(db, ids);
+                sendJson(res, 200, { ok: true, updated });
+            } catch (err) {
+                sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
+            } finally {
+                db?.close();
             }
 
             return;
