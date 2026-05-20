@@ -45,6 +45,7 @@ import type {
     UpOptions,
     UpResult,
 } from "./types";
+import { DEFAULT_BIND_HOST } from "./viteSpawn";
 
 export interface LifecycleContext {
     config: DashboardAppConfig;
@@ -67,7 +68,13 @@ export function buildLifecycleContext(config: DashboardAppConfig, resolvedPort: 
 function spawnEnv(config: DashboardAppConfig): Record<string, string | undefined> {
     return {
         ...config.spawn.env,
-        ...(config.type === "ui" ? { FORCE_COLOR: "1", BROWSER: "none" } : {}),
+        ...(config.type === "ui"
+            ? {
+                  FORCE_COLOR: "1",
+                  BROWSER: "none",
+                  DASHBOARD_BIND_HOST: config.bindHost ?? DEFAULT_BIND_HOST,
+              }
+            : {}),
     };
 }
 

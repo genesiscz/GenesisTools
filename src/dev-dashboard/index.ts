@@ -75,7 +75,8 @@ async function runUiServer(): Promise<void> {
     let frontProxy: ReturnType<typeof startFrontProxy>;
 
     try {
-        frontProxy = startFrontProxy({ publicPort: port, internalPort });
+        const bindHost = process.env.DASHBOARD_BIND_HOST ?? "0.0.0.0";
+        frontProxy = startFrontProxy({ publicPort: port, internalPort, hostname: bindHost });
     } catch (err) {
         try {
             child.kill("SIGTERM");
@@ -170,6 +171,7 @@ const devDashboardApp = defineDashboardApp({
     description: "Launch the dev-dashboard front-proxy + Vite + ttyd",
     commandName: "ui",
     aliases: ["dashboard"],
+    bindHost: "0.0.0.0",
     spawn: {
         cmd: [process.execPath, process.argv[1], "__ui-server"],
         cwd: PROJECT_ROOT,
