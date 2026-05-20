@@ -1,7 +1,9 @@
 import { closeSync, existsSync, openSync, readFileSync, readSync, statSync, writeFileSync } from "node:fs";
+import { getLocalIpv4 } from "@app/utils/network";
 import { stripAnsi } from "@app/utils/string";
 import pc from "picocolors";
 import { ensureLogFile } from "./pidFile";
+import type { DashboardBindHost } from "./types";
 
 export const LOG_SESSION_MARKER = "--- DashboardApp session ";
 
@@ -56,7 +58,11 @@ const BANNER_LINE =
     /(?:VITE v[\d.]+|➜\s+Local:|➜\s+Network:|Local:\s+https?:\/\/|Network:\s+https?:\/\/|ready in \d+)/i;
 
 /** Print the Vite/dev-server banner from the current log session to the terminal. */
-export function printDevServerBanner(logFile: string, port: number, opts: { color?: boolean } = {}): void {
+export function printDevServerBanner(
+    logFile: string,
+    port: number,
+    opts: { color?: boolean; bindHost?: DashboardBindHost } = {}
+): void {
     const color = opts.color ?? Boolean(process.stdout.isTTY);
     const tail = readLogTail(logFile, 40, true);
     const bannerLines: string[] = [];
@@ -73,14 +79,33 @@ export function printDevServerBanner(logFile: string, port: number, opts: { colo
         }
     }
 
+    const hasNetworkLine = bannerLines.some((line) => /network:/i.test(stripAnsi(line)));
+    const bindHost = opts.bindHost ?? "127.0.0.1";
+
     if (bannerLines.length === 0) {
-        const local = `http://localhost:${port}/`;
+        const local = bindHost === "0.0.0.0" ? `http://localhost:${port}/` : `http://127.0.0.1:${port}/`;
         process.stdout.write(
             `\n  ${color ? pc.cyan("➜") : "➜"}  ${color ? pc.bold("Local:") : "Local:"}   ${color ? pc.cyan(local) : local}\n`
         );
+
+        if (bindHost === "0.0.0.0") {
+            const network = `http://${getLocalIpv4()}:${port}/`;
+            process.stdout.write(
+                `  ${color ? pc.cyan("➜") : "➜"}  ${color ? pc.bold("Network:") : "Network:"} ${color ? pc.cyan(network) : network}\n`
+            );
+        }
+
         return;
     }
 
     const rendered = bannerLines.map((line) => (color ? line : stripAnsi(line)));
+
+    if (bindHost === "0.0.0.0" && !hasNetworkLine) {
+        const network = `http://${getLocalIpv4()}:${port}/`;
+        rendered.push(
+            `  ${color ? pc.cyan("➜") : "➜"}  ${color ? pc.bold("Network:") : "Network:"} ${color ? pc.cyan(network) : network}`
+        );
+    }
+
     process.stdout.write(`\n${rendered.join("\n")}\n`);
 }
