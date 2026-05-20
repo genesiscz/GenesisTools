@@ -1,3 +1,4 @@
+import { logger } from "@app/logger/client";
 import { Await, createFileRoute, defer, Link } from "@tanstack/react-router";
 import {
 	Activity,
@@ -81,7 +82,7 @@ function StatsPage() {
 			} catch (error) {
 				// Log error but don't crash - filtered stats just won't be available
 				if (import.meta.env.DEV) {
-					console.error("Failed to fetch stats for date range:", error);
+					logger.error({ err: error }, "Failed to fetch stats for date range");
 				}
 			} finally {
 				setIsLoadingRange(false);
