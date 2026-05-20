@@ -24,6 +24,44 @@ export function isLongLivedProxiedStream(pathname: string): boolean {
     return pathname === "/api/qa/stream";
 }
 
+const UPSTREAM_RETRY_ATTEMPTS = 10;
+const UPSTREAM_RETRY_MS = 250;
+
+function isConnectionRefused(err: unknown): boolean {
+    const code = (err as { code?: string })?.code;
+    return code === "ConnectionRefused" || code === "ECONNREFUSED";
+}
+
+export async function fetchProxiedUpstream(forwarded: Request, longLived: boolean): Promise<Response> {
+    for (let attempt = 0; attempt < UPSTREAM_RETRY_ATTEMPTS; attempt++) {
+        try {
+            const upstream = await fetch(forwarded, {
+                redirect: "manual",
+                ...(longLived ? {} : { signal: AbortSignal.timeout(15_000) }),
+            });
+
+            if (
+                (upstream.status === 502 || upstream.status === 503 || upstream.status === 504) &&
+                attempt < UPSTREAM_RETRY_ATTEMPTS - 1
+            ) {
+                await Bun.sleep(UPSTREAM_RETRY_MS);
+                continue;
+            }
+
+            return upstream;
+        } catch (err) {
+            if (isConnectionRefused(err) && attempt < UPSTREAM_RETRY_ATTEMPTS - 1) {
+                await Bun.sleep(UPSTREAM_RETRY_MS);
+                continue;
+            }
+
+            throw err;
+        }
+    }
+
+    throw new Error("fetchProxiedUpstream exhausted retries");
+}
+
 // LOCAL_ORIGIN_HEADER is the single source of truth in auth.ts (set/stripped
 // here, trusted by the Vite middleware — they must never desync).
 
@@ -226,10 +264,7 @@ export function startFrontProxy(opts: {
             let upstream: Response;
 
             try {
-                upstream = await fetch(forwarded, {
-                    redirect: "manual",
-                    ...(isLongLivedProxiedStream(url.pathname) ? {} : { signal: AbortSignal.timeout(15_000) }),
-                });
+                upstream = await fetchProxiedUpstream(forwarded, isLongLivedProxiedStream(url.pathname));
             } catch (err) {
                 // A refused connection is almost always the benign startup race
                 // (upstream Vite/ttyd not listening yet) — log it at debug so it
