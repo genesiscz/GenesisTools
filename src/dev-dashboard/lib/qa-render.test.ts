@@ -43,14 +43,15 @@ export function Widget({ title }: { title: string }) {
 });
 
 describe("enrichQaEntry", () => {
-    test("builds preview html for long answers", () => {
+    test("builds preview html for answers over the line limit", () => {
+        const lines = Array.from({ length: 52 }, (_, i) => `line ${i + 1}`);
         const entry = enrichQaEntry({
             ...baseEntry,
-            answerMd: "line one\nline two\nline three\nline four",
+            answerMd: lines.join("\n"),
         });
 
-        expect(entry.answerHtml).toContain("line four");
-        expect(entry.answerHtmlPreview).toContain("line three");
-        expect(entry.answerHtmlPreview).not.toContain("line four");
+        expect(entry.answerHtml).toContain("line 52");
+        expect(entry.answerHtmlPreview).toContain("line 50");
+        expect(entry.answerHtmlPreview).not.toContain("line 51");
     });
 });
