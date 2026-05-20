@@ -2,12 +2,13 @@ import { resolve } from "node:path";
 import { logger } from "@app/logger";
 import { Executor, runTool } from "@app/utils/cli";
 import { copyToClipboard } from "@app/utils/clipboard";
-import { handleReadmeFlag } from "@app/utils/readme";
-import { inquirerBackend } from "@app/utils/prompts/p/inquirer-backend";
 import * as p from "@app/utils/prompts/p";
+import { inquirerBackend } from "@app/utils/prompts/p/inquirer-backend";
+import { handleReadmeFlag } from "@app/utils/readme";
 
 // Use inquirer backend for this tool
 p.setBackend(inquirerBackend);
+
 import { Command } from "commander";
 
 // Handle --readme flag early (before Commander parses)
@@ -215,10 +216,10 @@ async function main() {
         ];
 
         try {
-            outputAction = await p.select({
+            outputAction = (await p.select({
                 message: "Where would you like the diff output to go?",
                 options: outputChoices.map((c) => ({ value: c.value, label: c.name })),
-            }) as OutputAction;
+            })) as OutputAction;
 
             if (outputAction === "file") {
                 const firstShaRaw = await getTruncatedSha(git, diffStartRef);

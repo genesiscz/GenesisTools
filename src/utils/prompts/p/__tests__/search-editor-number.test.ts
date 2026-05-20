@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { getBackend, setBackend } from "../backend";
 import type { PromptBackend } from "../backend";
+import { getBackend, setBackend } from "../backend";
 import type { EditorOpts, NumberOpts, SearchOpts } from "../types";
 
 /**

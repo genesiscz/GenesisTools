@@ -32,10 +32,18 @@ describe("@app/logger/client", () => {
         warns = [];
         errors = [];
         debugs = [];
-        logSpy = spyOn(console, "log").mockImplementation((...args) => { logs.push(args); });
-        warnSpy = spyOn(console, "warn").mockImplementation((...args) => { warns.push(args); });
-        errorSpy = spyOn(console, "error").mockImplementation((...args) => { errors.push(args); });
-        debugSpy = spyOn(console, "debug").mockImplementation((...args) => { debugs.push(args); });
+        logSpy = spyOn(console, "log").mockImplementation((...args) => {
+            logs.push(args);
+        });
+        warnSpy = spyOn(console, "warn").mockImplementation((...args) => {
+            warns.push(args);
+        });
+        errorSpy = spyOn(console, "error").mockImplementation((...args) => {
+            errors.push(args);
+        });
+        debugSpy = spyOn(console, "debug").mockImplementation((...args) => {
+            debugs.push(args);
+        });
     });
 
     afterEach(() => {

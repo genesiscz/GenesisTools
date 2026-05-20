@@ -1,3 +1,4 @@
+import { out } from "@app/logger";
 import { isInteractive } from "@app/utils/cli/executor";
 import { loadAskProviderChoice } from "@app/youtube/commands/_shared/ask-provider";
 import { getYoutube } from "@app/youtube/commands/_shared/ensure-pipeline";
@@ -47,7 +48,7 @@ export function registerAnalyzeCommand(program: Command): void {
         .addHelpText("after", buildAnalyzeExamples())
         .action(async (targets: string[], opts: AnalyzeOpts) => {
             if (opts.ask && (opts.summary || opts.timestamped)) {
-                console.error(pc.red("--ask is mutually exclusive with --summary/--timestamped"));
+                out.error(pc.red("--ask is mutually exclusive with --summary/--timestamped"));
                 process.exitCode = 1;
                 return;
             }
@@ -67,7 +68,7 @@ export function registerAnalyzeCommand(program: Command): void {
             });
 
             if (!proceed) {
-                console.error(pc.dim("Cancelled — no LLM call made."));
+                out.error(pc.dim("Cancelled — no LLM call made."));
                 process.exitCode = 1;
                 return;
             }
@@ -187,7 +188,7 @@ async function confirmLlmCall(opts: ConfirmLlmOpts): Promise<boolean> {
     lines.push(pc.yellow(`  - Cost: depends on the provider — subscription quota or pay-per-call API spend.`));
 
     for (const line of lines) {
-        console.error(line);
+        out.error(line);
     }
 
     if (opts.yes) {
@@ -195,7 +196,7 @@ async function confirmLlmCall(opts: ConfirmLlmOpts): Promise<boolean> {
     }
 
     if (!isInteractive()) {
-        console.error(pc.red("Refusing to call the LLM in non-interactive mode without --yes/-y."));
+        out.error(pc.red("Refusing to call the LLM in non-interactive mode without --yes/-y."));
         return false;
     }
 

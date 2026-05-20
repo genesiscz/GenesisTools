@@ -1,3 +1,4 @@
+import { out } from "@app/logger";
 import clipboardy from "clipboardy";
 import pc from "picocolors";
 
@@ -9,7 +10,7 @@ export async function copyToClipboard(
 
     if (!options.silent) {
         const label = options.label ? ` (${options.label})` : "";
-        console.error(pc.green(`✓ Copied to clipboard${label}`));
+        out.error(pc.green(`✓ Copied to clipboard${label}`));
     }
 }
 

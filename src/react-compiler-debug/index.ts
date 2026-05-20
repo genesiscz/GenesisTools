@@ -24,7 +24,7 @@ handleReadmeFlag(import.meta.url);
 
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { logger } from "@app/logger";
+import { logger, out } from "@app/logger";
 import { isVerbose, runTool } from "@app/utils/cli";
 import { copyToClipboard } from "@app/utils/clipboard";
 import { SafeJSON } from "@app/utils/json";
@@ -71,9 +71,9 @@ program
             await main(fileArg, options);
         } catch (error) {
             if (error instanceof Error) {
-                console.error(chalk.red("Error:"), error.message);
+                out.error(chalk.red("Error:"), error.message);
                 if (isVerbose()) {
-                    console.error(error.stack);
+                    out.error(error.stack);
                 }
             }
             process.exit(1);
@@ -89,7 +89,7 @@ function createCompilerOptions(options: ProgramOptions): CompilerOptions {
     if (isVerbose()) {
         compilerOptions.logger = {
             logEvent(filename: string | null, event: unknown) {
-                console.error(
+                out.error(
                     chalk.dim("[Compiler Event]"),
                     chalk.cyan(filename || "unknown"),
                     SafeJSON.stringify(event, null, 2)
@@ -387,11 +387,11 @@ async function main(fileArg: string | undefined, options: ProgramOptions) {
         code = await file.text();
         filename = filePath;
     } else {
-        console.error(chalk.red("No input provided."));
-        console.log("\nUsage:");
-        console.log("  tools react-compiler-debug <file.tsx>");
-        console.log('  tools react-compiler-debug --code "const Foo = () => <div />"');
-        console.log("  cat file.tsx | tools react-compiler-debug --stdin");
+        out.error(chalk.red("No input provided."));
+        out.print("\nUsage:");
+        out.print("  tools react-compiler-debug <file.tsx>");
+        out.print('  tools react-compiler-debug --code "const Foo = () => <div />"');
+        out.print("  cat file.tsx | tools react-compiler-debug --stdin");
         process.exit(1);
     }
 
@@ -428,7 +428,7 @@ async function main(fileArg: string | undefined, options: ProgramOptions) {
             } catch (prettifyError) {
                 // If prettification fails, fall back to raw output
                 if (isVerbose()) {
-                    console.error(chalk.yellow("Prettification failed, using raw output:"), prettifyError);
+                    out.error(chalk.yellow("Prettification failed, using raw output:"), prettifyError);
                 }
             }
         }
@@ -470,10 +470,10 @@ async function main(fileArg: string | undefined, options: ProgramOptions) {
         // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional ANSI escape/control character matching
         const plainText = outputText.replace(/\x1B\[[0-9;]*m/g, "");
         await copyToClipboard(plainText, { silent: true });
-        console.log(chalk.green("Output copied to clipboard!"));
-        console.log(outputText);
+        out.print(chalk.green("Output copied to clipboard!"));
+        out.print(outputText);
     } else {
-        console.log(outputText);
+        out.print(outputText);
     }
 }
 

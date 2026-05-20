@@ -48,13 +48,13 @@ export async function syncFromProviders(providers: MCPProvider[], options: SyncF
         logger.info(suggestCommand("tools mcp-manager", { add: ["--provider", "all"] }));
         process.exit(1);
     } else {
-        selectedProviders = await p.multiselect({
+        selectedProviders = (await p.multiselect({
             message: "Select providers to sync from:",
             options: availableProviders.map((prov) => ({
                 value: prov.getName(),
                 label: `${prov.getName()} (${prov.getConfigPath()})`,
             })),
-        }) as string[];
+        })) as string[];
 
         if (selectedProviders.length === 0) {
             logger.info("No providers selected. Cancelled.");
@@ -269,7 +269,7 @@ export async function syncFromProviders(providers: MCPProvider[], options: SyncF
                 logger.info(`Non-interactive: keeping current version for '${serverName}'`);
                 choice = "current";
             } else {
-                choice = await p.select({
+                choice = (await p.select({
                     message: `Which version should be kept for '${serverName}'?`,
                     options: [
                         {
@@ -281,7 +281,7 @@ export async function syncFromProviders(providers: MCPProvider[], options: SyncF
                             label: `Use incoming (${conflict.provider})`,
                         },
                     ],
-                }) as string;
+                })) as string;
             }
 
             if (choice === "incoming") {

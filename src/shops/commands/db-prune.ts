@@ -1,3 +1,4 @@
+import { out } from "@app/logger";
 import { getShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import { parsePositiveInt } from "@app/shops/lib/cli-validators";
 import { runDbPruneHttp } from "@app/shops/lib/db-prune";
@@ -13,6 +14,6 @@ export function registerDbPruneCommand(program: Command): void {
         .action(async (opts: { days: number }) => {
             const days = opts.days;
             const deleted = await runDbPruneHttp(getShopsDatabase(), days);
-            console.log(`pruned ${deleted} http_requests rows older than ${days} days`);
+            out.print(`pruned ${deleted} http_requests rows older than ${days} days`);
         });
 }

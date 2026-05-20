@@ -317,10 +317,10 @@ export async function promptForServers(config: UnifiedMCPConfig, message: string
         return null;
     }
 
-    const selectedServers = await p.multiselect({
+    const selectedServers = (await p.multiselect({
         message,
         options: serverNames.map((name) => ({ value: name, label: name })),
-    }) as string[];
+    })) as string[];
 
     return selectedServers;
 }
@@ -376,13 +376,13 @@ export async function promptForProviders(availableProviders: MCPProvider[], mess
         return null;
     }
 
-    const selectedProviders = await p.multiselect({
+    const selectedProviders = (await p.multiselect({
         message,
         options: availableProviders.map((prov) => ({
             value: prov.getName(),
             label: `${prov.getName()} (${prov.getConfigPath()})`,
         })),
-    }) as string[];
+    })) as string[];
 
     return selectedProviders;
 }
@@ -415,10 +415,10 @@ export async function promptForProjects(projects: string[], message: string): Pr
         })),
     ];
 
-    const selectedProjects = await p.multiselect({
+    const selectedProjects = (await p.multiselect({
         message,
         options,
-    }) as string[];
+    })) as string[];
 
     return selectedProjects.map((choice) => {
         if (choice === "global") {

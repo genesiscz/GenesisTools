@@ -5,8 +5,8 @@ import { WriteResult } from "@app/mcp-manager/utils/providers/types.js";
 import { isInteractive } from "@app/utils/cli";
 import { DiffUtil } from "@app/utils/diff";
 import { SafeJSON } from "@app/utils/json";
-import { inquirerBackend } from "@app/utils/prompts/p/inquirer-backend";
 import * as p from "@app/utils/prompts/p";
+import { inquirerBackend } from "@app/utils/prompts/p/inquirer-backend";
 import chalk from "chalk";
 
 /**
@@ -63,10 +63,10 @@ export async function renameServer(
     }
 
     if (!finalNewName) {
-        const inputNewName = await p.text({
+        const inputNewName = (await p.text({
             message: `Enter new name for '${finalOldName}':`,
             initialValue: finalOldName,
-        }) as string;
+        })) as string;
 
         finalNewName = inputNewName.trim();
     }
@@ -161,13 +161,13 @@ export async function renameServer(
         // Non-interactive: sync to all available providers
         selectedProviderNames = availableProviders.map((p) => p.getName());
     } else {
-        selectedProviderNames = await p.multiselect({
+        selectedProviderNames = (await p.multiselect({
             message: "Select providers to sync rename to:",
             options: availableProviders.map((prov) => ({
                 value: prov.getName(),
                 label: `${prov.getName()} (${prov.getConfigPath()})`,
             })),
-        }) as string[];
+        })) as string[];
     }
 
     if (selectedProviderNames.length === 0) {

@@ -1,4 +1,4 @@
-import { logger } from "@app/logger";
+import { logger, out } from "@app/logger";
 import { readUnifiedConfig, stripMetaFromServers } from "@app/mcp-manager/utils/config.utils.js";
 import type { UnifiedMCPServerConfig } from "@app/mcp-manager/utils/providers/types.js";
 import { copyToClipboard } from "@app/utils/clipboard";
@@ -130,6 +130,6 @@ export async function configJson(options: ConfigJsonOptions = {}): Promise<void>
         await copyToClipboard(jsonOutput, { silent: true });
         logger.info("✔ Configuration copied to clipboard");
     } else {
-        console.log(jsonOutput);
+        out.print(jsonOutput);
     }
 }

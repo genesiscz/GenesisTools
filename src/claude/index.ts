@@ -1,11 +1,12 @@
 #!/usr/bin/env bun
 import { logger } from "@app/logger";
 import { runTool } from "@app/utils/cli";
-import { inquirerBackend } from "@app/utils/prompts/p/inquirer-backend";
 import * as p from "@app/utils/prompts/p";
+import { inquirerBackend } from "@app/utils/prompts/p/inquirer-backend";
 
 // Use inquirer backend for this tool
 p.setBackend(inquirerBackend);
+
 import { Command } from "commander";
 import { registerConfigCommand } from "./commands/config";
 import { registerDaemonCommand } from "./commands/daemon";

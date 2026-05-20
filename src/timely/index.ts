@@ -2,10 +2,10 @@
 
 // src/timely/index.ts
 
-import { logger } from "@app/logger";
+import { logger, out } from "@app/logger";
 import { enhanceHelp, runTool } from "@app/utils/cli";
-import { inquirerBackend } from "@app/utils/prompts/p/inquirer-backend";
 import * as p from "@app/utils/prompts/p";
+import { inquirerBackend } from "@app/utils/prompts/p/inquirer-backend";
 import { Storage } from "@app/utils/storage";
 import chalk from "chalk";
 import { Command } from "commander";
@@ -35,7 +35,7 @@ const service = new TimelyService(client, storage);
 export { storage, client, service };
 
 function showHelpFull(): void {
-    console.log(`
+    out.print(`
 ${chalk.bold("Timely CLI")} - Interact with Timely time tracking
 
 ${chalk.cyan("Usage:")}

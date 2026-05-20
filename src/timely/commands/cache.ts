@@ -1,7 +1,7 @@
-import { logger } from "@app/logger";
+import { logger, out } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
-import type { Storage } from "@app/utils/storage";
 import * as p from "@app/utils/prompts/p";
+import type { Storage } from "@app/utils/storage";
 import chalk from "chalk";
 import type { Command } from "commander";
 
@@ -20,13 +20,13 @@ export function registerCacheCommand(program: Command, storage: Storage): void {
             }
 
             if (options.format === "json") {
-                console.log(SafeJSON.stringify(files, null, 2));
+                out.print(SafeJSON.stringify(files, null, 2));
                 return;
             }
 
             logger.info(chalk.cyan(`\nCached files (${files.length}):\n`));
             for (const file of files) {
-                console.log(`  ${file}`);
+                out.print(`  ${file}`);
             }
         });
 

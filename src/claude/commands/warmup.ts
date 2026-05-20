@@ -1,4 +1,5 @@
 import { sendWarmupMessage } from "@app/claude/lib/warmup/service";
+import { out } from "@app/logger";
 import { isInteractive, suggestCommand } from "@app/utils/cli";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
@@ -33,7 +34,7 @@ export function registerWarmupCommand(program: Command): void {
             selectedNames = [accountArg];
         } else if (!isInteractive()) {
             p.log.error("No account specified in non-interactive mode.");
-            console.info(suggestCommand("tools claude warmup", { add: ["<account>"] }));
+            out.info(suggestCommand("tools claude warmup", { add: ["<account>"] }));
             p.outro("");
             return;
         } else {
@@ -106,11 +107,11 @@ export function registerWarmupCommand(program: Command): void {
             const accountNames = aiConfig.getAccountsByProvider("anthropic-sub").map((a) => a.name);
 
             if (accountNames.length === 0) {
-                console.error("No accounts configured. Run: tools claude login");
+                out.error("No accounts configured. Run: tools claude login");
                 process.exit(1);
             }
 
-            console.log(`Warming up ${accountNames.length} account(s)...`);
+            out.print(`Warming up ${accountNames.length} account(s)...`);
 
             let failures = 0;
 
@@ -119,7 +120,7 @@ export function registerWarmupCommand(program: Command): void {
                 const success = await sendWarmupMessage(name);
                 const duration = Math.round(performance.now() - start);
                 const icon = success ? "\u2713" : "\u2717";
-                console.log(`  ${icon} ${name} (${duration}ms)`);
+                out.print(`  ${icon} ${name} (${duration}ms)`);
 
                 if (!success) {
                     failures++;

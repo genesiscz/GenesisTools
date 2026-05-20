@@ -47,13 +47,13 @@ export async function syncServers(providers: MCPProvider[], options: SyncOptions
         logger.info(suggestCommand("tools mcp-manager", { add: ["--provider", "all"] }));
         process.exit(1);
     } else {
-        selectedProviders = await p.multiselect({
+        selectedProviders = (await p.multiselect({
             message: "Select providers to sync to:",
             options: availableProviders.map((prov) => ({
                 value: prov.getName(),
                 label: `${prov.getName()} (${prov.getConfigPath()})`,
             })),
-        }) as string[];
+        })) as string[];
 
         if (selectedProviders.length === 0) {
             logger.info("No providers selected. Cancelled.");

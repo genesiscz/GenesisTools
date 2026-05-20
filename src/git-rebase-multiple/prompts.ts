@@ -1,5 +1,6 @@
-import { inquirerBackend } from "@app/utils/prompts/p/inquirer-backend";
+import { out } from "@app/logger";
 import * as p from "@app/utils/prompts/p";
+import { inquirerBackend } from "@app/utils/prompts/p/inquirer-backend";
 import chalk from "chalk";
 import { git } from "./git";
 import type { PlanStep } from "./types";
@@ -63,11 +64,11 @@ export const prompts = {
         potentialChildren: Array<{ name: string; commitsAhead: number }>
     ): Promise<string[]> {
         if (potentialChildren.length === 0) {
-            console.log(chalk.yellow("\nNo dependent branches found."));
+            out.print(chalk.yellow("\nNo dependent branches found."));
             return [];
         }
 
-        console.log(chalk.dim(`\nFound ${potentialChildren.length} branches that may depend on ${parentBranch}:`));
+        out.print(chalk.dim(`\nFound ${potentialChildren.length} branches that may depend on ${parentBranch}:`));
 
         return p.multiselect({
             message: "Select child branches to rebase (space to toggle):",
@@ -83,16 +84,16 @@ export const prompts = {
      * Show execution plan and confirm
      */
     async confirmPlan(_config: unknown, steps: PlanStep[]): Promise<boolean> {
-        console.log(chalk.bold("\n📝 Execution Plan:\n"));
+        out.print(chalk.bold("\n📝 Execution Plan:\n"));
 
         for (const step of steps) {
-            console.log(`${chalk.cyan(`  Step ${step.stepNumber}:`)} ${step.description}`);
+            out.print(`${chalk.cyan(`  Step ${step.stepNumber}:`)} ${step.description}`);
             if (step.command) {
-                console.log(chalk.dim(`         ${step.command}`));
+                out.print(chalk.dim(`         ${step.command}`));
             }
         }
 
-        console.log(chalk.yellow("\n⚠️  You can abort at ANY step with: tools git-rebase-multiple --abort"));
+        out.print(chalk.yellow("\n⚠️  You can abort at ANY step with: tools git-rebase-multiple --abort"));
 
         return p.confirm({
             message: "Continue?",
@@ -199,7 +200,7 @@ export const prompts = {
      * Ask what to do about target branch divergence
      */
     async selectTargetDivergenceAction(): Promise<"pull" | "reset" | "skip" | "cancel"> {
-        const answer = await p.select({
+        const answer = (await p.select({
             message: "Target branch diverges from remote. What would you like to do?",
             options: [
                 {
@@ -219,7 +220,7 @@ export const prompts = {
                     label: "Cancel operation",
                 },
             ],
-        }) as "pull" | "reset" | "skip" | "cancel";
+        })) as "pull" | "reset" | "skip" | "cancel";
 
         return answer;
     },

@@ -1,3 +1,4 @@
+import { out } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import { MacReminders } from "@app/utils/macos/apple-reminders";
 import { type Command, Option } from "commander";
@@ -23,19 +24,19 @@ export function registerListCommand(program: Command): void {
                 });
 
                 if (reminders.length === 0) {
-                    console.log("No reminders found.");
+                    out.print("No reminders found.");
                     return;
                 }
 
                 const format = options.format ?? "table";
 
                 if (format === "json") {
-                    console.log(SafeJSON.stringify(reminders, null, 2));
+                    out.print(SafeJSON.stringify(reminders, null, 2));
                 } else {
-                    console.log(formatRemindersTable(reminders));
+                    out.print(formatRemindersTable(reminders));
                 }
             } catch (error) {
-                console.error(error instanceof Error ? error.message : String(error));
+                out.error(error instanceof Error ? error.message : String(error));
                 process.exit(1);
             }
         });

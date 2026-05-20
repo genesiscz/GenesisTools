@@ -64,14 +64,19 @@ export interface Out {
     password(o: { message: string; validate?: (v: string) => string | undefined }): Promise<string | symbol>;
     isCancel: typeof isCancel;
     result(data: unknown): void;
-    print(raw: string): void;
+    // print/info/warn/error accept zero-or-more args of ANY type to match
+    // console.* ergonomics — `console.log()` (just a newline) becomes
+    // `out.print()`, and `console.log(someObject)` becomes `out.print(someObject)`.
+    // Non-string values are serialized internally. Codemod emits these literally
+    // so the surface must accept what console.* accepts.
+    print(raw?: unknown, ...rest: unknown[]): void;
     detail(m: string): void;
     // Convenience shortcuts — match console.* ergonomics (rest args appended).
     // out.info/warn/error forward to out.log.info/warn/error but also accept
     // extra args (e.g. `out.warn("msg", err)`) matching the codemod output shape.
-    info(msg: string, ...rest: unknown[]): void;
-    warn(msg: string, ...rest: unknown[]): void;
-    error(msg: string, ...rest: unknown[]): void;
+    info(msg?: unknown, ...rest: unknown[]): void;
+    warn(msg?: unknown, ...rest: unknown[]): void;
+    error(msg?: unknown, ...rest: unknown[]): void;
 }
 
 // Drain-safe stdout write; a rejected write is surfaced to the logger (file)
@@ -113,11 +118,17 @@ export function makeOut(component: string | null, mirror: "component" | "config"
         };
 
     // Lrest: like L but accepts rest args (matches console.* ergonomics).
-    // Extra args are appended after a space so `out.warn("msg", err)` stays readable.
+    // Extra args are appended after a space so `out.warn("msg", err)` stays
+    // readable. msg is optional so `console.log()` (no args, just a newline)
+    // → `out.print()` / `out.info()` works after codemod with no manual fix.
+    const stringify = (a: unknown): string =>
+        a == null ? String(a) : typeof a === "string" ? a : typeof a === "object" ? asResult(a) : String(a);
+
     const Lrest =
         (k: "info" | "warn" | "error") =>
-        (msg: string, ...rest: unknown[]): void => {
-            const m = rest.length > 0 ? `${msg} ${rest.map((a) => (typeof a === "object" ? String(a) : a)).join(" ")}` : msg;
+        (msg?: unknown, ...rest: unknown[]): void => {
+            const head = msg === undefined ? "" : stringify(msg);
+            const m = rest.length > 0 ? `${head} ${rest.map(stringify).join(" ")}` : head;
             p.log[k](m);
             mirrorLine(m);
         };
@@ -148,7 +159,15 @@ export function makeOut(component: string | null, mirror: "component" | "config"
         password: (o) => p.password(o),
         isCancel,
         result: (data) => emitResult(asResult(data)),
-        print: (raw) => emitResult(asResult(raw)),
+        // print accepts optional first arg of any type + rest (matches
+        // console.log ergonomics including trailing newline). Wraps the joined
+        // text in asResult so the stdout-parity gate vs. pre-sweep goldens
+        // holds — console.log always appends a newline; out.print must too.
+        print: (raw?: unknown, ...rest: unknown[]) => {
+            const head = raw === undefined ? "" : stringify(raw);
+            const text = rest.length > 0 ? `${head} ${rest.map(stringify).join(" ")}` : head;
+            emitResult(asResult(text));
+        },
         detail: (m) => {
             p.log.message(m);
             mirrorLine(m);

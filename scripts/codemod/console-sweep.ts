@@ -126,9 +126,23 @@ function transformFile(sf: SourceFile, dryRun: boolean, diff: boolean): FileChan
     const relPath = relative(REPO_ROOT, sf.getFilePath());
     const changes: FileChanges = { needsOut: false, needsLogger: false, rewrites: [] };
 
+    // Two-pass: collect first, apply after. Single-pass mutation invalidates
+    // sibling/descendant nodes — e.g. `console.error(pc.red("..."))` enumerates
+    // BOTH the outer console.error CallExpression AND the inner pc.red
+    // CallExpression. Replacing the outer one forgets the inner one, and any
+    // subsequent .getText()/.getExpression() on it throws "node removed or
+    // forgotten." Collect, sort by start position descending, then replace.
+    const pending: { call: CallExpression; after: string; start: number; line: number; before: string }[] = [];
+
     const calls = sf.getDescendantsOfKind(SyntaxKind.CallExpression);
 
     for (const call of calls) {
+        // A prior iteration in this same loop may have replaced an ancestor;
+        // skip orphaned nodes defensively (belt + braces with the two-pass below).
+        if (call.wasForgotten()) {
+            continue;
+        }
+
         const expr = call.getExpression();
         if (!Node.isPropertyAccessExpression(expr)) {
             continue;
@@ -154,16 +168,28 @@ function transformFile(sf: SourceFile, dryRun: boolean, diff: boolean): FileChan
         const after = `${mapping.target}.${mapping.method}(${args})`;
 
         const line = call.getStartLineNumber();
+        const start = call.getStart();
         changes.rewrites.push({ file: relPath, line, before, after });
+        pending.push({ call, after, start, line, before });
 
         if (mapping.target === "out") {
             changes.needsOut = true;
         } else {
             changes.needsLogger = true;
         }
+    }
 
-        if (!dryRun && !diff) {
-            call.replaceWithText(after);
+    // Apply replacements end-first so earlier positions stay valid. Also a
+    // defensive wasForgotten() check in case an earlier-positioned replacement
+    // (a parent of one we already enqueued) eats a later one.
+    if (!dryRun && !diff) {
+        pending.sort((a, b) => b.start - a.start);
+        for (const r of pending) {
+            if (r.call.wasForgotten()) {
+                continue;
+            }
+
+            r.call.replaceWithText(r.after);
         }
     }
 

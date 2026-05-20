@@ -1,11 +1,12 @@
 import { logger } from "@app/logger";
 import { Executor, runTool } from "@app/utils/cli";
-import { handleReadmeFlag } from "@app/utils/readme";
-import { inquirerBackend } from "@app/utils/prompts/p/inquirer-backend";
 import * as p from "@app/utils/prompts/p";
+import { inquirerBackend } from "@app/utils/prompts/p/inquirer-backend";
+import { handleReadmeFlag } from "@app/utils/readme";
 
 // Use inquirer backend for this tool
 p.setBackend(inquirerBackend);
+
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { generateObject } from "ai";
 import { Command } from "commander";
@@ -135,10 +136,10 @@ async function main() {
         });
 
         // Let user choose a commit message
-        const chosenIndex = await p.select({
+        const chosenIndex = (await p.select({
             message: "Choose a commit message:",
             options: choices.map((c) => ({ value: c.value, label: c.name })),
-        }) as string;
+        })) as string;
 
         const chosenMessage = messages[parseInt(chosenIndex, 10)];
 

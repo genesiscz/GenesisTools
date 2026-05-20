@@ -1,11 +1,12 @@
 import { logger as log } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
-import { handleReadmeFlag } from "@app/utils/readme";
-import { inquirerBackend } from "@app/utils/prompts/p/inquirer-backend";
 import * as p from "@app/utils/prompts/p";
+import { inquirerBackend } from "@app/utils/prompts/p/inquirer-backend";
+import { handleReadmeFlag } from "@app/utils/readme";
 
 // Use inquirer backend for this tool
 p.setBackend(inquirerBackend);
+
 import { WebSocketServer } from "ws";
 
 // Handle --readme flag early (before Commander parses)

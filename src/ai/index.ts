@@ -4,6 +4,7 @@ import { existsSync } from "node:fs";
 import { unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { out } from "@app/logger";
 import { AI, AIConfig } from "@app/utils/ai/index.ts";
 import { ModelManager } from "@app/utils/ai/ModelManager.ts";
 import type { AIProviderType, AITask } from "@app/utils/ai/types.ts";
@@ -57,12 +58,12 @@ async function cmdTranslate(text: string | undefined, opts: TranslateFlags): Pro
     }
 
     if (!input) {
-        console.error(pc.red("No text provided. Pass text as argument or pipe via stdin."));
+        out.error(pc.red("No text provided. Pass text as argument or pipe via stdin."));
         process.exit(1);
     }
 
     if (!opts.to) {
-        console.error(pc.red("--to <lang> is required (e.g. --to en)"));
+        out.error(pc.red("--to <lang> is required (e.g. --to en)"));
         process.exit(1);
     }
 
@@ -72,7 +73,7 @@ async function cmdTranslate(text: string | undefined, opts: TranslateFlags): Pro
         try {
             const detected = await detectLanguage(input);
             fromLang = detected.language;
-            console.error(pc.dim(`Detected language: ${fromLang}`));
+            out.error(pc.dim(`Detected language: ${fromLang}`));
         } catch {
             // fallback — let the provider auto-detect
         }
@@ -93,19 +94,19 @@ async function cmdTranslate(text: string | undefined, opts: TranslateFlags): Pro
             });
 
             s.stop(pc.green("Translation complete"));
-            console.error(pc.dim(`${result.from} → ${result.to}`));
+            out.error(pc.dim(`${result.from} → ${result.to}`));
 
             if (opts.clipboard) {
                 await copyToClipboard(result.text, { label: "translation" });
             }
 
-            console.log(result.text);
+            out.print(result.text);
         } finally {
             translator.dispose();
         }
     } catch (error) {
         s.stop(pc.red("Translation failed"));
-        console.error(pc.red(error instanceof Error ? error.message : String(error)));
+        out.error(pc.red(error instanceof Error ? error.message : String(error)));
         process.exit(1);
     }
 }
@@ -129,7 +130,7 @@ async function cmdSummarize(file: string | undefined, opts: SummarizeFlags): Pro
         const resolved = resolve(file);
 
         if (!existsSync(resolved)) {
-            console.error(pc.red(`File not found: ${resolved}`));
+            out.error(pc.red(`File not found: ${resolved}`));
             process.exit(1);
         }
 
@@ -138,14 +139,14 @@ async function cmdSummarize(file: string | undefined, opts: SummarizeFlags): Pro
         // No file, no stdin — try clipboard
         try {
             input = await readFromClipboard();
-            console.error(pc.dim("Reading from clipboard..."));
+            out.error(pc.dim("Reading from clipboard..."));
         } catch {
             // ignore
         }
     }
 
     if (!input?.trim()) {
-        console.error(pc.red("No text to summarize. Provide a file, pipe stdin, or have text in clipboard."));
+        out.error(pc.red("No text to summarize. Provide a file, pipe stdin, or have text in clipboard."));
         process.exit(1);
     }
 
@@ -158,18 +159,16 @@ async function cmdSummarize(file: string | undefined, opts: SummarizeFlags): Pro
         const result = await AI.summarize(input, { maxLength });
 
         s.stop(pc.green("Summarization complete"));
-        console.error(
-            pc.dim(`Original: ${formatBytes(input.length)} → Summary: ${formatBytes(result.summary.length)}`)
-        );
+        out.error(pc.dim(`Original: ${formatBytes(input.length)} → Summary: ${formatBytes(result.summary.length)}`));
 
         if (opts.clipboard) {
             await copyToClipboard(result.summary, { label: "summary" });
         }
 
-        console.log(result.summary);
+        out.print(result.summary);
     } catch (error) {
         s.stop(pc.red("Summarization failed"));
-        console.error(pc.red(error instanceof Error ? error.message : String(error)));
+        out.error(pc.red(error instanceof Error ? error.message : String(error)));
         process.exit(1);
     }
 }
@@ -188,8 +187,8 @@ async function cmdImage(prompt: string, opts: ImageFlags): Promise<void> {
     const token = config.getHfToken() ?? process.env.HUGGINGFACE_TOKEN;
 
     if (!token) {
-        console.error(pc.red("Hugging Face token required."));
-        console.error(pc.dim("Set HUGGINGFACE_TOKEN env var or run: tools ai config"));
+        out.error(pc.red("Hugging Face token required."));
+        out.error(pc.dim("Set HUGGINGFACE_TOKEN env var or run: tools ai config"));
         process.exit(1);
     }
 
@@ -223,12 +222,12 @@ async function cmdImage(prompt: string, opts: ImageFlags): Promise<void> {
         await Bun.write(outputPath, arrayBuffer);
 
         s.stop(pc.green("Image generated"));
-        console.error(pc.dim(`Model: ${model}`));
-        console.error(pc.dim(`Size: ${formatBytes(arrayBuffer.byteLength)}`));
-        console.log(outputPath);
+        out.error(pc.dim(`Model: ${model}`));
+        out.error(pc.dim(`Size: ${formatBytes(arrayBuffer.byteLength)}`));
+        out.print(outputPath);
     } catch (error) {
         s.stop(pc.red("Image generation failed"));
-        console.error(pc.red(error instanceof Error ? error.message : String(error)));
+        out.error(pc.red(error instanceof Error ? error.message : String(error)));
         process.exit(1);
     }
 }
@@ -250,19 +249,19 @@ async function cmdClassify(text: string | undefined, opts: ClassifyFlags): Promi
     }
 
     if (!input) {
-        console.error(pc.red("No text provided. Pass text as argument or pipe via stdin."));
+        out.error(pc.red("No text provided. Pass text as argument or pipe via stdin."));
         process.exit(1);
     }
 
     if (!opts.categories) {
-        console.error(pc.red('--categories is required (e.g. --categories "positive,negative,neutral")'));
+        out.error(pc.red('--categories is required (e.g. --categories "positive,negative,neutral")'));
         process.exit(1);
     }
 
     const categories = opts.categories.split(",").map((c) => c.trim());
 
     if (categories.length < 2) {
-        console.error(pc.red("At least 2 categories are required."));
+        out.error(pc.red("At least 2 categories are required."));
         process.exit(1);
     }
 
@@ -280,10 +279,10 @@ async function cmdClassify(text: string | undefined, opts: ClassifyFlags): Promi
         ]);
 
         const table = formatTable(rows, ["Category", "Confidence"], { alignRight: [1] });
-        console.log(table);
+        out.print(table);
     } catch (error) {
         s.stop(pc.red("Classification failed"));
-        console.error(pc.red(error instanceof Error ? error.message : String(error)));
+        out.error(pc.red(error instanceof Error ? error.message : String(error)));
         process.exit(1);
     }
 }
@@ -305,8 +304,8 @@ async function cmdModelsList(): Promise<void> {
     const table = formatTable(rows, ["Model", "Size"], { alignRight: [1] });
 
     const cacheInfo = await manager.getCacheSize();
-    console.log(table);
-    console.error(pc.dim(`\nTotal: ${cacheInfo.modelCount} models, ${cacheInfo.formatted}`));
+    out.print(table);
+    out.error(pc.dim(`\nTotal: ${cacheInfo.modelCount} models, ${cacheInfo.formatted}`));
 }
 
 async function cmdModelsDownload(modelId: string, opts: { dtype?: string }): Promise<void> {
@@ -326,7 +325,7 @@ async function cmdModelsDownload(modelId: string, opts: { dtype?: string }): Pro
         s.stop(pc.green(`Downloaded ${modelId}`));
     } catch (error) {
         s.stop(pc.red("Download failed"));
-        console.error(pc.red(error instanceof Error ? error.message : String(error)));
+        out.error(pc.red(error instanceof Error ? error.message : String(error)));
         process.exit(1);
     }
 }

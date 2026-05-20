@@ -1,3 +1,4 @@
+import { out } from "@app/logger";
 import { getShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import { formatSummary, runGoldenHarness } from "@app/shops/lib/golden-harness";
 import {
@@ -18,7 +19,7 @@ export function registerMatchCommand(program: Command): void {
         .option("--json", "Output JSON (default)", true)
         .action(async () => {
             const pairs = await listPendingCandidates();
-            console.log(SafeJSON.stringify(pairs, null, 2));
+            out.print(SafeJSON.stringify(pairs, null, 2));
         });
 
     cmd.command("accept <a> <b>")
@@ -28,7 +29,7 @@ export function registerMatchCommand(program: Command): void {
             const pa = await resolveProductId(shopsDb, a);
             const pb = await resolveProductId(shopsDb, b);
             await acceptCandidatePair({ shopsDb, productIdA: pa, productIdB: pb });
-            console.log(`accepted pair ${pa}-${pb}`);
+            out.print(`accepted pair ${pa}-${pb}`);
         });
 
     cmd.command("reject <a> <b>")
@@ -38,7 +39,7 @@ export function registerMatchCommand(program: Command): void {
             const pa = await resolveProductId(shopsDb, a);
             const pb = await resolveProductId(shopsDb, b);
             await rejectCandidatePair({ shopsDb, productIdA: pa, productIdB: pb });
-            console.log(`rejected pair ${pa}-${pb}`);
+            out.print(`rejected pair ${pa}-${pb}`);
         });
 
     cmd.command("rematch <input>")
@@ -47,7 +48,7 @@ export function registerMatchCommand(program: Command): void {
             const shopsDb = getShopsDatabase();
             const id = await resolveProductId(shopsDb, input);
             await rematchProduct({ shopsDb, productId: id });
-            console.log(`reset product ${id} to pending`);
+            out.print(`reset product ${id} to pending`);
         });
 
     cmd.command("verify")
@@ -56,11 +57,11 @@ export function registerMatchCommand(program: Command): void {
         .action(async (opts: { json?: boolean }) => {
             const summary = await runGoldenHarness();
             if (opts.json) {
-                console.log(SafeJSON.stringify(summary, null, 2));
+                out.print(SafeJSON.stringify(summary, null, 2));
                 return;
             }
 
-            console.log(formatSummary(summary));
+            out.print(formatSummary(summary));
             if (summary.f1 < 0.95) {
                 process.exitCode = 1;
             }

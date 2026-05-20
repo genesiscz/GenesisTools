@@ -1,3 +1,4 @@
+import { out } from "@app/logger";
 import * as p from "@clack/prompts";
 import pc from "picocolors";
 import { getDaemonPid, startDaemon } from "../daemon";
@@ -48,7 +49,7 @@ export async function runInteractiveMenu(): Promise<void> {
                 break;
         }
 
-        console.log("");
+        out.print("");
     }
 }
 

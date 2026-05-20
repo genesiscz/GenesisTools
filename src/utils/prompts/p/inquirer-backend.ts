@@ -254,12 +254,7 @@ export const inquirerBackend: InquirerBackend = {
     cancel: (msg) => writeStderr(pc.red("■") + " " + msg),
     note: (content, title?) => {
         const border = pc.dim("─".repeat(40));
-        const lines = [
-            border,
-            title ? pc.bold(title) : "",
-            content,
-            border,
-        ].filter((l) => l !== "");
+        const lines = [border, title ? pc.bold(title) : "", content, border].filter((l) => l !== "");
         writeStderr(lines.join("\n"));
     },
 

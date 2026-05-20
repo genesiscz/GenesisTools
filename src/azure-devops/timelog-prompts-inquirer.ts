@@ -4,6 +4,7 @@
 
 import { convertToMinutes, formatMinutes, getTodayDate, TimeLogApi } from "@app/azure-devops/timelog-api";
 import type { AzureConfigWithTimeLog, TimeLogUser } from "@app/azure-devops/types";
+import { out } from "@app/logger";
 import * as p from "@app/utils/prompts/p";
 
 export async function runInteractiveAddInquirer(
@@ -11,20 +12,20 @@ export async function runInteractiveAddInquirer(
     user: TimeLogUser,
     prefilledWorkItem?: string
 ): Promise<void> {
-    console.log("\n📝 TimeLog - Add Entry\n");
+    out.print("\n📝 TimeLog - Add Entry\n");
 
     try {
         const api = new TimeLogApi(config.orgId!, config.projectId, config.timelog!.functionsKey, user);
 
         // Fetch time types
-        console.log("Loading time types...");
+        out.print("Loading time types...");
         const types = await api.getTimeTypes();
 
         // Work item ID
         let workItemId: number;
         if (prefilledWorkItem) {
             workItemId = parseInt(prefilledWorkItem, 10);
-            console.log(`Work Item: #${workItemId}`);
+            out.print(`Work Item: #${workItemId}`);
         } else {
             const workItemInput = await p.text({
                 message: "Work Item ID:",
@@ -43,14 +44,14 @@ export async function runInteractiveAddInquirer(
 
         // Time type
         const defaultType = types.find((t) => t.isDefaultForProject);
-        const selectedType = await p.select({
+        const selectedType = (await p.select({
             message: "Time Type:",
             options: types.map((t) => ({
                 value: t.description,
                 label: t.description + (t.isDefaultForProject ? " (default)" : ""),
             })),
             initialValue: defaultType?.description,
-        }) as string;
+        })) as string;
 
         // Hours
         const hoursInput = await p.text({
@@ -99,15 +100,15 @@ export async function runInteractiveAddInquirer(
         });
 
         // Confirm
-        console.log(`\n${"─".repeat(40)}`);
-        console.log(`Work Item: #${workItemId}`);
-        console.log(`Time: ${formatMinutes(totalMinutes)}`);
-        console.log(`Type: ${selectedType}`);
-        console.log(`Date: ${dateInput}`);
+        out.print(`\n${"─".repeat(40)}`);
+        out.print(`Work Item: #${workItemId}`);
+        out.print(`Time: ${formatMinutes(totalMinutes)}`);
+        out.print(`Type: ${selectedType}`);
+        out.print(`Date: ${dateInput}`);
         if (comment) {
-            console.log(`Comment: ${comment}`);
+            out.print(`Comment: ${comment}`);
         }
-        console.log("─".repeat(40));
+        out.print("─".repeat(40));
 
         const confirmed = await p.confirm({
             message: "Create this time log entry?",
@@ -115,15 +116,15 @@ export async function runInteractiveAddInquirer(
         });
 
         if (!confirmed) {
-            console.log("Cancelled");
+            out.print("Cancelled");
             process.exit(0);
         }
 
         // Create entry
-        console.log("\nCreating time log entry...");
+        out.print("\nCreating time log entry...");
         const ids = await api.createTimeLogEntry(workItemId, totalMinutes, selectedType, dateInput, comment);
 
-        console.log(`\n✔ Time log created! Entry ID: ${ids[0]}`);
+        out.print(`\n✔ Time log created! Entry ID: ${ids[0]}`);
     } catch (error) {
         throw error;
     }

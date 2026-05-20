@@ -25,7 +25,7 @@ import {
     isQueryIdOrUrl,
     requireConfig,
 } from "@app/azure-devops/utils";
-import { logger } from "@app/logger";
+import { logger, out } from "@app/logger";
 import { formatLocalDateTimeStamp } from "@app/utils/date";
 import type { Command } from "commander";
 
@@ -335,13 +335,13 @@ export async function handleQuery(
     // Output
     switch (format) {
         case "ai":
-            console.log(formatAI(queryId, items, oldCache ? changes : [], oldCacheTime));
+            out.print(formatAI(queryId, items, oldCache ? changes : [], oldCacheTime));
             break;
         case "md":
-            console.log(formatMD(items));
+            out.print(formatMD(items));
             break;
         case "json":
-            console.log(formatJSON({ items, changes: oldCache ? changes : [] }));
+            out.print(formatJSON({ items, changes: oldCache ? changes : [] }));
             break;
     }
 

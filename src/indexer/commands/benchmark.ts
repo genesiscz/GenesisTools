@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
+import { out } from "@app/logger";
 import { discoverEmbeddingProviders } from "@app/utils/ai/embedding-selection";
 import { Embedder } from "@app/utils/ai/tasks/Embedder";
 import { formatBytes, formatDuration } from "@app/utils/format";
@@ -414,9 +415,9 @@ async function runCompareProviders(opts: {
         alignRight: [2, 3],
     });
 
-    console.log();
-    console.log(table);
-    console.log();
+    out.print();
+    out.print(table);
+    out.print();
 
     const best = results[0];
     p.log.success(`Recommendation: ${best.provider}/${best.model} at ${best.embPerSec.toLocaleString()} emb/s`);
@@ -532,9 +533,9 @@ async function runCompareModels(opts: {
         alignRight: [1, 2],
     });
 
-    console.log();
-    console.log(table);
-    console.log();
+    out.print();
+    out.print(table);
+    out.print();
 
     const best = results[0];
     p.log.success(`Best model: ${best.model} at ${best.embPerSec.toLocaleString()} emb/s`);
@@ -666,7 +667,7 @@ async function runDirBenchmark(
         p.log.info(`  DB size:          ${formatBytes(result.dbSizeBytes)}`);
 
         const json = SafeJSON.stringify(result, null, 2);
-        console.log(json);
+        out.print(json);
 
         if (opts.output) {
             const outPath = resolve(opts.output);

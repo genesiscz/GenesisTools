@@ -42,7 +42,7 @@ export function registerShowCommand(program: Command): void {
 
             const indexedEntry = session.entries[index];
             if (!indexedEntry) {
-                console.error(
+                out.error(
                     `Entry e${index} not found. Session has ${session.entries.length} entries (0-${session.entries.length - 1}).`
                 );
                 process.exit(1);
@@ -61,6 +61,7 @@ export function registerShowCommand(program: Command): void {
 }
 
 import type { OutputFormat } from "@app/har-analyzer/types";
+import { out } from "@app/logger";
 
 async function showDetail(entry: HarEntry, fullUrl: string, format: OutputFormat): Promise<void> {
     const lines: string[] = [];
@@ -258,7 +259,7 @@ export function registerExpandCommand(program: Command): void {
             // Parse entry index from refId (e.g. "e14.rs.body" -> 14)
             const match = refId.match(/^e(\d+)\./);
             if (!match) {
-                console.error(`Invalid refId format: "${refId}". Expected format like "e14.rs.body".`);
+                out.error(`Invalid refId format: "${refId}". Expected format like "e14.rs.body".`);
                 process.exit(1);
             }
             const entryIndex = Number.parseInt(match[1], 10);
@@ -268,7 +269,7 @@ export function registerExpandCommand(program: Command): void {
             const session = await sm.requireSession(parentOpts.session);
 
             if (entryIndex < 0 || entryIndex >= session.entries.length) {
-                console.error(
+                out.error(
                     `Entry e${entryIndex} not found. Session has ${session.entries.length} entries (0-${session.entries.length - 1}).`
                 );
                 process.exit(1);
@@ -282,20 +283,20 @@ export function registerExpandCommand(program: Command): void {
             const content = extractContent(harEntry, pathPart);
 
             if (content === null) {
-                console.error(`No content found for ref "${refId}".`);
+                out.error(`No content found for ref "${refId}".`);
                 process.exit(1);
             }
 
             if (options.schema) {
                 const parsed = parseJSON(content);
                 if (parsed === null) {
-                    console.error("Content is not valid JSON. Schema inference requires JSON data.");
+                    out.error("Content is not valid JSON. Schema inference requires JSON data.");
                     process.exit(1);
                 }
                 const mode = options.schema === true ? "skeleton" : options.schema;
                 const validModes = ["skeleton", "typescript", "schema"] as const;
                 if (!validModes.includes(mode as (typeof validModes)[number])) {
-                    console.error(`Invalid schema mode: "${mode}". Use: skeleton, typescript, schema`);
+                    out.error(`Invalid schema mode: "${mode}". Use: skeleton, typescript, schema`);
                     process.exit(1);
                 }
                 await printFormatted(

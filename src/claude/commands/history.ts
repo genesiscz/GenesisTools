@@ -19,8 +19,8 @@ import { resolveProjectFilter } from "@app/utils/claude";
 import { isInteractive } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
 import { PROJECT_ROOT } from "@app/utils/paths";
-import { inquirerBackend } from "@app/utils/prompts/p/inquirer-backend";
 import * as p from "@app/utils/prompts/p";
+import { inquirerBackend } from "@app/utils/prompts/p/inquirer-backend";
 import { spawn } from "bun";
 import chalk from "chalk";
 import type { Command } from "commander";
@@ -151,16 +151,18 @@ async function runInteractive(): Promise<SearchFilters> {
     const project = await inquirerBackend.search<string>({
         message: "Select project (type to filter):",
         options: async (term) => {
-            const filtered = term ? projects.filter((proj) => proj.toLowerCase().includes(term.toLowerCase())) : projects;
+            const filtered = term
+                ? projects.filter((proj) => proj.toLowerCase().includes(term.toLowerCase()))
+                : projects;
             return [{ value: "all", label: "All projects" }, ...filtered.map((proj) => ({ value: proj, label: proj }))];
         },
     });
 
-    const query = await p.text({
+    const query = (await p.text({
         message: "Search query (leave empty for all):",
-    }) as string;
+    })) as string;
 
-    const toolChoice = await p.select({
+    const toolChoice = (await p.select({
         message: "Filter by tool?",
         options: [
             { value: "", label: "No filter" },
@@ -172,17 +174,17 @@ async function runInteractive(): Promise<SearchFilters> {
             { value: "Grep", label: "Grep" },
             { value: "Glob", label: "Glob" },
         ],
-    }) as string;
+    })) as string;
 
-    const sinceStr = await p.text({
+    const sinceStr = (await p.text({
         message: "Since (e.g., '7 days ago', 'yesterday', or date):",
         initialValue: "",
-    }) as string;
+    })) as string;
 
-    const contextStr = await p.text({
+    const contextStr = (await p.text({
         message: "Context lines (0 for summary only):",
         initialValue: "0",
-    }) as string;
+    })) as string;
 
     return {
         project: project === "all" ? undefined : project,
@@ -240,7 +242,7 @@ export function registerHistoryCommand(program: Command): void {
                         if (project) {
                             // For encoded dirs like "-Users-Martin-Projects-Foo", show just the leaf
                             const displayName = project.startsWith("-") ? basename(process.cwd()) : project;
-                            console.log(
+                            out.print(
                                 chalk.dim(`Auto-detected project: ${displayName} (use --all to search all projects)`)
                             );
                         }
@@ -279,14 +281,14 @@ export function registerHistoryCommand(program: Command): void {
                     : await searchConversations(filters);
 
                 if (results.length === 0) {
-                    console.log(chalk.yellow("No conversations found matching your criteria."));
+                    out.print(chalk.yellow("No conversations found matching your criteria."));
                     return;
                 }
 
                 if (options.format === "json") {
-                    console.log(formatResultsAsJson(results));
+                    out.print(formatResultsAsJson(results));
                 } else {
-                    console.log(formatResultsAsMarkdown(results, filters));
+                    out.print(formatResultsAsMarkdown(results, filters));
                 }
 
                 // Post-search: offer to summarize a session (interactive only —
@@ -323,7 +325,7 @@ export function registerHistoryCommand(program: Command): void {
                 }
             } catch (error) {
                 if ((error as Error).message?.includes("canceled")) {
-                    console.log(chalk.dim("\nOperation cancelled."));
+                    out.print(chalk.dim("\nOperation cancelled."));
                     process.exit(0);
                 }
                 throw error;
@@ -338,9 +340,9 @@ export function registerHistoryCommand(program: Command): void {
         .action(async (options) => {
             const dashboardDir = resolve(import.meta.dir, "../../claude-history-dashboard");
 
-            console.log(chalk.cyan("Starting Claude History Dashboard..."));
-            console.log(chalk.dim(`   Port: ${options.port}`));
-            console.log();
+            out.print(chalk.cyan("Starting Claude History Dashboard..."));
+            out.print(chalk.dim(`   Port: ${options.port}`));
+            out.print();
 
             const proc = spawn({
                 cmd: [

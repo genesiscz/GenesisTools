@@ -3,6 +3,7 @@ import { formatEntryLine } from "@app/debugging-master/core/formatter";
 import { filterByLevel, indexEntries } from "@app/debugging-master/core/log-parser";
 import { SessionManager } from "@app/debugging-master/core/session-manager";
 import type { IndexedLogEntry, LogEntry } from "@app/debugging-master/types";
+import { out } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import type { Command } from "commander";
 
@@ -28,21 +29,21 @@ export function registerTailCommand(program: Command): void {
             }
             const tail = existing.slice(-lastCount);
 
-            console.log(`Tailing session: ${sessionName} (${raw.length} entries, showing last ${tail.length})`);
-            console.log("");
+            out.print(`Tailing session: ${sessionName} (${raw.length} entries, showing last ${tail.length})`);
+            out.print("");
 
             let currentFile = "";
             for (const entry of tail) {
                 const file = entry.file ?? "unknown";
                 if (file !== currentFile) {
                     currentFile = file;
-                    console.log(`File: ${file}`);
+                    out.print(`File: ${file}`);
                 }
-                console.log(formatEntryLine(entry, pretty));
+                out.print(formatEntryLine(entry, pretty));
             }
 
-            console.log("");
-            console.log("--- Watching for new entries (Ctrl+C to stop) ---");
+            out.print("");
+            out.print("--- Watching for new entries (Ctrl+C to stop) ---");
 
             let offset = 0;
             try {
@@ -83,9 +84,9 @@ export function registerTailCommand(program: Command): void {
                             const file = indexed.file ?? "unknown";
                             if (file !== currentFile) {
                                 currentFile = file;
-                                console.log(`File: ${file}`);
+                                out.print(`File: ${file}`);
                             }
-                            console.log(formatEntryLine(indexed, pretty));
+                            out.print(formatEntryLine(indexed, pretty));
                         } catch {
                             const fallback: IndexedLogEntry = {
                                 level: "raw",
@@ -93,7 +94,7 @@ export function registerTailCommand(program: Command): void {
                                 ts: Date.now(),
                                 index: entryIndex,
                             };
-                            console.log(formatEntryLine(fallback, pretty));
+                            out.print(formatEntryLine(fallback, pretty));
                         }
                     }
                 } catch {
@@ -107,7 +108,7 @@ export function registerTailCommand(program: Command): void {
 
             process.on("SIGINT", () => {
                 watcher.close();
-                console.log("\nStopped tailing.");
+                out.print("\nStopped tailing.");
                 process.exit(0);
             });
 

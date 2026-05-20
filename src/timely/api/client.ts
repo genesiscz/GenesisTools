@@ -1,8 +1,8 @@
 import { logger } from "@app/logger";
 import type { OAuth2Tokens, OAuthApplication } from "@app/timely/types";
 import { SafeJSON } from "@app/utils/json";
-import type { Storage } from "@app/utils/storage";
 import * as p from "@app/utils/prompts/p";
+import type { Storage } from "@app/utils/storage";
 import chalk from "chalk";
 
 export interface RequestOptions {

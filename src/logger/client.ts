@@ -113,10 +113,7 @@ function formatArgs(args: unknown[]): string {
     return args.map((a) => (typeof a === "object" ? SafeJSON.stringify(a) : String(a))).join(" ");
 }
 
-function makeLogFn(
-    consoleFn: (...args: unknown[]) => void,
-    prefix: string
-): LogFn {
+function makeLogFn(consoleFn: (...args: unknown[]) => void, prefix: string): LogFn {
     return (objOrMsg: string | Record<string, unknown>, ...rest: unknown[]) => {
         if (typeof objOrMsg === "string") {
             const extra = rest.length > 0 ? ` ${formatArgs(rest)}` : "";
@@ -133,7 +130,8 @@ function makeLogFn(
 function makeScopedOut(scope: string): Out {
     const tag = `[${scope}] `;
 
-    const L = (prefix: string, fn: (...a: unknown[]) => void) =>
+    const L =
+        (prefix: string, fn: (...a: unknown[]) => void) =>
         (m: string): void => {
             fn(`${prefix}${tag}${m}`);
         };

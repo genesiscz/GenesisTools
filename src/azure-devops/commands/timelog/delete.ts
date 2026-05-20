@@ -1,5 +1,6 @@
 import { formatMinutes, TimeLogApi } from "@app/azure-devops/timelog-api";
 import { requireTimeLogConfig, requireTimeLogUser } from "@app/azure-devops/utils";
+import { out } from "@app/logger";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 
@@ -19,24 +20,24 @@ export function registerDeleteSubcommand(parent: Command): void {
             if (!timeLogId) {
                 // Interactive mode: pick from work item's entries
                 if (!options.workitem) {
-                    console.error("Provide a timeLogId or --workitem for interactive selection");
-                    console.error("\nExamples:");
-                    console.error("  tools azure-devops timelog delete <timeLogId>");
-                    console.error("  tools azure-devops timelog delete --workitem 268935");
+                    out.error("Provide a timeLogId or --workitem for interactive selection");
+                    out.error("\nExamples:");
+                    out.error("  tools azure-devops timelog delete <timeLogId>");
+                    out.error("  tools azure-devops timelog delete --workitem 268935");
                     process.exit(1);
                 }
 
                 const workItemId = parseInt(options.workitem, 10);
 
                 if (Number.isNaN(workItemId)) {
-                    console.error("Invalid work item ID");
+                    out.error("Invalid work item ID");
                     process.exit(1);
                 }
 
                 const entries = await api.getWorkItemTimeLogs(workItemId);
 
                 if (entries.length === 0) {
-                    console.log(`No time logs found for #${workItemId}`);
+                    out.print(`No time logs found for #${workItemId}`);
                     return;
                 }
 
@@ -67,6 +68,6 @@ export function registerDeleteSubcommand(parent: Command): void {
             }
 
             await api.deleteTimeLogEntry(timeLogId);
-            console.log(`\u2714 Deleted time log entry ${timeLogId.substring(0, 8)}...`);
+            out.print(`\u2714 Deleted time log entry ${timeLogId.substring(0, 8)}...`);
         });
 }

@@ -1,3 +1,4 @@
+import { out } from "@app/logger";
 import { AIConfig } from "@app/utils/ai/AIConfig";
 import type { AIAccountEntry, AIProvider } from "@app/utils/config/ai.types";
 import { loadAskConfig, saveAskConfig } from "@ask/config";
@@ -307,9 +308,9 @@ async function addViaOAuthFlow(): Promise<void> {
         "OAuth Login"
     );
 
-    console.log();
-    console.log(`  ${pc.cyan(authUrl)}`);
-    console.log();
+    out.print();
+    out.print(`  ${pc.cyan(authUrl)}`);
+    out.print();
 
     const openBrowser = await p.confirm({
         message: "Open URL in browser?",
@@ -613,9 +614,9 @@ async function addViaCodexOAuth(): Promise<void> {
         "OpenAI OAuth Login"
     );
 
-    console.log();
-    console.log(`  ${pc.cyan(authUrl)}`);
-    console.log();
+    out.print();
+    out.print(`  ${pc.cyan(authUrl)}`);
+    out.print();
 
     const openBrowser = await p.confirm({
         message: "Open URL in browser?",

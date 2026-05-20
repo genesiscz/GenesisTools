@@ -1,3 +1,4 @@
+import { out } from "@app/logger";
 import { closeDarwinKit } from "@app/utils/macos";
 import { handleCancel, isCancelled, withCancel } from "@app/utils/prompts/clack/helpers";
 import * as p from "@clack/prompts";
@@ -83,7 +84,7 @@ export async function runCommandInteractive(
 
         const format = formatOverride ?? defaultFormat();
         const output = formatOutput(result, format);
-        console.log(output);
+        out.print(output);
     } catch (error) {
         spin.stop(pc.red(`${cmd.name} failed`));
         p.log.error(error instanceof Error ? error.message : String(error));

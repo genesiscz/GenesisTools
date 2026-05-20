@@ -5,11 +5,12 @@ import { resolve } from "node:path";
 import { logger } from "@app/logger";
 import { runTool } from "@app/utils/cli";
 import { copyToClipboard } from "@app/utils/clipboard";
-import { inquirerBackend } from "@app/utils/prompts/p/inquirer-backend";
 import * as p from "@app/utils/prompts/p";
+import { inquirerBackend } from "@app/utils/prompts/p/inquirer-backend";
 
 // Use inquirer backend for this tool
 p.setBackend(inquirerBackend);
+
 import { Command } from "commander";
 
 interface ToolUseBlock {
@@ -289,10 +290,10 @@ async function main() {
         }
 
         // Show tool names and let user select which to remove
-        const selectedItems = await p.multiselect({
+        const selectedItems = (await p.multiselect({
             message: "Select tool inputs/outputs to remove (use space to select, enter to confirm):",
             options: choices.map((c) => ({ value: c.value, label: c.name })),
-        }) as string[];
+        })) as string[];
 
         if (!selectedItems || selectedItems.length === 0) {
             logger.info("No items selected for removal. Exiting.");

@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 
+import { out } from "@app/logger";
 import { createAddCommand } from "@app/todo/commands/add";
 import { createEditCommand } from "@app/todo/commands/edit";
 import { createExportCommand, createImportCommand } from "@app/todo/commands/import-export";
@@ -42,12 +43,12 @@ async function main(): Promise<void> {
         await runTool(program, { tool: "todo" });
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        console.error(`Error: ${message}`);
+        out.error(`Error: ${message}`);
         process.exit(1);
     }
 }
 
 main().catch((err) => {
-    console.error(`Unexpected error: ${err}`);
+    out.error(`Unexpected error: ${err}`);
     process.exit(1);
 });

@@ -1,3 +1,5 @@
+import { out } from "@app/logger";
+
 /**
  * Azure DevOps CLI Tool - CLI Utilities
  *
@@ -123,11 +125,11 @@ export function extractAzLoginSuggestion(stderr: string): string | null {
  * Print SSL/proxy certificate guide and exit
  */
 export function exitWithSslGuide(error?: unknown): never {
-    console.log(SSL_PROXY_GUIDE);
+    out.print(SSL_PROXY_GUIDE);
 
     if (error instanceof Error && error.stack && process.env.DEBUG) {
-        console.error("\nStacktrace:\n");
-        console.error(error.stack);
+        out.error("\nStacktrace:\n");
+        out.error(error.stack);
     }
 
     process.exit(1);
@@ -137,11 +139,11 @@ export function exitWithSslGuide(error?: unknown): never {
  * Print authentication guide and exit
  */
 export function exitWithAuthGuide(error?: unknown): never {
-    console.log(AUTH_GUIDE);
+    out.print(AUTH_GUIDE);
 
     if (error instanceof Error && error.stack && process.env.DEBUG) {
-        console.error("\nStacktrace:\n");
-        console.error(error.stack);
+        out.error("\nStacktrace:\n");
+        out.error(error.stack);
     }
 
     process.exit(1);
@@ -157,6 +159,6 @@ export function handleCliError(error: unknown): never {
         exitWithAuthGuide();
     }
 
-    console.error(`ERROR: ${message}`);
+    out.error(`ERROR: ${message}`);
     process.exit(1);
 }

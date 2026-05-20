@@ -5,8 +5,8 @@ import type { MCPProvider, UnifiedMCPServerConfig } from "@app/mcp-manager/utils
 import { WriteResult } from "@app/mcp-manager/utils/providers/types.js";
 import { isInteractive, suggestCommand } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
-import { inquirerBackend } from "@app/utils/prompts/p/inquirer-backend";
 import * as p from "@app/utils/prompts/p";
+import { inquirerBackend } from "@app/utils/prompts/p/inquirer-backend";
 import chalk from "chalk";
 
 export interface InstallOptions {
@@ -65,10 +65,10 @@ export async function installServer(
         });
 
         if (inputServerName === CREATE_NEW) {
-            const newServerName = await p.text({
+            const newServerName = (await p.text({
                 message: "Enter name for the new server:",
                 validate: (value: string) => (value.trim() ? undefined : "Server name cannot be empty."),
-            }) as string;
+            })) as string;
             finalServerName = newServerName.trim();
         } else {
             finalServerName = inputServerName.trim();
@@ -106,7 +106,7 @@ export async function installServer(
 
         // If it's a new server or we're overwriting, ask for details
         if (!transportType) {
-            const inputType = await p.select({
+            const inputType = (await p.select({
                 message: "Select transport type:",
                 options: [
                     { value: "stdio", label: "stdio (Local executable/npx)" },
@@ -114,7 +114,7 @@ export async function installServer(
                     { value: "http", label: "http (Remote HTTP endpoint)" },
                 ],
                 initialValue: serverConfig?.type || "stdio",
-            }) as string;
+            })) as string;
             transportType = inputType as "stdio" | "sse" | "http";
         }
 
@@ -134,12 +134,12 @@ export async function installServer(
 
         if (!finalCommandOrUrl) {
             const isRemote = transportType === "sse" || transportType === "http";
-            const inputVal = await p.text({
+            const inputVal = (await p.text({
                 message: isRemote
                     ? `Enter URL (e.g., "https://server.example.com/sse"):`
                     : 'Enter command (e.g., "npx -y @modelcontextprotocol/server-github"):',
                 initialValue: isRemote ? serverConfig?.url || serverConfig?.httpUrl : serverConfig?.command,
-            }) as string;
+            })) as string;
 
             finalCommandOrUrl = inputVal.trim();
 
@@ -173,10 +173,10 @@ export async function installServer(
                 }
             } else if (!isNonInteractive) {
                 // Interactive: ask for headers
-                const inputHeaders = await p.text({
+                const inputHeaders = (await p.text({
                     message: 'Enter optional headers ("Key: value" format or JSON) or leave empty:',
                     initialValue: serverConfig?.headers ? SafeJSON.stringify(serverConfig.headers) : "",
-                }) as string;
+                })) as string;
 
                 if (inputHeaders.trim()) {
                     try {
@@ -211,10 +211,10 @@ export async function installServer(
                 }
             } else if (!isNonInteractive) {
                 // Interactive: ask for env
-                const inputEnv = await p.text({
+                const inputEnv = (await p.text({
                     message: "Enter ENV variables (JSON format recommended) or leave empty:",
                     initialValue: serverConfig?.env ? SafeJSON.stringify(serverConfig.env) : "",
-                }) as string;
+                })) as string;
 
                 if (inputEnv.trim()) {
                     env = parseEnvString(inputEnv);
@@ -274,13 +274,13 @@ export async function installServer(
         );
         process.exit(1);
     } else {
-        const selectedProvider = await p.select({
+        const selectedProvider = (await p.select({
             message: "Select provider to install to:",
             options: availableProviders.map((prov) => ({
                 value: prov.getName(),
                 label: `${prov.getName()} (${prov.getConfigPath()})`,
             })),
-        }) as string;
+        })) as string;
         selectedProviderNames = [selectedProvider];
     }
 

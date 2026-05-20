@@ -7,7 +7,7 @@ import { getConfig, saveConfig } from "@app/dev-dashboard/config";
 import { createBasicAuthCredentials } from "@app/dev-dashboard/lib/auth";
 import { startFrontProxy } from "@app/dev-dashboard/lib/front-proxy";
 import { findFreePort } from "@app/dev-dashboard/lib/ttyd/free-port";
-import { logger } from "@app/logger";
+import { logger, out } from "@app/logger";
 import { runTool } from "@app/utils/cli";
 import { PROJECT_ROOT } from "@app/utils/paths";
 import { stripAnsi } from "@app/utils/string";
@@ -24,13 +24,13 @@ async function runUiServer(): Promise<void> {
     const viteEntry = resolve(PROJECT_ROOT, "node_modules", "vite", "bin", "vite.js");
 
     if (!existsSync(configPath)) {
-        console.error(`Could not find dev-dashboard Vite config at ${configPath}`);
+        out.error(`Could not find dev-dashboard Vite config at ${configPath}`);
         process.exit(1);
     }
 
     if (!existsSync(viteEntry)) {
-        console.error(`Could not find Vite at ${viteEntry}`);
-        console.error(`Run "bun install" in ${PROJECT_ROOT} first.`);
+        out.error(`Could not find Vite at ${viteEntry}`);
+        out.error(`Run "bun install" in ${PROJECT_ROOT} first.`);
         process.exit(1);
     }
 
@@ -41,8 +41,8 @@ async function runUiServer(): Promise<void> {
     // upgrade socket is broken (oven-sh/bun#28396).
     const internalPort = await findFreePort();
 
-    console.log(`Starting dev-dashboard at ${url} ...`);
-    console.log("(first start can take a few seconds; output below comes from Vite)\n");
+    out.print(`Starting dev-dashboard at ${url} ...`);
+    out.print("(first start can take a few seconds; output below comes from Vite)\n");
 
     const child = spawn(
         "bun",
@@ -158,7 +158,7 @@ async function runUiServer(): Promise<void> {
     });
 
     if (exitCode !== 0) {
-        console.error(`\nVite exited with code ${exitCode}`);
+        out.error(`\nVite exited with code ${exitCode}`);
     }
 
     process.exit(exitCode);
@@ -217,18 +217,18 @@ async function stopRunningDashboard(port: number): Promise<void> {
     const pids = await pidsListeningOn(port);
 
     if (pids.length === 0) {
-        console.log(`No dev-dashboard listening on :${port}.`);
+        out.print(`No dev-dashboard listening on :${port}.`);
         return;
     }
 
-    console.log(`Stopping dev-dashboard (pid ${pids.join(", ")}) on :${port} ...`);
+    out.print(`Stopping dev-dashboard (pid ${pids.join(", ")}) on :${port} ...`);
     // SIGTERM lets index.ts's handler stop the front-proxy and reap its Vite
     // child gracefully; SIGKILL is the fallback if the port is still held.
     signalPids(pids, "SIGTERM");
 
     if (!(await waitForPortFree(port, 6000))) {
         const stuck = await pidsListeningOn(port);
-        console.log(`Port :${port} still held by ${stuck.join(", ")}; sending SIGKILL.`);
+        out.print(`Port :${port} still held by ${stuck.join(", ")}; sending SIGKILL.`);
         signalPids(stuck, "SIGKILL");
 
         if (!(await waitForPortFree(port, 4000))) {
@@ -301,10 +301,10 @@ program
                 clearTimeout(deadline);
             }
 
-            console.log(`\n${note}`);
-            console.log(`dev-dashboard running in background → ${url}  (pid ${child.pid})`);
-            console.log(`logs → ${logFile}`);
-            console.log(`stop it with: kill ${child.pid}  (\`tools dev-dashboard restart\` relaunches a new one)`);
+            out.print(`\n${note}`);
+            out.print(`dev-dashboard running in background → ${url}  (pid ${child.pid})`);
+            out.print(`logs → ${logFile}`);
+            out.print(`stop it with: kill ${child.pid}  (\`tools dev-dashboard restart\` relaunches a new one)`);
             child.unref();
             process.exit(0);
         };
@@ -344,13 +344,13 @@ program
         };
 
         child.on("error", (err) => {
-            console.error(`Failed to launch dev-dashboard: ${err.message}`);
+            out.error(`Failed to launch dev-dashboard: ${err.message}`);
             process.exit(1);
         });
         child.on("exit", (code) => {
             if (!settled) {
                 drain();
-                console.error(`dev-dashboard exited before becoming ready (code ${code ?? "?"}) — see ${logFile}`);
+                out.error(`dev-dashboard exited before becoming ready (code ${code ?? "?"}) — see ${logFile}`);
                 process.exit(code ?? 1);
             }
         });
@@ -378,9 +378,9 @@ auth.command("reset")
         });
         await saveConfig({ ...config, auth: nextAuth });
 
-        console.log("dev-dashboard Basic Auth updated");
-        console.log(`username: ${nextAuth.username}`);
-        console.log(`password: ${password}`);
+        out.print("dev-dashboard Basic Auth updated");
+        out.print(`username: ${nextAuth.username}`);
+        out.print(`password: ${password}`);
     });
 
 await runTool(program, { tool: "dev-dashboard" }).catch((err) => {

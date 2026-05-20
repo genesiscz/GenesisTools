@@ -1,11 +1,12 @@
 import { configureLogger, logger } from "@app/logger";
 import { enhanceHelp, isInteractive } from "@app/utils/cli";
-import { handleReadmeFlag } from "@app/utils/readme";
-import { inquirerBackend } from "@app/utils/prompts/p/inquirer-backend";
 import * as p from "@app/utils/prompts/p";
+import { inquirerBackend } from "@app/utils/prompts/p/inquirer-backend";
+import { handleReadmeFlag } from "@app/utils/readme";
 
 // Use inquirer backend for this tool
 p.setBackend(inquirerBackend);
+
 import { Command } from "commander";
 import { showHelp } from "./utils/command.utils.js";
 import { ClaudeProvider } from "./utils/providers/claude.js";
@@ -255,7 +256,7 @@ program.action(async () => {
         process.exit(1);
     }
 
-    const action = await p.select({
+    const action = (await p.select({
         message: "What would you like to do?",
         options: [
             { value: "config", label: "Open/edit unified configuration" },
@@ -269,7 +270,7 @@ program.action(async () => {
             { value: "backupAll", label: "Backup all configs" },
             { value: "rename", label: "Rename a server" },
         ],
-    }) as string;
+    })) as string;
 
     switch (action) {
         case "config":
@@ -294,9 +295,9 @@ program.action(async () => {
             await installServer(undefined, undefined, providers);
             break;
         case "show": {
-            const serverName = await p.text({
+            const serverName = (await p.text({
                 message: "Server name:",
-            }) as string;
+            })) as string;
             await showServerConfig(serverName, providers);
             break;
         }

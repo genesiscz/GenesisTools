@@ -1,3 +1,4 @@
+import { out } from "@app/logger";
 import { isVerbose, runTool } from "@app/utils/cli";
 import type { DetailedCommitInfo } from "@app/utils/git";
 import { createGit } from "@app/utils/git";
@@ -19,7 +20,7 @@ interface Options {
 }
 
 function showHelpFull() {
-    console.log(`
+    out.print(`
 Usage: tools git-rebranch [options]
 
 Description:

@@ -1,13 +1,14 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { logger } from "@app/logger";
+import { logger, out } from "@app/logger";
 import { runTool } from "@app/utils/cli";
-import { handleReadmeFlag } from "@app/utils/readme";
-import { inquirerBackend } from "@app/utils/prompts/p/inquirer-backend";
 import * as p from "@app/utils/prompts/p";
+import { inquirerBackend } from "@app/utils/prompts/p/inquirer-backend";
+import { handleReadmeFlag } from "@app/utils/readme";
 
 // Use inquirer backend for this tool
 p.setBackend(inquirerBackend);
+
 import { Command } from "commander";
 import * as watchman from "fb-watchman";
 
@@ -45,7 +46,7 @@ await runTool(program, { tool: "watchman" });
 const options = program.opts<{ current?: boolean; temporary?: boolean; helpFull?: boolean }>();
 
 if (options.helpFull) {
-    console.log(`
+    out.print(`
 Usage: tools watchman [options] [directory]
 
 Watch a directory for file changes using Facebook's Watchman.
