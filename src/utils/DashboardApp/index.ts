@@ -41,6 +41,7 @@ import type {
     DashboardAppConfig,
     DownOptions,
     DownResult,
+    InstallOptions,
     StatusResult,
     UpOptions,
     UpResult,
@@ -56,6 +57,7 @@ export type {
     DependencyStatus,
     DownOptions,
     DownResult,
+    InstallOptions,
     PreflightWarning,
     ReadinessProbe,
     StatusResult,
@@ -107,8 +109,8 @@ export function defineDashboardApp(config: DashboardAppConfig): DashboardApp {
         logs(opts?: { lines?: number }): Promise<void> {
             return logsLifecycle(ctx, opts);
         },
-        async install(): Promise<void> {
-            await installLifecycle(ctx);
+        async install(opts?: InstallOptions): Promise<void> {
+            await installLifecycle(ctx, opts);
         },
         async uninstall(): Promise<void> {
             await uninstallLifecycle(ctx);

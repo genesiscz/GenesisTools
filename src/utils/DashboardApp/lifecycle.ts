@@ -10,11 +10,19 @@ import { closeSync, existsSync, openSync, readSync, statSync } from "node:fs";
 import { logger, out } from "@app/logger";
 import { Browser } from "@app/utils/browser";
 import { suggestCommand } from "@app/utils/cli";
-import { isPortInUse } from "@app/utils/network";
+import { getPortOwner } from "@app/utils/network";
 import { spawnDashboard } from "@app/utils/process/spawnDashboard";
 import { stripAnsi } from "@app/utils/string";
 import { spawnDetached } from "./detach";
-import { defaultPlistLabel, installLaunchd, isLaunchdInstalled, uninstallLaunchd } from "./launchd";
+import {
+    bootoutLaunchd,
+    defaultPlistLabel,
+    installLaunchd,
+    isLaunchdInstalled,
+    refreshLaunchd,
+    uninstallLaunchd,
+} from "./launchd";
+import { printDevServerBanner, readLogTail, resetLogFile } from "./logSession";
 import {
     describeConflict,
     promptDependencyStart,
@@ -22,8 +30,8 @@ import {
     promptLaunchdInstall,
     promptMineMenu,
 } from "./menu";
-import { clearPid, ensureLogFile, logFilePath, pidFilePath, pidFileStartTime, readPid, writePid } from "./pidFile";
-import { checkPortConflict } from "./portConflict";
+import { clearPid, logFilePath, pidFilePath, pidFileStartTime, readPid, writePid } from "./pidFile";
+import { checkPortConflict, killPortOwner, waitForPortFree } from "./portConflict";
 import { readPreferences, writePreferences } from "./preferences";
 import { waitForReady } from "./readiness";
 import type {
@@ -31,6 +39,7 @@ import type {
     DependencyStatus,
     DownOptions,
     DownResult,
+    InstallOptions,
     PreflightWarning,
     StatusResult,
     UpOptions,
@@ -55,123 +64,49 @@ export function buildLifecycleContext(config: DashboardAppConfig, resolvedPort: 
     };
 }
 
+function spawnEnv(config: DashboardAppConfig): Record<string, string | undefined> {
+    return {
+        ...config.spawn.env,
+        ...(config.type === "ui" ? { FORCE_COLOR: "1", BROWSER: "none" } : {}),
+    };
+}
+
 export async function up(ctx: LifecycleContext, opts: UpOptions = {}): Promise<UpResult> {
     const { config } = ctx;
     const port = opts.port ?? ctx.port;
 
-    // 1. Preflight (soft warnings only — never blocks the up).
-    if (config.preflight) {
-        try {
-            const { warnings } = await config.preflight();
-            for (const w of warnings) {
-                logger.warn({ service: w.service, fix: w.fix }, w.error);
-                out.warn(`${w.service}: ${w.error}${w.fix ? `\n  Fix: ${w.fix}` : ""}`);
-            }
-        } catch (err) {
-            logger.warn({ err }, `[${config.key}] preflight threw`);
-        }
-    }
+    await runPreflight(ctx);
+    await resolveDependencies(ctx, opts, "up");
 
-    // 2. Resolve dependencies. Each dep gets its own up if policy says so.
-    for (const dep of config.dependencies ?? []) {
-        const depStatus = await dep.app.status();
-        if (depStatus.running) {
-            continue;
-        }
+    // 3. Port conflict check — reclaim stale orphans, prompt on foreign holders.
+    const portReady = await preparePort(ctx, port, opts);
 
-        if (dep.policy === "auto") {
-            out.log.step(`starting dependency ${dep.app.config.key}...`);
-            await dep.app.up({ open: false });
-            continue;
-        }
-
-        if (dep.policy === "warn") {
-            out.warn(`dependency ${dep.app.config.key} is not running.`);
-            continue;
-        }
-
-        // prompt
-        const choice = await promptDependencyStart(dep.app.config.key, config.key);
-        if (choice === "start") {
-            await dep.app.up({ open: false });
-        } else if (choice === null) {
-            out.warn(
-                `dependency ${dep.app.config.key} is not running. Run \`tools ${dep.app.config.key} ${dep.app.config.commandName} up\` to start it.`
-            );
-        }
-    }
-
-    // 3. Port conflict check.
-    const conflict = await checkPortConflict(config.key, port);
-    logger.debug({ conflict: describeConflict(conflict) }, `[${config.key}] port conflict check`);
-
-    if (conflict.state === "mine") {
-        if (opts.interactive) {
-            return handleMineMenu(ctx, conflict.pid, opts);
-        }
-        return handleMineMenu(ctx, conflict.pid, opts);
-    }
-
-    if (conflict.state === "foreign") {
-        if (opts.force && conflict.owner) {
-            out.log.step(`killing port owner pid ${conflict.owner.pid} (${conflict.owner.command})`);
-            try {
-                process.kill(conflict.owner.pid, "SIGTERM");
-            } catch (err) {
-                logger.warn({ err, pid: conflict.owner.pid }, `[${config.key}] failed to kill foreign owner`);
-            }
-            await waitForPortFree(port, 5_000);
-        } else {
-            const owner = conflict.owner;
-            const ownerDesc = owner ? `pid ${owner.pid} (${owner.command})` : "(unknown owner)";
-            out.error(`port ${port} is held by ${ownerDesc}.`);
-
-            if (owner) {
-                const choice = await promptForeignMenu(port, owner.pid, owner.command, owner.sameUser);
-                if (choice === "kill-and-up") {
-                    try {
-                        process.kill(owner.pid, "SIGTERM");
-                    } catch (err) {
-                        logger.warn({ err, pid: owner.pid }, `[${config.key}] failed to kill foreign owner`);
-                    }
-                    await waitForPortFree(port, 5_000);
-                } else if (choice === null) {
-                    out.info(
-                        `  Use --force to kill the owner and start: ${suggestCommand("tools", { add: ["--force"] })}`
-                    );
-                    return { started: false, port, mode: opts.foreground ? "foreground" : "background" };
-                } else {
-                    return { started: false, port, mode: opts.foreground ? "foreground" : "background" };
-                }
-            } else {
-                return { started: false, port, mode: opts.foreground ? "foreground" : "background" };
-            }
-        }
+    if (!portReady.proceed) {
+        return portReady.result;
     }
 
     // 4. Launchd first-run prompt (TTY only, opt-in apps only).
     if (
         config.launchd?.available &&
+        !opts.foreground &&
         !opts.skipInstallPrompt &&
         !readPreferences(config.key).launchdInstalled &&
         !readPreferences(config.key).launchdPromptDismissed
     ) {
         const wantInstall = await promptLaunchdInstall(config.key);
+
         if (wantInstall === true) {
-            await install(ctx);
-            // Launchd will start the process via the plist. Return now — readiness wait below.
-            const ok = await waitForReady(config.readiness, { port, logFile: ctx.logFile });
-            return {
-                started: ok.ready,
-                port,
-                mode: "background",
-                pid: readPid(config.key) ?? undefined,
-                logPath: ctx.logFile,
-            };
+            return finishLaunchdStart(ctx, port, opts);
         }
+
         if (wantInstall === false) {
             writePreferences(config.key, { launchdPromptDismissed: true });
         }
+    }
+
+    // If launchd is already installed, prefer launchd over a duplicate manual spawn.
+    if (config.launchd?.available && !opts.foreground && isLaunchdInstalled(ctx.plistLabel)) {
+        return finishLaunchdStart(ctx, port, { ...opts, skipInstallPrompt: true });
     }
 
     // 5. Spawn — foreground OR background.
@@ -184,7 +119,7 @@ export async function up(ctx: LifecycleContext, opts: UpOptions = {}): Promise<U
             const exitCode = await spawnDashboard({
                 cmd: [...config.spawn.cmd],
                 cwd: config.spawn.cwd,
-                env: config.spawn.env,
+                env: spawnEnv(config),
             });
             clearPid(config.key);
             process.exit(exitCode);
@@ -195,11 +130,11 @@ export async function up(ctx: LifecycleContext, opts: UpOptions = {}): Promise<U
     }
 
     // Background: detached spawn with stdio → logfile.
-    ensureLogFile(config.key);
+    resetLogFile(config.key);
     const { pid } = spawnDetached({
         cmd: [...config.spawn.cmd],
         cwd: config.spawn.cwd,
-        env: config.spawn.env,
+        env: spawnEnv(config),
         logFile: ctx.logFile,
     });
     writePid(config.key, pid);
@@ -207,16 +142,21 @@ export async function up(ctx: LifecycleContext, opts: UpOptions = {}): Promise<U
     const readiness = await waitForReady(config.readiness, { port, logFile: ctx.logFile });
     if (!readiness.ready) {
         out.warn(
-            `readiness check failed: ${readiness.detail ?? "(no detail)"}\n  Started anyway — tail the log: tools ${config.key} ${config.commandName} attach`
+            `Readiness check failed: ${readiness.detail ?? "(no detail)"}\n  Started anyway — tail the log: tools ${config.key} ${config.commandName} attach`
         );
     } else {
         out.log.success(
             `${config.name ?? config.key} ready on http://localhost:${port}  (pid ${pid})\n  logs → ${ctx.logFile}`
         );
+
+        if (config.type === "ui") {
+            await Bun.sleep(400);
+            printDevServerBanner(ctx.logFile, port);
+        }
     }
 
     // Browser-open (UI only).
-    if (config.type === "ui" && (opts.open ?? config.openBrowser?.enabled)) {
+    if (config.type === "ui" && shouldOpenBrowser(config, opts)) {
         const browserUrl = config.openBrowser?.url ? config.openBrowser.url(port) : `http://localhost:${port}`;
         await Browser.open(browserUrl).catch((err) => {
             logger.warn({ err }, `[${config.key}] browser open failed`);
@@ -226,9 +166,172 @@ export async function up(ctx: LifecycleContext, opts: UpOptions = {}): Promise<U
     return { started: true, port, mode, pid, logPath: ctx.logFile };
 }
 
+type PreparePortResult = { proceed: true } | { proceed: false; result: UpResult };
+
+async function preparePort(ctx: LifecycleContext, port: number, opts: UpOptions): Promise<PreparePortResult> {
+    const { config } = ctx;
+    const conflict = await checkPortConflict(config.key, port);
+    logger.debug({ conflict: describeConflict(conflict) }, `[${config.key}] port conflict check`);
+
+    if (conflict.state === "free") {
+        return { proceed: true };
+    }
+
+    if (conflict.state === "mine") {
+        if (opts.force || opts.replaceRunning) {
+            out.log.step(`Stopping running instance (pid ${conflict.pid}) before start`);
+            await down(ctx, { force: true });
+            await waitForPortFree(port, 5_000, { killIfHeld: true, dashboardKey: config.key });
+            return { proceed: true };
+        }
+
+        const result = await handleMineMenu(ctx, conflict.pid, opts);
+        return { proceed: false, result };
+    }
+
+    if (conflict.state === "stale") {
+        out.log.step(`Reclaiming port ${port} from stale pid ${conflict.owner.pid} (${conflict.owner.command})`);
+        await killPortOwner(conflict.owner);
+        clearPid(config.key);
+
+        const freed = await waitForPortFree(port, 5_000, {
+            killIfHeld: true,
+            expectOwnerPid: conflict.owner.pid,
+        });
+
+        if (!freed) {
+            out.error(`Port ${port} still held after reclaiming stale pid ${conflict.owner.pid}`);
+            return {
+                proceed: false,
+                result: { started: false, port, mode: opts.foreground ? "foreground" : "background" },
+            };
+        }
+
+        return { proceed: true };
+    }
+
+    if (opts.force && conflict.owner) {
+        out.log.step(`Killing port owner pid ${conflict.owner.pid} (${conflict.owner.command})`);
+        await killPortOwner(conflict.owner);
+        clearPid(config.key);
+        await waitForPortFree(port, 5_000, {
+            killIfHeld: true,
+            expectOwnerPid: conflict.owner.pid,
+            sameUserOnly: conflict.owner.sameUser,
+        });
+        return { proceed: true };
+    }
+
+    const owner = conflict.owner;
+    const ownerDesc = owner ? `pid ${owner.pid} (${owner.command})` : "(unknown owner)";
+    out.error(`Port ${port} is held by ${ownerDesc}.`);
+
+    if (owner) {
+        const choice = await promptForeignMenu(port, owner.pid, owner.command, owner.sameUser);
+
+        if (choice === "kill-and-up") {
+            await killPortOwner(owner);
+            clearPid(config.key);
+            await waitForPortFree(port, 5_000, {
+                killIfHeld: true,
+                expectOwnerPid: owner.pid,
+                sameUserOnly: owner.sameUser,
+            });
+            return { proceed: true };
+        }
+
+        if (choice === null) {
+            out.info(`  Use --force to kill the owner and start: ${suggestCommand("tools", { add: ["--force"] })}`);
+        }
+    }
+
+    return {
+        proceed: false,
+        result: { started: false, port, mode: opts.foreground ? "foreground" : "background" },
+    };
+}
+
+async function finishLaunchdStart(ctx: LifecycleContext, port: number, opts: UpOptions): Promise<UpResult> {
+    const { config } = ctx;
+    const newlyInstalled = !isLaunchdInstalled(ctx.plistLabel);
+
+    resetLogFile(config.key);
+
+    if (newlyInstalled) {
+        await installLaunchd({
+            label: ctx.plistLabel,
+            command: config.spawn.cmd,
+            cwd: config.spawn.cwd,
+            env: spawnEnv(config),
+            logFile: ctx.logFile,
+        });
+        writePreferences(config.key, { launchdInstalled: true, launchdPromptDismissed: false });
+        out.log.success(`Launchd plist installed at ~/Library/LaunchAgents/${ctx.plistLabel}.plist`);
+    } else {
+        const portHeld = await getPortOwner(port);
+
+        if (portHeld) {
+            out.log.step(`Restarting launchd agent ${ctx.plistLabel}…`);
+            await bootoutLaunchd(ctx.plistLabel).catch((err) => {
+                logger.warn({ err }, `[${config.key}] launchd bootout failed`);
+            });
+            out.log.step(`Waiting for port ${port} to free…`);
+            await waitForPortFree(port, 5_000, { killIfHeld: true, dashboardKey: config.key });
+        }
+
+        out.log.step(`Starting launchd agent ${ctx.plistLabel}…`);
+        await refreshLaunchd({
+            label: ctx.plistLabel,
+            command: config.spawn.cmd,
+            cwd: config.spawn.cwd,
+            env: spawnEnv(config),
+            logFile: ctx.logFile,
+        });
+    }
+
+    out.log.step(`Waiting for ${config.name ?? config.key} to respond on :${port}…`);
+    const ok = await waitForReady(config.readiness, { port, logFile: ctx.logFile });
+    const owner = ok.ready ? await getPortOwner(port) : null;
+    const pid = owner?.pid ?? readPid(config.key) ?? undefined;
+
+    if (owner?.pid) {
+        writePid(config.key, owner.pid);
+    }
+
+    if (ok.ready) {
+        out.log.success(
+            `${config.name ?? config.key} ready on http://localhost:${port}${pid ? ` (pid ${pid})` : ""} · launchd\n  logs → ${ctx.logFile}`
+        );
+
+        if (config.type === "ui") {
+            await Bun.sleep(400);
+            printDevServerBanner(ctx.logFile, port);
+        }
+
+        if (config.type === "ui" && shouldOpenBrowser(config, opts)) {
+            const browserUrl = config.openBrowser?.url ? config.openBrowser.url(port) : `http://localhost:${port}`;
+            await Browser.open(browserUrl).catch((err) => {
+                logger.warn({ err }, `[${config.key}] browser open failed`);
+            });
+        }
+    } else {
+        out.warn(
+            `Launchd agent did not become ready: ${ok.detail ?? "unknown"}\n  Check: launchctl print gui/$UID/${ctx.plistLabel}\n  Log: ${ctx.logFile}`
+        );
+    }
+
+    return {
+        started: ok.ready,
+        port,
+        mode: "background",
+        pid,
+        logPath: ctx.logFile,
+    };
+}
+
 async function handleMineMenu(ctx: LifecycleContext, pid: number, opts: UpOptions): Promise<UpResult> {
     const { config, port } = ctx;
-    const choice = await promptMineMenu(port, pid);
+    const choice = await promptMineMenu(port, pid, { canOpen: config.type === "ui" });
 
     if (choice === null) {
         // Non-TTY: print the verbs and exit.
@@ -244,7 +347,7 @@ async function handleMineMenu(ctx: LifecycleContext, pid: number, opts: UpOption
 
     if (choice === "restart") {
         await down(ctx, {});
-        return up(ctx, { ...opts, interactive: false });
+        return up(ctx, { ...opts, interactive: false, open: opts.open ?? config.openBrowser?.enabled });
     }
     if (choice === "down") {
         await down(ctx, {});
@@ -258,61 +361,102 @@ async function handleMineMenu(ctx: LifecycleContext, pid: number, opts: UpOption
         await printStatus(ctx);
         return { started: false, port, mode: "background", pid };
     }
+    if (choice === "open") {
+        if (config.type === "ui") {
+            const browserUrl = config.openBrowser?.url ? config.openBrowser.url(port) : `http://localhost:${port}`;
+            await Browser.open(browserUrl).catch((err) => {
+                logger.warn({ err }, `[${config.key}] browser open failed`);
+            });
+        }
+        return { started: false, port, mode: "background", pid };
+    }
     return { started: false, port, mode: "background" };
 }
 
 export async function down(ctx: LifecycleContext, opts: DownOptions = {}): Promise<DownResult> {
     const { config } = ctx;
-    const pid = readPid(config.key);
-    if (!pid) {
+    const portOwner = await getPortOwner(ctx.port);
+    const filePid = readPid(config.key);
+    const targetPid = portOwner?.pid ?? filePid;
+    const launchdManaged = Boolean(config.launchd?.available && isLaunchdInstalled(ctx.plistLabel));
+    let didBootout = false;
+
+    if (!targetPid && !launchdManaged) {
         out.info(`${config.name ?? config.key} is not running.`);
-        clearPid(config.key); // clean up stale PID file if any
+        clearPid(config.key);
         return { stopped: false };
     }
 
-    // If launchd-managed, unload first so it doesn't respawn.
-    if (config.launchd?.available && isLaunchdInstalled(ctx.plistLabel)) {
-        await uninstallLaunchd(ctx.plistLabel).catch((err) => {
-            logger.warn({ err }, `[${config.key}] launchd unload failed`);
+    const aliveBeforeStop = targetPid !== null && isProcessAlive(targetPid);
+
+    if (launchdManaged) {
+        out.log.step(`Stopping launchd agent ${ctx.plistLabel}…`);
+        await bootoutLaunchd(ctx.plistLabel).catch((err) => {
+            logger.warn({ err }, `[${config.key}] launchd bootout failed`);
         });
+        didBootout = true;
     }
 
-    try {
-        process.kill(pid, "SIGTERM");
-    } catch (err) {
-        logger.warn({ err, pid }, `[${config.key}] SIGTERM failed`);
-    }
+    const pid = (await getPortOwner(ctx.port))?.pid ?? targetPid;
 
-    const force = opts.force ?? true;
-    const gracePeriodMs = 5_000;
-    const deadline = Date.now() + gracePeriodMs;
-    while (Date.now() < deadline) {
-        if (!isProcessAlive(pid)) {
-            clearPid(config.key);
-            out.log.success(`${config.name ?? config.key} stopped (pid ${pid})`);
-            return { stopped: true, pid };
-        }
-        await Bun.sleep(200);
-    }
-
-    if (force) {
-        try {
-            process.kill(pid, "SIGKILL");
-        } catch (err) {
-            logger.warn({ err, pid }, `[${config.key}] SIGKILL failed`);
-        }
-        // brief wait for kernel to clean up
-        await Bun.sleep(500);
-    }
-
-    if (!isProcessAlive(pid)) {
+    if (!pid) {
         clearPid(config.key);
-        out.log.success(`${config.name ?? config.key} stopped (pid ${pid}, forced)`);
-        return { stopped: true, pid };
+        out.log.success(`${config.name ?? config.key} stopped${didBootout ? " (launchd agent unloaded)" : ""}.`);
+        return { stopped: true };
     }
 
-    out.error(`failed to stop pid ${pid}; it may need manual cleanup.`);
-    return { stopped: false, pid };
+    if (isProcessAlive(pid)) {
+        try {
+            process.kill(pid, "SIGTERM");
+        } catch (err) {
+            logger.warn({ err, pid }, `[${config.key}] SIGTERM failed`);
+        }
+
+        out.log.step(`Waiting for ${config.name ?? config.key} (pid ${pid}) to exit…`);
+        const force = opts.force ?? true;
+        const gracePeriodMs = 5_000;
+        const deadline = Date.now() + gracePeriodMs;
+
+        while (Date.now() < deadline) {
+            if (!isProcessAlive(pid)) {
+                break;
+            }
+
+            await Bun.sleep(200);
+        }
+
+        if (isProcessAlive(pid) && force) {
+            try {
+                process.kill(pid, "SIGKILL");
+            } catch (err) {
+                logger.warn({ err, pid }, `[${config.key}] SIGKILL failed`);
+            }
+
+            await Bun.sleep(500);
+        }
+
+        if (isProcessAlive(pid)) {
+            out.error(`Failed to stop pid ${pid}; it may need manual cleanup.`);
+            return { stopped: false, pid };
+        }
+    }
+
+    if (await getPortOwner(ctx.port)) {
+        out.log.step(`Waiting for port ${ctx.port} to free…`);
+        await waitForPortFree(ctx.port, 2_000, { killIfHeld: true, dashboardKey: config.key });
+    }
+
+    clearPid(config.key);
+
+    if (didBootout) {
+        out.log.success(`${config.name ?? config.key} stopped (pid ${pid})`);
+    } else if (!aliveBeforeStop) {
+        out.log.success(`${config.name ?? config.key} stopped (pid ${pid} was not running; cleaned up stale state)`);
+    } else {
+        out.log.success(`${config.name ?? config.key} stopped (pid ${pid})`);
+    }
+
+    return { stopped: true, pid };
 }
 
 export async function restart(ctx: LifecycleContext, opts: UpOptions = {}): Promise<UpResult> {
@@ -322,7 +466,19 @@ export async function restart(ctx: LifecycleContext, opts: UpOptions = {}): Prom
 
 export async function status(ctx: LifecycleContext): Promise<StatusResult> {
     const { config, port } = ctx;
-    const pid = readPid(config.key);
+    let pid = readPid(config.key);
+    let running = pid !== null && isProcessAlive(pid);
+
+    if (!running) {
+        const owner = await getPortOwner(port);
+
+        if (owner?.pid && isProcessAlive(owner.pid)) {
+            pid = owner.pid;
+            running = true;
+            writePid(config.key, owner.pid);
+        }
+    }
+
     const startTime = pid ? pidFileStartTime(config.key) : null;
 
     const dependencies: DependencyStatus[] = [];
@@ -349,7 +505,7 @@ export async function status(ctx: LifecycleContext): Promise<StatusResult> {
     return {
         key: config.key,
         type: config.type,
-        running: pid !== null,
+        running,
         pid: pid ?? undefined,
         port,
         uptimeMs: pid && startTime ? Date.now() - startTime.getTime() : undefined,
@@ -402,13 +558,17 @@ export async function attach(ctx: LifecycleContext, opts: { lines?: number } = {
         return;
     }
 
-    // Print the tail first.
-    await logs(ctx, { lines: opts.lines ?? 50 });
+    const tail = readLogTail(logFile, opts.lines ?? 50, true);
+    const isTty = Boolean(process.stdout.isTTY);
+    process.stdout.write(isTty ? tail : stripAnsi(tail));
 
-    out.info(`\n--- attached (Ctrl+C to detach the tail; the process keeps running) ---`);
+    if (!tail.endsWith("\n")) {
+        process.stdout.write("\n");
+    }
+
+    out.info(`\n--- Attached (Ctrl+C to detach the tail; the process keeps running) ---`);
 
     let pos = statSync(logFile).size;
-    const isTty = Boolean(process.stdout.isTTY);
 
     let interrupted = false;
     const handler = () => {
@@ -442,57 +602,156 @@ export async function attach(ctx: LifecycleContext, opts: { lines?: number } = {
     }
 }
 
-export async function logs(ctx: LifecycleContext, opts: { lines?: number } = {}): Promise<void> {
+export async function logs(ctx: LifecycleContext, opts: { lines?: number; sessionOnly?: boolean } = {}): Promise<void> {
     const { logFile } = ctx;
+
     if (!existsSync(logFile)) {
         out.info(`No log file at ${logFile}.`);
         return;
     }
 
-    const requested = opts.lines ?? 200;
-    const size = statSync(logFile).size;
-    const readBytes = Math.min(size, Math.max(8_192, requested * 200));
-    const fd = openSync(logFile, "r");
-    try {
-        const buf = Buffer.alloc(readBytes);
-        const read = readSync(fd, buf, 0, readBytes, Math.max(0, size - readBytes));
-        const text = buf.subarray(0, read).toString();
-        const allLines = text.split("\n");
-        const tail = allLines.slice(-requested).join("\n");
-        const isTty = Boolean(process.stdout.isTTY);
-        process.stdout.write(isTty ? tail : stripAnsi(tail));
-        if (!tail.endsWith("\n")) {
-            process.stdout.write("\n");
-        }
-    } finally {
-        closeSync(fd);
+    const sessionOnly = opts.sessionOnly ?? true;
+    const tail = readLogTail(logFile, opts.lines ?? 200, sessionOnly);
+    const isTty = Boolean(process.stdout.isTTY);
+    process.stdout.write(isTty ? tail : stripAnsi(tail));
+
+    if (tail.length > 0 && !tail.endsWith("\n")) {
+        process.stdout.write("\n");
     }
 }
 
-export async function install(ctx: LifecycleContext): Promise<void> {
-    if (!ctx.config.launchd?.available) {
-        throw new Error(`${ctx.config.key} does not opt into launchd integration.`);
+function shouldOpenBrowser(config: DashboardAppConfig, opts: UpOptions): boolean {
+    if (config.type !== "ui") {
+        return false;
     }
+
+    return opts.open ?? config.openBrowser?.enabled ?? false;
+}
+
+export async function install(ctx: LifecycleContext, opts: InstallOptions = {}): Promise<void> {
+    const { config } = ctx;
+    const port = opts.port ?? ctx.port;
+
+    if (!config.launchd?.available) {
+        throw new Error(`${config.key} does not opt into launchd integration.`);
+    }
+
     if (process.platform !== "darwin") {
         throw new Error("Launchd integration is macOS-only.");
     }
 
-    ensureLogFile(ctx.config.key);
-    await installLaunchd({
-        label: ctx.plistLabel,
-        command: ctx.config.spawn.cmd,
-        cwd: ctx.config.spawn.cwd,
-        env: ctx.config.spawn.env,
-        logFile: ctx.logFile,
+    await runPreflight(ctx);
+    await resolveDependencies(ctx, { ...opts, open: false, skipInstallPrompt: true, replaceRunning: true }, "install");
+
+    const portReady = await preparePort(ctx, port, {
+        force: opts.force,
+        replaceRunning: true,
+        open: false,
+        skipInstallPrompt: true,
     });
-    writePreferences(ctx.config.key, { launchdInstalled: true, launchdPromptDismissed: false });
-    out.log.success(`launchd plist installed at ~/Library/LaunchAgents/${ctx.plistLabel}.plist`);
+
+    if (!portReady.proceed) {
+        throw new Error(`${config.name ?? config.key}: port ${port} is still in use.`);
+    }
+
+    const result = await finishLaunchdStart(ctx, port, { open: false, skipInstallPrompt: true });
+
+    if (!result.started) {
+        throw new Error(
+            `${config.name ?? config.key} launchd install failed — not ready on :${port}. See ${ctx.logFile}`
+        );
+    }
+}
+
+async function runPreflight(ctx: LifecycleContext): Promise<void> {
+    const { config } = ctx;
+
+    if (!config.preflight) {
+        return;
+    }
+
+    try {
+        const { warnings } = await config.preflight();
+
+        for (const w of warnings) {
+            logger.warn({ service: w.service, fix: w.fix }, w.error);
+            out.warn(`${w.service}: ${w.error}${w.fix ? `\n  Fix: ${w.fix}` : ""}`);
+        }
+    } catch (err) {
+        logger.warn({ err }, `[${config.key}] preflight threw`);
+    }
+}
+
+type StartMode = "up" | "install";
+
+async function resolveDependencies(ctx: LifecycleContext, opts: UpOptions, mode: StartMode): Promise<void> {
+    const { config } = ctx;
+
+    for (const dep of config.dependencies ?? []) {
+        const depStatus = await dep.app.status();
+
+        if (depStatus.running) {
+            continue;
+        }
+
+        const startDep = async () => {
+            if (mode === "install" && dep.app.config.launchd?.available) {
+                await dep.app.install({ force: opts.force });
+                return;
+            }
+
+            await dep.app.up({
+                open: false,
+                force: opts.force,
+                skipInstallPrompt: true,
+                replaceRunning: opts.replaceRunning,
+            });
+        };
+
+        if (dep.policy === "auto") {
+            out.log.step(`${mode === "install" ? "Installing" : "Starting"} dependency ${dep.app.config.key}...`);
+            await startDep();
+            continue;
+        }
+
+        if (dep.policy === "warn") {
+            out.warn(`Dependency ${dep.app.config.key} is not running.`);
+            continue;
+        }
+
+        if (mode === "install") {
+            out.log.step(`Installing dependency ${dep.app.config.key}...`);
+            await startDep();
+            continue;
+        }
+
+        const choice = await promptDependencyStart(dep.app.config.key, config.key);
+
+        if (choice === "start") {
+            await startDep();
+        } else if (choice === null) {
+            out.warn(
+                `Dependency ${dep.app.config.key} is not running. Run \`tools ${dep.app.config.commandName} up\` on the dependency to start it.`
+            );
+        }
+    }
 }
 
 export async function uninstall(ctx: LifecycleContext): Promise<void> {
+    await bootoutLaunchd(ctx.plistLabel).catch((err) => {
+        logger.warn({ err }, `[${ctx.config.key}] launchd bootout failed`);
+    });
+
+    const owner = await getPortOwner(ctx.port);
+
+    if (owner?.pid && isProcessAlive(owner.pid)) {
+        await killPortOwner(owner);
+    }
+
+    clearPid(ctx.config.key);
     await uninstallLaunchd(ctx.plistLabel);
     writePreferences(ctx.config.key, { launchdInstalled: false });
-    out.log.success(`launchd plist removed.`);
+    out.log.success(`Launchd plist removed.`);
 }
 
 function isProcessAlive(pid: number): boolean {
@@ -501,16 +760,6 @@ function isProcessAlive(pid: number): boolean {
         return true;
     } catch {
         return false;
-    }
-}
-
-async function waitForPortFree(port: number, timeoutMs: number): Promise<void> {
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-        if (!(await isPortInUse(port))) {
-            return;
-        }
-        await Bun.sleep(150);
     }
 }
 

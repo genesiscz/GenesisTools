@@ -9,22 +9,29 @@ import { isInteractive } from "@app/utils/cli";
 import * as p from "@app/utils/prompts/p";
 import type { PortConflict } from "./portConflict";
 
-export type MineMenuChoice = "restart" | "down" | "attach" | "status" | "abort";
+export type MineMenuChoice = "restart" | "down" | "attach" | "status" | "open" | "abort";
 
-export async function promptMineMenu(port: number, pid: number): Promise<MineMenuChoice | null> {
+export async function promptMineMenu(
+    port: number,
+    pid: number,
+    opts?: { canOpen?: boolean }
+): Promise<MineMenuChoice | null> {
     if (!isInteractive()) {
         return null;
     }
 
+    const options = [
+        ...(opts?.canOpen ? [{ value: "open" as const, label: "Open in browser" }] : []),
+        { value: "restart", label: "Restart (stop and start fresh)" },
+        { value: "attach", label: "Attach to its background log" },
+        { value: "status", label: "Show status" },
+        { value: "down", label: "Stop it" },
+        { value: "abort", label: "Abort" },
+    ];
+
     const picked = await p.select({
         message: `Already running (pid ${pid} on :${port}). What now?`,
-        options: [
-            { value: "restart", label: "Restart (stop and start fresh)" },
-            { value: "attach", label: "Attach to its background log" },
-            { value: "status", label: "Show status" },
-            { value: "down", label: "Stop it" },
-            { value: "abort", label: "Abort" },
-        ],
+        options,
     });
 
     if (p.isCancel(picked)) {
@@ -110,11 +117,18 @@ export function describeConflict(conflict: PortConflict): string {
     if (conflict.state === "free") {
         return "free";
     }
+
     if (conflict.state === "mine") {
         return `mine (pid ${conflict.pid})`;
     }
+
+    if (conflict.state === "stale") {
+        return `stale (pid ${conflict.owner.pid} ${conflict.owner.command})`;
+    }
+
     if (conflict.owner) {
         return `foreign (pid ${conflict.owner.pid} ${conflict.owner.command})`;
     }
+
     return "foreign (unknown owner)";
 }

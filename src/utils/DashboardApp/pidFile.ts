@@ -41,12 +41,7 @@ export function writePid(key: string, pid: number): void {
     writeFileSync(file, String(pid));
 }
 
-/**
- * Returns the PID written for this dashboard if (a) the file exists and (b)
- * the PID is alive. Returns null otherwise — the file is left in place (caller
- * decides whether to clear stale entries via `clearPid`).
- */
-export function readPid(key: string): number | null {
+export function readPidRaw(key: string): number | null {
     const file = pidFilePath(key);
 
     if (!existsSync(file)) {
@@ -57,6 +52,21 @@ export function readPid(key: string): number | null {
     const pid = Number.parseInt(raw, 10);
 
     if (Number.isNaN(pid) || pid <= 0) {
+        return null;
+    }
+
+    return pid;
+}
+
+/**
+ * Returns the PID written for this dashboard if (a) the file exists and (b)
+ * the PID is alive. Returns null otherwise — the file is left in place (caller
+ * decides whether to clear stale entries via `clearPid`).
+ */
+export function readPid(key: string): number | null {
+    const pid = readPidRaw(key);
+
+    if (pid === null) {
         return null;
     }
 

@@ -98,6 +98,13 @@ export interface UpOptions {
     skipInstallPrompt?: boolean;
     /** When true, forces the interactive menu even on unambiguous actions. */
     interactive?: boolean;
+    /** When true, an already-running instance on our port is stopped without a menu (used by `install`). */
+    replaceRunning?: boolean;
+}
+
+export interface InstallOptions {
+    force?: boolean;
+    port?: number;
 }
 
 export interface UpResult {
@@ -165,6 +172,6 @@ export interface DashboardApp {
     status(): Promise<StatusResult>;
     attach(opts?: AttachOptions): Promise<void>;
     logs(opts?: { lines?: number }): Promise<void>;
-    install(): Promise<void>;
+    install(opts?: InstallOptions): Promise<void>;
     uninstall(): Promise<void>;
 }
