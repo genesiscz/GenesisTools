@@ -1,7 +1,6 @@
 import {
     appendFileSync,
     chmodSync,
-    existsSync,
     lstatSync,
     mkdirSync,
     readdirSync,
@@ -95,99 +94,19 @@ function totalsOf(ops: ProcessOp[]): ProcessTotals {
     return t;
 }
 
-/** Replay a process JSONL into a ProcessReport. Last meta line wins for
- *  state/endedAt (rollback appends a second meta). Read-only. */
-export function readProcess(id: string): ProcessReport | null {
+/** Stream a process JSONL line-by-line as discriminated `{ meta }` / `{ op }`
+ *  records. Read errors (typically ENOENT for unknown ids) end the generator
+ *  silently — callers decide what to do when no meta was yielded. */
+function* parseProcessLines(id: string): Generator<{ meta?: ProcessMeta; op?: ProcessOp }> {
     const path = processJsonlPath(id);
-    if (!existsSync(path)) {
-        return null;
-    }
-
-    let lines: string[];
-    try {
-        lines = readFileSync(path, "utf8")
-            .split("\n")
-            .filter((l) => l.trim().length > 0);
-    } catch (err) {
-        log.warn({ err, id }, "readProcess failed");
-        return null;
-    }
-
-    let meta: ProcessMeta | null = null;
-    const ops: ProcessOp[] = [];
-    for (const line of lines) {
-        let parsed: unknown;
-        try {
-            parsed = SafeJSON.parse(line);
-        } catch (err) {
-            log.debug({ err, id, line }, "skipping unparseable jsonl line");
-            continue;
-        }
-
-        if (isMetaLine(parsed)) {
-            meta = parsed._meta;
-        } else {
-            ops.push(parsed as ProcessOp);
-        }
-    }
-
-    if (!meta) {
-        return null;
-    }
-
-    return {
-        id: meta.id,
-        state: meta.state,
-        roots: meta.roots,
-        startedAt: meta.startedAt,
-        endedAt: meta.endedAt,
-        planCache: {
-            hit: meta.planCacheHit,
-            ...(meta.planCacheAgeMs !== undefined ? { ageMs: meta.planCacheAgeMs } : {}),
-        },
-        ops,
-        totals: totalsOf(ops),
-    };
-}
-
-function firstMeta(path: string): ProcessMeta | null {
-    try {
-        for (const line of readFileSync(path, "utf8").split("\n")) {
-            if (line.trim().length === 0) {
-                continue;
-            }
-
-            const parsed: unknown = SafeJSON.parse(line);
-            if (isMetaLine(parsed)) {
-                return parsed._meta;
-            }
-        }
-    } catch (err) {
-        log.debug({ err, path }, "firstMeta read failed");
-    }
-
-    return null;
-}
-
-/** Summary-only read: same parse loop as readProcess but skips materialising
- *  the ops[] array. Totals are accumulated incrementally → constant memory
- *  per process even on huge audit logs. */
-function readProcessSummary(id: string): Omit<ProcessReport, "ops"> | null {
-    const path = processJsonlPath(id);
-    if (!existsSync(path)) {
-        return null;
-    }
-
     let raw: string;
     try {
         raw = readFileSync(path, "utf8");
     } catch (err) {
-        log.warn({ err, id }, "readProcessSummary failed");
-        return null;
+        log.debug({ err, id }, "parseProcessLines read failed");
+        return;
     }
 
-    let meta: ProcessMeta | null = null;
-    const t: ProcessTotals = { cloned: 0, skipped: 0, errors: 0, bytesReclaimed: 0 };
     for (const line of raw.split("\n")) {
         if (line.trim().length === 0) {
             continue;
@@ -202,25 +121,14 @@ function readProcessSummary(id: string): Omit<ProcessReport, "ops"> | null {
         }
 
         if (isMetaLine(parsed)) {
-            meta = parsed._meta;
-            continue;
-        }
-
-        const op = parsed as ProcessOp;
-        if (op.op === "clone") {
-            t.cloned += 1;
-            t.bytesReclaimed += op.bytes;
-        } else if (op.op === "skip") {
-            t.skipped += 1;
-        } else if (op.op === "error") {
-            t.errors += 1;
+            yield { meta: parsed._meta };
+        } else {
+            yield { op: parsed as ProcessOp };
         }
     }
+}
 
-    if (!meta) {
-        return null;
-    }
-
+function metaToReport(meta: ProcessMeta, ops: ProcessOp[], totals: ProcessTotals): ProcessReport {
     return {
         id: meta.id,
         state: meta.state,
@@ -231,8 +139,63 @@ function readProcessSummary(id: string): Omit<ProcessReport, "ops"> | null {
             hit: meta.planCacheHit,
             ...(meta.planCacheAgeMs !== undefined ? { ageMs: meta.planCacheAgeMs } : {}),
         },
-        totals: t,
+        ops,
+        totals,
     };
+}
+
+/** Replay a process JSONL into a ProcessReport. Last meta line wins for
+ *  state/endedAt (rollback appends a second meta). Read-only. */
+export function readProcess(id: string): ProcessReport | null {
+    let meta: ProcessMeta | null = null;
+    const ops: ProcessOp[] = [];
+    for (const rec of parseProcessLines(id)) {
+        if (rec.meta) {
+            meta = rec.meta;
+        } else if (rec.op) {
+            ops.push(rec.op);
+        }
+    }
+
+    if (!meta) {
+        return null;
+    }
+
+    return metaToReport(meta, ops, totalsOf(ops));
+}
+
+/** Summary-only read: same parse loop as readProcess but skips materialising
+ *  the ops[] array. Totals are accumulated incrementally → constant memory
+ *  per process even on huge audit logs. */
+function readProcessSummary(id: string): Omit<ProcessReport, "ops"> | null {
+    let meta: ProcessMeta | null = null;
+    const t: ProcessTotals = { cloned: 0, skipped: 0, errors: 0, bytesReclaimed: 0 };
+    for (const rec of parseProcessLines(id)) {
+        if (rec.meta) {
+            meta = rec.meta;
+            continue;
+        }
+
+        if (!rec.op) {
+            continue;
+        }
+
+        if (rec.op.op === "clone") {
+            t.cloned += 1;
+            t.bytesReclaimed += rec.op.bytes;
+        } else if (rec.op.op === "skip") {
+            t.skipped += 1;
+        } else if (rec.op.op === "error") {
+            t.errors += 1;
+        }
+    }
+
+    if (!meta) {
+        return null;
+    }
+
+    const { ops: _ops, ...rest } = metaToReport(meta, [], t);
+    return rest;
 }
 
 export function listProcesses(): ProcessListReport {
@@ -280,8 +243,6 @@ export function closestProcessIds(wanted: string): string[] {
 
     return ids.sort((a, b) => score(b) - score(a)).slice(0, 5);
 }
-
-export { firstMeta };
 
 export class IntegrityError extends Error {
     constructor(message: string) {
