@@ -1,8 +1,4 @@
 import { analyzeActiveVsSold } from "@app/Internal/commands/reas/analysis/active-vs-sold";
-import { configureLogger } from "@app/logger";
-
-// Enable file logging at debug level so all outbound API calls (logged by ApiClient) are captured
-configureLogger({ logToFile: true, level: "debug" });
 
 import { analyzeComparables } from "@app/Internal/commands/reas/analysis/comparables";
 import { analyzeDiscount } from "@app/Internal/commands/reas/analysis/discount";
