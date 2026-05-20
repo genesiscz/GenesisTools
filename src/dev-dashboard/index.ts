@@ -1,16 +1,15 @@
 #!/usr/bin/env bun
 import { spawn } from "node:child_process";
-import { closeSync, existsSync, mkdirSync, openSync, readSync, statSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
 import { getConfig, saveConfig } from "@app/dev-dashboard/config";
 import { createBasicAuthCredentials } from "@app/dev-dashboard/lib/auth";
 import { startFrontProxy } from "@app/dev-dashboard/lib/front-proxy";
 import { findFreePort } from "@app/dev-dashboard/lib/ttyd/free-port";
 import { logger, out } from "@app/logger";
 import { runTool } from "@app/utils/cli";
+import { defineDashboardApp } from "@app/utils/DashboardApp";
 import { PROJECT_ROOT } from "@app/utils/paths";
-import { stripAnsi } from "@app/utils/string";
 import { Command } from "commander";
 
 const program = new Command()
@@ -164,205 +163,35 @@ async function runUiServer(): Promise<void> {
     process.exit(exitCode);
 }
 
-async function pidsListeningOn(port: number): Promise<number[]> {
-    const proc = Bun.spawn(["lsof", "-ti", `tcp:${port}`, "-sTCP:LISTEN"], {
-        stdout: "pipe",
-        stderr: "ignore",
-    });
-    const out = await new Response(proc.stdout).text();
-    await proc.exited;
-
-    return out
-        .split("\n")
-        .map((line) => Number.parseInt(line.trim(), 10))
-        .filter((pid) => Number.isInteger(pid) && pid > 0 && pid !== process.pid);
-}
-
-async function pidsMatching(pattern: string): Promise<number[]> {
-    const proc = Bun.spawn(["pgrep", "-f", pattern], { stdout: "pipe", stderr: "ignore" });
-    const out = await new Response(proc.stdout).text();
-    await proc.exited;
-
-    return out
-        .split("\n")
-        .map((line) => Number.parseInt(line.trim(), 10))
-        .filter((pid) => Number.isInteger(pid) && pid > 0 && pid !== process.pid);
-}
-
-function signalPids(pids: number[], signal: NodeJS.Signals): void {
-    for (const pid of pids) {
-        try {
-            process.kill(pid, signal);
-        } catch (err) {
-            logger.debug({ err, pid, signal }, "dev-dashboard restart: kill failed (process already gone?)");
-        }
-    }
-}
-
-async function waitForPortFree(port: number, timeoutMs: number): Promise<boolean> {
-    const deadline = Date.now() + timeoutMs;
-
-    while (Date.now() < deadline) {
-        if ((await pidsListeningOn(port)).length === 0) {
-            return true;
-        }
-
-        await Bun.sleep(200);
-    }
-
-    return (await pidsListeningOn(port)).length === 0;
-}
-
-async function stopRunningDashboard(port: number): Promise<void> {
-    const pids = await pidsListeningOn(port);
-
-    if (pids.length === 0) {
-        out.println(`No dev-dashboard listening on :${port}.`);
-        return;
-    }
-
-    out.println(`Stopping dev-dashboard (pid ${pids.join(", ")}) on :${port} ...`);
-    // SIGTERM lets index.ts's handler stop the front-proxy and reap its Vite
-    // child gracefully; SIGKILL is the fallback if the port is still held.
-    signalPids(pids, "SIGTERM");
-
-    if (!(await waitForPortFree(port, 6000))) {
-        const stuck = await pidsListeningOn(port);
-        out.println(`Port :${port} still held by ${stuck.join(", ")}; sending SIGKILL.`);
-        signalPids(stuck, "SIGKILL");
-
-        if (!(await waitForPortFree(port, 4000))) {
-            // Abort here — proceeding would only fail later as an opaque
-            // EADDRINUSE inside runUiServer().
-            throw new Error(`Port :${port} is still in use after SIGTERM+SIGKILL; aborting restart.`);
-        }
-
-        // Only reachable on the force-kill path. A SIGKILLed parent can't reap
-        // its Vite child (the graceful SIGTERM path's shutdown handler does),
-        // so sweep the orphan here only — scoping it to this branch keeps a
-        // dev-dashboard running from another worktree/checkout untouched.
-        const orphanVite = await pidsMatching("src/dev-dashboard/ui/vite.config.ts");
-
-        if (orphanVite.length > 0) {
-            signalPids(orphanVite, "SIGTERM");
-        }
-    }
-}
-
-program.action(runUiServer);
-
-program.command("ui").alias("dashboard").description("Launch the dev-dashboard web UI").action(runUiServer);
+const devDashboardApp = defineDashboardApp({
+    type: "ui",
+    key: "dev-dashboard",
+    name: "Dev Dashboard",
+    description: "Launch the dev-dashboard front-proxy + Vite + ttyd",
+    commandName: "ui",
+    aliases: ["dashboard"],
+    spawn: {
+        cmd: [process.execPath, process.argv[1], "__ui-server"],
+        cwd: PROJECT_ROOT,
+        env: process.env as Record<string, string | undefined>,
+    },
+    readiness: {
+        kind: "log",
+        regex: /ready in \d+\s*m?s|Local:\s*http|localhost:\d+|press h \+ enter/i,
+        timeoutMs: 30_000,
+    },
+    openBrowser: { enabled: false },
+    launchd: { available: true },
+});
 
 program
-    .command("restart")
-    .description("Stop any running dev-dashboard, relaunch it detached in the background, then exit")
+    .command("__ui-server", { hidden: true })
+    .description("Internal entry: front-proxy + Vite + ttyd")
     .action(async () => {
-        const { port } = await getConfig();
-        await stopRunningDashboard(port);
-
-        const url = `http://localhost:${port}`;
-        const logFile = join(homedir(), ".genesis-tools", "logs", "dev-dashboard.bg.log");
-        mkdirSync(dirname(logFile), { recursive: true });
-        const logFd = openSync(logFile, "a");
-
-        // Daemonize: the UI is Vite + an in-process front-proxy. Re-invoke THIS
-        // script via process.execPath + argv[1] so it works even when `tools`
-        // isn't on PATH (t2). Child stdout/stderr go to a LOG FILE, not pipes —
-        // the inherited fd stays valid after we exit, so the backgrounded Vite
-        // never hits EPIPE/SIGPIPE on parent exit (t1). We tail the file for
-        // readiness; output to a file is also already ANSI-free.
-        const child = spawn(process.execPath, [process.argv[1], "ui"], {
-            cwd: PROJECT_ROOT,
-            detached: true,
-            stdio: ["ignore", logFd, logFd],
-            env: process.env,
-        });
-        closeSync(logFd); // the child holds its own dup'd fd now
-
-        const READY = /ready in \d+\s*m?s|Local:\s*http|localhost:\d+|press h \+ enter/i;
-        const isTty = Boolean(process.stdout.isTTY);
-        let settled = false;
-        let pos = 0;
-        let acc = "";
-        let poll: ReturnType<typeof setInterval> | undefined;
-        let deadline: ReturnType<typeof setTimeout> | undefined;
-
-        const finish = (note: string): void => {
-            if (settled) {
-                return;
-            }
-
-            settled = true;
-            if (poll) {
-                clearInterval(poll);
-            }
-
-            if (deadline) {
-                clearTimeout(deadline);
-            }
-
-            out.println(`\n${note}`);
-            out.println(`dev-dashboard running in background → ${url}  (pid ${child.pid})`);
-            out.println(`logs → ${logFile}`);
-            out.println(`stop it with: kill ${child.pid}  (\`tools dev-dashboard restart\` relaunches a new one)`);
-            child.unref();
-            process.exit(0);
-        };
-
-        // Tail the child's log file; echo new bytes (strip ANSI when our stdout
-        // isn't a TTY — t6) and match the accumulated stripped text (t3).
-        const drain = (): void => {
-            let size: number;
-            try {
-                size = statSync(logFile).size;
-            } catch {
-                return;
-            }
-
-            if (size <= pos) {
-                return;
-            }
-
-            const fd = openSync(logFile, "r");
-            try {
-                const buf = Buffer.alloc(size - pos);
-                const read = readSync(fd, buf, 0, buf.length, pos);
-                pos += read;
-                const chunk = buf.subarray(0, read).toString();
-                process.stdout.write(isTty ? chunk : stripAnsi(chunk));
-                acc += stripAnsi(chunk);
-                if (acc.length > 4000) {
-                    acc = acc.slice(-2000);
-                }
-
-                if (READY.test(acc)) {
-                    finish("✓ dev-dashboard is up.");
-                }
-            } finally {
-                closeSync(fd);
-            }
-        };
-
-        child.on("error", (err) => {
-            out.error(`Failed to launch dev-dashboard: ${err.message}`);
-            process.exit(1);
-        });
-        child.on("exit", (code) => {
-            if (!settled) {
-                drain();
-                out.error(`dev-dashboard exited before becoming ready (code ${code ?? "?"}) — see ${logFile}`);
-                process.exit(code ?? 1);
-            }
-        });
-
-        poll = setInterval(drain, 150);
-        // Safety net: detach + exit even if the ready marker never matches,
-        // rather than holding the terminal forever.
-        deadline = setTimeout(
-            () => finish("⚠ ready marker not seen in 30s — detaching anyway; check the URL."),
-            30_000
-        );
+        await runUiServer();
     });
+
+program.addCommand(devDashboardApp.commanderCommand);
 
 const auth = program.command("auth").description("Manage dev-dashboard Basic Auth");
 
