@@ -158,7 +158,7 @@ export async function up(ctx: LifecycleContext, opts: UpOptions = {}): Promise<U
 
         if (config.type === "ui") {
             await Bun.sleep(400);
-            printDevServerBanner(ctx.logFile, port);
+            printDevServerBanner(ctx.logFile, port, { bindHost: config.bindHost });
         }
     }
 
@@ -312,7 +312,7 @@ async function finishLaunchdStart(ctx: LifecycleContext, port: number, opts: UpO
 
         if (config.type === "ui") {
             await Bun.sleep(400);
-            printDevServerBanner(ctx.logFile, port);
+            printDevServerBanner(ctx.logFile, port, { bindHost: config.bindHost });
         }
 
         if (config.type === "ui" && shouldOpenBrowser(config, opts)) {
