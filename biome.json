@@ -5,6 +5,12 @@
         "clientKind": "git",
         "useIgnoreFile": true
     },
+    "plugins": [
+        "./scripts/biome/no-direct-prompt-backend.grit",
+        "./scripts/biome/no-mock-module-prompts.grit",
+        "./scripts/biome/no-hardcoded-tmp.grit",
+        "./scripts/biome/no-hardcoded-user-paths.grit"
+    ],
     "formatter": {
         "enabled": true,
         "indentStyle": "space",
@@ -67,7 +73,43 @@
             "**/*.{ts,tsx,js,jsx}",
             "*.{json,mjs,cjs}",
             "!src/claude-history-dashboard",
-            "!**/routeTree.gen.ts"
+            "!**/routeTree.gen.ts",
+            "!scripts/codemod/__fixtures__/**"
         ]
-    }
+    },
+    "overrides": [
+        {
+            "includes": [
+                "src/clarity/ui/**",
+                "src/claude-history-dashboard/**",
+                "src/dashboard/apps/web/**",
+                "src/debugging-master/dashboard/**",
+                "src/dev-dashboard/ui/**",
+                "src/shops/ui/**",
+                "src/youtube/extension/**",
+                "src/youtube/ui/**",
+                "src/Internal/commands/reas/ui/**",
+                "src/logger/client.ts"
+            ],
+            "linter": {
+                "rules": {
+                    "style": {
+                        "noRestrictedImports": {
+                            "level": "error",
+                            "options": {
+                                "paths": {
+                                    "picocolors": "Browser-safe code must not import picocolors — its ANSI escape output renders as garbage in browser DevTools. Use plain Unicode glyphs (◆ ✔ ▲ ✖ ■). See PR #179 t11.",
+                                    "chalk": "Browser-safe code must not import chalk — pulls Node deps and emits ANSI that browsers can't render. Use plain Unicode glyphs."
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        {
+            "includes": ["**/*.test.ts", "**/*.test.tsx", "**/__tests__/**", "**/*.data.ts"],
+            "plugins": []
+        }
+    ]
 }

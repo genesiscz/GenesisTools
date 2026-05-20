@@ -33,3 +33,8 @@ if ! bun run typecheck:all; then
 fi
 
 echo "✔ pre-push passed (CI mirror)"
+# Note: `bash scripts/ci/check-hardcoded-paths.sh` catches hardcoded /tmp/Users
+# paths in src/. Not wired in here yet — pre-push currently fails on a batch
+# of pre-existing `lint` errors (codemod test fixtures, useless catches) that
+# are unrelated to the path check. Once those clear, append the hardcoded-paths
+# script after the typecheck line above.

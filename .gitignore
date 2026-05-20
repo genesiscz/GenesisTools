@@ -222,3 +222,6 @@ vercel-skills
 
 .tanstack/
 .superpowers/
+
+# logger-overhaul golden captures (live in /tmp, never tracked)
+/tmp/logger-goldens/
