@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
+import { out } from "@app/logger";
 import { getLocalIpv4 } from "@app/utils/network";
 import { renderQr } from "@app/utils/qr";
 import type { Command } from "commander";
@@ -26,11 +27,11 @@ export function registerDashboardCommand(program: Command): void {
             const lanIp = getLocalIpv4();
             const url = `http://${lanIp}:${port}/`;
 
-            console.log("");
-            console.log(`  ${pc.bold(pc.yellow("dashboard:"))} ${pc.bold(url)}`);
-            console.log("");
-            console.log(pc.dim("  scan from your phone:"));
-            console.log(renderQr(url, { small: true }));
+            out.print("");
+            out.print(`  ${pc.bold(pc.yellow("dashboard:"))} ${pc.bold(url)}`);
+            out.print("");
+            out.print(pc.dim("  scan from your phone:"));
+            out.print(renderQr(url, { small: true }));
 
             try {
                 const cmd = openCommand(url);
@@ -57,11 +58,11 @@ function openCommand(url: string): string[] {
 
 export async function runBuild(): Promise<void> {
     if (!existsSync(resolve(DASHBOARD_ROOT, "vite.config.ts"))) {
-        console.error(pc.red(`✗ Dashboard source not found at ${DASHBOARD_ROOT}`));
+        out.error(pc.red(`✗ Dashboard source not found at ${DASHBOARD_ROOT}`));
         process.exit(1);
     }
 
-    console.log(pc.dim(`▸ Building dashboard at ${DASHBOARD_ROOT}`));
+    out.print(pc.dim(`▸ Building dashboard at ${DASHBOARD_ROOT}`));
 
     const proc = Bun.spawn(["bunx", "vite", "build", "--logLevel", "warn"], {
         cwd: DASHBOARD_ROOT,
@@ -70,11 +71,11 @@ export async function runBuild(): Promise<void> {
     });
     const code = await proc.exited;
     if (code !== 0) {
-        console.error(pc.red(`✗ Build failed (exit ${code})`));
+        out.error(pc.red(`✗ Build failed (exit ${code})`));
         process.exit(code);
     }
 
-    console.log(pc.green("✓ Dashboard built"));
+    out.print(pc.green("✓ Dashboard built"));
 }
 
 /** Used at server startup if dist/ is missing — auto-builds once so users don't see a 503. */
@@ -83,6 +84,6 @@ export async function ensureDashboardBuilt(): Promise<void> {
     if (existsSync(distIndex)) {
         return;
     }
-    console.log(pc.dim("▸ Dashboard dist/ missing — building once..."));
+    out.print(pc.dim("▸ Dashboard dist/ missing — building once..."));
     await runBuild();
 }

@@ -1,5 +1,6 @@
 import { spawn as nodeSpawn } from "node:child_process";
 import { resolve } from "node:path";
+import { out } from "@app/logger";
 import { runTool } from "@app/utils/cli";
 import { formatDuration, parseDuration } from "@app/utils/format";
 import { withCancel } from "@app/utils/prompts/clack/helpers";
@@ -110,7 +111,7 @@ async function runForegroundTimer(opts: TimerOptions): Promise<void> {
 
     for (let cycle = 1; cycle <= repeat; cycle++) {
         if (repeat > 1) {
-            console.log(pc.cyan(`\nCycle ${cycle}/${repeat}`));
+            out.print(pc.cyan(`\nCycle ${cycle}/${repeat}`));
         }
 
         const endTime = Date.now() + durationMs;
@@ -143,7 +144,7 @@ async function runForegroundTimer(opts: TimerOptions): Promise<void> {
         await fireCompletionActions({ title, notify, say, cycle, totalCycles: repeat });
 
         if (cycle < repeat) {
-            console.log(pc.dim("  Starting next cycle..."));
+            out.print(pc.dim("  Starting next cycle..."));
         }
     }
 }
@@ -204,7 +205,7 @@ async function startBackgroundTimer(opts: TimerOptions): Promise<void> {
     const pid = child.pid;
 
     if (!pid) {
-        console.log(pc.red("Failed to start background timer process."));
+        out.print(pc.red("Failed to start background timer process."));
         process.exit(1);
     }
 
@@ -222,9 +223,9 @@ async function startBackgroundTimer(opts: TimerOptions): Promise<void> {
 
     await addActiveTimer(entry);
 
-    console.log(pc.green(`Timer started in background`));
-    console.log(pc.dim(`  ID: ${id}  PID: ${pid}`));
-    console.log(pc.dim(`  Duration: ${formatDuration(durationMs)}  Title: ${title}`));
+    out.print(pc.green(`Timer started in background`));
+    out.print(pc.dim(`  ID: ${id}  PID: ${pid}`));
+    out.print(pc.dim(`  Duration: ${formatDuration(durationMs)}  Title: ${title}`));
 }
 
 async function handleBackgroundRun(args: string[]): Promise<void> {
@@ -292,7 +293,7 @@ async function listTimers(): Promise<void> {
     }
 
     if (alive.length === 0) {
-        console.log(pc.dim("No active timers."));
+        out.print(pc.dim("No active timers."));
         return;
     }
 
@@ -314,7 +315,7 @@ async function listTimers(): Promise<void> {
         return [t.id, t.title, formatCountdown(remaining), repeatLabel, actions.join(", ") || "-", String(t.pid)];
     });
 
-    console.log(formatTable(rows, ["ID", "Title", "Remaining", "Cycle", "Actions", "PID"]));
+    out.print(formatTable(rows, ["ID", "Title", "Remaining", "Cycle", "Actions", "PID"]));
 }
 
 async function cancelTimer(idOrIndex?: string): Promise<void> {
@@ -322,7 +323,7 @@ async function cancelTimer(idOrIndex?: string): Promise<void> {
     const alive = data.timers.filter((t) => isProcessAlive(t.pid));
 
     if (alive.length === 0) {
-        console.log(pc.dim("No active timers to cancel."));
+        out.print(pc.dim("No active timers to cancel."));
         return;
     }
 
@@ -340,7 +341,7 @@ async function cancelTimer(idOrIndex?: string): Promise<void> {
         }
 
         if (!target) {
-            console.log(pc.red(`Timer not found: ${idOrIndex}`));
+            out.print(pc.red(`Timer not found: ${idOrIndex}`));
             return;
         }
     } else if (alive.length === 1) {
@@ -374,7 +375,7 @@ async function cancelTimer(idOrIndex?: string): Promise<void> {
     }
 
     await removeActiveTimer(target.id);
-    console.log(pc.green(`Cancelled timer: ${target.title} (${target.id})`));
+    out.print(pc.green(`Cancelled timer: ${target.title} (${target.id})`));
 }
 
 // ============================================
@@ -499,13 +500,13 @@ program
         const durationMs = duration ? parseDuration(duration) : 0;
 
         if (durationMs <= 0 && duration && duration !== "list" && duration !== "cancel") {
-            console.log(pc.red(`Invalid duration: ${duration}`));
-            console.log(pc.dim("Use formats like: 25m, 1h30m, 90s, or a number (minutes)"));
+            out.print(pc.red(`Invalid duration: ${duration}`));
+            out.print(pc.dim("Use formats like: 25m, 1h30m, 90s, or a number (minutes)"));
             process.exit(1);
         }
 
         if (durationMs > MAX_TIMEOUT_MS) {
-            console.log(pc.red(`Duration too large (max ~24.8 days)`));
+            out.print(pc.red(`Duration too large (max ~24.8 days)`));
             process.exit(1);
         }
 
@@ -520,7 +521,7 @@ program
         const repeat = options.repeat ?? 1;
 
         if (!Number.isInteger(repeat) || repeat < 1) {
-            console.log(pc.red(`Invalid repeat value: ${options.repeat} (must be a positive integer)`));
+            out.print(pc.red(`Invalid repeat value: ${options.repeat} (must be a positive integer)`));
             process.exit(1);
         }
 
@@ -559,7 +560,7 @@ async function main(): Promise<void> {
         await runTool(program, { tool: "timer" });
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        console.error(pc.red(message));
+        out.error(pc.red(message));
         process.exit(1);
     }
 }

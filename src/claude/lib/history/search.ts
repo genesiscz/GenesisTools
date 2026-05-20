@@ -8,7 +8,7 @@ import { createReadStream, readFileSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import { basename, sep } from "node:path";
 import { createInterface } from "node:readline";
-import { logger } from "@app/logger";
+import { logger, out } from "@app/logger";
 import { discoverSessionFiles, discoverSessionFilesInDir } from "@app/utils/claude/discovery";
 import { extractProjectName, PROJECTS_DIR, resolveProjectDir } from "@app/utils/claude/projects";
 import { Executor } from "@app/utils/cli";
@@ -2123,7 +2123,7 @@ export async function processFileForCache(filePath: string): Promise<FileStats |
 
         return fileStats;
     } catch (error) {
-        console.error(`Error processing file ${filePath}:`, error);
+        out.error(`Error processing file ${filePath}:`, error);
         return null;
     }
 }

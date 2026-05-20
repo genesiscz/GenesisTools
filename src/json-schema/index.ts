@@ -1,3 +1,4 @@
+import { out } from "@app/logger";
 import { runTool } from "@app/utils/cli";
 import { copyToClipboard } from "@app/utils/clipboard";
 import { SafeJSON } from "@app/utils/json";
@@ -47,7 +48,7 @@ program
         try {
             value = SafeJSON.parse(raw);
         } catch {
-            console.error("Failed to parse JSON input.");
+            out.error("Failed to parse JSON input.");
             process.exit(1);
         }
 
@@ -56,7 +57,7 @@ program
         if (options.clipboard) {
             await copyToClipboard(output, { label: `${options.mode} mode` });
         } else {
-            console.log(output);
+            out.print(output);
         }
     });
 

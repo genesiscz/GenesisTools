@@ -2,6 +2,7 @@
 
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { out } from "@app/logger";
 import { runTool } from "@app/utils/cli";
 import { Storage } from "@app/utils/storage/storage.ts";
 import { formatTable } from "@app/utils/table.ts";
@@ -330,9 +331,9 @@ program
                 }
                 return line;
             });
-            console.log(coloredLines.join("\n"));
+            out.print(coloredLines.join("\n"));
         } else {
-            console.log(table);
+            out.print(table);
         }
     });
 

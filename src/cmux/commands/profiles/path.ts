@@ -1,4 +1,5 @@
 import { ProfileStore } from "@app/cmux/lib/store";
+import { out } from "@app/logger";
 import type { Command } from "commander";
 
 export function registerPathCommand(parent: Command): void {
@@ -8,9 +9,9 @@ export function registerPathCommand(parent: Command): void {
         .action((name: string | undefined) => {
             const store = new ProfileStore();
             if (!name) {
-                console.log(store.getProfilesDir());
+                out.print(store.getProfilesDir());
                 return;
             }
-            console.log(store.pathFor(name));
+            out.print(store.pathFor(name));
         });
 }

@@ -2,6 +2,8 @@
  * Multiline text input for @clack/prompts
  * Handles pasted multiline content (like cURL commands)
  */
+
+import { out } from "@app/logger";
 import pc from "picocolors";
 
 export interface MultilineOptions {
@@ -131,8 +133,8 @@ export async function multilineText(options: MultilineOptions): Promise<string |
                 const error = validate(trimmed);
                 if (error) {
                     process.stdout.write(`\x1b[1A\x1b[2K`);
-                    console.log(`${S_BAR}  ${pc.red(error)}`);
-                    console.log(pc.dim("└"));
+                    out.print(`${S_BAR}  ${pc.red(error)}`);
+                    out.print(pc.dim("└"));
                     emptyEnterCount = 0;
                     return;
                 }

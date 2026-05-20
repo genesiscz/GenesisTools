@@ -3,8 +3,7 @@ import { readUnifiedConfig, stripMeta } from "@app/mcp-manager/utils/config.util
 import type { MCPProvider } from "@app/mcp-manager/utils/providers/types.js";
 import { WriteResult } from "@app/mcp-manager/utils/providers/types.js";
 import { isInteractive, suggestCommand } from "@app/utils/cli";
-import { ExitPromptError } from "@inquirer/core";
-import { checkbox } from "@inquirer/prompts";
+import * as p from "@app/utils/prompts/p";
 
 export interface SyncOptions {
     provider?: string; // Provider name(s), comma-separated for non-interactive mode
@@ -48,25 +47,17 @@ export async function syncServers(providers: MCPProvider[], options: SyncOptions
         logger.info(suggestCommand("tools mcp-manager", { add: ["--provider", "all"] }));
         process.exit(1);
     } else {
-        try {
-            selectedProviders = await checkbox({
-                message: "Select providers to sync to:",
-                choices: availableProviders.map((p) => ({
-                    value: p.getName(),
-                    name: `${p.getName()} (${p.getConfigPath()})`,
-                })),
-            });
+        selectedProviders = (await p.multiselect({
+            message: "Select providers to sync to:",
+            options: availableProviders.map((prov) => ({
+                value: prov.getName(),
+                label: `${prov.getName()} (${prov.getConfigPath()})`,
+            })),
+        })) as string[];
 
-            if (selectedProviders.length === 0) {
-                logger.info("No providers selected. Cancelled.");
-                return;
-            }
-        } catch (error) {
-            if (error instanceof ExitPromptError) {
-                logger.info("\nOperation cancelled by user.");
-                return;
-            }
-            throw error;
+        if (selectedProviders.length === 0) {
+            logger.info("No providers selected. Cancelled.");
+            return;
         }
     }
 

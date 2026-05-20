@@ -1,3 +1,4 @@
+import { out } from "@app/logger";
 import { isQuietOutput } from "@app/utils/cli";
 import { MailDatabase } from "@app/utils/macos/MailDatabase";
 import { formatTable } from "@app/utils/table";
@@ -15,7 +16,7 @@ export function registerAccountsCommand(program: Command): void {
                 const accounts = await db.listAccounts();
 
                 if (accounts.length === 0) {
-                    console.log("No mail accounts found.");
+                    out.print("No mail accounts found.");
                     return;
                 }
 
@@ -28,9 +29,9 @@ export function registerAccountsCommand(program: Command): void {
                     `${a.uuid.slice(0, 8)}...`,
                 ]);
 
-                console.log();
-                console.log(formatTable(rows, headers, { alignRight: [2, 3] }));
-                console.log();
+                out.print();
+                out.print(formatTable(rows, headers, { alignRight: [2, 3] }));
+                out.print();
 
                 const unknownCount = accounts.filter((a) => a.email === "unknown").length;
                 if (unknownCount > 0 && !isQuietOutput()) {

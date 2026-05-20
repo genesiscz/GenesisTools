@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { ProfileNotFoundError, ProfileStore } from "@app/cmux/lib/store";
+import { out } from "@app/logger";
 import type { Command } from "commander";
 
 export function registerEditCommand(parent: Command): void {
@@ -24,7 +25,7 @@ export function registerEditCommand(parent: Command): void {
                 }
             } catch (error) {
                 if (error instanceof ProfileNotFoundError) {
-                    console.error(error.message);
+                    out.error(error.message);
                     process.exitCode = 1;
                     return;
                 }

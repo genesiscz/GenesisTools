@@ -1,3 +1,4 @@
+import { out } from "@app/logger";
 import { MacReminders } from "@app/utils/macos/apple-reminders";
 import type { Command } from "commander";
 import { formatRemindersTable } from "./format";
@@ -16,13 +17,13 @@ export function registerSearchCommand(program: Command): void {
                 const reminders = await MacReminders.searchReminders(query, options.list);
 
                 if (reminders.length === 0) {
-                    console.log("No reminders found matching your query.");
+                    out.print("No reminders found matching your query.");
                     return;
                 }
 
-                console.log(formatRemindersTable(reminders));
+                out.print(formatRemindersTable(reminders));
             } catch (error) {
-                console.error(error instanceof Error ? error.message : String(error));
+                out.error(error instanceof Error ? error.message : String(error));
                 process.exit(1);
             }
         });

@@ -12,7 +12,7 @@
 import { registerCommitsCommand } from "@app/git/commands/commits";
 import { registerConfigureAuthorsCommand } from "@app/git/commands/configure-authors";
 import { registerConfigureWorkitemPatternsCommand } from "@app/git/commands/configure-workitem-patterns";
-import { logger } from "@app/logger";
+import { logger, out } from "@app/logger";
 import { enhanceHelp, runTool } from "@app/utils/cli";
 import { Storage } from "@app/utils/storage";
 import { Command } from "commander";
@@ -39,7 +39,7 @@ registerConfigureWorkitemPatternsCommand(program, storage);
 enhanceHelp(program);
 
 function showHelpFull(): void {
-    console.log(`
+    out.print(`
 Git Analysis Tool
 
 Usage:

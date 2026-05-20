@@ -1,4 +1,6 @@
+import { out } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+
 // Core types
 export type LogLevel = {
     name: string;
@@ -688,21 +690,21 @@ export const consoleTransport: ITransport = {
         // Use appropriate console method based on level
         switch (level.name) {
             case "error":
-                console.error(message);
+                out.error(message);
                 break;
             case "warn":
             case "warning":
-                console.warn(message);
+                out.warn(message);
                 break;
             case "info":
-                console.info(message);
+                out.info(message);
                 break;
             case "debug":
             case "silly":
-                console.log(message);
+                out.print(message);
                 break;
             default:
-                console.log(message);
+                out.print(message);
         }
     },
 };
@@ -721,6 +723,6 @@ export const fileTransport = (options: FileTransportOptions): ITransport => ({
 
         // This is a placeholder for actual file writing
         // You would replace this with platform-specific implementation
-        console.log(`[FILE TRANSPORT] Would write to ${options.filePath}: ${message}`);
+        out.print(`[FILE TRANSPORT] Would write to ${options.filePath}: ${message}`);
     },
 });

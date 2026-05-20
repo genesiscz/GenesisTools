@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
+import { out } from "@app/logger";
 import { findProjectRoot } from "@app/todo/lib/context";
 import { TodoStore } from "@app/todo/lib/store";
 import type { Todo } from "@app/todo/lib/types";
@@ -58,9 +59,9 @@ export function createExportCommand(): Command {
             if (opts.output) {
                 const outPath = resolve(opts.output);
                 await Bun.write(outPath, output);
-                console.error(`Exported ${todos.length} todo(s) to ${outPath}`);
+                out.error(`Exported ${todos.length} todo(s) to ${outPath}`);
             } else {
-                console.log(output);
+                out.print(output);
             }
         });
 }
@@ -74,7 +75,7 @@ export function createImportCommand(): Command {
             const filePath = resolve(file);
 
             if (!existsSync(filePath)) {
-                console.error(`File not found: ${filePath}`);
+                out.error(`File not found: ${filePath}`);
                 process.exit(1);
             }
 
@@ -84,7 +85,7 @@ export function createImportCommand(): Command {
             try {
                 parsed = SafeJSON.parse(content);
             } catch {
-                console.error("Failed to parse JSON from file");
+                out.error("Failed to parse JSON from file");
                 process.exit(1);
             }
 
@@ -95,6 +96,6 @@ export function createImportCommand(): Command {
             const store = TodoStore.forProject(projectRoot);
             const count = await store.bulkImport(todos);
 
-            console.log(`Imported ${count} todo(s)`);
+            out.print(`Imported ${count} todo(s)`);
         });
 }

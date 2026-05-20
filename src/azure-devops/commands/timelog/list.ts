@@ -1,5 +1,6 @@
 import { formatMinutes, TimeLogApi } from "@app/azure-devops/timelog-api";
 import { requireTimeLogConfig, requireTimeLogUser } from "@app/azure-devops/utils";
+import { out } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import Table from "cli-table3";
 import type { Command } from "commander";
@@ -60,7 +61,7 @@ export function registerListSubcommand(parent: Command): void {
                     const workItemId = parseInt(options.workitem!, 10);
 
                     if (Number.isNaN(workItemId)) {
-                        console.error("Invalid work item ID");
+                        out.error("Invalid work item ID");
                         process.exit(1);
                     }
 
@@ -69,7 +70,7 @@ export function registerListSubcommand(parent: Command): void {
                 } else if (hasDateFilter || !hasWorkItem) {
                     // Cross-WI query
                     if (!hasDateFilter && !hasWorkItem) {
-                        console.error("Provide --workitem, --day, --from/--to, or a combination");
+                        out.error("Provide --workitem, --day, --from/--to, or a combination");
                         process.exit(1);
                     }
 
@@ -77,7 +78,7 @@ export function registerListSubcommand(parent: Command): void {
                     const toDate = resolvedTo;
 
                     if (!fromDate) {
-                        console.error("--from (or --since) or --day is required for date queries");
+                        out.error("--from (or --since) or --day is required for date queries");
                         process.exit(1);
                     }
 
@@ -98,7 +99,7 @@ export function registerListSubcommand(parent: Command): void {
                     const resolvedUsers = options.user.map((u) => {
                         if (u === "@me") {
                             if (!defaultUserName) {
-                                console.error(
+                                out.error(
                                     'Cannot resolve "@me": no defaultUser configured in timelog config. Pass an explicit --user name or set timelog.defaultUser.userName in config.'
                                 );
                                 process.exit(1);
@@ -120,12 +121,12 @@ export function registerListSubcommand(parent: Command): void {
 
                 // JSON output
                 if (options.format === "json") {
-                    console.log(SafeJSON.stringify(entries, null, 2));
+                    out.print(SafeJSON.stringify(entries, null, 2));
                     return;
                 }
 
                 if (entries.length === 0) {
-                    console.log("No time logs found.");
+                    out.print("No time logs found.");
                     return;
                 }
 
@@ -161,12 +162,12 @@ export function registerListSubcommand(parent: Command): void {
                         ]);
                     }
 
-                    console.log(table.toString());
-                    console.log(`\n${pc.bold(`Total: ${formatMinutes(totalMinutes)}`)} (${entries.length} entries)`);
-                    console.log("\nBy Type:");
+                    out.print(table.toString());
+                    out.print(`\n${pc.bold(`Total: ${formatMinutes(totalMinutes)}`)} (${entries.length} entries)`);
+                    out.print("\nBy Type:");
 
                     for (const [type, mins] of Object.entries(byType)) {
-                        console.log(`  ${type}: ${formatMinutes(mins)}`);
+                        out.print(`  ${type}: ${formatMinutes(mins)}`);
                     }
 
                     return;
@@ -175,42 +176,42 @@ export function registerListSubcommand(parent: Command): void {
                 if (options.format === "md") {
                     const title =
                         hasWorkItem && !hasDateFilter ? `## Time Logs for #${options.workitem}\n` : `## Time Logs\n`;
-                    console.log(title);
-                    console.log(`| ID | Date | WI | Type | Time | User | Comment |`);
-                    console.log(`|----|------|-----|------|------|------|---------|`);
+                    out.print(title);
+                    out.print(`| ID | Date | WI | Type | Time | User | Comment |`);
+                    out.print(`|----|------|-----|------|------|------|---------|`);
 
                     for (const e of entries) {
                         const wi = e.workItemId ? `#${e.workItemId}` : "-";
-                        console.log(
+                        out.print(
                             `| ${e.timeLogId.substring(0, 8)} | ${e.date} | ${wi} | ${e.timeTypeDescription} | ${formatMinutes(e.minutes)} | ${e.userName} | ${e.comment || "-"} |`
                         );
                     }
 
-                    console.log(`\n**Total: ${formatMinutes(totalMinutes)}**`);
+                    out.print(`\n**Total: ${formatMinutes(totalMinutes)}**`);
                 } else {
                     // AI format
                     const title =
                         hasWorkItem && !hasDateFilter ? `Time Logs for Work Item #${options.workitem}` : "Time Logs";
-                    console.log(title);
-                    console.log("=".repeat(40));
+                    out.print(title);
+                    out.print("=".repeat(40));
 
                     for (const e of entries) {
                         const wi = e.workItemId ? ` [#${e.workItemId}]` : "";
-                        console.log(`\n${e.date} - ${formatMinutes(e.minutes)} (${e.timeTypeDescription})${wi}`);
-                        console.log(`  ID: ${e.timeLogId}`);
-                        console.log(`  User: ${e.userName}`);
+                        out.print(`\n${e.date} - ${formatMinutes(e.minutes)} (${e.timeTypeDescription})${wi}`);
+                        out.print(`  ID: ${e.timeLogId}`);
+                        out.print(`  User: ${e.userName}`);
 
                         if (e.comment) {
-                            console.log(`  Comment: ${e.comment}`);
+                            out.print(`  Comment: ${e.comment}`);
                         }
                     }
 
-                    console.log(`\n${"=".repeat(40)}`);
-                    console.log(`Total: ${formatMinutes(totalMinutes)}`);
-                    console.log("\nBy Type:");
+                    out.print(`\n${"=".repeat(40)}`);
+                    out.print(`Total: ${formatMinutes(totalMinutes)}`);
+                    out.print("\nBy Type:");
 
                     for (const [type, mins] of Object.entries(byType)) {
-                        console.log(`  ${type}: ${formatMinutes(mins)}`);
+                        out.print(`  ${type}: ${formatMinutes(mins)}`);
                     }
                 }
             }

@@ -1,10 +1,14 @@
 import { type ChildProcess, spawn } from "node:child_process";
-import { logger } from "@app/logger";
+import { logger, out } from "@app/logger";
 import { runTool } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
+import * as p from "@app/utils/prompts/p";
+import { inquirerBackend } from "@app/utils/prompts/p/inquirer-backend";
 import { handleReadmeFlag } from "@app/utils/readme";
-import { ExitPromptError } from "@inquirer/core";
-import { checkbox, select } from "@inquirer/prompts";
+
+// Use inquirer backend for this tool
+p.setBackend(inquirerBackend);
+
 import chalk from "chalk";
 import { Command } from "commander";
 
@@ -727,7 +731,7 @@ function formatEvent(event: ESLoggerEvent): string {
 
 // Show help message
 function showHelp() {
-    console.log(`
+    out.print(`
 ${chalk.bold("macOS ESLogger Monitor")}
 
 Monitor macOS Endpoint Security events in real-time using eslogger.
@@ -795,28 +799,28 @@ function monitorWithESF(
     filterExpression?: string
 ) {
     if (!silent) {
-        console.log(chalk.blue("🚀 Starting ESLogger monitor..."));
-        console.log(`📊 Monitoring ${eventTypes.length} event type(s):`);
+        out.print(chalk.blue("🚀 Starting ESLogger monitor..."));
+        out.print(`📊 Monitoring ${eventTypes.length} event type(s):`);
 
         // Display in columns for better readability
         const columns = 4;
         for (let i = 0; i < eventTypes.length; i += columns) {
             const row = eventTypes.slice(i, i + columns);
-            console.log(`   ${row.map((e) => e.padEnd(30)).join("")}`);
+            out.print(`   ${row.map((e) => e.padEnd(30)).join("")}`);
         }
 
         if (filterExpression) {
-            console.log(`\n🔍 Filter: ${filterExpression}`);
+            out.print(`\n🔍 Filter: ${filterExpression}`);
         }
 
         if (dryRun) {
-            console.log(chalk.green("\n✅ Dry run complete - would monitor the events above."));
-            console.log("─".repeat(80));
+            out.print(chalk.green("\n✅ Dry run complete - would monitor the events above."));
+            out.print("─".repeat(80));
             return;
         }
 
-        console.log(chalk.yellow("\n⌨️  Press Ctrl+C to stop."));
-        console.log(`${"─".repeat(80)}\n`);
+        out.print(chalk.yellow("\n⌨️  Press Ctrl+C to stop."));
+        out.print(`${"─".repeat(80)}\n`);
     }
 
     const args = ["eslogger", ...eventTypes];
@@ -843,9 +847,9 @@ function monitorWithESF(
                 eventCount++;
 
                 if (debug) {
-                    console.log(chalk.gray("--- RAW EVENT ---"));
-                    console.log(SafeJSON.stringify(event, null, 2));
-                    console.log(chalk.gray("--- END RAW ---"));
+                    out.print(chalk.gray("--- RAW EVENT ---"));
+                    out.print(SafeJSON.stringify(event, null, 2));
+                    out.print(chalk.gray("--- END RAW ---"));
                 }
 
                 // Apply filter if specified
@@ -859,7 +863,7 @@ function monitorWithESF(
                     if (outputPath) {
                         outputBuffer += `${formatted}\n`;
                     } else {
-                        console.log(formatted);
+                        out.print(formatted);
                     }
                 } catch (formatErr: unknown) {
                     // Formatting error - event parsed but couldn't format it
@@ -928,28 +932,28 @@ function monitorWithESF(
 async function getEventTypesInteractively(): Promise<string[]> {
     logger.info(chalk.cyan("🔍 macOS ESLogger Real-time Event Monitor\n"));
 
-    const mode = await select({
+    const mode = (await p.select({
         message: "Choose monitoring mode:",
-        choices: [
-            { value: "category", name: "📂 Category (pre-defined event groups)" },
-            { value: "custom", name: "🎯 Custom (select specific events)" },
-            { value: "popular", name: "🔥 Popular (most commonly monitored)" },
+        options: [
+            { value: "category", label: "📂 Category (pre-defined event groups)" },
+            { value: "custom", label: "🎯 Custom (select specific events)" },
+            { value: "popular", label: "🔥 Popular (most commonly monitored)" },
         ],
-    });
+    })) as string;
 
     if (mode === "popular") {
         return ["exec", "fork", "exit", "open", "write", "authentication", "sudo"];
     } else if (mode === "category") {
-        const categories = await checkbox({
+        const categories = (await p.multiselect({
             message: "Select event categories to monitor:",
-            choices: Object.keys(EVENT_CATEGORIES).map((cat) => ({
+            options: Object.keys(EVENT_CATEGORIES).map((cat) => ({
                 value: cat,
-                name: `${cat.charAt(0).toUpperCase() + cat.slice(1)} (${
+                label: `${cat.charAt(0).toUpperCase() + cat.slice(1)} (${
                     EVENT_CATEGORIES[cat as keyof typeof EVENT_CATEGORIES].length
                 } events)`,
-                checked: cat === "process", // Default select process
             })),
-        });
+            initialValues: Object.keys(EVENT_CATEGORIES).filter((cat) => cat === "process"),
+        })) as string[];
 
         if (!categories || categories.length === 0) {
             logger.info("No categories selected. Exiting.");
@@ -963,14 +967,14 @@ async function getEventTypesInteractively(): Promise<string[]> {
         return eventTypes;
     } else {
         // Custom event selection
-        const events = await checkbox({
+        const events = (await p.multiselect({
             message: "Select events to monitor (type to filter):",
-            choices: ALL_EVENTS.map((evt) => ({
+            options: ALL_EVENTS.map((evt) => ({
                 value: evt,
-                name: evt,
-                checked: evt === "exec", // Default select exec
+                label: evt,
             })),
-        });
+            initialValues: ALL_EVENTS.filter((evt) => evt === "exec"),
+        })) as string[];
 
         if (!events || events.length === 0) {
             logger.info("No events selected. Exiting.");
@@ -1019,9 +1023,9 @@ async function main() {
         // Validate event types
         const invalid = eventTypes.filter((e) => !ALL_EVENTS.includes(e));
         if (invalid.length > 0) {
-            console.log(`❌ Unknown event type(s): ${invalid.join(", ")}`);
-            console.log("\n💡 Use one of the following event types:");
-            console.log(ALL_EVENTS.join(", "));
+            out.print(`❌ Unknown event type(s): ${invalid.join(", ")}`);
+            out.print("\n💡 Use one of the following event types:");
+            out.print(ALL_EVENTS.join(", "));
             process.exit(1);
         }
     } else if (options.category) {
@@ -1029,25 +1033,17 @@ async function main() {
         if (EVENT_CATEGORIES[category as keyof typeof EVENT_CATEGORIES]) {
             eventTypes = EVENT_CATEGORIES[category as keyof typeof EVENT_CATEGORIES];
         } else {
-            console.log(`❌ Unknown category: ${category}`);
-            console.log(`📚 Available categories: ${Object.keys(EVENT_CATEGORIES).join(", ")}`);
+            out.print(`❌ Unknown category: ${category}`);
+            out.print(`📚 Available categories: ${Object.keys(EVENT_CATEGORIES).join(", ")}`);
             process.exit(1);
         }
     } else {
         // Interactive mode
-        try {
-            eventTypes = await getEventTypesInteractively();
-        } catch (error) {
-            if (error instanceof ExitPromptError) {
-                logger.info("\nOperation cancelled by user.");
-                process.exit(0);
-            }
-            throw error;
-        }
+        eventTypes = await getEventTypesInteractively();
     }
 
     if (eventTypes.length === 0) {
-        console.log("❌ No event types specified.");
+        out.print("❌ No event types specified.");
         showHelp();
         process.exit(1);
     }

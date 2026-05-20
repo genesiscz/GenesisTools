@@ -3,6 +3,7 @@
  * Shows a formatted list of settings before execution.
  */
 
+import { out } from "@app/logger";
 import pc from "picocolors";
 
 const S_STEP_SUBMIT = pc.green("\u25C7");
@@ -28,9 +29,9 @@ export interface SettingsEntry {
 export function printSettingsSummary(entries: SettingsEntry[]): void {
     for (const entry of entries) {
         const hint = entry.hint ? ` ${pc.dim(`(${entry.hint})`)}` : "";
-        console.log(`${S_BAR}`);
-        console.log(`${S_STEP_SUBMIT}  ${pc.dim(`${entry.label}:`)} ${entry.value}${hint}`);
+        out.print(`${S_BAR}`);
+        out.print(`${S_STEP_SUBMIT}  ${pc.dim(`${entry.label}:`)} ${entry.value}${hint}`);
     }
 
-    console.log(`${S_BAR}`);
+    out.print(`${S_BAR}`);
 }

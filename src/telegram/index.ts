@@ -1,3 +1,4 @@
+import { out } from "@app/logger";
 import { runTool } from "@app/utils/cli";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { Command } from "commander";
@@ -23,6 +24,6 @@ registerHistoryCommand(program);
 registerWatchCommand(program);
 
 await runTool(program, { tool: "telegram" }).catch((err) => {
-    console.error(err);
+    out.error(err);
     process.exit(1);
 });

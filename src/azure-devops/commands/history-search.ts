@@ -12,7 +12,7 @@ import { resolveUser, userMatches } from "@app/azure-devops/history";
 import type { AzureConfig, WorkItem, WorkItemCache } from "@app/azure-devops/types";
 import { requireConfig } from "@app/azure-devops/utils";
 import { buildCombinedQuery, buildEverAssignedQuery } from "@app/azure-devops/wiql-builder";
-import { logger } from "@app/logger";
+import { logger, out } from "@app/logger";
 import { suggestCommand } from "@app/utils/cli";
 import { formatLocalDate, formatLocalDateTimeStamp } from "@app/utils/date";
 import { formatDuration as _formatDuration } from "@app/utils/format";
@@ -156,7 +156,7 @@ async function wiqlSearch(options: SearchOptions, api: Api, config: AzureConfig)
 
     // Output
     if (options.output === "json") {
-        console.log(formatJSON(allItems));
+        out.print(formatJSON(allItems));
     } else {
         printWorkItemsTable(allItems);
     }
@@ -205,18 +205,18 @@ function printWorkItemsTable(items: WorkItem[]): void {
     }
 
     const header = `${pad("ID", 8)} ${pad("State", 14)} ${pad("Assignee", 24)} ${pad("Title", 50)}`;
-    console.log(pc.bold(header));
-    console.log("-".repeat(header.length));
+    out.print(pc.bold(header));
+    out.print("-".repeat(header.length));
 
     for (const item of items) {
         const line = `${pad(String(item.id), 8)} ${pad(item.state, 14)} ${pad(item.assignee ?? "-", 24)} ${pad(
             item.title,
             50
         )}`;
-        console.log(line);
+        out.print(line);
     }
 
-    console.log(`\n${pc.dim(`${items.length} work items`)}`);
+    out.print(`\n${pc.dim(`${items.length} work items`)}`);
 }
 
 // ============= Mode 2: Local Search =============
@@ -356,7 +356,7 @@ async function localSearch(options: SearchOptions): Promise<void> {
     const syncDate = lastSyncTime > 0 ? formatLocalDateTimeStamp(lastSyncTime, { seconds: false }) : "?";
 
     if (options.output === "json") {
-        console.log(
+        out.print(
             formatJSON({
                 results,
                 stats: { cached: scannedCount, matched: results.length, dataFrom, dataTo, syncDate },
@@ -366,7 +366,7 @@ async function localSearch(options: SearchOptions): Promise<void> {
         printLocalResultsTable(results);
 
         // Stats
-        console.log(pc.dim(`\nCache: ${scannedCount} items, data ${dataFrom} → ${dataTo}, synced ${syncDate}`));
+        out.print(pc.dim(`\nCache: ${scannedCount} items, data ${dataFrom} → ${dataTo}, synced ${syncDate}`));
 
         // Suggest WIQL equivalent
         const wiqlCmd = suggestCommand("tools azure-devops", { add: ["--wiql"] });
@@ -417,19 +417,19 @@ function printLocalResultsTable(results: LocalSearchResult[]): void {
     }
 
     const header = `${pad("ID", 8)} ${pad("Time", 10)} ${pad("State", 14)} ${pad("Assignee", 24)} ${pad("Title", 44)}`;
-    console.log(pc.bold(header));
-    console.log("-".repeat(header.length));
+    out.print(pc.bold(header));
+    out.print("-".repeat(header.length));
 
     for (const r of results) {
         const line = `${pad(String(r.workItemId), 8)} ${pad(formatDuration(r.totalMinutes), 10)} ${pad(
             r.currentState,
             14
         )} ${pad(r.assignee, 24)} ${pad(r.title, 44)}`;
-        console.log(line);
+        out.print(line);
     }
 
     const totalTime = results.reduce((sum, r) => sum + r.totalMinutes, 0);
-    console.log(`\n${pc.dim(`${results.length} work items, total time: ${formatDuration(totalTime)}`)}`);
+    out.print(`\n${pc.dim(`${results.length} work items, total time: ${formatDuration(totalTime)}`)}`);
 }
 
 // ============= Main Handler =============

@@ -1,5 +1,6 @@
 import { TimeLogApi } from "@app/azure-devops/timelog-api";
 import { requireTimeLogConfig, requireTimeLogUser } from "@app/azure-devops/utils";
+import { out } from "@app/logger";
 import { ClarityApi } from "@app/utils/clarity";
 import { SafeJSON } from "@app/utils/json";
 import * as clack from "@clack/prompts";
@@ -438,7 +439,7 @@ export function registerLinkCommand(program: Command): void {
             const config = await getConfig();
 
             if (!config) {
-                console.error("Clarity not configured. Run: tools clarity configure");
+                out.error("Clarity not configured. Run: tools clarity configure");
                 process.exit(1);
             }
 
@@ -447,19 +448,19 @@ export function registerLinkCommand(program: Command): void {
                 const idx = config.mappings.findIndex((m) => m.adoWorkItemId === options.unlink);
 
                 if (idx === -1) {
-                    console.error(`No mapping found for ADO work item #${options.unlink}`);
+                    out.error(`No mapping found for ADO work item #${options.unlink}`);
                     process.exit(1);
                 }
 
                 const removed = config.mappings.splice(idx, 1)[0];
                 await saveConfig(config);
-                console.log(`Removed mapping: ADO #${removed.adoWorkItemId} -> ${removed.clarityTaskName}`);
+                out.print(`Removed mapping: ADO #${removed.adoWorkItemId} -> ${removed.clarityTaskName}`);
                 return;
             }
 
             // List
             if (options.list) {
-                console.log(SafeJSON.stringify({ mappings: config.mappings }, null, 2));
+                out.print(SafeJSON.stringify({ mappings: config.mappings }, null, 2));
                 return;
             }
 
@@ -486,7 +487,7 @@ export function registerLinkCommand(program: Command): void {
                 }
 
                 if (missing.length > 0) {
-                    console.error(`Non-interactive linking requires all flags. Missing: ${missing.join(", ")}`);
+                    out.error(`Non-interactive linking requires all flags. Missing: ${missing.join(", ")}`);
                     process.exit(1);
                 }
             }
@@ -508,14 +509,14 @@ export function registerLinkCommand(program: Command): void {
                 try {
                     data = await api.getTimesheet(timesheetId);
                 } catch (err) {
-                    console.error(`Failed to fetch timesheet: ${err instanceof Error ? err.message : String(err)}`);
+                    out.error(`Failed to fetch timesheet: ${err instanceof Error ? err.message : String(err)}`);
                     process.exit(1);
                 }
 
                 const ts = data.timesheets._results[0];
 
                 if (!ts) {
-                    console.error(`Timesheet ${timesheetId} not found`);
+                    out.error(`Timesheet ${timesheetId} not found`);
                     process.exit(1);
                 }
 
@@ -537,7 +538,7 @@ export function registerLinkCommand(program: Command): void {
                         if (matches.length === 1) {
                             project = matches[0];
                         } else if (matches.length > 1) {
-                            console.error(
+                            out.error(
                                 `Ambiguous --clarity-task "${options.clarityTask}" matched ${matches.length} tasks:\n` +
                                     matches.map((p) => `  - ${p.taskName} (id: ${p.taskId})`).join("\n") +
                                     `\nUse --clarity-task-id <id> for an exact match.`
@@ -548,7 +549,7 @@ export function registerLinkCommand(program: Command): void {
                 }
 
                 if (!project) {
-                    console.error(
+                    out.error(
                         `Clarity task not found. Available tasks:\n${projects.map((p) => `  - ${p.taskName} (id: ${p.taskId})`).join("\n")}`
                     );
                     process.exit(1);
@@ -575,7 +576,7 @@ export function registerLinkCommand(program: Command): void {
 
                 config.mappings.push(mapping);
                 await saveConfig(config);
-                console.log(`Linked: ADO #${options.azureDevopsWorkitem} -> ${project.taskName}`);
+                out.print(`Linked: ADO #${options.azureDevopsWorkitem} -> ${project.taskName}`);
                 return;
             }
 

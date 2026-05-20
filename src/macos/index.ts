@@ -39,7 +39,7 @@
  *   tools macos contacts search
  */
 
-import { logger } from "@app/logger";
+import { logger, out } from "@app/logger";
 import { registerCalendarCommand } from "@app/macos/commands/calendar/index";
 import { registerClonesCommand } from "@app/macos/commands/clones/index";
 import { registerMailCommand } from "@app/macos/commands/mail/index";
@@ -77,10 +77,10 @@ async function main(): Promise<void> {
         logger.error(`Error: ${message}`);
 
         if (message.includes("not authorized") || message.includes("permission")) {
-            console.log("\nTo fix permission issues:");
-            console.log("  1. Open System Settings > Privacy & Security > Full Disk Access");
-            console.log("  2. Enable access for your terminal app");
-            console.log("  3. Restart the terminal and try again");
+            out.print("\nTo fix permission issues:");
+            out.print("  1. Open System Settings > Privacy & Security > Full Disk Access");
+            out.print("  2. Enable access for your terminal app");
+            out.print("  3. Restart the terminal and try again");
         }
 
         process.exit(1);

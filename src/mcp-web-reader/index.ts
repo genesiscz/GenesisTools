@@ -6,6 +6,7 @@ import { Command } from "commander";
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
 
+import { logger, out } from "@app/logger";
 import { runTool } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -23,12 +24,17 @@ import {
 import { limitToTokens } from "./utils/tokens.js";
 import { buildJinaUrl, ensureHttpUrl } from "./utils/urls.js";
 
+// CLI status → stderr via clack (out.log.*), with logger mirror for the file
+// log. Plain console.log here would corrupt stdout (the MCP server's JSON-RPC
+// channel when --server is set). `out.print`/`out.result` are the ONLY stdout
+// writers.
 const log = {
-    info: (msg: string) => console.log(chalk.blue("ℹ️ ") + msg),
-    ok: (msg: string) => console.log(chalk.green("✔ ") + msg),
-    warn: (msg: string) => console.log(chalk.yellow("⚠ ") + msg),
-    err: (msg: string, e?: unknown) => console.error(chalk.red("❌ ") + msg + (e ? `: ${String(e)}` : "")),
+    info: (msg: string) => out.log.info(msg),
+    ok: (msg: string) => out.log.success(msg),
+    warn: (msg: string) => out.log.warn(msg),
+    err: (msg: string, e?: unknown) => out.log.error(msg + (e ? `: ${String(e)}` : "")),
 };
+const slog = logger.scoped("mcp-web-reader").log;
 
 // CLI options interface
 interface CliOptions {
@@ -265,9 +271,9 @@ async function main(): Promise<void> {
     const args = program.args;
 
     if (opts.listEngines) {
-        console.log("Available engines:");
+        out.print("Available engines:");
         for (const engine of listEngines()) {
-            console.log(`  ${chalk.cyan(engine.name)}: ${engine.description}`);
+            out.print(`  ${chalk.cyan(engine.name)}: ${engine.description}`);
         }
         return;
     }
@@ -277,10 +283,10 @@ async function main(): Promise<void> {
         const status = await checkLLMModel();
         if (status.available) {
             log.ok(`Model available: ${status.path}`);
-            console.log(`  Size: ${status.sizeFormatted}`);
+            out.print(`  Size: ${status.sizeFormatted}`);
         } else {
             log.warn("Model not downloaded");
-            console.log("  Run with --download-model to download (~1GB)");
+            out.print("  Run with --download-model to download (~1GB)");
         }
         return;
     }
@@ -291,8 +297,8 @@ async function main(): Promise<void> {
             log.ok(`Model already downloaded: ${status.path}`);
         } else {
             log.info("Downloading ReaderLM-v2 (~1GB)");
-            console.log(`  Model: ${chalk.cyan("https://huggingface.co/jinaai/ReaderLM-v2")}`);
-            console.log(`  HTML-to-Markdown conversion optimized for LLMs (512K tokens, 29 languages)`);
+            out.print(`  Model: ${chalk.cyan("https://huggingface.co/jinaai/ReaderLM-v2")}`);
+            out.print(`  HTML-to-Markdown conversion optimized for LLMs (512K tokens, 29 languages)`);
             let lastUpdate = 0;
             await downloadLLMModel({
                 onProgress: (downloaded, total, pct) => {
@@ -308,7 +314,7 @@ async function main(): Promise<void> {
                     );
                 },
             });
-            console.log("");
+            out.print("");
             log.ok("Model downloaded successfully!");
         }
         // If no URL provided, just exit after download
@@ -322,7 +328,7 @@ async function main(): Promise<void> {
     if (opts.server) {
         const transport = new StdioServerTransport();
         await server.connect(transport);
-        console.error("mcp-web-reader server running (v0.2.0)");
+        slog.info("mcp-web-reader server running (v0.2.0)");
         return;
     }
 
@@ -346,6 +352,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((e) => {
-    console.error("Fatal error:", e);
+    slog.error({ err: e }, "fatal");
     process.exit(1);
 });

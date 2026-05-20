@@ -1,6 +1,6 @@
 // Code search command implementation
 
-import { logger } from "@app/logger";
+import { logger, out } from "@app/logger";
 import { getOctokit } from "@app/utils/github/octokit";
 import { withRetry } from "@app/utils/github/rate-limit";
 import { setGlobalVerbose, verbose } from "@app/utils/github/utils";
@@ -47,7 +47,7 @@ async function searchCode(query: string, options: CodeSearchOptions): Promise<Co
         searchQuery += ` language:${options.language}`;
     }
 
-    console.log(chalk.dim(`Searching code: ${searchQuery}`));
+    out.print(chalk.dim(`Searching code: ${searchQuery}`));
 
     const { data } = await withRetry(
         () =>
@@ -103,7 +103,7 @@ export async function codeSearchCommand(query: string, options: CodeSearchOption
     verbose(options, `Found ${results.length} results`);
 
     if (results.length === 0) {
-        console.log(chalk.yellow("No code results found."));
+        out.print(chalk.yellow("No code results found."));
         return;
     }
 
@@ -112,9 +112,9 @@ export async function codeSearchCommand(query: string, options: CodeSearchOption
 
     if (options.output) {
         await Bun.write(options.output, output);
-        console.log(chalk.green(`✔ Output written to ${options.output}`));
+        out.print(chalk.green(`✔ Output written to ${options.output}`));
     } else {
-        console.log(output);
+        out.print(output);
     }
 }
 
@@ -139,14 +139,14 @@ export function createCodeSearchCommand(): Command {
 
                 // Provide helpful tips on common errors
                 if (errorMessage.includes("at least one search term")) {
-                    console.error(chalk.yellow("\n📝 GitHub Code Search Tips:"));
-                    console.error(chalk.dim("  • Provide a search term in your query"));
-                    console.error(chalk.dim('  • Example: tools github code "useState" --repo facebook/react'));
-                    console.error(chalk.dim("  • Qualifiers alone (like path:) are not sufficient"));
-                    console.error("");
+                    out.error(chalk.yellow("\n📝 GitHub Code Search Tips:"));
+                    out.error(chalk.dim("  • Provide a search term in your query"));
+                    out.error(chalk.dim('  • Example: tools github code "useState" --repo facebook/react'));
+                    out.error(chalk.dim("  • Qualifiers alone (like path:) are not sufficient"));
+                    out.error("");
                 }
 
-                console.error(chalk.red(`Error: ${errorMessage}`));
+                out.error(chalk.red(`Error: ${errorMessage}`));
                 process.exit(1);
             }
         });

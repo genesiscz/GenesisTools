@@ -1,3 +1,4 @@
+import { logger } from "@app/logger/client";
 import { Button } from "@app/utils/ui/components/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@app/utils/ui/components/card";
 import { AlertTriangle } from "lucide-react";
@@ -15,7 +16,7 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, ErrorBound
     }
 
     componentDidCatch(error: Error, info: ErrorInfo) {
-        console.error("youtube ui error", error, info.componentStack);
+        logger.error({ err: error, componentStack: info.componentStack }, "youtube ui error");
     }
 
     render() {

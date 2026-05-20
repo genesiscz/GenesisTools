@@ -1,4 +1,5 @@
 import { existsSync, statSync, unlinkSync } from "node:fs";
+import { out } from "@app/logger";
 import { formatBytes } from "@app/utils/format";
 import { renderColumns } from "@app/youtube/commands/_shared/columns";
 import { confirmDestructive } from "@app/youtube/commands/_shared/confirm";
@@ -98,7 +99,7 @@ export function registerCacheCommand(program: Command): void {
             const flags = opts.all ? { audio: true, video: true, thumbs: true } : opts;
 
             if (!flags.audio && !flags.video && !flags.thumbs) {
-                console.error(pc.red("Specify --audio, --video, --thumbs, or --all"));
+                out.error(pc.red("Specify --audio, --video, --thumbs, or --all"));
                 process.exitCode = 1;
                 return;
             }

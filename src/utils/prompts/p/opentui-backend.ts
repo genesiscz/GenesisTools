@@ -3,9 +3,12 @@ import { usePromptStore } from "@app/doctor/ui/tui/stores/prompt-store";
 import type { PromptBackend } from "@app/utils/prompts/p/backend";
 import type {
     ConfirmOpts,
+    EditorOpts,
     Log,
     MultiSelectOpts,
+    NumberOpts,
     PasswordOpts,
+    SearchOpts,
     SelectOpts,
     SelectValue,
     Spinner,
@@ -127,7 +130,19 @@ export function opentuiBackend(_renderer: CliRenderer): PromptBackend {
             };
         },
 
+        // search/editor/number are not supported in the opentui TUI renderer.
+        // The doctor tool (the only opentui consumer) does not use these prompts.
+        search: makeUnsupported("search"),
+        editor: makeUnsupported("editor"),
+        number: makeUnsupported("number"),
+
         log,
+    };
+}
+
+function makeUnsupported(method: string): () => never {
+    return () => {
+        throw new Error(`opentuiBackend does not support "${method}" — use clackBackend or implement a TUI widget`);
     };
 }
 

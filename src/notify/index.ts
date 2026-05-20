@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 
+import { out } from "@app/logger";
 import { isInteractive, runTool, suggestCommand } from "@app/utils/cli";
 import type { ChannelConfigs } from "@app/utils/notifications";
 import { dispatchNotification, notificationsConfig } from "@app/utils/notifications";
@@ -203,8 +204,8 @@ function showCurrentConfig(channels: ChannelConfigs): void {
 
 async function configCommand(): Promise<void> {
     if (!isInteractive()) {
-        console.error("notify config requires an interactive terminal.");
-        console.info(suggestCommand("tools notify", { add: ["--title", "Test", "Hello"] }));
+        out.error("notify config requires an interactive terminal.");
+        out.info(suggestCommand("tools notify", { add: ["--title", "Test", "Hello"] }));
         return;
     }
 

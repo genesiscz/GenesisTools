@@ -3,6 +3,7 @@
 import { existsSync } from "node:fs";
 import { basename, extname, resolve } from "node:path";
 import { audioProcessor } from "@app/ask/audio/AudioProcessor.ts";
+import { out } from "@app/logger";
 import { AI } from "@app/utils/ai/index.ts";
 import { getAllProviders } from "@app/utils/ai/providers/index.ts";
 import { formatOutput, formatTimestamp, type OutputFormat, toSRT, toVTT } from "@app/utils/ai/transcription-format.ts";
@@ -58,15 +59,15 @@ async function runTranscription(filePath: string, opts: TranscribeFlags): Promis
     const resolved = resolve(filePath);
 
     if (!existsSync(resolved)) {
-        console.error(pc.red(`File not found: ${resolved}`));
+        out.error(pc.red(`File not found: ${resolved}`));
         process.exit(1);
     }
 
     const ext = extname(resolved).toLowerCase();
 
     if (!SUPPORTED_AUDIO_EXTENSIONS.has(ext)) {
-        console.error(pc.red(`Unsupported audio format: ${ext}`));
-        console.error(pc.dim(`Supported: ${Array.from(SUPPORTED_AUDIO_EXTENSIONS).join(", ")}`));
+        out.error(pc.red(`Unsupported audio format: ${ext}`));
+        out.error(pc.dim(`Supported: ${Array.from(SUPPORTED_AUDIO_EXTENSIONS).join(", ")}`));
         process.exit(1);
     }
 
@@ -74,7 +75,7 @@ async function runTranscription(filePath: string, opts: TranscribeFlags): Promis
     const validation = await audioProcessor.validateAudioFile(resolved);
 
     if (!validation.isValid) {
-        console.error(pc.red(`Invalid audio file: ${validation.error}`));
+        out.error(pc.red(`Invalid audio file: ${validation.error}`));
         process.exit(1);
     }
 
@@ -93,7 +94,7 @@ async function runTranscription(filePath: string, opts: TranscribeFlags): Promis
         fileInfo.push(formatBytes(validation.size));
     }
 
-    console.error(pc.dim(`File: ${fileInfo.join(" | ")}`));
+    out.error(pc.dim(`File: ${fileInfo.join(" | ")}`));
 
     // Resolve provider
     const provider: AIProviderType | undefined = opts.local
@@ -153,11 +154,11 @@ async function runTranscription(filePath: string, opts: TranscribeFlags): Promis
 
             // Show metadata
             if (result.language) {
-                console.error(pc.dim(`Language: ${result.language}`));
+                out.error(pc.dim(`Language: ${result.language}`));
             }
 
             if (result.duration) {
-                console.error(pc.dim(`Duration: ${formatDuration(result.duration, "s", "hms")}`));
+                out.error(pc.dim(`Duration: ${formatDuration(result.duration, "s", "hms")}`));
             }
 
             const output = formatOutput(result, format);
@@ -170,11 +171,11 @@ async function runTranscription(filePath: string, opts: TranscribeFlags): Promis
             if (opts.output) {
                 const outputPath = resolve(opts.output);
                 await Bun.write(outputPath, output);
-                console.error(pc.green(`Written to ${outputPath}`));
+                out.error(pc.green(`Written to ${outputPath}`));
             }
 
             if (!opts.output && !opts.clipboard) {
-                console.log(output);
+                out.print(output);
             }
         } finally {
             transcriber.dispose();
@@ -186,7 +187,7 @@ async function runTranscription(filePath: string, opts: TranscribeFlags): Promis
             s.stop(pc.red("Transcription failed"));
         }
 
-        console.error(pc.red(error instanceof Error ? error.message : String(error)));
+        out.error(pc.red(error instanceof Error ? error.message : String(error)));
         process.exit(1);
     }
 }
@@ -383,9 +384,9 @@ async function ensureProviderResolved(opts: TranscribeFlags): Promise<string | u
 
     if (isInteractive()) {
         if (available.length === 0) {
-            console.error(pc.red("No transcription providers are available."));
-            console.error(pc.dim("Set one of: OPENAI_API_KEY, GROQ_API_KEY, OPENROUTER_API_KEY, X_AI_API_KEY"));
-            console.error(pc.dim("…or install local-hf / darwinkit support."));
+            out.error(pc.red("No transcription providers are available."));
+            out.error(pc.dim("Set one of: OPENAI_API_KEY, GROQ_API_KEY, OPENROUTER_API_KEY, X_AI_API_KEY"));
+            out.error(pc.dim("…or install local-hf / darwinkit support."));
             process.exit(1);
         }
 
@@ -395,7 +396,7 @@ async function ensureProviderResolved(opts: TranscribeFlags): Promise<string | u
         });
 
         if (p.isCancel(picked)) {
-            console.error(pc.yellow("Cancelled."));
+            out.error(pc.yellow("Cancelled."));
             process.exit(1);
         }
 
@@ -403,8 +404,8 @@ async function ensureProviderResolved(opts: TranscribeFlags): Promise<string | u
     }
 
     const choices = available.length > 0 ? available.join("|") : "local-hf|cloud|openai|groq|openrouter|xai";
-    console.error(pc.red("No --provider specified and not in an interactive terminal."));
-    console.error(pc.dim(suggestCommand("tools transcribe", { add: ["--provider", `<${choices}>`] })));
+    out.error(pc.red("No --provider specified and not in an interactive terminal."));
+    out.error(pc.dim(suggestCommand("tools transcribe", { add: ["--provider", `<${choices}>`] })));
     process.exit(1);
 }
 
@@ -430,7 +431,7 @@ async function main(): Promise<void> {
         await runTool(program, { tool: "transcribe" });
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        console.error(message);
+        out.error(message);
         process.exit(1);
     }
 }

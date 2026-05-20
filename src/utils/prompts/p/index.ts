@@ -1,9 +1,12 @@
 import { getBackend, setBackend } from "./backend";
 import type {
     ConfirmOpts,
+    EditorOpts,
     Log,
     MultiSelectOpts,
+    NumberOpts,
     PasswordOpts,
+    SearchOpts,
     SelectOpts,
     SelectValue,
     Spinner,
@@ -11,8 +14,11 @@ import type {
     TypedConfirmOpts,
 } from "./types";
 
+export { isCancel } from "@clack/prompts";
 export { setBackend };
 export type { PromptBackend } from "./backend";
+export type { InquirerBackend } from "./inquirer-backend";
+export { inquirerBackend } from "./inquirer-backend";
 export type * from "./types";
 
 export function intro(msg: string): void {
@@ -53,6 +59,18 @@ export function multiselect(opts: MultiSelectOpts): Promise<SelectValue[]> {
 
 export function password(opts: PasswordOpts): Promise<string> {
     return getBackend().password(opts);
+}
+
+export function search<T>(opts: SearchOpts<T>): Promise<T> {
+    return getBackend().search(opts);
+}
+
+export function editor(opts: EditorOpts): Promise<string> {
+    return getBackend().editor(opts);
+}
+
+export function number(opts: NumberOpts): Promise<number> {
+    return getBackend().number(opts);
 }
 
 export function spinner(): Spinner {
