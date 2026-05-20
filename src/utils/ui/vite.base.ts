@@ -162,6 +162,29 @@ function deriveWatchDirs(root: string, appDir: string, extraDirs: string[]): str
 }
 
 /**
+ * Find the monorepo git root, not the first `.git` walking up from `start`.
+ *
+ * Some dashboards (e.g. `src/claude-history-dashboard`) still carry a nested
+ * `.git` from their scaffold template. Stopping at the first match parked their
+ * Vite cache at `<dashboard>/node_modules/.vite-cache/root`, colliding with
+ * other tools and causing 504 Outdated Optimize Dep / duplicate React crashes.
+ */
+function resolveGitRoot(start: string): string {
+    let gitRoot = start;
+    let dir = start;
+
+    while (dir !== dirname(dir)) {
+        if (existsSync(join(dir, ".git"))) {
+            gitRoot = dir;
+        }
+
+        dir = dirname(dir);
+    }
+
+    return gitRoot;
+}
+
+/**
  * Per-dashboard cacheDir under `<repo>/node_modules/.vite-cache/<slug>/`.
  *
  * Default Vite cacheDir is `<root>/node_modules/.vite`, which from
@@ -179,17 +202,10 @@ function deriveWatchDirs(root: string, appDir: string, extraDirs: string[]): str
  * resolution chain.
  */
 function resolveDashboardCacheDir(root: string): string {
-    let dir = root;
-    while (dir !== dirname(dir)) {
-        if (existsSync(join(dir, ".git"))) {
-            const slug = relative(dir, root).split(sep).filter(Boolean).join("-") || "root";
+    const gitRoot = resolveGitRoot(root);
+    const slug = relative(gitRoot, root).split(sep).filter(Boolean).join("-") || "root";
 
-            return join(dir, "node_modules", ".vite-cache", slug);
-        }
-        dir = dirname(dir);
-    }
-
-    return join(root, "node_modules", ".vite");
+    return join(gitRoot, "node_modules", ".vite-cache", slug);
 }
 
 export function createDashboardViteConfig({
