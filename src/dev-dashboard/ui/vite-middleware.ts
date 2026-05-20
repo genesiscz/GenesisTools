@@ -445,7 +445,7 @@ export function attachDevDashboardMiddleware(middlewares: Connect.Server): void 
             const stream = createQaStream(todayLogFile(), (entry) => {
                 res.write(`data: ${SafeJSON.stringify(enrichQaEntry(entry))}\n\n`);
             });
-            const keepAlive = setInterval(() => res.write(": ping\n\n"), 25000);
+            const keepAlive = setInterval(() => res.write(": ping\n\n"), 12_000);
             const shutdown = (): void => {
                 clearInterval(keepAlive);
                 stream.close();

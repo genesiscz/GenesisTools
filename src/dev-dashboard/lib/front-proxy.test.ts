@@ -6,7 +6,7 @@ import {
     LOCAL_ORIGIN_HEADER,
     makeBasicAuthHeader,
 } from "@app/dev-dashboard/lib/auth";
-import { decideProxyAuth, isLoopbackOnlyOrigin } from "@app/dev-dashboard/lib/front-proxy";
+import { decideProxyAuth, isLongLivedProxiedStream, isLoopbackOnlyOrigin } from "@app/dev-dashboard/lib/front-proxy";
 
 // Security regression net for the ttyd/WS auth gate. The front-proxy serves
 // /ttyd/* and every WS upgrade BEFORE the Vite auth middleware, so this gate is
@@ -120,5 +120,12 @@ describe("LOCAL_ORIGIN_HEADER invariant", () => {
         // trust into a fail-open auth bypass — pin the value.
         expect(LOCAL_ORIGIN_HEADER).toBe("x-dd-local-origin");
         expect(LOCAL_ORIGIN_HEADER).toBe(LOCAL_ORIGIN_HEADER.toLowerCase());
+    });
+});
+
+describe("isLongLivedProxiedStream", () => {
+    test("matches QA SSE route only", () => {
+        expect(isLongLivedProxiedStream("/api/qa/stream")).toBe(true);
+        expect(isLongLivedProxiedStream("/api/qa/log")).toBe(false);
     });
 });
