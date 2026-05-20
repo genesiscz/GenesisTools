@@ -25,7 +25,7 @@ import {
 import type { AnalysisFilters, FullAnalysis, TargetProperty } from "@app/Internal/commands/reas/types";
 import { out } from "@app/logger";
 import { isInteractive, suggestCommand } from "@app/utils/cli";
-import { defineDashboardApp } from "@app/utils/DashboardApp";
+import { buildViteDevCmd, defineDashboardApp } from "@app/utils/DashboardApp";
 import { SafeJSON } from "@app/utils/json";
 import { PROJECT_ROOT } from "@app/utils/paths";
 import * as p from "@app/utils/prompts/p";
@@ -44,7 +44,7 @@ const reasUiApp = defineDashboardApp({
     commandName: "ui",
     aliases: ["dashboard"],
     spawn: {
-        cmd: ["bun", "--bun", "vite", "dev", "--strictPort", "-c", reasUiConfigPath],
+        cmd: buildViteDevCmd({ configPath: reasUiConfigPath, strictPort: true }),
         cwd: PROJECT_ROOT,
     },
     readiness: { kind: "http", path: "/" },

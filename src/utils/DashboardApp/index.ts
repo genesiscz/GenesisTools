@@ -10,7 +10,8 @@
  *       key: "clarity",
  *       commandName: "ui",
  *       description: "Launch the Clarity dashboard",
- *       spawn: { cmd: ["bun", "--bun", viteEntry, "dev", "-c", configPath, "--strictPort"], cwd: PROJECT_ROOT },
+ *       spawn: { cmd: buildViteDevCmd({ configPath, strictPort: true }), cwd: PROJECT_ROOT },
+ *       bindHost: "127.0.0.1", // default; use "0.0.0.0" for LAN/tunnel (see dev-dashboard)
  *       readiness: { kind: "http" },
  *       openBrowser: { enabled: true },
  *       launchd: { available: true },
@@ -52,6 +53,7 @@ export type {
     DashboardApp,
     DashboardAppConfig,
     DashboardAppType,
+    DashboardBindHost,
     DashboardDependency,
     DependencyPolicy,
     DependencyStatus,
@@ -64,6 +66,8 @@ export type {
     UpOptions,
     UpResult,
 } from "./types";
+export type { ViteDevCmdOptions } from "./viteSpawn";
+export { buildViteDevCmd, DEFAULT_BIND_HOST, resolveViteEntry } from "./viteSpawn";
 
 function resolvePort(config: DashboardAppConfig): number {
     if (typeof config.port === "number") {

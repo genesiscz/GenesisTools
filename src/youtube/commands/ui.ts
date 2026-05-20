@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { defineDashboardApp } from "@app/utils/DashboardApp";
+import { buildViteDevCmd, defineDashboardApp } from "@app/utils/DashboardApp";
 import { PROJECT_ROOT } from "@app/utils/paths";
 import { DASHBOARDS } from "@app/utils/ui/dashboards";
 import { getYoutube } from "@app/youtube/commands/_shared/ensure-pipeline";
@@ -8,7 +8,6 @@ import type { Command } from "commander";
 
 const UI_DIR = resolve(import.meta.dirname, "..", "ui");
 const CONFIG_PATH = resolve(UI_DIR, "vite.config.ts");
-const VITE_ENTRY = resolve(PROJECT_ROOT, "node_modules", "vite", "bin", "vite.js");
 
 export const youtubeUiApp = defineDashboardApp({
     type: "ui",
@@ -17,17 +16,11 @@ export const youtubeUiApp = defineDashboardApp({
     description: "Launch the YouTube AI web UI",
     commandName: "ui",
     spawn: {
-        cmd: [
-            "bun",
-            "--bun",
-            VITE_ENTRY,
-            "dev",
-            "-c",
-            CONFIG_PATH,
-            "--port",
-            String(DASHBOARDS.youtube.port),
-            "--strictPort",
-        ],
+        cmd: buildViteDevCmd({
+            configPath: CONFIG_PATH,
+            port: DASHBOARDS.youtube.port,
+            strictPort: true,
+        }),
         cwd: PROJECT_ROOT,
         env: { YOUTUBE_PROJECT_CWD: process.cwd() },
     },

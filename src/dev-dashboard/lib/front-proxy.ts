@@ -125,14 +125,19 @@ function normalizeCloseCode(code: number): number {
 // can't grow the queue unbounded while the upstream is slow/stalled.
 const MAX_WS_QUEUE = 256;
 
-export function startFrontProxy(opts: { publicPort: number; internalPort: number }): Server<BridgeData> {
+export function startFrontProxy(opts: {
+    publicPort: number;
+    internalPort: number;
+    hostname?: string;
+}): Server<BridgeData> {
     const { publicPort, internalPort } = opts;
+    const hostname = opts.hostname ?? "0.0.0.0";
     const viteHttp = `http://127.0.0.1:${internalPort}`;
     const viteWs = `ws://127.0.0.1:${internalPort}`;
 
     const server = Bun.serve<BridgeData>({
         port: publicPort,
-        hostname: "0.0.0.0",
+        hostname,
         idleTimeout: 0,
         async fetch(req, srv) {
             const url = new URL(req.url);

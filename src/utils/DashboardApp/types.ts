@@ -13,6 +13,9 @@ import type { Command } from "commander";
 
 export type DashboardAppType = "ui" | "server";
 
+/** Vite / dev-server bind address. Default `127.0.0.1` (localhost only). */
+export type DashboardBindHost = "127.0.0.1" | "0.0.0.0";
+
 export type ReadinessProbe =
     | { kind: "http"; path?: string; timeoutMs?: number }
     | { kind: "log"; regex: RegExp; timeoutMs?: number }
@@ -58,6 +61,13 @@ export interface DashboardAppConfig {
 
     /** Port. For type:"ui" defaults to DASHBOARDS[key].port; for type:"server" required. */
     port?: number;
+
+    /**
+     * Dev-server bind address (UI dashboards). Default `127.0.0.1`.
+     * Use `0.0.0.0` when the dashboard must be reachable on LAN or via a tunnel
+     * (e.g. dev-dashboard + cloudflared).
+     */
+    bindHost?: DashboardBindHost;
 
     /** Spawn instructions for the child process. */
     spawn: {

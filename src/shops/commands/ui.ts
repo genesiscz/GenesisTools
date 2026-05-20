@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { defineDashboardApp } from "@app/utils/DashboardApp";
+import { buildViteDevCmd, defineDashboardApp } from "@app/utils/DashboardApp";
 import { PROJECT_ROOT } from "@app/utils/paths";
 import type { Command } from "commander";
 
@@ -29,7 +29,7 @@ export const shopsUiApp = defineDashboardApp({
     commandName: "ui",
     aliases: ["dashboard"],
     spawn: {
-        cmd: ["bun", "--bun", VITE_ENTRY, "dev", "-c", CONFIG_PATH, "--strictPort"],
+        cmd: buildViteDevCmd({ configPath: CONFIG_PATH, strictPort: true }),
         cwd: PROJECT_ROOT,
         env: { SHOPS_PROJECT_CWD: process.cwd() },
     },

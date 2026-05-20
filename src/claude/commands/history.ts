@@ -17,7 +17,7 @@ import { out } from "@app/logger";
 import { getAgentRuntimeContext } from "@app/utils/agent-runtime";
 import { resolveProjectFilter } from "@app/utils/claude";
 import { isInteractive } from "@app/utils/cli";
-import { defineDashboardApp } from "@app/utils/DashboardApp";
+import { buildViteDevCmd, defineDashboardApp } from "@app/utils/DashboardApp";
 import { SafeJSON } from "@app/utils/json";
 import { PROJECT_ROOT } from "@app/utils/paths";
 import * as p from "@app/utils/prompts/p";
@@ -333,7 +333,7 @@ export function registerHistoryCommand(program: Command): void {
         });
 
     const dashboardDir = resolve(import.meta.dir, "../../claude-history-dashboard");
-    const viteEntry = resolve(PROJECT_ROOT, "node_modules", "vite", "bin", "vite.js");
+    const viteConfigPath = resolve(dashboardDir, "vite.config.ts");
 
     const claudeHistoryApp = defineDashboardApp({
         type: "ui",
@@ -342,7 +342,7 @@ export function registerHistoryCommand(program: Command): void {
         description: "Search & browse Claude Code conversation history",
         commandName: "dashboard",
         spawn: {
-            cmd: ["bun", "--bun", viteEntry, "dev", "-c", resolve(dashboardDir, "vite.config.ts"), "--strictPort"],
+            cmd: buildViteDevCmd({ configPath: viteConfigPath, strictPort: true }),
             cwd: PROJECT_ROOT,
         },
         readiness: { kind: "http", path: "/" },
