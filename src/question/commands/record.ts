@@ -6,6 +6,7 @@ import type { QaTag } from "../lib/types";
 export function registerRecordCommand(program: Command): void {
     program
         .command("record")
+        .alias("answer")
         .description("Record a Q→A entry (used by the question_answer MCP tool / scripts)")
         .requiredOption("--q <question>", "the question")
         .option("--a <answer>", "the answer (markdown)")
