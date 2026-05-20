@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
-import { type Dirent, readdirSync, statSync } from "node:fs";
+import { type Dirent, readdirSync } from "node:fs";
 import { basename, dirname, join, relative, sep } from "node:path";
 import logger from "@app/logger";
 import { findDuplicateFiles } from "@app/utils/fs/disk-usage";
 import { Stopwatch } from "@app/utils/Stopwatch";
-import { matchGlob } from "@app/utils/string";
+import { passesGlobs } from "./filters";
 import type { DuplicateSet, DuplicatesReport } from "./render/types";
 
 const log = logger.child({ component: "clones:collapse" });
@@ -17,38 +17,6 @@ export interface CollapseArgs {
     include?: string[];
     /** Glob patterns: exclude files whose RELPATH or any path-segment matches (wins). */
     exclude?: string[];
-}
-
-function pathMatches(rel: string, glob: string): boolean {
-    if (matchGlob(rel, glob)) {
-        return true;
-    }
-
-    for (const seg of rel.split(sep)) {
-        if (matchGlob(seg, glob)) {
-            return true;
-        }
-    }
-
-    return false;
-}
-
-function passesFilters(
-    absPath: string,
-    root: string,
-    include: string[] | undefined,
-    exclude: string[] | undefined
-): boolean {
-    const rel = relative(root, absPath);
-    if (exclude && exclude.length > 0 && exclude.some((g) => pathMatches(rel, g))) {
-        return false;
-    }
-
-    if (include && include.length > 0) {
-        return include.some((g) => pathMatches(rel, g));
-    }
-
-    return true;
 }
 
 /** Which root contains `absPath`? Used to relativize for glob matching across
@@ -113,17 +81,16 @@ function listFiles(dir: string): string[] {
     return out;
 }
 
-function dirInfo(dir: string, shaOf: Map<string, string>, sizeOf: Map<string, number>): DirInfo {
-    const files = listFiles(dir).sort();
+function dirInfo(dir: string, files: string[], shaOf: Map<string, string>, sizeOf: Map<string, number>): DirInfo {
     let bytes = 0;
     const h = createHash("sha256");
     for (const f of files) {
         const sha = shaOf.get(f);
-        if (sha === undefined) {
+        const size = sizeOf.get(f);
+        if (sha === undefined || size === undefined) {
             return { fileCount: files.length, hash: null, bytes };
         }
 
-        const size = sizeOf.get(f) ?? statSync(f).size;
         bytes += size;
         // dir identity = (relpath, sha) per file. Mode is intentionally NOT
         // hashed: cloning preserves each replace's original mode via dedupeFile's
@@ -149,19 +116,14 @@ export function collapseDuplicates({ roots, minSize, include, exclude }: Collaps
     const fileGroups: { sha256: string; size: number; paths: string[] }[] = [];
 
     for (const root of roots) {
-        for (const g of findDuplicateFiles(root)) {
-            // Filter 1: minSize. Drop groups smaller than the user's threshold.
-            if (minSize !== undefined && g.size < minSize) {
-                continue;
-            }
-
-            // Filter 2: include/exclude. Keep only paths passing the globs; if
-            // the surviving set drops below 2, the group is no longer a duplicate.
+        for (const g of findDuplicateFiles(root, minSize !== undefined ? { minSize } : {})) {
+            // If include/exclude prunes the group below 2 paths it is no
+            // longer a duplicate — drop it.
             const filtered =
                 (include && include.length > 0) || (exclude && exclude.length > 0)
                     ? g.paths.filter((p) => {
                           const containingRoot = rootOf(p, roots) ?? root;
-                          return passesFilters(p, containingRoot, include, exclude);
+                          return passesGlobs(relative(containingRoot, p), include, exclude);
                       })
                     : g.paths;
             if (filtered.length < 2) {
@@ -177,6 +139,21 @@ export function collapseDuplicates({ roots, minSize, include, exclude }: Collaps
         }
     }
 
+    // The ancestor walk re-enumerates the same dirs many times — once per
+    // file group, once per cursor level. Memoise both the sorted file list
+    // and the derived DirInfo so each dir is walked exactly once.
+    const filesCache = new Map<string, string[]>();
+    const listFilesCached = (dir: string): string[] => {
+        const hit = filesCache.get(dir);
+        if (hit) {
+            return hit;
+        }
+
+        const out = listFiles(dir).sort();
+        filesCache.set(dir, out);
+        return out;
+    };
+
     const dirCache = new Map<string, DirInfo>();
     const infoFor = (dir: string): DirInfo => {
         const cached = dirCache.get(dir);
@@ -184,7 +161,7 @@ export function collapseDuplicates({ roots, minSize, include, exclude }: Collaps
             return cached;
         }
 
-        const info = dirInfo(dir, shaOf, sizeOf);
+        const info = dirInfo(dir, listFilesCached(dir), shaOf, sizeOf);
         dirCache.set(dir, info);
         return info;
     };
@@ -223,7 +200,7 @@ export function collapseDuplicates({ roots, minSize, include, exclude }: Collaps
             const members = [...new Set(bestDirs)].sort();
             if (members.length >= 2) {
                 for (const m of members) {
-                    for (const f of listFiles(m)) {
+                    for (const f of listFilesCached(m)) {
                         consumed.add(f);
                     }
                 }

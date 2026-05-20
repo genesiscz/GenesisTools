@@ -387,11 +387,14 @@ export function bytesEqualStreaming(a: string, b: string): boolean {
 }
 
 /** Content-identical regular files under `root`, grouped (size → sha256 →
- *  full byte-compare). Groups of <2 are dropped. Order-independent. */
-export function findDuplicateFiles(root: string): DuplicateGroup[] {
+ *  full byte-compare). Groups of <2 are dropped. Order-independent.
+ *  `minSize` is applied during the walk so large trees don't materialise
+ *  paths for every below-threshold file. */
+export function findDuplicateFiles(root: string, opts: { minSize?: number } = {}): DuplicateGroup[] {
+    const minSize = Math.max(1, opts.minSize ?? 1);
     const bySize = new Map<number, string[]>();
     for (const e of walkFiles(root)) {
-        if (e.logical === 0) {
+        if (e.logical < minSize) {
             continue;
         }
 
