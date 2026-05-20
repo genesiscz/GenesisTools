@@ -1,4 +1,18 @@
+import type { DedupeStatus } from "@app/utils/fs/disk-usage";
+
 export type Format = "auto" | "table" | "json" | "jsonl";
+
+/** Every value `ProcessOp.status` can actually take when audit.ts writes a row.
+ *  Mirrors `DedupeStatus` (returned from dedupeFile and forwarded verbatim) plus
+ *  the audit-only states that wrap clone / rollback / pre-state outcomes. */
+export type ProcessOpStatus =
+    | DedupeStatus
+    | "ok"
+    | "prestate"
+    | "integrity"
+    | "clone-unsupported"
+    | "errno"
+    | "rollback-failed";
 
 export interface DirNode {
     path: string;
@@ -72,7 +86,7 @@ export interface ProcessOp {
     seq: number;
     ts: string;
     op: OpKind;
-    status: string;
+    status: ProcessOpStatus;
     bytes: number;
     keep: string;
     replace: string;

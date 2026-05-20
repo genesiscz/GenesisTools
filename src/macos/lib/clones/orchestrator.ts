@@ -69,8 +69,10 @@ interface MutNode {
     depth: number;
     logical: number;
     allocated: number;
+    /** null = no per-file `private` value was ever contributed; once any file
+     *  contributes, this becomes a (non-null) running sum. Distinguishes
+     *  "unsupported" from "supported but zero". */
     real: number | null;
-    realSeen: boolean;
     /** Sum of (allocated - private) for files in this subtree whose clone-id
      *  has only ONE in-tree member (i.e. the sharing partner lives outside the
      *  measured roots — typically the bun install cache). */
@@ -84,8 +86,7 @@ function emptyNode(path: string, depth: number): MutNode {
         depth,
         logical: 0,
         allocated: 0,
-        real: 0,
-        realSeen: false,
+        real: null,
         crossTreeShared: 0,
         children: new Map(),
     };
@@ -280,8 +281,7 @@ function walkRoot(root: string, args: BuildMeasureArgs, crossTreeShared: Map<str
         dirCount: 0,
         errors: [],
     };
-    let privateSum = 0;
-    let privateSeen = false;
+    let privateSum: number | null = null;
     const dirs = new Set<string>();
     const rootKey = root.endsWith("/") ? root.slice(0, -1) : root;
 
@@ -306,8 +306,7 @@ function walkRoot(root: string, args: BuildMeasureArgs, crossTreeShared: Map<str
         }
 
         if (priv !== null) {
-            privateSeen = true;
-            privateSum += priv;
+            privateSum = (privateSum ?? 0) + priv;
         }
 
         // Per-dir tree (populated regardless of breakdown — the root node
@@ -319,7 +318,6 @@ function walkRoot(root: string, args: BuildMeasureArgs, crossTreeShared: Map<str
         node.crossTreeShared += fileShared;
         if (priv !== null) {
             node.real = (node.real ?? 0) + priv;
-            node.realSeen = true;
         }
 
         // Stop CREATING child nodes past maxDepth, but the totals above were
@@ -344,7 +342,6 @@ function walkRoot(root: string, args: BuildMeasureArgs, crossTreeShared: Map<str
             child.crossTreeShared += fileShared;
             if (priv !== null) {
                 child.real = (child.real ?? 0) + priv;
-                child.realSeen = true;
             }
 
             node = child;
@@ -352,7 +349,7 @@ function walkRoot(root: string, args: BuildMeasureArgs, crossTreeShared: Map<str
     }
 
     aggregate.dirCount = dirs.size;
-    aggregate.private = privateSeen ? privateSum : null;
+    aggregate.private = privateSum;
     aggregate.exactReclaimable = aggregate.private;
     return { tree: rootNode, aggregate };
 }
@@ -367,7 +364,7 @@ function pruneTree(node: MutNode, minReal: number): DirNode[] {
         keptChildren.push(...pruneTree(child, minReal));
     }
 
-    const real = node.realSeen ? (node.real ?? 0) : null;
+    const real = node.real;
     const childRealSum = keptChildren.reduce((s, c) => s + (c.real ?? 0), 0);
     const ownReal = real === null ? null : real - childRealSum;
     const significant = real !== null && real > minReal;
@@ -477,7 +474,6 @@ export function buildMeasureReport(args: BuildMeasureArgs): MeasureReport {
         dirCount: 0,
         errors: [],
     };
-    let realSeen = false;
     const tree: DirNode[] = [];
 
     const swCross = new Stopwatch();
@@ -491,7 +487,6 @@ export function buildMeasureReport(args: BuildMeasureArgs): MeasureReport {
         totalsAgg.fileCount += u.fileCount;
         totalsAgg.dirCount += u.dirCount;
         if (u.private !== null) {
-            realSeen = true;
             totalsAgg.private = (totalsAgg.private ?? 0) + u.private;
         }
 
@@ -502,7 +497,7 @@ export function buildMeasureReport(args: BuildMeasureArgs): MeasureReport {
         }
     }
 
-    const totalReal = realSeen ? totalsAgg.private : null;
+    const totalReal = totalsAgg.private;
     const totalOvercount = totalReal !== null && totalReal > 0 ? totalsAgg.allocated / totalReal : null;
     const fs = freeDiskSpace(args.roots[0]);
     const sorted = args.breakdown ? sortTree(tree, args.sort ?? "overcount") : [];
