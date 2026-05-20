@@ -1,7 +1,7 @@
-import { SafeJSON } from "@app/utils/json";
-import { YoutubeConfig } from "@app/youtube/lib/config";
-import type { YoutubeConfigPatch } from "@app/youtube/lib/config.api.types";
 import type { Plugin } from "vite";
+import { SafeJSON } from "../../../utils/json";
+import { YoutubeConfig } from "../../lib/config";
+import type { YoutubeConfigPatch } from "../../lib/config.api.types";
 
 export function youtubeConfigPlugin(): Plugin {
     return {
