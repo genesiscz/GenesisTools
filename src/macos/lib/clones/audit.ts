@@ -4,8 +4,8 @@ import {
     existsSync,
     lstatSync,
     mkdirSync,
-    readFileSync,
     readdirSync,
+    readFileSync,
     renameSync,
     statSync,
     utimesSync,
@@ -162,6 +162,72 @@ function firstMeta(path: string): ProcessMeta | null {
     return null;
 }
 
+/** Summary-only read: same parse loop as readProcess but skips materializing
+ *  the ops[] array. Totals are accumulated incrementally → constant memory
+ *  per process even on huge audit logs. Used by listProcesses. */
+function readProcessSummary(id: string): Omit<ProcessReport, "ops"> | null {
+    const path = processJsonlPath(id);
+    if (!existsSync(path)) {
+        return null;
+    }
+
+    let raw: string;
+    try {
+        raw = readFileSync(path, "utf8");
+    } catch (err) {
+        log.warn({ err, id }, "readProcessSummary failed");
+        return null;
+    }
+
+    let meta: ProcessMeta | null = null;
+    const t: ProcessTotals = { cloned: 0, skipped: 0, errors: 0, bytesReclaimed: 0 };
+    for (const line of raw.split("\n")) {
+        if (line.trim().length === 0) {
+            continue;
+        }
+
+        let parsed: unknown;
+        try {
+            parsed = SafeJSON.parse(line);
+        } catch (err) {
+            log.debug({ err, id, line }, "skipping unparseable jsonl line");
+            continue;
+        }
+
+        if (isMetaLine(parsed)) {
+            meta = parsed._meta;
+            continue;
+        }
+
+        const op = parsed as ProcessOp;
+        if (op.op === "clone") {
+            t.cloned += 1;
+            t.bytesReclaimed += op.bytes;
+        } else if (op.op === "skip") {
+            t.skipped += 1;
+        } else if (op.op === "error") {
+            t.errors += 1;
+        }
+    }
+
+    if (!meta) {
+        return null;
+    }
+
+    return {
+        id: meta.id,
+        state: meta.state,
+        roots: meta.roots,
+        startedAt: meta.startedAt,
+        endedAt: meta.endedAt,
+        planCache: {
+            hit: meta.planCacheHit,
+            ...(meta.planCacheAgeMs !== undefined ? { ageMs: meta.planCacheAgeMs } : {}),
+        },
+        totals: t,
+    };
+}
+
 export function listProcesses(): ProcessListReport {
     const dir = processDir();
     const entries: ProcessListEntry[] = [];
@@ -171,7 +237,8 @@ export function listProcesses(): ProcessListReport {
         }
 
         const id = name.slice(0, -".jsonl".length);
-        const rep = readProcess(id);
+        // Summary read — no ops array materialized. Cheap on long audit logs.
+        const rep = readProcessSummary(id);
         if (!rep) {
             continue;
         }
@@ -305,6 +372,14 @@ export function runOptimize({ roots, sets, planCacheHit, planCacheAgeMs }: RunOp
                 let mtimeBeforeMs = 0;
                 let sha256Before = "";
                 try {
+                    // There's a small TOCTOU window between lstatSync and sha256(replace)
+                    // here — `replace` could in theory be modified between the two reads.
+                    // It is NOT a corruption risk: dedupeFile re-verifies content
+                    // (byte-for-byte against `keep`) immediately before cloning, and
+                    // runOptimize re-hashes `replace` AFTER the clone and asserts the
+                    // sha256 matches `sha256Before` (throwing IntegrityError otherwise).
+                    // The worst case is a "skipped-different" or "integrity" status —
+                    // never a corrupted file.
                     const st = lstatSync(replace);
                     modeBefore = st.mode & 0o7777;
                     mtimeBeforeMs = st.mtimeMs;

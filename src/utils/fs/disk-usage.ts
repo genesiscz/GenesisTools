@@ -7,7 +7,6 @@ import {
     lstatSync,
     openSync,
     readdirSync,
-    readFileSync,
     readSync,
     renameSync,
     statfsSync,
@@ -306,8 +305,12 @@ export function sha256File(path: string): string {
     const fd = openSync(path, "r");
     try {
         const buf = Buffer.allocUnsafe(STREAM_CHUNK_BYTES);
-        let n: number;
-        while ((n = readSync(fd, buf, 0, buf.length, null)) > 0) {
+        for (;;) {
+            const n = readSync(fd, buf, 0, buf.length, null);
+            if (n <= 0) {
+                break;
+            }
+
             h.update(buf.subarray(0, n));
         }
     } finally {
@@ -330,8 +333,12 @@ export function copyFileStreaming(src: string, dst: string): void {
         // to a temp path then renameSync, so existence at dst is an error.
         dstFd = openSync(dst, "wx");
         const buf = Buffer.allocUnsafe(STREAM_CHUNK_BYTES);
-        let n: number;
-        while ((n = readSync(srcFd, buf, 0, buf.length, null)) > 0) {
+        for (;;) {
+            const n = readSync(srcFd, buf, 0, buf.length, null);
+            if (n <= 0) {
+                break;
+            }
+
             let written = 0;
             while (written < n) {
                 written += writeSync(dstFd, buf, written, n - written);

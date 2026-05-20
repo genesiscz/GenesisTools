@@ -1,4 +1,4 @@
-import { dlopen, FFIType, ptr, toArrayBuffer } from "bun:ffi";
+import { dlopen, FFIType, ptr } from "bun:ffi";
 import logger from "@app/logger";
 
 const IS_DARWIN = process.platform === "darwin";
@@ -139,7 +139,10 @@ function queryForkAttr(path: string, forkAttr: number): DataView | null {
         return null;
     }
 
-    return new DataView(toArrayBuffer(ptr(out), 0, 64));
+    // `out` is already the ArrayBuffer we allocated above — `toArrayBuffer`
+    // would just round-trip its pointer back to itself. Avoid the extra FFI
+    // call and wrap the buffer directly.
+    return new DataView(out);
 }
 
 /** Bytes freed immediately if `path` is deleted (clone/snapshot-aware).

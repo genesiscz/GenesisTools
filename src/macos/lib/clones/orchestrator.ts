@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { dirname, relative, resolve } from "node:path";
 import logger from "@app/logger";
 import { formatBytes } from "@app/utils/format";
-import { type DiskUsage, findCloneFamilies, freeDiskSpace, measureTree, walkFiles } from "@app/utils/fs/disk-usage";
+import { type DiskUsage, findCloneFamilies, freeDiskSpace, walkFiles } from "@app/utils/fs/disk-usage";
 import { getCloneId, getPrivateSize } from "@app/utils/macos/apfs";
 import { Stopwatch } from "@app/utils/Stopwatch";
 import { matchGlob } from "@app/utils/string";
@@ -259,9 +259,35 @@ function passesGlobs(rel: string, base: string, include?: string[], exclude?: st
     return true;
 }
 
-function buildRootTree(root: string, args: BuildMeasureArgs, crossTreeShared: Map<string, number>): MutNode {
+interface WalkRootResult {
+    /** Per-dir aggregation tree. Only meaningful when args.breakdown is true. */
+    tree: MutNode;
+    /** Whole-root DiskUsage aggregate. Replaces the separate measureTree(root)
+     *  call so we only walk the FS once per root (was 2x — perf win on large
+     *  trees where each walk pays for thousands of getattrlist syscalls). */
+    aggregate: DiskUsage;
+}
+
+/** Single-pass walk: collect both the per-dir tree AND the whole-root DiskUsage
+ *  aggregate. Honors include/exclude — so the TOTAL line matches the displayed
+ *  tree (previously the totals ignored filters, which was confusing). */
+function walkRoot(root: string, args: BuildMeasureArgs, crossTreeShared: Map<string, number>): WalkRootResult {
     const rootNode = emptyNode(root, 0);
-    for (const e of walkFiles(root, { onError: (err) => log.debug({ err }, "walk error") })) {
+    const aggregate: DiskUsage = {
+        logical: 0,
+        allocated: 0,
+        private: null,
+        exactReclaimable: null,
+        fileCount: 0,
+        dirCount: 0,
+        errors: [],
+    };
+    let privateSum = 0;
+    let privateSeen = false;
+    const dirs = new Set<string>();
+    const rootKey = root.endsWith("/") ? root.slice(0, -1) : root;
+
+    for (const e of walkFiles(root, { onError: (err) => aggregate.errors.push(err) })) {
         const rel = relative(root, e.path);
         if (!passesGlobs(rel, e.path.split("/").pop() ?? "", args.include, args.exclude)) {
             continue;
@@ -271,6 +297,24 @@ function buildRootTree(root: string, args: BuildMeasureArgs, crossTreeShared: Ma
 
         const priv = getPrivateSize(e.path);
         const fileShared = crossTreeShared.get(e.path) ?? 0;
+
+        // Whole-root aggregate (always populated, even when !args.breakdown).
+        aggregate.fileCount += 1;
+        aggregate.logical += e.logical;
+        aggregate.allocated += e.allocated;
+        const parent = e.path.slice(0, e.path.lastIndexOf("/"));
+        if (parent !== rootKey) {
+            dirs.add(parent);
+        }
+
+        if (priv !== null) {
+            privateSeen = true;
+            privateSum += priv;
+        }
+
+        // Per-dir tree (populated regardless of breakdown — the root node
+        // itself is the always-true totals row; child population is the only
+        // thing depth-gated below).
         let node = rootNode;
         node.logical += e.logical;
         node.allocated += e.allocated;
@@ -309,7 +353,10 @@ function buildRootTree(root: string, args: BuildMeasureArgs, crossTreeShared: Ma
         }
     }
 
-    return rootNode;
+    aggregate.dirCount = dirs.size;
+    aggregate.private = privateSeen ? privateSum : null;
+    aggregate.exactReclaimable = aggregate.private;
+    return { tree: rootNode, aggregate };
 }
 
 /** Deepest-significant keep rule (spec §5): keep D iff real(D) > minReal;
@@ -432,7 +479,11 @@ export function buildMeasureReport(args: BuildMeasureArgs): MeasureReport {
     const crossTreeMs = Math.round(swCross.elapsedMs);
 
     for (const root of args.roots) {
-        const u = measureTree(root);
+        // Single walk per root — produces both the totals and (when breakdown
+        // is requested) the per-dir tree. Previously each call to measureTree
+        // + buildRootTree was a separate full FS walk doing the same getattrlist
+        // syscalls twice.
+        const { tree: rootMut, aggregate: u } = walkRoot(root, args, crossTree.sharedByPath);
         totalsAgg.logical += u.logical;
         totalsAgg.allocated += u.allocated;
         totalsAgg.fileCount += u.fileCount;
@@ -445,7 +496,6 @@ export function buildMeasureReport(args: BuildMeasureArgs): MeasureReport {
         totalsAgg.errors.push(...u.errors);
 
         if (args.breakdown) {
-            const rootMut = buildRootTree(root, args, crossTree.sharedByPath);
             tree.push(...pruneTree(rootMut, args.minReal));
         }
     }
