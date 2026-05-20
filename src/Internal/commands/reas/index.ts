@@ -1,4 +1,3 @@
-import { resolve } from "node:path";
 import { renderReport } from "@app/Internal/commands/reas/analysis/report";
 import { clearCache } from "@app/Internal/commands/reas/cache/index";
 import type { DistrictInfo } from "@app/Internal/commands/reas/data/districts";
@@ -9,6 +8,7 @@ import {
     searchDistricts,
 } from "@app/Internal/commands/reas/data/districts";
 import { resolveAddress } from "@app/Internal/commands/reas/lib/address-resolver";
+import { reasUiApp } from "@app/Internal/commands/reas/lib/ui-app";
 import {
     fetchAndAnalyze as fetchAndAnalyzeService,
     searchListings,
@@ -25,32 +25,12 @@ import {
 import type { AnalysisFilters, FullAnalysis, TargetProperty } from "@app/Internal/commands/reas/types";
 import { out } from "@app/logger";
 import { isInteractive, suggestCommand } from "@app/utils/cli";
-import { buildViteDevCmd, defineDashboardApp } from "@app/utils/DashboardApp";
 import { SafeJSON } from "@app/utils/json";
-import { PROJECT_ROOT } from "@app/utils/paths";
 import * as p from "@app/utils/prompts/p";
 import { stripAnsi } from "@app/utils/string";
 import { formatTable } from "@app/utils/table";
 import { Command } from "commander";
 import pc from "picocolors";
-
-const reasUiConfigPath = resolve(import.meta.dir, "ui/vite.config.ts");
-
-const reasUiApp = defineDashboardApp({
-    type: "ui",
-    key: "reas",
-    name: "REAS Analyzer",
-    description: "Launch the REAS Analyzer dashboard",
-    commandName: "ui",
-    aliases: ["dashboard"],
-    spawn: {
-        cmd: buildViteDevCmd({ configPath: reasUiConfigPath, strictPort: true }),
-        cwd: PROJECT_ROOT,
-    },
-    readiness: { kind: "http", path: "/" },
-    openBrowser: { enabled: true },
-    launchd: { available: true },
-});
 
 interface ReasOptions {
     district?: string;

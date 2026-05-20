@@ -10,8 +10,8 @@ import { $ } from "bun";
 export async function checkAzureCliLogin(): Promise<void> {
     try {
         await $`az account show`.quiet();
-    } catch {
-        throw new Error(`Azure CLI not logged in. Run:\n${azLoginSuggestionBlock()}`);
+    } catch (error) {
+        throw new Error(`Azure CLI not logged in. Run:\n${azLoginSuggestionBlock()}`, { cause: error });
     }
 }
 

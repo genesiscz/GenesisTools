@@ -192,7 +192,7 @@ async function preparePort(ctx: LifecycleContext, port: number, opts: UpOptions)
             return { proceed: true };
         }
 
-        const result = await handleMineMenu(ctx, conflict.pid, opts);
+        const result = await handleMineMenu(ctx, conflict.pid, opts, port);
         return { proceed: false, result };
     }
 
@@ -333,8 +333,14 @@ async function finishLaunchdStart(ctx: LifecycleContext, port: number, opts: UpO
     };
 }
 
-async function handleMineMenu(ctx: LifecycleContext, pid: number, opts: UpOptions): Promise<UpResult> {
-    const { config, port } = ctx;
+async function handleMineMenu(
+    ctx: LifecycleContext,
+    pid: number,
+    opts: UpOptions,
+    effectivePort: number
+): Promise<UpResult> {
+    const { config } = ctx;
+    const port = effectivePort;
     const choice = await promptMineMenu(port, pid, { canOpen: config.type === "ui" });
 
     if (choice === null) {
@@ -561,10 +567,10 @@ export async function attach(ctx: LifecycleContext, opts: { lines?: number } = {
 
     const tail = readLogTail(logFile, opts.lines ?? 50, true);
     const isTty = Boolean(process.stdout.isTTY);
-    process.stdout.write(isTty ? tail : stripAnsi(tail));
+    out.print(isTty ? tail : stripAnsi(tail));
 
     if (!tail.endsWith("\n")) {
-        process.stdout.write("\n");
+        out.print("\n");
     }
 
     out.info(`\n--- Attached (Ctrl+C to detach the tail; the process keeps running) ---`);
@@ -593,7 +599,7 @@ export async function attach(ctx: LifecycleContext, opts: { lines?: number } = {
                 const read = readSync(fd, buf, 0, buf.length, pos);
                 pos += read;
                 const chunk = buf.subarray(0, read).toString();
-                process.stdout.write(isTty ? chunk : stripAnsi(chunk));
+                out.print(isTty ? chunk : stripAnsi(chunk));
             } finally {
                 closeSync(fd);
             }
@@ -614,10 +620,10 @@ export async function logs(ctx: LifecycleContext, opts: { lines?: number; sessio
     const sessionOnly = opts.sessionOnly ?? true;
     const tail = readLogTail(logFile, opts.lines ?? 200, sessionOnly);
     const isTty = Boolean(process.stdout.isTTY);
-    process.stdout.write(isTty ? tail : stripAnsi(tail));
+    out.print(isTty ? tail : stripAnsi(tail));
 
     if (tail.length > 0 && !tail.endsWith("\n")) {
-        process.stdout.write("\n");
+        out.print("\n");
     }
 }
 
@@ -751,6 +757,10 @@ async function resolveDependencies(ctx: LifecycleContext, opts: UpOptions, mode:
 
         const choice = await promptDependencyStart(dep.app.config.key, config.key);
 
+        if (choice === "abort") {
+            throw new Error(`Aborted: dependency ${dep.app.config.key} is required for ${config.key}`);
+        }
+
         if (choice === "start") {
             await startDep();
         } else if (choice === null) {
@@ -782,7 +792,8 @@ function isProcessAlive(pid: number): boolean {
     try {
         process.kill(pid, 0);
         return true;
-    } catch {
+    } catch (err) {
+        logger.debug({ err, pid }, "process liveness probe failed");
         return false;
     }
 }

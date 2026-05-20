@@ -33,10 +33,30 @@ interface UpFlags {
     interactive?: boolean;
 }
 
+function parsePort(value: string): number {
+    const parsed = Number.parseInt(value, 10);
+
+    if (!Number.isFinite(parsed) || parsed <= 0 || parsed > 65_535) {
+        throw new Error(`Invalid --port value: ${value}`);
+    }
+
+    return parsed;
+}
+
+function parseLines(value: string): number {
+    const parsed = Number.parseInt(value, 10);
+
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+        throw new Error(`Invalid --lines value: ${value}`);
+    }
+
+    return parsed;
+}
+
 function toUpOptions(flags: UpFlags) {
     return {
         foreground: flags.foreground,
-        port: flags.port ? Number.parseInt(flags.port, 10) : undefined,
+        port: flags.port ? parsePort(flags.port) : undefined,
         force: flags.force,
         open: flags.open,
         interactive: flags.interactive,
@@ -106,7 +126,7 @@ export function buildCommanderCommand({ config, ctx }: BuildOptions): Command {
     // `attach`
     cmd.command("attach")
         .description("Tail the background log. Ctrl+C detaches the tail (the process keeps running).")
-        .option("-n, --lines <n>", "how many trailing log lines to print first", (v) => Number.parseInt(v, 10), 50)
+        .option("-n, --lines <n>", "how many trailing log lines to print first", parseLines, 50)
         .action(async (flags: { lines?: number }) => {
             await attach(ctx, { lines: flags.lines });
         });
@@ -114,7 +134,7 @@ export function buildCommanderCommand({ config, ctx }: BuildOptions): Command {
     // `logs`
     cmd.command("logs")
         .description("Print the last N lines of the background log.")
-        .option("-n, --lines <n>", "lines to print", (v) => Number.parseInt(v, 10), 200)
+        .option("-n, --lines <n>", "lines to print", parseLines, 200)
         .action(async (flags: { lines?: number }) => {
             await logs(ctx, { lines: flags.lines });
         });
@@ -128,7 +148,7 @@ export function buildCommanderCommand({ config, ctx }: BuildOptions): Command {
             .action(async (flags: { force?: boolean; port?: string }) => {
                 await install(ctx, {
                     force: flags.force,
-                    port: flags.port ? Number.parseInt(flags.port, 10) : undefined,
+                    port: flags.port ? parsePort(flags.port) : undefined,
                 });
             });
         cmd.command("uninstall")

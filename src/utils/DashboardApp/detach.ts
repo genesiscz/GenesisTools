@@ -13,7 +13,7 @@
  * This module does NOT register the PID file — that's lifecycle.ts's job, so
  * detach can be reused for tests that don't want the side effects.
  */
-import { spawn } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
 
 export interface DetachOptions {
@@ -29,13 +29,19 @@ export interface DetachResult {
 
 export function spawnDetached(opts: DetachOptions): DetachResult {
     const logFd = openSync(opts.logFile, "a");
-    const child = spawn(opts.cmd[0], opts.cmd.slice(1), {
-        cwd: opts.cwd,
-        env: { ...process.env, ...filterUndefined(opts.env) },
-        detached: true,
-        stdio: ["ignore", logFd, logFd],
-    });
-    closeSync(logFd); // child holds its own dup'd fd now
+    let child: ChildProcess;
+
+    try {
+        child = spawn(opts.cmd[0], opts.cmd.slice(1), {
+            cwd: opts.cwd,
+            env: { ...process.env, ...filterUndefined(opts.env) },
+            detached: true,
+            stdio: ["ignore", logFd, logFd],
+        });
+    } finally {
+        closeSync(logFd); // child holds its own dup'd fd now
+    }
+
     child.unref();
 
     if (!child.pid) {

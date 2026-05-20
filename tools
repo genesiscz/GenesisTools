@@ -222,12 +222,16 @@ async function spawnAndCaptureStderr(args: string[], workspaceRoot: string): Pro
             if (process.ppid === 1) {
                 try {
                     child.kill("SIGTERM");
-                } catch {}
+                } catch (err) {
+                    logger.debug({ err }, "[tools] orphan SIGTERM threw");
+                }
                 setTimeout(() => {
                     if (!child.killed) {
                         try {
                             child.kill("SIGKILL");
-                        } catch {}
+                        } catch (err) {
+                            logger.debug({ err }, "[tools] orphan SIGKILL threw");
+                        }
                     }
                 }, 5000).unref();
             }
@@ -238,18 +242,23 @@ async function spawnAndCaptureStderr(args: string[], workspaceRoot: string): Pro
         const forward = (sig: NodeJS.Signals) => () => {
             try {
                 child.kill(sig);
-            } catch {}
+            } catch (err) {
+                logger.debug({ err, sig }, "[tools] signal forward threw");
+            }
         };
         const signals: readonly NodeJS.Signals[] = ["SIGHUP", "SIGINT", "SIGTERM", "SIGQUIT"];
+        const signalHandlers = new Map<NodeJS.Signals, () => void>();
 
         for (const sig of signals) {
-            process.on(sig, forward(sig));
+            const handler = forward(sig);
+            signalHandlers.set(sig, handler);
+            process.on(sig, handler);
         }
 
         const cleanup = () => {
             clearInterval(orphanTimer);
-            for (const sig of signals) {
-                process.removeAllListeners(sig);
+            for (const [sig, handler] of signalHandlers) {
+                process.off(sig, handler);
             }
         };
 

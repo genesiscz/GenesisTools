@@ -5,7 +5,9 @@
  * don't pester on every `up`. Schema is intentionally minimal; extend as new
  * persistent decisions surface.
  */
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
+import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import { configFilePath } from "./pidFile";
 
@@ -28,8 +30,8 @@ export function readPreferences(key: string): DashboardPreferences {
         if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
             return parsed as DashboardPreferences;
         }
-    } catch {
-        // Corrupted file is treated as no preferences — caller will overwrite on next write.
+    } catch (err) {
+        logger.debug({ err, key, file }, "failed to parse dashboard preferences");
     }
 
     return {};
@@ -37,6 +39,7 @@ export function readPreferences(key: string): DashboardPreferences {
 
 export function writePreferences(key: string, prefs: DashboardPreferences): void {
     const file = configFilePath(key);
+    mkdirSync(dirname(file), { recursive: true });
     const existing = readPreferences(key);
     const merged: DashboardPreferences = { ...existing, ...prefs };
     writeFileSync(file, `${SafeJSON.stringify(merged, null, 2)}\n`);

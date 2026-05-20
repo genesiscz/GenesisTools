@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import tailwindcss from "@tailwindcss/vite";
@@ -203,7 +204,8 @@ function resolveGitRoot(start: string): string {
  */
 function resolveDashboardCacheDir(root: string): string {
     const gitRoot = resolveGitRoot(root);
-    const slug = relative(gitRoot, root).split(sep).filter(Boolean).join("-") || "root";
+    const relativeRoot = relative(gitRoot, root) || "root";
+    const slug = createHash("sha1").update(relativeRoot).digest("hex").slice(0, 12);
 
     return join(gitRoot, "node_modules", ".vite-cache", slug);
 }

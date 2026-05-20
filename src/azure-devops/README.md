@@ -138,9 +138,11 @@ tools azure-devops --create --type Bug --title "Error in checkout" --severity "A
 
    If that fails (e.g. `AADSTS530036` — Conditional Access blocks the device-code flow),
    use the interactive browser flow with the Azure DevOps scope:
+
    ```bash
    az login --scope 499b84ac-1321-427f-aa17-267ca6975798/.default --allow-no-subscriptions
    ```
+
    - Enter the code to authenticate
 
 ### Configure for Your Project

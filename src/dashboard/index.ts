@@ -100,7 +100,11 @@ async function launchProd(options: {
     }
 
     logger.info(pc.cyan("▶ Build complete — starting PM2 (ecosystem.config.cjs)"));
-    spawn("bunx", ["pm2", "start", "ecosystem.config.cjs"], { cwd: DASHBOARD_DIR, stdio: "inherit" });
+    const pm2Code = await runToCompletion("bunx", ["pm2", "start", "ecosystem.config.cjs"]);
+    if (pm2Code !== 0) {
+        logger.error(`PM2 start failed (exit ${pm2Code}).`);
+        process.exit(pm2Code);
+    }
 
     if (!open) {
         logger.info(pc.dim(`Server starting at ${url} (browser auto-open disabled).`));
