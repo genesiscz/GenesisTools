@@ -1,4 +1,5 @@
 import { createWriteStream, type WriteStream } from "node:fs";
+import { out } from "@app/logger";
 import { formatToolDiff, formatToolSignature } from "@app/utils/agents/formatters/tool-formatter";
 import { formatDateTime } from "@app/utils/date";
 import { SafeJSON } from "@app/utils/json";
@@ -695,7 +696,7 @@ export class ClaudeSessionFormatter {
         if (this.options.output) {
             this.options.output(indented);
         } else if (this.options.cliOutput !== false) {
-            console.log(indented);
+            out.print(indented);
         }
 
         if (this.fileStream) {

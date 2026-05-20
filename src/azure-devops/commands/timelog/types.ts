@@ -2,7 +2,7 @@ import { loadTimeTypesCache, saveTimeTypesCache } from "@app/azure-devops/cache"
 import { TimeLogApi } from "@app/azure-devops/timelog-api";
 import type { TimeType } from "@app/azure-devops/types";
 import { requireTimeLogConfig, requireTimeLogUser } from "@app/azure-devops/utils";
-import { logger } from "@app/logger";
+import { logger, out } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import type { Command } from "commander";
 
@@ -36,19 +36,19 @@ export function registerTypesSubcommand(parent: Command): void {
 
             // Output
             if (options.format === "json") {
-                console.log(SafeJSON.stringify(types, null, 2));
+                out.print(SafeJSON.stringify(types, null, 2));
                 return;
             }
 
             // AI-friendly format
-            console.log("Available Time Types:");
-            console.log("=====================");
+            out.print("Available Time Types:");
+            out.print("=====================");
 
             for (const type of types) {
                 const defaultMark = type.isDefaultForProject ? " (default)" : "";
-                console.log(`  - ${type.description}${defaultMark}`);
+                out.print(`  - ${type.description}${defaultMark}`);
             }
 
-            console.log(`\nTotal: ${types.length} time types`);
+            out.print(`\nTotal: ${types.length} time types`);
         });
 }

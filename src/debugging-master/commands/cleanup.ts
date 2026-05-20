@@ -2,6 +2,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSy
 import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
 import { SessionManager } from "@app/debugging-master/core/session-manager";
+import { out } from "@app/logger";
 import { suggestCommand } from "@app/utils/cli/executor";
 import type { Command } from "commander";
 import { glob } from "glob";
@@ -129,11 +130,11 @@ export function registerCleanupCommand(program: Command): void {
             }
 
             if (allWarnings.length > 0) {
-                console.log(pc.yellow(`\n${allWarnings.length} unclosed/orphan @dbg region(s) found:`));
+                out.print(pc.yellow(`\n${allWarnings.length} unclosed/orphan @dbg region(s) found:`));
                 for (const { file, warning } of allWarnings) {
-                    console.log(`  ${pc.dim(relative(projectPath, file))}: ${warning}`);
+                    out.print(`  ${pc.dim(relative(projectPath, file))}: ${warning}`);
                 }
-                console.log(pc.dim("\nThese regions were skipped. Fix the markers manually, then re-run cleanup."));
+                out.print(pc.dim("\nThese regions were skipped. Fix the markers manually, then re-run cleanup."));
             }
 
             // --- B. Remove blocks ---
@@ -147,15 +148,15 @@ export function registerCleanupCommand(program: Command): void {
             }
 
             if (totalBlocks > 0) {
-                console.log(pc.green(`Removed ${totalBlocks} @dbg block(s) from ${modifiedFiles.length} file(s):`));
+                out.print(pc.green(`Removed ${totalBlocks} @dbg block(s) from ${modifiedFiles.length} file(s):`));
                 for (const file of modifiedFiles) {
                     const blocks = fileBlockMap.get(file)!;
-                    console.log(
+                    out.print(
                         `  ${pc.dim(relative(projectPath, file))} (${blocks.length} block${blocks.length > 1 ? "s" : ""})`
                     );
                 }
             } else {
-                console.log(pc.dim("No @dbg blocks found."));
+                out.print(pc.dim("No @dbg blocks found."));
             }
 
             // --- C. Git diff check ---
@@ -173,9 +174,9 @@ export function registerCleanupCommand(program: Command): void {
                 }
 
                 if (realDiffFiles.length > 0) {
-                    console.log(`\n${pc.yellow(`${realDiffFiles.length} file(s) have real diffs remaining:`)}`);
+                    out.print(`\n${pc.yellow(`${realDiffFiles.length} file(s) have real diffs remaining:`)}`);
                     for (const { file } of realDiffFiles) {
-                        console.log(`  ${relative(projectPath, file)}`);
+                        out.print(`  ${relative(projectPath, file)}`);
                     }
                 }
 
@@ -184,13 +185,13 @@ export function registerCleanupCommand(program: Command): void {
                         for (const file of formatOnlyFiles) {
                             await repairFile(file);
                         }
-                        console.log(pc.green(`\nRepaired formatting in ${formatOnlyFiles.length} file(s).`));
+                        out.print(pc.green(`\nRepaired formatting in ${formatOnlyFiles.length} file(s).`));
                     } else {
-                        console.log(`\n${pc.yellow(`${formatOnlyFiles.length} file(s) have formatting-only diffs:`)}`);
+                        out.print(`\n${pc.yellow(`${formatOnlyFiles.length} file(s) have formatting-only diffs:`)}`);
                         for (const file of formatOnlyFiles) {
-                            console.log(`  ${pc.dim(relative(projectPath, file))}`);
+                            out.print(`  ${pc.dim(relative(projectPath, file))}`);
                         }
-                        console.log(`\n${pc.dim("Tip:")} ${suggestCommand(TOOL, { add: ["--repair-formatting"] })}`);
+                        out.print(`\n${pc.dim("Tip:")} ${suggestCommand(TOOL, { add: ["--repair-formatting"] })}`);
                     }
                 }
             }
@@ -229,17 +230,17 @@ export function registerCleanupCommand(program: Command): void {
                         unlinkSync(metaPath);
                     }
 
-                    console.log(`\n${pc.green("Logs archived to:")} ${archivePath}`);
+                    out.print(`\n${pc.green("Logs archived to:")} ${archivePath}`);
                     if (!opts.keepLogs) {
-                        console.log(
+                        out.print(
                             `${pc.dim("Tip: Keep logs permanently →")} ${suggestCommand(TOOL, { add: ["--keep-logs", "./debug-logs/"] })}`
                         );
                     }
                 } else {
-                    console.log(pc.dim("\nNo session log file to archive."));
+                    out.print(pc.dim("\nNo session log file to archive."));
                 }
             } else {
-                console.log(pc.dim("\nNo active session found — skipping log archival."));
+                out.print(pc.dim("\nNo active session found — skipping log archival."));
             }
         });
 }

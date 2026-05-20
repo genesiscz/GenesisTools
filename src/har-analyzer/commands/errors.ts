@@ -5,6 +5,7 @@ import { RefStoreManager } from "@app/har-analyzer/core/ref-store";
 import { SessionManager } from "@app/har-analyzer/core/session-manager";
 import type { HarEntry, IndexedEntry, OutputOptions } from "@app/har-analyzer/types";
 import { isInterestingMimeType } from "@app/har-analyzer/types";
+import { out } from "@app/logger";
 import { formatDuration } from "@app/utils/format";
 import type { Command } from "commander";
 
@@ -20,7 +21,7 @@ export function registerErrorsCommand(program: Command): void {
             const errorEntries = filterEntries(session.entries, {}).filter((e) => e.isError);
 
             if (errorEntries.length === 0) {
-                console.log("No error responses found.");
+                out.print("No error responses found.");
                 return;
             }
 

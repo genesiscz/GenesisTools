@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { logger } from "@app/logger";
+import { logger, out } from "@app/logger";
 import { transcriptionManager } from "@app/utils/ai/transcription/TranscriptionManager";
 import { input } from "@app/utils/prompts/clack";
 import { handleReadmeFlag } from "@app/utils/readme";
@@ -205,21 +205,21 @@ class ASKTool {
     }
 
     private exitWithUsageHint(reason: string): never {
-        console.error(pc.red(reason));
-        console.error("");
-        console.error(pc.dim("Usage examples:"));
-        console.error(pc.dim(`  tools ask -p anthropic -m claude-sonnet-4-20250514 "your message"`));
-        console.error(pc.dim(`  tools ask -p openai -m gpt-4o "your message"`));
-        console.error(pc.dim(`  echo "your message" | tools ask -p anthropic -m claude-sonnet-4-20250514`));
-        console.error("");
-        console.error(pc.dim("Configure defaults:  tools ask config"));
-        console.error(pc.dim("List providers:      tools ask models"));
+        out.error(pc.red(reason));
+        out.error("");
+        out.error(pc.dim("Usage examples:"));
+        out.error(pc.dim(`  tools ask -p anthropic -m claude-sonnet-4-20250514 "your message"`));
+        out.error(pc.dim(`  tools ask -p openai -m gpt-4o "your message"`));
+        out.error(pc.dim(`  echo "your message" | tools ask -p anthropic -m claude-sonnet-4-20250514`));
+        out.error("");
+        out.error(pc.dim("Configure defaults:  tools ask config"));
+        out.error(pc.dim("List providers:      tools ask models"));
         process.exit(1);
     }
 
     private async exitWithModelHint(provider?: string, model?: string): Promise<never> {
         const missing = !provider && !model ? "provider and model" : !provider ? "provider (-p)" : "model (-m)";
-        console.error(pc.red(`Missing ${missing} for non-interactive mode.`));
+        out.error(pc.red(`Missing ${missing} for non-interactive mode.`));
 
         // Show fuzzy matches if partial model was given
         if (model) {
@@ -231,10 +231,10 @@ class ASKTool {
             }
 
             if (matches.length > 0) {
-                console.error("");
-                console.error(pc.yellow("Did you mean one of these?"));
+                out.error("");
+                out.error(pc.yellow("Did you mean one of these?"));
                 for (const m of matches.slice(0, 8)) {
-                    console.error(pc.dim(`  tools ask -p ${m.provider.name} -m ${m.model.id} "your message"`));
+                    out.error(pc.dim(`  tools ask -p ${m.provider.name} -m ${m.model.id} "your message"`));
                 }
             }
         }
@@ -244,17 +244,17 @@ class ASKTool {
         const providers = await pm.detectProviders();
 
         if (providers.length > 0) {
-            console.error("");
-            console.error(pc.dim("Available providers:"));
+            out.error("");
+            out.error(pc.dim("Available providers:"));
             for (const prov of providers) {
                 const topModels = prov.models.slice(0, 3).map((m) => m.id);
                 const suffix = prov.models.length > 3 ? ` +${prov.models.length - 3} more` : "";
-                console.error(pc.dim(`  ${prov.name}: ${topModels.join(", ")}${suffix}`));
+                out.error(pc.dim(`  ${prov.name}: ${topModels.join(", ")}${suffix}`));
             }
         }
 
-        console.error("");
-        console.error(pc.dim("Configure defaults:  tools ask config"));
+        out.error("");
+        out.error(pc.dim("Configure defaults:  tools ask config"));
         process.exit(1);
     }
 
@@ -470,7 +470,7 @@ class ASKTool {
                             },
                         ];
 
-                        console.log(await outputManager.formatCostBreakdown(breakdown, chat.getResolvedAccount()));
+                        out.print(await outputManager.formatCostBreakdown(breakdown, chat.getResolvedAccount()));
                     }
                 }
             }
@@ -582,7 +582,7 @@ class ASKTool {
                 }
 
                 // Regular chat message
-                console.log(pc.yellow("\nAssistant:"));
+                out.print(pc.yellow("\nAssistant:"));
 
                 // Set up tools
                 const tools = this.getAvailableTools();
@@ -639,13 +639,13 @@ class ASKTool {
                         },
                     ];
 
-                    console.log(await outputManager.formatCostBreakdown(breakdown, modelChoice.provider.account));
+                    out.print(await outputManager.formatCostBreakdown(breakdown, modelChoice.provider.account));
                 }
 
-                console.log(); // Add spacing
+                out.print(); // Add spacing
             } catch (error) {
                 logger.error(`Chat error: ${error}`);
-                console.log(pc.red("Error occurred. Type /quit to exit or continue chatting."));
+                out.print(pc.red("Error occurred. Type /quit to exit or continue chatting."));
             }
         }
 

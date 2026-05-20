@@ -1,6 +1,7 @@
 import { exportMonth } from "@app/azure-devops/lib/timelog/export";
 import { formatMinutes, TimeLogApi } from "@app/azure-devops/timelog-api";
 import { requireTimeLogConfig, requireTimeLogUser } from "@app/azure-devops/utils";
+import { out } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import Table from "cli-table3";
 import type { Command } from "commander";
@@ -24,7 +25,7 @@ export function registerExportMonthSubcommand(parent: Command): void {
             const userId = options.user ?? user.userId;
 
             if (options.month < 1 || options.month > 12) {
-                console.error("Month must be between 1 and 12");
+                out.error("Month must be between 1 and 12");
                 process.exit(1);
             }
 
@@ -35,9 +36,9 @@ export function registerExportMonthSubcommand(parent: Command): void {
 
                 if (options.output) {
                     await Bun.write(options.output, jsonOutput);
-                    console.log(`Exported to ${options.output}`);
+                    out.print(`Exported to ${options.output}`);
                 } else {
-                    console.log(jsonOutput);
+                    out.print(jsonOutput);
                 }
                 return;
             }
@@ -59,12 +60,12 @@ export function registerExportMonthSubcommand(parent: Command): void {
             ];
             const monthName = monthNames[options.month - 1];
 
-            console.log(`\n${pc.bold(`${monthName} ${year} - Time Log Export`)}`);
-            console.log(
+            out.print(`\n${pc.bold(`${monthName} ${year} - Time Log Export`)}`);
+            out.print(
                 `Total: ${pc.bold(formatMinutes(result.summary.totalMinutes))} ` +
                     `(${result.summary.totalHours}h) across ${result.entries.length} entries`
             );
-            console.log(`Period: ${result.fromDate} to ${result.toDate}\n`);
+            out.print(`Period: ${result.fromDate} to ${result.toDate}\n`);
 
             // By Work Item table
             const wiEntries = Object.entries(result.summary.entriesByWorkItem).sort(
@@ -72,7 +73,7 @@ export function registerExportMonthSubcommand(parent: Command): void {
             );
 
             if (wiEntries.length > 0) {
-                console.log(pc.bold("By Work Item:"));
+                out.print(pc.bold("By Work Item:"));
                 const wiTable = new Table({
                     head: ["ID", "Title", "Hours", "Entries"],
                     style: { head: ["cyan"] },
@@ -87,14 +88,14 @@ export function registerExportMonthSubcommand(parent: Command): void {
                     ]);
                 }
 
-                console.log(wiTable.toString());
+                out.print(wiTable.toString());
             }
 
             // By Day table
             const dayEntries = Object.entries(result.summary.entriesByDay).sort(([a], [b]) => a.localeCompare(b));
 
             if (dayEntries.length > 0) {
-                console.log(`\n${pc.bold("By Day:")}`);
+                out.print(`\n${pc.bold("By Day:")}`);
                 const dayTable = new Table({
                     head: ["Date", "Hours"],
                     style: { head: ["cyan"] },
@@ -104,12 +105,12 @@ export function registerExportMonthSubcommand(parent: Command): void {
                     dayTable.push([date, formatMinutes(minutes)]);
                 }
 
-                console.log(dayTable.toString());
+                out.print(dayTable.toString());
             }
 
             if (options.output) {
                 await Bun.write(options.output, SafeJSON.stringify(result, null, 2));
-                console.log(`\nFull data exported to ${options.output}`);
+                out.print(`\nFull data exported to ${options.output}`);
             }
         });
 }

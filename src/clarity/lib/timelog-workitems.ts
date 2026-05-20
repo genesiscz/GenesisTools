@@ -2,6 +2,7 @@ import { exportMonth } from "@app/azure-devops/lib/timelog/export";
 import { type EnrichedWorkItem, enrichWorkItems } from "@app/azure-devops/lib/work-item-enrichment";
 import type { TimeLogApi } from "@app/azure-devops/timelog-api";
 import type { AzureConfig } from "@app/azure-devops/types";
+import { out } from "@app/logger";
 
 export interface TimelogWorkItemGroup {
     id: number;
@@ -35,7 +36,7 @@ export async function getTimelogWorkItems(
             workItemMap = await enrichWorkItems(adoConfig, uniqueIds);
         } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
-            console.error("[clarity-lib] Failed to enrich timelog entries:", msg);
+            out.error("[clarity-lib] Failed to enrich timelog entries:", msg);
             enrichmentError = msg;
         }
     }

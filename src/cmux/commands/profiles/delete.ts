@@ -1,4 +1,5 @@
 import { ProfileNotFoundError, ProfileStore } from "@app/cmux/lib/store";
+import { out } from "@app/logger";
 import { isInteractive, suggestCommand } from "@app/utils/cli";
 import { withCancel } from "@app/utils/prompts/clack/helpers";
 import * as p from "@clack/prompts";
@@ -17,7 +18,7 @@ export function registerDeleteCommand(parent: Command): void {
                 const summary = store.summarize(store.read(name));
                 if (!flags.yes) {
                     if (!isInteractive()) {
-                        console.error(
+                        out.error(
                             `Refusing to delete in non-interactive mode without --yes. ${suggestCommand(`tools cmux profiles delete ${name} --yes`)}`
                         );
                         process.exitCode = 1;
@@ -35,10 +36,10 @@ export function registerDeleteCommand(parent: Command): void {
                     }
                 }
                 store.delete(name);
-                console.log(`${pc.green("✓")} Deleted profile "${name}".`);
+                out.print(`${pc.green("✓")} Deleted profile "${name}".`);
             } catch (error) {
                 if (error instanceof ProfileNotFoundError) {
-                    console.error(error.message);
+                    out.error(error.message);
                     process.exitCode = 1;
                     return;
                 }

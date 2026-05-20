@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import { ConfigManager } from "@app/debugging-master/core/config-manager";
+import { out } from "@app/logger";
 import type { Command } from "commander";
 
 const SNIPPET_TYPES = ["dump", "info", "warn", "error", "timer", "checkpoint", "assert", "snapshot", "trace"] as const;
@@ -180,8 +181,8 @@ export function registerSnippetCommand(program: Command): void {
         .option("--http", "Generate fetch/HTTP-based snippet instead of import-based")
         .action(async (type: string, label: string, opts: { language?: string; http?: boolean }) => {
             if (!SNIPPET_TYPES.includes(type as SnippetType)) {
-                console.error(`Unknown snippet type: ${type}`);
-                console.error(`Valid types: ${SNIPPET_TYPES.join(", ")}`);
+                out.error(`Unknown snippet type: ${type}`);
+                out.error(`Valid types: ${SNIPPET_TYPES.join(", ")}`);
                 process.exit(1);
             }
 
@@ -193,7 +194,7 @@ export function registerSnippetCommand(program: Command): void {
             let language: "typescript" | "php" = "typescript";
             if (opts.language) {
                 if (opts.language !== "typescript" && opts.language !== "php") {
-                    console.error(`Unsupported language: ${opts.language}. Use typescript or php.`);
+                    out.error(`Unsupported language: ${opts.language}. Use typescript or php.`);
                     process.exit(1);
                 }
                 language = opts.language;
@@ -209,20 +210,20 @@ export function registerSnippetCommand(program: Command): void {
                 const session = (await configManager.getRecentSession()) ?? "default";
 
                 if (language === "typescript") {
-                    console.log(tsHttpSnippet(snippetType, label, session));
+                    out.print(tsHttpSnippet(snippetType, label, session));
                 } else {
                     const guzzle = await hasGuzzle(process.cwd());
                     if (guzzle) {
-                        console.log(phpHttpGuzzleSnippet(snippetType, label, session));
+                        out.print(phpHttpGuzzleSnippet(snippetType, label, session));
                     } else {
-                        console.log(phpHttpNativeSnippet(snippetType, label, session));
+                        out.print(phpHttpNativeSnippet(snippetType, label, session));
                     }
                 }
             } else {
                 if (language === "typescript") {
-                    console.log(tsImportSnippet(snippetType, label));
+                    out.print(tsImportSnippet(snippetType, label));
                 } else {
-                    console.log(phpImportSnippet(snippetType, label));
+                    out.print(phpImportSnippet(snippetType, label));
                 }
             }
         });

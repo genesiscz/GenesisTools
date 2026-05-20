@@ -1,8 +1,7 @@
-import { logger } from "@app/logger";
+import { logger, out } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import * as p from "@app/utils/prompts/p";
 import type { Storage } from "@app/utils/storage";
-import { ExitPromptError } from "@inquirer/core";
-import { confirm } from "@inquirer/prompts";
 import chalk from "chalk";
 import type { Command } from "commander";
 
@@ -21,13 +20,13 @@ export function registerCacheCommand(program: Command, storage: Storage): void {
             }
 
             if (options.format === "json") {
-                console.log(SafeJSON.stringify(files, null, 2));
+                out.print(SafeJSON.stringify(files, null, 2));
                 return;
             }
 
             logger.info(chalk.cyan(`\nCached files (${files.length}):\n`));
             for (const file of files) {
-                console.log(`  ${file}`);
+                out.print(`  ${file}`);
             }
         });
 
@@ -42,9 +41,9 @@ export function registerCacheCommand(program: Command, storage: Storage): void {
                     return;
                 }
 
-                const shouldClear = await confirm({
+                const shouldClear = await p.confirm({
                     message: `Delete ${stats.count} cached files (${(stats.totalSizeBytes / 1024).toFixed(1)} KB)?`,
-                    default: false,
+                    initialValue: false,
                 });
 
                 if (shouldClear) {
@@ -54,10 +53,6 @@ export function registerCacheCommand(program: Command, storage: Storage): void {
                     logger.info("Cancelled.");
                 }
             } catch (error) {
-                if (error instanceof ExitPromptError) {
-                    logger.info("\nOperation cancelled.");
-                    process.exit(0);
-                }
                 throw error;
             }
         });

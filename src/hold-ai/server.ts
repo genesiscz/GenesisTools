@@ -1,8 +1,12 @@
 import { logger as log } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import * as p from "@app/utils/prompts/p";
+import { inquirerBackend } from "@app/utils/prompts/p/inquirer-backend";
 import { handleReadmeFlag } from "@app/utils/readme";
-import { ExitPromptError } from "@inquirer/core";
-import { editor } from "@inquirer/prompts";
+
+// Use inquirer backend for this tool
+p.setBackend(inquirerBackend);
+
 import { WebSocketServer } from "ws";
 
 // Handle --readme flag early (before Commander parses)
@@ -44,9 +48,9 @@ const startServer = () => {
     // Handle user input
     const promptUser = async () => {
         try {
-            const userInput = await editor({
+            const userInput = await inquirerBackend.editor({
                 message: "Enter your message (save and exit when done):",
-                default: "",
+                initialValue: "",
             });
 
             const input = userInput?.trim() || ""; // Safely get and trim input
@@ -101,12 +105,8 @@ const startServer = () => {
             // Continue prompting for the next message
             promptUser();
         } catch (error) {
-            // Handle user cancellation
-            if (error instanceof ExitPromptError) {
-                log.info("\nPrompt cancelled by user. Shutting down Hold-AI server gracefully.");
-            } else {
-                log.error(`\nError during prompt: ${String(error)}`);
-            }
+            // Handle user cancellation or errors
+            log.error(`\nError during prompt: ${String(error)}`);
             // Clean up server resources before exiting due to prompt error/cancellation
             log.info("Closing all client connections before server shutdown...");
             wss.clients.forEach((client) => {

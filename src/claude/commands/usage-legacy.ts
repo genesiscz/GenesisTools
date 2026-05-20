@@ -3,6 +3,7 @@ import { fetchUsage } from "@app/claude/lib/usage/api";
 import { renderAccountUsage, renderAllAccounts } from "@app/claude/lib/usage/display";
 import { getSharedAccountsUsage } from "@app/claude/lib/usage/shared-cache";
 import { watchUsage } from "@app/claude/lib/usage/watch";
+import { out } from "@app/logger";
 import { AIConfig } from "@app/utils/ai/AIConfig";
 import { SafeJSON } from "@app/utils/json";
 import * as p from "@clack/prompts";
@@ -25,9 +26,9 @@ export function registerUsageLegacyCommand(program: Command): void {
                 const account = { accountName: "token", usage };
 
                 if (opts.json) {
-                    console.log(SafeJSON.stringify(account, null, 2));
+                    out.print(SafeJSON.stringify(account, null, 2));
                 } else {
-                    console.log(renderAccountUsage(account));
+                    out.print(renderAccountUsage(account));
                 }
 
                 return;
@@ -77,9 +78,9 @@ export function registerUsageLegacyCommand(program: Command): void {
             const results = await getSharedAccountsUsage({ accountFilter: accountArg, force: opts.fresh === true });
 
             if (opts.json) {
-                console.log(SafeJSON.stringify(results, null, 2));
+                out.print(SafeJSON.stringify(results, null, 2));
             } else {
-                console.log(renderAllAccounts(results));
+                out.print(renderAllAccounts(results));
             }
         });
 }

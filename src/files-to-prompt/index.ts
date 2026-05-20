@@ -1,7 +1,7 @@
 import { existsSync, statSync } from "node:fs";
 import { mkdir, readdir, readFile } from "node:fs/promises";
 import { basename, dirname, extname, join, relative, resolve } from "node:path";
-import { logger } from "@app/logger";
+import { logger, out } from "@app/logger";
 import { runTool } from "@app/utils/cli";
 import { formatBytes as _formatBytes } from "@app/utils/format";
 import { handleReadmeFlag } from "@app/utils/readme";
@@ -702,19 +702,19 @@ function formatFileList<T extends string | IgnoredFile>(
 
 function printStatistics(stats: Statistics): void {
     // Use console.log to avoid timestamps in console output
-    console.log(`\n${"=".repeat(60)}`);
-    console.log("DRY RUN STATISTICS");
-    console.log("=".repeat(60));
-    console.log(`\nFiles to process: ${stats.fileCount}`);
-    console.log(`Directories found: ${stats.directoryCount}`);
-    console.log(`Total size: ${formatFileSize(stats.totalSize)}`);
-    console.log(`Estimated tokens: ${formatTokens(stats.totalTokens)}`);
+    out.print(`\n${"=".repeat(60)}`);
+    out.print("DRY RUN STATISTICS");
+    out.print("=".repeat(60));
+    out.print(`\nFiles to process: ${stats.fileCount}`);
+    out.print(`Directories found: ${stats.directoryCount}`);
+    out.print(`Total size: ${formatFileSize(stats.totalSize)}`);
+    out.print(`Estimated tokens: ${formatTokens(stats.totalTokens)}`);
 
     // Group ignored files by directory
     const _ignoredByDir = groupIgnoredFilesByDirectory(stats.ignoredFiles, stats.basePath);
 
     if (stats.ignoredFiles.length > 0) {
-        console.log(`\nIgnored files: ${stats.ignoredFiles.length}`);
+        out.print(`\nIgnored files: ${stats.ignoredFiles.length}`);
 
         // Group by reason
         const byReason = {
@@ -727,43 +727,43 @@ function printStatistics(stats: Statistics): void {
             const dirs = byReason.gitignore.filter((f) => f.isDirectory);
             const files = byReason.gitignore.filter((f) => !f.isDirectory);
             const totalCount = dirs.length + files.length;
-            console.log(
+            out.print(
                 `\n  By gitignore (${totalCount}${
                     dirs.length > 0 ? `: ${dirs.length} directories, ${files.length} files` : ""
                 }):`
             );
             const items = formatFileList(byReason.gitignore, stats.basePath, 100, "    ");
             items.forEach((item) => {
-                console.log(item);
+                out.print(item);
             });
         }
 
         if (byReason.extension.length > 0) {
-            console.log(`\n  By extension filter (${byReason.extension.length}):`);
+            out.print(`\n  By extension filter (${byReason.extension.length}):`);
             const items = formatFileList(byReason.extension, stats.basePath, 100, "    ");
             items.forEach((item) => {
-                console.log(item);
+                out.print(item);
             });
         }
 
         if (byReason.pattern.length > 0) {
-            console.log(`\n  By ignore pattern (${byReason.pattern.length}):`);
+            out.print(`\n  By ignore pattern (${byReason.pattern.length}):`);
             const items = formatFileList(byReason.pattern, stats.basePath, 100, "    ");
             items.forEach((item) => {
-                console.log(item);
+                out.print(item);
             });
         }
     }
 
     if (stats.files.length > 0) {
-        console.log(`\nFiles that would be processed (${stats.files.length}):`);
+        out.print(`\nFiles that would be processed (${stats.files.length}):`);
 
         const allFiles = stats.files.map((f) => toRelativePath(f, stats.basePath)).sort();
         const items = formatFileList(allFiles, stats.basePath, 100, "  ");
-        console.log(items.join("\n"));
+        out.print(items.join("\n"));
     }
 
-    console.log(`\n${"=".repeat(60)}\n`);
+    out.print(`\n${"=".repeat(60)}\n`);
 }
 
 function showHelp(): void {

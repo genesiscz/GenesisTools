@@ -1,3 +1,4 @@
+import { out } from "@app/logger";
 import { parseDate } from "@app/utils/date";
 import { SafeJSON } from "@app/utils/json";
 import type { CalendarEventInfo } from "@app/utils/macos/apple-calendar";
@@ -46,19 +47,19 @@ export function registerListCommand(program: Command): void {
                 const format = options.format ?? "table";
 
                 if (events.length === 0) {
-                    console.log(format === "json" ? "[]" : "No events found.");
+                    out.print(format === "json" ? "[]" : "No events found.");
                     return;
                 }
 
                 if (format === "json") {
-                    console.log(SafeJSON.stringify(events, null, 2));
+                    out.print(SafeJSON.stringify(events, null, 2));
                 } else if (format === "md") {
-                    console.log(formatEventsMd(events));
+                    out.print(formatEventsMd(events));
                 } else {
-                    console.log(formatEventsTable(events));
+                    out.print(formatEventsTable(events));
                 }
             } catch (error) {
-                console.error(error instanceof Error ? error.message : String(error));
+                out.error(error instanceof Error ? error.message : String(error));
                 process.exit(1);
             }
         });

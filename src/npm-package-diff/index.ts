@@ -3,6 +3,7 @@ import fs from "node:fs";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
+import { out } from "@app/logger";
 import { resolvePathWithTilde } from "@app/utils";
 import { isVerbose, runTool } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
@@ -33,44 +34,44 @@ const createSimpleLogger = () => {
         info: (msg: string) => {
             if (!isSilent) {
                 if (isTTY) {
-                    console.log(msg);
+                    out.print(msg);
                 } else {
                     // Strip ANSI codes for non-TTY output
                     // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional ANSI escape/control character matching
-                    console.log(msg.replace(/\u001b\[[0-9;]*m/g, ""));
+                    out.print(msg.replace(/\u001b\[[0-9;]*m/g, ""));
                 }
             }
         },
         error: (msg: string) => {
             if (isTTY) {
-                console.error(msg);
+                out.error(msg);
             } else {
                 // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional ANSI escape/control character matching
-                console.error(msg.replace(/\u001b\[[0-9;]*m/g, ""));
+                out.error(msg.replace(/\u001b\[[0-9;]*m/g, ""));
             }
         },
         debug: (msg: string) => {
             if ((v || isDebug) && !isSilent) {
                 if (isTTY) {
-                    console.log(chalk.gray(`[DEBUG] ${msg}`));
+                    out.print(chalk.gray(`[DEBUG] ${msg}`));
                 } else {
-                    console.log(`[DEBUG] ${msg}`);
+                    out.print(`[DEBUG] ${msg}`);
                 }
             }
         },
         success: (msg: string) => {
             if (!isSilent && isTTY) {
-                console.log(chalk.green(msg));
+                out.print(chalk.green(msg));
             } else if (!isSilent) {
-                console.log(msg);
+                out.print(msg);
             }
         },
         warn: (msg: string) => {
             if (!isSilent) {
                 if (isTTY) {
-                    console.warn(chalk.yellow(msg));
+                    out.warn(chalk.yellow(msg));
                 } else {
-                    console.warn(msg);
+                    out.warn(msg);
                 }
             }
         },
@@ -741,7 +742,7 @@ class EnhancedPackageComparison {
         ) {
             this.outputBuffer.push(text);
         } else {
-            console.log(text);
+            out.print(text);
         }
     }
 
@@ -764,7 +765,7 @@ class EnhancedPackageComparison {
                 logger.debug(`Failed to start pager: ${err}`);
                 // Fallback to normal output
                 this.outputBuffer.forEach((line) => {
-                    console.log(line);
+                    out.print(line);
                 });
                 this.outputBuffer = [];
             });
@@ -777,7 +778,7 @@ class EnhancedPackageComparison {
         } catch (_e) {
             // Fallback to normal output
             this.outputBuffer.forEach((line) => {
-                console.log(line);
+                out.print(line);
             });
             this.outputBuffer = [];
         }
@@ -1259,7 +1260,7 @@ class EnhancedPackageComparison {
             logger.success(`Output written to: ${outputPath}`);
         } else if (format !== "terminal" && format !== "side-by-side") {
             // For non-terminal formats, output to stdout
-            console.log(output);
+            out.print(output);
         }
 
         // Terminal output

@@ -1,9 +1,8 @@
-import { logger } from "@app/logger";
+import { logger, out } from "@app/logger";
 import type { TimelyService } from "@app/timely/api/service";
 import { SafeJSON } from "@app/utils/json";
+import * as p from "@app/utils/prompts/p";
 import type { Storage } from "@app/utils/storage";
-import { ExitPromptError } from "@inquirer/core";
-import { select } from "@inquirer/prompts";
 import chalk from "chalk";
 import type { Command } from "commander";
 
@@ -17,10 +16,6 @@ export function registerAccountsCommand(program: Command, storage: Storage, serv
             try {
                 await accountsAction(storage, service, options);
             } catch (error) {
-                if (error instanceof ExitPromptError) {
-                    logger.info("\nOperation cancelled.");
-                    process.exit(0);
-                }
                 throw error;
             }
         });
@@ -50,7 +45,7 @@ async function accountsAction(storage: Storage, service: TimelyService, options:
 
     // Display accounts
     if (options.format === "json") {
-        console.log(SafeJSON.stringify(accounts, null, 2));
+        out.print(SafeJSON.stringify(accounts, null, 2));
         return;
     }
 
@@ -59,11 +54,11 @@ async function accountsAction(storage: Storage, service: TimelyService, options:
     for (const account of accounts) {
         const selected = account.id === selectedId ? chalk.green(" (selected)") : "";
         const status = account.expired ? chalk.red("[expired]") : account.trial ? chalk.yellow("[trial]") : "";
-        console.log(`  ${chalk.bold(account.name)} (ID: ${account.id}) ${status}${selected}`);
-        console.log(`    Plan: ${account.plan_name}`);
-        console.log(`    Users: ${account.num_users}/${account.max_users}`);
-        console.log(`    Projects: ${account.active_projects_count}/${account.max_projects}`);
-        console.log();
+        out.print(`  ${chalk.bold(account.name)} (ID: ${account.id}) ${status}${selected}`);
+        out.print(`    Plan: ${account.plan_name}`);
+        out.print(`    Users: ${account.num_users}/${account.max_users}`);
+        out.print(`    Projects: ${account.active_projects_count}/${account.max_projects}`);
+        out.print();
     }
 
     // Interactive selection
@@ -73,10 +68,10 @@ async function accountsAction(storage: Storage, service: TimelyService, options:
             name: `${a.name} (${a.plan_name})`,
         }));
 
-        const accountId = await select({
+        const accountId = (await p.select({
             message: "Select default account:",
-            choices,
-        });
+            options: choices.map((c) => ({ value: c.value, label: c.name })),
+        })) as string;
 
         await storage.setConfigValue("selectedAccountId", parseInt(accountId, 10));
         logger.info(chalk.green(`Default account set to ID: ${accountId}`));

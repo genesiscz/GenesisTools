@@ -1,5 +1,6 @@
 import { copyFileSync, existsSync } from "node:fs";
 import { basename, resolve } from "node:path";
+import { out } from "@app/logger";
 import { formatBytes } from "@app/utils/format";
 import { iMessagesDatabase } from "@app/utils/macos/iMessagesDatabase";
 import chalk from "chalk";
@@ -16,7 +17,7 @@ export function registerMessagesAttachmentCommand(program: Command): void {
             const rowid = Number.parseInt(idArg.replace(/^#/, ""), 10);
 
             if (Number.isNaN(rowid)) {
-                console.error("Invalid attachment ID. Use the numeric ID from 'messages show' output (e.g. #9865).");
+                out.error("Invalid attachment ID. Use the numeric ID from 'messages show' output (e.g. #9865).");
                 process.exit(1);
             }
 
@@ -24,13 +25,13 @@ export function registerMessagesAttachmentCommand(program: Command): void {
             const att = db.getAttachment(rowid);
 
             if (!att) {
-                console.error(`Attachment #${rowid} not found.`);
+                out.error(`Attachment #${rowid} not found.`);
                 process.exit(1);
             }
 
             if (!att.resolvedPath || !existsSync(att.resolvedPath)) {
-                console.error(`Attachment file not found on disk: ${att.filename}`);
-                console.error("The file may have been deleted or not yet downloaded from iCloud.");
+                out.error(`Attachment file not found on disk: ${att.filename}`);
+                out.error("The file may have been deleted or not yet downloaded from iCloud.");
                 process.exit(1);
             }
 
@@ -41,16 +42,16 @@ export function registerMessagesAttachmentCommand(program: Command): void {
 
             if (opts.info) {
                 const name = att.transferName ?? basename(att.resolvedPath);
-                console.log();
-                console.log(`  ${chalk.bold(name)}`);
-                console.log(`  Type:  ${att.mimeType ?? "unknown"}`);
-                console.log(`  Size:  ${formatBytes(att.totalBytes)}`);
-                console.log(`  Path:  ${att.resolvedPath}`);
-                console.log(`  ID:    #${att.rowid}`);
-                console.log();
+                out.print();
+                out.print(`  ${chalk.bold(name)}`);
+                out.print(`  Type:  ${att.mimeType ?? "unknown"}`);
+                out.print(`  Size:  ${formatBytes(att.totalBytes)}`);
+                out.print(`  Path:  ${att.resolvedPath}`);
+                out.print(`  ID:    #${att.rowid}`);
+                out.print();
                 const base = `tools macos messages attachment ${rowid}`;
-                console.log(chalk.dim(`  ${base} --download [dest]`));
-                console.log(chalk.dim(`  ${base} --open`));
+                out.print(chalk.dim(`  ${base} --download [dest]`));
+                out.print(chalk.dim(`  ${base} --open`));
             }
 
             if (opts.download) {
@@ -59,7 +60,7 @@ export function registerMessagesAttachmentCommand(program: Command): void {
                 const destPath = resolve(destDir, name);
 
                 copyFileSync(att.resolvedPath, destPath);
-                console.log(`Saved to ${destPath}`);
+                out.print(`Saved to ${destPath}`);
             }
 
             if (opts.open) {

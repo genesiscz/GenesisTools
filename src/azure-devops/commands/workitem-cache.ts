@@ -8,7 +8,7 @@
 import { CACHE_TTL, storage } from "@app/azure-devops/cache";
 import type { WorkItemCache } from "@app/azure-devops/types";
 import { findTaskFile, getRelativeTime } from "@app/azure-devops/utils";
-import { logger } from "@app/logger";
+import { logger, out } from "@app/logger";
 import type { Command } from "commander";
 
 /**
@@ -27,7 +27,7 @@ async function handleList(): Promise<void> {
 
     if (workitemFiles.length === 0) {
         lines.push("No cached work items found.");
-        console.log(lines.join("\n"));
+        out.print(lines.join("\n"));
         return;
     }
 
@@ -81,7 +81,7 @@ async function handleList(): Promise<void> {
     lines.push("To refresh a work item:");
     lines.push("  tools azure-devops workitem <id> --force");
 
-    console.log(lines.join("\n"));
+    out.print(lines.join("\n"));
 }
 
 /**

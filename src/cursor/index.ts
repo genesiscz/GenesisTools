@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 
+import { out } from "@app/logger";
 import { CursorStreamAdapter } from "@app/utils/agents/adapters/cursor";
 import { TerminalRenderer } from "@app/utils/agents/renderers/TerminalRenderer";
 import { handleReadmeFlag } from "@app/utils/readme";
@@ -29,7 +30,7 @@ for (let i = 0; i < args.length; i++) {
     } else if (arg === "--raw") {
         raw = true;
     } else if (arg === "--help" || arg === "-h") {
-        console.log(`Usage: tools cursor [options] <question>
+        out.print(`Usage: tools cursor [options] <question>
 
 Ask Cursor Agent a question about the codebase and stream the answer.
 
@@ -51,8 +52,8 @@ Options:
 const question = positional.join(" ").trim();
 
 if (!question) {
-    console.error(pc.red("No question provided."));
-    console.error(pc.dim('Usage: tools cursor "which service creates the reservation?"'));
+    out.error(pc.red("No question provided."));
+    out.error(pc.dim('Usage: tools cursor "which service creates the reservation?"'));
     process.exit(1);
 }
 

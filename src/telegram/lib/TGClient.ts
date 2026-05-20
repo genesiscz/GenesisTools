@@ -1,3 +1,4 @@
+import { out } from "@app/logger";
 import bigInt from "big-integer";
 import { Api, TelegramClient } from "telegram";
 import { NewMessage, type NewMessageEvent } from "telegram/events";
@@ -36,7 +37,7 @@ export class TGClient {
             phoneNumber: callbacks.phoneNumber,
             phoneCode: callbacks.phoneCode,
             password: callbacks.password,
-            onError: (err) => console.error("Auth error:", err),
+            onError: (err) => out.error("Auth error:", err),
         });
     }
 

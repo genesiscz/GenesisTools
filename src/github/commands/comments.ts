@@ -16,7 +16,7 @@ import {
 import { calculateStats, formatIssue } from "@app/github/lib/output";
 import { findReplyTarget, processQuotes } from "@app/github/lib/quotes";
 import type { CommentData, CommentRecord, GitHubComment, IssueData } from "@app/github/types";
-import { logger } from "@app/logger";
+import { logger, out } from "@app/logger";
 import { formatLocalDateTimeStamp } from "@app/utils/date";
 import { getOctokit } from "@app/utils/github/octokit";
 import { withRetry } from "@app/utils/github/rate-limit";
@@ -199,13 +199,13 @@ export async function commentsCommand(input: string, options: CommentsCommandOpt
     const parsed = parseGitHubUrl(input, defaultRepo);
 
     if (!parsed) {
-        console.error(chalk.red("Invalid input. Please provide a GitHub issue/PR URL."));
+        out.error(chalk.red("Invalid input. Please provide a GitHub issue/PR URL."));
         process.exit(1);
     }
 
     const { owner, repo, number, commentId } = parsed;
     verbose(options, `Parsed: owner=${owner}, repo=${repo}, number=${number}, commentId=${commentId || "none"}`);
-    console.log(chalk.dim(`Fetching comments for ${owner}/${repo}#${number}...`));
+    out.print(chalk.dim(`Fetching comments for ${owner}/${repo}#${number}...`));
 
     // Get or create repo and issue in cache
     const repoRecord = getOrCreateRepo(owner, repo);
@@ -347,7 +347,7 @@ export async function commentsCommand(input: string, options: CommentsCommandOpt
         const lastFull = metadata?.last_full_fetch ? formatCacheDate(metadata.last_full_fetch) : "never";
         const lastIncr = metadata?.last_incremental_fetch ? formatCacheDate(metadata.last_incremental_fetch) : "never";
         const ageMin = Math.round(cacheAgeMs / 60000);
-        console.log(
+        out.print(
             chalk.dim(`Using cached comments (${ageMin}m old, last full: ${lastFull}, last update: ${lastIncr})`)
         );
 
@@ -398,7 +398,7 @@ export async function commentsCommand(input: string, options: CommentsCommandOpt
 
     // Validate --first and --last mutual exclusivity
     if (options.first && options.last) {
-        console.error(chalk.red("Error: Cannot specify both --first and --last. Use one or the other."));
+        out.error(chalk.red("Error: Cannot specify both --first and --last. Use one or the other."));
         process.exit(1);
     }
 
@@ -455,14 +455,14 @@ export async function commentsCommand(input: string, options: CommentsCommandOpt
         verbose(options, `Full content saved to: ${filename}`);
 
         const summary = formatIssue(outputData, "ai", { noIndex: options.noIndex, filePath: filename });
-        console.log(summary);
+        out.print(summary);
     } else {
         const output = formatIssue(outputData, format, { noIndex: options.noIndex });
         if (options.output) {
             await Bun.write(options.output, output);
-            console.log(chalk.green(`✔ Output written to ${options.output}`));
+            out.print(chalk.green(`✔ Output written to ${options.output}`));
         } else {
-            console.log(output);
+            out.print(output);
         }
     }
     verbose(options, `Completed: ${comments.length} comments`);
@@ -482,7 +482,7 @@ export async function commentsCommand(input: string, options: CommentsCommandOpt
         const ageMin = Math.round(cacheAgeMs / 60000);
         cacheStatus = `(cached, ${ageMin}m old)`;
     }
-    console.log(
+    out.print(
         chalk.dim(
             `\nFetched: ${comments.length} comments ${cacheStatus}${sinceId ? ` (since comment ${sinceId})` : ""}`
         )
@@ -516,7 +516,7 @@ export function createCommentsCommand(): Command {
                 await commentsCommand(url, opts);
             } catch (error) {
                 logger.error({ error }, "Comments command failed");
-                console.error(chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`));
+                out.error(chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`));
                 process.exit(1);
             }
         });

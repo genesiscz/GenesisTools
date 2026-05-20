@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 
+import { out } from "@app/logger";
 import { enhanceHelp, isInteractive, runTool } from "@app/utils/cli";
 import { withCancel } from "@app/utils/prompts/clack/helpers";
 import * as p from "@clack/prompts";
@@ -256,7 +257,7 @@ async function watchPortActivity(options: { all?: boolean; interval?: string }):
     await new Promise<void>((resolve) => {
         process.on("SIGINT", () => {
             clearInterval(timer);
-            console.log();
+            out.print();
             p.outro(pc.dim("Stopped watching."));
             resolve();
         });

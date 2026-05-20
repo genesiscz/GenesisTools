@@ -2,6 +2,7 @@
 
 import { exec } from "node:child_process";
 import { parseArgs, promisify } from "node:util";
+import { logger, out } from "@app/logger";
 import { Box, render, Text, useApp, useInput } from "ink";
 import React, { useCallback, useEffect, useState } from "react";
 import Table from "./Table";
@@ -46,7 +47,7 @@ const { values } = parseArgs({
 
 // Show help if requested
 if (values.help) {
-    console.log(`
+    out.print(`
 macOS Resource Analyzer
 
 Usage: tools macos-resources [options]
@@ -531,7 +532,7 @@ const App: React.FC = () => {
                 addNotification(`Processed ${sortedProcesses.length} processes`, "cpu");
                 return sortedProcesses;
             } catch (error) {
-                console.error("Error getting processes:", error);
+                logger.error({ err: error }, "Error getting processes");
                 return [];
             }
         },

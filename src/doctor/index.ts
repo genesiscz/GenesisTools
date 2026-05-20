@@ -10,7 +10,7 @@ import { runLog } from "@app/doctor/ui/log";
 import { runPlain } from "@app/doctor/ui/plain";
 import { runStats } from "@app/doctor/ui/stats";
 import { runTui } from "@app/doctor/ui/tui";
-import { logger } from "@app/logger";
+import { logger, out } from "@app/logger";
 import { enhanceHelp, isInteractive, runTool } from "@app/utils/cli";
 import { Command } from "commander";
 
@@ -135,7 +135,7 @@ program
     .description("Delete the analyzer cache so next run is fresh")
     .action(async () => {
         await wipeCache();
-        console.log("Analyzer cache wiped.");
+        out.print("Analyzer cache wiped.");
     });
 
 enhanceHelp(program);

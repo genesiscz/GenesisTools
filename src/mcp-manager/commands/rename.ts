@@ -5,8 +5,8 @@ import { WriteResult } from "@app/mcp-manager/utils/providers/types.js";
 import { isInteractive } from "@app/utils/cli";
 import { DiffUtil } from "@app/utils/diff";
 import { SafeJSON } from "@app/utils/json";
-import { ExitPromptError } from "@inquirer/core";
-import { checkbox, confirm, input, search } from "@inquirer/prompts";
+import * as p from "@app/utils/prompts/p";
+import { inquirerBackend } from "@app/utils/prompts/p/inquirer-backend";
 import chalk from "chalk";
 
 /**
@@ -34,29 +34,18 @@ export async function renameServer(
 
     if (!finalOldName) {
         const serverNames = Object.keys(config.mcpServers).sort();
-        try {
-            const selectedOldName = await search({
-                message: "Select server to rename:",
-                source: async (term) => {
-                    if (!term) {
-                        return serverNames.map((name) => ({ value: name, name }));
-                    }
-                    const lowerTerm = term.toLowerCase();
-                    return serverNames
-                        .filter((name) => name.toLowerCase().includes(lowerTerm))
-                        .map((name) => ({ value: name, name }));
-                },
-                pageSize: 30,
-            });
+        const selectedOldName = await inquirerBackend.search<string>({
+            message: "Select server to rename:",
+            options: async (term) => {
+                const filtered = !term
+                    ? serverNames
+                    : serverNames.filter((name) => name.toLowerCase().includes(term.toLowerCase()));
+                return filtered.map((name) => ({ value: name, label: name }));
+            },
+            pageSize: 30,
+        });
 
-            finalOldName = selectedOldName.trim();
-        } catch (error) {
-            if (error instanceof ExitPromptError) {
-                logger.info("\nOperation cancelled by user.");
-                return;
-            }
-            throw error;
-        }
+        finalOldName = selectedOldName.trim();
     }
 
     // Validate old name exists
@@ -74,20 +63,12 @@ export async function renameServer(
     }
 
     if (!finalNewName) {
-        try {
-            const inputNewName = await input({
-                message: `Enter new name for '${finalOldName}':`,
-                default: finalOldName,
-            });
+        const inputNewName = (await p.text({
+            message: `Enter new name for '${finalOldName}':`,
+            initialValue: finalOldName,
+        })) as string;
 
-            finalNewName = inputNewName.trim();
-        } catch (error) {
-            if (error instanceof ExitPromptError) {
-                logger.info("\nOperation cancelled by user.");
-                return;
-            }
-            throw error;
-        }
+        finalNewName = inputNewName.trim();
     }
 
     if (!finalNewName) {
@@ -126,22 +107,14 @@ export async function renameServer(
             process.exit(1);
         }
 
-        try {
-            const confirmed = await confirm({
-                message: `Replace existing server '${finalNewName}' with '${finalOldName}'?`,
-                default: false,
-            });
+        const confirmed = await p.confirm({
+            message: `Replace existing server '${finalNewName}' with '${finalOldName}'?`,
+            initialValue: false,
+        });
 
-            if (!confirmed) {
-                logger.info("Rename cancelled by user.");
-                return;
-            }
-        } catch (error) {
-            if (error instanceof ExitPromptError) {
-                logger.info("\nOperation cancelled by user.");
-                return;
-            }
-            throw error;
+        if (!confirmed) {
+            logger.info("Rename cancelled by user.");
+            return;
         }
     }
 
@@ -188,21 +161,13 @@ export async function renameServer(
         // Non-interactive: sync to all available providers
         selectedProviderNames = availableProviders.map((p) => p.getName());
     } else {
-        try {
-            selectedProviderNames = await checkbox({
-                message: "Select providers to sync rename to:",
-                choices: availableProviders.map((p) => ({
-                    value: p.getName(),
-                    name: `${p.getName()} (${p.getConfigPath()})`,
-                })),
-            });
-        } catch (error) {
-            if (error instanceof ExitPromptError) {
-                logger.info("\nOperation cancelled by user.");
-                return;
-            }
-            throw error;
-        }
+        selectedProviderNames = (await p.multiselect({
+            message: "Select providers to sync rename to:",
+            options: availableProviders.map((prov) => ({
+                value: prov.getName(),
+                label: `${prov.getName()} (${prov.getConfigPath()})`,
+            })),
+        })) as string[];
     }
 
     if (selectedProviderNames.length === 0) {
@@ -283,22 +248,14 @@ async function renameServerInProvider(
             `'${oldName}' (will replace)`
         );
 
-        try {
-            const confirmed = await confirm({
-                message: `Replace existing server '${newName}' in ${provider.getName()}?`,
-                default: false,
-            });
+        const confirmed = await p.confirm({
+            message: `Replace existing server '${newName}' in ${provider.getName()}?`,
+            initialValue: false,
+        });
 
-            if (!confirmed) {
-                logger.info(`Skipping rename in ${provider.getName()}.`);
-                return false;
-            }
-        } catch (error) {
-            if (error instanceof ExitPromptError) {
-                logger.info(`\nSkipping rename in ${provider.getName()}.`);
-                return false;
-            }
-            throw error;
+        if (!confirmed) {
+            logger.info(`Skipping rename in ${provider.getName()}.`);
+            return false;
         }
     }
 

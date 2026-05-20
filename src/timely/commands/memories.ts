@@ -1,4 +1,4 @@
-import { logger } from "@app/logger";
+import { logger, out } from "@app/logger";
 import type { TimelyService } from "@app/timely/api/service";
 import type { OAuth2Tokens, TimelyEntry } from "@app/timely/types";
 import { fetchMemoriesForDates } from "@app/timely/utils/memories";
@@ -92,7 +92,7 @@ async function memoriesAction(storage: Storage, _service: TimelyService, options
 
     // JSON output
     if (options.format === "json") {
-        console.log(SafeJSON.stringify(allEntries, null, 2));
+        out.print(SafeJSON.stringify(allEntries, null, 2));
         return;
     }
 
@@ -132,10 +132,10 @@ async function memoriesAction(storage: Storage, _service: TimelyService, options
         const sortedApps = Array.from(byApp.entries()).sort((a, b) => b[1].totalSeconds - a[1].totalSeconds);
 
         // Day header
-        console.log(chalk.bold(`${day} (${fmtDurHm(dayTotal)})`));
+        out.print(chalk.bold(`${day} (${fmtDurHm(dayTotal)})`));
 
         for (const [app, data] of sortedApps) {
-            console.log(`  ${padDur(fmtDurHm(data.totalSeconds))} ${chalk.yellow(app)}`);
+            out.print(`  ${padDur(fmtDurHm(data.totalSeconds))} ${chalk.yellow(app)}`);
 
             // Show sub-entries for each memory in this app group
             for (const entry of data.entries) {
@@ -147,25 +147,25 @@ async function memoriesAction(storage: Storage, _service: TimelyService, options
                 if (subs.length > 0) {
                     for (const sub of subs) {
                         if (sub.note) {
-                            console.log(
+                            out.print(
                                 `    ${chalk.dim(padDur(fmtDurHm(sub.duration.total_seconds)))} ${chalk.blue(sub.note)}`
                             );
                         }
                     }
                 } else if (entry.note) {
-                    console.log(
+                    out.print(
                         `    ${chalk.dim(padDur(fmtDurHm(entry.duration.total_seconds)))} ${chalk.blue(entry.note)}`
                     );
                 }
             }
         }
-        console.log();
+        out.print();
     }
 
     // Summary
-    console.log(chalk.cyan("─".repeat(60)));
-    console.log(chalk.bold(`Total: ${fmtDurHm(grandTotal)}`));
-    console.log(`Memories: ${totalEntries}, Days: ${sortedDays.length}`);
+    out.print(chalk.cyan("─".repeat(60)));
+    out.print(chalk.bold(`Total: ${fmtDurHm(grandTotal)}`));
+    out.print(`Memories: ${totalEntries}, Days: ${sortedDays.length}`);
 }
 
 /**

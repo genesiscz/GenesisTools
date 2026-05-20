@@ -29,7 +29,7 @@ import type {
     LinkedIssue,
     TimelineEventData,
 } from "@app/github/types";
-import { logger } from "@app/logger";
+import { logger, out } from "@app/logger";
 import { getOctokit } from "@app/utils/github/octokit";
 import { withRetry } from "@app/utils/github/rate-limit";
 import { detectRepoFromGit, extractCommentId, parseDate, parseGitHubUrl } from "@app/utils/github/url-parser";
@@ -327,7 +327,7 @@ export async function issueCommand(input: string, options: IssueCommandOptions):
     if (inputs.length > 1) {
         for (let i = 0; i < inputs.length; i++) {
             if (i > 0) {
-                console.log(chalk.dim("\n---\n"));
+                out.print(chalk.dim("\n---\n"));
             }
             await issueSingleCommand(inputs[i], options);
         }
@@ -348,12 +348,12 @@ async function issueSingleCommand(input: string, options: IssueCommandOptions): 
     const parsed = parseGitHubUrl(input, defaultRepo);
 
     if (!parsed) {
-        console.error(chalk.red(`Invalid input: "${input}". Please provide a GitHub issue URL or number.`));
+        out.error(chalk.red(`Invalid input: "${input}". Please provide a GitHub issue URL or number.`));
         return;
     }
 
     const { owner, repo, number } = parsed;
-    console.log(chalk.dim(`Fetching ${owner}/${repo}#${number}...`));
+    out.print(chalk.dim(`Fetching ${owner}/${repo}#${number}...`));
     verbose(options, `Parsed: owner=${owner}, repo=${repo}, number=${number}`);
 
     // Get or create repo in cache
@@ -369,7 +369,7 @@ async function issueSingleCommand(input: string, options: IssueCommandOptions): 
     // Fetch issue data
     let issue: GitHubIssue;
     if (shouldRefresh) {
-        console.log(chalk.dim("Fetching issue from GitHub..."));
+        out.print(chalk.dim("Fetching issue from GitHub..."));
         issue = await fetchIssue(owner, repo, number);
 
         // Update cache
@@ -420,13 +420,13 @@ async function issueSingleCommand(input: string, options: IssueCommandOptions): 
         const negativeR = sumNegativeReactions(issue.reactions);
 
         if (options.minReactions !== undefined && totalR < options.minReactions) {
-            console.log(
+            out.print(
                 chalk.yellow(`Issue #${number} has ${totalR} reactions (threshold: ${options.minReactions}). Skipping.`)
             );
             return;
         }
         if (options.minReactionsPositive !== undefined && positiveR < options.minReactionsPositive) {
-            console.log(
+            out.print(
                 chalk.yellow(
                     `Issue #${number} has ${positiveR} positive reactions (threshold: ${options.minReactionsPositive}). Skipping.`
                 )
@@ -434,7 +434,7 @@ async function issueSingleCommand(input: string, options: IssueCommandOptions): 
             return;
         }
         if (options.minReactionsNegative !== undefined && negativeR < options.minReactionsNegative) {
-            console.log(
+            out.print(
                 chalk.yellow(
                     `Issue #${number} has ${negativeR} negative reactions (threshold: ${options.minReactionsNegative}). Skipping.`
                 )
@@ -455,7 +455,7 @@ async function issueSingleCommand(input: string, options: IssueCommandOptions): 
 
         if (shouldFetchFresh || options.all) {
             // Fetch all comments from API
-            console.log(chalk.dim("Fetching comments..."));
+            out.print(chalk.dim("Fetching comments..."));
 
             const sinceStr =
                 afterDate?.toISOString() ||
@@ -552,7 +552,7 @@ async function issueSingleCommand(input: string, options: IssueCommandOptions): 
     // Fetch timeline events if requested
     let events: TimelineEventData[] = [];
     if (options.includeEvents) {
-        console.log(chalk.dim("Fetching timeline events..."));
+        out.print(chalk.dim("Fetching timeline events..."));
         const apiEvents = await fetchTimelineEvents(owner, repo, number);
         events = apiEvents
             .filter((e) => e.event !== "commented") // Don't duplicate comments
@@ -579,7 +579,7 @@ async function issueSingleCommand(input: string, options: IssueCommandOptions): 
         const refs = detectCrossReferences(issueBody);
         if (refs.length > 0) {
             verbose(options, `Found ${refs.length} cross-references to resolve`);
-            console.log(chalk.dim(`Resolving ${refs.length} cross-references...`));
+            out.print(chalk.dim(`Resolving ${refs.length} cross-references...`));
 
             for (const ref of refs) {
                 verbose(options, `Fetching linked issue #${ref.number}`);
@@ -630,10 +630,10 @@ async function issueSingleCommand(input: string, options: IssueCommandOptions): 
             await Bun.write(filepath, fullContent);
             verbose(options, `Full content saved to: ${filepath}`);
             const summary = formatIssue(outputData, "ai", { noIndex: options.noIndex, filePath: filepath });
-            console.log(summary);
+            out.print(summary);
         } else {
             // No save — print full markdown to stdout
-            console.log(formatIssue(outputData, "md", { noIndex: options.noIndex }));
+            out.print(formatIssue(outputData, "md", { noIndex: options.noIndex }));
         }
     } else {
         // For md and json formats
@@ -641,7 +641,7 @@ async function issueSingleCommand(input: string, options: IssueCommandOptions): 
 
         if (options.output) {
             await Bun.write(options.output, output);
-            console.log(chalk.green(`✔ Output written to ${options.output}`));
+            out.print(chalk.green(`✔ Output written to ${options.output}`));
         } else if (options.save !== undefined) {
             const localDir = typeof options.save === "string" ? options.save : join(process.cwd(), ".claude", "github");
             if (!existsSync(localDir)) {
@@ -650,9 +650,9 @@ async function issueSingleCommand(input: string, options: IssueCommandOptions): 
             const filename = `${owner}-${repo}-${number}.${format === "json" ? "json" : "md"}`;
             const filepath = join(localDir, filename);
             await Bun.write(filepath, output);
-            console.log(chalk.green(`✔ Output saved to ${filepath}`));
+            out.print(chalk.green(`✔ Output saved to ${filepath}`));
         } else {
-            console.log(output);
+            out.print(output);
         }
     }
 
@@ -661,7 +661,7 @@ async function issueSingleCommand(input: string, options: IssueCommandOptions): 
         options,
         `Completed: ${comments.length} comments, ${events.length} events, ${linkedIssues.length} linked issues`
     );
-    console.log(
+    out.print(
         chalk.dim(
             `\nFetched: ${comments.length} comments${events.length > 0 ? `, ${events.length} events` : ""}${linkedIssues.length > 0 ? `, ${linkedIssues.length} linked` : ""}`
         )
@@ -708,7 +708,7 @@ export function createIssueCommand(): Command {
                 await issueCommand(input, opts);
             } catch (error) {
                 logger.error({ error }, "Issue command failed");
-                console.error(chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`));
+                out.error(chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`));
                 process.exit(1);
             }
         });

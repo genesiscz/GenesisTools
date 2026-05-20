@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { parseHarFile } from "@app/har-analyzer/core/parser";
 import type { HarSession } from "@app/har-analyzer/types";
+import { out } from "@app/logger";
 import { xxhash } from "@app/utils/hash";
 import { Storage } from "@app/utils/storage/storage";
 
@@ -130,7 +131,7 @@ export class SessionManager {
     async requireSession(hash?: string): Promise<HarSession> {
         const session = await this.loadSession(hash);
         if (!session) {
-            console.error("No session loaded. Use `load <file>` first.");
+            out.error("No session loaded. Use `load <file>` first.");
             process.exit(1);
         }
         return session;

@@ -2,7 +2,7 @@
 
 import { resolve } from "node:path";
 import type { GitHubCommitUrl } from "@app/github/types";
-import { logger } from "@app/logger";
+import { logger, out } from "@app/logger";
 import { copyToClipboard } from "@app/utils/clipboard";
 import { getOctokit } from "@app/utils/github/octokit";
 import { withRetry } from "@app/utils/github/rate-limit";
@@ -220,14 +220,14 @@ export async function getCommand(input: string, options: GetOptions): Promise<vo
             return;
         }
 
-        console.error(chalk.red("Invalid GitHub URL."));
-        console.error(chalk.dim("\nSupported formats:"));
-        console.error(chalk.dim("  https://github.com/owner/repo/blob/branch/path/to/file"));
-        console.error(chalk.dim("  https://github.com/owner/repo/blame/tag/path/to/file"));
-        console.error(chalk.dim("  https://github.com/owner/repo/tree/branch/path/to/dir"));
-        console.error(chalk.dim("  https://raw.githubusercontent.com/owner/repo/ref/path"));
-        console.error(chalk.dim("  https://github.com/owner/repo/commit/SHA"));
-        console.error(chalk.dim("  Any of the above with #L10 or #L10-L20 line references"));
+        out.error(chalk.red("Invalid GitHub URL."));
+        out.error(chalk.dim("\nSupported formats:"));
+        out.error(chalk.dim("  https://github.com/owner/repo/blob/branch/path/to/file"));
+        out.error(chalk.dim("  https://github.com/owner/repo/blame/tag/path/to/file"));
+        out.error(chalk.dim("  https://github.com/owner/repo/tree/branch/path/to/dir"));
+        out.error(chalk.dim("  https://raw.githubusercontent.com/owner/repo/ref/path"));
+        out.error(chalk.dim("  https://github.com/owner/repo/commit/SHA"));
+        out.error(chalk.dim("  Any of the above with #L10 or #L10-L20 line references"));
         process.exit(1);
     }
 
@@ -244,7 +244,7 @@ export async function getCommand(input: string, options: GetOptions): Promise<vo
             lineStart = parseInt(lineMatch[1], 10);
             lineEnd = lineMatch[2] ? parseInt(lineMatch[2], 10) : undefined;
         } else {
-            console.error(chalk.red("Invalid --lines format. Use: 10 or 10-20"));
+            out.error(chalk.red("Invalid --lines format. Use: 10 or 10-20"));
             process.exit(1);
         }
     }
@@ -261,13 +261,13 @@ export async function getCommand(input: string, options: GetOptions): Promise<vo
 
             if (options.clipboard) {
                 await copyToClipboard(content, { silent: true });
-                console.log(chalk.green(`✔ Copied directory ${parsed.path} to clipboard`));
+                out.print(chalk.green(`✔ Copied directory ${parsed.path} to clipboard`));
             } else if (options.output) {
                 const outputPath = resolve(options.output);
                 await Bun.write(outputPath, content);
-                console.log(chalk.green(`✔ Written to ${outputPath}`));
+                out.print(chalk.green(`✔ Written to ${outputPath}`));
             } else {
-                console.log(content);
+                out.print(content);
             }
 
             return;
@@ -282,21 +282,21 @@ export async function getCommand(input: string, options: GetOptions): Promise<vo
         // Output
         if (options.clipboard) {
             await copyToClipboard(content, { silent: true });
-            console.log(chalk.green(`✔ Copied ${file.path} to clipboard`));
+            out.print(chalk.green(`✔ Copied ${file.path} to clipboard`));
             if (lineStart) {
-                console.log(chalk.dim(`  Lines: ${lineStart}${lineEnd ? `-${lineEnd}` : ""}`));
+                out.print(chalk.dim(`  Lines: ${lineStart}${lineEnd ? `-${lineEnd}` : ""}`));
             }
         } else if (options.output) {
             const outputPath = resolve(options.output);
             await Bun.write(outputPath, content);
-            console.log(chalk.green(`✔ Written to ${outputPath}`));
+            out.print(chalk.green(`✔ Written to ${outputPath}`));
         } else {
             // Output to stdout
-            console.log(content);
+            out.print(content);
         }
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        console.error(chalk.red(`Error: ${message}`));
+        out.error(chalk.red(`Error: ${message}`));
         process.exit(1);
     }
 }
@@ -372,13 +372,13 @@ async function handleCommitUrl(parsed: GitHubCommitUrl, options: GetOptions): Pr
 
     if (options.clipboard) {
         await copyToClipboard(content, { silent: true });
-        console.log(chalk.green(`✔ Copied commit ${commit.sha.slice(0, 7)} to clipboard`));
+        out.print(chalk.green(`✔ Copied commit ${commit.sha.slice(0, 7)} to clipboard`));
     } else if (options.output) {
         const outputPath = resolve(options.output);
         await Bun.write(outputPath, content);
-        console.log(chalk.green(`✔ Written to ${outputPath}`));
+        out.print(chalk.green(`✔ Written to ${outputPath}`));
     } else {
-        console.log(content);
+        out.print(content);
     }
 }
 
@@ -433,7 +433,7 @@ Examples:
                 await getCommand(url, opts);
             } catch (error) {
                 logger.error({ error }, "Get command failed");
-                console.error(chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`));
+                out.error(chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`));
                 process.exit(1);
             }
         });

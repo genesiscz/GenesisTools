@@ -52,8 +52,10 @@ function isServerOrTooling(rel: string): boolean {
 // Any non-type value import of @app/logger or @app/logger/out — covers the
 // `import … from "…"` form (excluding `import type`), the side-effect form
 // `import "…"`, and the dynamic `import("…")` form (PR #176 review t12).
+// Carve-out: @app/logger/client is the browser-safe facade and IS allowed
+// in client trees (negative lookahead (?!\/client) excludes it).
 const VALUE_LOGGER_IMPORT =
-    /(?:import\s+(?!type\b)[^;]*?from\s+["']@app\/logger(?:\/out)?["']|import\s+["']@app\/logger(?:\/out)?["']|import\s*\(\s*["']@app\/logger(?:\/out)?["']\s*\))/g;
+    /(?:import\s+(?!type\b)[^;]*?from\s+["']@app\/logger(?:\/out)?(?!\/client)["']|import\s+["']@app\/logger(?:\/out)?(?!\/client)["']|import\s*\(\s*["']@app\/logger(?:\/out)?(?!\/client)["']\s*\))/g;
 
 function walk(dir: string, acc: string[]): void {
     for (const name of readdirSync(dir)) {
@@ -73,6 +75,32 @@ function walk(dir: string, acc: string[]): void {
         }
     }
 }
+
+describe("VALUE_LOGGER_IMPORT regex carve-outs", () => {
+    it("allows @app/logger/client imports (browser-safe facade)", () => {
+        const allowedImports = [
+            'import { logger } from "@app/logger/client"',
+            'import { out } from "@app/logger/client"',
+            'import { logger, out } from "@app/logger/client"',
+        ];
+        for (const line of allowedImports) {
+            const matches = [...line.matchAll(VALUE_LOGGER_IMPORT)];
+            expect(matches).toHaveLength(0);
+        }
+    });
+
+    it("still blocks @app/logger and @app/logger/out imports", () => {
+        const blockedImports = [
+            'import { logger } from "@app/logger"',
+            'import { out } from "@app/logger/out"',
+            'import "@app/logger"',
+        ];
+        for (const line of blockedImports) {
+            const matches = [...line.matchAll(VALUE_LOGGER_IMPORT)];
+            expect(matches.length).toBeGreaterThan(0);
+        }
+    });
+});
 
 describe("browser-client trees never value-import @app/logger", () => {
     it("no client source pulls the Node logger (server handlers excluded)", () => {

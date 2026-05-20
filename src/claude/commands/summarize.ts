@@ -11,6 +11,7 @@ import { resolve } from "node:path";
 import { parseDate } from "@app/claude/lib/history/search";
 import type { SummarizeOptions, SummarizeResult } from "@app/claude/lib/history/summarize/engine.ts";
 import { listTemplates, SummarizeEngine } from "@app/claude/lib/history/summarize/engine.ts";
+import { out } from "@app/logger";
 import { getAgentRuntimeContext } from "@app/utils/agent-runtime";
 import { encodedProjectDir } from "@app/utils/claude";
 import { ClaudeSession } from "@app/utils/claude/session";
@@ -360,7 +361,7 @@ function displayResult(result: SummarizeResult): void {
         parts.push(chalk.yellow(`Note: ${result.truncationInfo}`));
     }
 
-    console.error(parts.join("\n"));
+    out.error(parts.join("\n"));
 }
 
 // =============================================================================
@@ -431,18 +432,18 @@ export function registerSummarizeCommand(program: Command): void {
                     // Separator between multiple sessions
                     if (sessions.length > 1) {
                         if (process.stdout.isTTY) {
-                            console.error(chalk.dim("\n---\n"));
+                            out.error(chalk.dim("\n---\n"));
                         }
                     }
                 }
             } catch (error) {
                 if (error instanceof Error && error.message.includes("cancelled")) {
                     if (process.stdout.isTTY) {
-                        console.error(chalk.dim("\nOperation cancelled."));
+                        out.error(chalk.dim("\nOperation cancelled."));
                     }
                     process.exit(0);
                 }
-                console.error(chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`));
+                out.error(chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`));
                 process.exit(1);
             }
         });

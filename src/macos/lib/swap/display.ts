@@ -1,3 +1,4 @@
+import { out } from "@app/logger";
 import { formatBytes, formatDuration } from "@app/utils/format";
 import { SafeJSON } from "@app/utils/json";
 import Table from "cli-table3";
@@ -43,12 +44,12 @@ function renderHeader(): void {
     const border = pc.cyan(pc.bold(" │"));
     const title = "Swap Usage";
     const subtitle = "what's hogging your swap";
-    console.log();
-    console.log(pc.cyan(pc.bold(" ┌─────────────────────────────────────┐")));
-    console.log(`${border}${pc.white(pc.bold(`  ${title.padEnd(HEADER_TEXT_MAX_WIDTH)}`))}${pc.cyan(pc.bold("│"))}`);
-    console.log(`${border}${pc.dim(`  ${subtitle.padEnd(HEADER_TEXT_MAX_WIDTH)}`)}${pc.cyan(pc.bold("│"))}`);
-    console.log(pc.cyan(pc.bold(" └─────────────────────────────────────┘")));
-    console.log();
+    out.print();
+    out.print(pc.cyan(pc.bold(" ┌─────────────────────────────────────┐")));
+    out.print(`${border}${pc.white(pc.bold(`  ${title.padEnd(HEADER_TEXT_MAX_WIDTH)}`))}${pc.cyan(pc.bold("│"))}`);
+    out.print(`${border}${pc.dim(`  ${subtitle.padEnd(HEADER_TEXT_MAX_WIDTH)}`)}${pc.cyan(pc.bold("│"))}`);
+    out.print(pc.cyan(pc.bold(" └─────────────────────────────────────┘")));
+    out.print();
 }
 
 function renderSummary(result: ScanResult): void {
@@ -57,7 +58,7 @@ function renderSummary(result: ScanResult): void {
     const pct = pctNum.toFixed(1);
     const usedColor = pctNum >= 90 ? pc.red : pctNum >= 70 ? pc.yellow : pc.green;
 
-    console.log(
+    out.print(
         `  ${pc.dim("System swap")} ${usedColor(formatBytes(system.usedBytes))}${pc.dim(" / ")}${pc.white(formatBytes(system.totalBytes))} ${pc.dim(`(${pct}%)`)}`
     );
     const cacheNote =
@@ -69,10 +70,10 @@ function renderSummary(result: ScanResult): void {
             ? `${pc.dim("  ·  ")}${pc.yellow(String(result.inaccessibleCount))}${pc.dim(" inaccessible (root needed)")}`
             : "";
 
-    console.log(
+    out.print(
         `  ${pc.dim("Scanned")}     ${pc.white(String(scannedCount))}${pc.dim(" of ")}${pc.white(String(totalProcesses))}${pc.dim(" processes  ·  ")}${pc.white(String(processes.length))}${pc.dim(" with swap > 0")}${cacheNote}${inaccessibleNote}`
     );
-    console.log();
+    out.print();
 }
 
 function createTable(): Table.Table {
@@ -106,10 +107,10 @@ export function renderResult(result: ScanResult, top: number): void {
     const showAllHint = !result.wasAllMode;
 
     if (result.processes.length === 0) {
-        console.log(pc.dim("  No processes with swap usage found among the scanned set.\n"));
+        out.print(pc.dim("  No processes with swap usage found among the scanned set.\n"));
 
         if (showAllHint) {
-            console.log(pc.dim(`  Try ${pc.cyan("tools macos swap --all")} to scan every process (slow).\n`));
+            out.print(pc.dim(`  Try ${pc.cyan("tools macos swap --all")} to scan every process (slow).\n`));
         }
 
         return;
@@ -128,15 +129,15 @@ export function renderResult(result: ScanResult, top: number): void {
         ]);
     }
 
-    console.log(table.toString());
-    console.log();
+    out.print(table.toString());
+    out.print();
 
     const totalSwap = sorted.reduce((acc, p) => acc + p.swapBytes, 0);
     const trailing = showAllHint
         ? `${pc.dim("  ·  Run ")}${pc.cyan("tools macos swap --all")}${pc.dim(" to scan everything")}`
         : "";
-    console.log(`${pc.dim(`  Top-${sorted.length} swap total: `)}${pc.white(formatBytes(totalSwap))}${trailing}`);
-    console.log();
+    out.print(`${pc.dim(`  Top-${sorted.length} swap total: `)}${pc.white(formatBytes(totalSwap))}${trailing}`);
+    out.print();
 }
 
 export function renderJson(result: ScanResult): void {
