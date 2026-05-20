@@ -1,4 +1,5 @@
 import { formatBytes } from "@app/utils/format";
+import { escapeShellArg } from "@app/utils/string";
 import { formatTable } from "@app/utils/table";
 import pc from "picocolors";
 import {
@@ -199,7 +200,7 @@ export class TableRenderer implements CloneRenderer {
             );
             // Shell-quote each root so the suggested command is copy-pasteable
             // even when paths contain spaces, quotes, or shell metachars.
-            const quotedRoots = r.roots.map((p) => `'${p.replace(/'/g, "'\\''")}'`).join(" ");
+            const quotedRoots = r.roots.map(escapeShellArg).join(" ");
             lines.push(pc.dim(`tools macos clones optimize --apply --yes ${quotedRoots}`));
         } else {
             lines.push(
