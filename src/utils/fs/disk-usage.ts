@@ -683,16 +683,32 @@ export async function findDuplicateFiles(root: string, opts: FindDuplicatesOptio
         // Clone-family pre-filter. Key = "id:<hex>" for real clone families,
         // "solo:<idx>" for files without a clone-id (each treated as its own
         // singleton family so they all get hashed).
+        //
+        // Cache short-circuit: if the file-meta cache has a row for this path
+        // with matching (size, mtimeNs), the cached cloneId is authoritative
+        // — (size, mtime) unchanged means inode unchanged means clone_id
+        // unchanged. Saves one getattrlist syscall per file per bucket.
         const byClone = new Map<string, string[]>();
+        const cloneIdByPath = new Map<string, string>();
         for (let i = 0; i < paths.length; i++) {
-            cloneIdCalls += 1;
-            const id = getCloneId(paths[i]);
-            const key = id !== null && id !== 0n ? `id:${id.toString(16)}` : `solo:${i}`;
+            const p = paths[i];
+            const mtimeNs = mtimeByPath.get(p);
+            const hit = cache?.get(p);
+            let cloneIdHex: string;
+            if (hit && mtimeNs !== undefined && hit.size === BigInt(size) && hit.mtimeNs === mtimeNs) {
+                cloneIdHex = hit.cloneId;
+            } else {
+                cloneIdCalls += 1;
+                const id = getCloneId(p);
+                cloneIdHex = id !== null && id !== 0n ? id.toString(16) : "";
+            }
+            cloneIdByPath.set(p, cloneIdHex);
+            const key = cloneIdHex !== "" ? `id:${cloneIdHex}` : `solo:${i}`;
             const arr = byClone.get(key);
             if (arr) {
-                arr.push(paths[i]);
+                arr.push(p);
             } else {
-                byClone.set(key, [paths[i]]);
+                byClone.set(key, [p]);
             }
         }
 
@@ -730,15 +746,11 @@ export async function findDuplicateFiles(root: string, opts: FindDuplicatesOptio
                 sha256Bytes += size;
                 h = sha256File(p, signal !== undefined ? { signal } : {});
                 if (cache && mtimeNs !== undefined) {
-                    // cloneId reuse is deferred to a follow-up phase — for now
-                    // we always recompute getCloneId in the pre-filter loop
-                    // (above) and store '' here. Storing the real cloneId
-                    // here would let a future patch wire the pre-filter cache.
                     cache.set(p, {
                         size: BigInt(size),
                         mtimeNs,
                         sha256: h,
-                        cloneId: "",
+                        cloneId: cloneIdByPath.get(p) ?? "",
                         lastSeenAt: 0,
                     });
                 }

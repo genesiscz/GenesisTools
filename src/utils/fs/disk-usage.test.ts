@@ -150,6 +150,54 @@ describe("duplicate detection", () => {
         }
     });
 
+    it("caches cloneId and reuses it on warm scans (skips getCloneId)", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-fmc-clone-"));
+        try {
+            const payload = Buffer.alloc(64_000, 0xab);
+            writeFileSync(join(dir, "one.bin"), payload);
+            writeFileSync(join(dir, "two.bin"), payload);
+
+            type Entry = {
+                size: bigint;
+                mtimeNs: bigint;
+                sha256: string;
+                cloneId: string;
+                lastSeenAt: number;
+            };
+            const mem = new Map<string, Entry>();
+            const fakeCache = {
+                get: (p: string) => mem.get(p) ?? null,
+                set: (p: string, e: Entry) => {
+                    mem.set(p, e);
+                },
+            };
+
+            await findDuplicateFiles(dir, { cache: fakeCache });
+            expect(mem.size).toBe(2);
+            const one = mem.get(join(dir, "one.bin"));
+            expect(one).toBeDefined();
+            const { getCloneId } = await import("@app/utils/macos/apfs");
+            const freshOne = getCloneId(join(dir, "one.bin"));
+            const expectedOne = freshOne !== null && freshOne !== 0n ? freshOne.toString(16) : "";
+            expect(one?.cloneId).toBe(expectedOne);
+
+            const oneKey = join(dir, "one.bin");
+            const twoKey = join(dir, "two.bin");
+            const two = mem.get(twoKey);
+            // Poison both files to share the SAME sentinel cloneId. If the
+            // pre-filter consults the cache, byClone.size == 1 → bucket gets
+            // dropped (treated as already-cloned family) → no duplicate
+            // reported. If it ignores the cache and calls getCloneId fresh,
+            // it sees the real divergent ids and still reports the duplicate.
+            mem.set(oneKey, { ...(one as Entry), cloneId: "deadbeef" });
+            mem.set(twoKey, { ...(two as Entry), cloneId: "deadbeef" });
+            const warm = await findDuplicateFiles(dir, { cache: fakeCache });
+            expect(warm.length).toBe(0); // sentinel proves the cache fires
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
     it("reuses cached sha256 on warm scan; sentinel sha proves the comparison fires", async () => {
         const dir = mkdtempSync(join(tmpdir(), "gt-fmc-"));
         try {
