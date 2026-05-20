@@ -311,6 +311,21 @@ async function main(): Promise<void> {
         const message = error instanceof Error ? error.message : String(error);
         p.log.error(message);
         process.exit(1);
+    } finally {
+        // sendViaDarwinKit() spawns a long-lived Swift child via the
+        // module-level singleton in @app/utils/macos/darwinkit. Without
+        // closeDarwinKit() here, the child's stdio pipes keep Node's event
+        // loop alive forever — a single `tools notify` invocation leaks
+        // both processes. Defense in depth alongside the SDK's unref() +
+        // exit reaper.
+        try {
+            const { closeDarwinKit, hasDarwinKit } = await import("@app/utils/macos");
+            if (hasDarwinKit()) {
+                closeDarwinKit();
+            }
+        } catch {
+            // DarwinKit not used in this invocation; ignore
+        }
     }
 }
 
