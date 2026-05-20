@@ -114,10 +114,17 @@ export const createLogger = (options: LoggerOptions = {}): pino.Logger => {
 
     // Console stream
     if (process.stdout && typeof process.stdout.write === "function") {
-        // Auto-route to stderr when stdin is piped + a CLI arg of "mcp" is present, OR LOG_STDERR=1.
-        // This protects MCP stdio JSON-RPC frames on stdout from being polluted by log output.
+        // Auto-route to stderr in three cases:
+        //   1. LOG_STDERR=1 — explicit override
+        //   2. MCP mode (stdin piped + "mcp" arg) — protect JSON-RPC frames
+        //   3. stdout is NOT a TTY (i.e., output is being piped/redirected) — protect
+        //      any structured payload the tool is emitting (JSON to `jq`, tables to a
+        //      file, etc.). When stdout IS a TTY (interactive terminal), keep logs on
+        //      stdout where the user sees them inline with the report.
         const useStderr =
-            process.env.LOG_STDERR === "1" || (process.argv.some((arg) => arg === "mcp") && !process.stdin.isTTY);
+            process.env.LOG_STDERR === "1" ||
+            (process.argv.some((arg) => arg === "mcp") && !process.stdin.isTTY) ||
+            process.stdout.isTTY !== true;
         const prettyOptions: PinoPretty.PrettyOptions = {
             sync,
             colorize: isTerminal,
