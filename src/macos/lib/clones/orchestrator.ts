@@ -1,13 +1,13 @@
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, relative, resolve } from "node:path";
+import { basename, dirname, relative, resolve } from "node:path";
 import logger from "@app/logger";
 import { formatBytes } from "@app/utils/format";
-import { type DiskUsage, findCloneFamilies, freeDiskSpace, walkFiles } from "@app/utils/fs/disk-usage";
+import { type DiskUsage, freeDiskSpace, walkFiles, type WalkError } from "@app/utils/fs/disk-usage";
 import { getCloneId, getPrivateSize } from "@app/utils/macos/apfs";
 import { Stopwatch } from "@app/utils/Stopwatch";
-import { matchGlob } from "@app/utils/string";
+import { passesGlobs } from "./filters";
 import type { CloneAnalysis, DirNode, MeasureReport } from "./render/types";
 
 const log = logger.child({ component: "clones:orchestrator" });
@@ -69,8 +69,10 @@ interface MutNode {
     depth: number;
     logical: number;
     allocated: number;
+    /** null = no per-file `private` value was ever contributed; once any file
+     *  contributes, this becomes a (non-null) running sum. Distinguishes
+     *  "unsupported" from "supported but zero". */
     real: number | null;
-    realSeen: boolean;
     /** Sum of (allocated - private) for files in this subtree whose clone-id
      *  has only ONE in-tree member (i.e. the sharing partner lives outside the
      *  measured roots — typically the bun install cache). */
@@ -84,8 +86,7 @@ function emptyNode(path: string, depth: number): MutNode {
         depth,
         logical: 0,
         allocated: 0,
-        real: 0,
-        realSeen: false,
+        real: null,
         crossTreeShared: 0,
         children: new Map(),
     };
@@ -99,21 +100,66 @@ interface CrossTreeData {
     loneCloneIds: Set<string>;
 }
 
-/** First pass: build path → cross-tree-shared bytes + the lone clone-id set.
- *  Cross-tree = the clone-id appears EXACTLY once in the measured roots, so
- *  the family's other members are external. shared = allocated - private for
- *  those lone in-tree files. */
-function detectCrossTreeShared(roots: string[]): CrossTreeData {
-    const byCloneId = new Map<string, { path: string; allocated: number; priv: number }[]>();
+/** Per-file record materialised by the single walk. Carries the two
+ *  getattrlist attrs alongside the regular logical/allocated sizes so the
+ *  downstream reductions (cross-tree, tree-build, clone-analysis) don't have
+ *  to re-walk or re-syscall. `cloneId`/`priv` are null when getattrlist
+ *  returned an error (off-darwin or syscall failure for that path). */
+interface EnrichedEntry {
+    path: string;
+    logical: number;
+    allocated: number;
+    cloneId: bigint | null;
+    priv: number | null;
+}
+
+interface RootRecords {
+    entries: EnrichedEntry[];
+    errors: WalkError[];
+}
+
+/** Single walk per root. Captures (logical, allocated, cloneId, priv) per
+ *  file in one pass — no filters applied here so the cross-tree pass that
+ *  follows can see the full picture. Includes are honoured later when each
+ *  per-root record set is folded into the per-dir tree + totals. */
+function gatherEnrichedRecords(roots: string[]): Map<string, RootRecords> {
+    const out = new Map<string, RootRecords>();
+    let totalEntries = 0;
     for (const root of roots) {
-        for (const e of walkFiles(root, { onError: (err) => log.debug({ err }, "cross-tree walk") })) {
-            const id = getCloneId(e.path);
-            if (id === null || id === 0n) {
+        const errors: WalkError[] = [];
+        const entries: EnrichedEntry[] = [];
+        for (const e of walkFiles(root, { onError: (err) => errors.push(err) })) {
+            entries.push({
+                path: e.path,
+                logical: e.logical,
+                allocated: e.allocated,
+                cloneId: getCloneId(e.path),
+                priv: getPrivateSize(e.path),
+            });
+        }
+
+        out.set(root, { entries, errors });
+        totalEntries += entries.length;
+    }
+
+    log.debug({ rootCount: roots.length, totalEntries }, "enriched records gathered");
+    return out;
+}
+
+/** Build path → cross-tree-shared bytes + the lone clone-id set, from already
+ *  materialised records. Cross-tree = the clone-id appears EXACTLY once in
+ *  the measured roots, so the family's other members are external.
+ *  shared = allocated - private for those lone in-tree files. */
+function detectCrossTreeShared(records: Map<string, RootRecords>): CrossTreeData {
+    const byCloneId = new Map<string, { path: string; allocated: number; priv: number }[]>();
+    for (const { entries } of records.values()) {
+        for (const e of entries) {
+            if (e.cloneId === null || e.cloneId === 0n) {
                 continue;
             }
 
-            const key = id.toString(16);
-            const priv = getPrivateSize(e.path) ?? e.allocated;
+            const key = e.cloneId.toString(16);
+            const priv = e.priv ?? e.allocated;
             const list = byCloneId.get(key) ?? [];
             list.push({ path: e.path, allocated: e.allocated, priv });
             byCloneId.set(key, list);
@@ -233,45 +279,29 @@ function findCrossTreePartners(loneIds: Set<string>): string[] {
     return [...partnerDirs].sort();
 }
 
-function anySegmentMatches(rel: string, glob: string): boolean {
-    if (matchGlob(rel, glob)) {
-        return true;
-    }
-
-    for (const seg of rel.split("/")) {
-        if (matchGlob(seg, glob)) {
-            return true;
-        }
-    }
-
-    return false;
-}
-
-function passesGlobs(rel: string, base: string, include?: string[], exclude?: string[]): boolean {
-    if (exclude?.some((g) => anySegmentMatches(rel, g) || matchGlob(base, g))) {
-        return false;
-    }
-
-    if (include && include.length > 0) {
-        return include.some((g) => anySegmentMatches(rel, g) || matchGlob(base, g));
-    }
-
-    return true;
-}
-
 interface WalkRootResult {
     /** Per-dir aggregation tree. Only meaningful when args.breakdown is true. */
     tree: MutNode;
-    /** Whole-root DiskUsage aggregate. Replaces the separate measureTree(root)
-     *  call so we only walk the FS once per root (was 2x — perf win on large
-     *  trees where each walk pays for thousands of getattrlist syscalls). */
+    /** Whole-root DiskUsage aggregate. Populated in the same pass as `tree`. */
     aggregate: DiskUsage;
+    /** True iff at least one INCLUDED file in this root had `priv === null`.
+     *  Distinct from `aggregate.private === null`, which is set only when
+     *  EVERY included file had null priv; this catches the mixed-null case
+     *  where 999/1000 files have priv and 1 doesn't (the running sum is then
+     *  a misleading partial). */
+    privateUnknown: boolean;
 }
 
-/** Single-pass walk: collect both the per-dir tree AND the whole-root DiskUsage
- *  aggregate. Honors include/exclude — so the TOTAL line matches the displayed
- *  tree (previously the totals ignored filters, which was confusing). */
-function walkRoot(root: string, args: BuildMeasureArgs, crossTreeShared: Map<string, number>): WalkRootResult {
+/** Fold an already-materialised RootRecords into the per-dir tree AND the
+ *  whole-root DiskUsage aggregate. Honors include/exclude so the TOTAL line
+ *  matches the displayed tree exactly (a filtered-out file contributes to
+ *  neither). */
+function walkRoot(
+    root: string,
+    records: RootRecords,
+    args: BuildMeasureArgs,
+    crossTreeShared: Map<string, number>
+): WalkRootResult {
     const rootNode = emptyNode(root, 0);
     const aggregate: DiskUsage = {
         logical: 0,
@@ -280,22 +310,22 @@ function walkRoot(root: string, args: BuildMeasureArgs, crossTreeShared: Map<str
         exactReclaimable: null,
         fileCount: 0,
         dirCount: 0,
-        errors: [],
+        errors: records.errors,
     };
-    let privateSum = 0;
-    let privateSeen = false;
+    let privateSum: number | null = null;
+    let privateUnknown = false;
     const dirs = new Set<string>();
     const rootKey = root.endsWith("/") ? root.slice(0, -1) : root;
 
-    for (const e of walkFiles(root, { onError: (err) => aggregate.errors.push(err) })) {
+    for (const e of records.entries) {
         const rel = relative(root, e.path);
-        if (!passesGlobs(rel, e.path.split("/").pop() ?? "", args.include, args.exclude)) {
+        if (!passesGlobs(rel, args.include, args.exclude, basename(e.path))) {
             continue;
         }
 
         const parts = dirname(rel) === "." ? [] : dirname(rel).split("/");
 
-        const priv = getPrivateSize(e.path);
+        const priv = e.priv;
         const fileShared = crossTreeShared.get(e.path) ?? 0;
 
         // Whole-root aggregate (always populated, even when !args.breakdown).
@@ -307,9 +337,10 @@ function walkRoot(root: string, args: BuildMeasureArgs, crossTreeShared: Map<str
             dirs.add(parent);
         }
 
-        if (priv !== null) {
-            privateSeen = true;
-            privateSum += priv;
+        if (priv === null) {
+            privateUnknown = true;
+        } else {
+            privateSum = (privateSum ?? 0) + priv;
         }
 
         // Per-dir tree (populated regardless of breakdown — the root node
@@ -321,7 +352,6 @@ function walkRoot(root: string, args: BuildMeasureArgs, crossTreeShared: Map<str
         node.crossTreeShared += fileShared;
         if (priv !== null) {
             node.real = (node.real ?? 0) + priv;
-            node.realSeen = true;
         }
 
         // Stop CREATING child nodes past maxDepth, but the totals above were
@@ -346,7 +376,6 @@ function walkRoot(root: string, args: BuildMeasureArgs, crossTreeShared: Map<str
             child.crossTreeShared += fileShared;
             if (priv !== null) {
                 child.real = (child.real ?? 0) + priv;
-                child.realSeen = true;
             }
 
             node = child;
@@ -354,9 +383,9 @@ function walkRoot(root: string, args: BuildMeasureArgs, crossTreeShared: Map<str
     }
 
     aggregate.dirCount = dirs.size;
-    aggregate.private = privateSeen ? privateSum : null;
+    aggregate.private = privateSum;
     aggregate.exactReclaimable = aggregate.private;
-    return { tree: rootNode, aggregate };
+    return { tree: rootNode, aggregate, privateUnknown };
 }
 
 /** Deepest-significant keep rule (spec §5): keep D iff real(D) > minReal;
@@ -369,7 +398,7 @@ function pruneTree(node: MutNode, minReal: number): DirNode[] {
         keptChildren.push(...pruneTree(child, minReal));
     }
 
-    const real = node.realSeen ? (node.real ?? 0) : null;
+    const real = node.real;
     const childRealSum = keptChildren.reduce((s, c) => s + (c.real ?? 0), 0);
     const ownReal = real === null ? null : real - childRealSum;
     const significant = real !== null && real > minReal;
@@ -389,7 +418,15 @@ function pruneTree(node: MutNode, minReal: number): DirNode[] {
         return keptChildren;
     }
 
-    const overcount = real !== null && real > 0 ? node.allocated / real : real === 0 ? 1 : null;
+    let overcount: number | null;
+    if (real === null) {
+        overcount = null;
+    } else if (real === 0) {
+        overcount = 1;
+    } else {
+        overcount = node.allocated / real;
+    }
+
     return [
         {
             path: node.path,
@@ -409,29 +446,69 @@ function pruneTree(node: MutNode, minReal: number): DirNode[] {
 }
 
 function buildCloneAnalysis(
-    roots: string[],
+    records: Map<string, RootRecords>,
     crossTree: CrossTreeData,
+    args: BuildMeasureArgs,
     opts: { probePartners: boolean }
 ): CloneAnalysis {
-    let families = 0;
-    let clonedFiles = 0;
-    for (const root of roots) {
-        const fams = findCloneFamilies(root);
-        families += fams.size;
-        for (const members of fams.values()) {
-            clonedFiles += members.length;
+    // Single fold: family detection AND sharedBytes summing in one record
+    // pass. `passing` tracks whether the file would survive the user's
+    // include/exclude filters — the reported counts/bytes must match the
+    // filtered tree+totals or the output is self-contradictory.
+    //
+    // Cross-tree DETECTION upstream stays unfiltered (lone-family detection
+    // needs the full picture to distinguish in-tree from cross-tree families).
+    // What we filter here is the REPORT.
+    const familyMembers = new Map<string, { total: number; passing: number }>();
+    // Lone clone-ids whose lone in-tree member passes the user's filters.
+    // Partner probing + the "rerun with --show-partners" count must use this
+    // subset, not the unfiltered crossTree.loneCloneIds — otherwise probing
+    // could surface partners for families the user just filtered out.
+    const visibleLoneCloneIds = new Set<string>();
+    let sharedBytes = 0;
+    for (const [root, { entries }] of records) {
+        for (const e of entries) {
+            const rel = relative(root, e.path);
+            const passing = passesGlobs(rel, args.include, args.exclude, basename(e.path));
+            if (e.cloneId !== null && e.cloneId !== 0n) {
+                const key = e.cloneId.toString(16);
+                const acc = familyMembers.get(key) ?? { total: 0, passing: 0 };
+                acc.total += 1;
+                if (passing) {
+                    acc.passing += 1;
+                    if (crossTree.loneCloneIds.has(key)) {
+                        visibleLoneCloneIds.add(key);
+                    }
+                }
+
+                familyMembers.set(key, acc);
+            }
+
+            if (passing) {
+                sharedBytes += crossTree.sharedByPath.get(e.path) ?? 0;
+            }
         }
     }
 
-    let sharedBytes = 0;
-    for (const v of crossTree.sharedByPath.values()) {
-        sharedBytes += v;
+    let families = 0;
+    let clonedFiles = 0;
+    for (const acc of familyMembers.values()) {
+        // A clone family requires ≥2 members in the full tree (otherwise it's
+        // a stale cloneId on a lone file). Then we surface only those families
+        // with at least one filter-visible member, and count just the visible
+        // members so the report matches what the user actually sees.
+        if (acc.total < 2 || acc.passing === 0) {
+            continue;
+        }
+
+        families += 1;
+        clonedFiles += acc.passing;
     }
 
     // Probe is OFF by default — bun cache can be GB and the walk would add
     // seconds to every measure on a real `node_modules` tree. Opt-in via
     // `--show-partners` when the user actually wants the WHERE info.
-    const crossTreePartners = opts.probePartners ? findCrossTreePartners(crossTree.loneCloneIds) : [];
+    const crossTreePartners = opts.probePartners ? findCrossTreePartners(visibleLoneCloneIds) : [];
 
     const notes: string[] = [];
     if (sharedBytes > 0) {
@@ -444,9 +521,9 @@ function buildCloneAnalysis(
                 `partner(s) located in: ${crossTreePartners.slice(0, 3).join(", ")}` +
                     (crossTreePartners.length > 3 ? ` (+${crossTreePartners.length - 3} more)` : "")
             );
-        } else if (!opts.probePartners && crossTree.loneCloneIds.size > 0) {
+        } else if (!opts.probePartners && visibleLoneCloneIds.size > 0) {
             notes.push(
-                `${crossTree.loneCloneIds.size} clone family(ies) have partners outside the scan — rerun with --show-partners to locate them.`
+                `${visibleLoneCloneIds.size} clone family(ies) have partners outside the scan — rerun with --show-partners to locate them.`
             );
         }
     }
@@ -471,25 +548,46 @@ export function buildMeasureReport(args: BuildMeasureArgs): MeasureReport {
         dirCount: 0,
         errors: [],
     };
-    let realSeen = false;
+    let privateUnknown = false;
     const tree: DirNode[] = [];
 
+    // Materialise once → reduce three times. Each root is walked exactly once;
+    // each file pays for exactly one getCloneId + one getPrivateSize. The three
+    // downstream passes (cross-tree, tree-build, clone-analysis) consume the
+    // resulting records map without touching the filesystem.
+    const swWalk = new Stopwatch();
+    const records = gatherEnrichedRecords(args.roots);
+    const walkMs = Math.round(swWalk.elapsedMs);
+
     const swCross = new Stopwatch();
-    const crossTree = detectCrossTreeShared(args.roots);
+    const crossTree = detectCrossTreeShared(records);
     const crossTreeMs = Math.round(swCross.elapsedMs);
 
     for (const root of args.roots) {
-        // Single walk per root — produces both the totals and (when breakdown
-        // is requested) the per-dir tree. Previously each call to measureTree
-        // + buildRootTree was a separate full FS walk doing the same getattrlist
-        // syscalls twice.
-        const { tree: rootMut, aggregate: u } = walkRoot(root, args, crossTree.sharedByPath);
+        const rootRecs = records.get(root);
+        if (!rootRecs) {
+            continue;
+        }
+
+        const { tree: rootMut, aggregate: u, privateUnknown: rootPrivateUnknown } = walkRoot(
+            root,
+            rootRecs,
+            args,
+            crossTree.sharedByPath
+        );
         totalsAgg.logical += u.logical;
         totalsAgg.allocated += u.allocated;
         totalsAgg.fileCount += u.fileCount;
         totalsAgg.dirCount += u.dirCount;
+        if (rootPrivateUnknown) {
+            // Any included file with priv === null taints the total — a
+            // partial sum would underreport reclaim while looking definitive.
+            // Catches both the all-null case AND the mixed-null case (one
+            // file's priv missing among many).
+            privateUnknown = true;
+        }
+
         if (u.private !== null) {
-            realSeen = true;
             totalsAgg.private = (totalsAgg.private ?? 0) + u.private;
         }
 
@@ -500,13 +598,18 @@ export function buildMeasureReport(args: BuildMeasureArgs): MeasureReport {
         }
     }
 
-    const totalReal = realSeen ? totalsAgg.private : null;
+    const totalReal = privateUnknown ? null : totalsAgg.private;
     const totalOvercount = totalReal !== null && totalReal > 0 ? totalsAgg.allocated / totalReal : null;
     const fs = freeDiskSpace(args.roots[0]);
     const sorted = args.breakdown ? sortTree(tree, args.sort ?? "overcount") : [];
     const swPartners = new Stopwatch();
-    const cloneAnalysis = buildCloneAnalysis(args.roots, crossTree, { probePartners: Boolean(args.probePartners) });
+    const cloneAnalysis = buildCloneAnalysis(records, crossTree, args, { probePartners: Boolean(args.probePartners) });
     const partnerProbeMs = args.probePartners ? Math.round(swPartners.elapsedMs) : 0;
+
+    let recordCount = 0;
+    for (const { entries } of records.values()) {
+        recordCount += entries.length;
+    }
 
     log.info(
         {
@@ -515,8 +618,10 @@ export function buildMeasureReport(args: BuildMeasureArgs): MeasureReport {
             breakdown: args.breakdown,
             probePartners: Boolean(args.probePartners),
             totalMs: Math.round(sw.elapsedMs),
+            walkMs,
             crossTreeDetectMs: crossTreeMs,
             partnerProbeMs,
+            recordCount,
             loneCloneIds: crossTree.loneCloneIds.size,
             sharedBytes: cloneAnalysis.sharedBytes,
             partners: cloneAnalysis.crossTreePartners.length,
