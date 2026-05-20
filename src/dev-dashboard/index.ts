@@ -75,9 +75,26 @@ async function runUiServer(): Promise<void> {
     // throws, the already-spawned Vite child would be orphaned. Kill it here.
     let frontProxy: ReturnType<typeof startFrontProxy>;
 
+    const internalUrl = `http://127.0.0.1:${internalPort}/`;
+    logger.info({ internalPort, publicPort: port }, "waiting for Vite before binding public front-proxy port");
+
+    const viteReady = await waitForUrlReady(internalUrl, 90_000);
+
+    if (!viteReady.ready) {
+        try {
+            child.kill("SIGTERM");
+        } catch (killErr) {
+            logger.debug({ err: killErr }, "failed terminating Vite after readiness timeout");
+        }
+
+        logger.error({ internalUrl, detail: viteReady.detail }, "Vite did not become ready");
+        process.exit(1);
+    }
+
     try {
         const bindHost = process.env.DASHBOARD_BIND_HOST ?? "0.0.0.0";
         frontProxy = startFrontProxy({ publicPort: port, internalPort, hostname: bindHost });
+        logger.info({ publicPort: port, internalPort }, "front proxy listening — upstream Vite is ready");
     } catch (err) {
         try {
             child.kill("SIGTERM");
@@ -168,7 +185,7 @@ const devDashboardApp = defineDashboardApp({
         cmd: [process.execPath, process.argv[1], "__ui-server"],
         cwd: PROJECT_ROOT,
     },
-    readiness: { kind: "http", path: "/" },
+    readiness: { kind: "http", path: "/", timeoutMs: 90_000 },
     openBrowser: { enabled: false },
     launchd: { available: true },
 });
