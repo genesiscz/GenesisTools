@@ -1,5 +1,7 @@
 #!/usr/bin/env bun
+import "./log-policy";
 import logger from "@app/logger";
+import { addGlobalVerboseOption } from "@app/utils/cli/commander";
 import { Command } from "commander";
 import { registerConfigCommand } from "./commands/config";
 import { registerDaemonCommand } from "./commands/daemon";
@@ -36,6 +38,8 @@ registerDaemonCommand(program);
 registerMigrateCommand(program);
 registerWarmupCommand(program);
 registerMcpCommand(program);
+
+addGlobalVerboseOption(program);
 
 async function main(): Promise<void> {
     try {
