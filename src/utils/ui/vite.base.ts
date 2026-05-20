@@ -123,10 +123,13 @@ function deriveWatchDirs(root: string, appDir: string, extraDirs: string[]): str
         rootRelativeToApp !== ".." &&
         !rootRelativeToApp.startsWith(`..${sep}`)
     ) {
-        const toolName = rootRelativeToApp.split(/[\\/]/)[0];
+        const withoutUi = rootRelativeToApp.replace(/[\\/]ui$/, "");
+        const withoutAppsWeb = withoutUi.replace(/[\\/]apps[\\/]web$/, "");
+        const toolRel =
+            withoutAppsWeb !== withoutUi || withoutUi !== rootRelativeToApp ? withoutAppsWeb : rootRelativeToApp.split(/[\\/]/)[0];
 
-        if (toolName) {
-            const toolDir = resolve(appDir, toolName);
+        if (toolRel) {
+            const toolDir = resolve(appDir, toolRel);
 
             if (toolDir !== root && existsSync(toolDir)) {
                 dirs.push(toolDir);
@@ -294,6 +297,23 @@ export function createDashboardViteConfig({
         ssr: {
             external: ["node:async_hooks", "bun"],
         },
+        ...(tanstackStartOptions !== false
+            ? {
+                  environments: {
+                      ssr: {
+                          optimizeDeps: {
+                              include: [
+                                  "react",
+                                  "react-dom",
+                                  "react-dom/server",
+                                  "react/jsx-runtime",
+                                  "react/jsx-dev-runtime",
+                              ],
+                          },
+                      },
+                  },
+              }
+            : {}),
         ...rest,
     }) as UserConfig;
 }
