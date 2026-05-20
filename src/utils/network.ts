@@ -1,5 +1,5 @@
 import { createServer } from "node:net";
-import { networkInterfaces } from "node:os";
+import { networkInterfaces, userInfo } from "node:os";
 
 /**
  * Returns the first non-internal IPv4 address (LAN IP).
@@ -44,4 +44,67 @@ export async function isPortInUse(port: number, host = "127.0.0.1"): Promise<boo
             });
         });
     });
+}
+
+export interface PortOwner {
+    pid: number;
+    command: string;
+    /** True when the owning process runs as the current user (and is therefore signal-able). */
+    sameUser: boolean;
+}
+
+/**
+ * Find who's listening on a TCP port. Returns null when nothing is listening
+ * or the OS doesn't expose it to us. macOS/Linux use `lsof`. Windows is
+ * unsupported for now (returns null) — most DashboardApp consumers are
+ * macOS-only anyway.
+ */
+export async function getPortOwner(port: number): Promise<PortOwner | null> {
+    if (process.platform === "win32") {
+        return null;
+    }
+
+    // /usr/sbin/lsof on macOS; some sandboxed PATHs don't include /usr/sbin.
+    const lsofBinary = process.platform === "darwin" ? "/usr/sbin/lsof" : "lsof";
+    const lsofProc = Bun.spawn([lsofBinary, "-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-t"], {
+        stdout: "pipe",
+        stderr: "pipe",
+    });
+    const lsofOut = await new Response(lsofProc.stdout).text();
+    await lsofProc.exited;
+
+    const pid = Number.parseInt(
+        lsofOut
+            .split("\n")
+            .map((line) => line.trim())
+            .find((line) => line.length > 0) ?? "",
+        10
+    );
+    if (Number.isNaN(pid) || pid <= 0) {
+        return null;
+    }
+
+    const psProc = Bun.spawn(["ps", "-p", String(pid), "-o", "command=,uid="], {
+        stdout: "pipe",
+        stderr: "pipe",
+    });
+    const psOut = (await new Response(psProc.stdout).text()).trim();
+    await psProc.exited;
+
+    if (!psOut) {
+        return { pid, command: "(unknown)", sameUser: false };
+    }
+
+    // `ps -p N -o command=,uid=` prints "<cmd...> <uid>" — uid is the last token.
+    const lastSpace = psOut.lastIndexOf(" ");
+    let command = psOut;
+    let uid = Number.NaN;
+    if (lastSpace > 0) {
+        command = psOut.slice(0, lastSpace).trim();
+        uid = Number.parseInt(psOut.slice(lastSpace + 1).trim(), 10);
+    }
+
+    const myUid = userInfo().uid;
+
+    return { pid, command, sameUser: !Number.isNaN(uid) && uid === myUid };
 }

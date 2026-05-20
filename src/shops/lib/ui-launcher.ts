@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { PROJECT_ROOT } from "@app/utils/paths";
+import { spawnDashboard } from "@app/utils/process/spawnDashboard";
 
 export interface UiLauncherPaths {
     uiDir: string;
@@ -46,18 +47,16 @@ export async function launchShopsDashboard(opts: UiLaunchOptions = {}): Promise<
     process.stdout.write(`Starting Shops dashboard at ${url} ...\n`);
     process.stdout.write("(first start can take a few seconds; output below comes from Vite)\n\n");
 
-    const child = Bun.spawn(["bun", "--bun", paths.viteEntry, "dev", "-c", paths.configPath, "--strictPort"], {
-        cwd: PROJECT_ROOT,
-        stdio: ["inherit", "inherit", "inherit"],
-        env: { ...process.env, SHOPS_PROJECT_CWD: process.cwd() },
-    });
-
     const openTimer = setTimeout(() => {
         openBrowser(url);
     }, 2000);
 
     try {
-        return await child.exited;
+        return await spawnDashboard({
+            cmd: ["bun", "--bun", paths.viteEntry, "dev", "-c", paths.configPath, "--strictPort"],
+            cwd: PROJECT_ROOT,
+            env: { SHOPS_PROJECT_CWD: process.cwd() },
+        });
     } finally {
         clearTimeout(openTimer);
     }
