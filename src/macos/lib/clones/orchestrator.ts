@@ -1,13 +1,13 @@
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, relative, resolve } from "node:path";
+import { basename, dirname, relative, resolve } from "node:path";
 import logger from "@app/logger";
 import { formatBytes } from "@app/utils/format";
 import { type DiskUsage, findCloneFamilies, freeDiskSpace, walkFiles } from "@app/utils/fs/disk-usage";
 import { getCloneId, getPrivateSize } from "@app/utils/macos/apfs";
 import { Stopwatch } from "@app/utils/Stopwatch";
-import { matchGlob } from "@app/utils/string";
+import { passesGlobs } from "./filters";
 import type { CloneAnalysis, DirNode, MeasureReport } from "./render/types";
 
 const log = logger.child({ component: "clones:orchestrator" });
@@ -234,32 +234,6 @@ function findCrossTreePartners(loneIds: Set<string>): string[] {
     return [...partnerDirs].sort();
 }
 
-function anySegmentMatches(rel: string, glob: string): boolean {
-    if (matchGlob(rel, glob)) {
-        return true;
-    }
-
-    for (const seg of rel.split("/")) {
-        if (matchGlob(seg, glob)) {
-            return true;
-        }
-    }
-
-    return false;
-}
-
-function passesGlobs(rel: string, base: string, include?: string[], exclude?: string[]): boolean {
-    if (exclude?.some((g) => anySegmentMatches(rel, g) || matchGlob(base, g))) {
-        return false;
-    }
-
-    if (include && include.length > 0) {
-        return include.some((g) => anySegmentMatches(rel, g) || matchGlob(base, g));
-    }
-
-    return true;
-}
-
 interface WalkRootResult {
     /** Per-dir aggregation tree. Only meaningful when args.breakdown is true. */
     tree: MutNode;
@@ -287,7 +261,7 @@ function walkRoot(root: string, args: BuildMeasureArgs, crossTreeShared: Map<str
 
     for (const e of walkFiles(root, { onError: (err) => aggregate.errors.push(err) })) {
         const rel = relative(root, e.path);
-        if (!passesGlobs(rel, e.path.split("/").pop() ?? "", args.include, args.exclude)) {
+        if (!passesGlobs(rel, args.include, args.exclude, basename(e.path))) {
             continue;
         }
 

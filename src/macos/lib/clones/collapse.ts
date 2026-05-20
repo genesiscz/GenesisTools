@@ -4,7 +4,7 @@ import { basename, dirname, join, relative, sep } from "node:path";
 import logger from "@app/logger";
 import { findDuplicateFiles } from "@app/utils/fs/disk-usage";
 import { Stopwatch } from "@app/utils/Stopwatch";
-import { matchGlob } from "@app/utils/string";
+import { passesGlobs } from "./filters";
 import type { DuplicateSet, DuplicatesReport } from "./render/types";
 
 const log = logger.child({ component: "clones:collapse" });
@@ -17,38 +17,6 @@ export interface CollapseArgs {
     include?: string[];
     /** Glob patterns: exclude files whose RELPATH or any path-segment matches (wins). */
     exclude?: string[];
-}
-
-function pathMatches(rel: string, glob: string): boolean {
-    if (matchGlob(rel, glob)) {
-        return true;
-    }
-
-    for (const seg of rel.split(sep)) {
-        if (matchGlob(seg, glob)) {
-            return true;
-        }
-    }
-
-    return false;
-}
-
-function passesFilters(
-    absPath: string,
-    root: string,
-    include: string[] | undefined,
-    exclude: string[] | undefined
-): boolean {
-    const rel = relative(root, absPath);
-    if (exclude && exclude.length > 0 && exclude.some((g) => pathMatches(rel, g))) {
-        return false;
-    }
-
-    if (include && include.length > 0) {
-        return include.some((g) => pathMatches(rel, g));
-    }
-
-    return true;
 }
 
 /** Which root contains `absPath`? Used to relativize for glob matching across
@@ -160,7 +128,7 @@ export function collapseDuplicates({ roots, minSize, include, exclude }: Collaps
                 (include && include.length > 0) || (exclude && exclude.length > 0)
                     ? g.paths.filter((p) => {
                           const containingRoot = rootOf(p, roots) ?? root;
-                          return passesFilters(p, containingRoot, include, exclude);
+                          return passesGlobs(relative(containingRoot, p), include, exclude);
                       })
                     : g.paths;
             if (filtered.length < 2) {
