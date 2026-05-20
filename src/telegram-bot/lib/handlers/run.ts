@@ -1,6 +1,6 @@
 import { listPresets } from "@app/automate/lib/storage";
 import { stripAnsi, truncateForTelegram } from "@app/telegram-bot/lib/formatting";
-import { runTool } from "@app/utils/cli/tools";
+import { execTool } from "@app/utils/cli/tools";
 import * as p from "@clack/prompts";
 import type { Bot } from "grammy";
 
@@ -23,7 +23,7 @@ export function registerRunCommand(bot: Bot): void {
 
         const presetName = args.split(/\s+/)[0];
         p.log.step(`/run → executing preset "${presetName}"`);
-        const result = await runTool(["automate", "run", presetName], { env: { NO_COLOR: "1" }, timeout: 120_000 });
+        const result = await execTool(["automate", "run", presetName], { env: { NO_COLOR: "1" }, timeout: 120_000 });
         const exitCode = result.exitCode;
         const output = stripAnsi(result.stdout + (result.stderr ? `\n${result.stderr}` : "")).trim();
 

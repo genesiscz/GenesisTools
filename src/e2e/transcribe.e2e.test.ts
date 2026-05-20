@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, unlinkSync, writeFileSync } from "node:fs";
-import { getOutput, runTool } from "@app/utils/e2e/helpers";
+import { execTool, getOutput } from "@app/utils/e2e/helpers";
 import { tmpPath } from "@app/utils/paths";
 
 const ZERO_BYTE_MP3 = tmpPath("e2e-empty.mp3");
@@ -15,13 +15,13 @@ describe("tools transcribe", () => {
 
     describe("help", () => {
         it("--help exits 0 and shows description", async () => {
-            const r = await runTool(["transcribe", "--help"]);
+            const r = await execTool(["transcribe", "--help"]);
             expect(r.exitCode).toBe(0);
             expect(r.stdout).toContain("Transcribe audio");
         });
 
         it("--help shows all options", async () => {
-            const r = await runTool(["transcribe", "--help"]);
+            const r = await execTool(["transcribe", "--help"]);
             for (const flag of ["--provider", "--local", "--format", "--lang", "--model", "--output", "--clipboard"]) {
                 expect(r.stdout).toContain(flag);
             }
@@ -30,7 +30,7 @@ describe("tools transcribe", () => {
 
     describe("error handling", () => {
         it("nonexistent file exits 1", async () => {
-            const r = await runTool(["transcribe", "/nonexistent/path.mp3", "--provider", "local-hf"]);
+            const r = await execTool(["transcribe", "/nonexistent/path.mp3", "--provider", "local-hf"]);
             expect(r.exitCode).toBe(1);
             expect(getOutput(r).toLowerCase()).toContain("not found");
         });
@@ -38,7 +38,7 @@ describe("tools transcribe", () => {
         it("unsupported extension exits 1", async () => {
             writeFileSync(UNSUPPORTED_FILE, "fake");
             try {
-                const r = await runTool(["transcribe", UNSUPPORTED_FILE, "--provider", "local-hf"]);
+                const r = await execTool(["transcribe", UNSUPPORTED_FILE, "--provider", "local-hf"]);
                 expect(r.exitCode).toBe(1);
                 expect(getOutput(r).toLowerCase()).toContain("unsupported");
             } finally {
@@ -48,7 +48,7 @@ describe("tools transcribe", () => {
 
         it("zero-byte mp3 exits 1", async () => {
             writeFileSync(ZERO_BYTE_MP3, "");
-            const r = await runTool(["transcribe", ZERO_BYTE_MP3, "--provider", "local-hf"]);
+            const r = await execTool(["transcribe", ZERO_BYTE_MP3, "--provider", "local-hf"]);
             expect(r.exitCode).toBe(1);
         });
     });

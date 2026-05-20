@@ -2,7 +2,8 @@
  * This tool is internal and probably not useful to you.
  */
 
-import logger from "@app/logger";
+import { asResult } from "@app/utils/cli/result";
+import { writeStdout } from "@app/utils/cli/stdout";
 
 interface Message {
     content: string;
@@ -56,4 +57,4 @@ const myInputJson: InputJson = {
 };
 
 const processedInfo = processMessages(myInputJson);
-logger.info(processedInfo);
+await writeStdout(asResult(processedInfo));

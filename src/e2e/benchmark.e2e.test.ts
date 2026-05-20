@@ -1,38 +1,38 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { getOutput, runTool } from "@app/utils/e2e/helpers";
+import { execTool, getOutput } from "@app/utils/e2e/helpers";
 import { skip } from "@app/utils/test/skip";
 
 describe.skipIf(skip.integration)("tools benchmark", () => {
     afterAll(async () => {
-        await runTool(["benchmark", "remove", "e2e-suite"]);
+        await execTool(["benchmark", "remove", "e2e-suite"]);
     });
 
     describe("help", () => {
         it("--help exits 0", async () => {
-            const r = await runTool(["benchmark", "--help"]);
+            const r = await execTool(["benchmark", "--help"]);
             expect(r.exitCode).toBe(0);
             expect(r.stdout).toContain("Benchmark");
         });
 
         it("list --help exits 0", async () => {
-            const r = await runTool(["benchmark", "list", "--help"]);
+            const r = await execTool(["benchmark", "list", "--help"]);
             expect(r.exitCode).toBe(0);
         });
 
         it("add --help exits 0", async () => {
-            const r = await runTool(["benchmark", "add", "--help"]);
+            const r = await execTool(["benchmark", "add", "--help"]);
             expect(r.exitCode).toBe(0);
         });
 
         it("remove --help exits 0", async () => {
-            const r = await runTool(["benchmark", "remove", "--help"]);
+            const r = await execTool(["benchmark", "remove", "--help"]);
             expect(r.exitCode).toBe(0);
         });
     });
 
     describe("list", () => {
         it("list exits 0 and shows built-in suites", async () => {
-            const r = await runTool(["benchmark", "list"]);
+            const r = await execTool(["benchmark", "list"]);
             expect(r.exitCode).toBe(0);
             expect(r.stdout).toContain("startup");
         });
@@ -42,19 +42,19 @@ describe.skipIf(skip.integration)("tools benchmark", () => {
         it(
             "add, list, remove suite",
             async () => {
-                const add = await runTool(["benchmark", "add", "e2e-suite", "a:echo hi", "b:echo bye"]);
+                const add = await execTool(["benchmark", "add", "e2e-suite", "a:echo hi", "b:echo bye"]);
                 expect(add.exitCode).toBe(0);
                 expect(getOutput(add).toLowerCase()).toMatch(/saved|added|created/i);
 
-                const list = await runTool(["benchmark", "list"]);
+                const list = await execTool(["benchmark", "list"]);
                 expect(list.exitCode).toBe(0);
                 expect(list.stdout).toContain("e2e-suite");
 
-                const remove = await runTool(["benchmark", "remove", "e2e-suite"]);
+                const remove = await execTool(["benchmark", "remove", "e2e-suite"]);
                 expect(remove.exitCode).toBe(0);
                 expect(getOutput(remove).toLowerCase()).toMatch(/removed|deleted/i);
 
-                const listAfter = await runTool(["benchmark", "list"]);
+                const listAfter = await execTool(["benchmark", "list"]);
                 expect(listAfter.exitCode).toBe(0);
                 expect(listAfter.stdout).not.toContain("e2e-suite");
             },
@@ -64,7 +64,7 @@ describe.skipIf(skip.integration)("tools benchmark", () => {
 
     describe("remove non-existent", () => {
         it("remove nonexistent shows error", async () => {
-            const r = await runTool(["benchmark", "remove", "nonexistent-xyz"]);
+            const r = await execTool(["benchmark", "remove", "nonexistent-xyz"]);
             expect(getOutput(r).toLowerCase()).toMatch(/not found|no suite|error|doesn't exist/i);
         });
     });
