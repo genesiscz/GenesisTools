@@ -7,7 +7,7 @@
  * functions; the imperative `DashboardApp` API on `types.ts` does the same.
  */
 import { closeSync, existsSync, openSync, readSync, statSync } from "node:fs";
-import { logger } from "@app/logger";
+import { logger, out } from "@app/logger";
 import { Browser } from "@app/utils/browser";
 import { suggestCommand } from "@app/utils/cli";
 import { isPortInUse } from "@app/utils/network";
@@ -65,7 +65,7 @@ export async function up(ctx: LifecycleContext, opts: UpOptions = {}): Promise<U
             const { warnings } = await config.preflight();
             for (const w of warnings) {
                 logger.warn({ service: w.service, fix: w.fix }, w.error);
-                process.stderr.write(`⚠ ${w.service}: ${w.error}${w.fix ? `\n  Fix: ${w.fix}` : ""}\n`);
+                out.warn(`${w.service}: ${w.error}${w.fix ? `\n  Fix: ${w.fix}` : ""}`);
             }
         } catch (err) {
             logger.warn({ err }, `[${config.key}] preflight threw`);
@@ -80,13 +80,13 @@ export async function up(ctx: LifecycleContext, opts: UpOptions = {}): Promise<U
         }
 
         if (dep.policy === "auto") {
-            process.stderr.write(`→ starting dependency ${dep.app.config.key}...\n`);
+            out.log.step(`starting dependency ${dep.app.config.key}...`);
             await dep.app.up({ open: false });
             continue;
         }
 
         if (dep.policy === "warn") {
-            process.stderr.write(`⚠ dependency ${dep.app.config.key} is not running.\n`);
+            out.warn(`dependency ${dep.app.config.key} is not running.`);
             continue;
         }
 
@@ -95,8 +95,8 @@ export async function up(ctx: LifecycleContext, opts: UpOptions = {}): Promise<U
         if (choice === "start") {
             await dep.app.up({ open: false });
         } else if (choice === null) {
-            process.stderr.write(
-                `⚠ dependency ${dep.app.config.key} is not running. Run \`tools ${dep.app.config.key} ${dep.app.config.commandName} up\` to start it.\n`
+            out.warn(
+                `dependency ${dep.app.config.key} is not running. Run \`tools ${dep.app.config.key} ${dep.app.config.commandName} up\` to start it.`
             );
         }
     }
@@ -114,7 +114,7 @@ export async function up(ctx: LifecycleContext, opts: UpOptions = {}): Promise<U
 
     if (conflict.state === "foreign") {
         if (opts.force && conflict.owner) {
-            process.stderr.write(`→ killing port owner pid ${conflict.owner.pid} (${conflict.owner.command})\n`);
+            out.log.step(`killing port owner pid ${conflict.owner.pid} (${conflict.owner.command})`);
             try {
                 process.kill(conflict.owner.pid, "SIGTERM");
             } catch (err) {
@@ -124,7 +124,7 @@ export async function up(ctx: LifecycleContext, opts: UpOptions = {}): Promise<U
         } else {
             const owner = conflict.owner;
             const ownerDesc = owner ? `pid ${owner.pid} (${owner.command})` : "(unknown owner)";
-            process.stderr.write(`✗ port ${port} is held by ${ownerDesc}.\n`);
+            out.error(`port ${port} is held by ${ownerDesc}.`);
 
             if (owner) {
                 const choice = await promptForeignMenu(port, owner.pid, owner.command, owner.sameUser);
@@ -136,8 +136,8 @@ export async function up(ctx: LifecycleContext, opts: UpOptions = {}): Promise<U
                     }
                     await waitForPortFree(port, 5_000);
                 } else if (choice === null) {
-                    process.stderr.write(
-                        `  Use --force to kill the owner and start: ${suggestCommand("tools", { add: ["--force"] })}\n`
+                    out.info(
+                        `  Use --force to kill the owner and start: ${suggestCommand("tools", { add: ["--force"] })}`
                     );
                     return { started: false, port, mode: opts.foreground ? "foreground" : "background" };
                 } else {
@@ -206,12 +206,12 @@ export async function up(ctx: LifecycleContext, opts: UpOptions = {}): Promise<U
 
     const readiness = await waitForReady(config.readiness, { port, logFile: ctx.logFile });
     if (!readiness.ready) {
-        process.stderr.write(
-            `⚠ readiness check failed: ${readiness.detail ?? "(no detail)"}\n  Started anyway — tail the log: tools ${config.key} ${config.commandName} attach\n`
+        out.warn(
+            `readiness check failed: ${readiness.detail ?? "(no detail)"}\n  Started anyway — tail the log: tools ${config.key} ${config.commandName} attach`
         );
     } else {
-        process.stderr.write(
-            `✓ ${config.name ?? config.key} ready on http://localhost:${port}  (pid ${pid})\n  logs → ${ctx.logFile}\n`
+        out.log.success(
+            `${config.name ?? config.key} ready on http://localhost:${port}  (pid ${pid})\n  logs → ${ctx.logFile}`
         );
     }
 
@@ -232,12 +232,12 @@ async function handleMineMenu(ctx: LifecycleContext, pid: number, opts: UpOption
 
     if (choice === null) {
         // Non-TTY: print the verbs and exit.
-        process.stderr.write(
+        out.info(
             `Already running (pid ${pid} on :${port}). Try one of:\n` +
                 `  tools <tool> ${config.commandName} restart\n` +
                 `  tools <tool> ${config.commandName} attach\n` +
                 `  tools <tool> ${config.commandName} status\n` +
-                `  tools <tool> ${config.commandName} down\n`
+                `  tools <tool> ${config.commandName} down`
         );
         return { started: false, port, mode: opts.foreground ? "foreground" : "background" };
     }
@@ -265,7 +265,7 @@ export async function down(ctx: LifecycleContext, opts: DownOptions = {}): Promi
     const { config } = ctx;
     const pid = readPid(config.key);
     if (!pid) {
-        process.stderr.write(`${config.name ?? config.key} is not running.\n`);
+        out.info(`${config.name ?? config.key} is not running.`);
         clearPid(config.key); // clean up stale PID file if any
         return { stopped: false };
     }
@@ -289,7 +289,7 @@ export async function down(ctx: LifecycleContext, opts: DownOptions = {}): Promi
     while (Date.now() < deadline) {
         if (!isProcessAlive(pid)) {
             clearPid(config.key);
-            process.stderr.write(`✓ ${config.name ?? config.key} stopped (pid ${pid})\n`);
+            out.log.success(`${config.name ?? config.key} stopped (pid ${pid})`);
             return { stopped: true, pid };
         }
         await Bun.sleep(200);
@@ -307,11 +307,11 @@ export async function down(ctx: LifecycleContext, opts: DownOptions = {}): Promi
 
     if (!isProcessAlive(pid)) {
         clearPid(config.key);
-        process.stderr.write(`✓ ${config.name ?? config.key} stopped (pid ${pid}, forced)\n`);
+        out.log.success(`${config.name ?? config.key} stopped (pid ${pid}, forced)`);
         return { stopped: true, pid };
     }
 
-    process.stderr.write(`✗ failed to stop pid ${pid}; it may need manual cleanup.\n`);
+    out.error(`failed to stop pid ${pid}; it may need manual cleanup.`);
     return { stopped: false, pid };
 }
 
@@ -379,7 +379,7 @@ export async function printStatus(ctx: LifecycleContext): Promise<void> {
     for (const w of s.preflightWarnings) {
         lines.push(`  ⚠ ${w.service}: ${w.error}${w.fix ? ` (fix: ${w.fix})` : ""}`);
     }
-    process.stdout.write(`${lines.join("\n")}\n`);
+    out.println(lines.join("\n"));
 }
 
 function formatDuration(ms: number): string {
@@ -398,14 +398,14 @@ function formatDuration(ms: number): string {
 export async function attach(ctx: LifecycleContext, opts: { lines?: number } = {}): Promise<void> {
     const { logFile } = ctx;
     if (!existsSync(logFile)) {
-        process.stderr.write(`No log file at ${logFile} — nothing to attach to.\n`);
+        out.info(`No log file at ${logFile} — nothing to attach to.`);
         return;
     }
 
     // Print the tail first.
     await logs(ctx, { lines: opts.lines ?? 50 });
 
-    process.stderr.write(`\n--- attached (Ctrl+C to detach the tail; the process keeps running) ---\n`);
+    out.info(`\n--- attached (Ctrl+C to detach the tail; the process keeps running) ---`);
 
     let pos = statSync(logFile).size;
     const isTty = Boolean(process.stdout.isTTY);
@@ -445,7 +445,7 @@ export async function attach(ctx: LifecycleContext, opts: { lines?: number } = {
 export async function logs(ctx: LifecycleContext, opts: { lines?: number } = {}): Promise<void> {
     const { logFile } = ctx;
     if (!existsSync(logFile)) {
-        process.stderr.write(`No log file at ${logFile}.\n`);
+        out.info(`No log file at ${logFile}.`);
         return;
     }
 
@@ -486,13 +486,13 @@ export async function install(ctx: LifecycleContext): Promise<void> {
         logFile: ctx.logFile,
     });
     writePreferences(ctx.config.key, { launchdInstalled: true, launchdPromptDismissed: false });
-    process.stderr.write(`✓ launchd plist installed at ~/Library/LaunchAgents/${ctx.plistLabel}.plist\n`);
+    out.log.success(`launchd plist installed at ~/Library/LaunchAgents/${ctx.plistLabel}.plist`);
 }
 
 export async function uninstall(ctx: LifecycleContext): Promise<void> {
     await uninstallLaunchd(ctx.plistLabel);
     writePreferences(ctx.config.key, { launchdInstalled: false });
-    process.stderr.write(`✓ launchd plist removed.\n`);
+    out.log.success(`launchd plist removed.`);
 }
 
 function isProcessAlive(pid: number): boolean {
