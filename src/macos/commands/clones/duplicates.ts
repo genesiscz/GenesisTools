@@ -1,4 +1,5 @@
 import logger from "@app/logger";
+import { applyLogLevel } from "@app/macos/commands/clones/log-level";
 import { collapseDuplicates } from "@app/macos/lib/clones/collapse";
 import { expandNodeModules, resolveRoots } from "@app/macos/lib/clones/orchestrator";
 import { resolveFormat, resolveRenderer } from "@app/macos/lib/clones/render/index";
@@ -40,6 +41,7 @@ export function createDuplicatesCommand(): Command {
         .option("-v, --verbose", "Verbose logging", false)
         .option("--silent", "Suppress non-essential output", false)
         .action(async (rootsArg: string[], opts: DuplicatesOpts) => {
+            applyLogLevel(opts);
             const cfg = await loadClonesConfig();
             const roots0 = resolveRoots(rootsArg ?? [], cfg.watchedDirs);
             const roots = opts.nodeModules ? expandNodeModules(roots0) : roots0;

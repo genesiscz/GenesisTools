@@ -1,4 +1,5 @@
 import logger from "@app/logger";
+import { applyLogLevel } from "@app/macos/commands/clones/log-level";
 import {
     closestProcessIds,
     IntegrityError,
@@ -80,6 +81,7 @@ export function createOptimizeCommand(): Command {
         .option("-v, --verbose", "Verbose logging", false)
         .option("--silent", "Suppress non-essential output", false)
         .action(async (rootsArg: string[], opts: OptimizeOpts) => {
+            applyLogLevel(opts);
             if (opts.list) {
                 console.log(resolveRenderer(resolveFormat(opts.format)).processList(listProcesses()));
                 process.exitCode = 0;

@@ -197,7 +197,10 @@ export class TableRenderer implements CloneRenderer {
                         `(original apply: cloned ${r.totals.cloned}, reclaimed ${formatBytes(r.totals.bytesReclaimed)})`,
                 ),
             );
-            lines.push(pc.dim(`tools macos clones optimize --apply --yes ${r.roots.join(" ")}`));
+            // Shell-quote each root so the suggested command is copy-pasteable
+            // even when paths contain spaces, quotes, or shell metachars.
+            const quotedRoots = r.roots.map((p) => `'${p.replace(/'/g, "'\\''")}'`).join(" ");
+            lines.push(pc.dim(`tools macos clones optimize --apply --yes ${quotedRoots}`));
         } else {
             lines.push(
                 pc.bold(
