@@ -6,7 +6,7 @@
  * invocation instead. Lifecycle wiring is in lifecycle.ts.
  */
 import { isInteractive } from "@app/utils/cli";
-import { confirm, isCancel, select } from "@clack/prompts";
+import * as p from "@app/utils/prompts/p";
 import type { PortConflict } from "./portConflict";
 
 export type MineMenuChoice = "restart" | "down" | "attach" | "status" | "abort";
@@ -16,7 +16,7 @@ export async function promptMineMenu(port: number, pid: number): Promise<MineMen
         return null;
     }
 
-    const picked = await select<MineMenuChoice>({
+    const picked = await p.select({
         message: `Already running (pid ${pid} on :${port}). What now?`,
         options: [
             { value: "restart", label: "Restart (stop and start fresh)" },
@@ -27,11 +27,11 @@ export async function promptMineMenu(port: number, pid: number): Promise<MineMen
         ],
     });
 
-    if (isCancel(picked)) {
+    if (p.isCancel(picked)) {
         return "abort";
     }
 
-    return picked;
+    return picked as MineMenuChoice;
 }
 
 export type ForeignMenuChoice = "kill-and-up" | "abort";
@@ -50,7 +50,7 @@ export async function promptForeignMenu(
         ? `Port ${port} is held by pid ${ownerPid} (${ownerCommand}). Kill it and start fresh?`
         : `Port ${port} is held by pid ${ownerPid} (${ownerCommand}) — owned by a different user; you may not have permission to kill it.`;
 
-    const picked = await select<ForeignMenuChoice>({
+    const picked = await p.select({
         message,
         options: sameUser
             ? [
@@ -60,11 +60,11 @@ export async function promptForeignMenu(
             : [{ value: "abort", label: "Abort" }],
     });
 
-    if (isCancel(picked)) {
+    if (p.isCancel(picked)) {
         return "abort";
     }
 
-    return picked;
+    return picked as ForeignMenuChoice;
 }
 
 export async function promptLaunchdInstall(key: string): Promise<boolean | null> {
@@ -72,12 +72,12 @@ export async function promptLaunchdInstall(key: string): Promise<boolean | null>
         return null;
     }
 
-    const picked = await confirm({
+    const picked = await p.confirm({
         message: `Install ${key} as a launchd agent so it survives reboots and restarts on crash?`,
         initialValue: false,
     });
 
-    if (isCancel(picked)) {
+    if (p.isCancel(picked)) {
         return null;
     }
 
@@ -91,7 +91,7 @@ export async function promptDependencyStart(depKey: string, parentKey: string): 
         return null;
     }
 
-    const picked = await select<DependencyMenuChoice>({
+    const picked = await p.select({
         message: `${parentKey} depends on ${depKey}, which isn't running.`,
         options: [
             { value: "start", label: `Start ${depKey} first` },
@@ -99,11 +99,11 @@ export async function promptDependencyStart(depKey: string, parentKey: string): 
         ],
     });
 
-    if (isCancel(picked)) {
+    if (p.isCancel(picked)) {
         return "skip";
     }
 
-    return picked;
+    return picked as DependencyMenuChoice;
 }
 
 export function describeConflict(conflict: PortConflict): string {
