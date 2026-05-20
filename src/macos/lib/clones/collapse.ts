@@ -3,6 +3,7 @@ import { type Dirent, readdirSync, statSync } from "node:fs";
 import { basename, dirname, join, relative, sep } from "node:path";
 import logger from "@app/logger";
 import { findDuplicateFiles } from "@app/utils/fs/disk-usage";
+import { Stopwatch } from "@app/utils/Stopwatch";
 import type { DuplicateSet, DuplicatesReport } from "./render/types";
 
 const log = logger.child({ component: "clones:collapse" });
@@ -98,6 +99,7 @@ function isAtOrAboveRoot(dir: string, roots: string[]): boolean {
 }
 
 export function collapseDuplicates({ roots }: CollapseArgs): DuplicatesReport {
+    const sw = new Stopwatch();
     const shaOf = new Map<string, string>();
     const sizeOf = new Map<string, number>();
     const modeOf = new Map<string, number>();
@@ -205,5 +207,19 @@ export function collapseDuplicates({ roots }: CollapseArgs): DuplicatesReport {
     }
 
     const totalReclaimable = sets.reduce((s, x) => s + x.reclaimable, 0);
+    const dirSets = sets.filter((s) => s.kind === "dir").length;
+    const fileSets = sets.length - dirSets;
+    log.info(
+        {
+            roots,
+            rootCount: roots.length,
+            fileGroups: fileGroups.length,
+            dirSets,
+            fileSets,
+            totalReclaimable,
+            elapsedMs: Math.round(sw.elapsedMs),
+        },
+        "collapseDuplicates complete"
+    );
     return { roots, sets, totalReclaimable, grouped: false, hardStop: roots };
 }
