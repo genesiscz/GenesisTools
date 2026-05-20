@@ -5,6 +5,7 @@ import { SafeJSON } from "@app/utils/json";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { LiveSseIndicator } from "@/components/LiveSseIndicator";
+import { QaSectionHeading } from "@/components/QaSectionHeading";
 
 interface AudioEntry {
     id: string;
@@ -140,7 +141,7 @@ function QaCard({ entry, defaultOpen = true }: { entry: QaRow; defaultOpen?: boo
     const answerHtml = open || !truncated ? entry.answerHtml : entry.answerHtmlPreview;
 
     return (
-        <div className="dd-panel flex flex-col gap-2 p-4" data-qa-id={entry.id}>
+        <div className="dd-panel flex flex-col gap-3 p-4" data-qa-id={entry.id}>
             <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--dd-text-muted)]">
                 <span className="text-[var(--dd-text-secondary)]">{entry.project}</span>
                 <span>·</span>
@@ -148,8 +149,15 @@ function QaCard({ entry, defaultOpen = true }: { entry: QaRow; defaultOpen?: boo
                 <span className={`rounded-full border px-2 py-[1px] ${tagClass(entry.tag)}`}>{entry.tag}</span>
                 <span className="ml-auto">{when}</span>
             </div>
-            <div className="font-bold text-[var(--dd-text-primary)]">❯ {entry.question}</div>
-            <article className="dd-markdown text-sm" dangerouslySetInnerHTML={{ __html: answerHtml }} />
+            <QaSectionHeading label="Question" />
+            <div className="dd-qa-section-body text-[var(--dd-text-primary)] font-medium leading-relaxed">
+                {entry.question}
+            </div>
+            <QaSectionHeading label="Answer" />
+            <article
+                className="dd-qa-section-body dd-markdown text-sm"
+                dangerouslySetInnerHTML={{ __html: answerHtml }}
+            />
             {truncated ? (
                 <button type="button" className="dd-accent-text self-start text-xs" onClick={() => setOpen((v) => !v)}>
                     {open ? "▴ collapse" : "▾ expand full answer (rationale · refs · links)"}
