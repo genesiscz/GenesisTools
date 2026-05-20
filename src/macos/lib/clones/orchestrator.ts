@@ -439,36 +439,53 @@ function pruneTree(node: MutNode, minReal: number): DirNode[] {
 function buildCloneAnalysis(
     records: Map<string, RootRecords>,
     crossTree: CrossTreeData,
+    args: BuildMeasureArgs,
     opts: { probePartners: boolean }
 ): CloneAnalysis {
-    // Per-root family detection from the records we already gathered — same
-    // semantics as findCloneFamilies(root) but without a third FS walk.
-    let families = 0;
-    let clonedFiles = 0;
-    for (const { entries } of records.values()) {
-        const fams = new Map<string, number>();
+    // Single fold: family detection AND sharedBytes summing in one record
+    // pass. `passing` tracks whether the file would survive the user's
+    // include/exclude filters — the reported counts/bytes must match the
+    // filtered tree+totals or the output is self-contradictory.
+    //
+    // Cross-tree DETECTION upstream stays unfiltered (lone-family detection
+    // needs the full picture to distinguish in-tree from cross-tree families).
+    // What we filter here is the REPORT.
+    const familyMembers = new Map<string, { total: number; passing: number }>();
+    let sharedBytes = 0;
+    for (const [root, { entries }] of records) {
         for (const e of entries) {
-            if (e.cloneId === null || e.cloneId === 0n) {
-                continue;
+            const rel = relative(root, e.path);
+            const passing = passesGlobs(rel, args.include, args.exclude, basename(e.path));
+            if (e.cloneId !== null && e.cloneId !== 0n) {
+                const key = e.cloneId.toString(16);
+                const acc = familyMembers.get(key) ?? { total: 0, passing: 0 };
+                acc.total += 1;
+                if (passing) {
+                    acc.passing += 1;
+                }
+
+                familyMembers.set(key, acc);
             }
 
-            const key = e.cloneId.toString(16);
-            fams.set(key, (fams.get(key) ?? 0) + 1);
-        }
-
-        for (const count of fams.values()) {
-            if (count < 2) {
-                continue;
+            if (passing) {
+                sharedBytes += crossTree.sharedByPath.get(e.path) ?? 0;
             }
-
-            families += 1;
-            clonedFiles += count;
         }
     }
 
-    let sharedBytes = 0;
-    for (const v of crossTree.sharedByPath.values()) {
-        sharedBytes += v;
+    let families = 0;
+    let clonedFiles = 0;
+    for (const acc of familyMembers.values()) {
+        // A clone family requires ≥2 members in the full tree (otherwise it's
+        // a stale cloneId on a lone file). Then we surface only those families
+        // with at least one filter-visible member, and count just the visible
+        // members so the report matches what the user actually sees.
+        if (acc.total < 2 || acc.passing === 0) {
+            continue;
+        }
+
+        families += 1;
+        clonedFiles += acc.passing;
     }
 
     // Probe is OFF by default — bun cache can be GB and the walk would add
@@ -514,6 +531,7 @@ export function buildMeasureReport(args: BuildMeasureArgs): MeasureReport {
         dirCount: 0,
         errors: [],
     };
+    let privateUnknown = false;
     const tree: DirNode[] = [];
 
     // Materialise once → reduce three times. Each root is walked exactly once;
@@ -539,7 +557,12 @@ export function buildMeasureReport(args: BuildMeasureArgs): MeasureReport {
         totalsAgg.allocated += u.allocated;
         totalsAgg.fileCount += u.fileCount;
         totalsAgg.dirCount += u.dirCount;
-        if (u.private !== null) {
+        if (u.private === null) {
+            // Any root that couldn't produce clone-aware sizing taints the
+            // total — a partial sum would underreport reclaim while looking
+            // definitive. Track and null out totalReal below.
+            privateUnknown = true;
+        } else {
             totalsAgg.private = (totalsAgg.private ?? 0) + u.private;
         }
 
@@ -550,12 +573,12 @@ export function buildMeasureReport(args: BuildMeasureArgs): MeasureReport {
         }
     }
 
-    const totalReal = totalsAgg.private;
+    const totalReal = privateUnknown ? null : totalsAgg.private;
     const totalOvercount = totalReal !== null && totalReal > 0 ? totalsAgg.allocated / totalReal : null;
     const fs = freeDiskSpace(args.roots[0]);
     const sorted = args.breakdown ? sortTree(tree, args.sort ?? "overcount") : [];
     const swPartners = new Stopwatch();
-    const cloneAnalysis = buildCloneAnalysis(records, crossTree, { probePartners: Boolean(args.probePartners) });
+    const cloneAnalysis = buildCloneAnalysis(records, crossTree, args, { probePartners: Boolean(args.probePartners) });
     const partnerProbeMs = args.probePartners ? Math.round(swPartners.elapsedMs) : 0;
 
     let recordCount = 0;

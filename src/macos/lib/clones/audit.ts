@@ -478,12 +478,28 @@ export function runOptimize({ roots, sets, planCacheHit, planCacheAgeMs }: RunOp
         throw err;
     }
 
+    // Close the success path with a real endedAt — the opening meta wrote
+    // endedAt=startedAt as a placeholder; readProcess uses last-meta-wins so
+    // this second record carries the true completion time. Without it the
+    // on-disk JSONL keeps endedAt=startedAt forever and consumers can never
+    // recover the real duration.
+    const endedAt = new Date().toISOString();
+    writeMeta({
+        id,
+        state: "applied",
+        roots,
+        startedAt,
+        endedAt,
+        planCacheHit,
+        ...(planCacheAgeMs !== undefined ? { planCacheAgeMs } : {}),
+    });
+
     const rep: ProcessReport = {
         id,
         state: "applied",
         roots,
         startedAt,
-        endedAt: startedAt,
+        endedAt,
         planCache: {
             hit: planCacheHit,
             ...(planCacheAgeMs !== undefined ? { ageMs: planCacheAgeMs } : {}),

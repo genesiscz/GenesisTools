@@ -148,7 +148,12 @@ describe.skipIf(skip.unlessMac)("runOptimize apply round-trip", () => {
             }
 
             const onDisk = rf(processJsonlPath(rep.id), "utf8").trim().split("\n");
-            expect(onDisk.length).toBe(3);
+            // Opening meta (state=applied, endedAt=startedAt placeholder),
+            // 2 clone op lines, closing meta (state=applied, real endedAt).
+            // The closing meta is what gives readProcess a recoverable
+            // completion time — last-meta-wins overwrites the placeholder.
+            expect(onDisk.length).toBe(4);
+            expect(rep.endedAt > rep.startedAt).toBe(true);
         } finally {
             rmSync(dir, { recursive: true, force: true });
         }
