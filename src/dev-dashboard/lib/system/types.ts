@@ -8,6 +8,8 @@ export interface PulseSnapshot {
     cpuPct: number | null;
     memUsedBytes: number | null;
     memTotalBytes: number | null;
+    /** macOS system-wide free memory % from `memory_pressure` (matches Activity Monitor pressure). */
+    memFreePct: number | null;
     swapUsedBytes: number | null;
     swapTotalBytes: number | null;
     batteryPct: number | null;

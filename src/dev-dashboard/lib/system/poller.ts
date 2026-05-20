@@ -73,8 +73,8 @@ async function tick(): Promise<void> {
             history.record("cpu", snapshot.cpuPct);
         }
 
-        if (snapshot.memUsedBytes !== null && snapshot.memTotalBytes) {
-            history.record("mem", (snapshot.memUsedBytes / snapshot.memTotalBytes) * 100);
+        if (snapshot.memFreePct !== null) {
+            history.record("mem_free", snapshot.memFreePct);
         }
 
         if (snapshot.swapUsedBytes !== null && snapshot.swapTotalBytes) {

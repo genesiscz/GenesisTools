@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { PulseHistoryDb } from "./history-db";
+import { downsamplePoints, PulseHistoryDb } from "./history-db";
 
 describe("PulseHistoryDb", () => {
     let db: PulseHistoryDb;
@@ -10,6 +10,20 @@ describe("PulseHistoryDb", () => {
 
     afterEach(() => {
         db.close();
+    });
+
+    test("downsamplePoints averages buckets", () => {
+        const points = [
+            { ts: "2026-01-01T00:00:00.000Z", value: 10 },
+            { ts: "2026-01-01T00:00:05.000Z", value: 20 },
+            { ts: "2026-01-01T00:00:10.000Z", value: 30 },
+            { ts: "2026-01-01T00:00:15.000Z", value: 40 },
+        ];
+
+        expect(downsamplePoints(points, 2)).toEqual([
+            { ts: "2026-01-01T00:00:05.000Z", value: 15 },
+            { ts: "2026-01-01T00:00:15.000Z", value: 35 },
+        ]);
     });
 
     test("record then series returns ascending points within window", () => {
@@ -35,6 +49,16 @@ describe("PulseHistoryDb", () => {
         const removed = db.pruneOlderThan(24);
         expect(removed).toBe(1);
         expect(db.series("cpu", 60 * 24 * 7).length).toBe(1);
+    });
+
+    test("series downsamples long ranges", () => {
+        for (let i = 0; i < 1000; i++) {
+            db.recordAt("cpu", i, new Date(Date.now() - (999 - i) * 1000).toISOString());
+        }
+
+        const points = db.series("cpu", 60 * 24, 360);
+        expect(points.length).toBeLessThanOrEqual(360);
+        expect(points.length).toBeGreaterThan(0);
     });
 
     test("public ip cache respects freshness", () => {

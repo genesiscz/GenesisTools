@@ -4,6 +4,7 @@ import {
     parseBattery,
     parseCpuIdlePct,
     parseDfRoot,
+    parseMemoryFreePct,
     parseVmStat,
     parseWifiSsid,
 } from "./collector";
@@ -43,6 +44,17 @@ describe("parseCpuIdlePct", () => {
 
     test("returns null on unparseable output", () => {
         expect(parseCpuIdlePct("garbage")).toBeNull();
+    });
+});
+
+describe("parseMemoryFreePct", () => {
+    test("parses system-wide free percentage", () => {
+        const out = "System-wide memory free percentage: 65%";
+        expect(parseMemoryFreePct(out)).toBe(65);
+    });
+
+    test("returns null when missing", () => {
+        expect(parseMemoryFreePct("no stats")).toBeNull();
     });
 });
 

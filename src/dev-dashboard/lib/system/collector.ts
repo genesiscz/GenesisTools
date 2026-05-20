@@ -17,6 +17,22 @@ export function parseCpuIdlePct(topOut: string): number | null {
     return Math.round((100 - idle) * 10) / 10;
 }
 
+export function parseMemoryFreePct(memoryPressureOut: string): number | null {
+    const m = memoryPressureOut.match(/System-wide memory free percentage:\s*(\d+)%/);
+
+    if (!m) {
+        return null;
+    }
+
+    const pct = Number.parseInt(m[1], 10);
+
+    if (Number.isNaN(pct)) {
+        return null;
+    }
+
+    return pct;
+}
+
 export function parseVmStat(vmStatOut: string, pageSize: number): { usedBytes: number } {
     const pages = (label: string): number => {
         const re = new RegExp(`${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s+(\\d+)`);
@@ -110,22 +126,24 @@ async function collectCpu(): Promise<number | null> {
     return parseCpuIdlePct(out);
 }
 
-async function collectMem(): Promise<{ used: number | null; total: number | null }> {
-    const [vmStat, pageSizeOut, memSizeOut] = await Promise.all([
+async function collectMem(): Promise<{ used: number | null; total: number | null; freePct: number | null }> {
+    const [vmStat, pageSizeOut, memSizeOut, memoryPressure] = await Promise.all([
         runShell(["vm_stat"]),
         runShell(["sysctl", "-n", "hw.pagesize"]),
         runShell(["sysctl", "-n", "hw.memsize"]),
+        runShell(["memory_pressure"]),
     ]);
 
     const total = memSizeOut === null ? null : Number.parseInt(memSizeOut.trim(), 10);
     const pageSize = pageSizeOut === null ? null : Number.parseInt(pageSizeOut.trim(), 10);
+    const freePct = memoryPressure === null ? null : parseMemoryFreePct(memoryPressure);
 
     if (vmStat === null || pageSize === null || Number.isNaN(pageSize)) {
-        return { used: null, total: total !== null && !Number.isNaN(total) ? total : null };
+        return { used: null, total: total !== null && !Number.isNaN(total) ? total : null, freePct };
     }
 
     const { usedBytes } = parseVmStat(vmStat, pageSize);
-    return { used: usedBytes, total: total !== null && !Number.isNaN(total) ? total : null };
+    return { used: usedBytes, total: total !== null && !Number.isNaN(total) ? total : null, freePct };
 }
 
 async function collectSwap(): Promise<{ used: number | null; total: number | null }> {
@@ -243,6 +261,7 @@ export async function collectPulse(): Promise<PulseSnapshot> {
         cpuPct: cpu,
         memUsedBytes: mem.used,
         memTotalBytes: mem.total,
+        memFreePct: mem.freePct,
         swapUsedBytes: swap.used,
         swapTotalBytes: swap.total,
         batteryPct: battery.pct,
