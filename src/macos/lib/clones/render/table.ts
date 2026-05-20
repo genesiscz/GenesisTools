@@ -54,11 +54,13 @@ export class TableRenderer implements CloneRenderer {
         }
 
         if (rows.length > 0) {
+            // Path column needs room for nested indent + sharedNote text
+            // ("X.X MB shared with cross-tree partner ..."), so 100 instead of 60.
             lines.push(
                 formatTable(rows, ["path", "logical", "du -sh", "real", "overcount"], {
                     alignRight: [1, 2, 3, 4],
-                    maxColWidth: 60,
-                })
+                    maxColWidth: 100,
+                }),
             );
         }
 
@@ -76,9 +78,12 @@ export class TableRenderer implements CloneRenderer {
         if (r.cloneAnalysis.families > 0) {
             lines.push("");
             lines.push(pc.bold("clone analysis"));
+            const sharedSuffix =
+                r.cloneAnalysis.sharedBytes > 0
+                    ? `, ${formatBytes(r.cloneAnalysis.sharedBytes)} shared cross-tree (stays on disk if deleted)`
+                    : " (all family members are in-scope — fully reclaimable)";
             lines.push(
-                `  ${r.cloneAnalysis.families} family(ies), ${r.cloneAnalysis.clonedFiles} cloned file(s), ` +
-                    `${formatBytes(r.cloneAnalysis.sharedBytes)} shared`
+                `  ${r.cloneAnalysis.families} family(ies), ${r.cloneAnalysis.clonedFiles} cloned file(s)${sharedSuffix}`,
             );
             if (r.cloneAnalysis.crossTreePartners.length > 0) {
                 lines.push(`  cross-tree partners: ${r.cloneAnalysis.crossTreePartners.join(", ")}`);
@@ -182,14 +187,27 @@ export class TableRenderer implements CloneRenderer {
         }
 
         lines.push("");
-        lines.push(
-            pc.bold(
-                `TOTAL  cloned ${r.totals.cloned}  skipped ${r.totals.skipped}  ` +
-                    `errors ${r.totals.errors}  reclaimed ${formatBytes(r.totals.bytesReclaimed)}`
-            )
-        );
-        if (r.state === "applied") {
-            lines.push(pc.dim(`tools macos clones optimize --rollback --process ${r.id}`));
+        const rollbackOps = r.ops.filter((o) => o.op === "rollback-uncloned");
+        if (r.state === "rolled-back") {
+            const undone = rollbackOps.length;
+            const reUnshared = rollbackOps.reduce((s, o) => s + o.bytes, 0);
+            lines.push(
+                pc.bold(
+                    `TOTAL  un-shared ${undone}  re-allocated ${formatBytes(reUnshared)}  ` +
+                        `(original apply: cloned ${r.totals.cloned}, reclaimed ${formatBytes(r.totals.bytesReclaimed)})`,
+                ),
+            );
+            lines.push(pc.dim(`tools macos clones optimize --apply --yes ${r.roots.join(" ")}`));
+        } else {
+            lines.push(
+                pc.bold(
+                    `TOTAL  cloned ${r.totals.cloned}  skipped ${r.totals.skipped}  ` +
+                        `errors ${r.totals.errors}  reclaimed ${formatBytes(r.totals.bytesReclaimed)}`,
+                ),
+            );
+            if (r.state === "applied") {
+                lines.push(pc.dim(`tools macos clones optimize --rollback --process ${r.id}`));
+            }
         }
 
         return lines.join("\n");

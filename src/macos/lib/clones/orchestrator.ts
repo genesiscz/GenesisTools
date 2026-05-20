@@ -432,6 +432,8 @@ export function buildMeasureReport(args: BuildMeasureArgs): MeasureReport {
         const u = measureTree(root);
         totalsAgg.logical += u.logical;
         totalsAgg.allocated += u.allocated;
+        totalsAgg.fileCount += u.fileCount;
+        totalsAgg.dirCount += u.dirCount;
         if (u.private !== null) {
             realSeen = true;
             totalsAgg.private = (totalsAgg.private ?? 0) + u.private;
