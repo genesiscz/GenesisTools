@@ -90,7 +90,10 @@ export function formatDuration(value: number, unit: DurationUnit = "ms", style: 
         }
 
         default: {
-            const _exhaustive: never = style;
+            // Exhaustiveness check — if a new `style` is added without a case
+            // arm, `satisfies never` becomes a compile error here. No variable
+            // is allocated (dashboard tsconfig has noUnusedLocals: true).
+            style satisfies never;
             return `${ms}ms`;
         }
     }
