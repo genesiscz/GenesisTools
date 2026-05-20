@@ -3,6 +3,7 @@ import { collapseDuplicates } from "@app/macos/lib/clones/collapse";
 import { expandNodeModules, resolveRoots } from "@app/macos/lib/clones/orchestrator";
 import { resolveFormat, resolveRenderer } from "@app/macos/lib/clones/render/index";
 import { loadClonesConfig } from "@app/macos/lib/clones/store";
+import { parseVariadic } from "@app/utils/cli";
 import { Command, Option } from "commander";
 
 const log = logger.child({ component: "clones:duplicates-cmd" });
@@ -15,6 +16,7 @@ interface DuplicatesOpts {
     format?: string;
     group?: boolean;
     nodeModules?: boolean;
+    minReal?: string;
     include: string[];
     exclude: string[];
     top?: string;
@@ -31,7 +33,8 @@ export function createDuplicatesCommand(): Command {
         )
         .option("--group", "List every member path under each set", false)
         .option("--node-modules", "Expand each root to its node_modules dirs", false)
-        .option("--include <glob>", "Include glob (repeatable)", collect, [])
+        .option("--min-real <bytes>", "Ignore duplicate sets smaller than this (per-file size)")
+        .option("--include <glob>", "Include glob (repeatable; matches relpath or any segment)", collect, [])
         .option("--exclude <glob>", "Exclude glob (repeatable, wins over --include)", collect, [])
         .option("--top <N>", "Show only the top N sets (default: unlimited)")
         .option("-v, --verbose", "Verbose logging", false)
@@ -46,7 +49,13 @@ export function createDuplicatesCommand(): Command {
                 process.exit(2);
             }
 
-            const report = collapseDuplicates({ roots });
+            const minSize = opts.minReal ? Number.parseInt(opts.minReal, 10) : undefined;
+            const report = collapseDuplicates({
+                roots,
+                ...(minSize !== undefined && !Number.isNaN(minSize) ? { minSize } : {}),
+                include: parseVariadic(opts.include),
+                exclude: parseVariadic(opts.exclude),
+            });
             report.grouped = Boolean(opts.group);
 
             if (opts.top) {
