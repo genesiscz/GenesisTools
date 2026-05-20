@@ -132,7 +132,7 @@ describe("freeDiskSpace / overcountRatio / formatDiskUsage", () => {
 import { findDedupeCandidates, findDuplicateFiles } from "@app/utils/fs/disk-usage";
 
 describe("duplicate detection", () => {
-    it("groups byte-identical files; ignores unique and size-mismatched", () => {
+    it("groups byte-identical files; ignores unique and size-mismatched", async () => {
         const dir = mkdtempSync(join(tmpdir(), "gt-dup-"));
         try {
             const payload = Buffer.alloc(64_000, 0xab);
@@ -141,7 +141,7 @@ describe("duplicate detection", () => {
             writeFileSync(join(dir, "diff.bin"), Buffer.alloc(64_000, 0xcd));
             writeFileSync(join(dir, "small.bin"), Buffer.alloc(10, 1));
 
-            const groups = findDuplicateFiles(dir);
+            const groups = await findDuplicateFiles(dir);
             expect(groups.length).toBe(1);
             expect(groups[0].paths.map((p) => p.split("/").pop()).sort()).toEqual(["one.bin", "two.bin"]);
             expect(groups[0].size).toBe(64_000);
@@ -150,7 +150,7 @@ describe("duplicate detection", () => {
         }
     });
 
-    it("findDedupeCandidates projects savings for non-clone duplicates", () => {
+    it("findDedupeCandidates projects savings for non-clone duplicates", async () => {
         const dir = mkdtempSync(join(tmpdir(), "gt-dupc-"));
         try {
             const payload = Buffer.alloc(128_000, 0x7);
@@ -158,7 +158,7 @@ describe("duplicate detection", () => {
             writeFileSync(join(dir, "b.bin"), payload);
             writeFileSync(join(dir, "c.bin"), payload);
 
-            const cands = findDedupeCandidates(dir);
+            const cands = await findDedupeCandidates(dir);
             expect(cands.length).toBe(1);
             // 3 copies → keep 1, reclaim ~2 copies
             expect(cands[0].reclaimable).toBeGreaterThanOrEqual(128_000);
@@ -308,7 +308,7 @@ describe.skipIf(skip.unlessMac)("dedupeFile safety", () => {
 import { dedupeTree } from "@app/utils/fs/disk-usage";
 
 describe.skipIf(skip.unlessMac)("dedupeTree", () => {
-    it("dry-run reports candidates and mutates nothing; apply reclaims space", () => {
+    it("dry-run reports candidates and mutates nothing; apply reclaims space", async () => {
         const dir = mkdtempSync(join(tmpdir(), "gt-deduptree-"));
         try {
             const payload = Buffer.alloc(1024 * 1024, 0x5e);
@@ -316,17 +316,17 @@ describe.skipIf(skip.unlessMac)("dedupeTree", () => {
             writeFileSync(join(dir, "q.bin"), payload);
             writeFileSync(join(dir, "r.bin"), payload);
 
-            const dry = dedupeTree(dir); // default dryRun: true
+            const dry = await dedupeTree(dir); // default dryRun: true
             expect(dry.dryRun).toBe(true);
             expect(dry.projectedReclaim).toBeGreaterThanOrEqual(2 * 1024 * 1024);
             expect(dry.cloned).toBe(0);
 
-            const applied = dedupeTree(dir, { apply: true });
+            const applied = await dedupeTree(dir, { apply: true });
             expect(applied.cloned).toBe(2); // q,r → clones of p
             expect(applied.bytesReclaimed).toBeGreaterThan(0);
 
             // re-running finds nothing left (already clones)
-            const again = dedupeTree(dir, { apply: true });
+            const again = await dedupeTree(dir, { apply: true });
             expect(again.cloned).toBe(0);
         } finally {
             rmSync(dir, { recursive: true, force: true });

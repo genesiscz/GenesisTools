@@ -17,6 +17,12 @@ export interface CollapseArgs {
     include?: string[];
     /** Glob patterns: exclude files whose RELPATH or any path-segment matches (wins). */
     exclude?: string[];
+    /** Aborts the underlying walk + hash. Hooked to SIGINT by the CLI. */
+    signal?: AbortSignal;
+    /** Directory pruning predicate forwarded to the walk. Lets the CLI skip
+     *  entire `node_modules` / `.git` subtrees before any syscall is spent
+     *  on them — far cheaper than post-filtering globs. */
+    shouldEnter?: (dir: string) => boolean;
 }
 
 /** Which root contains `absPath`? Used to relativize for glob matching across
@@ -109,14 +115,31 @@ function isAtOrAboveRoot(dir: string, roots: string[]): boolean {
     return roots.some((root) => dir === root || !relative(dir, root).startsWith(".."));
 }
 
-export function collapseDuplicates({ roots, minSize, include, exclude }: CollapseArgs): DuplicatesReport {
+export async function collapseDuplicates({
+    roots,
+    minSize,
+    include,
+    exclude,
+    signal,
+    shouldEnter,
+}: CollapseArgs): Promise<DuplicatesReport> {
     const sw = new Stopwatch();
     const shaOf = new Map<string, string>();
     const sizeOf = new Map<string, number>();
     const fileGroups: { sha256: string; size: number; paths: string[] }[] = [];
 
     for (const root of roots) {
-        for (const g of findDuplicateFiles(root, minSize !== undefined ? { minSize } : {})) {
+        const findOpts: Parameters<typeof findDuplicateFiles>[1] = {};
+        if (minSize !== undefined) {
+            findOpts.minSize = minSize;
+        }
+        if (signal !== undefined) {
+            findOpts.signal = signal;
+        }
+        if (shouldEnter !== undefined) {
+            findOpts.shouldEnter = shouldEnter;
+        }
+        for (const g of await findDuplicateFiles(root, findOpts)) {
             // If include/exclude prunes the group below 2 paths it is no
             // longer a duplicate — drop it.
             const filtered =

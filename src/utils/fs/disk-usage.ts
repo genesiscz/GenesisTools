@@ -33,6 +33,14 @@ export interface WalkError {
 
 export interface WalkOptions {
     onError?: (err: WalkError) => void;
+    /** Return false to skip recursing into this directory. Called with the
+     *  absolute path of every subdirectory before it's entered (the root
+     *  itself is always entered). Lets callers prune big subtrees
+     *  (`node_modules`, `.git`, …) before any syscall is spent on them. */
+    shouldEnter?: (dir: string) => boolean;
+    /** Aborts the walk between dirent reads. On abort the generator throws
+     *  `signal.reason` (or a generic `AbortError` if reason is unset). */
+    signal?: AbortSignal;
 }
 
 export interface DiskUsage {
@@ -71,8 +79,12 @@ export function filePrivateSize(path: string): number | null {
 
 /** Recursively yields regular files under `root`. Never follows symlinks
  *  (readdirSync does not, and apfs syscalls use FSOPT_NOFOLLOW). Per-entry
- *  errors (EPERM/ENOENT mid-walk) are reported via opts.onError, not thrown. */
+ *  errors (EPERM/ENOENT mid-walk) are reported via opts.onError, not thrown.
+ *  Honours `opts.shouldEnter` for directory pruning and `opts.signal` for
+ *  cancellation (checked once per directory). */
 export function* walkFiles(root: string, opts: WalkOptions = {}): Generator<WalkEntry> {
+    opts.signal?.throwIfAborted();
+
     let entries: Dirent[];
     try {
         entries = readdirSync(root, { withFileTypes: true });
@@ -88,6 +100,10 @@ export function* walkFiles(root: string, opts: WalkOptions = {}): Generator<Walk
         }
 
         if (entry.isDirectory()) {
+            if (opts.shouldEnter && !opts.shouldEnter(p)) {
+                continue;
+            }
+
             yield* walkFiles(p, opts);
         } else if (entry.isFile()) {
             try {
@@ -299,13 +315,15 @@ const STREAM_CHUNK_BYTES = 64 * 1024;
  *  file into memory. Required for safety: a `node_modules` tree may contain
  *  arbitrarily-large bundles, source maps, or media that would OOM under
  *  `readFileSync`. Exported so callers (e.g. the audit log) can share one
- *  implementation. */
-export function sha256File(path: string): string {
+ *  implementation. `signal` is checked between chunks so Ctrl+C can break
+ *  out of a multi-GB read within one 64 KB chunk. */
+export function sha256File(path: string, opts: { signal?: AbortSignal } = {}): string {
     const h = createHash("sha256");
     const fd = openSync(path, "r");
     try {
         const buf = Buffer.allocUnsafe(STREAM_CHUNK_BYTES);
         for (;;) {
+            opts.signal?.throwIfAborted();
             const n = readSync(fd, buf, 0, buf.length, null);
             if (n <= 0) {
                 break;
@@ -355,8 +373,9 @@ export function copyFileStreaming(src: string, dst: string): void {
 /** Streaming byte-equality. Reads both files in lockstep 64 KB chunks and
  *  compares each chunk. Used by `dedupeFile` (Safety Contract invariant 1)
  *  and `findDuplicateFiles` to confirm sha-matched files are truly equal
- *  without ever materializing the full content. */
-export function bytesEqualStreaming(a: string, b: string): boolean {
+ *  without ever materializing the full content. `signal` is checked between
+ *  chunks so Ctrl+C breaks out within one 64 KB read pair. */
+export function bytesEqualStreaming(a: string, b: string, opts: { signal?: AbortSignal } = {}): boolean {
     const fdA = openSync(a, "r");
     let fdB: number | null = null;
     try {
@@ -364,6 +383,7 @@ export function bytesEqualStreaming(a: string, b: string): boolean {
         const bufA = Buffer.allocUnsafe(STREAM_CHUNK_BYTES);
         const bufB = Buffer.allocUnsafe(STREAM_CHUNK_BYTES);
         while (true) {
+            opts.signal?.throwIfAborted();
             const nA = readSync(fdA, bufA, 0, bufA.length, null);
             const nB = readSync(fdB, bufB, 0, bufB.length, null);
             if (nA !== nB) {
@@ -386,14 +406,62 @@ export function bytesEqualStreaming(a: string, b: string): boolean {
     }
 }
 
-/** Content-identical regular files under `root`, grouped (size → sha256 →
- *  full byte-compare). Groups of <2 are dropped. Order-independent.
+export interface FindDuplicatesOptions {
+    /** Ignore files whose logical size is below this. Pruned during the walk. */
+    minSize?: number;
+    /** Aborts the walk + hash + byte-compare between syscalls. */
+    signal?: AbortSignal;
+    /** Directory predicate forwarded to `walkFiles`. Returning false skips
+     *  the subtree entirely (no `stat` cost on its contents). */
+    shouldEnter?: (dir: string) => boolean;
+}
+
+/** How often we yield to the event loop during the size-bucket loop.
+ *  Async-needed so SIGINT handlers can run — pure sync code in Node/Bun
+ *  starves the event loop and the user's Ctrl+C never gets delivered. */
+const YIELD_EVERY_BUCKETS = 64;
+
+function yieldToLoop(): Promise<void> {
+    return new Promise((resolve) => {
+        setImmediate(resolve);
+    });
+}
+
+/** Content-identical regular files under `root`, grouped (size → clone-id
+ *  → sha256 → full byte-compare). Groups of <2 are dropped. Order-independent.
+ *
+ *  **Async because Ctrl+C must work.** Sync JS code (a tight loop of
+ *  `getCloneId` syscalls + `sha256File` reads) starves the event loop, so
+ *  the SIGINT handler that flips `signal.aborted` never runs until the
+ *  whole walk is done. We yield via `setImmediate` every
+ *  `YIELD_EVERY_BUCKETS` size-buckets and check `signal.throwIfAborted()`
+ *  on each yield, so abort latency is bounded by (yield interval × bucket
+ *  cost) — typically well under one second.
+ *
+ *  **Clone-family pre-filter (huge speedup for bun-installed node_modules):**
+ *  before hashing, same-size files are pre-bucketed by APFS clone-id. Files
+ *  already sharing a non-zero clone-id are by construction byte-identical AND
+ *  share their physical extents — re-cloning would reclaim zero bytes. So we
+ *  pick ONE representative per clone-family, sha just the reps, then expand
+ *  each matched rep back to its full family in the returned groups. Same-size
+ *  groups that collapse to a single rep (everyone's already in one family)
+ *  are dropped entirely.
+ *
  *  `minSize` is applied during the walk so large trees don't materialise
  *  paths for every below-threshold file. */
-export function findDuplicateFiles(root: string, opts: { minSize?: number } = {}): DuplicateGroup[] {
+export async function findDuplicateFiles(root: string, opts: FindDuplicatesOptions = {}): Promise<DuplicateGroup[]> {
     const minSize = Math.max(1, opts.minSize ?? 1);
+    const { signal, shouldEnter } = opts;
+
     const bySize = new Map<number, string[]>();
-    for (const e of walkFiles(root)) {
+    const walkOpts: WalkOptions = {};
+    if (signal !== undefined) {
+        walkOpts.signal = signal;
+    }
+    if (shouldEnter !== undefined) {
+        walkOpts.shouldEnter = shouldEnter;
+    }
+    for (const e of walkFiles(root, walkOpts)) {
         if (e.logical < minSize) {
             continue;
         }
@@ -404,14 +472,49 @@ export function findDuplicateFiles(root: string, opts: { minSize?: number } = {}
     }
 
     const groups: DuplicateGroup[] = [];
+    let bucketIndex = 0;
     for (const [size, paths] of bySize) {
+        if ((bucketIndex++ & (YIELD_EVERY_BUCKETS - 1)) === 0) {
+            await yieldToLoop();
+        }
+        signal?.throwIfAborted();
+
         if (paths.length < 2) {
             continue;
         }
 
+        // Clone-family pre-filter. Key = "id:<hex>" for real clone families,
+        // "solo:<idx>" for files without a clone-id (each treated as its own
+        // singleton family so they all get hashed).
+        const byClone = new Map<string, string[]>();
+        for (let i = 0; i < paths.length; i++) {
+            const id = getCloneId(paths[i]);
+            const key = id !== null && id !== 0n ? `id:${id.toString(16)}` : `solo:${i}`;
+            const arr = byClone.get(key);
+            if (arr) {
+                arr.push(paths[i]);
+            } else {
+                byClone.set(key, [paths[i]]);
+            }
+        }
+
+        // Reps = one path per clone-family. If <2 reps remain, every file in
+        // this size bucket is already part of a single clone family — nothing
+        // reclaimable, skip the whole bucket without hashing.
+        if (byClone.size < 2) {
+            continue;
+        }
+
+        const reps: string[] = [];
+        const repToFamily = new Map<string, string[]>();
+        for (const family of byClone.values()) {
+            reps.push(family[0]);
+            repToFamily.set(family[0], family);
+        }
+
         const byHash = new Map<string, string[]>();
-        for (const p of paths) {
-            const h = sha256File(p);
+        for (const p of reps) {
+            const h = sha256File(p, signal !== undefined ? { signal } : {});
             const list = byHash.get(h) ?? [];
             list.push(p);
             byHash.set(h, list);
@@ -425,9 +528,21 @@ export function findDuplicateFiles(root: string, opts: { minSize?: number } = {}
             // Streaming byte-equality against group[0] — sha collisions are
             // astronomical but Safety Contract invariant 1 requires actual
             // byte-equality, not just sha-equality, before cloning.
-            const confirmed = group.filter((p) => p === group[0] || bytesEqualStreaming(group[0], p));
+            const bytesOpts = signal !== undefined ? { signal } : {};
+            const confirmed = group.filter((p) => p === group[0] || bytesEqualStreaming(group[0], p, bytesOpts));
             if (confirmed.length >= 2) {
-                groups.push({ size, sha256, paths: confirmed.sort() });
+                // Expand reps back to their full clone-families.
+                const all: string[] = [];
+                for (const rep of confirmed) {
+                    const fam = repToFamily.get(rep);
+                    if (fam) {
+                        all.push(...fam);
+                    } else {
+                        all.push(rep);
+                    }
+                }
+
+                groups.push({ size, sha256, paths: all.sort() });
             }
         }
     }
@@ -438,9 +553,9 @@ export function findDuplicateFiles(root: string, opts: { minSize?: number } = {}
 /** Duplicate groups reduced to actionable dedupe work: pick a `keep`
  *  representative, list the `replace` files not already sharing its clone
  *  id, and project reclaimable bytes. Empty when nothing to do. */
-export function findDedupeCandidates(root: string): DedupeCandidate[] {
+export async function findDedupeCandidates(root: string, opts: FindDuplicatesOptions = {}): Promise<DedupeCandidate[]> {
     const out: DedupeCandidate[] = [];
-    for (const g of findDuplicateFiles(root)) {
+    for (const g of await findDuplicateFiles(root, opts)) {
         const keep = g.paths[0];
         const keepId = getCloneId(keep);
         const replace = g.paths.slice(1).filter((p) => {
@@ -598,9 +713,9 @@ export interface DedupeTreeReport {
 /** Walk `root`, find non-clone duplicates, and (only if `apply: true`)
  *  convert each duplicate into a verified COW clone of its group's
  *  representative. Default is a dry run that mutates nothing. */
-export function dedupeTree(root: string, opts: DedupeTreeOptions = {}): DedupeTreeReport {
+export async function dedupeTree(root: string, opts: DedupeTreeOptions = {}): Promise<DedupeTreeReport> {
     const apply = opts.apply === true;
-    const candidates = findDedupeCandidates(root);
+    const candidates = await findDedupeCandidates(root);
     const report: DedupeTreeReport = {
         dryRun: !apply,
         candidateGroups: candidates.length,

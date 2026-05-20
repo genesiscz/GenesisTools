@@ -38,7 +38,7 @@ export async function runDaemonScan(args: DaemonScanArgs = {}): Promise<DaemonSc
     // collapseDuplicates so the cached plan matches its cache key — otherwise
     // a follow-up `optimize` cache hit serves an unfiltered plan against a
     // filter-aware request.
-    const sets = collapseDuplicates({ roots, minSize: minReal, exclude }).sets;
+    const sets = (await collapseDuplicates({ roots, minSize: minReal, exclude })).sets;
     const reclaimable = sets.reduce((s, x) => s + x.reclaimable, 0);
 
     await cachePlan(
