@@ -255,6 +255,12 @@ export function createDashboardViteConfig({
                 "bun",
                 "@tanstack/react-start-client",
                 "@tanstack/start-client-core",
+                // Terminal-only packages pulled in by @tanstack/devtools-vite (chalk).
+                // Vite 8's rolldown optimizer resolves supports-color to browser.js,
+                // which lacks createSupportsColor — exclude the whole chain.
+                "chalk",
+                "supports-hyperlinks",
+                "supports-color",
                 ...(overrideOptimizeDeps?.exclude ?? []),
             ],
             include: [
