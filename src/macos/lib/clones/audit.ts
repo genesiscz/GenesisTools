@@ -1,21 +1,18 @@
-import { createHash } from "node:crypto";
 import {
     appendFileSync,
     chmodSync,
     existsSync,
     lstatSync,
     mkdirSync,
-    readFileSync as readBin,
-    readdirSync,
     readFileSync,
+    readdirSync,
     renameSync,
     statSync,
     utimesSync,
-    writeFileSync as writeBin,
 } from "node:fs";
 import { join, relative } from "node:path";
 import logger from "@app/logger";
-import { dedupeFile, freeDiskSpace, walkFiles } from "@app/utils/fs/disk-usage";
+import { copyFileStreaming, dedupeFile, freeDiskSpace, sha256File, walkFiles } from "@app/utils/fs/disk-usage";
 import { SafeJSON } from "@app/utils/json";
 import { CloneUnsupportedError, isApfsCloneSupported } from "@app/utils/macos/apfs";
 import { Stopwatch } from "@app/utils/Stopwatch";
@@ -220,9 +217,10 @@ export class IntegrityError extends Error {
     }
 }
 
-function sha256(path: string): string {
-    return createHash("sha256").update(readBin(path)).digest("hex");
-}
+// Shared with disk-usage.ts so the streaming sha256 is one implementation,
+// not two parallel ones (each prone to drift). Pre-state capture + post-clone
+// re-hash both call this; both must stream to handle large bundles.
+const sha256 = sha256File;
 
 export interface RunOptimizeArgs {
     roots: string[];
@@ -513,9 +511,12 @@ export function rollbackProcess(id: string): ProcessReport {
         seq += 1;
         const ts = new Date().toISOString();
         try {
-            const data = readBin(op.replace);
             const tmp = `${op.replace}.gtunclone.${process.pid}.${Date.now()}`;
-            writeBin(tmp, data);
+            // Explicit chunked read/write — fs.copyFileSync may use clonefile
+            // on APFS (Bun's libuv build does), which would PRESERVE the clone
+            // family we're trying to break. copyFileStreaming guarantees an
+            // independent inode by going through user-space buffers.
+            copyFileStreaming(op.replace, tmp);
             renameSync(tmp, op.replace);
             chmodSync(op.replace, op.modeBefore & 0o7777);
             const mtime = new Date(op.mtimeBeforeMs);

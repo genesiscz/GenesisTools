@@ -2,15 +2,19 @@ import { createHash } from "node:crypto";
 import {
     chmodSync,
     chownSync,
+    closeSync,
     type Dirent,
     lstatSync,
+    openSync,
     readdirSync,
     readFileSync,
+    readSync,
     renameSync,
     statfsSync,
     statSync,
     unlinkSync,
     utimesSync,
+    writeSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
 import logger from "@app/logger";
@@ -287,8 +291,92 @@ export interface DedupeCandidate {
     reclaimable: number;
 }
 
-function sha256File(path: string): string {
-    return createHash("sha256").update(readFileSync(path)).digest("hex");
+/** Chunk size for streaming I/O. 64 KB balances syscall overhead against
+ *  memory: enough to amortize read() costs, small enough to never OOM on
+ *  multi-GB files. */
+const STREAM_CHUNK_BYTES = 64 * 1024;
+
+/** Streaming SHA-256 — reads `path` in chunks instead of slurping the whole
+ *  file into memory. Required for safety: a `node_modules` tree may contain
+ *  arbitrarily-large bundles, source maps, or media that would OOM under
+ *  `readFileSync`. Exported so callers (e.g. the audit log) can share one
+ *  implementation. */
+export function sha256File(path: string): string {
+    const h = createHash("sha256");
+    const fd = openSync(path, "r");
+    try {
+        const buf = Buffer.allocUnsafe(STREAM_CHUNK_BYTES);
+        let n: number;
+        while ((n = readSync(fd, buf, 0, buf.length, null)) > 0) {
+            h.update(buf.subarray(0, n));
+        }
+    } finally {
+        closeSync(fd);
+    }
+
+    return h.digest("hex");
+}
+
+/** Streaming, INDEPENDENT-inode byte copy. Unlike `fs.copyFileSync` (which
+ *  may use `clonefile` on APFS and preserve the clone family), this performs
+ *  an explicit user-space read/write loop so the destination is GUARANTEED
+ *  to be a fresh inode with its own physical extents. Required for rollback:
+ *  the whole point of un-cloning is to produce an independent copy. */
+export function copyFileStreaming(src: string, dst: string): void {
+    const srcFd = openSync(src, "r");
+    let dstFd: number | null = null;
+    try {
+        // 'wx' = create-exclusive — fail if dst already exists. Callers route
+        // to a temp path then renameSync, so existence at dst is an error.
+        dstFd = openSync(dst, "wx");
+        const buf = Buffer.allocUnsafe(STREAM_CHUNK_BYTES);
+        let n: number;
+        while ((n = readSync(srcFd, buf, 0, buf.length, null)) > 0) {
+            let written = 0;
+            while (written < n) {
+                written += writeSync(dstFd, buf, written, n - written);
+            }
+        }
+    } finally {
+        closeSync(srcFd);
+        if (dstFd !== null) {
+            closeSync(dstFd);
+        }
+    }
+}
+
+/** Streaming byte-equality. Reads both files in lockstep 64 KB chunks and
+ *  compares each chunk. Used by `dedupeFile` (Safety Contract invariant 1)
+ *  and `findDuplicateFiles` to confirm sha-matched files are truly equal
+ *  without ever materializing the full content. */
+export function bytesEqualStreaming(a: string, b: string): boolean {
+    const fdA = openSync(a, "r");
+    let fdB: number | null = null;
+    try {
+        fdB = openSync(b, "r");
+        const bufA = Buffer.allocUnsafe(STREAM_CHUNK_BYTES);
+        const bufB = Buffer.allocUnsafe(STREAM_CHUNK_BYTES);
+        while (true) {
+            const nA = readSync(fdA, bufA, 0, bufA.length, null);
+            const nB = readSync(fdB, bufB, 0, bufB.length, null);
+            if (nA !== nB) {
+                return false;
+            }
+
+            if (nA === 0) {
+                return true;
+            }
+
+            if (!bufA.subarray(0, nA).equals(bufB.subarray(0, nB))) {
+                return false;
+            }
+        }
+    } finally {
+        closeSync(fdA);
+        if (fdB !== null) {
+            closeSync(fdB);
+        }
+    }
 }
 
 /** Content-identical regular files under `root`, grouped (size → sha256 →
@@ -324,8 +412,10 @@ export function findDuplicateFiles(root: string): DuplicateGroup[] {
                 continue;
             }
 
-            const ref = readFileSync(group[0]);
-            const confirmed = group.filter((p) => p === group[0] || readFileSync(p).equals(ref));
+            // Streaming byte-equality against group[0] — sha collisions are
+            // astronomical but Safety Contract invariant 1 requires actual
+            // byte-equality, not just sha-equality, before cloning.
+            const confirmed = group.filter((p) => p === group[0] || bytesEqualStreaming(group[0], p));
             if (confirmed.length >= 2) {
                 groups.push({ size, sha256, paths: confirmed.sort() });
             }
@@ -433,8 +523,10 @@ export function dedupeFile({ keep, replace }: DedupeFileArgs): DedupeResult {
         return { status: "already-cloned", bytesReclaimed: 0 };
     }
 
-    const keepBuf = readFileSync(keep);
-    if (!readFileSync(replace).equals(keepBuf)) {
+    // Streaming byte-compare instead of two full readFileSyncs. Safety
+    // Contract invariant 1 requires byte-equality before cloning; streaming
+    // preserves the guarantee without OOM on multi-GB files.
+    if (!bytesEqualStreaming(keep, replace)) {
         return { status: "skipped-different", bytesReclaimed: 0 };
     }
 
