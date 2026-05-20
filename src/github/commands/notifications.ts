@@ -2,7 +2,7 @@
 
 import { formatNotifications } from "@app/github/lib/output";
 import type { GitHubNotification, NotificationItem, NotificationsCommandOptions } from "@app/github/types";
-import logger from "@app/logger";
+import { logger, out } from "@app/logger";
 import { Browser } from "@app/utils/browser";
 import { getOctokit } from "@app/utils/github/octokit";
 import { withRetry } from "@app/utils/github/rate-limit";
@@ -132,20 +132,20 @@ export async function notificationsCommand(options: NotificationsCommandOptions)
     items = items.slice(0, limit);
 
     if (items.length === 0) {
-        console.log(chalk.yellow("No matching notifications found."));
+        out.println(chalk.yellow("No matching notifications found."));
         return;
     }
 
-    console.log(chalk.dim(`Found ${items.length} matching notification(s)\n`));
+    out.println(chalk.dim(`Found ${items.length} matching notification(s)\n`));
 
     // Open in browser
     if (options.open) {
         const urls = items.map((n) => n.webUrl);
-        console.log(chalk.cyan(`Opening ${urls.length} URL(s) in browser...\n`));
+        out.println(chalk.cyan(`Opening ${urls.length} URL(s) in browser...\n`));
         const results = await Browser.openAll(urls);
         const failed = results.filter((r) => !r.success);
         if (failed.length > 0) {
-            console.log(chalk.yellow(`${failed.length} URL(s) failed to open`));
+            out.println(chalk.yellow(`${failed.length} URL(s) failed to open`));
         }
     }
 
@@ -160,7 +160,7 @@ export async function notificationsCommand(options: NotificationsCommandOptions)
                 { label: `PATCH /notifications/threads/${item.id}` }
             );
         }
-        console.log(chalk.green(`Marked ${items.length} notification(s) as read`));
+        out.println(chalk.green(`Marked ${items.length} notification(s) as read`));
     }
 
     // Mark as done
@@ -174,7 +174,7 @@ export async function notificationsCommand(options: NotificationsCommandOptions)
                 { label: `DELETE /notifications/threads/${item.id}` }
             );
         }
-        console.log(chalk.green(`Marked ${items.length} notification(s) as done`));
+        out.println(chalk.green(`Marked ${items.length} notification(s) as done`));
     }
 
     // Format output
@@ -183,9 +183,9 @@ export async function notificationsCommand(options: NotificationsCommandOptions)
 
     if (options.output) {
         await Bun.write(options.output, output);
-        console.log(chalk.green(`Output written to ${options.output}`));
+        out.println(chalk.green(`Output written to ${options.output}`));
     } else {
-        console.log(output);
+        out.println(output);
     }
 }
 
@@ -218,7 +218,7 @@ export function createNotificationsCommand(): Command {
                 });
             } catch (error) {
                 logger.error({ error }, "Notifications command failed");
-                console.error(chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`));
+                out.error(chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`));
                 process.exit(1);
             }
         });

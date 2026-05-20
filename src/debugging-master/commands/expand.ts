@@ -1,5 +1,6 @@
 import { indexEntries } from "@app/debugging-master/core/log-parser";
 import { SessionManager } from "@app/debugging-master/core/session-manager";
+import { out } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import { formatSchema } from "@app/utils/json-schema";
 import { search } from "@jmespath-community/jmespath";
@@ -22,7 +23,7 @@ export function registerExpandCommand(program: Command): void {
             const prefix = refId[0];
             const entryIndex = parseInt(refId.slice(1), 10);
             if (Number.isNaN(entryIndex)) {
-                console.error(`Invalid ref ID: ${refId}. Expected format like d2, e5, s8`);
+                out.error(`Invalid ref ID: ${refId}. Expected format like d2, e5, s8`);
                 process.exit(1);
             }
 
@@ -31,7 +32,7 @@ export function registerExpandCommand(program: Command): void {
             const entry = entries.find((e) => e.index === entryIndex);
 
             if (!entry) {
-                console.error(`Entry #${entryIndex} not found in session "${sessionName}"`);
+                out.error(`Entry #${entryIndex} not found in session "${sessionName}"`);
                 process.exit(1);
             }
 
@@ -44,7 +45,7 @@ export function registerExpandCommand(program: Command): void {
                 data = entry.data ?? entry.stack;
             }
             if (data === undefined) {
-                console.error(`Entry #${entryIndex} has no data to expand`);
+                out.error(`Entry #${entryIndex} has no data to expand`);
                 process.exit(1);
             }
 
@@ -60,14 +61,14 @@ export function registerExpandCommand(program: Command): void {
                 output = formatSchema(data, schemaMode);
             }
 
-            console.log(`[ref:${refId}] Entry #${entryIndex} (${entry.level})`);
-            console.log(output);
+            out.println(`[ref:${refId}] Entry #${entryIndex} (${entry.level})`);
+            out.println(output);
 
             if (!opts.full && !opts.query) {
-                console.log(`\nTip: Full data → ${TOOL} expand ${refId} --full`);
-                console.log(`Tip: Query → ${TOOL} expand ${refId} --query '<jmespath>'`);
+                out.println(`\nTip: Full data → ${TOOL} expand ${refId} --full`);
+                out.println(`Tip: Query → ${TOOL} expand ${refId} --query '<jmespath>'`);
             } else if (opts.full) {
-                console.log(`\nTip: Query → ${TOOL} expand ${refId} --query '<jmespath>'`);
+                out.println(`\nTip: Query → ${TOOL} expand ${refId} --query '<jmespath>'`);
             }
         });
 }

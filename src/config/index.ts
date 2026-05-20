@@ -1,5 +1,7 @@
 #!/usr/bin/env bun
 
+import { out } from "@app/logger";
+import { runTool } from "@app/utils/cli";
 import { clearRejectedPackages, listRejectedPackages, removeRejectedPackage } from "@app/utils/packages";
 import * as p from "@clack/prompts";
 import chalk from "chalk";
@@ -21,7 +23,7 @@ program
         p.log.info(`${rejected.length} package(s) currently rejected:`);
 
         for (const pkg of rejected) {
-            console.log(`  ${chalk.red("✗")} ${pkg}`);
+            out.println(`  ${chalk.red("✗")} ${pkg}`);
         }
 
         const action = await p.select({
@@ -61,4 +63,4 @@ program
         }
     });
 
-program.parse();
+await runTool(program, { tool: "config" });

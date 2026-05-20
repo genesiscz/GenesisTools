@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { BrandAliasesRepository } from "@app/shops/db/BrandAliasesRepository";
 import type { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import { BrandResolver } from "@app/shops/lib/brand-resolver";

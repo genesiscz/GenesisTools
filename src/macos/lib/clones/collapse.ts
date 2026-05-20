@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { type Dirent, readdirSync } from "node:fs";
 import { basename, dirname, join, relative, sep } from "node:path";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { findDuplicateFiles } from "@app/utils/fs/disk-usage";
 import { Stopwatch } from "@app/utils/Stopwatch";
 import { passesGlobs } from "./filters";

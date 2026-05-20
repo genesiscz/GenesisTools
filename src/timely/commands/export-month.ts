@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger, out } from "@app/logger";
 import type { TimelyService } from "@app/timely/api/service";
 import type { TimelyEvent } from "@app/timely/types";
 import { formatDuration, getDatesInMonth, getMonthDateRange } from "@app/timely/utils/date";
@@ -165,16 +165,16 @@ async function exportMonthAction(
  * Export events as JSON format
  */
 function exportAsJson(events: TimelyEvent[]): void {
-    console.log(SafeJSON.stringify(events, null, 2));
+    out.println(SafeJSON.stringify(events, null, 2));
 }
 
 /**
  * Export events as CSV format
  */
 function exportAsCsv(events: TimelyEvent[]): void {
-    console.log("date,project,note,hours,minutes,duration_formatted");
+    out.println("date,project,note,hours,minutes,duration_formatted");
     for (const event of events) {
-        console.log(
+        out.println(
             [
                 event.day,
                 `"${event.project?.name || "No Project"}"`,
@@ -218,9 +218,9 @@ async function exportAsRaw(
         const dayTotal = dayEvents.reduce((sum, e) => sum + e.duration.total_seconds, 0);
         totalSeconds += dayTotal;
 
-        console.log(chalk.bold.cyan(`\n${"=".repeat(100)}`));
-        console.log(chalk.bold.cyan(`${day} - Total: ${formatDuration(dayTotal)}`));
-        console.log(chalk.bold.cyan(`${"=".repeat(100)}\n`));
+        out.println(chalk.bold.cyan(`\n${"=".repeat(100)}`));
+        out.println(chalk.bold.cyan(`${day} - Total: ${formatDuration(dayTotal)}`));
+        out.println(chalk.bold.cyan(`${"=".repeat(100)}\n`));
 
         // Create detailed table for each event
         for (const event of dayEvents) {
@@ -387,7 +387,7 @@ async function exportAsRaw(
                             }
                         }
                     } else {
-                        console.log(entries);
+                        out.println(entries);
                         process.exit(1);
                         table.push([
                             chalk.bold(`Entry ${entryId}`),
@@ -426,19 +426,19 @@ async function exportAsRaw(
             // Manage flag
             table.push([chalk.bold("Manage"), event.manage ? "Yes" : "No"]);
 
-            console.log(table.toString());
-            console.log(); // Empty line between events
+            out.println(table.toString());
+            out.println(); // Empty line between events
         }
     }
 
     // Summary
-    console.log(chalk.bold.cyan(`\n${"=".repeat(100)}`));
-    console.log(chalk.bold.cyan("SUMMARY"));
-    console.log(chalk.bold.cyan(`${"=".repeat(100)}`));
-    console.log(chalk.bold(`Total Duration: ${formatDuration(totalSeconds)}`));
-    console.log(`Total Events: ${events.length}`);
-    console.log(`Total Days: ${sortedDays.length}`);
-    console.log();
+    out.println(chalk.bold.cyan(`\n${"=".repeat(100)}`));
+    out.println(chalk.bold.cyan("SUMMARY"));
+    out.println(chalk.bold.cyan(`${"=".repeat(100)}`));
+    out.println(chalk.bold(`Total Duration: ${formatDuration(totalSeconds)}`));
+    out.println(`Total Events: ${events.length}`);
+    out.println(`Total Days: ${sortedDays.length}`);
+    out.println();
 }
 
 /**
@@ -463,11 +463,11 @@ async function exportAsReport(
     const { content, filePath } = await generateReportMarkdown(monthArg, storage, detailMode);
 
     // Output absolute path (always shown)
-    console.log(filePath);
+    out.println(filePath);
 
     // Output content to console unless silent
     if (!silent) {
-        console.log(content);
+        out.println(content);
     }
 }
 
@@ -496,19 +496,19 @@ function exportAsTable(events: TimelyEvent[], monthArg: string): void {
         const dayTotal = dayEvents.reduce((sum, e) => sum + e.duration.total_seconds, 0);
         totalSeconds += dayTotal;
 
-        console.log(chalk.bold(`${day} (${formatDuration(dayTotal)})`));
+        out.println(chalk.bold(`${day} (${formatDuration(dayTotal)})`));
 
         for (const event of dayEvents) {
             const project = event.project?.name || "No Project";
             const note = event.note.substring(0, 50) + (event.note.length > 50 ? "..." : "");
-            console.log(`  ${event.duration.formatted.padStart(8)} | ${project.padEnd(20)} | ${note}`);
+            out.println(`  ${event.duration.formatted.padStart(8)} | ${project.padEnd(20)} | ${note}`);
         }
-        console.log();
+        out.println();
     }
 
     // Summary
-    console.log(chalk.cyan("─".repeat(60)));
-    console.log(chalk.bold(`Total: ${formatDuration(totalSeconds)}`));
-    console.log(`Events: ${events.length}`);
-    console.log(`Days: ${sortedDays.length}`);
+    out.println(chalk.cyan("─".repeat(60)));
+    out.println(chalk.bold(`Total: ${formatDuration(totalSeconds)}`));
+    out.println(`Events: ${events.length}`);
+    out.println(`Days: ${sortedDays.length}`);
 }

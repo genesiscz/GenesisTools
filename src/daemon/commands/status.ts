@@ -1,3 +1,4 @@
+import { out } from "@app/logger";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -31,7 +32,7 @@ export function registerStatusCommand(program: Command): void {
                 return;
             }
 
-            console.log("");
+            out.println("");
 
             for (const task of config.tasks) {
                 const state = task.enabled ? pc.green("enabled") : pc.dim("disabled");

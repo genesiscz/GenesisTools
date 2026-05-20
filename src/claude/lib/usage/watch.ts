@@ -1,4 +1,5 @@
 import type { NotificationConfig } from "@app/claude/lib/config";
+import { out } from "@app/logger";
 import { dispatchNotification } from "@app/utils/notifications";
 import type { AccountUsage } from "./api";
 import { renderAllAccounts } from "./display";
@@ -166,7 +167,7 @@ export async function watchUsage(accountFilter?: string, notifications?: Notific
     const intervalMs = (notifications.watchInterval || 60) * 1000;
 
     const cleanup = () => {
-        console.log("\nStopping watch mode...");
+        out.println("\nStopping watch mode...");
         process.exit(0);
     };
     process.on("SIGINT", cleanup);
@@ -180,8 +181,8 @@ export async function watchUsage(accountFilter?: string, notifications?: Notific
 
         // Clear and render fresh data
         process.stdout.write("\x1B[2J\x1B[H");
-        console.log(renderAllAccounts(results));
-        console.log(
+        out.println(renderAllAccounts(results));
+        out.println(
             `\n${new Date().toLocaleTimeString()} — refreshing every ${notifications.watchInterval}s (Ctrl+C to stop)`
         );
 

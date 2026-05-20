@@ -2,7 +2,7 @@ import { loadDashboardConfig } from "@app/claude/lib/usage/dashboard-config";
 import { UsageHistoryDb } from "@app/claude/lib/usage/history-db";
 import { NotificationManager } from "@app/claude/lib/usage/notification-manager";
 import { getSharedAccountsUsage } from "@app/claude/lib/usage/shared-cache";
-import logger from "@app/logger";
+import { logger, out } from "@app/logger";
 import { Storage } from "@app/utils/storage/storage";
 
 async function main(): Promise<void> {
@@ -26,7 +26,7 @@ async function main(): Promise<void> {
 
         if (results.length === 0) {
             logger.warn("[claude-usage] daemon poll found no configured accounts");
-            console.error("No accounts configured. Run: tools claude login");
+            out.error("No accounts configured. Run: tools claude login");
             process.exit(1);
         }
 
@@ -65,7 +65,7 @@ async function main(): Promise<void> {
             const { processWarmupRules } = await import("@app/claude/lib/warmup/service");
             await processWarmupRules(results);
         } catch (err) {
-            console.warn(`Warmup check failed: ${err}`);
+            out.warn(`Warmup check failed: ${err}`);
         }
 
         db.pruneOlderThan(dashConfig.dataRetentionDays);
@@ -76,7 +76,7 @@ async function main(): Promise<void> {
             { accounts: results.length, accountNames, errorCount, duration_ms: Date.now() - startedAt },
             "[claude-usage] daemon poll completed"
         );
-        console.log(
+        out.println(
             `Polled ${results.length} account(s): ${accountNames}${errorCount > 0 ? ` (${errorCount} error(s))` : ""}`
         );
     } finally {
@@ -89,7 +89,7 @@ if (import.meta.main) {
         .then(() => process.exit(0))
         .catch((err) => {
             logger.error({ error: err }, "[claude-usage] daemon poll failed");
-            console.error(err);
+            out.error(err);
             process.exit(1);
         });
 }

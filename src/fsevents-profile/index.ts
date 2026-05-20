@@ -1,5 +1,6 @@
 import * as path from "node:path";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
+import { runTool } from "@app/utils/cli";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { spawn } from "bun";
 import chalk from "chalk";
@@ -72,8 +73,9 @@ async function main() {
         .option("-t, --top <number>", "How many top directories to display", String(DEFAULT_TOP_N))
         .option("-w, --watchers", "Show processes currently watching fsevents")
         .option("-v, --verbose", "Enable verbose logging")
-        .option("-?, --help-full", "Show extended help message")
-        .parse();
+        .option("-?, --help-full", "Show extended help message");
+
+    await runTool(program, { tool: "fsevents-profile" });
 
     const options: Options = {
         duration: parseInt(program.opts().duration, 10),

@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import type { TranscriptionSegment } from "@app/utils/ai/types";
 
 const SINGLE_TOKEN_MIN_RUN = 5;

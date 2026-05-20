@@ -1,6 +1,6 @@
 import type { Api } from "@app/azure-devops/api";
 import type { JsonPatchOperation } from "@app/azure-devops/types";
-import logger from "@app/logger";
+import { logger, out } from "@app/logger";
 import pc from "picocolors";
 
 const REMAINING_FIELD = "Microsoft.VSTS.Scheduling.RemainingWork";
@@ -61,7 +61,7 @@ export async function updateWorkItemEffort(
     } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         logger.warn(`[effort] Failed to update effort for #${workItemId}: ${msg}`);
-        console.warn(pc.yellow(`  ⚠ Could not update Remaining/Completed Work for #${workItemId}: ${msg}`));
+        out.warn(pc.yellow(`  ⚠ Could not update Remaining/Completed Work for #${workItemId}: ${msg}`));
         return null;
     }
 }

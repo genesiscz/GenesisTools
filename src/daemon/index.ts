@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 
+import { runTool } from "@app/utils/cli";
 import { handleReadmeFlag } from "@app/utils/readme";
 import * as p from "@clack/prompts";
 import { Command } from "commander";
@@ -42,7 +43,7 @@ async function main(): Promise<void> {
     }
 
     try {
-        await program.parseAsync(process.argv);
+        await runTool(program, { tool: "daemon" });
     } catch (error) {
         p.log.error(error instanceof Error ? error.message : String(error));
         process.exit(1);

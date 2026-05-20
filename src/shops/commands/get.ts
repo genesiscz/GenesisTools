@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { runGetProduct } from "@app/shops/lib/get-product";
 import { SafeJSON } from "@app/utils/json";
 import { formatTable } from "@app/utils/table";

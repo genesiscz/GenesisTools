@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { Storage } from "@app/utils/storage/storage";
 import { askUI } from "@ask/output/AskUILogger";
 import type { PricingInfo } from "@ask/types/provider";

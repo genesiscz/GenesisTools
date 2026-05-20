@@ -7,7 +7,7 @@ import {
     verifySessionToken,
 } from "@app/dev-dashboard/lib/auth";
 import { getTtydPort } from "@app/dev-dashboard/lib/ttyd/manager";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import type { Server, ServerWebSocket } from "bun";
 
 // Bun's node:http upgrade socket is a no-op (oven-sh/bun#28396 / PR #28347),

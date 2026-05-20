@@ -8,7 +8,7 @@ import { Api } from "@app/azure-devops/api";
 import { formatJSON, saveGlobalCache } from "@app/azure-devops/cache";
 import type { OutputFormat } from "@app/azure-devops/types";
 import { extractDashboardId, requireConfig } from "@app/azure-devops/utils";
-import logger from "@app/logger";
+import { logger, out } from "@app/logger";
 import type { Command } from "commander";
 
 /**
@@ -49,10 +49,10 @@ async function handleDashboard(input: string, format: OutputFormat): Promise<voi
     switch (format) {
         case "ai":
         case "md":
-            console.log(lines.join("\n"));
+            out.println(lines.join("\n"));
             break;
         case "json":
-            console.log(formatJSON(dashboard));
+            out.println(formatJSON(dashboard));
             break;
     }
 }

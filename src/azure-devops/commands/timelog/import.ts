@@ -6,7 +6,7 @@ import { updateWorkItemEffort } from "@app/azure-devops/timelog-effort";
 import type { AllowedTypeConfig, TimeLogImportFile } from "@app/azure-devops/types";
 import { requireTimeLogConfig, requireTimeLogUser } from "@app/azure-devops/utils";
 import { precheckWorkItem } from "@app/azure-devops/workitem-precheck";
-import logger from "@app/logger";
+import { logger, out } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -22,7 +22,7 @@ export function registerImportSubcommand(parent: Command): void {
             const user = requireTimeLogUser(config);
 
             if (!existsSync(file)) {
-                console.error(`File not found: ${file}`);
+                out.error(`File not found: ${file}`);
                 process.exit(1);
             }
 
@@ -32,12 +32,12 @@ export function registerImportSubcommand(parent: Command): void {
                 const content = readFileSync(file, "utf-8");
                 data = SafeJSON.parse(content, { strict: true });
             } catch (e) {
-                console.error(`Invalid JSON: ${(e as Error).message}`);
+                out.error(`Invalid JSON: ${(e as Error).message}`);
                 process.exit(1);
             }
 
             if (!data.entries || !Array.isArray(data.entries)) {
-                console.error(`Invalid format: expected { entries: [...] }`);
+                out.error(`Invalid format: expected { entries: [...] }`);
                 process.exit(1);
             }
 
@@ -107,17 +107,17 @@ export function registerImportSubcommand(parent: Command): void {
 
             // Report validation errors
             if (errors.length > 0) {
-                console.error("Validation errors:");
+                out.error("Validation errors:");
 
                 for (const err of errors) {
-                    console.error(`  - ${err}`);
+                    out.error(`  - ${err}`);
                 }
 
                 if (validEntries.length === 0) {
                     process.exit(1);
                 }
 
-                console.log(`\n${validEntries.length} entries are valid.\n`);
+                out.println(`\n${validEntries.length} entries are valid.\n`);
             }
 
             // ---- Precheck phase: validate work item types ----
@@ -144,12 +144,12 @@ export function registerImportSubcommand(parent: Command): void {
 
             if (!allowedTypeConfig) {
                 logger.debug("[import] allowedWorkItemTypes not configured, skipping precheck");
-                console.log(
+                out.println(
                     pc.yellow("Note: allowedWorkItemTypes not configured — skipping work item type precheck.\n")
                 );
                 precheckPassed = validEntries;
             } else {
-                console.log("Pre-checking work item types...");
+                out.println("Pre-checking work item types...");
 
                 // Deduplicate work item IDs to avoid redundant API calls
                 const uniqueWorkItemIds = [...new Set(validEntries.map((e) => e.workItemId))];
@@ -182,19 +182,19 @@ export function registerImportSubcommand(parent: Command): void {
                 }
 
                 // Show precheck summary
-                console.log("\nPre-check results:");
+                out.println("\nPre-check results:");
 
                 if (precheckPassed.length - precheckRedirected.length > 0) {
-                    console.log(
+                    out.println(
                         pc.green(`  \u2714 ${precheckPassed.length - precheckRedirected.length} entries passed`)
                     );
                 }
 
                 if (precheckRedirected.length > 0) {
-                    console.log(pc.yellow(`  \u26A0 ${precheckRedirected.length} entries redirected`));
+                    out.println(pc.yellow(`  \u26A0 ${precheckRedirected.length} entries redirected`));
 
                     for (const r of precheckRedirected) {
-                        console.log(
+                        out.println(
                             pc.dim(
                                 `    #${r.original} ${r.originalTitle} (${r.originalType}) -> #${r.redirected} ${r.redirectedTitle} (${r.redirectedType})`
                             )
@@ -203,10 +203,10 @@ export function registerImportSubcommand(parent: Command): void {
                 }
 
                 if (precheckFailed.length > 0) {
-                    console.log(pc.red(`  \u2716 ${precheckFailed.length} entries failed`));
+                    out.println(pc.red(`  \u2716 ${precheckFailed.length} entries failed`));
 
                     for (const f of precheckFailed) {
-                        console.log(pc.dim(`    ${f}`));
+                        out.println(pc.dim(`    ${f}`));
                     }
                 }
 
@@ -219,21 +219,21 @@ export function registerImportSubcommand(parent: Command): void {
                     }
                 }
 
-                console.log();
+                out.println();
 
                 if (precheckPassed.length === 0) {
-                    console.error("No entries passed precheck. Aborting.");
+                    out.error("No entries passed precheck. Aborting.");
                     process.exit(1);
                 }
             }
 
             if (options.dryRun) {
-                console.log("\u2714 Dry run complete. Valid entries:");
+                out.println("\u2714 Dry run complete. Valid entries:");
 
                 for (const e of precheckPassed) {
                     const title = workitemTitles.get(e.workItemId);
                     const titlePart = title ? ` ${title}` : "";
-                    console.log(
+                    out.println(
                         `  #${e.workItemId}${titlePart}: ${formatMinutes(e.minutes)} ${e.timeType} on ${e.date}`
                     );
                 }
@@ -242,7 +242,7 @@ export function registerImportSubcommand(parent: Command): void {
             }
 
             // Create entries
-            console.log(`Creating ${precheckPassed.length} time log entries...`);
+            out.println(`Creating ${precheckPassed.length} time log entries...`);
             let created = 0;
             const failed: string[] = [];
             const createdWorkItemIds: number[] = [];
@@ -272,32 +272,32 @@ export function registerImportSubcommand(parent: Command): void {
                     }
 
                     parts.push(`[${ids[0].substring(0, 8)}]`);
-                    console.log(`  \u2714 ${parts.join(" | ")}`);
+                    out.println(`  \u2714 ${parts.join(" | ")}`);
                 } catch (e) {
                     failed.push(`#${entry.workItemId}: ${(e as Error).message}`);
                 }
             }
 
-            console.log(`\n\u2714 Created ${created}/${precheckPassed.length} entries`);
+            out.println(`\n\u2714 Created ${created}/${precheckPassed.length} entries`);
 
             if (failed.length > 0) {
-                console.error("\nFailed:");
+                out.error("\nFailed:");
 
                 for (const f of failed) {
-                    console.error(`  - ${f}`);
+                    out.error(`  - ${f}`);
                 }
             }
 
             // Update Remaining/Completed Work on affected work items (one update per unique work item)
             if (minutesPerWorkItem.size > 0) {
-                console.log("\nUpdating work item effort...");
+                out.println("\nUpdating work item effort...");
                 const devopsApi = new Api(config);
 
                 for (const [workItemId, totalMins] of minutesPerWorkItem) {
                     const effort = await updateWorkItemEffort(devopsApi, workItemId, totalMins);
 
                     if (effort) {
-                        console.log(
+                        out.println(
                             `  \u2714 #${workItemId}: Remaining ${effort.remaining}h | Completed ${effort.completed}h`
                         );
                     }

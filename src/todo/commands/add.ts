@@ -1,3 +1,4 @@
+import { out } from "@app/logger";
 import { findProjectRoot } from "@app/todo/lib/context";
 import { formatTodo } from "@app/todo/lib/format";
 import { parseLinks } from "@app/todo/lib/links";
@@ -56,8 +57,8 @@ export function createAddCommand(): Command {
             let description: string | undefined = opts.description;
 
             if (!title && !isInteractive()) {
-                console.error("Error: title is required in non-interactive mode.");
-                console.error(suggestCommand("tools todo add", { add: ['"My todo title"'] }));
+                out.error("Error: title is required in non-interactive mode.");
+                out.error(suggestCommand("tools todo add", { add: ['"My todo title"'] }));
                 process.exit(1);
             }
 
@@ -150,7 +151,7 @@ export function createAddCommand(): Command {
             });
 
             const format = resolveFormat(opts.format);
-            console.log(formatTodo(todo, format, { colors: opts.colors }));
+            out.println(formatTodo(todo, format, { colors: opts.colors }));
 
             if (opts.syncTo) {
                 const target = opts.syncTo as SyncTarget;
@@ -158,14 +159,14 @@ export function createAddCommand(): Command {
                 const count = countSynced(result);
 
                 if (count > 0) {
-                    console.error(pc.green(`Synced ${count} reminder(s) to ${target}.`));
+                    out.error(pc.green(`Synced ${count} reminder(s) to ${target}.`));
                 }
 
                 const failures = describeSyncFailures(result);
 
                 if (failures.length > 0) {
                     for (const line of failures) {
-                        console.error(pc.red(`SYNC_FAILED ${target} ${todo.id}: ${line}`));
+                        out.error(pc.red(`SYNC_FAILED ${target} ${todo.id}: ${line}`));
                     }
                 }
 

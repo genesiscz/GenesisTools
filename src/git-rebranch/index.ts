@@ -1,3 +1,5 @@
+import { out } from "@app/logger";
+import { isVerbose, runTool } from "@app/utils/cli";
 import type { DetailedCommitInfo } from "@app/utils/git";
 import { createGit } from "@app/utils/git";
 import { withCancel } from "@app/utils/prompts/clack/helpers";
@@ -15,11 +17,10 @@ handleReadmeFlag(import.meta.url);
 interface Options {
     helpFull?: boolean;
     dryRun?: boolean;
-    verbose?: boolean;
 }
 
 function showHelpFull() {
-    console.log(`
+    out.println(`
 Usage: tools git-rebranch [options]
 
 Description:
@@ -60,9 +61,9 @@ const program = new Command()
     .name("git-rebranch")
     .description("Split a messy branch into multiple clean branches by commit grouping")
     .option("-?, --help-full", "Show detailed help message")
-    .option("--dry-run", "Show execution plan without creating branches")
-    .option("-v, --verbose", "Show git commands being executed")
-    .parse();
+    .option("--dry-run", "Show execution plan without creating branches");
+
+await runTool(program, { tool: "git-rebranch" });
 
 const opts = program.opts<Options>();
 
@@ -72,7 +73,7 @@ if (opts.helpFull) {
 }
 
 async function main(): Promise<void> {
-    const git = createGit({ verbose: opts.verbose ?? false });
+    const git = createGit({ verbose: isVerbose() });
 
     p.intro(pc.bgCyan(pc.black(" git-rebranch ")));
 

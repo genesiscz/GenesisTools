@@ -13,6 +13,7 @@
 
 import { writeFileSync } from "node:fs";
 import path from "node:path";
+import { out } from "@app/logger";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
@@ -65,7 +66,7 @@ class StressTest {
     }
 
     async setup(): Promise<void> {
-        console.error("Setting up MCP client...");
+        out.error("Setting up MCP client...");
 
         const transport = new StdioClientTransport({
             command: "bun",
@@ -75,15 +76,15 @@ class StressTest {
         this.client = new Client({ name: "stress-test", version: "1.0.0" }, { capabilities: {} });
 
         await this.client.connect(transport);
-        console.error("Connected to MCP server");
+        out.error("Connected to MCP server");
 
         // Verify tools are available
         const tools = await this.client.listTools();
-        console.error(`Available tools: ${tools.tools.map((t) => t.name).join(", ")}`);
+        out.error(`Available tools: ${tools.tools.map((t) => t.name).join(", ")}`);
     }
 
     async teardown(): Promise<void> {
-        console.error("\nClosing client connection...");
+        out.error("\nClosing client connection...");
         await this.client.close();
     }
 
@@ -148,24 +149,24 @@ class StressTest {
     // =========================================================================
 
     async testSequentialDiagnostics(): Promise<void> {
-        console.error("\n=== Sequential Diagnostics Test ===");
+        out.error("\n=== Sequential Diagnostics Test ===");
 
         for (let i = 0; i < CONFIG.sequentialDiagnostics; i++) {
             const file = CONFIG.testFiles[i % CONFIG.testFiles.length];
             const absolutePath = path.resolve(this.cwd, file);
             const result = await this.callDiagnostics([absolutePath]);
             this.results.push(result);
-            console.error(
+            out.error(
                 `  [${i + 1}/${CONFIG.sequentialDiagnostics}] ${result.success ? "✓" : "✗"} ${result.name} (${result.duration}ms)`
             );
             if (!result.success) {
-                console.error(`    Error: ${result.error}`);
+                out.error(`    Error: ${result.error}`);
             }
         }
     }
 
     async testSequentialHover(): Promise<void> {
-        console.error("\n=== Sequential Hover Test ===");
+        out.error("\n=== Sequential Hover Test ===");
 
         for (let i = 0; i < CONFIG.sequentialHover; i++) {
             const file = CONFIG.testFiles[i % CONFIG.testFiles.length];
@@ -173,23 +174,23 @@ class StressTest {
             const line = 10 + i * 10; // Different lines
             const result = await this.callHover(absolutePath, line);
             this.results.push(result);
-            console.error(
+            out.error(
                 `  [${i + 1}/${CONFIG.sequentialHover}] ${result.success ? "✓" : "✗"} ${result.name} (${result.duration}ms)`
             );
             if (!result.success) {
-                console.error(`    Error: ${result.error}`);
+                out.error(`    Error: ${result.error}`);
             }
         }
     }
 
     async testConcurrentDiagnostics(): Promise<void> {
-        console.error("\n=== Concurrent Diagnostics Test ===");
-        console.error(`  Launching ${CONFIG.concurrentDiagnostics} concurrent requests...`);
+        out.error("\n=== Concurrent Diagnostics Test ===");
+        out.error(`  Launching ${CONFIG.concurrentDiagnostics} concurrent requests...`);
 
         const promises = CONFIG.testFiles.slice(0, CONFIG.concurrentDiagnostics).map(async (file, i) => {
             const absolutePath = path.resolve(this.cwd, file);
             const result = await this.callDiagnostics([absolutePath]);
-            console.error(`  [${i + 1}] ${result.success ? "✓" : "✗"} ${result.name} (${result.duration}ms)`);
+            out.error(`  [${i + 1}] ${result.success ? "✓" : "✗"} ${result.name} (${result.duration}ms)`);
             return result;
         });
 
@@ -198,8 +199,8 @@ class StressTest {
     }
 
     async testConcurrentHover(): Promise<void> {
-        console.error("\n=== Concurrent Hover Test ===");
-        console.error(`  Launching ${CONFIG.concurrentHover} concurrent requests...`);
+        out.error("\n=== Concurrent Hover Test ===");
+        out.error(`  Launching ${CONFIG.concurrentHover} concurrent requests...`);
 
         const promises: Promise<TestResult>[] = [];
         for (let i = 0; i < CONFIG.concurrentHover; i++) {
@@ -209,7 +210,7 @@ class StressTest {
             const line = 10 + (i % 5) * 3;
             promises.push(
                 this.callHover(absolutePath, line).then((result) => {
-                    console.error(`  [${i + 1}] ${result.success ? "✓" : "✗"} ${result.name} (${result.duration}ms)`);
+                    out.error(`  [${i + 1}] ${result.success ? "✓" : "✗"} ${result.name} (${result.duration}ms)`);
                     return result;
                 })
             );
@@ -220,8 +221,8 @@ class StressTest {
     }
 
     async testMixedConcurrent(): Promise<void> {
-        console.error("\n=== Mixed Concurrent Test (Diagnostics + Hover) ===");
-        console.error(`  Launching ${CONFIG.mixedConcurrent} mixed concurrent requests...`);
+        out.error("\n=== Mixed Concurrent Test (Diagnostics + Hover) ===");
+        out.error(`  Launching ${CONFIG.mixedConcurrent} mixed concurrent requests...`);
 
         const promises: Promise<TestResult>[] = [];
         for (let i = 0; i < CONFIG.mixedConcurrent; i++) {
@@ -232,9 +233,7 @@ class StressTest {
                 // Diagnostics
                 promises.push(
                     this.callDiagnostics([absolutePath]).then((result) => {
-                        console.error(
-                            `  [${i + 1}] ${result.success ? "✓" : "✗"} ${result.name} (${result.duration}ms)`
-                        );
+                        out.error(`  [${i + 1}] ${result.success ? "✓" : "✗"} ${result.name} (${result.duration}ms)`);
                         return result;
                     })
                 );
@@ -243,9 +242,7 @@ class StressTest {
                 const line = 5 + (i % 8) * 2;
                 promises.push(
                     this.callHover(absolutePath, line).then((result) => {
-                        console.error(
-                            `  [${i + 1}] ${result.success ? "✓" : "✗"} ${result.name} (${result.duration}ms)`
-                        );
+                        out.error(`  [${i + 1}] ${result.success ? "✓" : "✗"} ${result.name} (${result.duration}ms)`);
                         return result;
                     })
                 );
@@ -257,19 +254,19 @@ class StressTest {
     }
 
     async testMultipleFileDiagnostics(): Promise<void> {
-        console.error("\n=== Multiple Files in Single Request Test ===");
+        out.error("\n=== Multiple Files in Single Request Test ===");
 
         const absolutePaths = CONFIG.testFiles.map((f) => path.resolve(this.cwd, f));
         const result = await this.callDiagnostics(absolutePaths, 30);
         this.results.push(result);
-        console.error(`  ${result.success ? "✓" : "✗"} ${result.name} (${result.duration}ms)`);
+        out.error(`  ${result.success ? "✓" : "✗"} ${result.name} (${result.duration}ms)`);
         if (!result.success) {
-            console.error(`    Error: ${result.error}`);
+            out.error(`    Error: ${result.error}`);
         }
     }
 
     async testFileModification(): Promise<void> {
-        console.error("\n=== File Modification During Request Test ===");
+        out.error("\n=== File Modification During Request Test ===");
 
         // Create a temp test file
         const testFilePath = path.resolve(this.cwd, "src/mcp-tsc/test-temp.ts");
@@ -286,13 +283,13 @@ export function testFunction(input: TestInterface): string {
 `;
 
         writeFileSync(testFilePath, originalContent);
-        console.error("  Created test file");
+        out.error("  Created test file");
 
         try {
             // First call to warm up
             let result = await this.callDiagnostics([testFilePath]);
             this.results.push(result);
-            console.error(`  [Warm-up] ${result.success ? "✓" : "✗"} (${result.duration}ms)`);
+            out.error(`  [Warm-up] ${result.success ? "✓" : "✗"} (${result.duration}ms)`);
 
             for (let i = 0; i < CONFIG.fileModificationTests; i++) {
                 // Modify the file while making a request
@@ -302,7 +299,7 @@ export function testFunction(input: TestInterface): string {
                 // Immediately request diagnostics
                 result = await this.callDiagnostics([testFilePath]);
                 this.results.push(result);
-                console.error(`  [Mod ${i + 1}] ${result.success ? "✓" : "✗"} (${result.duration}ms)`);
+                out.error(`  [Mod ${i + 1}] ${result.success ? "✓" : "✗"} (${result.duration}ms)`);
             }
 
             // Add an error to the file
@@ -312,13 +309,13 @@ export function testFunction(input: TestInterface): string {
             result = await this.callDiagnostics([testFilePath]);
             this.results.push(result);
             // This should succeed but report an error
-            console.error(`  [Error test] ${result.success ? "✓" : "✗"} (${result.duration}ms)`);
+            out.error(`  [Error test] ${result.success ? "✓" : "✗"} (${result.duration}ms)`);
         } finally {
             // Cleanup
             try {
                 const fs = await import("node:fs");
                 fs.unlinkSync(testFilePath);
-                console.error("  Cleaned up test file");
+                out.error("  Cleaned up test file");
             } catch {
                 // Ignore cleanup errors
             }
@@ -326,7 +323,7 @@ export function testFunction(input: TestInterface): string {
     }
 
     async testTimeouts(): Promise<void> {
-        console.error("\n=== Timeout Handling Test ===");
+        out.error("\n=== Timeout Handling Test ===");
 
         // Test hover with very short timeout
         const file = path.resolve(this.cwd, CONFIG.testFiles[0]);
@@ -334,17 +331,17 @@ export function testFunction(input: TestInterface): string {
         // Short timeout - might fail
         let result = await this.callHover(file, 100, 0.1);
         this.results.push({ ...result, name: "Hover(100ms timeout)" });
-        console.error(`  [Short timeout] ${result.success ? "✓" : "✗"} (${result.duration}ms)`);
+        out.error(`  [Short timeout] ${result.success ? "✓" : "✗"} (${result.duration}ms)`);
 
         // Normal timeout - should succeed
         result = await this.callHover(file, 100, 3);
         this.results.push({ ...result, name: "Hover(3s timeout)" });
-        console.error(`  [Normal timeout] ${result.success ? "✓" : "✗"} (${result.duration}ms)`);
+        out.error(`  [Normal timeout] ${result.success ? "✓" : "✗"} (${result.duration}ms)`);
     }
 
     async testRapidFireSameFile(): Promise<void> {
-        console.error("\n=== Rapid Fire Same File Test ===");
-        console.error("  Sending 20 rapid requests to the same file...");
+        out.error("\n=== Rapid Fire Same File Test ===");
+        out.error("  Sending 20 rapid requests to the same file...");
 
         const file = path.resolve(this.cwd, CONFIG.testFiles[0]);
         const promises: Promise<TestResult>[] = [];
@@ -352,7 +349,7 @@ export function testFunction(input: TestInterface): string {
         for (let i = 0; i < 20; i++) {
             promises.push(
                 this.callDiagnostics([file], 5).then((result) => {
-                    console.error(`  [${i + 1}] ${result.success ? "✓" : "✗"} (${result.duration}ms)`);
+                    out.error(`  [${i + 1}] ${result.success ? "✓" : "✗"} (${result.duration}ms)`);
                     return result;
                 })
             );
@@ -377,35 +374,35 @@ export function testFunction(input: TestInterface): string {
     }
 
     printReport(): void {
-        console.error(`\n${"=".repeat(60)}`);
-        console.error("STRESS TEST REPORT");
-        console.error("=".repeat(60));
+        out.error(`\n${"=".repeat(60)}`);
+        out.error("STRESS TEST REPORT");
+        out.error("=".repeat(60));
 
         const stats = this.getStats();
 
-        console.error(`\nResults:`);
-        console.error(`  Total tests:    ${stats.total}`);
-        console.error(`  Passed:         ${stats.passed} (${((stats.passed / stats.total) * 100).toFixed(1)}%)`);
-        console.error(`  Failed:         ${stats.failed} (${((stats.failed / stats.total) * 100).toFixed(1)}%)`);
-        console.error(`  Avg duration:   ${stats.avgDuration.toFixed(0)}ms`);
+        out.error(`\nResults:`);
+        out.error(`  Total tests:    ${stats.total}`);
+        out.error(`  Passed:         ${stats.passed} (${((stats.passed / stats.total) * 100).toFixed(1)}%)`);
+        out.error(`  Failed:         ${stats.failed} (${((stats.failed / stats.total) * 100).toFixed(1)}%)`);
+        out.error(`  Avg duration:   ${stats.avgDuration.toFixed(0)}ms`);
 
         // Duration distribution
         const durations = this.results.map((r) => r.duration).sort((a, b) => a - b);
-        console.error(`\nDuration distribution:`);
-        console.error(`  Min:    ${durations[0]}ms`);
-        console.error(`  P50:    ${durations[Math.floor(durations.length * 0.5)]}ms`);
-        console.error(`  P90:    ${durations[Math.floor(durations.length * 0.9)]}ms`);
-        console.error(`  P99:    ${durations[Math.floor(durations.length * 0.99)]}ms`);
-        console.error(`  Max:    ${durations[durations.length - 1]}ms`);
+        out.error(`\nDuration distribution:`);
+        out.error(`  Min:    ${durations[0]}ms`);
+        out.error(`  P50:    ${durations[Math.floor(durations.length * 0.5)]}ms`);
+        out.error(`  P90:    ${durations[Math.floor(durations.length * 0.9)]}ms`);
+        out.error(`  P99:    ${durations[Math.floor(durations.length * 0.99)]}ms`);
+        out.error(`  Max:    ${durations[durations.length - 1]}ms`);
 
         if (stats.errors.length > 0) {
-            console.error(`\nErrors (first 10):`);
+            out.error(`\nErrors (first 10):`);
             stats.errors.slice(0, 10).forEach((err, i) => {
-                console.error(`  ${i + 1}. ${err.substring(0, 100)}${err.length > 100 ? "..." : ""}`);
+                out.error(`  ${i + 1}. ${err.substring(0, 100)}${err.length > 100 ? "..." : ""}`);
             });
         }
 
-        console.error(`\n${"=".repeat(60)}`);
+        out.error(`\n${"=".repeat(60)}`);
     }
 
     async run(): Promise<number> {
@@ -428,7 +425,7 @@ export function testFunction(input: TestInterface): string {
             const stats = this.getStats();
             return stats.failed > 0 ? 1 : 0;
         } catch (error) {
-            console.error("\nFatal error during stress test:", error);
+            out.error("\nFatal error during stress test:", error);
             return 1;
         } finally {
             await this.teardown();

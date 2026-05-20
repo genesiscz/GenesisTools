@@ -9,6 +9,7 @@ import {
 } from "@app/debugging-master/core/log-parser";
 import { SessionManager } from "@app/debugging-master/core/session-manager";
 import type { IndexedLogEntry, OutputFormat } from "@app/debugging-master/types";
+import { out } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import { REF_THRESHOLD } from "@app/utils/references";
 import type { Command } from "commander";
@@ -80,6 +81,6 @@ export function registerGetCommand(program: Command): void {
 
             const content = formatL1(sessionName, entries, stats, pretty);
             const tip = formatTip(entries);
-            console.log(wrapOutput(content, format, tip));
+            out.println(wrapOutput(content, format, tip));
         });
 }

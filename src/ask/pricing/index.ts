@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger, out } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
 import { providerManager } from "@ask/providers/ProviderManager";
@@ -114,7 +114,7 @@ function sortModels(modelsWithPricing: ModelWithPricing[], sortBy?: ModelsOption
 }
 
 async function showPricingTable(providerFilter?: string, sortBy?: ModelsOptions["sort"], filterCapabilities?: string) {
-    console.log(pc.bold(pc.cyan("\n💰 MODEL PRICING & INFORMATION\n")));
+    out.println(pc.bold(pc.cyan("\n💰 MODEL PRICING & INFORMATION\n")));
 
     const providers = await providerManager.detectProviders();
     const filteredProviders = providerFilter
@@ -122,13 +122,13 @@ async function showPricingTable(providerFilter?: string, sortBy?: ModelsOptions[
         : providers;
 
     if (filteredProviders.length === 0) {
-        console.log(pc.yellow(`No providers found${providerFilter ? ` matching "${providerFilter}"` : ""}`));
+        out.println(pc.yellow(`No providers found${providerFilter ? ` matching "${providerFilter}"` : ""}`));
         return;
     }
 
     // Group models by provider
     for (const provider of filteredProviders) {
-        console.log(
+        out.println(
             pc.bold(
                 pc.blue(
                     `\n${provider.name.toUpperCase()} (${provider.models.length} model${
@@ -138,9 +138,9 @@ async function showPricingTable(providerFilter?: string, sortBy?: ModelsOptions[
             )
         );
         if (provider.config.description) {
-            console.log(pc.dim(`  ${provider.config.description}\n`));
+            out.println(pc.dim(`  ${provider.config.description}\n`));
         } else {
-            console.log();
+            out.println();
         }
 
         // Fetch pricing for all models
@@ -219,11 +219,11 @@ async function showPricingTable(providerFilter?: string, sortBy?: ModelsOptions[
             table.push([pc.green(modelName), modelId, context, inputPrice, outputPrice, cachedPrice, capabilities]);
         }
 
-        console.log(table.toString());
+        out.println(table.toString());
     }
 
     // Show summary
-    console.log(pc.bold(pc.cyan("\n📊 SUMMARY\n")));
+    out.println(pc.bold(pc.cyan("\n📊 SUMMARY\n")));
 
     // Collect all filtered models (accounting for capability filtering)
     const allFilteredModels: ModelWithProvider[] = [];
@@ -250,8 +250,8 @@ async function showPricingTable(providerFilter?: string, sortBy?: ModelsOptions[
     const totalProviders = filteredProviders.length;
     const totalModels = allFilteredModels.length;
 
-    console.log(pc.white(`Total Providers: ${pc.cyan(totalProviders.toString())}`));
-    console.log(pc.white(`Total Models: ${pc.cyan(totalModels.toString())}`));
+    out.println(pc.white(`Total Providers: ${pc.cyan(totalProviders.toString())}`));
+    out.println(pc.white(`Total Models: ${pc.cyan(totalModels.toString())}`));
 
     const modelsWithPricing = allFilteredModels;
 
@@ -300,15 +300,15 @@ async function showPricingTable(providerFilter?: string, sortBy?: ModelsOptions[
             (m.pricing?.inputPer1M ?? 0) > (max.pricing?.inputPer1M ?? 0) ? m : max
         );
 
-        console.log(pc.white("\nPricing:"));
-        console.log(
+        out.println(pc.white("\nPricing:"));
+        out.println(
             pc.white(
                 `  Cheapest Input: ${pc.green(cheapest.model.name || cheapest.model.id)} (${pc.yellow(
                     `$${cheapest.pricing?.inputPer1M.toFixed(4)}/1M`
                 )})`
             )
         );
-        console.log(
+        out.println(
             pc.white(
                 `  Most Expensive Input: ${pc.red(
                     mostExpensive.model.name || mostExpensive.model.id
@@ -321,7 +321,7 @@ async function showPricingTable(providerFilter?: string, sortBy?: ModelsOptions[
             (m) => m.pricing?.inputPer1MAbove200k || m.pricing?.outputPer1MAbove200k
         );
         if (tieredModels.length > 0) {
-            console.log(pc.white(`  Tiered Pricing Models: ${pc.magenta(tieredModels.length.toString())}`));
+            out.println(pc.white(`  Tiered Pricing Models: ${pc.magenta(tieredModels.length.toString())}`));
         }
     }
 
@@ -334,11 +334,11 @@ async function showPricingTable(providerFilter?: string, sortBy?: ModelsOptions[
     });
 
     if (Object.keys(capabilityCounts).length > 0) {
-        console.log(pc.white("\nCapabilities:"));
+        out.println(pc.white("\nCapabilities:"));
         Object.entries(capabilityCounts)
             .sort((a, b) => b[1] - a[1])
             .forEach(([cap, count]) => {
-                console.log(pc.white(`  ${cap}: ${pc.cyan(count.toString())}`));
+                out.println(pc.white(`  ${cap}: ${pc.cyan(count.toString())}`));
             });
     }
 
@@ -349,10 +349,10 @@ async function showPricingTable(providerFilter?: string, sortBy?: ModelsOptions[
         const minContext = contextWindows[contextWindows.length - 1];
         const avgContext = Math.round(contextWindows.reduce((a, b) => a + b, 0) / contextWindows.length);
 
-        console.log(pc.white("\nContext Windows:"));
-        console.log(pc.white(`  Max: ${pc.cyan(formatContextWindow(maxContext))}`));
-        console.log(pc.white(`  Min: ${pc.cyan(formatContextWindow(minContext))}`));
-        console.log(pc.white(`  Avg: ${pc.cyan(formatContextWindow(avgContext))}`));
+        out.println(pc.white("\nContext Windows:"));
+        out.println(pc.white(`  Max: ${pc.cyan(formatContextWindow(maxContext))}`));
+        out.println(pc.white(`  Min: ${pc.cyan(formatContextWindow(minContext))}`));
+        out.println(pc.white(`  Avg: ${pc.cyan(formatContextWindow(avgContext))}`));
     }
 }
 
@@ -408,7 +408,7 @@ async function showPricingJSON(providerFilter?: string, filterCapabilities?: str
         };
     }
 
-    console.log(SafeJSON.stringify(output, null, 2));
+    out.println(SafeJSON.stringify(output, null, 2));
 }
 
 export async function showPricing(options: ModelsOptions = {}): Promise<void> {

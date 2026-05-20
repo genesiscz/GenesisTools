@@ -1,4 +1,4 @@
-import type logger from "@app/logger";
+import type { Logger } from "@app/logger";
 import { getLogger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import { type FetchError, ofetch, type ResponseType } from "ofetch";
@@ -145,7 +145,7 @@ export class ApiClient {
     private readonly defaultHeaders: Record<string, string>;
     private readonly defaultTimeoutMs: number;
     private readonly defaultRetry: number;
-    private _requestLogger: ReturnType<typeof logger.child> | null = null;
+    private _requestLogger: ReturnType<Logger["child"]> | null = null;
     private readonly _loggerContext: Record<string, unknown>;
 
     constructor(config: ApiClientConfig = {}) {

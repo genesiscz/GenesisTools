@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
+import { out } from "@app/logger";
 import { ClaudeSessionFormatter } from "@app/utils/claude/ClaudeSessionFormatter";
 import { IncludeSpec } from "@app/utils/claude/cli/dsl";
 import { ClaudeSession } from "@app/utils/claude/session";
@@ -70,7 +71,7 @@ export async function renderSessionList(options: ListSessionsOptions): Promise<v
     });
 
     if (sessions.length === 0) {
-        console.log(pc.dim("No sessions found."));
+        out.println(pc.dim("No sessions found."));
         return;
     }
 
@@ -101,12 +102,12 @@ export async function renderActiveSessionList(
 
     sortByRecency(activeSessions);
 
-    console.log(
+    out.println(
         options.colors
             ? pc.yellow(`⚠️ ${activeSessions.length} active sessions — pick one:`)
             : `⚠️ ${activeSessions.length} active sessions — pick one:`
     );
-    console.log();
+    out.println();
 
     printSuggestHeader(activeSessions[0], options);
 
@@ -130,16 +131,16 @@ async function renderCompactSession(
     if (preview.lastUserMessage) {
         const collapsed = preview.lastUserMessage.replace(/\n+/g, " ");
         const truncated = truncateText(collapsed, 120);
-        console.log(c ? `   ${pc.dim("›")} ${pc.green(truncated)}` : `   › ${truncated}`);
+        out.println(c ? `   ${pc.dim("›")} ${pc.green(truncated)}` : `   › ${truncated}`);
     }
 
     for (const excerpt of preview.assistantExcerpts) {
         const collapsed = excerpt.replace(/\n+/g, " ");
         const truncated = truncateText(collapsed, 200);
-        console.log(c ? `   ${pc.dim("│")} ${pc.dim(truncated)}` : `   │ ${truncated}`);
+        out.println(c ? `   ${pc.dim("│")} ${pc.dim(truncated)}` : `   │ ${truncated}`);
     }
 
-    console.log();
+    out.println();
 }
 
 function renderSessionHeader(session: SessionInfo, activeIds: Set<string>, options: ListSessionsOptions): void {
@@ -154,7 +155,7 @@ function renderSessionHeader(session: SessionInfo, activeIds: Set<string>, optio
     const header = c
         ? `${icon}${pc.bold(pc.white(shortId))}  ${pc.dim(timeStr.padEnd(8))} ${pc.cyan(branch)}`
         : `${icon}${shortId}  ${timeStr.padEnd(8)} ${branch}`;
-    console.log(header);
+    out.println(header);
 }
 
 // ─── Verbose List (-ll) ─────────────────────────────────────────────────────
@@ -191,10 +192,10 @@ async function renderVerboseSession(
     renderSessionHeader(session, activeIds, options);
 
     for (const line of lines) {
-        console.log(line);
+        out.println(line);
     }
 
-    console.log();
+    out.println();
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -302,12 +303,12 @@ function printSuggestHeader(firstSession: SessionInfo, options: ListSessionsOpti
     });
 
     if (options.colors) {
-        console.log(`  ${pc.dim("┌")} ${pc.cyan(hint)}`);
-        console.log(`  ${pc.dim("└")}`);
+        out.println(`  ${pc.dim("┌")} ${pc.cyan(hint)}`);
+        out.println(`  ${pc.dim("└")}`);
     } else {
-        console.log(`  ┌ ${hint}`);
-        console.log("  └");
+        out.println(`  ┌ ${hint}`);
+        out.println("  └");
     }
 
-    console.log();
+    out.println();
 }

@@ -1,3 +1,4 @@
+import { out } from "@app/logger";
 import { findProjectRoot } from "@app/todo/lib/context";
 import { formatTodoList } from "@app/todo/lib/format";
 import { TodoStore } from "@app/todo/lib/store";
@@ -58,6 +59,6 @@ export function createListCommand(): Command {
             }
 
             const format = resolveFormat(opts.format);
-            console.log(formatTodoList(todos, format, { colors: opts.colors }));
+            out.println(formatTodoList(todos, format, { colors: opts.colors }));
         });
 }

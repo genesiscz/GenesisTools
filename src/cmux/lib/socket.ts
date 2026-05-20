@@ -1,6 +1,6 @@
 import { connect } from "node:net";
 import { runCmuxJSON } from "@app/cmux/lib/cli";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 
 interface IdentifyResponse {

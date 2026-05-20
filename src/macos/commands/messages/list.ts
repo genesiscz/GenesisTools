@@ -1,3 +1,4 @@
+import { out } from "@app/logger";
 import { parseMailDate } from "@app/macos/lib/mail/command-helpers";
 import { iMessagesDatabase } from "@app/utils/macos/iMessagesDatabase";
 import { MacContactsDatabase } from "@app/utils/macos/MacContactsDatabase";
@@ -26,7 +27,7 @@ export function registerMessagesListCommand(program: Command): void {
             });
 
             if (chats.length === 0) {
-                console.log("No conversations found.");
+                out.println("No conversations found.");
                 return;
             }
 
@@ -52,14 +53,14 @@ export function registerMessagesListCommand(program: Command): void {
                 const count = chalk.dim(`${chat.messageCount} msgs`);
                 const style = chat.style === "group" ? chalk.dim(" [group]") : "";
 
-                console.log(`  ${displayName}${style}  ${service}  ${count}  ${chalk.dim(lastMsg)}`);
+                out.println(`  ${displayName}${style}  ${service}  ${count}  ${chalk.dim(lastMsg)}`);
 
                 if (chat.displayName && chat.participants.length > 0) {
-                    console.log(chalk.dim(`    ${participantNames}`));
+                    out.println(chalk.dim(`    ${participantNames}`));
                 }
 
-                console.log(chalk.dim(`    ID: ${chat.chatIdentifier}`));
-                console.log();
+                out.println(chalk.dim(`    ID: ${chat.chatIdentifier}`));
+                out.println();
             }
         });
 }

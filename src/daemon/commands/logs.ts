@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { out } from "@app/logger";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -48,14 +49,14 @@ function showTaskLogs(taskName: string): void {
                 );
                 break;
             case "stdout":
-                console.log(entry.data);
+                out.println(entry.data);
                 break;
             case "stderr":
-                console.log(pc.yellow(entry.data));
+                out.println(pc.yellow(entry.data));
                 break;
             case "exit": {
                 const color = entry.code === 0 ? pc.green : pc.red;
-                console.log(color(`[exit ${entry.code ?? "killed"} in ${formatDuration(entry.duration_ms)}]`));
+                out.println(color(`[exit ${entry.code ?? "killed"} in ${formatDuration(entry.duration_ms)}]`));
                 break;
             }
         }

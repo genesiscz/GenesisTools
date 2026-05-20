@@ -1,3 +1,4 @@
+import { out } from "@app/logger";
 import { MacCalendar } from "@app/utils/macos/apple-calendar";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -11,13 +12,13 @@ export function registerDeleteCommand(program: Command): void {
                 const ok = await MacCalendar.deleteEvent({ eventId });
 
                 if (ok) {
-                    console.log(`${pc.green("Event deleted")} — ID: ${eventId}`);
+                    out.println(`${pc.green("Event deleted")} — ID: ${eventId}`);
                 } else {
-                    console.error(`${pc.red("Failed to delete event")} — ID: ${eventId}`);
+                    out.error(`${pc.red("Failed to delete event")} — ID: ${eventId}`);
                     process.exit(1);
                 }
             } catch (error) {
-                console.error(error instanceof Error ? error.message : String(error));
+                out.error(error instanceof Error ? error.message : String(error));
                 process.exit(1);
             }
         });

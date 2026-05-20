@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import type { ShopApiClient } from "@app/shops/api/ShopApiClient";
 import type {
     CrawlOptions,

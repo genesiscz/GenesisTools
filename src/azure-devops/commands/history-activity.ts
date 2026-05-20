@@ -20,6 +20,7 @@ import { buildWorkItemHistory, resolveUser, userMatches } from "@app/azure-devop
 import type { Comment, IdentityRef, WorkItemUpdate } from "@app/azure-devops/types";
 import { requireConfig } from "@app/azure-devops/utils";
 import { escapeWiqlValue } from "@app/azure-devops/wiql-builder";
+import { out } from "@app/logger";
 import { suggestCommand } from "@app/utils/cli";
 import { formatDateTime } from "@app/utils/date";
 import * as p from "@clack/prompts";
@@ -372,22 +373,22 @@ function printTimeline(days: ActivityDay[]): void {
     }
 
     for (const day of days) {
-        console.log();
-        console.log(pc.bold(`${day.date} (${day.dayName})`));
-        console.log(pc.dim("-".repeat(60)));
+        out.println();
+        out.println(pc.bold(`${day.date} (${day.dayName})`));
+        out.println(pc.dim("-".repeat(60)));
 
         for (const event of day.events) {
             const time = formatTime(event.date);
             const icon = TYPE_COLORS[event.type](TYPE_ICONS[event.type]);
             const id = pc.dim(`#${event.workItemId}`);
             const shortTitle = event.title;
-            console.log(`  ${pc.dim(time)}  ${icon} ${id} ${event.description}`);
+            out.println(`  ${pc.dim(time)}  ${icon} ${id} ${event.description}`);
             if (event.type !== "field_edit") {
-                console.log(`  ${" ".repeat(8)}${pc.dim(shortTitle)}`);
+                out.println(`  ${" ".repeat(8)}${pc.dim(shortTitle)}`);
             }
         }
     }
-    console.log();
+    out.println();
 }
 
 function printSummary(days: ActivityDay[]): void {
@@ -421,19 +422,19 @@ function printSummary(days: ActivityDay[]): void {
         }
 
         const uniqueItems = new Set(day.events.map((e) => e.workItemId));
-        console.log(
+        out.println(
             `  ${pc.bold(day.date)} (${day.dayName}): ${day.events.length} actions across ${uniqueItems.size} items — ${parts.join(", ")}`
         );
     }
 
     const totalEvents = days.reduce((sum, d) => sum + d.events.length, 0);
     const allItems = new Set(days.flatMap((d) => d.events.map((e) => e.workItemId)));
-    console.log();
-    console.log(pc.dim(`Total: ${totalEvents} actions across ${allItems.size} work items over ${days.length} days`));
+    out.println();
+    out.println(pc.dim(`Total: ${totalEvents} actions across ${allItems.size} work items over ${days.length} days`));
 }
 
 function printJson(days: ActivityDay[]): void {
-    console.log(formatJSON(days));
+    out.println(formatJSON(days));
 }
 
 // ============= Main Handler =============

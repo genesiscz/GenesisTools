@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 
+import { runTool } from "@app/utils/cli";
 import { isMultilineCancel, multilineText } from "@app/utils/prompts/clack";
 import { Storage } from "@app/utils/storage/storage";
 import * as p from "@clack/prompts";
@@ -368,7 +369,7 @@ async function main() {
             p.outro(pc.green("Done!"));
         });
 
-    await program.parseAsync();
+    await runTool(program, { tool: "rohlik-spending" });
 }
 
 main().catch((error) => {

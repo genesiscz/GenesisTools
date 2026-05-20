@@ -1,6 +1,7 @@
 // Shared utility functions for GitHub commands
 
 import type { CommentData, CommentRecord, GitHubReactions } from "@app/github/types";
+import { out } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import chalk from "chalk";
 
@@ -22,7 +23,7 @@ export function isGlobalVerbose(): boolean {
  */
 export function verboseLog(message: string): void {
     if (globalVerbose) {
-        console.log(chalk.cyan(message));
+        out.println(chalk.cyan(message));
     }
 }
 
@@ -39,7 +40,7 @@ export interface VerboseOptions {
  */
 export function verbose<T extends VerboseOptions>(options: T, message: string): void {
     if (options.verbose) {
-        console.log(chalk.cyan(message));
+        out.println(chalk.cyan(message));
     }
 }
 

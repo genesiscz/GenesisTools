@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import type { HlidacGetByUrlResult } from "@app/shops/api/HlidacShopuClient.types";
 import type { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import type { Product } from "@app/shops/db/types";

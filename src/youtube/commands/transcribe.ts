@@ -1,3 +1,4 @@
+import { out } from "@app/logger";
 import { isInteractive, suggestCommand } from "@app/utils/cli/executor";
 import { SafeJSON } from "@app/utils/json";
 import { getYoutube } from "@app/youtube/commands/_shared/ensure-pipeline";
@@ -91,7 +92,7 @@ async function runTranscribe({
 
     const videoId = extractVideoId(url);
     if (!videoId) {
-        console.error(pc.red("Invalid YouTube URL or video ID"));
+        out.error(pc.red("Invalid YouTube URL or video ID"));
         process.exitCode = 1;
         return;
     }
@@ -144,8 +145,8 @@ async function resolveInput(
     }
 
     if (!isInteractive()) {
-        console.error(pc.red("transcribe requires a YouTube URL or video ID in non-interactive mode."));
-        console.error(`Try: ${suggestCommand("tools youtube transcribe", { add: ["dQw4w9WgXcQ"] })}`);
+        out.error(pc.red("transcribe requires a YouTube URL or video ID in non-interactive mode."));
+        out.error(`Try: ${suggestCommand("tools youtube transcribe", { add: ["dQw4w9WgXcQ"] })}`);
         process.exitCode = 1;
         return null;
     }

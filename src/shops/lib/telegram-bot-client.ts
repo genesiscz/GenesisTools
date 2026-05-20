@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { ApiClient } from "@app/utils/api/ApiClient";
 
 export interface TelegramBotClientConfig {

@@ -39,7 +39,7 @@
  *   tools macos contacts search
  */
 
-import logger from "@app/logger";
+import { logger, out } from "@app/logger";
 import { registerCalendarCommand } from "@app/macos/commands/calendar/index";
 import { registerClonesCommand } from "@app/macos/commands/clones/index";
 import { registerMailCommand } from "@app/macos/commands/mail/index";
@@ -48,6 +48,7 @@ import { registerRemindersCommand } from "@app/macos/commands/reminders/index";
 import { registerSleepCommand } from "@app/macos/commands/sleep/index";
 import { registerSwapCommand } from "@app/macos/commands/swap/index";
 import { registerVoiceMemosCommand } from "@app/macos/commands/voice-memos/index";
+import { runTool } from "@app/utils/cli";
 import { closeDarwinKit } from "@app/utils/macos/darwinkit";
 import { Command } from "commander";
 
@@ -70,16 +71,16 @@ registerVoiceMemosCommand(program);
 
 async function main(): Promise<void> {
     try {
-        await program.parseAsync(process.argv);
+        await runTool(program, { tool: "macos" });
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         logger.error(`Error: ${message}`);
 
         if (message.includes("not authorized") || message.includes("permission")) {
-            console.log("\nTo fix permission issues:");
-            console.log("  1. Open System Settings > Privacy & Security > Full Disk Access");
-            console.log("  2. Enable access for your terminal app");
-            console.log("  3. Restart the terminal and try again");
+            out.println("\nTo fix permission issues:");
+            out.println("  1. Open System Settings > Privacy & Security > Full Disk Access");
+            out.println("  2. Enable access for your terminal app");
+            out.println("  3. Restart the terminal and try again");
         }
 
         process.exit(1);

@@ -1,4 +1,5 @@
 import { performance } from "node:perf_hooks";
+import { out } from "@app/logger";
 import { AIXAITextToSpeechProvider } from "./AIXAITextToSpeechProvider";
 
 const SAMPLE = [
@@ -9,7 +10,7 @@ const SAMPLE = [
 ].join(" ");
 
 if (!process.env.X_AI_API_KEY) {
-    console.error("X_AI_API_KEY not set — skipping benchmark.");
+    out.error("X_AI_API_KEY not set — skipping benchmark.");
     process.exit(1);
 }
 
@@ -41,18 +42,18 @@ async function timeWs(): Promise<{ ttfbMs: number; totalMs: number; bytes: numbe
     return { ttfbMs: firstByteMs, totalMs: total, bytes };
 }
 
-console.log(`Sample: ${SAMPLE.length} chars`);
+out.println(`Sample: ${SAMPLE.length} chars`);
 
 const rest = await timeRest();
-console.log(
+out.println(
     `REST  /v1/tts (HTTP)  → TTFB ${rest.ttfbMs.toFixed(0)}ms, total ${rest.totalMs.toFixed(0)}ms, ${rest.bytes} bytes`
 );
 
 const ws = await timeWs();
-console.log(
+out.println(
     `WS    /v1/tts (WSS)   → TTFB ${ws.ttfbMs.toFixed(0)}ms, total ${ws.totalMs.toFixed(0)}ms, ${ws.bytes} bytes`
 );
 
 const winner = ws.ttfbMs < rest.ttfbMs ? "WS" : "REST";
 const delta = Math.abs(ws.ttfbMs - rest.ttfbMs).toFixed(0);
-console.log(`\nFirst-byte winner: ${winner} (by ${delta}ms)`);
+out.println(`\nFirst-byte winner: ${winner} (by ${delta}ms)`);

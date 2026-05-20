@@ -1,6 +1,6 @@
 import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { findModel } from "@app/utils/ai/ModelRegistry";
 import type { Embedder } from "@app/utils/ai/tasks/Embedder";
 import type { WatcherSubscription } from "@app/utils/fs/watcher";

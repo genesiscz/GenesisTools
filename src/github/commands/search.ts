@@ -2,7 +2,7 @@
 
 import { formatRepoResults, formatSearchResults } from "@app/github/lib/output";
 import type { RepoSearchResult, SearchCommandOptions, SearchResult } from "@app/github/types";
-import logger from "@app/logger";
+import { logger, out } from "@app/logger";
 import { batchFetchCommentReactions } from "@app/utils/github/graphql";
 import { getOctokit } from "@app/utils/github/octokit";
 import { withRetry } from "@app/utils/github/rate-limit";
@@ -99,7 +99,7 @@ async function searchLegacy(query: string, options: SearchCommandOptions): Promi
         searchQuery += " is:issue is:pr";
     }
 
-    console.log(chalk.dim(`Searching (legacy): ${searchQuery}`));
+    out.println(chalk.dim(`Searching (legacy): ${searchQuery}`));
 
     const { data } = await withRetry(
         () =>
@@ -132,7 +132,7 @@ async function searchAdvanced(query: string, options: SearchCommandOptions): Pro
         searchQuery += " type:issue type:pr";
     }
 
-    console.log(chalk.dim(`Searching (advanced): ${searchQuery}`));
+    out.println(chalk.dim(`Searching (advanced): ${searchQuery}`));
 
     const { data } = await withRetry(
         () =>
@@ -210,7 +210,7 @@ async function searchRepos(query: string, options: SearchCommandOptions): Promis
         searchQuery += ` stars:>=${options.minStars}`;
     }
 
-    console.log(chalk.dim(`Searching repos: ${searchQuery}`));
+    out.println(chalk.dim(`Searching repos: ${searchQuery}`));
 
     const { data } = await withRetry(
         () =>
@@ -259,16 +259,16 @@ export async function searchCommand(query: string, options: SearchCommandOptions
         const repos = await searchRepos(query, options);
         verbose(options, `Found ${repos.length} repositories`);
         if (repos.length === 0) {
-            console.log(chalk.yellow("No repositories found."));
+            out.println(chalk.yellow("No repositories found."));
             return;
         }
         const format = options.format || "ai";
         const output = formatRepoResults(repos, format);
         if (options.output) {
             await Bun.write(options.output, output);
-            console.log(chalk.green(`✔ Output written to ${options.output}`));
+            out.println(chalk.green(`✔ Output written to ${options.output}`));
         } else {
-            console.log(output);
+            out.println(output);
         }
         verbose(options, `Completed: ${repos.length} repos displayed`);
         return;
@@ -320,20 +320,20 @@ export async function searchCommand(query: string, options: SearchCommandOptions
         const estimatedCost = results.length * 2 + totalComments; // 2 per issue (node + connection) + 1 per comment node
         const issueList = results.map((r) => `#${r.number} (${r.comments} comments)`).join(", ");
 
-        console.log("");
-        console.log(
+        out.println("");
+        out.println(
             chalk.yellow(
                 `⚠ GraphQL comment scan: ${results.length} issues, ${totalComments} comments (~${estimatedCost} of 5,000/hr points)`
             )
         );
-        console.log(chalk.dim(`  ${issueList}`));
-        console.log(chalk.dim(`  Tip: To check specific issues instead:`));
-        console.log(
+        out.println(chalk.dim(`  ${issueList}`));
+        out.println(chalk.dim(`  Tip: To check specific issues instead:`));
+        out.println(
             chalk.cyan(
                 `    tools github issue <number>,<number> --repo ${results[0]?.repo || "owner/repo"} --min-comment-reactions ${options.minCommentReactions}`
             )
         );
-        console.log("");
+        out.println("");
 
         preFilterResults = [...results];
 
@@ -360,7 +360,7 @@ export async function searchCommand(query: string, options: SearchCommandOptions
         }
 
         results = results.filter((r) => keep.has(`${r.repo}#${r.number}`));
-        console.log(
+        out.println(
             chalk.dim(
                 `Filtered to ${results.length} of ${preFilterResults.length} results with comment reactions >= ${options.minCommentReactions}`
             )
@@ -370,14 +370,14 @@ export async function searchCommand(query: string, options: SearchCommandOptions
     if (results.length === 0) {
         // If comment-reaction filter eliminated everything, still show the original search results
         if (preFilterResults && preFilterResults.length > 0) {
-            console.log(
+            out.println(
                 chalk.yellow(
                     `\nNo issues matched --min-comment-reactions ${options.minCommentReactions}. Showing all ${preFilterResults.length} search results:\n`
                 )
             );
             results = preFilterResults;
         } else {
-            console.log(chalk.yellow("No results found."));
+            out.println(chalk.yellow("No results found."));
             return;
         }
     }
@@ -389,13 +389,13 @@ export async function searchCommand(query: string, options: SearchCommandOptions
 
     if (options.output) {
         await Bun.write(options.output, output);
-        console.log(chalk.green(`✔ Output written to ${options.output}`));
+        out.println(chalk.green(`✔ Output written to ${options.output}`));
     } else {
-        console.log(output);
+        out.println(output);
     }
 
     if (footer) {
-        console.log(chalk.dim(`\n${footer}`));
+        out.println(chalk.dim(`\n${footer}`));
     }
 
     verbose(options, `Completed: ${results.length} results displayed`);
@@ -435,16 +435,16 @@ export function createSearchCommand(): Command {
                 const errorMessage = error instanceof Error ? error.message : String(error);
 
                 if (errorMessage.includes("is:issue") || errorMessage.includes("is:pull-request")) {
-                    console.error(chalk.yellow("\n📝 GitHub Search Syntax Tips:"));
-                    console.error(chalk.dim('  • For issues: tools github search "query" --type issue'));
-                    console.error(chalk.dim('  • For PRs: tools github search "query" --type pr'));
-                    console.error(chalk.dim('  • For code: tools github code "query" --repo owner/repo'));
-                    console.error(chalk.dim("  • Add repo filter: --repo owner/repo"));
-                    console.error(chalk.dim("  • Filter by state: --state open|closed"));
-                    console.error("");
+                    out.error(chalk.yellow("\n📝 GitHub Search Syntax Tips:"));
+                    out.error(chalk.dim('  • For issues: tools github search "query" --type issue'));
+                    out.error(chalk.dim('  • For PRs: tools github search "query" --type pr'));
+                    out.error(chalk.dim('  • For code: tools github code "query" --repo owner/repo'));
+                    out.error(chalk.dim("  • Add repo filter: --repo owner/repo"));
+                    out.error(chalk.dim("  • Filter by state: --state open|closed"));
+                    out.error("");
                 }
 
-                console.error(chalk.red(`Error: ${errorMessage}`));
+                out.error(chalk.red(`Error: ${errorMessage}`));
                 process.exit(1);
             }
         });

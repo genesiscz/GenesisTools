@@ -16,7 +16,7 @@ import {
     writeSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { formatBytes } from "@app/utils/format";
 import { CloneUnsupportedError, cloneFile, getCloneId, getFsType, getPrivateSize } from "@app/utils/macos/apfs";
 

@@ -1,3 +1,4 @@
+import { out } from "@app/logger";
 import type { Command } from "commander";
 import pc from "picocolors";
 
@@ -43,29 +44,29 @@ export function registerBenchVectorsCommand(program: Command): void {
                 ["limit", limit],
             ] as const) {
                 if (Number.isNaN(value) || value <= 0) {
-                    console.error(pc.red(`Invalid --${name}: must be a positive integer`));
+                    out.error(pc.red(`Invalid --${name}: must be a positive integer`));
                     process.exit(1);
                 }
             }
 
             const backends = (opts.backends as string).split(",").map((b: string) => b.trim());
 
-            console.log(pc.bold("\nVector Search Benchmark"));
-            console.log(`  Vectors: ${numVectors.toLocaleString()}`);
-            console.log(`  Dimensions: ${dimensions}`);
-            console.log(`  Queries: ${numQueries}`);
-            console.log(`  k (limit): ${limit}`);
-            console.log(`  Backends: ${backends.join(", ")}\n`);
+            out.println(pc.bold("\nVector Search Benchmark"));
+            out.println(`  Vectors: ${numVectors.toLocaleString()}`);
+            out.println(`  Dimensions: ${dimensions}`);
+            out.println(`  Queries: ${numQueries}`);
+            out.println(`  k (limit): ${limit}`);
+            out.println(`  Backends: ${backends.join(", ")}\n`);
 
             // Generate random normalized vectors
-            console.log("Generating random vectors...");
+            out.println("Generating random vectors...");
             const vectors = generateRandomVectors(numVectors, dimensions);
             const queryVectors = generateRandomVectors(numQueries, dimensions);
 
             const results: BenchmarkResult[] = [];
 
             for (const backend of backends) {
-                console.log(pc.cyan(`\nBenchmarking: ${backend}`));
+                out.println(pc.cyan(`\nBenchmarking: ${backend}`));
                 const tmpDir = mkdtempSync(join(tmpdir(), `bench-${backend}-`));
 
                 try {
@@ -104,13 +105,13 @@ export function registerBenchVectorsCommand(program: Command): void {
 
                     results.push(result);
 
-                    console.log(
+                    out.println(
                         `  Insert: ${result.insertTimeMs.toFixed(0)}ms | ` +
                             `Search avg: ${result.searchTimeMs.toFixed(2)}ms | ` +
                             `${result.searchesPerSecond.toFixed(0)} q/s`
                     );
                 } catch (err) {
-                    console.log(pc.red(`  FAILED: ${err}`));
+                    out.println(pc.red(`  FAILED: ${err}`));
                 } finally {
                     rmSync(tmpDir, { recursive: true, force: true });
                 }
@@ -199,19 +200,19 @@ function printResultsTable(results: BenchmarkResult[]): void {
         return;
     }
 
-    console.log(pc.bold("\n\nResults Summary:"));
-    console.log("=".repeat(80));
-    console.log(
+    out.println(pc.bold("\n\nResults Summary:"));
+    out.println("=".repeat(80));
+    out.println(
         "Backend".padEnd(16) +
             "Insert (ms)".padStart(14) +
             "Search avg (ms)".padStart(18) +
             "Queries/sec".padStart(14) +
             "Memory (MB)".padStart(14)
     );
-    console.log("-".repeat(80));
+    out.println("-".repeat(80));
 
     for (const r of results) {
-        console.log(
+        out.println(
             r.backend.padEnd(16) +
                 r.insertTimeMs.toFixed(0).padStart(14) +
                 r.searchTimeMs.toFixed(2).padStart(18) +
@@ -220,17 +221,17 @@ function printResultsTable(results: BenchmarkResult[]): void {
         );
     }
 
-    console.log("=".repeat(80));
+    out.println("=".repeat(80));
 
     // Find fastest search
     const fastest = results.reduce((a, b) => (a.searchTimeMs < b.searchTimeMs ? a : b));
 
-    console.log(pc.green(`\nFastest search: ${fastest.backend} (${fastest.searchTimeMs.toFixed(2)}ms avg)`));
+    out.println(pc.green(`\nFastest search: ${fastest.backend} (${fastest.searchTimeMs.toFixed(2)}ms avg)`));
 
     for (const r of results) {
         if (r.backend !== fastest.backend) {
             const ratio = r.searchTimeMs / fastest.searchTimeMs;
-            console.log(pc.dim(`  ${r.backend}: ${ratio.toFixed(1)}x slower`));
+            out.println(pc.dim(`  ${r.backend}: ${ratio.toFixed(1)}x slower`));
         }
     }
 }

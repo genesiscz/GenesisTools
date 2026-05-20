@@ -34,7 +34,7 @@ import {
     parseRelations,
     requireConfig,
 } from "@app/azure-devops/utils";
-import logger, { consoleLog } from "@app/logger";
+import { logger, out } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import type { Command } from "commander";
 
@@ -42,7 +42,7 @@ import type { Command } from "commander";
 let silentMode = false;
 const log = (msg: string) => {
     if (!silentMode) {
-        consoleLog.info(msg);
+        logger.info(msg);
     }
 };
 
@@ -500,12 +500,12 @@ export async function handleWorkItem(
         const cacheTime = cacheTimes.get(item.id);
 
         if (i > 0) {
-            console.log("\n---\n");
+            out.println("\n---\n");
         }
 
         switch (format) {
             case "ai":
-                console.log(
+                out.println(
                     formatWorkItemAI(
                         item,
                         taskPath,
@@ -516,12 +516,12 @@ export async function handleWorkItem(
                 );
                 break;
             case "md":
-                console.log(
+                out.println(
                     `# ${item.title}\n\n${item.description || "No description"}\n\n## Comments\n${item.comments.map((c) => `- **${c.author}**: ${c.text}`).join("\n")}`
                 );
                 break;
             case "json":
-                console.log(formatJSON(item));
+                out.println(formatJSON(item));
                 break;
         }
     }

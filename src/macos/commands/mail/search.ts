@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { ALL_COLUMN_KEYS, type MailColumnKey } from "@app/macos/lib/mail/columns";
 import {
     enrichWithBodies,
@@ -76,17 +76,6 @@ function createQuietSpinner(): QuietSpinner {
         start: (): void => {},
         stop: (): void => {},
     };
-}
-
-function isVerboseErrorOutput(): boolean {
-    return (
-        process.env.LOG_DEBUG === "1" ||
-        process.env.LOG_TRACE === "1" ||
-        process.argv.includes("--verbose") ||
-        process.argv.includes("-v") ||
-        process.argv.includes("--trace") ||
-        process.argv.includes("-vv")
-    );
 }
 
 export function registerSearchCommand(program: Command): void {
@@ -225,9 +214,7 @@ export function registerSearchCommand(program: Command): void {
                     p.log.error(msg);
                 }
 
-                if (isVerboseErrorOutput()) {
-                    process.stderr.write(`\n[mail/search] stack trace:\n${verboseDetails}\n`);
-                }
+                logger.debug(`[mail/search] stack trace:\n${verboseDetails}`);
 
                 process.exit(1);
             } finally {

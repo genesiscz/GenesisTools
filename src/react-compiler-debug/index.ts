@@ -24,9 +24,9 @@ handleReadmeFlag(import.meta.url);
 
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import logger from "@app/logger";
+import { logger, out } from "@app/logger";
+import { isVerbose, runTool } from "@app/utils/cli";
 import { copyToClipboard } from "@app/utils/clipboard";
-
 import { SafeJSON } from "@app/utils/json";
 
 // Resolve babel-plugin-react-compiler from GenesisTools installation
@@ -46,7 +46,6 @@ interface CompilerOptions {
 interface ProgramOptions {
     code?: string;
     stdin?: boolean;
-    verbose?: boolean;
     clipboard?: boolean;
     target?: "17" | "18" | "19";
     mode?: "infer" | "all" | "annotation" | "syntax";
@@ -62,7 +61,6 @@ program
     .argument("[file]", "File to compile")
     .option("-c, --code <code>", "Compile inline code snippet")
     .option("-s, --stdin", "Read code from stdin")
-    .option("-v, --verbose", "Show compiler events")
     .option("--clipboard", "Copy output to clipboard")
     .option("-t, --target <version>", "React version target (17, 18, 19)", "19")
     .option("-m, --mode <mode>", "Compilation mode (infer, all, annotation, syntax)", "infer")
@@ -73,9 +71,9 @@ program
             await main(fileArg, options);
         } catch (error) {
             if (error instanceof Error) {
-                console.error(chalk.red("Error:"), error.message);
-                if (options.verbose) {
-                    console.error(error.stack);
+                out.error(chalk.red("Error:"), error.message);
+                if (isVerbose()) {
+                    out.error(error.stack);
                 }
             }
             process.exit(1);
@@ -88,10 +86,10 @@ function createCompilerOptions(options: ProgramOptions): CompilerOptions {
         compilationMode: options.mode || "infer",
     };
 
-    if (options.verbose) {
+    if (isVerbose()) {
         compilerOptions.logger = {
             logEvent(filename: string | null, event: unknown) {
-                console.error(
+                out.error(
                     chalk.dim("[Compiler Event]"),
                     chalk.cyan(filename || "unknown"),
                     SafeJSON.stringify(event, null, 2)
@@ -389,11 +387,11 @@ async function main(fileArg: string | undefined, options: ProgramOptions) {
         code = await file.text();
         filename = filePath;
     } else {
-        console.error(chalk.red("No input provided."));
-        console.log("\nUsage:");
-        console.log("  tools react-compiler-debug <file.tsx>");
-        console.log('  tools react-compiler-debug --code "const Foo = () => <div />"');
-        console.log("  cat file.tsx | tools react-compiler-debug --stdin");
+        out.error(chalk.red("No input provided."));
+        out.println("\nUsage:");
+        out.println("  tools react-compiler-debug <file.tsx>");
+        out.println('  tools react-compiler-debug --code "const Foo = () => <div />"');
+        out.println("  cat file.tsx | tools react-compiler-debug --stdin");
         process.exit(1);
     }
 
@@ -429,8 +427,8 @@ async function main(fileArg: string | undefined, options: ProgramOptions) {
                 compiled = prettifyCompiledCode(compiled);
             } catch (prettifyError) {
                 // If prettification fails, fall back to raw output
-                if (options.verbose) {
-                    console.error(chalk.yellow("Prettification failed, using raw output:"), prettifyError);
+                if (isVerbose()) {
+                    out.error(chalk.yellow("Prettification failed, using raw output:"), prettifyError);
                 }
             }
         }
@@ -459,7 +457,7 @@ async function main(fileArg: string | undefined, options: ProgramOptions) {
             output.push(chalk.red(`Compilation error: ${errorMessage}`));
         }
 
-        if (options.verbose && error instanceof Error) {
+        if (isVerbose() && error instanceof Error) {
             output.push(chalk.dim(error.stack || ""));
         }
     }
@@ -472,11 +470,11 @@ async function main(fileArg: string | undefined, options: ProgramOptions) {
         // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional ANSI escape/control character matching
         const plainText = outputText.replace(/\x1B\[[0-9;]*m/g, "");
         await copyToClipboard(plainText, { silent: true });
-        console.log(chalk.green("Output copied to clipboard!"));
-        console.log(outputText);
+        out.println(chalk.green("Output copied to clipboard!"));
+        out.println(outputText);
     } else {
-        console.log(outputText);
+        out.println(outputText);
     }
 }
 
-program.parse();
+await runTool(program, { tool: "react-compiler-debug" });

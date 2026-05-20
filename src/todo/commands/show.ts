@@ -1,3 +1,4 @@
+import { out } from "@app/logger";
 import { findProjectRoot } from "@app/todo/lib/context";
 import { formatTodo } from "@app/todo/lib/format";
 import { TodoStore } from "@app/todo/lib/store";
@@ -30,11 +31,11 @@ export function createShowCommand(): Command {
             }
 
             if (!todo) {
-                console.error(`Todo not found: ${id}`);
+                out.error(`Todo not found: ${id}`);
                 process.exit(1);
             }
 
             const format = resolveFormat(opts.format);
-            console.log(formatTodo(todo, format, { colors: opts.colors }));
+            out.println(formatTodo(todo, format, { colors: opts.colors }));
         });
 }

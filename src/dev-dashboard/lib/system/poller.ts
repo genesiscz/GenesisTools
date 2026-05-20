@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import { collectPulse } from "./collector";
 import { PulseHistoryDb } from "./history-db";

@@ -1,7 +1,7 @@
 import { captureProfile, getCmuxVersion, type SnapshotOptions } from "@app/cmux/lib/snapshot";
 import { ProfileExistsError, ProfileStore } from "@app/cmux/lib/store";
 import type { ProfileScope, Window } from "@app/cmux/lib/types";
-import logger from "@app/logger";
+import { logger, out } from "@app/logger";
 import { isInteractive, suggestCommand } from "@app/utils/cli";
 import { withCancel } from "@app/utils/prompts/clack/helpers";
 import * as p from "@clack/prompts";
@@ -54,8 +54,8 @@ async function runSave(rawName: string | undefined, flags: SaveFlags): Promise<v
     const store = new ProfileStore();
     if (store.exists(name) && !forceWrite) {
         if (!interactive) {
-            console.error(`Profile "${name}" already exists. Use --force to overwrite.`);
-            console.error(suggestCommand("tools cmux profiles save", { add: ["--force"] }));
+            out.error(`Profile "${name}" already exists. Use --force to overwrite.`);
+            out.error(suggestCommand("tools cmux profiles save", { add: ["--force"] }));
             process.exitCode = 1;
             return;
         }
@@ -133,8 +133,8 @@ async function resolveScope(flags: SaveFlags, interactive: boolean): Promise<Pro
         return flags.scope;
     }
     if (!interactive) {
-        console.error("Non-interactive mode requires --scope <all|window|workspace>.");
-        console.error(suggestCommand("tools cmux profiles save", { add: ["--scope", "all"] }));
+        out.error("Non-interactive mode requires --scope <all|window|workspace>.");
+        out.error(suggestCommand("tools cmux profiles save", { add: ["--scope", "all"] }));
         process.exit(1);
     }
     const choice = await withCancel(
@@ -237,8 +237,8 @@ async function resolveName(rawName: string | undefined, scope: ProfileScope, int
         return validateProfileName(rawName);
     }
     if (!interactive) {
-        console.error("Profile name required as the first positional argument in non-interactive mode.");
-        console.error(suggestCommand("tools cmux profiles save", { add: ["<name>"] }));
+        out.error("Profile name required as the first positional argument in non-interactive mode.");
+        out.error(suggestCommand("tools cmux profiles save", { add: ["<name>"] }));
         process.exit(1);
     }
     const value = await withCancel(

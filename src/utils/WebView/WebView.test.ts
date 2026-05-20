@@ -1,3 +1,4 @@
+// biome-ignore-all lint/plugin: test fixture intentionally uses /tmp/ or /Users/ string literals — production plugins do not apply to test code
 import { describe, expect, it } from "bun:test";
 import { statSync } from "node:fs";
 import { detectBunCapabilities } from "@app/utils/bun";

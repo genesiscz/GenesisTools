@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, rmdirSync, statSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { type AIProviderType, isCloudProvider } from "@app/utils/config/ai.types";
 import { formatBytes } from "@app/utils/format";
 import { ensurePackage } from "@app/utils/packages";

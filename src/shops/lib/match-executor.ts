@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import type { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import type { MatchCandidatesTable } from "@app/shops/db/types";
 import { refreshMasterDenorm } from "@app/shops/lib/master-denorm";

@@ -1,6 +1,8 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
+import { out } from "@app/logger";
+import { runTool } from "@app/utils/cli";
 import { PROJECT_ROOT } from "@app/utils/paths";
 import { Command } from "commander";
 import { registerConfigureCommand } from "./commands/configure.js";
@@ -30,13 +32,13 @@ program
         const url = "http://localhost:3071";
 
         if (!existsSync(viteEntry)) {
-            console.error(`✗ Could not find vite at ${viteEntry}`);
-            console.error(`  Run "bun install" in ${PROJECT_ROOT} first.`);
+            out.error(`✗ Could not find vite at ${viteEntry}`);
+            out.error(`  Run "bun install" in ${PROJECT_ROOT} first.`);
             process.exit(1);
         }
 
         if (!existsSync(configPath)) {
-            console.error(`✗ Vite config missing: ${configPath}`);
+            out.error(`✗ Vite config missing: ${configPath}`);
             process.exit(1);
         }
 
@@ -45,18 +47,18 @@ program
             // Soft warning — don't block startup. The user may want to open the UI
             // and reconfigure (paste a fresh cURL, rotate a key, etc.) from Settings.
             // Settings → Configuration status will surface the same errors inline.
-            console.warn("\n⚠  Clarity dashboard is starting with auth/connection issues — fix in UI Settings:\n");
+            out.warn("\n⚠  Clarity dashboard is starting with auth/connection issues — fix in UI Settings:\n");
             for (const f of failures) {
-                console.warn(`  • [${f.service}] ${f.error}`);
+                out.warn(`  • [${f.service}] ${f.error}`);
                 if (f.fix) {
-                    console.warn(`      Fix: ${f.fix}`);
+                    out.warn(`      Fix: ${f.fix}`);
                 }
             }
-            console.warn("");
+            out.warn("");
         }
 
-        console.log(`Starting Clarity dashboard at ${url} ...`);
-        console.log("(first start can take a few seconds; output below comes from Vite)\n");
+        out.println(`Starting Clarity dashboard at ${url} ...`);
+        out.println("(first start can take a few seconds; output below comes from Vite)\n");
 
         // Spawn vite.js directly via bun rather than relying on node_modules/.bin/vite
         // — on Windows the .bin entry is a .cmd shim that Bun.spawn can fail to resolve
@@ -69,7 +71,7 @@ program
         });
 
         child.on("error", (err) => {
-            console.error(`✗ Failed to start vite: ${err.message}`);
+            out.error(`✗ Failed to start vite: ${err.message}`);
             process.exit(1);
         });
 
@@ -91,10 +93,10 @@ program
         });
 
         if (exitCode !== 0) {
-            console.error(`\n✗ Vite exited with code ${exitCode}`);
+            out.error(`\n✗ Vite exited with code ${exitCode}`);
         }
 
         process.exit(exitCode);
     });
 
-program.parse();
+await runTool(program, { tool: "clarity" });

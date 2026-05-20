@@ -16,6 +16,7 @@ import { registerSitemapCrawlCommand } from "@app/shops/commands/sitemap-crawl";
 import { registerSitemapSyncCommand } from "@app/shops/commands/sitemap-sync";
 import { registerUiCommand } from "@app/shops/commands/ui";
 import { registerWatchCommand } from "@app/shops/commands/watch";
+import { runTool } from "@app/utils/cli";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { Command } from "commander";
 
@@ -46,4 +47,4 @@ registerDevCaptureFixtureCommand(program);
 registerProviderConnectCommand(program);
 registerOrdersSyncCommand(program);
 
-await program.parseAsync(process.argv);
+await runTool(program, { tool: "shops" });

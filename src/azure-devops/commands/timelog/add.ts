@@ -7,7 +7,7 @@ import { runInteractiveAddInquirer } from "@app/azure-devops/timelog-prompts-inq
 import type { AllowedTypeConfig, AzureConfigWithTimeLog, TimeLogUser } from "@app/azure-devops/types";
 import { requireTimeLogConfig, requireTimeLogUser } from "@app/azure-devops/utils";
 import { precheckWorkItem } from "@app/azure-devops/workitem-precheck";
-import logger from "@app/logger";
+import { logger, out } from "@app/logger";
 import type { Command } from "commander";
 import pc from "picocolors";
 
@@ -29,7 +29,7 @@ async function runInteractiveAdd(
 }
 
 function showAddHelp(): void {
-    console.log(`
+    out.println(`
 Usage: tools azure-devops timelog add [options]
 
 Required (unless -i):
@@ -93,7 +93,7 @@ export function registerAddSubcommand(parent: Command): void {
 
                 // Validate required fields
                 if (!options.workitem || !options.hours || !options.type) {
-                    console.error(`
+                    out.error(`
 Missing required options for non-interactive mode.
 
 Required: --workitem, --hours, --type
@@ -112,7 +112,7 @@ Or use interactive mode:
                 const workItemId = parseInt(options.workitem, 10);
 
                 if (Number.isNaN(workItemId)) {
-                    console.error("Invalid work item ID");
+                    out.error("Invalid work item ID");
                     process.exit(1);
                 }
 
@@ -125,7 +125,7 @@ Or use interactive mode:
                         options.minutes ? parseInt(options.minutes, 10) : undefined
                     );
                 } catch (e) {
-                    console.error(`${(e as Error).message}`);
+                    out.error(`${(e as Error).message}`);
                     process.exit(1);
                 }
 
@@ -136,7 +136,7 @@ Or use interactive mode:
 
                 if (!validType) {
                     const types = await api.getTimeTypes();
-                    console.error(`
+                    out.error(`
 Unknown time type: "${options.type}"
 
 Available types:
@@ -166,16 +166,16 @@ ${types.map((t) => `  - ${t.description}`).join("\n")}
                     const result = await precheckWorkItem(workItemId, config.org, allowedTypeConfig);
 
                     if (result.status === "redirect") {
-                        console.log(pc.yellow(`\u26A0 ${result.message}`));
+                        out.println(pc.yellow(`\u26A0 ${result.message}`));
                         effectiveWorkItemId = result.redirectId!;
                     } else if (result.status === "error") {
-                        console.error(pc.red(`\u2716 ${result.message}`));
+                        out.error(pc.red(`\u2716 ${result.message}`));
 
                         if (result.suggestCommands?.length) {
-                            console.log("\nSuggested commands:");
+                            out.println("\nSuggested commands:");
 
                             for (const cmd of result.suggestCommands) {
-                                console.log(`  ${cmd}`);
+                                out.println(`  ${cmd}`);
                             }
                         }
 
@@ -192,24 +192,24 @@ ${types.map((t) => `  - ${t.description}`).join("\n")}
                     comment
                 );
 
-                console.log(`\u2714 Time logged successfully!`);
-                console.log(`  Work Item: #${effectiveWorkItemId}`);
-                console.log(`  Time: ${formatMinutes(totalMinutes)}`);
-                console.log(`  Type: ${validType.description}`);
-                console.log(`  Date: ${date}`);
+                out.println(`\u2714 Time logged successfully!`);
+                out.println(`  Work Item: #${effectiveWorkItemId}`);
+                out.println(`  Time: ${formatMinutes(totalMinutes)}`);
+                out.println(`  Type: ${validType.description}`);
+                out.println(`  Date: ${date}`);
 
                 if (comment) {
-                    console.log(`  Comment: ${comment}`);
+                    out.println(`  Comment: ${comment}`);
                 }
 
-                console.log(`  Entry ID: ${ids[0]}`);
+                out.println(`  Entry ID: ${ids[0]}`);
 
                 // Update Remaining/Completed Work on the work item
                 const devopsApi = new Api(config);
                 const effort = await updateWorkItemEffort(devopsApi, effectiveWorkItemId, totalMinutes);
 
                 if (effort) {
-                    console.log(`  Remaining: ${effort.remaining}h | Completed: ${effort.completed}h`);
+                    out.println(`  Remaining: ${effort.remaining}h | Completed: ${effort.completed}h`);
                 }
 
                 // Evict timelog cache for affected work item

@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { Embedder } from "@app/utils/ai/tasks/Embedder";
 import { attachReadonly, detachQuietly } from "@app/utils/database/attach";
 import { countActiveEmbeddings, countPairedEmbeddings } from "@app/utils/database/embedding-stats";

@@ -9,6 +9,7 @@
  */
 
 import { extractFromMessage, loadWorkitemPatternsAsync } from "@app/git/workitem-patterns";
+import { out } from "@app/logger";
 import { Executor } from "@app/utils/cli";
 import { formatDateTime } from "@app/utils/date";
 import type { DetailedCommitInfo } from "@app/utils/git";
@@ -182,8 +183,8 @@ function outputTable(
 
     for (const day of sortedDays) {
         const dayCommits = grouped.get(day)!;
-        console.log(`\n${chalk.bold.cyan(formatDateForDisplay(day))} ${chalk.dim(`(${dayCommits.length} commits)`)}`);
-        console.log(chalk.dim("─".repeat(80)));
+        out.println(`\n${chalk.bold.cyan(formatDateForDisplay(day))} ${chalk.dim(`(${dayCommits.length} commits)`)}`);
+        out.println(chalk.dim("─".repeat(80)));
 
         for (const commit of dayCommits) {
             const workitemTag =
@@ -198,20 +199,20 @@ function outputTable(
 
             const authorTag = authors.length !== 1 ? chalk.dim(` (${commit.author})`) : "";
 
-            console.log(`  ${chalk.dim(commit.shortHash)} ${commit.message}${workitemTag}${statTag}${authorTag}`);
+            out.println(`  ${chalk.dim(commit.shortHash)} ${commit.message}${workitemTag}${statTag}${authorTag}`);
         }
     }
 
     // Workitem summary
     if (workitemMap.size > 0) {
-        console.log(`\n${chalk.bold("Workitem Summary:")}`);
+        out.println(`\n${chalk.bold("Workitem Summary:")}`);
         for (const [id, stats] of workitemMap) {
             const statPart = includeStat ? chalk.dim(` (+${stats.totalInsertions}/-${stats.totalDeletions})`) : "";
-            console.log(`  ${chalk.yellow(`#${id}`)} - ${stats.commits} commit(s)${statPart}`);
+            out.println(`  ${chalk.yellow(`#${id}`)} - ${stats.commits} commit(s)${statPart}`);
         }
     }
 
-    console.log(`\n${chalk.dim(`Total: ${commits.length} commits`)}`);
+    out.println(`\n${chalk.dim(`Total: ${commits.length} commits`)}`);
 }
 
 function outputJson(
@@ -244,7 +245,7 @@ function outputJson(
         workitemSummary,
     };
 
-    console.log(SafeJSON.stringify(output, null, 2));
+    out.println(SafeJSON.stringify(output, null, 2));
 }
 
 async function handleCommits(options: CommitsOptions): Promise<void> {
@@ -263,14 +264,14 @@ async function handleCommits(options: CommitsOptions): Promise<void> {
     }
 
     if (authors.length === 0) {
-        console.log(chalk.dim("Note: No authors configured. Showing all commits."));
-        console.log(chalk.dim('To pre-configure: tools git configure-authors --add "Your Name"'));
-        console.log();
+        out.println(chalk.dim("Note: No authors configured. Showing all commits."));
+        out.println(chalk.dim('To pre-configure: tools git configure-authors --add "Your Name"'));
+        out.println();
     }
 
     if (options.format !== "json") {
         const authorDisplay = authors.length > 0 ? authors.join(", ") : "all authors";
-        console.log(chalk.bold(`Finding git commits from ${options.from} until ${options.to} from ${authorDisplay}`));
+        out.println(chalk.bold(`Finding git commits from ${options.from} until ${options.to} from ${authorDisplay}`));
     }
 
     const commits = await getCommitsByDate(options.from, options.to, authors, !!options.stat);
@@ -295,7 +296,7 @@ async function handleCommits(options: CommitsOptions): Promise<void> {
     }
 
     if (commits.length === 0) {
-        console.log(chalk.yellow("\nNo commits found for the specified criteria."));
+        out.println(chalk.yellow("\nNo commits found for the specified criteria."));
         return;
     }
 

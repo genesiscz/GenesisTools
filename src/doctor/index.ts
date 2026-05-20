@@ -10,8 +10,8 @@ import { runLog } from "@app/doctor/ui/log";
 import { runPlain } from "@app/doctor/ui/plain";
 import { runStats } from "@app/doctor/ui/stats";
 import { runTui } from "@app/doctor/ui/tui";
-import logger from "@app/logger";
-import { enhanceHelp, isInteractive } from "@app/utils/cli";
+import { logger, out } from "@app/logger";
+import { enhanceHelp, isInteractive, runTool } from "@app/utils/cli";
 import { Command } from "commander";
 
 interface RootOpts {
@@ -135,13 +135,13 @@ program
     .description("Delete the analyzer cache so next run is fresh")
     .action(async () => {
         await wipeCache();
-        console.log("Analyzer cache wiped.");
+        out.println("Analyzer cache wiped.");
     });
 
 enhanceHelp(program);
 
 async function main(): Promise<void> {
-    await program.parseAsync(process.argv);
+    await runTool(program, { tool: "doctor" });
 }
 
 main();

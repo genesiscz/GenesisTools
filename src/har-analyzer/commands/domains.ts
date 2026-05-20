@@ -5,6 +5,7 @@ import { RefStoreManager } from "@app/har-analyzer/core/ref-store";
 import { SessionManager } from "@app/har-analyzer/core/session-manager";
 import type { EntryFilter, OutputOptions } from "@app/har-analyzer/types";
 import { isInterestingMimeType } from "@app/har-analyzer/types";
+import { out } from "@app/logger";
 import { formatBytes, formatDuration } from "@app/utils/format";
 import { formatTable } from "@app/utils/table";
 import type { Command } from "commander";
@@ -84,7 +85,7 @@ export function registerDomainCommand(program: Command): void {
             const entries = filterEntries(session.entries, filter);
 
             if (entries.length === 0) {
-                console.log(`No entries found for domain "${name}".`);
+                out.println(`No entries found for domain "${name}".`);
                 return;
             }
 

@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { out } from "@app/logger";
 import type { DiagnosticsResult, TSServer } from "@app/mcp-tsc/core/interfaces.js";
 import type { GetTsDiagnosticsArgs, GetTsHoverArgs, GetTsHoverResponse } from "@app/mcp-tsc/types/mcp.js";
 import { filterByTsconfig, resolveFiles } from "@app/mcp-tsc/utils/FileResolver.js";
@@ -382,12 +383,12 @@ Please retry with a lower timeout (e.g., timeout=${retryTimeoutSeconds}) to get 
 
             // Start MCP server
             const transport = new StdioServerTransport();
-            console.error("TypeScript Diagnostics MCP Server starting...");
-            console.error("Connecting MCP server to transport...");
+            out.error("TypeScript Diagnostics MCP Server starting...");
+            out.error("Connecting MCP server to transport...");
             await this.mcpServer.connect(transport);
-            console.error("TypeScript Diagnostics MCP Server connected, should be running indefinitely...");
+            out.error("TypeScript Diagnostics MCP Server connected, should be running indefinitely...");
         } catch (error) {
-            console.error("MCP Server failed to start:", error);
+            out.error("MCP Server failed to start:", error);
             throw error;
         }
     }

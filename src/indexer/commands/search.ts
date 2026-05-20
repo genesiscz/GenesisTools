@@ -1,5 +1,6 @@
 import { isAbsolute, relative } from "node:path";
 import { toToon } from "@app/json/lib/toon";
+import { out } from "@app/logger";
 import { isInteractive } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
 import type { SearchResult } from "@app/utils/search/types";
@@ -219,9 +220,9 @@ export function registerSearchCommand(program: Command): void {
                     }));
 
                     if (format === "json") {
-                        console.log(SafeJSON.stringify(output, null, 2));
+                        out.println(SafeJSON.stringify(output, null, 2));
                     } else {
-                        console.log(toToon(output));
+                        out.println(toToon(output));
                     }
 
                     return;
@@ -244,7 +245,7 @@ export function registerSearchCommand(program: Command): void {
                     baseDirs,
                     multiIndex: names.length > 1,
                 });
-                console.log(output);
+                out.println(output);
             } finally {
                 await manager.close();
             }

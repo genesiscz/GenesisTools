@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { resolve } from "node:path";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import { AIChat } from "@ask/AIChat";
 import type { ActionHandler } from "../types";

@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { getShopsDatabase, type ShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import { MasterMerger } from "@app/shops/lib/master-merger";
 

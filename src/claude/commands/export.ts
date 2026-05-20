@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { resolve } from "node:path";
+import { out } from "@app/logger";
 import { ClaudeSessionFormatter } from "@app/utils/claude/ClaudeSessionFormatter";
 import { IncludeSpec } from "@app/utils/claude/cli/dsl";
 import { parseJsonlTranscript } from "@app/utils/claude/index";
@@ -88,15 +89,15 @@ export function registerExportCommand(program: Command): void {
             });
 
             if (!filePath) {
-                console.error(pc.red(`Session not found: ${sessionId}`));
-                console.error(pc.dim("Tip: use an 8-char prefix or full UUID from `tools claude history`"));
+                out.error(pc.red(`Session not found: ${sessionId}`));
+                out.error(pc.dim("Tip: use an 8-char prefix or full UUID from `tools claude history`"));
                 process.exit(1);
             }
 
             const validFormats = ["full", "mini", "raw"];
 
             if (!validFormats.includes(opts.format)) {
-                console.error(pc.red(`Invalid format "${opts.format}". Use: ${validFormats.join(", ")}`));
+                out.error(pc.red(`Invalid format "${opts.format}". Use: ${validFormats.join(", ")}`));
                 process.exit(1);
             }
 
@@ -123,7 +124,7 @@ export function registerExportCommand(program: Command): void {
             await formatter.close();
 
             if (opts.output) {
-                console.error(pc.dim(`Exported ${records.length} records to ${opts.output}`));
+                out.error(pc.dim(`Exported ${records.length} records to ${opts.output}`));
             }
         });
 }

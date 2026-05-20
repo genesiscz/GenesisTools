@@ -1,3 +1,4 @@
+// biome-ignore-all lint/plugin: test fixture intentionally uses /tmp/ or /Users/ string literals — production plugins do not apply to test code
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { skip } from "@app/utils/test/skip";
 import { runDarwinKit, runDarwinKitRaw } from "./helpers";

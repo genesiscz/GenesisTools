@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
-import { parseVariadic } from "@app/utils/cli";
+import { out } from "@app/logger";
+import { parseVariadic, runTool } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
 import { closeDarwinKit } from "@app/utils/macos";
 import { handleReadmeFlag } from "@app/utils/readme";
@@ -20,9 +21,9 @@ const LOGO = `${pc.bold(pc.cyan("  DarwinKit"))} ${pc.dim("— Apple on-device M
 // ─── Help Generator ─────────────────────────────────────────────────────────────
 
 function printFullHelp(): void {
-    console.log();
-    console.log(LOGO);
-    console.log();
+    out.println();
+    out.println(LOGO);
+    out.println();
 
     const grouped = getCommandsByGroup();
 
@@ -33,21 +34,21 @@ function printFullHelp(): void {
             continue;
         }
 
-        console.log(pc.bold(pc.yellow(`  ${GROUP_LABELS[group] ?? group}`)));
+        out.println(pc.bold(pc.yellow(`  ${GROUP_LABELS[group] ?? group}`)));
 
         for (const cmd of cmds) {
             const positionals = cmd.params.filter((pm) => pm.positional);
             const posStr = positionals.map((pm) => (pm.required ? `<${pm.name}>` : `[${pm.name}]`)).join(" ");
             const nameCol = `    ${pc.green(cmd.name)}${posStr ? ` ${pc.dim(posStr)}` : ""}`;
-            console.log(`${nameCol.padEnd(50)}${pc.dim(cmd.description)}`);
+            out.println(`${nameCol.padEnd(50)}${pc.dim(cmd.description)}`);
         }
 
-        console.log();
+        out.println();
     }
 
-    console.log(pc.dim("  Options: --format json|pretty|raw"));
-    console.log(pc.dim("  Run without args for interactive mode (TTY only)"));
-    console.log();
+    out.println(pc.dim("  Options: --format json|pretty|raw"));
+    out.println(pc.dim("  Run without args for interactive mode (TTY only)"));
+    out.println();
 }
 
 // ─── Commander Setup ────────────────────────────────────────────────────────────
@@ -120,7 +121,7 @@ async function handleCommandAction(cmd: CommandDef, sub: Command, actionArgs: un
             const num = Number(rawValue);
 
             if (Number.isNaN(num)) {
-                console.error(`Invalid number for --${param.name}: ${rawValue}`);
+                out.error(`Invalid number for --${param.name}: ${rawValue}`);
                 process.exit(1);
             }
 
@@ -159,12 +160,12 @@ async function handleCommandAction(cmd: CommandDef, sub: Command, actionArgs: un
 
     try {
         const result = await cmd.run(args);
-        console.log(formatOutput(result, format));
+        out.println(formatOutput(result, format));
     } catch (error) {
         if (process.stdout.isTTY) {
             p.log.error(error instanceof Error ? error.message : String(error));
         } else {
-            console.error(error instanceof Error ? error.message : String(error));
+            out.error(error instanceof Error ? error.message : String(error));
         }
 
         process.exit(1);
@@ -190,12 +191,12 @@ async function main(): Promise<void> {
     const program = buildProgram();
 
     try {
-        await program.parseAsync(process.argv);
+        await runTool(program, { tool: "darwinkit" });
     } catch (error) {
         if (process.stdout.isTTY) {
             p.log.error(error instanceof Error ? error.message : String(error));
         } else {
-            console.error(error instanceof Error ? error.message : String(error));
+            out.error(error instanceof Error ? error.message : String(error));
         }
 
         process.exit(1);
@@ -206,7 +207,7 @@ main().catch((err) => {
     if (process.stdout.isTTY) {
         p.log.error(err instanceof Error ? err.message : String(err));
     } else {
-        console.error(err instanceof Error ? err.message : String(err));
+        out.error(err instanceof Error ? err.message : String(err));
     }
 
     closeDarwinKit();

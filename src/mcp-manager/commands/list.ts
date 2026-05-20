@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import type { MCPProvider, MCPServerInfo } from "@app/mcp-manager/utils/providers/types.js";
 import chalk from "chalk";
 

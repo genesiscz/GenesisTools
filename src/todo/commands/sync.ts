@@ -1,3 +1,4 @@
+import { out } from "@app/logger";
 import { findProjectRoot } from "@app/todo/lib/context";
 import { TodoStore } from "@app/todo/lib/store";
 import { countSynced, describeSyncFailures, type SyncTarget, syncSucceeded, syncTodo } from "@app/todo/lib/sync";
@@ -14,7 +15,7 @@ export function createSyncCommand(): Command {
             const target = opts.to as SyncTarget;
 
             if (target !== "calendar" && target !== "reminders" && target !== "both") {
-                console.error(`Invalid sync target: ${opts.to}. Use "calendar", "reminders", or "both".`);
+                out.error(`Invalid sync target: ${opts.to}. Use "calendar", "reminders", or "both".`);
                 process.exit(1);
             }
 
@@ -26,7 +27,7 @@ export function createSyncCommand(): Command {
                 const withReminders = todos.filter((t) => t.reminders.length > 0);
 
                 if (withReminders.length === 0) {
-                    console.log("No open todos with reminders to sync.");
+                    out.println("No open todos with reminders to sync.");
                     return;
                 }
 
@@ -38,7 +39,7 @@ export function createSyncCommand(): Command {
                     const count = countSynced(result);
 
                     if (count > 0) {
-                        console.log(pc.green(`  ✓ ${todo.id}: ${todo.title} (${count} synced)`));
+                        out.println(pc.green(`  ✓ ${todo.id}: ${todo.title} (${count} synced)`));
                         totalSynced += count;
                     }
 
@@ -48,15 +49,15 @@ export function createSyncCommand(): Command {
                         failed.push({ todoId: todo.id, reasons });
 
                         for (const r of reasons) {
-                            console.error(pc.red(`  ✗ ${todo.id}: ${r}`));
+                            out.error(pc.red(`  ✗ ${todo.id}: ${r}`));
                         }
                     }
                 }
 
-                console.log(`\nSynced ${totalSynced} item(s) to ${target}.`);
+                out.println(`\nSynced ${totalSynced} item(s) to ${target}.`);
 
                 if (failed.length > 0) {
-                    console.error(pc.red(`SYNC_FAILED ${target}: ${failed.length} todo(s) had failures`));
+                    out.error(pc.red(`SYNC_FAILED ${target}: ${failed.length} todo(s) had failures`));
                     process.exitCode = 1;
                 }
 
@@ -64,19 +65,19 @@ export function createSyncCommand(): Command {
             }
 
             if (!id) {
-                console.error("Provide a todo ID or use --all.");
+                out.error("Provide a todo ID or use --all.");
                 process.exit(1);
             }
 
             const todo = await store.get(id);
 
             if (!todo) {
-                console.error(`Todo not found: ${id}`);
+                out.error(`Todo not found: ${id}`);
                 process.exit(1);
             }
 
             if (todo.reminders.length === 0 && target !== "reminders") {
-                console.error("This todo has no reminders to sync to calendar.");
+                out.error("This todo has no reminders to sync to calendar.");
                 process.exit(1);
             }
 
@@ -84,14 +85,14 @@ export function createSyncCommand(): Command {
             const count = countSynced(result);
 
             if (count > 0) {
-                console.log(pc.green(`Synced ${count} item(s) to ${target} for ${todo.id}.`));
+                out.println(pc.green(`Synced ${count} item(s) to ${target} for ${todo.id}.`));
             }
 
             const failures = describeSyncFailures(result);
 
             if (failures.length > 0) {
                 for (const line of failures) {
-                    console.error(pc.red(`SYNC_FAILED ${target} ${todo.id}: ${line}`));
+                    out.error(pc.red(`SYNC_FAILED ${target} ${todo.id}: ${line}`));
                 }
             }
 

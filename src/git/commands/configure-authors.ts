@@ -11,6 +11,7 @@
  *   tools git configure-authors    # interactive (default)
  */
 
+import { out } from "@app/logger";
 import { Executor } from "@app/utils/cli";
 import type { Storage } from "@app/utils/storage";
 import * as p from "@clack/prompts";
@@ -49,11 +50,11 @@ async function handleConfigureAuthors(storage: Storage, options: ConfigureAuthor
     // --list flag
     if (options.list) {
         if (currentAuthors.length === 0) {
-            console.log(chalk.dim("No authors configured."));
+            out.println(chalk.dim("No authors configured."));
         } else {
-            console.log(chalk.bold("Configured authors:"));
+            out.println(chalk.bold("Configured authors:"));
             for (const author of currentAuthors) {
-                console.log(`  ${chalk.green("*")} ${author}`);
+                out.println(`  ${chalk.green("*")} ${author}`);
             }
         }
         return;
@@ -66,12 +67,12 @@ async function handleConfigureAuthors(storage: Storage, options: ConfigureAuthor
         const added = options.add.filter((a) => !currentAuthors.includes(a));
 
         if (added.length > 0) {
-            console.log(chalk.green(`Added: ${added.join(", ")}`));
+            out.println(chalk.green(`Added: ${added.join(", ")}`));
         } else {
-            console.log(chalk.dim("All specified authors were already configured."));
+            out.println(chalk.dim("All specified authors were already configured."));
         }
 
-        console.log(chalk.dim(`Total authors: ${newAuthors.length}`));
+        out.println(chalk.dim(`Total authors: ${newAuthors.length}`));
         return;
     }
 
@@ -80,13 +81,13 @@ async function handleConfigureAuthors(storage: Storage, options: ConfigureAuthor
         const filtered = currentAuthors.filter((a) => a !== options.remove);
 
         if (filtered.length === currentAuthors.length) {
-            console.log(chalk.yellow(`Author "${options.remove}" not found in config.`));
+            out.println(chalk.yellow(`Author "${options.remove}" not found in config.`));
             return;
         }
 
         await storage.setConfigValue("authors", filtered);
-        console.log(chalk.green(`Removed: ${options.remove}`));
-        console.log(chalk.dim(`Remaining authors: ${filtered.length}`));
+        out.println(chalk.green(`Removed: ${options.remove}`));
+        out.println(chalk.dim(`Remaining authors: ${filtered.length}`));
         return;
     }
 

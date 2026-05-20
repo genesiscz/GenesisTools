@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { newProcessId, writeMeta } from "@app/macos/lib/clones/audit";
 import { cachePlan } from "@app/macos/lib/clones/cache";
 import { collapseDuplicates } from "@app/macos/lib/clones/collapse";

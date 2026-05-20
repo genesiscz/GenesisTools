@@ -1,5 +1,6 @@
 import { createInterface } from "node:readline";
 import { parseAuthCurl } from "@app/clarity/lib/parse-auth-curl";
+import { out } from "@app/logger";
 import { ClarityApi } from "@app/utils/clarity";
 import * as clack from "@clack/prompts";
 import type { Command } from "commander";
@@ -19,7 +20,7 @@ async function readMultilineCurl(): Promise<string> {
     let finishTimer: ReturnType<typeof setTimeout> | null = null;
 
     return new Promise((resolve) => {
-        console.log(pc.gray("  (paste cURL, press Enter on blank line to finish)"));
+        out.println(pc.gray("  (paste cURL, press Enter on blank line to finish)"));
         process.stdout.write(pc.cyan("  > "));
 
         function finish() {
@@ -175,19 +176,19 @@ async function runInteractiveSetup(): Promise<void> {
 }
 
 function showConfig(config: ClarityConfig): void {
-    console.log("\nClarity Configuration:");
-    console.log(`  Base URL:     ${config.baseUrl}`);
-    console.log(`  Auth Token:   [configured]`);
-    console.log(`  Session ID:   [configured]`);
-    console.log(`  Resource ID:  ${config.resourceId ?? "not set"}`);
-    console.log(`  User:         ${config.uniqueName ?? "not set"}`);
-    console.log(`  Mappings:     ${config.mappings.length}`);
+    out.println("\nClarity Configuration:");
+    out.println(`  Base URL:     ${config.baseUrl}`);
+    out.println(`  Auth Token:   [configured]`);
+    out.println(`  Session ID:   [configured]`);
+    out.println(`  Resource ID:  ${config.resourceId ?? "not set"}`);
+    out.println(`  User:         ${config.uniqueName ?? "not set"}`);
+    out.println(`  Mappings:     ${config.mappings.length}`);
 
     if (config.mappings.length > 0) {
-        console.log("\n  ADO Work Item -> Clarity Task:");
+        out.println("\n  ADO Work Item -> Clarity Task:");
 
         for (const m of config.mappings) {
-            console.log(
+            out.println(
                 `    #${m.adoWorkItemId} (${m.adoWorkItemTitle}) -> ${m.clarityTaskName} [${m.clarityInvestmentName}]`
             );
         }
@@ -209,7 +210,7 @@ export function registerConfigureCommand(program: Command): void {
             const config = await getConfig();
 
             if (!config) {
-                console.error("Clarity not configured. Run: tools clarity configure auth");
+                out.error("Clarity not configured. Run: tools clarity configure auth");
                 process.exit(1);
             }
 
@@ -228,7 +229,7 @@ export function registerConfigureCommand(program: Command): void {
             const config = await getConfig();
 
             if (!config) {
-                console.error("Clarity not configured. Run: tools clarity configure auth");
+                out.error("Clarity not configured. Run: tools clarity configure auth");
                 process.exit(1);
             }
 

@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 
 const DOWNLOAD_TIMEOUT_MS = 30_000;
 

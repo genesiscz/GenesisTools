@@ -5,6 +5,7 @@ import { RefStoreManager } from "@app/har-analyzer/core/ref-store";
 import { SessionManager } from "@app/har-analyzer/core/session-manager";
 import type { HarEntry, HarHeader, OutputOptions } from "@app/har-analyzer/types";
 import { isInterestingMimeType } from "@app/har-analyzer/types";
+import { out } from "@app/logger";
 import { formatBytes, formatDuration } from "@app/utils/format";
 import type { Command } from "commander";
 
@@ -30,7 +31,7 @@ export function registerDiffCommand(program: Command): void {
 
             for (const idx of [idx1, idx2]) {
                 if (idx < 0 || idx >= session.entries.length) {
-                    console.error(
+                    out.error(
                         `Entry e${idx} not found. Session has ${session.entries.length} entries (0-${session.entries.length - 1}).`
                     );
                     process.exit(1);

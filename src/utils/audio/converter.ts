@@ -2,7 +2,7 @@ import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 
 /**
  * Convert any audio file/buffer to 16kHz mono 16-bit PCM Float32Array

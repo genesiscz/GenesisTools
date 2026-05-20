@@ -1,5 +1,5 @@
 import { readFileSync, writeFileSync } from "node:fs";
-import logger from "@app/logger";
+import { logger, out } from "@app/logger";
 import type { TimelyService } from "@app/timely/api/service";
 import type { OAuth2Tokens, TimelyEntry } from "@app/timely/types";
 import type { CreatePlanV1, PlanIssue } from "@app/timely/types/plan";
@@ -258,11 +258,11 @@ async function runPlan(storage: Storage, service: TimelyService, options: Create
 
 function printPlanSummary(plan: CreatePlanV1): void {
     for (const day of plan.days) {
-        console.log(chalk.bold(`\n=== ${day.day} (${day.available_memories.length} memories) ===`));
+        out.println(chalk.bold(`\n=== ${day.day} (${day.available_memories.length} memories) ===`));
         if (day.suggestions.length > 0) {
-            console.log(chalk.dim("  Suggestions:"));
+            out.println(chalk.dim("  Suggestions:"));
             for (const s of day.suggestions) {
-                console.log(
+                out.println(
                     chalk.dim(
                         `    proj ${String(s.project_id).padStart(8)}  ${s.project_name.padEnd(20)}  score ${s.score.toFixed(2).padStart(5)}  ${s.reasons.join(" · ")}`
                     )
@@ -270,20 +270,20 @@ function printPlanSummary(plan: CreatePlanV1): void {
             }
         }
 
-        console.log(chalk.dim("  Memories (id  from-to  min  app  note | sub_notes):"));
+        out.println(chalk.dim("  Memories (id  from-to  min  app  note | sub_notes):"));
         for (const m of day.available_memories) {
             const f = m.from.split("T")[1]?.slice(0, 5) ?? "??:??";
             const t = m.to.split("T")[1]?.slice(0, 5) ?? "??:??";
             const app = (m.app || "").slice(0, 20).padEnd(20);
             const note = (m.note || "").slice(0, 70);
             const sub = m.sub_notes.length > 0 ? ` | ${m.sub_notes.slice(0, 2).join("; ").slice(0, 80)}` : "";
-            console.log(
+            out.println(
                 `    ${String(m.id).padStart(10)}  ${f}-${t}  ${String(m.duration_min).padStart(4)}m  ${app}  ${note}${sub}`
             );
         }
     }
 
-    console.log("");
+    out.println("");
 }
 
 function readPlanFile(path: string): CreatePlanV1 {
@@ -313,7 +313,7 @@ function printIssues(issues: PlanIssue[]): { errors: number; warnings: number } 
     for (const issue of issues) {
         const tag = issue.severity === "error" ? chalk.red("✗") : chalk.yellow("!");
         const where = issue.eventIdx !== undefined ? `${issue.day}#${issue.eventIdx}` : issue.day;
-        console.log(`${tag} ${where}: ${issue.message}`);
+        out.println(`${tag} ${where}: ${issue.message}`);
         if (issue.severity === "error") {
             errors++;
         } else {
@@ -359,8 +359,8 @@ async function runApply(storage: Storage, service: TimelyService, options: Creat
         accessToken: tokens.access_token,
         dryRun: options.dryRun ?? false,
         onPayload: (day, idx, payload) => {
-            console.log(chalk.dim(`\n--- ${day} event #${idx} ---`));
-            console.log(SafeJSON.stringify(payload, null, 2));
+            out.println(chalk.dim(`\n--- ${day} event #${idx} ---`));
+            out.println(SafeJSON.stringify(payload, null, 2));
         },
     });
 
@@ -368,16 +368,16 @@ async function runApply(storage: Storage, service: TimelyService, options: Creat
     let failed = 0;
     for (const r of results) {
         if (r.error) {
-            console.log(chalk.red(`✗ ${r.day}#${r.eventIdx} [proj ${r.project_id}]: ${r.error}`));
+            out.println(chalk.red(`✗ ${r.day}#${r.eventIdx} [proj ${r.project_id}]: ${r.error}`));
             failed++;
         } else if (options.dryRun) {
-            console.log(
+            out.println(
                 chalk.cyan(
                     `◯ ${r.day}#${r.eventIdx} [proj ${r.project_id}] DRY ${r.duration} (${r.memoryCount} memories)`
                 )
             );
         } else {
-            console.log(
+            out.println(
                 chalk.green(
                     `✓ ${r.day}#${r.eventIdx} [proj ${r.project_id}] event ${r.eventId} (${r.duration}, ${r.memoryCount} memories)`
                 )

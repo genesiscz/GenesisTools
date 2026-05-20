@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 
 /**
  * Supported ONNX Runtime execution providers, ordered by preference per platform.

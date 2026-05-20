@@ -1,5 +1,5 @@
 import path from "node:path";
-import logger from "@app/logger";
+import { logger, out } from "@app/logger";
 import type { CliArgs } from "@app/mcp-tsc/core/interfaces.js";
 import { McpAdapter } from "@app/mcp-tsc/protocols/McpAdapter.js";
 import { LspServer } from "@app/mcp-tsc/providers/LspServer.js";
@@ -26,7 +26,7 @@ export class McpCommand {
             },
             "MCP Server configuration"
         );
-        console.error(`Starting TypeScript Diagnostics MCP Server (root: ${cwd}, timeout: ${timeout}s)`);
+        out.error(`Starting TypeScript Diagnostics MCP Server (root: ${cwd}, timeout: ${timeout}s)`);
 
         // MCP always uses LSP
         logger.debug(

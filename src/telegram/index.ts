@@ -1,3 +1,5 @@
+import { out } from "@app/logger";
+import { runTool } from "@app/utils/cli";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { Command } from "commander";
 import { registerConfigureCommand } from "./commands/configure";
@@ -21,7 +23,7 @@ registerContactsCommand(program);
 registerHistoryCommand(program);
 registerWatchCommand(program);
 
-program.parseAsync().catch((err) => {
-    console.error(err);
+await runTool(program, { tool: "telegram" }).catch((err) => {
+    out.error(err);
     process.exit(1);
 });

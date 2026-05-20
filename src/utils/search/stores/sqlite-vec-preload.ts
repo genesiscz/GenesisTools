@@ -8,7 +8,7 @@
  *
  * Usage: bun run --preload ./src/utils/search/stores/sqlite-vec-preload.ts <entry>
  */
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { ensureExtensionCapableSQLite } from "./sqlite-vec-loader";
 
 ensureExtensionCapableSQLite();

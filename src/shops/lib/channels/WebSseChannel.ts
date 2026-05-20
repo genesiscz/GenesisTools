@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import type { DispatchResult, NotificationChannel, NotificationPayload } from "@app/shops/lib/channels/types";
 import { type SseBroadcaster, sseBroadcaster } from "@app/shops/lib/sse-broadcaster";
 

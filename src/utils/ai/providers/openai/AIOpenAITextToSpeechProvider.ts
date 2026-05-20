@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import type { AITask, AITextToSpeechProvider, TTSOptions, TTSResult, TTSVoice } from "@app/utils/ai/types";
 import { rateLimitAwareDelay, retry } from "@app/utils/async";
 import type { AIProviderType } from "@app/utils/config/ai.types";

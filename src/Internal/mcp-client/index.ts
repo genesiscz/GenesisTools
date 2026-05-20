@@ -1,6 +1,8 @@
 /**
  * Example of a MCP client that lists the contents of the user's home directory.
  */
+
+import { out } from "@app/logger";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
@@ -17,7 +19,7 @@ const client = new Client({
 await client.connect(transport);
 
 const tools = await client.listTools();
-console.log(tools);
+out.println(tools);
 
 const dir = await client.callTool({
     name: "list_directory",
@@ -26,4 +28,4 @@ const dir = await client.callTool({
     },
 });
 
-console.log(dir);
+out.println(dir);

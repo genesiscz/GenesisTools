@@ -9,7 +9,7 @@ setupStorageSandbox();
 // Now import after mocking
 const { installServer } = await import("../install.js");
 
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import * as configUtils from "@app/mcp-manager/utils/config.utils.js";
 import type { UnifiedMCPConfig } from "@app/mcp-manager/utils/providers/types.js";
 import { createMockUnifiedConfig, MockMCPProvider } from "./test-utils.js";

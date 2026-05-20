@@ -1,3 +1,4 @@
+import { out } from "@app/logger";
 import { formatLocalDateTimeStamp } from "@app/utils/date";
 import * as p from "@clack/prompts";
 import pc from "picocolors";
@@ -67,7 +68,7 @@ async function showTaskRuns(taskName: string): Promise<void> {
 function showLogContent(logFile: string): void {
     const entries = parseLogFile(logFile);
 
-    console.log("");
+    out.println("");
 
     for (const entry of entries) {
         switch (entry.type) {
@@ -77,20 +78,20 @@ function showLogContent(logFile: string): void {
                 );
                 break;
             case "stdout":
-                console.log(entry.data);
+                out.println(entry.data);
                 break;
             case "stderr":
-                console.log(pc.yellow(entry.data));
+                out.println(pc.yellow(entry.data));
                 break;
             case "exit": {
                 const color = entry.code === 0 ? pc.green : pc.red;
-                console.log(color(`\n[exit ${entry.code ?? "killed"} in ${formatDuration(entry.duration_ms)}]`));
+                out.println(color(`\n[exit ${entry.code ?? "killed"} in ${formatDuration(entry.duration_ms)}]`));
                 break;
             }
         }
     }
 
-    console.log("");
+    out.println("");
 }
 
 function formatRunLabel(

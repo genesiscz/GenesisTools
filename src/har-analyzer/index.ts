@@ -15,6 +15,7 @@ program
     .option("-v, --verbose", "Verbose logging")
     .option("-i, --interactive", "Launch interactive mode");
 
+import { runTool } from "@app/utils/cli";
 import { registerCookiesCommand } from "./commands/cookies";
 import { registerDashboardCommand } from "./commands/dashboard";
 import { registerDiffCommand } from "./commands/diff";
@@ -62,4 +63,4 @@ program.action(async (options) => {
     }
 });
 
-program.parse();
+await runTool(program, { tool: "har-analyzer" });

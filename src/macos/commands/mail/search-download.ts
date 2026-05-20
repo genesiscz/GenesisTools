@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { parseMailDate } from "@app/macos/lib/mail/command-helpers";
 import { exportMessages } from "@app/macos/lib/mail/export";
 import { resolveMailSearchMode, runMailSearch } from "@app/macos/lib/mail/search-runner";

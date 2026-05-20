@@ -1,7 +1,7 @@
 import { mkdir } from "node:fs/promises"; // Using fs.promises for async operations - Bun implements this
 import { basename, dirname, join, resolve } from "node:path";
-import logger from "@app/logger";
-import { Executor } from "@app/utils/cli";
+import { logger } from "@app/logger";
+import { Executor, runTool } from "@app/utils/cli";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { Command } from "commander";
 
@@ -49,8 +49,9 @@ async function main() {
         .option(
             "-f, --flat",
             "Copy all files directly to the target directory without preserving the directory structure"
-        )
-        .parse();
+        );
+
+    await runTool(program, { tool: "collect-files-for-ai" });
 
     const repoDir = resolve(program.args[0]);
     const git = new Executor({ prefix: "git", cwd: repoDir });

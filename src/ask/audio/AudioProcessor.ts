@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 import { convertAudioFormat as convertAudioFormatUtil } from "@app/utils/audio/converter";
 import { getAudioInfo, validateAudioFile } from "@app/utils/audio/probe";
 import { CHUNK_SIZE, splitAudioBySize, splitAudioFile } from "@app/utils/audio/split";

@@ -2,10 +2,15 @@
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
+import { runTool } from "@app/utils/cli";
 import { copyToClipboard } from "@app/utils/clipboard";
-import { ExitPromptError } from "@inquirer/core";
-import { checkbox, confirm, input } from "@inquirer/prompts";
+import * as p from "@app/utils/prompts/p";
+import { inquirerBackend } from "@app/utils/prompts/p/inquirer-backend";
+
+// Use inquirer backend for this tool
+p.setBackend(inquirerBackend);
+
 import { Command } from "commander";
 
 interface ToolUseBlock {
@@ -236,8 +241,9 @@ async function main() {
         .argument("[file]", "Path to the SpecStory file", "logs/story.log")
         .option("-i, --input <file>", "Input SpecStory file path")
         .option("-o, --output <file>", "Output file path")
-        .option("-?, --help-full", "Show this help message")
-        .parse();
+        .option("-?, --help-full", "Show this help message");
+
+    await runTool(program, { tool: "cursor-context" });
 
     const options = program.opts();
     const [fileArg] = program.args;
@@ -284,10 +290,10 @@ async function main() {
         }
 
         // Show tool names and let user select which to remove
-        const selectedItems = await checkbox({
+        const selectedItems = (await p.multiselect({
             message: "Select tool inputs/outputs to remove (use space to select, enter to confirm):",
-            choices,
-        });
+            options: choices.map((c) => ({ value: c.value, label: c.name })),
+        })) as string[];
 
         if (!selectedItems || selectedItems.length === 0) {
             logger.info("No items selected for removal. Exiting.");
@@ -365,36 +371,23 @@ Statistics:
             writeFileSync(outputPath, cleaned, "utf-8");
             logger.info(`✔ Saved cleaned content to: ${outputPath}`);
         } else {
-            // Ask if user wants to save to file
-            try {
-                const saveToFile = await confirm({
-                    message: "Save cleaned content to a file?",
-                    default: false,
+            const saveToFile = await p.confirm({
+                message: "Save cleaned content to a file?",
+                initialValue: false,
+            });
+
+            if (saveToFile) {
+                const outputPath = await p.text({
+                    message: "Enter output file path:",
+                    initialValue: inputPath.replace(/\.(log|md)$/, ".cleaned.$1"),
                 });
 
-                if (saveToFile) {
-                    const outputPath = await input({
-                        message: "Enter output file path:",
-                        default: inputPath.replace(/\.(log|md)$/, ".cleaned.$1"),
-                    });
-
-                    const resolvedOutputPath = resolve(outputPath);
-                    writeFileSync(resolvedOutputPath, cleaned, "utf-8");
-                    logger.info(`✔ Saved cleaned content to: ${resolvedOutputPath}`);
-                }
-            } catch (error) {
-                if (error instanceof ExitPromptError) {
-                    // User cancelled, that's fine
-                    return;
-                }
-                throw error;
+                const resolvedOutputPath = resolve(outputPath);
+                writeFileSync(resolvedOutputPath, cleaned, "utf-8");
+                logger.info(`✔ Saved cleaned content to: ${resolvedOutputPath}`);
             }
         }
     } catch (error) {
-        if (error instanceof ExitPromptError) {
-            logger.info("\nOperation cancelled by user.");
-            process.exit(0);
-        }
         const message = error instanceof Error ? error.message : String(error);
         logger.error(`\n✖ Error: ${message}`);
         if (error instanceof Error && error.stack) {

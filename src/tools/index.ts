@@ -2,6 +2,7 @@
 
 import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
+import { out } from "@app/logger";
 import { copyToClipboard } from "@app/utils/clipboard";
 import { renderMarkdownToCli } from "@app/utils/markdown/index.js";
 import { searchSelect, searchSelectCancelSymbol } from "@app/utils/prompts/clack/search-select.js";
@@ -52,7 +53,7 @@ async function handleToolAction(tool: ToolInfo, srcDir: string): Promise<void> {
     if (action === "readme") {
         const readme = getReadme(srcDir, tool.name);
         if (readme) {
-            console.log(`\n${renderMarkdownToCli(readme)}\n`);
+            out.println(`\n${renderMarkdownToCli(readme)}\n`);
         } else {
             p.log.warn("No README.md found for this tool.");
         }
@@ -94,9 +95,9 @@ async function handleToolAction(tool: ToolInfo, srcDir: string): Promise<void> {
         if (help.options.length > 0) {
             p.log.info(pc.bold("Options:"));
             for (const opt of help.options) {
-                console.log(`  ${pc.cyan(opt.flags)}  ${pc.dim(opt.description)}`);
+                out.println(`  ${pc.cyan(opt.flags)}  ${pc.dim(opt.description)}`);
             }
-            console.log();
+            out.println();
         }
 
         await handleToolAction(tool, srcDir);
@@ -113,7 +114,7 @@ async function handleToolAction(tool: ToolInfo, srcDir: string): Promise<void> {
 async function main(): Promise<void> {
     const srcDir = resolve(import.meta.dirname, "..");
 
-    console.log(LOGO);
+    out.println(LOGO);
     p.intro(pc.bgCyan(pc.black(" Tools Browser ")));
 
     const tools = discoverTools(srcDir);
@@ -152,6 +153,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err: unknown) => {
-    console.error(err);
+    out.error(err);
     process.exit(1);
 });

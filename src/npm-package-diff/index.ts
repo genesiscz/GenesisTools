@@ -3,7 +3,9 @@ import fs from "node:fs";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
+import { out } from "@app/logger";
 import { resolvePathWithTilde } from "@app/utils";
+import { isVerbose, runTool } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
 import { handleReadmeFlag } from "@app/utils/readme";
 import boxen from "boxen";
@@ -24,7 +26,7 @@ const _require = createRequire(import.meta.url);
 // Custom logger that respects output redirection
 const createSimpleLogger = () => {
     const isTTY = process.stdout.isTTY;
-    const isVerbose = process.argv.includes("-v") || process.argv.includes("--verbose");
+    const v = isVerbose();
     const isSilent = process.argv.includes("--silent");
     const isDebug = process.argv.includes("-vv") || process.argv.includes("--debug");
 
@@ -32,44 +34,44 @@ const createSimpleLogger = () => {
         info: (msg: string) => {
             if (!isSilent) {
                 if (isTTY) {
-                    console.log(msg);
+                    out.println(msg);
                 } else {
                     // Strip ANSI codes for non-TTY output
                     // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional ANSI escape/control character matching
-                    console.log(msg.replace(/\u001b\[[0-9;]*m/g, ""));
+                    out.println(msg.replace(/\u001b\[[0-9;]*m/g, ""));
                 }
             }
         },
         error: (msg: string) => {
             if (isTTY) {
-                console.error(msg);
+                out.error(msg);
             } else {
                 // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional ANSI escape/control character matching
-                console.error(msg.replace(/\u001b\[[0-9;]*m/g, ""));
+                out.error(msg.replace(/\u001b\[[0-9;]*m/g, ""));
             }
         },
         debug: (msg: string) => {
-            if ((isVerbose || isDebug) && !isSilent) {
+            if ((v || isDebug) && !isSilent) {
                 if (isTTY) {
-                    console.log(chalk.gray(`[DEBUG] ${msg}`));
+                    out.println(chalk.gray(`[DEBUG] ${msg}`));
                 } else {
-                    console.log(`[DEBUG] ${msg}`);
+                    out.println(`[DEBUG] ${msg}`);
                 }
             }
         },
         success: (msg: string) => {
             if (!isSilent && isTTY) {
-                console.log(chalk.green(msg));
+                out.println(chalk.green(msg));
             } else if (!isSilent) {
-                console.log(msg);
+                out.println(msg);
             }
         },
         warn: (msg: string) => {
             if (!isSilent) {
                 if (isTTY) {
-                    console.warn(chalk.yellow(msg));
+                    out.warn(chalk.yellow(msg));
                 } else {
-                    console.warn(msg);
+                    out.warn(msg);
                 }
             }
         },
@@ -100,7 +102,6 @@ const program = new Command()
     .argument("[package-name]", "Package name")
     .argument("[version1]", "First version")
     .argument("[version2]", "Second version")
-    .option("-v, --verbose", "Enable verbose logging")
     .option("-f, --filter <pattern>", "Glob pattern to filter files", "**/*.d.ts")
     .option("-?, --help-full", "Show this help message")
     .option("-o, --output <file>", "Output file path")
@@ -120,8 +121,9 @@ const program = new Command()
     .option("--delta-theme <theme>", "Delta theme to use (light/dark)")
     .option("--npmrc <path>", "Path to .npmrc file for authentication")
     .option("--timeout <ms>", "Installation timeout in ms", "120000")
-    .option("--context <lines>", "Number of context lines", "10")
-    .parse();
+    .option("--context <lines>", "Number of context lines", "10");
+
+await runTool(program, { tool: "npm-package-diff" });
 
 const options = program.opts();
 const [packageName, version1, version2] = program.args;
@@ -147,7 +149,6 @@ const config = {
     exclude: getOptionValue("exclude"),
     output: getOptionValue("output"),
     patch: getOptionValue("patch"),
-    verbose: getOptionValue("verbose"),
     silent: getOptionValue("silent"),
     keep: getOptionValue("keep"),
     stats: getOptionValue("stats"),
@@ -504,7 +505,7 @@ class EnhancedPackageComparison {
         return new Promise((resolve, reject) => {
             const installProcess = spawn(installCmd, installArgs, {
                 cwd: dir,
-                stdio: this.options.verbose ? "inherit" : "pipe",
+                stdio: isVerbose() ? "inherit" : "pipe",
             });
 
             let timedOut = false;
@@ -741,7 +742,7 @@ class EnhancedPackageComparison {
         ) {
             this.outputBuffer.push(text);
         } else {
-            console.log(text);
+            out.println(text);
         }
     }
 
@@ -764,7 +765,7 @@ class EnhancedPackageComparison {
                 logger.debug(`Failed to start pager: ${err}`);
                 // Fallback to normal output
                 this.outputBuffer.forEach((line) => {
-                    console.log(line);
+                    out.println(line);
                 });
                 this.outputBuffer = [];
             });
@@ -777,7 +778,7 @@ class EnhancedPackageComparison {
         } catch (_e) {
             // Fallback to normal output
             this.outputBuffer.forEach((line) => {
-                console.log(line);
+                out.println(line);
             });
             this.outputBuffer = [];
         }
@@ -1259,7 +1260,7 @@ class EnhancedPackageComparison {
             logger.success(`Output written to: ${outputPath}`);
         } else if (format !== "terminal" && format !== "side-by-side") {
             // For non-terminal formats, output to stdout
-            console.log(output);
+            out.println(output);
         }
 
         // Terminal output

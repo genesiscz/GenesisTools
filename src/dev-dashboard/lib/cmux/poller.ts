@@ -1,6 +1,6 @@
 import { fetchSnapshot } from "@app/dev-dashboard/lib/cmux/client";
 import type { CmuxSnapshot } from "@app/dev-dashboard/lib/cmux/types";
-import logger from "@app/logger";
+import { logger } from "@app/logger";
 
 let cached: CmuxSnapshot | null = null;
 let timer: ReturnType<typeof setInterval> | null = null;
