@@ -21,8 +21,11 @@ const nitroConfig: NitroConfig = {
 
 const dashboardDependency = (specifier: string) => new URL(`./node_modules/${specifier}`, import.meta.url).pathname;
 
+const bindHost = process.env.DASHBOARD_BIND_HOST;
+
 const config = defineConfig({
     server: {
+        ...(bindHost ? { host: bindHost } : {}),
         hmr: {
             overlay: false,
         },

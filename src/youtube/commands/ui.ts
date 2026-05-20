@@ -25,7 +25,7 @@ export const youtubeUiApp = defineDashboardApp({
         env: { YOUTUBE_PROJECT_CWD: process.cwd() },
     },
     dependencies: [{ app: youtubeServerApp, policy: "prompt" }],
-    readiness: { kind: "http", path: "/" },
+    readiness: { kind: "http", path: "/", timeoutMs: 90_000 },
     openBrowser: { enabled: true },
     launchd: { available: true },
 });
