@@ -3,8 +3,7 @@ import type { TimelyService } from "@app/timely/api/service";
 import type { TimelyClient, TimelyProject } from "@app/timely/types";
 import { SafeJSON } from "@app/utils/json";
 import type { Storage } from "@app/utils/storage";
-import { ExitPromptError } from "@inquirer/core";
-import { select } from "@inquirer/prompts";
+import * as p from "@app/utils/prompts/p";
 import chalk from "chalk";
 import type { Command } from "commander";
 
@@ -19,10 +18,6 @@ export function registerProjectsCommand(program: Command, storage: Storage, serv
             try {
                 await projectsAction(storage, service, options);
             } catch (error) {
-                if (error instanceof ExitPromptError) {
-                    logger.info("\nOperation cancelled.");
-                    process.exit(0);
-                }
                 throw error;
             }
         });
@@ -101,10 +96,10 @@ async function projectsAction(storage: Storage, service: TimelyService, options:
                 };
             });
 
-        const projectId = await select({
+        const projectId = await p.select({
             message: "Select default project:",
-            choices,
-        });
+            options: choices.map((c) => ({ value: c.value, label: c.name })),
+        }) as string;
 
         await storage.setConfigValue("selectedProjectId", parseInt(projectId, 10));
         logger.info(chalk.green(`Default project set to ID: ${projectId}`));

@@ -3,8 +3,11 @@ import * as path from "node:path";
 import { logger } from "@app/logger";
 import { runTool } from "@app/utils/cli";
 import { handleReadmeFlag } from "@app/utils/readme";
-import { ExitPromptError } from "@inquirer/core";
-import { search } from "@inquirer/prompts";
+import { inquirerBackend } from "@app/utils/prompts/p/inquirer-backend";
+import * as p from "@app/utils/prompts/p";
+
+// Use inquirer backend for this tool
+p.setBackend(inquirerBackend);
 import { Command } from "commander";
 import * as watchman from "fb-watchman";
 
@@ -121,7 +124,7 @@ async function getDirOfInterest(): Promise<string> {
     ];
 
     try {
-        const selected = await search({
+        const selected = await inquirerBackend.search<string>({
             message: "Select a directory to watch:",
             source: async (term) => {
                 if (!term) {
@@ -132,11 +135,6 @@ async function getDirOfInterest(): Promise<string> {
         });
         return selected;
     } catch (error) {
-        if (error instanceof ExitPromptError) {
-            client.end(); // Close client before exit
-            logger.info("Directory selection cancelled by user.");
-            process.exit(0);
-        }
         client.end(); // Close client on error
         throw error;
     }

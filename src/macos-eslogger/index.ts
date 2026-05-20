@@ -3,8 +3,11 @@ import { logger } from "@app/logger";
 import { runTool } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
 import { handleReadmeFlag } from "@app/utils/readme";
-import { ExitPromptError } from "@inquirer/core";
-import { checkbox, select } from "@inquirer/prompts";
+import { inquirerBackend } from "@app/utils/prompts/p/inquirer-backend";
+import * as p from "@app/utils/prompts/p";
+
+// Use inquirer backend for this tool
+p.setBackend(inquirerBackend);
 import chalk from "chalk";
 import { Command } from "commander";
 
@@ -928,28 +931,28 @@ function monitorWithESF(
 async function getEventTypesInteractively(): Promise<string[]> {
     logger.info(chalk.cyan("🔍 macOS ESLogger Real-time Event Monitor\n"));
 
-    const mode = await select({
+    const mode = await p.select({
         message: "Choose monitoring mode:",
-        choices: [
-            { value: "category", name: "📂 Category (pre-defined event groups)" },
-            { value: "custom", name: "🎯 Custom (select specific events)" },
-            { value: "popular", name: "🔥 Popular (most commonly monitored)" },
+        options: [
+            { value: "category", label: "📂 Category (pre-defined event groups)" },
+            { value: "custom", label: "🎯 Custom (select specific events)" },
+            { value: "popular", label: "🔥 Popular (most commonly monitored)" },
         ],
-    });
+    }) as string;
 
     if (mode === "popular") {
         return ["exec", "fork", "exit", "open", "write", "authentication", "sudo"];
     } else if (mode === "category") {
-        const categories = await checkbox({
+        const categories = await p.multiselect({
             message: "Select event categories to monitor:",
-            choices: Object.keys(EVENT_CATEGORIES).map((cat) => ({
+            options: Object.keys(EVENT_CATEGORIES).map((cat) => ({
                 value: cat,
-                name: `${cat.charAt(0).toUpperCase() + cat.slice(1)} (${
+                label: `${cat.charAt(0).toUpperCase() + cat.slice(1)} (${
                     EVENT_CATEGORIES[cat as keyof typeof EVENT_CATEGORIES].length
                 } events)`,
-                checked: cat === "process", // Default select process
             })),
-        });
+            initialValues: Object.keys(EVENT_CATEGORIES).filter((cat) => cat === "process"),
+        }) as string[];
 
         if (!categories || categories.length === 0) {
             logger.info("No categories selected. Exiting.");
@@ -963,14 +966,14 @@ async function getEventTypesInteractively(): Promise<string[]> {
         return eventTypes;
     } else {
         // Custom event selection
-        const events = await checkbox({
+        const events = await p.multiselect({
             message: "Select events to monitor (type to filter):",
-            choices: ALL_EVENTS.map((evt) => ({
+            options: ALL_EVENTS.map((evt) => ({
                 value: evt,
-                name: evt,
-                checked: evt === "exec", // Default select exec
+                label: evt,
             })),
-        });
+            initialValues: ALL_EVENTS.filter((evt) => evt === "exec"),
+        }) as string[];
 
         if (!events || events.length === 0) {
             logger.info("No events selected. Exiting.");
@@ -1035,15 +1038,7 @@ async function main() {
         }
     } else {
         // Interactive mode
-        try {
-            eventTypes = await getEventTypesInteractively();
-        } catch (error) {
-            if (error instanceof ExitPromptError) {
-                logger.info("\nOperation cancelled by user.");
-                process.exit(0);
-            }
-            throw error;
-        }
+        eventTypes = await getEventTypesInteractively();
     }
 
     if (eventTypes.length === 0) {

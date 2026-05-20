@@ -5,7 +5,11 @@ import { Executor, runTool } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
 import { isPromptCancelled } from "@app/utils/prompt-helpers.js";
 import { handleReadmeFlag } from "@app/utils/readme";
-import { confirm, input, number } from "@inquirer/prompts";
+import { inquirerBackend } from "@app/utils/prompts/p/inquirer-backend";
+import * as p from "@app/utils/prompts/p";
+
+// Use inquirer backend for this tool
+p.setBackend(inquirerBackend);
 import chalk from "chalk";
 import { Command } from "commander";
 
@@ -404,10 +408,10 @@ async function promptForNewMessage(
         console.log(chalk.dim(`  💡 Suggestion: ${chalk.green(suggestion)}`));
     }
 
-    const newMessageRaw = await input({
+    const newMessageRaw = await p.text({
         message: `[${index + 1}/${total}] Enter new message for commit ${chalk.cyan(commit.shortHash)}:`,
-        default: suggestion,
-        validate: (v) => (v?.trim().length ?? 0) > 0 || "Commit message cannot be empty",
+        initialValue: suggestion,
+        validate: (v) => ((v?.trim().length ?? 0) > 0 ? undefined : "Commit message cannot be empty"),
     });
 
     let newMessage = newMessageRaw.trim();
@@ -932,13 +936,11 @@ async function main() {
             console.log();
 
             const maxCommits = recentCommits.length;
-            commitCount = await number({
+            commitCount = await inquirerBackend.number({
                 message: `How many commits do you want to rename? (1-${maxCommits})`,
                 min: 1,
                 max: maxCommits,
                 default: 1,
-                validate: (v) =>
-                    (v !== undefined && v >= 1 && v <= maxCommits) || `Enter a number between 1 and ${maxCommits}`,
             });
         }
 
@@ -993,9 +995,8 @@ async function main() {
 
         // If no scope found in commits, ask user for it
         if (!mostCommonScope) {
-            const scopeInput = await input({
+            const scopeInput = await p.text({
                 message: "What scope should be used for commit suggestions? (e.g., 'vouchers', 'invoices', 'auth'):",
-                default: "",
             });
 
             defaultScope = scopeInput.trim() || null;
@@ -1012,9 +1013,9 @@ async function main() {
         // Show confirmation
         console.log(showConfirmation(commits));
 
-        const confirmed = await confirm({
+        const confirmed = await p.confirm({
             message: "Do you want to proceed with renaming these commits?",
-            default: true,
+            initialValue: true,
         });
 
         if (!confirmed) {

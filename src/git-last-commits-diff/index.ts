@@ -3,8 +3,11 @@ import { logger } from "@app/logger";
 import { Executor, runTool } from "@app/utils/cli";
 import { copyToClipboard } from "@app/utils/clipboard";
 import { handleReadmeFlag } from "@app/utils/readme";
-import { ExitPromptError } from "@inquirer/core";
-import { input, search, select } from "@inquirer/prompts";
+import { inquirerBackend } from "@app/utils/prompts/p/inquirer-backend";
+import * as p from "@app/utils/prompts/p";
+
+// Use inquirer backend for this tool
+p.setBackend(inquirerBackend);
 import { Command } from "commander";
 
 // Handle --readme flag early (before Commander parses)
@@ -107,26 +110,22 @@ async function getAndSelectCommit(git: Executor): Promise<string | undefined> {
     }
 
     try {
-        const selectedCommit = await search({
+        const selectedCommit = await inquirerBackend.search<string>({
             message: "Select a commit (type to filter). The diff will be from this commit to HEAD:",
-            source: async (input) => {
-                if (!input) {
+            source: async (term) => {
+                if (!term) {
                     return choices;
                 }
-                const lowerInput = input.toLowerCase();
+                const lowerInput = term.toLowerCase();
                 return choices.filter((choice) => choice.name.toLowerCase().includes(lowerInput));
             },
         });
 
         return selectedCommit;
     } catch (promptError: unknown) {
-        if (promptError instanceof ExitPromptError) {
-            logger.info("\nℹ Commit selection cancelled by user.");
-        } else {
-            logger.error(
-                `\n✖ Error during commit selection prompt: ${promptError instanceof Error ? promptError.message : String(promptError)}`
-            );
-        }
+        logger.error(
+            `\n✖ Error during commit selection prompt: ${promptError instanceof Error ? promptError.message : String(promptError)}`
+        );
         return undefined;
     }
 }
@@ -217,10 +216,10 @@ async function main() {
         ];
 
         try {
-            outputAction = await select({
+            outputAction = await p.select({
                 message: "Where would you like the diff output to go?",
-                choices: outputChoices,
-            });
+                options: outputChoices.map((c) => ({ value: c.value, label: c.name })),
+            }) as OutputAction;
 
             if (outputAction === "file") {
                 const firstShaRaw = await getTruncatedSha(git, diffStartRef);
@@ -234,9 +233,9 @@ async function main() {
                 const defaultFileName = `commits-${firstSha}-${lastSha}.diff`;
                 const currentDir = process.cwd();
 
-                const filePathResponse = await input({
+                const filePathResponse = await p.text({
                     message: `Enter filename for the diff (will be created in ${currentDir}):`,
-                    default: defaultFileName,
+                    initialValue: defaultFileName,
                 });
 
                 if (!filePathResponse || filePathResponse.trim().length === 0) {
@@ -252,13 +251,9 @@ async function main() {
                 logger.info("ℹ Output will be written to stdout.");
             }
         } catch (promptError: unknown) {
-            if (promptError instanceof ExitPromptError) {
-                logger.info("\nℹ Output selection cancelled by user. Exiting.");
-            } else {
-                logger.error(
-                    `\n✖ Error during output selection prompt: ${promptError instanceof Error ? promptError.message : String(promptError)}`
-                );
-            }
+            logger.error(
+                `\n✖ Error during output selection prompt: ${promptError instanceof Error ? promptError.message : String(promptError)}`
+            );
             process.exit(0);
         }
     }

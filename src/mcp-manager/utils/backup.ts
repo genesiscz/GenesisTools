@@ -3,8 +3,7 @@ import { copyFile } from "node:fs/promises";
 import path from "node:path";
 import { logger } from "@app/logger";
 import { DiffUtil } from "@app/utils/diff";
-import { ExitPromptError } from "@inquirer/core";
-import { confirm } from "@inquirer/prompts";
+import * as p from "@app/utils/prompts/p";
 import chalk from "chalk";
 import { getGlobalOptions } from "./config.utils.js";
 
@@ -107,20 +106,12 @@ export class BackupManager {
             return false;
         }
 
-        try {
-            const confirmed = await confirm({
-                message: "Are these changes okay?",
-                default: true,
-            });
+        const confirmed = await p.confirm({
+            message: "Are these changes okay?",
+            initialValue: true,
+        });
 
-            return confirmed;
-        } catch (error) {
-            if (error instanceof ExitPromptError) {
-                logger.info("\nOperation cancelled by user.");
-                return false;
-            }
-            throw error;
-        }
+        return !!confirmed;
     }
 
     /**

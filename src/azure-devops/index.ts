@@ -16,6 +16,11 @@
 import { exitWithAuthGuide, exitWithSslGuide, isAuthError, isSslError } from "@app/azure-devops/cli.utils";
 import { logger } from "@app/logger";
 import { handleReadmeFlag } from "@app/utils/readme";
+import { inquirerBackend } from "@app/utils/prompts/p/inquirer-backend";
+import * as p from "@app/utils/prompts/p";
+
+// Use inquirer backend for this tool
+p.setBackend(inquirerBackend);
 import { Command } from "commander";
 
 // Handle --readme flag early (before Commander parses)

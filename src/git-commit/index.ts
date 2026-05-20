@@ -1,8 +1,11 @@
 import { logger } from "@app/logger";
 import { Executor, runTool } from "@app/utils/cli";
 import { handleReadmeFlag } from "@app/utils/readme";
-import { ExitPromptError } from "@inquirer/core";
-import { confirm, select } from "@inquirer/prompts";
+import { inquirerBackend } from "@app/utils/prompts/p/inquirer-backend";
+import * as p from "@app/utils/prompts/p";
+
+// Use inquirer backend for this tool
+p.setBackend(inquirerBackend);
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { generateObject } from "ai";
 import { Command } from "commander";
@@ -132,10 +135,10 @@ async function main() {
         });
 
         // Let user choose a commit message
-        const chosenIndex = await select({
+        const chosenIndex = await p.select({
             message: "Choose a commit message:",
-            choices: choices,
-        });
+            options: choices.map((c) => ({ value: c.value, label: c.name })),
+        }) as string;
 
         const chosenMessage = messages[parseInt(chosenIndex, 10)];
 
@@ -149,9 +152,9 @@ async function main() {
         logger.info("✅ Commit successful!");
 
         // Ask if user wants to push
-        const shouldPush = await confirm({
+        const shouldPush = await p.confirm({
             message: "Do you want to push the changes?",
-            default: true,
+            initialValue: true,
         });
 
         if (shouldPush) {
@@ -160,10 +163,6 @@ async function main() {
             logger.info("✅ Push successful!");
         }
     } catch (error) {
-        if (error instanceof ExitPromptError) {
-            logger.info("\n🚫 Operation cancelled by user.");
-            process.exit(0);
-        }
         logger.error(`✖ Error: ${error instanceof Error ? error.message : String(error)}`);
         process.exit(1);
     }

@@ -5,8 +5,11 @@ import { resolve } from "node:path";
 import { logger } from "@app/logger";
 import { runTool } from "@app/utils/cli";
 import { copyToClipboard } from "@app/utils/clipboard";
-import { ExitPromptError } from "@inquirer/core";
-import { checkbox, confirm, input } from "@inquirer/prompts";
+import { inquirerBackend } from "@app/utils/prompts/p/inquirer-backend";
+import * as p from "@app/utils/prompts/p";
+
+// Use inquirer backend for this tool
+p.setBackend(inquirerBackend);
 import { Command } from "commander";
 
 interface ToolUseBlock {
@@ -286,10 +289,10 @@ async function main() {
         }
 
         // Show tool names and let user select which to remove
-        const selectedItems = await checkbox({
+        const selectedItems = await p.multiselect({
             message: "Select tool inputs/outputs to remove (use space to select, enter to confirm):",
-            choices,
-        });
+            options: choices.map((c) => ({ value: c.value, label: c.name })),
+        }) as string[];
 
         if (!selectedItems || selectedItems.length === 0) {
             logger.info("No items selected for removal. Exiting.");
@@ -369,15 +372,15 @@ Statistics:
         } else {
             // Ask if user wants to save to file
             try {
-                const saveToFile = await confirm({
+                const saveToFile = await p.confirm({
                     message: "Save cleaned content to a file?",
-                    default: false,
+                    initialValue: false,
                 });
 
                 if (saveToFile) {
-                    const outputPath = await input({
+                    const outputPath = await p.text({
                         message: "Enter output file path:",
-                        default: inputPath.replace(/\.(log|md)$/, ".cleaned.$1"),
+                        initialValue: inputPath.replace(/\.(log|md)$/, ".cleaned.$1"),
                     });
 
                     const resolvedOutputPath = resolve(outputPath);
@@ -385,18 +388,10 @@ Statistics:
                     logger.info(`✔ Saved cleaned content to: ${resolvedOutputPath}`);
                 }
             } catch (error) {
-                if (error instanceof ExitPromptError) {
-                    // User cancelled, that's fine
-                    return;
-                }
                 throw error;
             }
         }
     } catch (error) {
-        if (error instanceof ExitPromptError) {
-            logger.info("\nOperation cancelled by user.");
-            process.exit(0);
-        }
         const message = error instanceof Error ? error.message : String(error);
         logger.error(`\n✖ Error: ${message}`);
         if (error instanceof Error && error.stack) {
