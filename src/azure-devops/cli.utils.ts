@@ -1,5 +1,3 @@
-import { out } from "@app/logger";
-
 /**
  * Azure DevOps CLI Tool - CLI Utilities
  *
@@ -9,6 +7,7 @@ import { out } from "@app/logger";
  * helpers from there instead of hand-rolling the command strings.
  */
 import { azLoginSuggestionBlock, extractTenantFromStderr } from "@app/azure-devops/lib/az-cli.utils";
+import { out } from "@app/logger";
 
 const SSL_PROXY_GUIDE = `
 🔐 SSL Certificate Error (Proxy Detected)

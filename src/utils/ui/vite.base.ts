@@ -170,11 +170,18 @@ function deriveWatchDirs(root: string, appDir: string, extraDirs: string[]): str
  * race, rewriting the same `?v=<hash>` files and breaking already-open tabs
  * with 504 "Outdated Optimize Dep" + "Failed to fetch dynamically imported
  * module". Isolating per dashboard prevents the collision.
+ *
+ * **Anchored on `.git`, not the closest `node_modules`.** Some tools (e.g.
+ * `src/shops`) have their own nested `package.json` + `node_modules`. If we
+ * picked that as the cache home, Vite would resolve `react` from the nested
+ * tree while the rest of the deps come from the root — duplicate-React
+ * "Invalid hook call". Pinning the cache to the repo root guarantees a single
+ * resolution chain.
  */
 function resolveDashboardCacheDir(root: string): string {
     let dir = root;
     while (dir !== dirname(dir)) {
-        if (existsSync(join(dir, "node_modules")) && existsSync(join(dir, "package.json"))) {
+        if (existsSync(join(dir, ".git"))) {
             const slug = relative(dir, root).split(sep).filter(Boolean).join("-") || "root";
 
             return join(dir, "node_modules", ".vite-cache", slug);
