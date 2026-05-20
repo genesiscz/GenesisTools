@@ -37,6 +37,13 @@ export function makeTestBackend(answers: Record<string, unknown> = {}): PromptBa
         multiselect: async () => ((next("multiselect") as SelectValue[]) ?? []),
         password: async () => (next("password") as string) ?? "",
 
+        // Canonical PromptBackend methods added in COS-T2 (Agent B); their
+        // test stubs were deferred to the integrator since Agent A's
+        // inquirer-backend was being written in parallel.
+        search: async <T>() => (next("search") as T),
+        editor: async () => (next("editor") as string) ?? "",
+        number: async () => (next("number") as number) ?? 0,
+
         spinner: () => ({
             start: () => {},
             stop: () => {},

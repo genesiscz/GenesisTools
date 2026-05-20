@@ -126,11 +126,11 @@ async function getDirOfInterest(): Promise<string> {
     try {
         const selected = await inquirerBackend.search<string>({
             message: "Select a directory to watch:",
-            source: async (term) => {
-                if (!term) {
-                    return allChoices;
-                }
-                return allChoices.filter((c) => c.value.toLowerCase().includes(term.toLowerCase()));
+            options: async (term) => {
+                const filtered = !term
+                    ? allChoices
+                    : allChoices.filter((c) => c.value.toLowerCase().includes(term.toLowerCase()));
+                return filtered.map((c) => ({ value: c.value, label: c.name }));
             },
         });
         return selected;

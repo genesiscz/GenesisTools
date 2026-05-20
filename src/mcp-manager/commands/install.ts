@@ -55,12 +55,11 @@ export async function installServer(
 
         const inputServerName = await inquirerBackend.search<string>({
             message: "Select server to install or create new:",
-            source: async (term) => {
-                if (!term) {
-                    return choices;
-                }
-                const lowerTerm = term.toLowerCase();
-                return choices.filter((c) => c.name.toLowerCase().includes(lowerTerm));
+            options: async (term) => {
+                const filtered = !term
+                    ? choices
+                    : choices.filter((c) => c.name.toLowerCase().includes(term.toLowerCase()));
+                return filtered.map((c) => ({ value: c.value, label: c.name }));
             },
             pageSize: 30,
         });

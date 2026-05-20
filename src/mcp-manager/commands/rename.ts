@@ -36,14 +36,11 @@ export async function renameServer(
         const serverNames = Object.keys(config.mcpServers).sort();
         const selectedOldName = await inquirerBackend.search<string>({
             message: "Select server to rename:",
-            source: async (term) => {
-                if (!term) {
-                    return serverNames.map((name) => ({ value: name, name }));
-                }
-                const lowerTerm = term.toLowerCase();
-                return serverNames
-                    .filter((name) => name.toLowerCase().includes(lowerTerm))
-                    .map((name) => ({ value: name, name }));
+            options: async (term) => {
+                const filtered = !term
+                    ? serverNames
+                    : serverNames.filter((name) => name.toLowerCase().includes(term.toLowerCase()));
+                return filtered.map((name) => ({ value: name, label: name }));
             },
             pageSize: 30,
         });

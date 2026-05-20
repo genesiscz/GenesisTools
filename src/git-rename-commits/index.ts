@@ -940,7 +940,7 @@ async function main() {
                 message: `How many commits do you want to rename? (1-${maxCommits})`,
                 min: 1,
                 max: maxCommits,
-                default: 1,
+                initialValue: 1,
             });
         }
 

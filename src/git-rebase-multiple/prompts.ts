@@ -22,12 +22,11 @@ export const prompts = {
 
         return inquirerBackend.search({
             message: "Which branch do you want to rebase?",
-            source: async (term) => {
-                if (!term) {
-                    return allChoices;
-                }
-                const lower = term.toLowerCase();
-                return allChoices.filter((c) => c.value.toLowerCase().includes(lower));
+            options: async (term) => {
+                const filtered = !term
+                    ? allChoices
+                    : allChoices.filter((c) => c.value.toLowerCase().includes(term.toLowerCase()));
+                return filtered.map((c) => ({ value: c.value, label: c.name }));
             },
         }) as Promise<string>;
     },
@@ -47,12 +46,11 @@ export const prompts = {
 
         return inquirerBackend.search({
             message: "Onto which branch?",
-            source: async (term) => {
-                if (!term) {
-                    return allChoices;
-                }
-                const lower = term.toLowerCase();
-                return allChoices.filter((c) => c.value.toLowerCase().includes(lower));
+            options: async (term) => {
+                const filtered = !term
+                    ? allChoices
+                    : allChoices.filter((c) => c.value.toLowerCase().includes(term.toLowerCase()));
+                return filtered.map((c) => ({ value: c.value, label: c.name }));
             },
         }) as Promise<string>;
     },

@@ -49,7 +49,7 @@ const startServer = () => {
         try {
             const userInput = await inquirerBackend.editor({
                 message: "Enter your message (save and exit when done):",
-                default: "",
+                initialValue: "",
             });
 
             const input = userInput?.trim() || ""; // Safely get and trim input

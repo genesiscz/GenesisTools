@@ -5,9 +5,12 @@ import pc from "picocolors";
 import type { PromptBackend } from "./backend";
 import type {
     ConfirmOpts,
+    EditorOpts,
     Log,
     MultiSelectOpts,
+    NumberOpts,
     PasswordOpts,
+    SearchOpts,
     SelectOpts,
     SelectValue,
     Spinner,
@@ -15,14 +18,13 @@ import type {
     TypedConfirmOpts,
 } from "./types";
 
-/** Additional prompt methods not in PromptBackend, for inquirer-specific consumers. */
-export interface InquirerExtras {
-    search<T>(opts: { message: string; source: (term?: string) => Promise<{ value: T; name: string }[]>; pageSize?: number }): Promise<T>;
-    editor(opts: { message: string; default?: string }): Promise<string>;
-    number(opts: { message: string; default?: number; min?: number; max?: number }): Promise<number | undefined>;
-}
-
-export type InquirerBackend = PromptBackend & InquirerExtras;
+/**
+ * Compatibility alias kept for external imports (mcp-manager mock + the public
+ * re-export from p/index.ts). After the canonical search/editor/number landed
+ * directly on PromptBackend (Agent B), inquirerBackend has nothing extra —
+ * it's a PromptBackend implementation backed by @inquirer/prompts.
+ */
+export type InquirerBackend = PromptBackend;
 
 function writeStderr(msg: string): void {
     process.stderr.write(msg + "\n");
@@ -166,21 +168,22 @@ async function passwordImpl(opts: PasswordOpts): Promise<string> {
     }
 }
 
-async function searchImpl<T>(opts: {
-    message: string;
-    source: (term?: string) => Promise<{ value: T; name: string }[]>;
-    pageSize?: number;
-}): Promise<T> {
+async function searchImpl<T>(opts: SearchOpts<T>): Promise<T> {
     if (!isInteractive()) {
         writeStderr(pc.red("✘") + " search prompt requires an interactive terminal");
         process.exit(1);
     }
 
     try {
+        // PromptBackend.search uses { value, label, hint }; inquirer's source
+        // callback shape is { value, name, description }. Adapt at the boundary.
         const result = await search<T>({
             message: opts.message,
-            source: opts.source,
-            pageSize: opts.pageSize,
+            source: async (term) => {
+                const items = await opts.options(term ?? "");
+                return items.map((i) => ({ value: i.value, name: i.label, description: i.hint }));
+            },
+            ...(opts.pageSize !== undefined ? { pageSize: opts.pageSize } : {}),
         });
 
         return result;
@@ -189,7 +192,7 @@ async function searchImpl<T>(opts: {
     }
 }
 
-async function editorImpl(opts: { message: string; default?: string }): Promise<string> {
+async function editorImpl(opts: EditorOpts): Promise<string> {
     if (!isInteractive()) {
         writeStderr(pc.red("✘") + " editor prompt requires an interactive terminal");
         process.exit(1);
@@ -198,7 +201,8 @@ async function editorImpl(opts: { message: string; default?: string }): Promise<
     try {
         const result = await editor({
             message: opts.message,
-            default: opts.default,
+            default: opts.initialValue,
+            postfix: opts.postfix,
         });
 
         return result;
@@ -207,26 +211,38 @@ async function editorImpl(opts: { message: string; default?: string }): Promise<
     }
 }
 
-async function numberImpl(opts: {
-    message: string;
-    default?: number;
-    min?: number;
-    max?: number;
-}): Promise<number | undefined> {
+async function numberImpl(opts: NumberOpts): Promise<number> {
     if (!isInteractive()) {
         writeStderr(pc.red("✘") + " number prompt requires an interactive terminal");
         process.exit(1);
     }
 
     try {
+        // Inquirer's number prompt validate returns string | boolean | Promise<…>.
+        // PromptBackend.NumberOpts.validate returns string | undefined (string =
+        // error, undefined = ok). Bridge the two so the canonical type works.
+        // Also wrap the required check: inquirer can return undefined if input
+        // is empty AND no default — we require a value so the canonical return
+        // type Promise<number> is honored.
         const result = await number({
             message: opts.message,
-            default: opts.default,
+            default: opts.initialValue,
             min: opts.min,
             max: opts.max,
+            validate: (v) => {
+                if (v === undefined) {
+                    return "A number is required";
+                }
+                if (opts.validate) {
+                    const err = opts.validate(v);
+                    return err === undefined ? true : err;
+                }
+                return true;
+            },
         });
 
-        return result;
+        // validate guarantees non-undefined at acceptance
+        return result as number;
     } catch (err) {
         exitOnCancel(err);
     }

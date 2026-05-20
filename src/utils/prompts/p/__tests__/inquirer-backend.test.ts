@@ -241,7 +241,7 @@ describe("inquirerBackend", () => {
         it("calls inquirer search and returns result", async () => {
             const result = await inquirerBackend.search({
                 message: "find",
-                source: async () => [{ value: "a", name: "A" }],
+                options: async () => [{ value: "a", label: "A" }],
             });
 
             expect(result).toBe("searched");

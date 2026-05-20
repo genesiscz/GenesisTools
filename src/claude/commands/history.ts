@@ -150,9 +150,9 @@ async function runInteractive(): Promise<SearchFilters> {
 
     const project = await inquirerBackend.search<string>({
         message: "Select project (type to filter):",
-        source: async (term) => {
+        options: async (term) => {
             const filtered = term ? projects.filter((proj) => proj.toLowerCase().includes(term.toLowerCase())) : projects;
-            return [{ value: "all", name: "All projects" }, ...filtered.map((proj) => ({ value: proj, name: proj }))];
+            return [{ value: "all", label: "All projects" }, ...filtered.map((proj) => ({ value: proj, label: proj }))];
         },
     });
 

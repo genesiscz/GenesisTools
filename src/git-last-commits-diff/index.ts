@@ -112,12 +112,11 @@ async function getAndSelectCommit(git: Executor): Promise<string | undefined> {
     try {
         const selectedCommit = await inquirerBackend.search<string>({
             message: "Select a commit (type to filter). The diff will be from this commit to HEAD:",
-            source: async (term) => {
-                if (!term) {
-                    return choices;
-                }
-                const lowerInput = term.toLowerCase();
-                return choices.filter((choice) => choice.name.toLowerCase().includes(lowerInput));
+            options: async (term) => {
+                const filtered = !term
+                    ? choices
+                    : choices.filter((choice) => choice.name.toLowerCase().includes(term.toLowerCase()));
+                return filtered.map((c) => ({ value: c.value, label: c.name }));
             },
         });
 

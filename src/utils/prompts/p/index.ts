@@ -18,7 +18,7 @@ export { isCancel } from "@clack/prompts";
 export { setBackend };
 export type { PromptBackend } from "./backend";
 export { inquirerBackend } from "./inquirer-backend";
-export type { InquirerBackend, InquirerExtras } from "./inquirer-backend";
+export type { InquirerBackend } from "./inquirer-backend";
 export type * from "./types";
 
 export function intro(msg: string): void {

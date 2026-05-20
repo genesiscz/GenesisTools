@@ -62,6 +62,8 @@ export interface PasswordOpts {
 export interface SearchOpts<T = unknown> {
     message: string;
     options: (input: string) => Promise<{ value: T; label: string; hint?: string }[]>;
+    /** Optional page size for backends that paginate (e.g. inquirer's search). */
+    pageSize?: number;
 }
 
 export interface EditorOpts {
