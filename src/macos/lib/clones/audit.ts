@@ -1,7 +1,6 @@
 import {
     appendFileSync,
     chmodSync,
-    existsSync,
     lstatSync,
     mkdirSync,
     readdirSync,
@@ -48,10 +47,17 @@ function isMetaLine(v: unknown): v is MetaLine {
 }
 
 /** The process/ audit dir — sibling of cache/ under the tool's base dir.
- *  NOT a Storage cache helper (those write under cache/). */
+ *  NOT a Storage cache helper (those write under cache/). Cached after first
+ *  call to avoid re-running mkdirSync on every appendOp/writeMeta. */
+let cachedProcessDir: string | null = null;
 export function processDir(): string {
+    if (cachedProcessDir !== null) {
+        return cachedProcessDir;
+    }
+
     const dir = join(storage.getBaseDir(), "process");
     mkdirSync(dir, { recursive: true });
+    cachedProcessDir = dir;
     return dir;
 }
 
@@ -88,99 +94,19 @@ function totalsOf(ops: ProcessOp[]): ProcessTotals {
     return t;
 }
 
-/** Replay a process JSONL into a ProcessReport. Last meta line wins for
- *  state/endedAt (rollback appends a second meta). Read-only. */
-export function readProcess(id: string): ProcessReport | null {
+/** Stream a process JSONL line-by-line as discriminated `{ meta }` / `{ op }`
+ *  records. Read errors (typically ENOENT for unknown ids) end the generator
+ *  silently — callers decide what to do when no meta was yielded. */
+function* parseProcessLines(id: string): Generator<{ meta?: ProcessMeta; op?: ProcessOp }> {
     const path = processJsonlPath(id);
-    if (!existsSync(path)) {
-        return null;
-    }
-
-    let lines: string[];
-    try {
-        lines = readFileSync(path, "utf8")
-            .split("\n")
-            .filter((l) => l.trim().length > 0);
-    } catch (err) {
-        log.warn({ err, id }, "readProcess failed");
-        return null;
-    }
-
-    let meta: ProcessMeta | null = null;
-    const ops: ProcessOp[] = [];
-    for (const line of lines) {
-        let parsed: unknown;
-        try {
-            parsed = SafeJSON.parse(line);
-        } catch (err) {
-            log.debug({ err, id, line }, "skipping unparseable jsonl line");
-            continue;
-        }
-
-        if (isMetaLine(parsed)) {
-            meta = parsed._meta;
-        } else {
-            ops.push(parsed as ProcessOp);
-        }
-    }
-
-    if (!meta) {
-        return null;
-    }
-
-    return {
-        id: meta.id,
-        state: meta.state,
-        roots: meta.roots,
-        startedAt: meta.startedAt,
-        endedAt: meta.endedAt,
-        planCache: {
-            hit: meta.planCacheHit,
-            ...(meta.planCacheAgeMs !== undefined ? { ageMs: meta.planCacheAgeMs } : {}),
-        },
-        ops,
-        totals: totalsOf(ops),
-    };
-}
-
-function firstMeta(path: string): ProcessMeta | null {
-    try {
-        for (const line of readFileSync(path, "utf8").split("\n")) {
-            if (line.trim().length === 0) {
-                continue;
-            }
-
-            const parsed: unknown = SafeJSON.parse(line);
-            if (isMetaLine(parsed)) {
-                return parsed._meta;
-            }
-        }
-    } catch (err) {
-        log.debug({ err, path }, "firstMeta read failed");
-    }
-
-    return null;
-}
-
-/** Summary-only read: same parse loop as readProcess but skips materializing
- *  the ops[] array. Totals are accumulated incrementally → constant memory
- *  per process even on huge audit logs. Used by listProcesses. */
-function readProcessSummary(id: string): Omit<ProcessReport, "ops"> | null {
-    const path = processJsonlPath(id);
-    if (!existsSync(path)) {
-        return null;
-    }
-
     let raw: string;
     try {
         raw = readFileSync(path, "utf8");
     } catch (err) {
-        log.warn({ err, id }, "readProcessSummary failed");
-        return null;
+        log.debug({ err, id }, "parseProcessLines read failed");
+        return;
     }
 
-    let meta: ProcessMeta | null = null;
-    const t: ProcessTotals = { cloned: 0, skipped: 0, errors: 0, bytesReclaimed: 0 };
     for (const line of raw.split("\n")) {
         if (line.trim().length === 0) {
             continue;
@@ -195,25 +121,14 @@ function readProcessSummary(id: string): Omit<ProcessReport, "ops"> | null {
         }
 
         if (isMetaLine(parsed)) {
-            meta = parsed._meta;
-            continue;
-        }
-
-        const op = parsed as ProcessOp;
-        if (op.op === "clone") {
-            t.cloned += 1;
-            t.bytesReclaimed += op.bytes;
-        } else if (op.op === "skip") {
-            t.skipped += 1;
-        } else if (op.op === "error") {
-            t.errors += 1;
+            yield { meta: parsed._meta };
+        } else {
+            yield { op: parsed as ProcessOp };
         }
     }
+}
 
-    if (!meta) {
-        return null;
-    }
-
+function metaToReport(meta: ProcessMeta, ops: ProcessOp[], totals: ProcessTotals): ProcessReport {
     return {
         id: meta.id,
         state: meta.state,
@@ -224,8 +139,63 @@ function readProcessSummary(id: string): Omit<ProcessReport, "ops"> | null {
             hit: meta.planCacheHit,
             ...(meta.planCacheAgeMs !== undefined ? { ageMs: meta.planCacheAgeMs } : {}),
         },
-        totals: t,
+        ops,
+        totals,
     };
+}
+
+/** Replay a process JSONL into a ProcessReport. Last meta line wins for
+ *  state/endedAt (rollback appends a second meta). Read-only. */
+export function readProcess(id: string): ProcessReport | null {
+    let meta: ProcessMeta | null = null;
+    const ops: ProcessOp[] = [];
+    for (const rec of parseProcessLines(id)) {
+        if (rec.meta) {
+            meta = rec.meta;
+        } else if (rec.op) {
+            ops.push(rec.op);
+        }
+    }
+
+    if (!meta) {
+        return null;
+    }
+
+    return metaToReport(meta, ops, totalsOf(ops));
+}
+
+/** Summary-only read: same parse loop as readProcess but skips materialising
+ *  the ops[] array. Totals are accumulated incrementally → constant memory
+ *  per process even on huge audit logs. */
+function readProcessSummary(id: string): Omit<ProcessReport, "ops"> | null {
+    let meta: ProcessMeta | null = null;
+    const t: ProcessTotals = { cloned: 0, skipped: 0, errors: 0, bytesReclaimed: 0 };
+    for (const rec of parseProcessLines(id)) {
+        if (rec.meta) {
+            meta = rec.meta;
+            continue;
+        }
+
+        if (!rec.op) {
+            continue;
+        }
+
+        if (rec.op.op === "clone") {
+            t.cloned += 1;
+            t.bytesReclaimed += rec.op.bytes;
+        } else if (rec.op.op === "skip") {
+            t.skipped += 1;
+        } else if (rec.op.op === "error") {
+            t.errors += 1;
+        }
+    }
+
+    if (!meta) {
+        return null;
+    }
+
+    const { ops: _ops, ...rest } = metaToReport(meta, [], t);
+    return rest;
 }
 
 export function listProcesses(): ProcessListReport {
@@ -237,7 +207,6 @@ export function listProcesses(): ProcessListReport {
         }
 
         const id = name.slice(0, -".jsonl".length);
-        // Summary read — no ops array materialized. Cheap on long audit logs.
         const rep = readProcessSummary(id);
         if (!rep) {
             continue;
@@ -274,8 +243,6 @@ export function closestProcessIds(wanted: string): string[] {
 
     return ids.sort((a, b) => score(b) - score(a)).slice(0, 5);
 }
-
-export { firstMeta };
 
 export class IntegrityError extends Error {
     constructor(message: string) {
@@ -345,9 +312,8 @@ export function runOptimize({ roots, sets, planCacheHit, planCacheAgeMs }: RunOp
     const id = newProcessId();
     const startedAt = new Date().toISOString();
     const sw = new Stopwatch();
-    // Materialize pairs ONCE per set — for dir-kind sets this walks the keep
-    // tree, which can be expensive on large dirs; recomputing in both the log
-    // preamble and the loop was a real perf regression on every run.
+    // dir-kind sets walk the keep tree to enumerate pairs — keep one materialised
+    // copy and reuse it for both the log preamble and the per-pair loop.
     const pairsBySet = sets.map((s) => expandSetToPairs(s));
     const totalPairs = pairsBySet.reduce((s, p) => s + p.length, 0);
     log.info({ id, roots, sets: sets.length, totalPairs, planCacheHit, planCacheAgeMs }, "runOptimize starting");
@@ -360,6 +326,24 @@ export function runOptimize({ roots, sets, planCacheHit, planCacheAgeMs }: RunOp
         planCacheHit,
         ...(planCacheAgeMs !== undefined ? { planCacheAgeMs } : {}),
     });
+
+    // Build the ProcessReport in-memory so we don't have to re-read the
+    // JSONL we just wrote. Each recordOp() persists to disk AND accumulates
+    // into the in-memory ops + totals.
+    const ops: ProcessOp[] = [];
+    const totals: ProcessTotals = { cloned: 0, skipped: 0, errors: 0, bytesReclaimed: 0 };
+    const recordOp = (op: ProcessOp): void => {
+        appendOp(id, op);
+        ops.push(op);
+        if (op.op === "clone") {
+            totals.cloned += 1;
+            totals.bytesReclaimed += op.bytes;
+        } else if (op.op === "skip") {
+            totals.skipped += 1;
+        } else if (op.op === "error") {
+            totals.errors += 1;
+        }
+    };
 
     let seq = 0;
     try {
@@ -386,7 +370,7 @@ export function runOptimize({ roots, sets, planCacheHit, planCacheAgeMs }: RunOp
                     sha256Before = sha256(replace);
                 } catch (err) {
                     log.warn({ err, replace }, "pre-state capture failed");
-                    appendOp(id, {
+                    recordOp({
                         seq,
                         ts,
                         op: "error",
@@ -407,7 +391,7 @@ export function runOptimize({ roots, sets, planCacheHit, planCacheAgeMs }: RunOp
                     if (res.status === "cloned") {
                         const sha256After = sha256(replace);
                         if (sha256After !== sha256Before) {
-                            appendOp(id, {
+                            recordOp({
                                 seq,
                                 ts,
                                 op: "error",
@@ -426,7 +410,7 @@ export function runOptimize({ roots, sets, planCacheHit, planCacheAgeMs }: RunOp
                             );
                         }
 
-                        appendOp(id, {
+                        recordOp({
                             seq,
                             ts,
                             op: "clone",
@@ -440,7 +424,7 @@ export function runOptimize({ roots, sets, planCacheHit, planCacheAgeMs }: RunOp
                             sha256After,
                         });
                     } else {
-                        appendOp(id, {
+                        recordOp({
                             seq,
                             ts,
                             op: "skip",
@@ -459,7 +443,7 @@ export function runOptimize({ roots, sets, planCacheHit, planCacheAgeMs }: RunOp
                     }
 
                     const isClone = err instanceof CloneUnsupportedError;
-                    appendOp(id, {
+                    recordOp({
                         seq,
                         ts,
                         op: "error",
@@ -494,10 +478,35 @@ export function runOptimize({ roots, sets, planCacheHit, planCacheAgeMs }: RunOp
         throw err;
     }
 
-    const rep = readProcess(id);
-    if (!rep) {
-        throw new Error(`runOptimize: process ${id} could not be read back`);
-    }
+    // Close the success path with a real endedAt — the opening meta wrote
+    // endedAt=startedAt as a placeholder; readProcess uses last-meta-wins so
+    // this second record carries the true completion time. Without it the
+    // on-disk JSONL keeps endedAt=startedAt forever and consumers can never
+    // recover the real duration.
+    const endedAt = new Date().toISOString();
+    writeMeta({
+        id,
+        state: "applied",
+        roots,
+        startedAt,
+        endedAt,
+        planCacheHit,
+        ...(planCacheAgeMs !== undefined ? { planCacheAgeMs } : {}),
+    });
+
+    const rep: ProcessReport = {
+        id,
+        state: "applied",
+        roots,
+        startedAt,
+        endedAt,
+        planCache: {
+            hit: planCacheHit,
+            ...(planCacheAgeMs !== undefined ? { ageMs: planCacheAgeMs } : {}),
+        },
+        ops,
+        totals,
+    };
 
     log.info(
         {
