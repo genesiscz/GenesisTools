@@ -60,7 +60,7 @@ export class TableRenderer implements CloneRenderer {
                 formatTable(rows, ["path", "logical", "du -sh", "real", "overcount"], {
                     alignRight: [1, 2, 3, 4],
                     maxColWidth: 100,
-                }),
+                })
             );
         }
 
@@ -83,7 +83,7 @@ export class TableRenderer implements CloneRenderer {
                     ? `, ${formatBytes(r.cloneAnalysis.sharedBytes)} shared cross-tree (stays on disk if deleted)`
                     : " (all family members are in-scope — fully reclaimable)";
             lines.push(
-                `  ${r.cloneAnalysis.families} family(ies), ${r.cloneAnalysis.clonedFiles} cloned file(s)${sharedSuffix}`,
+                `  ${r.cloneAnalysis.families} family(ies), ${r.cloneAnalysis.clonedFiles} cloned file(s)${sharedSuffix}`
             );
             if (r.cloneAnalysis.crossTreePartners.length > 0) {
                 lines.push(`  cross-tree partners: ${r.cloneAnalysis.crossTreePartners.join(", ")}`);
@@ -194,8 +194,8 @@ export class TableRenderer implements CloneRenderer {
             lines.push(
                 pc.bold(
                     `TOTAL  un-shared ${undone}  re-allocated ${formatBytes(reUnshared)}  ` +
-                        `(original apply: cloned ${r.totals.cloned}, reclaimed ${formatBytes(r.totals.bytesReclaimed)})`,
-                ),
+                        `(original apply: cloned ${r.totals.cloned}, reclaimed ${formatBytes(r.totals.bytesReclaimed)})`
+                )
             );
             // Shell-quote each root so the suggested command is copy-pasteable
             // even when paths contain spaces, quotes, or shell metachars.
@@ -205,8 +205,8 @@ export class TableRenderer implements CloneRenderer {
             lines.push(
                 pc.bold(
                     `TOTAL  cloned ${r.totals.cloned}  skipped ${r.totals.skipped}  ` +
-                        `errors ${r.totals.errors}  reclaimed ${formatBytes(r.totals.bytesReclaimed)}`,
-                ),
+                        `errors ${r.totals.errors}  reclaimed ${formatBytes(r.totals.bytesReclaimed)}`
+                )
             );
             if (r.state === "applied") {
                 lines.push(pc.dim(`tools macos clones optimize --rollback --process ${r.id}`));

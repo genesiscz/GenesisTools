@@ -27,7 +27,7 @@ describe("createOptimizeCommand (dry-run default)", () => {
             try {
                 await createOptimizeCommand().parseAsync(
                     ["node", "optimize", dir, "--format", "json", "--min-real", "1024"],
-                    { from: "node" },
+                    { from: "node" }
                 );
             } finally {
                 console.log = orig;

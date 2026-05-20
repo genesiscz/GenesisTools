@@ -37,7 +37,7 @@ function passesFilters(
     absPath: string,
     root: string,
     include: string[] | undefined,
-    exclude: string[] | undefined,
+    exclude: string[] | undefined
 ): boolean {
     const rel = relative(root, absPath);
     if (exclude && exclude.length > 0 && exclude.some((g) => pathMatches(rel, g))) {
