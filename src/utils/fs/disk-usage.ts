@@ -37,6 +37,12 @@ export interface WalkEntry {
      *  Hex string for consistency with `FileMetaEntry.cloneId`; "" or
      *  undefined both mean "no clone-family info available." */
     cloneIdHex?: string;
+    /** Clone-aware private bytes (`getPrivateSize` equivalent), set when
+     *  the walker fetched it inline via `ATTR_CMNEXT_PRIVATESIZE` in the
+     *  P1 bulk path (since P8). Undefined when walker fell back. Consumers
+     *  should call {@link resolvePrivateSize} which prefers this over a
+     *  per-file `getPrivateSize(path)` syscall. */
+    privateSize?: number;
 }
 
 // One-shot probe at module load — `getattrlistbulk` is unavailable off-darwin
@@ -142,6 +148,24 @@ export function resolveCloneIdHex(e: Pick<WalkEntry, "path" | "cloneIdHex">): st
     return id !== null && id !== 0n ? id.toString(16) : "";
 }
 
+/** Resolve clone-aware private bytes for a `WalkEntry`. Prefers the
+ *  walker-supplied `privateSize` (set inline by the P1 bulk path since
+ *  P8) over a fresh `getPrivateSize(path)` syscall. Returns `null` only
+ *  when the walker didn't fetch it (cache-replay / non-darwin / ENOTSUP)
+ *  AND `getPrivateSize` also fails — i.e. no value available.
+ *
+ *  Pairs with {@link resolveCloneIdHex}. On the cold measure pass these
+ *  two helpers together drop per-file syscall load from ~2 getattrlist
+ *  calls (cloneId + privateSize) to 0 — all attrs come from one
+ *  `getattrlistbulk` syscall per directory. */
+export function resolvePrivateSize(e: Pick<WalkEntry, "path" | "privateSize">): number | null {
+    if (e.privateSize !== undefined) {
+        return e.privateSize;
+    }
+
+    return getPrivateSize(e.path);
+}
+
 /** Recursively yields regular files under `root`. Never follows symlinks
  *  (readdirSync does not, and apfs syscalls use FSOPT_NOFOLLOW). Per-entry
  *  errors (EPERM/ENOENT mid-walk) are reported via opts.onError, not thrown.
@@ -214,6 +238,7 @@ export function* walkFiles(root: string, opts: WalkOptions = {}): Generator<Walk
                 allocSize: bigint;
                 mtimeNs: bigint;
                 cloneId: bigint;
+                privateSize: bigint;
             }> = [];
             const subdirs: string[] = [];
             for (const e of iterDir(root)) {
@@ -241,6 +266,7 @@ export function* walkFiles(root: string, opts: WalkOptions = {}): Generator<Walk
                         allocSize: e.allocSize,
                         mtimeNs: e.mtimeNs,
                         cloneId: e.cloneId,
+                        privateSize: e.privateSize,
                     });
                 }
                 // OTHER (sockets, fifos, …): skip silently
@@ -266,6 +292,7 @@ export function* walkFiles(root: string, opts: WalkOptions = {}): Generator<Walk
                     allocated: Number(fe.allocSize),
                     mtimeNs: fe.mtimeNs,
                     cloneIdHex: fe.cloneId === 0n ? "" : fe.cloneId.toString(16),
+                    privateSize: Number(fe.privateSize),
                 };
             }
             for (const subPath of subdirs) {
@@ -375,7 +402,9 @@ export function measureTree(root: string, opts: MeasureOptions = {}): DiskUsage 
             dirs.add(parent);
         }
 
-        const priv = getPrivateSize(e.path);
+        // P8: prefer walker-supplied privateSize (from getattrlistbulk's
+        // ATTR_CMNEXT_PRIVATESIZE) over a per-file getPrivateSize syscall.
+        const priv = resolvePrivateSize(e);
         if (priv !== null) {
             privateSeen = true;
             privateSum += priv;

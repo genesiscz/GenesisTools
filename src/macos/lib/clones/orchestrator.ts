@@ -4,8 +4,14 @@ import { homedir } from "node:os";
 import { basename, dirname, relative, resolve } from "node:path";
 import { logger } from "@app/logger";
 import { formatBytes } from "@app/utils/format";
-import { type DiskUsage, freeDiskSpace, resolveCloneIdHex, type WalkError, walkFiles } from "@app/utils/fs/disk-usage";
-import { getPrivateSize } from "@app/utils/macos/apfs";
+import {
+    type DiskUsage,
+    freeDiskSpace,
+    resolveCloneIdHex,
+    resolvePrivateSize,
+    type WalkError,
+    walkFiles,
+} from "@app/utils/fs/disk-usage";
 import { Stopwatch } from "@app/utils/Stopwatch";
 import { passesGlobs } from "./filters";
 import type { CloneAnalysis, DirNode, MeasureReport } from "./render/types";
@@ -136,10 +142,11 @@ function gatherEnrichedRecords(roots: string[]): Map<string, RootRecords> {
                 path: e.path,
                 logical: e.logical,
                 allocated: e.allocated,
-                // P7 plumbing: prefer the walker's inline cloneIdHex (from
-                // `getattrlistbulk`) over a per-file `getCloneId` syscall.
+                // P7/P8 plumbing: prefer the walker's inline cloneIdHex +
+                // privateSize (both from `getattrlistbulk`) over per-file
+                // `getCloneId` + `getPrivateSize` syscalls.
                 cloneIdHex: resolveCloneIdHex(e),
-                priv: getPrivateSize(e.path),
+                priv: resolvePrivateSize(e),
             });
         }
 

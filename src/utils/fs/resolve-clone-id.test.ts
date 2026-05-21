@@ -12,9 +12,9 @@
  * test asserts the fallback path is reached, not the return value.
  */
 import { describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { tmpdir, platform } from "node:os";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
 import { resolveCloneIdHex } from "@app/utils/fs/disk-usage";
 
@@ -22,23 +22,17 @@ const isDarwin = platform() === "darwin";
 
 describe("resolveCloneIdHex — Phase 7 plumbing helper", () => {
     it("returns walker-supplied hex when defined (non-empty)", () => {
-        expect(
-            resolveCloneIdHex({ path: "/non/existent/x", cloneIdHex: "abc123" })
-        ).toBe("abc123");
+        expect(resolveCloneIdHex({ path: "/non/existent/x", cloneIdHex: "abc123" })).toBe("abc123");
     });
 
     it("returns '' when walker confirmed no clone-family ('')", () => {
-        expect(
-            resolveCloneIdHex({ path: "/non/existent/x", cloneIdHex: "" })
-        ).toBe("");
+        expect(resolveCloneIdHex({ path: "/non/existent/x", cloneIdHex: "" })).toBe("");
     });
 
     it("on undefined cloneIdHex, falls back to getCloneId(path) — non-existent file → ''", () => {
         // Non-existent path: getCloneId throws/returns null → resolveCloneIdHex
         // returns "". This proves the fallback executed.
-        expect(
-            resolveCloneIdHex({ path: "/this/path/definitely/does/not/exist" })
-        ).toBe("");
+        expect(resolveCloneIdHex({ path: "/this/path/definitely/does/not/exist" })).toBe("");
     });
 
     it.skipIf(!isDarwin)("on undefined + real clone family: fallback returns the actual hex", () => {
@@ -68,18 +62,16 @@ describe("resolveCloneIdHex — Phase 7 plumbing helper", () => {
     it.skipIf(!isDarwin)("walker-supplied hex is trusted even when path doesn't exist (no syscall)", () => {
         // Even if the path is bogus, when cloneIdHex is defined we DON'T
         // touch the filesystem. Proves no syscall fallback is invoked.
-        expect(
-            resolveCloneIdHex({ path: "/totally/fake/path/does/not/exist", cloneIdHex: "deadbeef" })
-        ).toBe("deadbeef");
+        expect(resolveCloneIdHex({ path: "/totally/fake/path/does/not/exist", cloneIdHex: "deadbeef" })).toBe(
+            "deadbeef"
+        );
     });
 
     it("hex case is preserved (lowercase per walker contract)", () => {
         // Walker emits lowercase hex via `.toString(16)`. Helper must NOT
         // upcase or otherwise normalize — that would break clone-family
         // grouping if any caller has cached lowercase keys.
-        expect(
-            resolveCloneIdHex({ path: "/x", cloneIdHex: "abcdef0123456789" })
-        ).toBe("abcdef0123456789");
+        expect(resolveCloneIdHex({ path: "/x", cloneIdHex: "abcdef0123456789" })).toBe("abcdef0123456789");
     });
 
     it("very large hex (multi-byte cloneId) round-trips intact", () => {

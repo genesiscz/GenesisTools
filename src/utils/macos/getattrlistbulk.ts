@@ -15,12 +15,13 @@
  *            FILEID(u64)
  *            TOTALSIZE(i64)                // fileattr — logical bytes
  *            ALLOCSIZE(i64)                // fileattr — disk-allocated bytes
- *            CLONEID(u64)                  // forkattr reinterpreted as cmnext
+ *            PRIVATESIZE(u64)              // P8 — cmnext, bit 0x008 packed before CLONEID
+ *            CLONEID(u64)                  // cmnext, bit 0x100
  *            <variable: name bytes + padding>
  *
- * Fixed area = 88 bytes. NAME attr_dataoffset is relative to the start
- * of the NAME attrreference (i.e. byte 28 within the entry); attr_length
- * includes the trailing NUL.
+ * Fixed area = 96 bytes (was 88 pre-P8). NAME attr_dataoffset is
+ * relative to the start of the NAME attrreference (i.e. byte 28 within
+ * the entry); attr_length includes the trailing NUL.
  *
  * Constants verified against apple/darwin-xnu `bsd/sys/attr.h`. The
  * `ATTR_CMN_ERROR is packed first` behaviour is documented in xnu's
@@ -44,6 +45,7 @@ const ATTR_CMN_ERROR = 0x20000000;
 const ATTR_CMN_RETURNED_ATTRS = 0x80000000;
 const ATTR_FILE_TOTALSIZE = 0x00000002;
 const ATTR_FILE_ALLOCSIZE = 0x00000004;
+const ATTR_CMNEXT_PRIVATESIZE = 0x00000008;
 const ATTR_CMNEXT_CLONEID = 0x00000100;
 const FSOPT_PACK_INVAL_ATTRS = 0x00000008;
 const FSOPT_ATTR_CMN_EXTENDED = 0x00000020;
@@ -82,6 +84,10 @@ export interface BulkEntry {
     fileid: bigint;
     /** APFS clone family id, or 0n if the file has no clone family. */
     cloneId: bigint;
+    /** Clone-aware private bytes (`getPrivateSize` equivalent — bytes
+     *  freed if THIS file is deleted, ignoring any non-clone references).
+     *  Fetched inline via `ATTR_CMNEXT_PRIVATESIZE` since Phase 8. */
+    privateSize: bigint;
     /** Per-entry errno; non-zero entries should be skipped by the caller. */
     errorCode: number;
 }
@@ -174,7 +180,7 @@ const ATTRLIST_BUF = new ArrayBuffer(24);
     dv.setUint32(8, 0, true);
     dv.setUint32(12, 0, true);
     dv.setUint32(16, ATTR_FILE_TOTALSIZE | ATTR_FILE_ALLOCSIZE, true);
-    dv.setUint32(20, ATTR_CMNEXT_CLONEID, true);
+    dv.setUint32(20, ATTR_CMNEXT_PRIVATESIZE | ATTR_CMNEXT_CLONEID, true);
 }
 const ATTRLIST_PTR = ptr(ATTRLIST_BUF);
 
@@ -293,6 +299,12 @@ export function* iterDir(dirPath: string): Generator<BulkEntry> {
                 off += 8;
                 const allocsize = OUT_VIEW.getBigInt64(off, true);
                 off += 8;
+                // P8 — ATTR_CMNEXT_PRIVATESIZE (0x008) is packed BEFORE
+                // ATTR_CMNEXT_CLONEID (0x100) because the kernel's bulk-handler
+                // (`bsd/vfs/vfs_attrlist.c:getattrlist_pack_invalid_attrs`)
+                // packs forkattrs in bitmap-ascending order.
+                const privateSize = OUT_VIEW.getBigUint64(off, true);
+                off += 8;
                 const cloneId = OUT_VIEW.getBigUint64(off, true);
                 off += 8;
 
@@ -309,6 +321,7 @@ export function* iterDir(dirPath: string): Generator<BulkEntry> {
                     mtimeNs: sec * 1_000_000_000n + nsec,
                     fileid,
                     cloneId,
+                    privateSize,
                     errorCode,
                 };
 
