@@ -18,6 +18,7 @@ import {
 import { join, resolve } from "node:path";
 import { logger } from "@app/logger";
 import { formatBytes } from "@app/utils/format";
+import { sha256FilesParallel } from "@app/utils/fs/parallel-sha256";
 import { CloneUnsupportedError, cloneFile, getCloneId, getFsType, getPrivateSize } from "@app/utils/macos/apfs";
 import { GetattrlistbulkUnsupportedError, isGetattrlistbulkSupported, iterDir } from "@app/utils/macos/getattrlistbulk";
 import { Stopwatch } from "@app/utils/Stopwatch";
@@ -1120,12 +1121,23 @@ export async function findDuplicateFiles(root: string, opts: FindDuplicatesOptio
         if (cacheMissReps.length > 0 && (!prefixHashEnabled || anyCacheHitInBucket || cacheMissReps.length === 1)) {
             // Case B (P3 disabled, OR mixed hit/miss, OR single rep —
             // prefix-hash adds overhead without skipping anything).
-            // Full-hash every miss.
+            // Full-hash every miss. P9: dispatch via parallel-sha256 so
+            // concurrent files share libuv's read pool (~2× cold on dev
+            // trees; no effect on warm because no misses).
+            const parallel = await sha256FilesParallel(cacheMissReps, signal !== undefined ? { signal } : {});
             for (const p of cacheMissReps) {
+                const h = parallel.shas.get(p);
+                if (h === undefined) {
+                    // Read or hash failed — error recorded in parallel.errors.
+                    // Mirror the pre-P9 behaviour of "skip and move on" by
+                    // not pushing the file into byHash. The bucket loop's
+                    // group-emission logic ignores singleton entries anyway.
+                    continue;
+                }
+
                 const mtimeNs = mtimeByPath.get(p);
                 sha256Calls += 1;
                 sha256Bytes += size;
-                const h = sha256File(p, signal !== undefined ? { signal } : {});
                 if (cache && mtimeNs !== undefined) {
                     cache.set(p, {
                         size: BigInt(size),
