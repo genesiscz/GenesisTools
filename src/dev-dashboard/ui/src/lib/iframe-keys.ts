@@ -85,11 +85,15 @@ export function sendKeyToIframe(iframe: HTMLIFrameElement | null, key: IframeKey
 /**
  * Scrolls the terminal's scrollback buffer. Positive amount = down, negative = up.
  *
- * xterm.js doesn't bind PageUp/PageDown to scrollback by default — only host
- * apps do, and ttyd doesn't. So the reliable path is: prefer the xterm.js
- * `term.scrollLines()` API if exposed, else scroll the `.xterm-viewport`
- * element directly (xterm.js owns this div and its scrollTop drives the
- * scrollback view).
+ * xterm.js's reliable scroll inputs are (in priority order):
+ *   1. the public `term.scrollLines(±n)` API if ttyd exposes the Terminal,
+ *   2. a synthetic WheelEvent on `.xterm-viewport` — xterm.js binds wheel
+ *      and converts deltaY into scrollback movement,
+ *   3. direct scrollTop manipulation as a belt-and-braces nudge.
+ *
+ * What does NOT work: PageUp/PageDown keydowns (xterm.js doesn't bind those
+ * by default — host apps add them, and ttyd doesn't). Earlier versions of
+ * this file shipped that approach and it was a no-op on ttyd.
  */
 export function scrollIframeTerminal(iframe: HTMLIFrameElement | null, amount: number): boolean {
     if (!iframe || amount === 0) {
@@ -103,14 +107,26 @@ export function scrollIframeTerminal(iframe: HTMLIFrameElement | null, amount: n
     }
 
     const viewport = getXtermViewport(iframe);
-    if (viewport) {
-        // ~17px per line is xterm.js's default; close enough for a tap step.
-        const lineHeight = estimateLineHeight(viewport);
-        viewport.scrollTop = Math.max(0, viewport.scrollTop + amount * lineHeight);
-        return true;
+    if (!viewport) {
+        return false;
     }
 
-    return false;
+    const lineHeight = estimateLineHeight(viewport);
+    const deltaY = amount * lineHeight;
+
+    viewport.dispatchEvent(
+        new WheelEvent("wheel", {
+            deltaY,
+            deltaMode: 0, // pixels
+            bubbles: true,
+            cancelable: true,
+        })
+    );
+
+    // Some xterm.js renderers detach visual rows from the scrollable DOM, so
+    // belt-and-braces also nudge scrollTop; harmless if the wheel already won.
+    viewport.scrollTop = Math.max(0, viewport.scrollTop + deltaY);
+    return true;
 }
 
 function getXtermViewport(iframe: HTMLIFrameElement): HTMLElement | null {
