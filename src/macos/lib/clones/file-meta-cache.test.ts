@@ -215,4 +215,93 @@ describe("FileMetaCache", () => {
             c2.close();
         });
     });
+
+    it("dir-meta round-trips across open/setDir/flushDir/loadDirScope", async () => {
+        await withTmpDb("dir-roundtrip", async (dbPath, dir) => {
+            const c1 = FileMetaCache.resetForTests(dbPath);
+            c1.setDir(`${dir}/sub`, {
+                dirMtimeNs: 1234567890n,
+                ino: 99n,
+                childNames: [
+                    { name: "a.txt", kind: "file" },
+                    { name: "b", kind: "dir" },
+                ],
+                lastSeenAt: 0,
+            });
+            await c1.flushDir(Date.now());
+            c1.close();
+
+            const c2 = FileMetaCache.resetForTests(dbPath);
+            await c2.loadDirScope(dir);
+            const entry = c2.getDir(`${dir}/sub`);
+            expect(entry?.dirMtimeNs).toBe(1234567890n);
+            expect(entry?.ino).toBe(99n);
+            expect(entry?.childNames).toEqual([
+                { name: "a.txt", kind: "file" },
+                { name: "b", kind: "dir" },
+            ]);
+            c2.close();
+        });
+    });
+
+    it("loadDirScope only loads paths inside the root (prefix-range exact)", async () => {
+        await withTmpDb("dir-scope-exact", async (dbPath, dir) => {
+            const c = FileMetaCache.resetForTests(dbPath);
+            c.setDir(`${dir}/foo`, { dirMtimeNs: 1n, ino: 1n, childNames: [], lastSeenAt: 0 });
+            c.setDir(`${dir}/foobar`, { dirMtimeNs: 2n, ino: 2n, childNames: [], lastSeenAt: 0 });
+            await c.flushDir(Date.now());
+            c.close();
+
+            const c2 = FileMetaCache.resetForTests(dbPath);
+            await c2.loadDirScope(`${dir}/foo`);
+            expect(c2.getDir(`${dir}/foo`)?.dirMtimeNs).toBe(1n);
+            expect(c2.getDir(`${dir}/foobar`)).toBeNull();
+            c2.close();
+        });
+    });
+
+    it("pruneDirScope (TTL-based) drops only ancient rows", async () => {
+        await withTmpDb("dir-prune-ttl", async (dbPath, dir) => {
+            const c = FileMetaCache.resetForTests(dbPath);
+            const NOW = 1_000_000_000_000;
+            const OLD = NOW - 31 * 86_400_000;
+            const FRESH = NOW - 1 * 86_400_000;
+            c.setDir(`${dir}/ancient`, { dirMtimeNs: 1n, ino: 1n, childNames: [], lastSeenAt: 0 });
+            await c.flushDir(OLD);
+            c.setDir(`${dir}/fresh`, { dirMtimeNs: 2n, ino: 2n, childNames: [], lastSeenAt: 0 });
+            await c.flushDir(FRESH);
+
+            await c.pruneDirScope(dir, NOW);
+            c.close();
+
+            const c2 = FileMetaCache.resetForTests(dbPath);
+            await c2.loadDirScope(dir);
+            expect(c2.getDir(`${dir}/ancient`)).toBeNull(); // > 30d
+            expect(c2.getDir(`${dir}/fresh`)?.ino).toBe(2n);
+            c2.close();
+        });
+    });
+
+    it("flushDir chunks rows past the SQLite parameter limit (>5000 rows)", async () => {
+        await withTmpDb("dir-batch", async (dbPath, dir) => {
+            const c = FileMetaCache.resetForTests(dbPath);
+            const N = 6_000;
+            for (let i = 0; i < N; i++) {
+                c.setDir(`${dir}/d-${i.toString().padStart(5, "0")}`, {
+                    dirMtimeNs: BigInt(1_000_000 + i),
+                    ino: BigInt(100_000 + i),
+                    childNames: [{ name: "x", kind: "file" }],
+                    lastSeenAt: 0,
+                });
+            }
+            await c.flushDir(Date.now());
+            c.close();
+
+            const c2 = FileMetaCache.resetForTests(dbPath);
+            await c2.loadDirScope(dir);
+            expect(c2.getDir(`${dir}/d-00000`)?.ino).toBe(100_000n);
+            expect(c2.getDir(`${dir}/d-05999`)?.ino).toBe(105_999n);
+            c2.close();
+        });
+    });
 });

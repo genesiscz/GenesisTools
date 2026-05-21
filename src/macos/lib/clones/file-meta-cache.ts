@@ -2,6 +2,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { logger } from "@app/logger";
 import { createKyselyClient, type DatabaseClient } from "@app/utils/database/client";
+import { SafeJSON } from "@app/utils/json";
 import { Stopwatch } from "@app/utils/Stopwatch";
 import { FILE_META_MIGRATION_CONTEXT, FILE_META_MIGRATIONS } from "./file-meta-migrations";
 import type { FileMetaDB } from "./file-meta-schema";
@@ -42,6 +43,20 @@ export interface FileMetaEntry {
     lastSeenAt: number;
 }
 
+export type DirChildKind = "file" | "dir" | "symlink";
+
+export interface DirChild {
+    name: string;
+    kind: DirChildKind;
+}
+
+export interface DirMetaEntry {
+    dirMtimeNs: bigint;
+    ino: bigint;
+    childNames: DirChild[];
+    lastSeenAt: number;
+}
+
 /** Writable cache database for per-file (size, mtime_ns, sha256, clone_id)
  *  metadata. Used by `findDuplicateFiles` to skip re-hashing unchanged files
  *  across runs.
@@ -69,6 +84,8 @@ export class FileMetaCache {
     private client: DatabaseClient<FileMetaDB> | null = null;
     private readonly mem = new Map<string, FileMetaEntry>();
     private readonly dirty = new Set<string>();
+    private readonly dirMem = new Map<string, DirMetaEntry>();
+    private readonly dirDirty = new Set<string>();
 
     private constructor(private readonly dbPath: string) {}
 
@@ -127,6 +144,19 @@ export class FileMetaCache {
         const lastChar = lo.charCodeAt(lo.length - 1);
         const hi = `${lo.slice(0, -1)}${String.fromCharCode(lastChar + 1)}`;
         return { lo, hi };
+    }
+
+    /** For dir-meta: the root directory itself IS a row in the table, AND
+     *  its child directories live under `root + "/"`. Returns the exact
+     *  path AND the children-prefix range. A pure single range can't
+     *  discriminate `/foo` (the root) from `/foobar` (a sibling) — so we
+     *  filter with `(path = exact OR (path >= childLo AND path < childHi))`. */
+    private static dirPathFilter(root: string): { exact: string; childLo: string; childHi: string } {
+        const exact = root.endsWith("/") ? root.slice(0, -1) : root;
+        const childLo = `${exact}/`;
+        const lastChar = childLo.charCodeAt(childLo.length - 1);
+        const childHi = `${childLo.slice(0, -1)}${String.fromCharCode(lastChar + 1)}`;
+        return { exact, childLo, childHi };
     }
 
     /** Bulk-load rows under `root` into the in-memory `mem` Map via one
@@ -300,6 +330,165 @@ export class FileMetaCache {
         );
     }
 
+    // ─────────────────────────── dir-meta API (Phase 10) ─────────────────────
+    //
+    // Parallel to the file-meta methods. Different table (`dir_meta`), same
+    // SQLite client, same WAL, same TTL prune. Used by `walkFiles` to skip
+    // `readdirSync` on directories whose `(dir_mtime_ns, ino)` haven't
+    // changed since the last scan (POSIX 1003.1-2001 §4.7 — namespace
+    // changes are the ONLY source of directory mtime bumps).
+
+    async loadDirScope(root: string): Promise<void> {
+        const { kysely } = this.getClient();
+        const sw = new Stopwatch();
+        const { exact, childLo, childHi } = FileMetaCache.dirPathFilter(root);
+        log.info({ event: "dir.load.start", root, exact, childLo, childHi }, "FileMetaCache loadDirScope start");
+
+        const rows = await kysely
+            .selectFrom("dir_meta")
+            .select(["path", "dir_mtime_ns", "ino", "child_names_json", "last_seen_at"])
+            .where((eb) =>
+                eb.or([eb("path", "=", exact), eb.and([eb("path", ">=", childLo), eb("path", "<", childHi)])])
+            )
+            .execute();
+
+        for (const r of rows) {
+            this.dirMem.set(r.path, {
+                dirMtimeNs: r.dir_mtime_ns,
+                ino: r.ino,
+                childNames: SafeJSON.parse(r.child_names_json) as DirChild[],
+                lastSeenAt: Number(r.last_seen_at),
+            });
+        }
+        log.info(
+            { event: "dir.load.complete", root, rows: rows.length, loadMs: Math.round(sw.elapsedMs) },
+            "FileMetaCache loadDirScope complete"
+        );
+    }
+
+    getDir(path: string): DirMetaEntry | null {
+        return this.dirMem.get(path) ?? null;
+    }
+
+    setDir(path: string, entry: DirMetaEntry): void {
+        this.dirMem.set(path, entry);
+        this.dirDirty.add(path);
+    }
+
+    /** Bulk-write dirty dir rows in batches of FLUSH_BATCH_ROWS. Five columns
+     *  per row, so the same 5000-row chunk size used for file_meta works
+     *  here too (5 × 5000 = 25,000 params, well under the 32,766 cap). */
+    async flushDir(lastSeenAt: number): Promise<void> {
+        if (this.dirDirty.size === 0) {
+            log.info({ event: "dir.flush.skip", reason: "no-dirty" }, "FileMetaCache flushDir skipped (clean)");
+            return;
+        }
+        const { kysely } = this.getClient();
+        const sw = new Stopwatch();
+        const lastSeenBig = BigInt(lastSeenAt);
+        const rows = [...this.dirDirty].flatMap((path) => {
+            const e = this.dirMem.get(path);
+            if (!e) {
+                return [];
+            }
+            return [
+                {
+                    path,
+                    dir_mtime_ns: e.dirMtimeNs,
+                    ino: e.ino,
+                    child_names_json: SafeJSON.stringify(e.childNames),
+                    last_seen_at: lastSeenBig,
+                },
+            ];
+        });
+
+        log.info(
+            { event: "dir.flush.start", rows: rows.length, batchSize: FLUSH_BATCH_ROWS },
+            "FileMetaCache flushDir start"
+        );
+
+        let batchIndex = 0;
+        for (let i = 0; i < rows.length; i += FLUSH_BATCH_ROWS) {
+            const batch = rows.slice(i, i + FLUSH_BATCH_ROWS);
+            batchIndex += 1;
+            await kysely
+                .insertInto("dir_meta")
+                .values(batch)
+                .onConflict((oc) =>
+                    oc.column("path").doUpdateSet((eb) => ({
+                        dir_mtime_ns: eb.ref("excluded.dir_mtime_ns"),
+                        ino: eb.ref("excluded.ino"),
+                        child_names_json: eb.ref("excluded.child_names_json"),
+                        last_seen_at: eb.ref("excluded.last_seen_at"),
+                    }))
+                )
+                .execute();
+        }
+
+        for (const path of this.dirDirty) {
+            const e = this.dirMem.get(path);
+            if (e) {
+                e.lastSeenAt = lastSeenAt;
+            }
+        }
+        log.info(
+            {
+                event: "dir.flush.complete",
+                rows: rows.length,
+                batches: batchIndex,
+                flushMs: Math.round(sw.elapsedMs),
+            },
+            "FileMetaCache flushDir complete"
+        );
+        this.dirDirty.clear();
+    }
+
+    /** TTL-based prune for dir_meta. Same 30-day window as pruneScope.
+     *  Stale rows are harmless for correctness — the (dir_mtime_ns, ino)
+     *  hit check catches divergence and triggers a fresh readdirSync. */
+    async pruneDirScope(root: string, nowMs: number): Promise<void> {
+        const { kysely } = this.getClient();
+        const sw = new Stopwatch();
+        const cutoff = nowMs - PRUNE_TTL_MS;
+        const { exact, childLo, childHi } = FileMetaCache.dirPathFilter(root);
+        log.info(
+            {
+                event: "dir.prune.start",
+                root,
+                nowMs,
+                cutoff,
+                ttlDays: PRUNE_TTL_MS / 86_400_000,
+                exact,
+                childLo,
+                childHi,
+            },
+            "FileMetaCache pruneDirScope start"
+        );
+
+        const res = await kysely
+            .deleteFrom("dir_meta")
+            .where("last_seen_at", "<", BigInt(cutoff))
+            .where((eb) =>
+                eb.or([eb("path", "=", exact), eb.and([eb("path", ">=", childLo), eb("path", "<", childHi)])])
+            )
+            .executeTakeFirst();
+
+        for (const [path, entry] of this.dirMem) {
+            if (entry.lastSeenAt < cutoff && (path === exact || (path >= childLo && path < childHi))) {
+                this.dirMem.delete(path);
+            }
+        }
+        log.info(
+            {
+                event: "dir.prune.complete",
+                root,
+                pruned: Number(res.numDeletedRows ?? 0n),
+                pruneMs: Math.round(sw.elapsedMs),
+            },
+            "FileMetaCache pruneDirScope complete"
+        );
+    }
+
     close(): void {
         this.client?.close();
         this.client = null;
@@ -308,8 +497,13 @@ export class FileMetaCache {
         }
     }
 
-    /** Diagnostics: number of paths in the in-memory cache. */
+    /** Diagnostics: number of paths in the in-memory file-meta cache. */
     size(): number {
         return this.mem.size;
+    }
+
+    /** Diagnostics: number of paths in the in-memory dir-meta cache. */
+    dirSize(): number {
+        return this.dirMem.size;
     }
 }
