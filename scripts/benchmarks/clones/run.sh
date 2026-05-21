@@ -57,14 +57,14 @@ extract_complete() {
 COLD_START=$(count_lines)
 echo "[bench] === COLD run ===" >&2
 SECONDS=0
-bun run src/macos/index.ts clones duplicates "$ROOT" --verbose --format json >/dev/null 2>/dev/null
+bun run src/macos/index.ts clones duplicates "$ROOT" --verbose --format json ${PREFIX_HASH:+--prefix-hash} >/dev/null 2>/dev/null
 COLD_TOTAL=$SECONDS
 echo "[bench] cold finished in ${COLD_TOTAL}s" >&2
 
 WARM_START=$(count_lines)
 echo "[bench] === WARM run (1st warm) ===" >&2
 SECONDS=0
-bun run src/macos/index.ts clones duplicates "$ROOT" --verbose --format json >/dev/null 2>/dev/null
+bun run src/macos/index.ts clones duplicates "$ROOT" --verbose --format json ${PREFIX_HASH:+--prefix-hash} >/dev/null 2>/dev/null
 WARM_TOTAL=$SECONDS
 echo "[bench] warm1 finished in ${WARM_TOTAL}s" >&2
 
@@ -74,7 +74,7 @@ WARM2_START=$(count_lines)
 # If it's anywhere near cold time, the prune is nuking hits.
 echo "[bench] === WARM run (2nd warm — P0 regression check) ===" >&2
 SECONDS=0
-bun run src/macos/index.ts clones duplicates "$ROOT" --verbose --format json >/dev/null 2>/dev/null
+bun run src/macos/index.ts clones duplicates "$ROOT" --verbose --format json ${PREFIX_HASH:+--prefix-hash} >/dev/null 2>/dev/null
 WARM2_TOTAL=$SECONDS
 echo "[bench] warm2 finished in ${WARM2_TOTAL}s" >&2
 

@@ -29,6 +29,8 @@ export interface CollapseArgs {
     /** Forwarded to `findDuplicateFiles`. When provided, the hash phase
      *  reuses cached sha for unchanged files. */
     cache?: FileMetaCacheLike;
+    /** P3 — opt-in prefix-hash pre-filter. Forwarded to `findDuplicateFiles`. */
+    prefixHash?: boolean;
 }
 
 /** Which root contains `absPath`? Used to relativize for glob matching across
@@ -130,6 +132,7 @@ export async function collapseDuplicates({
     shouldEnter,
     onDirEntered,
     cache,
+    prefixHash,
 }: CollapseArgs): Promise<DuplicatesReport> {
     const sw = new Stopwatch();
     const shaOf = new Map<string, string>();
@@ -155,6 +158,9 @@ export async function collapseDuplicates({
         }
         if (cache !== undefined) {
             findOpts.cache = cache;
+        }
+        if (prefixHash === true) {
+            findOpts.prefixHash = true;
         }
         for (const g of await findDuplicateFiles(root, findOpts)) {
             // If include/exclude prunes the group below 2 paths it is no

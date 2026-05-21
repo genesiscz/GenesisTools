@@ -12,6 +12,11 @@ export interface FileMetaTable {
     mtime_ns: bigint;
     /** SHA-256 of file contents (lowercase hex, no prefix). */
     sha256: string;
+    /** SHA-256 of the first 4 KB of the file (lowercase hex). Used by P3
+     *  prefix-hash pre-filter. Empty string for rows that haven't been
+     *  re-hashed since the column was added — the detector recomputes on
+     *  next visit and writes back. */
+    prefix_hash: string;
     /** APFS clone-family id as lowercase hex, or '' for files without one. */
     clone_id: string;
     /** Epoch-ms timestamp of the scan that last touched this row. Drives

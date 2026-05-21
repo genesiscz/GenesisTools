@@ -59,4 +59,21 @@ const initDirMeta: Migration = {
     },
 };
 
-export const FILE_META_MIGRATIONS: Migration[] = [initFileMeta, initDirMeta];
+const addPrefixHash: Migration = {
+    id: "2026-05-add-prefix-hash",
+    description: "Add prefix_hash column for P3 suffix-hash / generational hashing",
+    isApplied(db) {
+        const cols = db.query("PRAGMA table_info(file_meta)").all() as Array<{ name: string }>;
+        return cols.some((c) => c.name === "prefix_hash");
+    },
+    apply(db) {
+        // First 4 KB sha256 of the file. Used by findDuplicateFiles' P3
+        // pre-filter: if two same-size files have different prefix_hash,
+        // they can't be duplicates → skip the full sha256. Default '' so
+        // existing rows survive; the detector treats '' as "not cached"
+        // and recomputes on the next pass.
+        db.run(`ALTER TABLE file_meta ADD COLUMN prefix_hash TEXT NOT NULL DEFAULT ''`);
+    },
+};
+
+export const FILE_META_MIGRATIONS: Migration[] = [initFileMeta, initDirMeta, addPrefixHash];

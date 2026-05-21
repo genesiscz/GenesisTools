@@ -9,7 +9,7 @@ describe("file-meta-migrations", () => {
         runMigrations(db, FILE_META_MIGRATIONS, FILE_META_MIGRATION_CONTEXT);
         const cols = db.query<{ name: string }, []>("PRAGMA table_info(file_meta)").all();
         const names = cols.map((c) => c.name).sort();
-        expect(names).toEqual(["clone_id", "last_seen_at", "mtime_ns", "path", "sha256", "size"]);
+        expect(names).toEqual(["clone_id", "last_seen_at", "mtime_ns", "path", "prefix_hash", "sha256", "size"]);
 
         // path is the PK — verify it's marked NOT NULL via PRAGMA.
         const pathCol = db

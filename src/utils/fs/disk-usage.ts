@@ -19,11 +19,7 @@ import { join, resolve } from "node:path";
 import { logger } from "@app/logger";
 import { formatBytes } from "@app/utils/format";
 import { CloneUnsupportedError, cloneFile, getCloneId, getFsType, getPrivateSize } from "@app/utils/macos/apfs";
-import {
-    GetattrlistbulkUnsupportedError,
-    isGetattrlistbulkSupported,
-    iterDir,
-} from "@app/utils/macos/getattrlistbulk";
+import { GetattrlistbulkUnsupportedError, isGetattrlistbulkSupported, iterDir } from "@app/utils/macos/getattrlistbulk";
 import { Stopwatch } from "@app/utils/Stopwatch";
 
 export interface WalkEntry {
@@ -512,6 +508,13 @@ export interface DedupeCandidate {
  *  multi-GB files. */
 const STREAM_CHUNK_BYTES = 64 * 1024;
 
+/** Bytes read for the P3 prefix-hash pre-filter. 4 KB is the canonical
+ *  choice in `fclones` / `rmlint` — large enough to make collisions rare
+ *  across random binary content, small enough that the read costs ~10 µs
+ *  per file on warm cache. Increasing helps separator strength marginally;
+ *  decreasing risks more prefix-collisions inflating the second-pass work. */
+const PREFIX_HASH_BYTES = 4 * 1024;
+
 /** Streaming SHA-256 — reads `path` in chunks instead of slurping the whole
  *  file into memory. Required for safety: a `node_modules` tree may contain
  *  arbitrarily-large bundles, source maps, or media that would OOM under
@@ -531,6 +534,36 @@ export function sha256File(path: string, opts: { signal?: AbortSignal } = {}): s
             }
 
             h.update(buf.subarray(0, n));
+        }
+    } finally {
+        closeSync(fd);
+    }
+
+    return h.digest("hex");
+}
+
+/** Streaming SHA-256 of just the first `PREFIX_HASH_BYTES` of a file.
+ *  Used by the P3 prefix-hash pre-filter — when two same-size candidates
+ *  have different prefixes, they can't be byte-equal, so the full sha256
+ *  can be skipped. For files smaller than `PREFIX_HASH_BYTES` the prefix
+ *  IS the whole file; callers should use the result as the canonical hash.
+ *  `signal` is checked between chunks like `sha256File`. */
+export function sha256PrefixFile(path: string, opts: { signal?: AbortSignal } = {}): string {
+    const h = createHash("sha256");
+    const fd = openSync(path, "r");
+    try {
+        const buf = Buffer.allocUnsafe(Math.min(PREFIX_HASH_BYTES, STREAM_CHUNK_BYTES));
+        let read = 0;
+        while (read < PREFIX_HASH_BYTES) {
+            opts.signal?.throwIfAborted();
+            const want = Math.min(PREFIX_HASH_BYTES - read, buf.length);
+            const n = readSync(fd, buf, 0, want, null);
+            if (n <= 0) {
+                break;
+            }
+
+            h.update(buf.subarray(0, n));
+            read += n;
         }
     } finally {
         closeSync(fd);
@@ -634,6 +667,11 @@ export interface FindDuplicatesStats {
     cacheHits: number;
     /** Per-file cache misses (new file or size/mtime changed → recomputed). Wired in Phase 3. */
     cacheMisses: number;
+    /** P3 — `sha256PrefixFile` call count (one per cache-miss rep that wasn't fully covered by the prefix). */
+    prefixHashCalls: number;
+    /** P3 — reps dropped without full sha256 because their prefix was unique
+     *  within the size bucket (provably not a duplicate). */
+    prefixHashDrops: number;
 }
 
 export function emptyFindDuplicatesStats(): FindDuplicatesStats {
@@ -651,6 +689,8 @@ export function emptyFindDuplicatesStats(): FindDuplicatesStats {
         hashMs: 0,
         cacheHits: 0,
         cacheMisses: 0,
+        prefixHashCalls: 0,
+        prefixHashDrops: 0,
     };
 }
 
@@ -662,6 +702,10 @@ export interface FileMetaCacheLike {
         size: bigint;
         mtimeNs: bigint;
         sha256: string;
+        /** Optional — present only when the row was written by a P3-aware writer.
+         *  Tests may use simpler fakes that omit this; the detector treats
+         *  missing/"" as "not cached, recompute on miss". */
+        prefixHash?: string;
         cloneId: string;
         lastSeenAt: number;
     } | null;
@@ -671,6 +715,7 @@ export interface FileMetaCacheLike {
             size: bigint;
             mtimeNs: bigint;
             sha256: string;
+            prefixHash?: string;
             cloneId: string;
             lastSeenAt: number;
         }
@@ -712,6 +757,15 @@ export interface FindDuplicatesOptions {
      *  (sha256, cloneId) for any file whose (size, mtimeNs) matches the
      *  cached entry. Missing/changed files re-hash and write back. */
     cache?: FileMetaCacheLike;
+    /** P3 — enable prefix-hash pre-filter. When true AND a size bucket has
+     *  ≥2 cache-miss reps, hash only the first 4 KB of each and drop reps
+     *  whose prefix is unique (provably not duplicates) without computing
+     *  the full sha256. Caveat: prefix-dropped reps don't cache a full
+     *  sha256, so they re-prefix-hash on every warm scan. Default OFF
+     *  because the microbench showed warm regression on dev trees;
+     *  recommended for one-off cold scans of heterogeneous media trees
+     *  (the `fclones` / `rmlint` use case). */
+    prefixHash?: boolean;
 }
 
 /** How often we yield to the event loop during the size-bucket loop.
@@ -765,6 +819,7 @@ const HASH_HEARTBEAT_EVERY = 1_000;
 export async function findDuplicateFiles(root: string, opts: FindDuplicatesOptions = {}): Promise<DuplicateGroup[]> {
     const minSize = Math.max(1, opts.minSize ?? 1);
     const { signal, shouldEnter, onDirEntered, stats, cache } = opts;
+    const prefixHashEnabled = opts.prefixHash === true;
 
     const sw = new Stopwatch();
     let phaseStartMs = sw.elapsedMs;
@@ -864,6 +919,8 @@ export async function findDuplicateFiles(root: string, opts: FindDuplicatesOptio
     let bucketsHashed = 0;
     let cacheHits = 0;
     let cacheMisses = 0;
+    let prefixHashCalls = 0;
+    let prefixHashDrops = 0;
 
     const groups: DuplicateGroup[] = [];
     let bucketIndex = 0;
@@ -955,37 +1012,130 @@ export async function findDuplicateFiles(root: string, opts: FindDuplicatesOptio
             reps.push(family[0]);
         }
 
+        // P3 — prefix-hash pre-filter for the COLD path. Two cases per
+        // size bucket:
+        //
+        //   (A) All reps are cache misses → unknown full sha for any of
+        //       them. Compute 4 KB-prefix sha for each, group by prefix,
+        //       then full-hash only sub-groups with ≥2 reps. Sub-groups
+        //       of size 1 are provably non-duplicates within this bucket
+        //       (same size + different prefix ⇒ different content) → drop
+        //       without full-hashing.
+        //
+        //   (B) At least one rep is a cache hit on (size, mtime) → its
+        //       full sha is known. We MUST full-hash the cache-miss reps
+        //       to compare against the cache-hit sha — prefix-mismatch
+        //       can't drop them because a cache-miss rep with a unique
+        //       prefix might still byte-match a cache-hit rep whose
+        //       prefix we don't have. (Storing the prefix per rep in the
+        //       cache helps on the SECOND warm rerun but not here.)
+        //
+        // Case (B) is the Phase 9 fast path: cache hits supply sha
+        // directly, misses get full sha256.
+        //
+        // Special case: files ≤ PREFIX_BYTES — the prefix IS the full
+        // content, so we use the prefix hash as the canonical hash AND
+        // skip the redundant second read.
         const byHash = new Map<string, string[]>();
+        const cacheMissReps: string[] = [];
+        let anyCacheHitInBucket = false;
         for (const p of reps) {
             const mtimeNs = mtimeByPath.get(p);
             const hit = cache?.get(p);
-            let h: string;
-            // Cache hit only if size AND mtimeNs both match. Both are bigint
-            // (cache uses safeIntegers; walk returns bigint mtimeNs). size in
-            // bySize is `number` so we promote to bigint for the compare.
-            // If mtimeNs is undefined (shouldn't happen — every walked path
-            // is in the side-map) we conservatively force a miss.
             if (hit && mtimeNs !== undefined && hit.size === BigInt(size) && hit.mtimeNs === mtimeNs) {
                 cacheHits += 1;
-                h = hit.sha256;
-            } else {
-                cacheMisses += 1;
+                anyCacheHitInBucket = true;
+                const list = byHash.get(hit.sha256) ?? [];
+                list.push(p);
+                byHash.set(hit.sha256, list);
+                continue;
+            }
+            cacheMisses += 1;
+            cacheMissReps.push(p);
+        }
+
+        if (cacheMissReps.length > 0 && (!prefixHashEnabled || anyCacheHitInBucket || cacheMissReps.length === 1)) {
+            // Case B (P3 disabled, OR mixed hit/miss, OR single rep —
+            // prefix-hash adds overhead without skipping anything).
+            // Full-hash every miss.
+            for (const p of cacheMissReps) {
+                const mtimeNs = mtimeByPath.get(p);
                 sha256Calls += 1;
                 sha256Bytes += size;
-                h = sha256File(p, signal !== undefined ? { signal } : {});
+                const h = sha256File(p, signal !== undefined ? { signal } : {});
                 if (cache && mtimeNs !== undefined) {
                     cache.set(p, {
                         size: BigInt(size),
                         mtimeNs,
                         sha256: h,
+                        prefixHash: "",
                         cloneId: cloneIdByPath.get(p) ?? "",
                         lastSeenAt: 0,
                     });
                 }
+                const list = byHash.get(h) ?? [];
+                list.push(p);
+                byHash.set(h, list);
             }
-            const list = byHash.get(h) ?? [];
-            list.push(p);
-            byHash.set(h, list);
+        } else if (cacheMissReps.length >= 2) {
+            // Case A — all reps in this bucket are cache misses. Run the
+            // prefix-hash pre-filter.
+            const byPrefix = new Map<string, string[]>();
+            for (const p of cacheMissReps) {
+                prefixHashCalls += 1;
+                const prefix = sha256PrefixFile(p, signal !== undefined ? { signal } : {});
+
+                if (size <= PREFIX_HASH_BYTES) {
+                    // Whole-file prefix → canonical hash, skip pass B for it.
+                    const mtimeNs = mtimeByPath.get(p);
+                    if (cache && mtimeNs !== undefined) {
+                        cache.set(p, {
+                            size: BigInt(size),
+                            mtimeNs,
+                            sha256: prefix,
+                            prefixHash: prefix,
+                            cloneId: cloneIdByPath.get(p) ?? "",
+                            lastSeenAt: 0,
+                        });
+                    }
+                    const list = byHash.get(prefix) ?? [];
+                    list.push(p);
+                    byHash.set(prefix, list);
+                    continue;
+                }
+
+                const arr = byPrefix.get(prefix) ?? [];
+                arr.push(p);
+                byPrefix.set(prefix, arr);
+            }
+
+            // Pass B — full-hash same-prefix sub-buckets only.
+            for (const [prefix, subReps] of byPrefix) {
+                if (subReps.length < 2) {
+                    prefixHashDrops += 1;
+                    continue;
+                }
+
+                for (const p of subReps) {
+                    const mtimeNs = mtimeByPath.get(p);
+                    sha256Calls += 1;
+                    sha256Bytes += size;
+                    const h = sha256File(p, signal !== undefined ? { signal } : {});
+                    if (cache && mtimeNs !== undefined) {
+                        cache.set(p, {
+                            size: BigInt(size),
+                            mtimeNs,
+                            sha256: h,
+                            prefixHash: prefix,
+                            cloneId: cloneIdByPath.get(p) ?? "",
+                            lastSeenAt: 0,
+                        });
+                    }
+                    const list = byHash.get(h) ?? [];
+                    list.push(p);
+                    byHash.set(h, list);
+                }
+            }
         }
 
         for (const [sha256, group] of byHash) {
@@ -1073,6 +1223,8 @@ export async function findDuplicateFiles(root: string, opts: FindDuplicatesOptio
         stats.hashMs += hashMs;
         stats.cacheHits += cacheHits;
         stats.cacheMisses += cacheMisses;
+        stats.prefixHashCalls += prefixHashCalls;
+        stats.prefixHashDrops += prefixHashDrops;
     }
 
     logger.info(
@@ -1092,6 +1244,8 @@ export async function findDuplicateFiles(root: string, opts: FindDuplicatesOptio
             hashMs: Math.round(hashMs),
             cacheHits,
             cacheMisses,
+            prefixHashCalls,
+            prefixHashDrops,
             groupsEmitted: groups.length,
         },
         "findDuplicateFiles complete"

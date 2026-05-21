@@ -330,6 +330,8 @@ describe("duplicate detection", () => {
                 hashMs: 0,
                 cacheHits: 0,
                 cacheMisses: 0,
+                prefixHashCalls: 0,
+                prefixHashDrops: 0,
             });
 
             // Baseline: WITHOUT a cache, byte-compare runs unconditionally.

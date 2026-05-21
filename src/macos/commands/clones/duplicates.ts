@@ -42,6 +42,7 @@ interface DuplicatesOpts {
     top?: string;
     verbose?: boolean;
     silent?: boolean;
+    prefixHash?: boolean;
 }
 
 /** `.git` is the only basename we skip unconditionally — git objects are
@@ -81,6 +82,11 @@ export function createDuplicatesCommand(): Command {
         )
         .option("-v, --verbose", "Verbose logging", false)
         .option("--silent", "Suppress non-essential output", false)
+        .option(
+            "--prefix-hash",
+            "Enable P3 prefix-hash pre-filter (4 KB sha256 before full sha256). Helps heterogeneous cold scans; may regress warm scans. Default off.",
+            false
+        )
         .action(async (rootsArg: string[], opts: DuplicatesOpts) => {
             applyLogLevel(opts);
             const cfg = await loadClonesConfig();
@@ -155,6 +161,7 @@ export function createDuplicatesCommand(): Command {
                     shouldEnter: shouldEnterByDefault,
                     onDirEntered,
                     cache,
+                    ...(opts.prefixHash ? { prefixHash: true } : {}),
                 });
                 // Flush dirty rows + prune missing-from-disk entries per root.
                 // Both run BEFORE rendering so a slow-render path doesn't leak

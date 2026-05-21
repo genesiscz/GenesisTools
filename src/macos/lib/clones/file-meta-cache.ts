@@ -37,6 +37,12 @@ export interface FileMetaEntry {
     size: bigint;
     mtimeNs: bigint;
     sha256: string;
+    /** First-4 KB sha256 (lowercase hex). Empty string when the row was
+     *  written before the P3 prefix-hash column landed OR by a writer that
+     *  didn't compute it. The detector treats missing/"" as "not cached,
+     *  recompute". Optional so older test fakes and pre-P3 callers don't
+     *  need to know about it. */
+    prefixHash?: string;
     /** APFS clone-family id, lowercase hex; empty string for files without one. */
     cloneId: string;
     /** Epoch-ms timestamp of the scan that last touched this row. */
@@ -172,7 +178,7 @@ export class FileMetaCache {
 
         const rows = await kysely
             .selectFrom("file_meta")
-            .select(["path", "size", "mtime_ns", "sha256", "clone_id", "last_seen_at"])
+            .select(["path", "size", "mtime_ns", "sha256", "prefix_hash", "clone_id", "last_seen_at"])
             .where("path", ">=", lo)
             .where("path", "<", hi)
             .execute();
@@ -182,6 +188,7 @@ export class FileMetaCache {
                 size: r.size,
                 mtimeNs: r.mtime_ns,
                 sha256: r.sha256,
+                prefixHash: r.prefix_hash,
                 cloneId: r.clone_id,
                 lastSeenAt: Number(r.last_seen_at),
             });
@@ -225,6 +232,7 @@ export class FileMetaCache {
                     size: e.size,
                     mtime_ns: e.mtimeNs,
                     sha256: e.sha256,
+                    prefix_hash: e.prefixHash ?? "",
                     clone_id: e.cloneId,
                     last_seen_at: lastSeenBig,
                 },
@@ -248,6 +256,7 @@ export class FileMetaCache {
                         size: eb.ref("excluded.size"),
                         mtime_ns: eb.ref("excluded.mtime_ns"),
                         sha256: eb.ref("excluded.sha256"),
+                        prefix_hash: eb.ref("excluded.prefix_hash"),
                         clone_id: eb.ref("excluded.clone_id"),
                         last_seen_at: eb.ref("excluded.last_seen_at"),
                     }))
