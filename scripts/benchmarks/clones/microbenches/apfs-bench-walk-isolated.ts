@@ -124,16 +124,8 @@ function walkReaddirStat(root: string): { dirs: number; files: number } {
 }
 
 async function walkGetattrlistbulk(root: string): Promise<{ dirs: number; files: number }> {
-    try {
-        const mod = await import("@app/utils/macos/getattrlistbulk");
-        if (typeof mod.walkGetattrlistbulk === "function") {
-            return mod.walkGetattrlistbulk(root);
-        }
-    } catch {
-        // module not present yet — P1 hasn't landed
-    }
-
-    throw new Error("getattrlistbulk variant not implemented (P1 not landed)");
+    const mod = await import("@app/utils/macos/getattrlistbulk");
+    return mod.walkGetattrlistbulk(root);
 }
 
 function pickWalker(variant: Args["variant"]): (root: string) => Promise<{ dirs: number; files: number }> {
