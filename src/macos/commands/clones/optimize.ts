@@ -202,10 +202,11 @@ export function createOptimizeCommand(): Command {
             const fileCache = FileMetaCache.getInstance();
             for (const root of roots) {
                 await fileCache.loadScope(root);
+                await fileCache.loadDirScope(root);
             }
             const scanStartedAt = Date.now();
             log.info(
-                { scanStartedAt, roots, cacheSize: fileCache.size() },
+                { scanStartedAt, roots, fileCacheSize: fileCache.size(), dirCacheSize: fileCache.dirSize() },
                 "optimize starting with FileMetaCache attached"
             );
 
@@ -295,8 +296,10 @@ export function createOptimizeCommand(): Command {
                 // and the WAL is released.
                 try {
                     await fileCache.flush(scanStartedAt);
+                    await fileCache.flushDir(scanStartedAt);
                     for (const root of roots) {
                         await fileCache.pruneScope(root, scanStartedAt);
+                        await fileCache.pruneDirScope(root, scanStartedAt);
                     }
                 } finally {
                     fileCache.close();

@@ -51,6 +51,13 @@ export interface WalkOptions {
      *  enumerated at high rate; the CLI throttles spinner updates on top of
      *  this with a setInterval. */
     onDirEntered?: (dir: string) => void;
+    /** Optional dir-meta cache. When provided, walkFiles statSyncs each dir
+     *  and skips readdirSync when (dir_mtime_ns, ino) match the cached row,
+     *  replaying the cached child list. APFS dir mtime bumps only on
+     *  namespace changes (POSIX 1003.1-2001 §4.7), so unchanged
+     *  (dir_mtime_ns, ino) means the immediate-child name list is unchanged.
+     *  Per-file mtime/size changes are caught by the file-meta cache layer. */
+    cache?: FileMetaCacheLike;
 }
 
 export interface DiskUsage {
@@ -95,6 +102,56 @@ export function filePrivateSize(path: string): number | null {
 export function* walkFiles(root: string, opts: WalkOptions = {}): Generator<WalkEntry> {
     opts.signal?.throwIfAborted();
 
+    // Dir-meta cache short-circuit (Phase 10). If the cache has a row for
+    // this dir whose (dir_mtime_ns, ino) match the fresh stat, the
+    // immediate-child name list is unchanged since the last scan (POSIX
+    // 1003.1-2001 §4.7 — namespace changes are the only mtime triggers).
+    // We replay the cached child list and skip readdirSync entirely.
+    let dirStat: ReturnType<typeof statSync> | null = null;
+    if (opts.cache?.getDir !== undefined) {
+        try {
+            dirStat = statSync(root, { bigint: true });
+        } catch {
+            // ignore — readdirSync below will surface the real error
+        }
+    }
+
+    const cachedDir = opts.cache?.getDir !== undefined && dirStat !== null ? opts.cache.getDir(root) : null;
+    if (
+        cachedDir !== null &&
+        cachedDir !== undefined &&
+        dirStat !== null &&
+        cachedDir.dirMtimeNs === (dirStat as { mtimeNs: bigint }).mtimeNs &&
+        cachedDir.ino === (dirStat as { ino: bigint }).ino
+    ) {
+        opts.onDirEntered?.(root);
+        for (const child of cachedDir.childNames) {
+            const p = join(root, child.name);
+            if (child.kind === "symlink") {
+                continue;
+            }
+            if (child.kind === "dir") {
+                if (opts.shouldEnter && !opts.shouldEnter(p)) {
+                    continue;
+                }
+                yield* walkFiles(p, opts);
+            } else {
+                try {
+                    const st = statSync(p, { bigint: true });
+                    yield {
+                        path: p,
+                        logical: Number(st.size),
+                        allocated: Number(st.blocks) * BLOCK_SIZE,
+                        mtimeNs: st.mtimeNs,
+                    };
+                } catch (err) {
+                    opts.onError?.({ path: p, errno: errnoOf(err) });
+                }
+            }
+        }
+        return;
+    }
+
     let entries: Dirent[];
     try {
         entries = readdirSync(root, { withFileTypes: true });
@@ -104,6 +161,21 @@ export function* walkFiles(root: string, opts: WalkOptions = {}): Generator<Walk
     }
 
     opts.onDirEntered?.(root);
+
+    // Populate the dir cache for next scan.
+    if (opts.cache?.setDir !== undefined && dirStat !== null) {
+        const childNames: Array<{ name: string; kind: "file" | "dir" | "symlink" }> = [];
+        for (const e of entries) {
+            const kind: "file" | "dir" | "symlink" = e.isSymbolicLink() ? "symlink" : e.isDirectory() ? "dir" : "file";
+            childNames.push({ name: e.name, kind });
+        }
+        opts.cache.setDir(root, {
+            dirMtimeNs: (dirStat as { mtimeNs: bigint }).mtimeNs,
+            ino: (dirStat as { ino: bigint }).ino,
+            childNames,
+            lastSeenAt: 0,
+        });
+    }
 
     for (const entry of entries) {
         const p = join(root, entry.name);
@@ -487,6 +559,23 @@ export interface FileMetaCacheLike {
             lastSeenAt: number;
         }
     ): void;
+    /** Optional dir-meta API (Phase 10). Absent on older test fakes — walk
+     *  falls through to unconditional readdirSync when missing. */
+    getDir?(path: string): {
+        dirMtimeNs: bigint;
+        ino: bigint;
+        childNames: Array<{ name: string; kind: "file" | "dir" | "symlink" }>;
+        lastSeenAt: number;
+    } | null;
+    setDir?(
+        path: string,
+        entry: {
+            dirMtimeNs: bigint;
+            ino: bigint;
+            childNames: Array<{ name: string; kind: "file" | "dir" | "symlink" }>;
+            lastSeenAt: number;
+        }
+    ): void;
 }
 
 export interface FindDuplicatesOptions {
@@ -593,6 +682,9 @@ export async function findDuplicateFiles(root: string, opts: FindDuplicatesOptio
         lastDir = dir;
         userDirEntered?.(dir);
     };
+    if (cache !== undefined) {
+        walkOpts.cache = cache;
+    }
     let walkCount = 0;
     for (const e of walkFiles(root, walkOpts)) {
         if ((walkCount++ & (YIELD_EVERY_WALK_ENTRIES - 1)) === 0) {

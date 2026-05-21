@@ -137,9 +137,13 @@ export function createDuplicatesCommand(): Command {
             const cache = FileMetaCache.getInstance();
             for (const root of roots) {
                 await cache.loadScope(root);
+                await cache.loadDirScope(root);
             }
             const scanStartedAt = Date.now();
-            log.info({ scanStartedAt, roots, cacheSize: cache.size() }, "duplicates scan starting with cache");
+            log.info(
+                { scanStartedAt, roots, fileCacheSize: cache.size(), dirCacheSize: cache.dirSize() },
+                "duplicates scan starting with cache"
+            );
 
             try {
                 const report = await collapseDuplicates({
@@ -157,8 +161,10 @@ export function createDuplicatesCommand(): Command {
                 // an unflushed cache on Ctrl+C — but AFTER the report comes
                 // back so we know the walk completed cleanly.
                 await cache.flush(scanStartedAt);
+                await cache.flushDir(scanStartedAt);
                 for (const root of roots) {
                     await cache.pruneScope(root, scanStartedAt);
+                    await cache.pruneDirScope(root, scanStartedAt);
                 }
 
                 if (tickTimer) {

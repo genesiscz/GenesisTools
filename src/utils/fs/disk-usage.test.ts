@@ -23,6 +23,112 @@ describe("disk-usage per-file sizers + walkFiles", () => {
             rmSync(dir, { recursive: true, force: true });
         }
     });
+
+    it("dir-cache hit replays cached child list (skips readdirSync)", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-dirwalk-"));
+        try {
+            writeFileSync(join(dir, "a.txt"), "1");
+            writeFileSync(join(dir, "b.txt"), "2");
+
+            type DirEntry = {
+                dirMtimeNs: bigint;
+                ino: bigint;
+                childNames: Array<{ name: string; kind: "file" | "dir" | "symlink" }>;
+                lastSeenAt: number;
+            };
+            const dirMem = new Map<string, DirEntry>();
+            const fakeCache = {
+                get: () => null,
+                set: () => {},
+                getDir: (p: string) => dirMem.get(p) ?? null,
+                setDir: (p: string, e: DirEntry) => {
+                    dirMem.set(p, e);
+                },
+            };
+
+            // First walk: cache miss → populates dirMem.
+            const first: string[] = [];
+            for (const e of walkFiles(dir, { cache: fakeCache })) {
+                first.push(e.path);
+            }
+            expect(first.length).toBe(2);
+            expect(dirMem.has(dir)).toBe(true);
+
+            // Inject a sentinel CHILD that doesn't exist on disk. If readdirSync
+            // runs, we won't see it. If the cache hit short-circuits, walkFiles
+            // tries to stat the phantom → onError fires.
+            const entry = dirMem.get(dir);
+            expect(entry).toBeDefined();
+            dirMem.set(dir, {
+                ...(entry as DirEntry),
+                childNames: [...(entry as DirEntry).childNames, { name: "phantom.txt", kind: "file" }],
+            });
+
+            let phantomErrors = 0;
+            for (const _e of walkFiles(dir, {
+                cache: fakeCache,
+                onError: (err) => {
+                    if (err.path.endsWith("phantom.txt")) {
+                        phantomErrors += 1;
+                    }
+                },
+            })) {
+                // count yielded entries via the loop, ignore _e
+                void _e;
+            }
+            expect(phantomErrors).toBe(1); // sentinel proves cached list was used
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("dir-cache mismatch falls back to readdirSync (and overwrites cache)", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-dirwalk-miss-"));
+        try {
+            writeFileSync(join(dir, "a.txt"), "1");
+            type DirEntry = {
+                dirMtimeNs: bigint;
+                ino: bigint;
+                childNames: Array<{ name: string; kind: "file" | "dir" | "symlink" }>;
+                lastSeenAt: number;
+            };
+            const dirMem = new Map<string, DirEntry>();
+            // Poison: wrong mtime + phantom child.
+            dirMem.set(dir, {
+                dirMtimeNs: 999n,
+                ino: 999n,
+                childNames: [{ name: "phantom.txt", kind: "file" }],
+                lastSeenAt: 0,
+            });
+
+            const fakeCache = {
+                get: () => null,
+                set: () => {},
+                getDir: (p: string) => dirMem.get(p) ?? null,
+                setDir: (p: string, e: DirEntry) => {
+                    dirMem.set(p, e);
+                },
+            };
+
+            let phantomErrors = 0;
+            const out: string[] = [];
+            for (const e of walkFiles(dir, {
+                cache: fakeCache,
+                onError: (err) => {
+                    if (err.path.endsWith("phantom.txt")) {
+                        phantomErrors += 1;
+                    }
+                },
+            })) {
+                out.push(e.path);
+            }
+            expect(phantomErrors).toBe(0); // mtime mismatch → readdir ran → no phantom
+            expect(out.length).toBe(1); // a.txt yielded
+            expect(dirMem.get(dir)?.dirMtimeNs).not.toBe(999n); // cache refreshed
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
 });
 
 import { measureTree } from "@app/utils/fs/disk-usage";
