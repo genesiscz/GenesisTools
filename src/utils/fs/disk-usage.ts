@@ -117,6 +117,31 @@ export function filePrivateSize(path: string): number | null {
     return getPrivateSize(path);
 }
 
+/** Resolve a clone-family hex key for a `WalkEntry`. Prefers the walker-
+ *  supplied `cloneIdHex` (set inline by P1's `getattrlistbulk` path) over
+ *  a fresh `getCloneId(path)` syscall. Returns "" when the file has no
+ *  clone family; matches the walker's "" convention.
+ *
+ *  This is the Phase 7 plumbing fix: `measureTree`, `findCloneFamilies`,
+ *  `gatherEnrichedRecords`, and `findCrossTreePartners` used to call
+ *  `getCloneId(e.path)` per file even when the walker already produced
+ *  `e.cloneIdHex` for free. On a 4.9M-file walk that's millions of
+ *  unnecessary getattrlist syscalls.
+ *
+ *  Falls back to `getCloneId(path)` when `cloneIdHex` is undefined —
+ *  the walker fell back to readdir+stat for that dir (non-APFS volume
+ *  inside a mixed-FS scan, per-dir ENOTSUP, non-darwin) or the entry
+ *  came from the dir-meta cache replay path which does not currently
+ *  populate cloneIdHex. */
+export function resolveCloneIdHex(e: Pick<WalkEntry, "path" | "cloneIdHex">): string {
+    if (e.cloneIdHex !== undefined) {
+        return e.cloneIdHex;
+    }
+
+    const id = getCloneId(e.path);
+    return id !== null && id !== 0n ? id.toString(16) : "";
+}
+
 /** Recursively yields regular files under `root`. Never follows symlinks
  *  (readdirSync does not, and apfs syscalls use FSOPT_NOFOLLOW). Per-entry
  *  errors (EPERM/ENOENT mid-walk) are reported via opts.onError, not thrown.
@@ -355,9 +380,8 @@ export function measureTree(root: string, opts: MeasureOptions = {}): DiskUsage 
             privateSeen = true;
             privateSum += priv;
             if (opts.exact !== false) {
-                const id = getCloneId(e.path);
-                if (id !== null && id !== 0n) {
-                    const key = id.toString(16);
+                const key = resolveCloneIdHex(e);
+                if (key !== "") {
                     const g = cloneGroups.get(key) ?? { private: 0, allocated: 0 };
                     g.private += priv;
                     g.allocated += e.allocated;
@@ -410,12 +434,11 @@ export function exactReclaimableBytes(root: string): number | null {
 export function findCloneFamilies(root: string): Map<string, string[]> {
     const families = new Map<string, string[]>();
     for (const e of walkFiles(root)) {
-        const id = getCloneId(e.path);
-        if (id === null || id === 0n) {
+        const key = resolveCloneIdHex(e);
+        if (key === "") {
             continue;
         }
 
-        const key = id.toString(16);
         const list = families.get(key) ?? [];
         list.push(e.path);
         families.set(key, list);

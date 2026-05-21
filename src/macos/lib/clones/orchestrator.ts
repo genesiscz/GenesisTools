@@ -4,8 +4,8 @@ import { homedir } from "node:os";
 import { basename, dirname, relative, resolve } from "node:path";
 import { logger } from "@app/logger";
 import { formatBytes } from "@app/utils/format";
-import { type DiskUsage, freeDiskSpace, type WalkError, walkFiles } from "@app/utils/fs/disk-usage";
-import { getCloneId, getPrivateSize } from "@app/utils/macos/apfs";
+import { type DiskUsage, freeDiskSpace, resolveCloneIdHex, type WalkError, walkFiles } from "@app/utils/fs/disk-usage";
+import { getPrivateSize } from "@app/utils/macos/apfs";
 import { Stopwatch } from "@app/utils/Stopwatch";
 import { passesGlobs } from "./filters";
 import type { CloneAnalysis, DirNode, MeasureReport } from "./render/types";
@@ -103,13 +103,16 @@ interface CrossTreeData {
 /** Per-file record materialised by the single walk. Carries the two
  *  getattrlist attrs alongside the regular logical/allocated sizes so the
  *  downstream reductions (cross-tree, tree-build, clone-analysis) don't have
- *  to re-walk or re-syscall. `cloneId`/`priv` are null when getattrlist
- *  returned an error (off-darwin or syscall failure for that path). */
+ *  to re-walk or re-syscall. `priv` is null when getPrivateSize returned an
+ *  error. `cloneIdHex` is "" when the file has no clone family — the value
+ *  follows the walker's `WalkEntry.cloneIdHex` convention (lowercase hex
+ *  string, "" = no clone), so downstream sites can use it as a Map key
+ *  without bigint round-tripping. */
 interface EnrichedEntry {
     path: string;
     logical: number;
     allocated: number;
-    cloneId: bigint | null;
+    cloneIdHex: string;
     priv: number | null;
 }
 
@@ -133,7 +136,9 @@ function gatherEnrichedRecords(roots: string[]): Map<string, RootRecords> {
                 path: e.path,
                 logical: e.logical,
                 allocated: e.allocated,
-                cloneId: getCloneId(e.path),
+                // P7 plumbing: prefer the walker's inline cloneIdHex (from
+                // `getattrlistbulk`) over a per-file `getCloneId` syscall.
+                cloneIdHex: resolveCloneIdHex(e),
                 priv: getPrivateSize(e.path),
             });
         }
@@ -154,15 +159,14 @@ function detectCrossTreeShared(records: Map<string, RootRecords>): CrossTreeData
     const byCloneId = new Map<string, { path: string; allocated: number; priv: number }[]>();
     for (const { entries } of records.values()) {
         for (const e of entries) {
-            if (e.cloneId === null || e.cloneId === 0n) {
+            if (e.cloneIdHex === "") {
                 continue;
             }
 
-            const key = e.cloneId.toString(16);
             const priv = e.priv ?? e.allocated;
-            const list = byCloneId.get(key) ?? [];
+            const list = byCloneId.get(e.cloneIdHex) ?? [];
             list.push({ path: e.path, allocated: e.allocated, priv });
-            byCloneId.set(key, list);
+            byCloneId.set(e.cloneIdHex, list);
         }
     }
 
@@ -236,13 +240,10 @@ function findCrossTreePartners(loneIds: Set<string>): string[] {
             }
 
             filesScanned += 1;
-            const id = getCloneId(e.path);
-            if (id === null || id === 0n) {
-                continue;
-            }
-
-            const key = id.toString(16);
-            if (!remaining.has(key)) {
+            // P7 plumbing: walker-supplied cloneIdHex over per-file getCloneId.
+            // Probe walk runs against ~/.bun cache — also benefits.
+            const key = resolveCloneIdHex(e);
+            if (key === "" || !remaining.has(key)) {
                 continue;
             }
 
@@ -470,18 +471,17 @@ function buildCloneAnalysis(
         for (const e of entries) {
             const rel = relative(root, e.path);
             const passing = passesGlobs(rel, args.include, args.exclude, basename(e.path));
-            if (e.cloneId !== null && e.cloneId !== 0n) {
-                const key = e.cloneId.toString(16);
-                const acc = familyMembers.get(key) ?? { total: 0, passing: 0 };
+            if (e.cloneIdHex !== "") {
+                const acc = familyMembers.get(e.cloneIdHex) ?? { total: 0, passing: 0 };
                 acc.total += 1;
                 if (passing) {
                     acc.passing += 1;
-                    if (crossTree.loneCloneIds.has(key)) {
-                        visibleLoneCloneIds.add(key);
+                    if (crossTree.loneCloneIds.has(e.cloneIdHex)) {
+                        visibleLoneCloneIds.add(e.cloneIdHex);
                     }
                 }
 
-                familyMembers.set(key, acc);
+                familyMembers.set(e.cloneIdHex, acc);
             }
 
             if (passing) {
