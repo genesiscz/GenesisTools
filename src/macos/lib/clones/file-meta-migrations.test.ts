@@ -51,6 +51,25 @@ describe("file-meta-migrations", () => {
         ).toThrow();
     });
 
+    it("creates dir_meta table with required columns and STRICT typing", () => {
+        const db = new Database(":memory:");
+        runMigrations(db, FILE_META_MIGRATIONS, FILE_META_MIGRATION_CONTEXT);
+        const cols = db.query<{ name: string; pk: number; notnull: number }, []>("PRAGMA table_info(dir_meta)").all();
+        const names = cols.map((c) => c.name).sort();
+        expect(names).toEqual(["child_names_json", "dir_mtime_ns", "ino", "last_seen_at", "path"]);
+        const pathCol = cols.find((c) => c.name === "path");
+        expect(pathCol?.pk).toBe(1);
+        expect(pathCol?.notnull).toBe(1);
+    });
+
+    it("dir_meta migration is idempotent (re-run is a no-op)", () => {
+        const db = new Database(":memory:");
+        runMigrations(db, FILE_META_MIGRATIONS, FILE_META_MIGRATION_CONTEXT);
+        const r2 = runMigrations(db, FILE_META_MIGRATIONS, FILE_META_MIGRATION_CONTEXT);
+        expect(r2.applied).not.toContain("2026-05-init-dir-meta");
+        expect(r2.skipped).toContain("2026-05-init-dir-meta");
+    });
+
     it("preserves mtime_ns past Number.MAX_SAFE_INTEGER (safeIntegers prerequisite)", () => {
         // bun:sqlite exposes safeIntegers only as a constructor option, not a
         // runtime method. Verifies the schema-side prerequisite for the

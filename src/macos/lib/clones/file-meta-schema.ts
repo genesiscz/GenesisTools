@@ -19,6 +19,25 @@ export interface FileMetaTable {
     last_seen_at: bigint;
 }
 
+export interface DirMetaTable {
+    /** Absolute directory path. Primary key. */
+    path: string;
+    /** Directory's mtime in nanoseconds. APFS (POSIX 1003.1-2001 §4.7) bumps
+     *  this only on namespace changes (add/remove/rename of immediate
+     *  children); content edits on existing children do NOT bump. */
+    dir_mtime_ns: bigint;
+    /** Inode number. Detects "directory was deleted and recreated with the
+     *  same name" — different inode → invalidate. */
+    ino: bigint;
+    /** SafeJSON-stringified array of `{ name, kind }` for each immediate
+     *  child. Re-read from this when dir_mtime_ns matches; replays the
+     *  readdirSync result without the syscall. */
+    child_names_json: string;
+    /** Epoch-ms of last refresh. Same TTL prune semantics as file_meta. */
+    last_seen_at: bigint;
+}
+
 export interface FileMetaDB {
     file_meta: FileMetaTable;
+    dir_meta: DirMetaTable;
 }

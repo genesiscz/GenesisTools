@@ -32,4 +32,31 @@ const initFileMeta: Migration = {
     },
 };
 
-export const FILE_META_MIGRATIONS: Migration[] = [initFileMeta];
+const initDirMeta: Migration = {
+    id: "2026-05-init-dir-meta",
+    description: "Per-directory mtime+ino cache for walk skip (Phase 10)",
+    isApplied(db) {
+        const row = db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='dir_meta'").get() as {
+            name: string;
+        } | null;
+        return row !== null;
+    },
+    apply(db) {
+        // path PK = btree → prefix-range bulk-load O(log n + matches), same
+        // shape as file_meta. STRICT enforces INTEGER on dir_mtime_ns / ino.
+        // child_names_json is a TEXT blob; STRICT does not validate it as
+        // JSON, the application layer parses with SafeJSON.
+        db.run(`
+            CREATE TABLE IF NOT EXISTS dir_meta (
+                path TEXT PRIMARY KEY NOT NULL,
+                dir_mtime_ns INTEGER NOT NULL,
+                ino INTEGER NOT NULL,
+                child_names_json TEXT NOT NULL,
+                last_seen_at INTEGER NOT NULL
+            ) STRICT
+        `);
+        db.run(`CREATE INDEX IF NOT EXISTS idx_dir_meta_last_seen ON dir_meta(last_seen_at)`);
+    },
+};
+
+export const FILE_META_MIGRATIONS: Migration[] = [initFileMeta, initDirMeta];
