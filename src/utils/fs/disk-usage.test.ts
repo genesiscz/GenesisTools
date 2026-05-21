@@ -198,6 +198,85 @@ describe("duplicate detection", () => {
         }
     });
 
+    it("skips bytesEqualStreaming when both sides are cache-confirmed (warm fast path)", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-fmc-bytes-"));
+        try {
+            const payload = Buffer.alloc(64_000, 0xab);
+            writeFileSync(join(dir, "one.bin"), payload);
+            writeFileSync(join(dir, "two.bin"), payload);
+
+            type Entry = {
+                size: bigint;
+                mtimeNs: bigint;
+                sha256: string;
+                cloneId: string;
+                lastSeenAt: number;
+            };
+            const mem = new Map<string, Entry>();
+            const fakeCache = {
+                get: (p: string) => mem.get(p) ?? null,
+                set: (p: string, e: Entry) => {
+                    mem.set(p, e);
+                },
+            };
+            const emptyStats = () => ({
+                walkedFiles: 0,
+                walkedDirs: 0,
+                walkMs: 0,
+                bucketsTotal: 0,
+                bucketsDroppedByClone: 0,
+                bucketsHashed: 0,
+                cloneIdCalls: 0,
+                sha256Calls: 0,
+                sha256Bytes: 0,
+                byteCompareCalls: 0,
+                hashMs: 0,
+                cacheHits: 0,
+                cacheMisses: 0,
+            });
+
+            // Baseline: WITHOUT a cache, byte-compare runs unconditionally.
+            const noCacheStats = emptyStats();
+            await findDuplicateFiles(dir, { stats: noCacheStats });
+            expect(noCacheStats.byteCompareCalls).toBe(1);
+
+            // WITH a cache, even the first scan short-circuits the byte-compare:
+            // cache.set runs inside the hash loop (~10 lines before the
+            // byte-compare filter), so by the time the filter reads cache.get
+            // for both files, the just-written entries match the fresh stats.
+            // That's by design — those entries are by-construction correct
+            // (we just computed sha + stat ourselves this iteration).
+            const coldStats = emptyStats();
+            await findDuplicateFiles(dir, { cache: fakeCache, stats: coldStats });
+            expect(coldStats.byteCompareCalls).toBe(0);
+
+            // Warm: same outcome.
+            const warmStats = emptyStats();
+            const warm = await findDuplicateFiles(dir, { cache: fakeCache, stats: warmStats });
+            expect(warm.length).toBe(1); // still detected as duplicate
+            expect(warmStats.byteCompareCalls).toBe(0);
+
+            // Cache-with-set-blocked-for-one-path mimics "the entry never made
+            // it into the cache" — get returns null for one.bin both during
+            // the hash loop and during the byte-compare filter. The
+            // byte-compare must then run to confirm the pair.
+            const oneKey = join(dir, "one.bin");
+            const fakeBlockingCache = {
+                get: (p: string) => (p === oneKey ? null : (mem.get(p) ?? null)),
+                set: (p: string, e: Entry) => {
+                    if (p !== oneKey) {
+                        mem.set(p, e);
+                    }
+                },
+            };
+            const fallbackStats = emptyStats();
+            await findDuplicateFiles(dir, { cache: fakeBlockingCache, stats: fallbackStats });
+            expect(fallbackStats.byteCompareCalls).toBe(1); // re-verified
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
     it("reuses cached sha256 on warm scan; sentinel sha proves the comparison fires", async () => {
         const dir = mkdtempSync(join(tmpdir(), "gt-fmc-"));
         try {

@@ -768,13 +768,56 @@ export async function findDuplicateFiles(root: string, opts: FindDuplicatesOptio
             // Streaming byte-equality against group[0] — sha collisions are
             // astronomical but Safety Contract invariant 1 requires actual
             // byte-equality, not just sha-equality, before cloning.
+            //
+            // DETECTION-side cache shortcut (Phase 9): if both sides have a
+            // cache row whose (size, mtimeNs) matches the freshly-walked
+            // values, last-scan's byte-compare result still applies — we
+            // already proved byte-equality with then-fresh stats, and
+            // unchanged (size, mtime) means unchanged contents. Skip the
+            // re-read.
+            //
+            // SAFETY: This delegates collision risk to the Safety Contract
+            // in `dedupeFile` (~disk-usage.ts:921), which UNCONDITIONALLY
+            // calls bytesEqualStreaming(keep, replace) before each
+            // `clonefile`. A SHA-256 collision that survived through
+            // detection here would land on the user's confirmation prompt,
+            // then be re-byte-compared at apply time and emit
+            // `skipped-different`. Net effect of a phantom dup: wasted user
+            // attention, never a wrong dedupe. DO NOT remove this comment.
             const bytesOpts = signal !== undefined ? { signal } : {};
+            const refPath = group[0];
+            const refMtime = mtimeByPath.get(refPath);
+            const refHit = cache?.get(refPath);
+            const refCacheConfirmed =
+                refHit !== null &&
+                refHit !== undefined &&
+                refMtime !== undefined &&
+                refHit.size === BigInt(size) &&
+                refHit.mtimeNs === refMtime;
             const confirmed = group.filter((p) => {
-                if (p === group[0]) {
+                if (p === refPath) {
                     return true;
                 }
+                if (refCacheConfirmed) {
+                    const pMtime = mtimeByPath.get(p);
+                    const pHit = cache?.get(p);
+                    if (
+                        pHit !== null &&
+                        pHit !== undefined &&
+                        pMtime !== undefined &&
+                        pHit.size === BigInt(size) &&
+                        pHit.mtimeNs === pMtime
+                    ) {
+                        // Both sides cache-confirmed; bytes proven equal in
+                        // a prior scan that survived its own byte-compare.
+                        // sha agreement is structurally guaranteed (every p
+                        // in `group` has sha == refPath's sha, whether
+                        // cached or freshly computed).
+                        return true;
+                    }
+                }
                 byteCompareCalls += 1;
-                return bytesEqualStreaming(group[0], p, bytesOpts);
+                return bytesEqualStreaming(refPath, p, bytesOpts);
             });
             if (confirmed.length >= 2) {
                 // Per the contract above: paths are exactly the confirmed
