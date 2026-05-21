@@ -19,6 +19,11 @@ import { join, resolve } from "node:path";
 import { logger } from "@app/logger";
 import { formatBytes } from "@app/utils/format";
 import { CloneUnsupportedError, cloneFile, getCloneId, getFsType, getPrivateSize } from "@app/utils/macos/apfs";
+import {
+    GetattrlistbulkUnsupportedError,
+    isGetattrlistbulkSupported,
+    iterDir,
+} from "@app/utils/macos/getattrlistbulk";
 import { Stopwatch } from "@app/utils/Stopwatch";
 
 export interface WalkEntry {
@@ -29,7 +34,29 @@ export interface WalkEntry {
      *  bigint, so this is free to expose. Past Number.MAX_SAFE_INTEGER, so
      *  must remain a bigint — converting to number loses precision. */
     mtimeNs: bigint;
+    /** APFS clone-family id, when the walker fetched it inline (via
+     *  `getattrlistbulk`). When set, `findDuplicateFiles` skips its own
+     *  `getCloneId(path)` syscall. Undefined when walker fell back to
+     *  `readdirSync + statSync` (non-darwin, non-APFS, or `ENOTSUP` per-dir).
+     *  Hex string for consistency with `FileMetaEntry.cloneId`; "" or
+     *  undefined both mean "no clone-family info available." */
+    cloneIdHex?: string;
 }
+
+// One-shot probe at module load — `getattrlistbulk` is unavailable off-darwin
+// and on non-APFS volumes (returns ENOTSUP). Per-dir fallback handles mixed
+// filesystem trees inside a single scan root.
+const BULK_AVAILABLE: boolean = (() => {
+    if (process.platform !== "darwin") {
+        return false;
+    }
+
+    try {
+        return isGetattrlistbulkSupported();
+    } catch {
+        return false;
+    }
+})();
 
 export interface WalkError {
     path: string;
@@ -150,6 +177,95 @@ export function* walkFiles(root: string, opts: WalkOptions = {}): Generator<Walk
             }
         }
         return;
+    }
+
+    // P1 — `getattrlistbulk(2)` fast path. One syscall per dir returns
+    // (name, kind, size, allocSize, mtime, fileid, cloneId) for every entry,
+    // replacing `readdirSync + N × statSync + N × getattrlist(CLONEID)`.
+    // Fall back to readdirSync + statSync per-dir on `ENOTSUP` (non-APFS
+    // volume inside the scan root) or any other libc error.
+    if (BULK_AVAILABLE) {
+        try {
+            const bulkChildren: Array<{ name: string; kind: "file" | "dir" | "symlink" }> = [];
+            const fileEntries: Array<{
+                path: string;
+                size: bigint;
+                allocSize: bigint;
+                mtimeNs: bigint;
+                cloneId: bigint;
+            }> = [];
+            const subdirs: string[] = [];
+            for (const e of iterDir(root)) {
+                if (e.errorCode !== 0) {
+                    opts.onError?.({ path: join(root, e.name), errno: `errno=${e.errorCode}` });
+                    continue;
+                }
+
+                if (e.kind === "LNK") {
+                    bulkChildren.push({ name: e.name, kind: "symlink" });
+                    continue;
+                }
+
+                if (e.kind === "DIR") {
+                    bulkChildren.push({ name: e.name, kind: "dir" });
+                    subdirs.push(join(root, e.name));
+                    continue;
+                }
+
+                if (e.kind === "REG") {
+                    bulkChildren.push({ name: e.name, kind: "file" });
+                    fileEntries.push({
+                        path: join(root, e.name),
+                        size: e.size,
+                        allocSize: e.allocSize,
+                        mtimeNs: e.mtimeNs,
+                        cloneId: e.cloneId,
+                    });
+                }
+                // OTHER (sockets, fifos, …): skip silently
+            }
+
+            opts.onDirEntered?.(root);
+
+            // Populate dir-meta cache from bulk result so warm reruns hit
+            // the Phase-10 short-circuit above without re-running bulk.
+            if (opts.cache?.setDir !== undefined && dirStat !== null) {
+                opts.cache.setDir(root, {
+                    dirMtimeNs: (dirStat as { mtimeNs: bigint }).mtimeNs,
+                    ino: (dirStat as { ino: bigint }).ino,
+                    childNames: bulkChildren,
+                    lastSeenAt: 0,
+                });
+            }
+
+            for (const fe of fileEntries) {
+                yield {
+                    path: fe.path,
+                    logical: Number(fe.size),
+                    allocated: Number(fe.allocSize),
+                    mtimeNs: fe.mtimeNs,
+                    cloneIdHex: fe.cloneId === 0n ? "" : fe.cloneId.toString(16),
+                };
+            }
+            for (const subPath of subdirs) {
+                if (opts.shouldEnter && !opts.shouldEnter(subPath)) {
+                    continue;
+                }
+
+                yield* walkFiles(subPath, opts);
+            }
+            return;
+        } catch (err) {
+            if (err instanceof GetattrlistbulkUnsupportedError) {
+                logger.debug({ root }, "walkFiles: ENOTSUP, falling back to readdir+stat");
+                // fall through to readdir path below
+            } else {
+                // `open(dir)` failed (ENOENT, EACCES, ENOTDIR…) — surface as a
+                // walk error, same shape readdir would have produced.
+                opts.onError?.({ path: root, errno: errnoOf(err) });
+                return;
+            }
+        }
     }
 
     let entries: Dirent[];
@@ -668,6 +784,12 @@ export async function findDuplicateFiles(root: string, opts: FindDuplicatesOptio
     // during the walk (bigint mtimeNs comes from the already-bigint statSync
     // in walkFiles — no extra syscall).
     const mtimeByPath = new Map<string, bigint>();
+    // P1 — when walkFiles used the `getattrlistbulk` fast path, every WalkEntry
+    // carries `cloneIdHex` inline (one syscall per dir vs one getattrlist per
+    // file). Empty string = file has no clone family. Undefined = walker
+    // didn't fetch it (cache-hit replay, non-darwin, ENOTSUP). The hash phase
+    // prefers walk-supplied cloneIdHex over the per-file `getCloneId` syscall.
+    const walkCloneIdByPath = new Map<string, string>();
     const walkOpts: WalkOptions = {};
     if (signal !== undefined) {
         walkOpts.signal = signal;
@@ -715,6 +837,9 @@ export async function findDuplicateFiles(root: string, opts: FindDuplicatesOptio
         list.push(e.path);
         bySize.set(e.logical, list);
         mtimeByPath.set(e.path, e.mtimeNs);
+        if (e.cloneIdHex !== undefined) {
+            walkCloneIdByPath.set(e.path, e.cloneIdHex);
+        }
     }
 
     const walkMs = sw.elapsedMs - phaseStartMs;
@@ -786,8 +911,19 @@ export async function findDuplicateFiles(root: string, opts: FindDuplicatesOptio
             const p = paths[i];
             const mtimeNs = mtimeByPath.get(p);
             const hit = cache?.get(p);
+            const walked = walkCloneIdByPath.get(p);
             let cloneIdHex: string;
-            if (hit && mtimeNs !== undefined && hit.size === BigInt(size) && hit.mtimeNs === mtimeNs) {
+            // Three sources, in priority order:
+            //  1. Walk-supplied cloneIdHex (set by the P1 bulk path — current,
+            //     no extra syscall). Empty string is a valid "no clone family"
+            //     answer — distinct from undefined ("walker didn't fetch").
+            //  2. File-meta cache when (size, mtimeNs) match (saves a syscall
+            //     on warm reruns where the walk took the dir-cache replay
+            //     path and so didn't fill cloneIdHex).
+            //  3. Per-file `getCloneId(path)` syscall fallback.
+            if (walked !== undefined) {
+                cloneIdHex = walked;
+            } else if (hit && mtimeNs !== undefined && hit.size === BigInt(size) && hit.mtimeNs === mtimeNs) {
                 cloneIdHex = hit.cloneId;
             } else {
                 cloneIdCalls += 1;
