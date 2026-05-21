@@ -23,19 +23,26 @@ import { closeSync, openSync, readSync } from "node:fs";
 
 const STREAM_CHUNK_BYTES = 128 * 1024;
 
+/** Module-level read buffer reused across `sha256File` and `blake3File`.
+ *  Same serial-execution safety contract as `READ_BUF` in `disk-usage.ts`
+ *  — see that file for the full rationale. In short: `readSync` and the
+ *  hash `update` calls are synchronous and never yield, so a single buffer
+ *  is safe under JS's single-threaded execution. Workers get their own
+ *  module instance and thus their own buffer. */
+const READ_BUF = Buffer.allocUnsafe(STREAM_CHUNK_BYTES);
+
 export function sha256File(path: string, opts: { signal?: AbortSignal } = {}): string {
     const h = createHash("sha256");
     const fd = openSync(path, "r");
     try {
-        const buf = Buffer.allocUnsafe(STREAM_CHUNK_BYTES);
         for (;;) {
             opts.signal?.throwIfAborted();
-            const n = readSync(fd, buf, 0, buf.length, null);
+            const n = readSync(fd, READ_BUF, 0, READ_BUF.length, null);
             if (n <= 0) {
                 break;
             }
 
-            h.update(buf.subarray(0, n));
+            h.update(READ_BUF.subarray(0, n));
         }
     } finally {
         closeSync(fd);
@@ -68,15 +75,14 @@ export async function blake3File(path: string, opts: { signal?: AbortSignal } = 
     hasher.init();
     const fd = openSync(path, "r");
     try {
-        const buf = Buffer.allocUnsafe(STREAM_CHUNK_BYTES);
         for (;;) {
             opts.signal?.throwIfAborted();
-            const n = readSync(fd, buf, 0, buf.length, null);
+            const n = readSync(fd, READ_BUF, 0, READ_BUF.length, null);
             if (n <= 0) {
                 break;
             }
 
-            hasher.update(buf.subarray(0, n));
+            hasher.update(READ_BUF.subarray(0, n));
         }
     } finally {
         closeSync(fd);

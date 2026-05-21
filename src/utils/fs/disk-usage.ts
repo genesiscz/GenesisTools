@@ -515,6 +515,22 @@ const STREAM_CHUNK_BYTES = 64 * 1024;
  *  decreasing risks more prefix-collisions inflating the second-pass work. */
 const PREFIX_HASH_BYTES = 4 * 1024;
 
+/** Module-level read buffers reused across `sha256File` / `sha256PrefixFile` /
+ *  `copyFileStreaming` and `bytesEqualStreaming`. A cold scan of GenesisTools
+ *  calls `sha256File` ~126 k times — allocating a fresh 64 KB buffer each
+ *  time produces ~8 GB of throwaway allocations and measurable GC churn.
+ *
+ *  Safety contract: these buffers are only safe because every consumer below
+ *  is *synchronous* (`readSync`, `writeSync`, `h.update(buf.subarray)`,
+ *  `Buffer.compare`) and never yields control mid-loop. JS is single-threaded;
+ *  a re-entrant call could only happen if one of these functions awaited
+ *  inside the read loop, which they do not. If `await` is ever added, each
+ *  consumer MUST allocate its own buffer — or the loops must move to a
+ *  buffer pool. Bun Workers (Phase 9) get their own module instance and
+ *  thus their own buffers, so cross-thread aliasing is not a concern. */
+const READ_BUF = Buffer.allocUnsafe(STREAM_CHUNK_BYTES);
+const CMP_BUF = Buffer.allocUnsafe(STREAM_CHUNK_BYTES);
+
 /** Streaming SHA-256 — reads `path` in chunks instead of slurping the whole
  *  file into memory. Required for safety: a `node_modules` tree may contain
  *  arbitrarily-large bundles, source maps, or media that would OOM under
@@ -525,15 +541,14 @@ export function sha256File(path: string, opts: { signal?: AbortSignal } = {}): s
     const h = createHash("sha256");
     const fd = openSync(path, "r");
     try {
-        const buf = Buffer.allocUnsafe(STREAM_CHUNK_BYTES);
         for (;;) {
             opts.signal?.throwIfAborted();
-            const n = readSync(fd, buf, 0, buf.length, null);
+            const n = readSync(fd, READ_BUF, 0, READ_BUF.length, null);
             if (n <= 0) {
                 break;
             }
 
-            h.update(buf.subarray(0, n));
+            h.update(READ_BUF.subarray(0, n));
         }
     } finally {
         closeSync(fd);
@@ -552,17 +567,16 @@ export function sha256PrefixFile(path: string, opts: { signal?: AbortSignal } = 
     const h = createHash("sha256");
     const fd = openSync(path, "r");
     try {
-        const buf = Buffer.allocUnsafe(Math.min(PREFIX_HASH_BYTES, STREAM_CHUNK_BYTES));
         let read = 0;
         while (read < PREFIX_HASH_BYTES) {
             opts.signal?.throwIfAborted();
-            const want = Math.min(PREFIX_HASH_BYTES - read, buf.length);
-            const n = readSync(fd, buf, 0, want, null);
+            const want = Math.min(PREFIX_HASH_BYTES - read, READ_BUF.length);
+            const n = readSync(fd, READ_BUF, 0, want, null);
             if (n <= 0) {
                 break;
             }
 
-            h.update(buf.subarray(0, n));
+            h.update(READ_BUF.subarray(0, n));
             read += n;
         }
     } finally {
@@ -584,16 +598,15 @@ export function copyFileStreaming(src: string, dst: string): void {
         // 'wx' = create-exclusive — fail if dst already exists. Callers route
         // to a temp path then renameSync, so existence at dst is an error.
         dstFd = openSync(dst, "wx");
-        const buf = Buffer.allocUnsafe(STREAM_CHUNK_BYTES);
         for (;;) {
-            const n = readSync(srcFd, buf, 0, buf.length, null);
+            const n = readSync(srcFd, READ_BUF, 0, READ_BUF.length, null);
             if (n <= 0) {
                 break;
             }
 
             let written = 0;
             while (written < n) {
-                written += writeSync(dstFd, buf, written, n - written);
+                written += writeSync(dstFd, READ_BUF, written, n - written);
             }
         }
     } finally {
@@ -614,12 +627,10 @@ export function bytesEqualStreaming(a: string, b: string, opts: { signal?: Abort
     let fdB: number | null = null;
     try {
         fdB = openSync(b, "r");
-        const bufA = Buffer.allocUnsafe(STREAM_CHUNK_BYTES);
-        const bufB = Buffer.allocUnsafe(STREAM_CHUNK_BYTES);
         while (true) {
             opts.signal?.throwIfAborted();
-            const nA = readSync(fdA, bufA, 0, bufA.length, null);
-            const nB = readSync(fdB, bufB, 0, bufB.length, null);
+            const nA = readSync(fdA, READ_BUF, 0, READ_BUF.length, null);
+            const nB = readSync(fdB, CMP_BUF, 0, CMP_BUF.length, null);
             if (nA !== nB) {
                 return false;
             }
@@ -628,7 +639,7 @@ export function bytesEqualStreaming(a: string, b: string, opts: { signal?: Abort
                 return true;
             }
 
-            if (!bufA.subarray(0, nA).equals(bufB.subarray(0, nB))) {
+            if (!READ_BUF.subarray(0, nA).equals(CMP_BUF.subarray(0, nB))) {
                 return false;
             }
         }
