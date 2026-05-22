@@ -2,11 +2,15 @@
  * Realistic byte-compare: pick actual same-size GROUPS (not just first pair),
  * and measure the cost mimicking the production hot loop.
  */
-import { performance } from "node:perf_hooks";
-import { readFileSync } from "node:fs";
-import { bytesEqualStreaming, walkFiles } from "/Users/Martin/Tresors/Projects/GenesisTools-dupperf/src/utils/fs/disk-usage";
 
-const root = process.argv[2] ?? "/Users/Martin/Tresors/Projects/GenesisTools";
+import { readFileSync } from "node:fs";
+import { performance } from "node:perf_hooks";
+import {
+    bytesEqualStreaming,
+    walkFiles,
+} from "../../../../src/utils/fs/disk-usage";
+
+const root = process.argv[2] ?? process.cwd();
 
 // Walk and bucket by size, like findDuplicateFiles does.
 const bySize = new Map<number, string[]>();
@@ -43,6 +47,10 @@ let diffCount = 0;
 let errCount = 0;
 let totalBytes = 0;
 const sampleSize = Math.min(pairs.length, 5000);
+if (sampleSize === 0) {
+    console.log("No same-size pairs found — nothing to compare.");
+    process.exit(0);
+}
 for (let i = 0; i < sampleSize; i++) {
     const p = pairs[i];
     try {
@@ -54,8 +62,6 @@ for (let i = 0; i < sampleSize; i++) {
     }
 }
 const t1 = performance.now();
-console.log(
-    `${sampleSize} pairs in ${(t1 - t0).toFixed(0)}ms = ${((t1 - t0) / sampleSize).toFixed(2)}ms/pair`
-);
-console.log(`equal=${equalCount} diff=${diffCount} err=${errCount} totalBytes=${(totalBytes/1e6).toFixed(0)}MB`);
-console.log(`scaled to 33k pairs: ${((33053 / sampleSize) * (t1 - t0) / 1000).toFixed(1)}s`);
+console.log(`${sampleSize} pairs in ${(t1 - t0).toFixed(0)}ms = ${((t1 - t0) / sampleSize).toFixed(2)}ms/pair`);
+console.log(`equal=${equalCount} diff=${diffCount} err=${errCount} totalBytes=${(totalBytes / 1e6).toFixed(0)}MB`);
+console.log(`scaled to 33k pairs: ${(((33053 / sampleSize) * (t1 - t0)) / 1000).toFixed(1)}s`);

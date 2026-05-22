@@ -3,10 +3,10 @@
  * Used to estimate the warm-hash residual cost from cloneIdCalls=139741.
  */
 import { performance } from "node:perf_hooks";
-import { getCloneId } from "/Users/Martin/Tresors/Projects/GenesisTools-dupperf/src/utils/macos/apfs";
-import { walkFiles } from "/Users/Martin/Tresors/Projects/GenesisTools-dupperf/src/utils/fs/disk-usage";
+import { walkFiles } from "../../../../src/utils/fs/disk-usage";
+import { getCloneId } from "../../../../src/utils/macos/apfs";
 
-const root = process.argv[2] ?? "/Users/Martin/Tresors/Projects/GenesisTools";
+const root = process.argv[2] ?? process.cwd();
 console.log("Root:", root);
 
 // Walk + collect paths first (separate from getCloneId timing).
@@ -16,7 +16,9 @@ for (const e of walkFiles(root)) {
     paths.push(e.path);
 }
 const t1 = performance.now();
-console.log(`walked: ${paths.length} files in ${(t1 - t0).toFixed(1)}ms (${((paths.length / (t1 - t0)) * 1000).toFixed(0)} files/sec)`);
+console.log(
+    `walked: ${paths.length} files in ${(t1 - t0).toFixed(1)}ms (${((paths.length / (t1 - t0)) * 1000).toFixed(0)} files/sec)`
+);
 
 // Now time JUST getCloneId on all of them.
 const t2 = performance.now();

@@ -39,6 +39,10 @@ count_lines() {
 # Pull the LAST `findDuplicateFiles.complete` JSON line from the given line
 # range. Line-based, not byte-based — line count is stable even when pino is
 # still flushing.
+#
+# Strip machine-identifying fields (pid, hostname, level, tool, msg, time)
+# and the redundant `root` (already at the top-level row) so committed
+# results.jsonl rows are portable across dev machines.
 extract_complete() {
     local from_line="$1"
     local to_line="$2"
@@ -47,11 +51,16 @@ extract_complete() {
         return
     fi
     local count=$((to_line - from_line))
-    tail -n +$((from_line + 1)) "$LOG_FILE" \
+    local raw
+    raw=$(tail -n +$((from_line + 1)) "$LOG_FILE" \
         | head -n "$count" \
         | rg --color=never -F '"event":"findDuplicateFiles.complete"' \
-        | tail -1 \
-        || true
+        | tail -1)
+    if [[ -z "$raw" ]]; then
+        echo "{}"
+        return
+    fi
+    echo "$raw" | jq -c 'del(.level, .pid, .hostname, .tool, .msg, .time, .root)'
 }
 
 COLD_START=$(count_lines)
@@ -94,9 +103,13 @@ WARM2_JSON="${WARM2_JSON:-}"
 
 mkdir -p "$(dirname "$RESULTS")"
 
+# Anonymize the top-level root: replace $HOME with `~` so committed rows
+# don't leak this machine's username/home path.
+ROOT_ANON="${ROOT/#$HOME/~}"
+
 jq -nc \
     --arg label "$LABEL" \
-    --arg root "$ROOT" \
+    --arg root "$ROOT_ANON" \
     --argjson coldTotal "$COLD_TOTAL" \
     --argjson warmTotal "$WARM_TOTAL" \
     --argjson warm2Total "$WARM2_TOTAL" \

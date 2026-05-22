@@ -4,10 +4,13 @@
  * byte-compare vs scheduler-overhead.
  */
 import { performance } from "node:perf_hooks";
-import { findDuplicateFiles, emptyFindDuplicatesStats } from "/Users/Martin/Tresors/Projects/GenesisTools-dupperf/src/utils/fs/disk-usage";
-import { FileMetaCache } from "/Users/Martin/Tresors/Projects/GenesisTools-dupperf/src/macos/lib/clones/file-meta-cache";
+import { FileMetaCache } from "../../../../src/macos/lib/clones/file-meta-cache";
+import {
+    emptyFindDuplicatesStats,
+    findDuplicateFiles,
+} from "../../../../src/utils/fs/disk-usage";
 
-const root = process.argv[2] ?? "/Users/Martin/Tresors/Projects/GenesisTools";
+const root = process.argv[2] ?? process.cwd();
 
 // Reuse the shipping singleton
 const cache = FileMetaCache.getInstance();

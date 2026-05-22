@@ -2,11 +2,11 @@
  * Split the walk cost: how much is `readdirSync` vs `statSync({bigint:true})`?
  * Mimics walkFiles but lets us toggle.
  */
-import { readdirSync, statSync, type Dirent } from "node:fs";
+import { type Dirent, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 
-const root = process.argv[2] ?? "/Users/Martin/Tresors/Projects/GenesisTools";
+const root = process.argv[2] ?? process.cwd();
 
 // Variant 1 — readdir-only (no per-file stat). What the dir-mtime cache helps.
 function readdirOnly(root: string): { dirs: number; files: number } {
@@ -89,4 +89,6 @@ console.log(`readdir+stat #2: ${(t7 - t6).toFixed(0)}ms`);
 const readdirShare = (t5 - t4) / (t7 - t6);
 console.log(`readdir-only is ${(readdirShare * 100).toFixed(0)}% of full walk time`);
 console.log(`-> stat overhead is ${((1 - readdirShare) * 100).toFixed(0)}% of full walk time`);
-console.log(`-> if dir-mtime cache skips 90% of readdirs, you save ~${((readdirShare * 0.9) * (t7 - t6)).toFixed(0)}ms of ${(t7 - t6).toFixed(0)}ms walk`);
+console.log(
+    `-> if dir-mtime cache skips 90% of readdirs, you save ~${(readdirShare * 0.9 * (t7 - t6)).toFixed(0)}ms of ${(t7 - t6).toFixed(0)}ms walk`
+);
