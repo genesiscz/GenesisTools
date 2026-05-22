@@ -56,7 +56,8 @@ const BULK_AVAILABLE: boolean = (() => {
 
     try {
         return isGetattrlistbulkSupported();
-    } catch {
+    } catch (err) {
+        logger.debug({ err }, "BULK_AVAILABLE: isGetattrlistbulkSupported probe threw, disabling bulk path");
         return false;
     }
 })();
@@ -184,8 +185,8 @@ export function* walkFiles(root: string, opts: WalkOptions = {}): Generator<Walk
     if (opts.cache?.getDir !== undefined) {
         try {
             dirStat = statSync(root, { bigint: true });
-        } catch {
-            // ignore — readdirSync below will surface the real error
+        } catch (err) {
+            logger.debug({ err, root }, "walkFiles: dir-cache statSync failed, falling back to readdirSync");
         }
     }
 

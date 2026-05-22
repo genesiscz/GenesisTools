@@ -1,3 +1,4 @@
+import { basename } from "node:path";
 import { logger } from "@app/logger";
 import { newProcessId, writeMeta } from "@app/macos/lib/clones/audit";
 import { cachePlan } from "@app/macos/lib/clones/cache";
@@ -5,6 +6,10 @@ import { collapseDuplicates } from "@app/macos/lib/clones/collapse";
 import { loadClonesConfig } from "@app/macos/lib/clones/store";
 import { formatBytes } from "@app/utils/format";
 import { sendNotification } from "@app/utils/macos/notifications";
+
+function shouldEnterByDefault(dir: string): boolean {
+    return basename(dir) !== ".git";
+}
 
 const log = logger.child({ component: "clones:scan-daemon" });
 
@@ -38,7 +43,8 @@ export async function runDaemonScan(args: DaemonScanArgs = {}): Promise<DaemonSc
     // collapseDuplicates so the cached plan matches its cache key — otherwise
     // a follow-up `optimize` cache hit serves an unfiltered plan against a
     // filter-aware request.
-    const sets = (await collapseDuplicates({ roots, minSize: minReal, exclude })).sets;
+    const sets = (await collapseDuplicates({ roots, minSize: minReal, exclude, shouldEnter: shouldEnterByDefault }))
+        .sets;
     const reclaimable = sets.reduce((s, x) => s + x.reclaimable, 0);
 
     await cachePlan(

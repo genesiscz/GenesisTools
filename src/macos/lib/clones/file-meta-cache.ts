@@ -183,7 +183,17 @@ export class FileMetaCache {
             .where("path", "<", hi)
             .execute();
 
+        // Skip rows whose path is in `dirty` — those have in-memory writes
+        // from this scan that haven't been flushed yet. A second loadScope
+        // call (e.g. CLI passing multiple roots that overlap a stale DB row)
+        // would otherwise clobber the newer in-memory entry with stale data.
+        let skipped = 0;
         for (const r of rows) {
+            if (this.dirty.has(r.path)) {
+                skipped += 1;
+                continue;
+            }
+
             this.mem.set(r.path, {
                 size: r.size,
                 mtimeNs: r.mtime_ns,
@@ -194,7 +204,13 @@ export class FileMetaCache {
             });
         }
         log.info(
-            { event: "cache.load.complete", root, rows: rows.length, loadMs: Math.round(sw.elapsedMs) },
+            {
+                event: "cache.load.complete",
+                root,
+                rows: rows.length,
+                skippedDirty: skipped,
+                loadMs: Math.round(sw.elapsedMs),
+            },
             "FileMetaCache loadScope complete"
         );
     }
@@ -361,7 +377,13 @@ export class FileMetaCache {
             )
             .execute();
 
+        let skipped = 0;
         for (const r of rows) {
+            if (this.dirDirty.has(r.path)) {
+                skipped += 1;
+                continue;
+            }
+
             this.dirMem.set(r.path, {
                 dirMtimeNs: r.dir_mtime_ns,
                 ino: r.ino,
@@ -370,7 +392,13 @@ export class FileMetaCache {
             });
         }
         log.info(
-            { event: "dir.load.complete", root, rows: rows.length, loadMs: Math.round(sw.elapsedMs) },
+            {
+                event: "dir.load.complete",
+                root,
+                rows: rows.length,
+                skippedDirty: skipped,
+                loadMs: Math.round(sw.elapsedMs),
+            },
             "FileMetaCache loadDirScope complete"
         );
     }

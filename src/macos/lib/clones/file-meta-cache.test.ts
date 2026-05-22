@@ -197,6 +197,26 @@ describe("FileMetaCache", () => {
         });
     });
 
+    it("loadScope does not clobber dirty in-memory entries with stale DB rows", async () => {
+        await withTmpDb("dirty-guard", async (dbPath, dir) => {
+            // Seed DB with stale row.
+            const c1 = FileMetaCache.resetForTests(dbPath);
+            c1.set(`${dir}/f`, { size: 100n, mtimeNs: 1n, sha256: "stale", cloneId: "", lastSeenAt: 0 });
+            await c1.flush(0);
+            c1.close();
+
+            // Reopen, write a fresh entry (dirty), then loadScope must NOT
+            // replace it with the stale DB row.
+            const c2 = FileMetaCache.resetForTests(dbPath);
+            c2.set(`${dir}/f`, { size: 200n, mtimeNs: 2n, sha256: "fresh", cloneId: "newclone", lastSeenAt: 0 });
+            await c2.loadScope(dir);
+            const entry = c2.get(`${dir}/f`);
+            expect(entry?.sha256).toBe("fresh");
+            expect(entry?.size).toBe(200n);
+            c2.close();
+        });
+    });
+
     it("upsert via set+flush overwrites existing rows", async () => {
         await withTmpDb("upsert", async (dbPath, dir) => {
             const c1 = FileMetaCache.resetForTests(dbPath);

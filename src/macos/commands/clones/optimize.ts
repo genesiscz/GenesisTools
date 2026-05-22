@@ -194,23 +194,38 @@ export function createOptimizeCommand(): Command {
                 nodeModules: Boolean(opts.nodeModules),
             };
 
+            // SIGINT/SIGTERM → abort scan within ~one 64 KB chunk. Mirrors
+            // duplicates.ts so optimize's dry-run + --apply scan phases are
+            // also interruptible. Without this the user can wait many seconds
+            // for sync readSync to return on a large file.
+            const controller = new AbortController();
+            const onSigint = (): void => {
+                if (!controller.signal.aborted) {
+                    log.warn("SIGINT received, aborting optimize");
+                    controller.abort(new Error("aborted by SIGINT"));
+                }
+            };
+            process.on("SIGINT", onSigint);
+            process.on("SIGTERM", onSigint);
+
             // Share the per-file metadata cache singleton with the duplicates
             // command. The cache only speeds up detection; runOptimize's
             // dedupeFile still byte-verifies before each clonefile (Safety
             // Contract invariant 1) so a stale cache row can't cause an
             // incorrect dedupe — at worst one extra streaming byte-compare.
             const fileCache = FileMetaCache.getInstance();
-            for (const root of roots) {
-                await fileCache.loadScope(root);
-                await fileCache.loadDirScope(root);
-            }
             const scanStartedAt = Date.now();
-            log.info(
-                { scanStartedAt, roots, fileCacheSize: fileCache.size(), dirCacheSize: fileCache.dirSize() },
-                "optimize starting with FileMetaCache attached"
-            );
 
             try {
+                for (const root of roots) {
+                    await fileCache.loadScope(root);
+                    await fileCache.loadDirScope(root);
+                }
+                log.info(
+                    { scanStartedAt, roots, fileCacheSize: fileCache.size(), dirCacheSize: fileCache.dirSize() },
+                    "optimize starting with FileMetaCache attached"
+                );
+
                 if (opts.apply) {
                     const cached = opts.cache === false ? null : await getCachedPlan(cacheParams);
                     const sets =
@@ -222,6 +237,7 @@ export function createOptimizeCommand(): Command {
                                 include: cacheParams.include,
                                 exclude: cacheParams.exclude,
                                 cache: fileCache,
+                                signal: controller.signal,
                             })
                         ).sets;
                     const projected = sets.reduce((s, x) => s + x.reclaimable, 0);
@@ -285,11 +301,20 @@ export function createOptimizeCommand(): Command {
                         include: cacheParams.include,
                         exclude: cacheParams.exclude,
                         cache: fileCache,
+                        signal: controller.signal,
                     })
                 ).sets;
                 await cachePlan(cacheParams, sets);
                 console.log(resolveRenderer(resolveFormat(opts.format)).processReport(dryRunReport(roots, sets)));
                 process.exitCode = 0;
+            } catch (err) {
+                if (controller.signal.aborted) {
+                    log.warn({ err }, "optimize aborted");
+                    process.exitCode = 130;
+                    return;
+                }
+
+                throw err;
             } finally {
                 // Flush + prune-per-root + close the cache regardless of
                 // success path so subsequent scans see this run's writes
@@ -304,6 +329,8 @@ export function createOptimizeCommand(): Command {
                 } finally {
                     fileCache.close();
                 }
+                process.off("SIGINT", onSigint);
+                process.off("SIGTERM", onSigint);
             }
         });
 

@@ -136,22 +136,22 @@ export function createDuplicatesCommand(): Command {
                 }, 100);
             }
 
-            // Open the singleton cache + bulk-load the rows for each scan
-            // root. `getInstance` lazy-opens; the first scan after a
-            // fresh install creates the DB+migration. Cache is closed in
-            // `finally` so SIGINT/exception paths still release the WAL.
+            // Open the singleton cache. `getInstance` is a cheap allocator
+            // (no I/O); the actual DB+migration open happens lazily inside
+            // `loadScope`, which we run inside the try so an open/migrate
+            // failure still triggers the `finally` close+SIGINT cleanup.
             const cache = FileMetaCache.getInstance();
-            for (const root of roots) {
-                await cache.loadScope(root);
-                await cache.loadDirScope(root);
-            }
             const scanStartedAt = Date.now();
-            log.info(
-                { scanStartedAt, roots, fileCacheSize: cache.size(), dirCacheSize: cache.dirSize() },
-                "duplicates scan starting with cache"
-            );
 
             try {
+                for (const root of roots) {
+                    await cache.loadScope(root);
+                    await cache.loadDirScope(root);
+                }
+                log.info(
+                    { scanStartedAt, roots, fileCacheSize: cache.size(), dirCacheSize: cache.dirSize() },
+                    "duplicates scan starting with cache"
+                );
                 const report = await collapseDuplicates({
                     roots,
                     ...(minSize !== undefined && !Number.isNaN(minSize) && minSize > 0 ? { minSize } : {}),
