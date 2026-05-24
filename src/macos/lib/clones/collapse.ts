@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { type Dirent, readdirSync } from "node:fs";
 import { basename, dirname, join, relative, sep } from "node:path";
 import { logger } from "@app/logger";
-import { findDuplicateFiles } from "@app/utils/fs/disk-usage";
+import { emptyFindDuplicatesStats, type FileMetaCacheLike, findDuplicateFiles } from "@app/utils/fs/disk-usage";
 import { Stopwatch } from "@app/utils/Stopwatch";
 import { passesGlobs } from "./filters";
 import type { DuplicateSet, DuplicatesReport } from "./render/types";
@@ -17,6 +17,20 @@ export interface CollapseArgs {
     include?: string[];
     /** Glob patterns: exclude files whose RELPATH or any path-segment matches (wins). */
     exclude?: string[];
+    /** Aborts the underlying walk + hash. Hooked to SIGINT by the CLI. */
+    signal?: AbortSignal;
+    /** Directory pruning predicate forwarded to the walk. Lets the CLI skip
+     *  entire `node_modules` / `.git` subtrees before any syscall is spent
+     *  on them — far cheaper than post-filtering globs. */
+    shouldEnter?: (dir: string) => boolean;
+    /** Forwarded to `walkFiles` — called per directory entered (high rate;
+     *  cheap callback only). CLI uses this to drive a live spinner. */
+    onDirEntered?: (dir: string) => void;
+    /** Forwarded to `findDuplicateFiles`. When provided, the hash phase
+     *  reuses cached sha for unchanged files. */
+    cache?: FileMetaCacheLike;
+    /** P3 — opt-in prefix-hash pre-filter. Forwarded to `findDuplicateFiles`. */
+    prefixHash?: boolean;
 }
 
 /** Which root contains `absPath`? Used to relativize for glob matching across
@@ -109,14 +123,46 @@ function isAtOrAboveRoot(dir: string, roots: string[]): boolean {
     return roots.some((root) => dir === root || !relative(dir, root).startsWith(".."));
 }
 
-export function collapseDuplicates({ roots, minSize, include, exclude }: CollapseArgs): DuplicatesReport {
+export async function collapseDuplicates({
+    roots,
+    minSize,
+    include,
+    exclude,
+    signal,
+    shouldEnter,
+    onDirEntered,
+    cache,
+    prefixHash,
+}: CollapseArgs): Promise<DuplicatesReport> {
     const sw = new Stopwatch();
     const shaOf = new Map<string, string>();
     const sizeOf = new Map<string, number>();
     const fileGroups: { sha256: string; size: number; paths: string[] }[] = [];
+    // One stats accumulator across all roots — findDuplicateFiles ADDS to its
+    // counters, so we get sum-of-roots in `stats` at the end.
+    const stats = emptyFindDuplicatesStats();
 
     for (const root of roots) {
-        for (const g of findDuplicateFiles(root, minSize !== undefined ? { minSize } : {})) {
+        const findOpts: Parameters<typeof findDuplicateFiles>[1] = { stats };
+        if (minSize !== undefined) {
+            findOpts.minSize = minSize;
+        }
+        if (signal !== undefined) {
+            findOpts.signal = signal;
+        }
+        if (shouldEnter !== undefined) {
+            findOpts.shouldEnter = shouldEnter;
+        }
+        if (onDirEntered !== undefined) {
+            findOpts.onDirEntered = onDirEntered;
+        }
+        if (cache !== undefined) {
+            findOpts.cache = cache;
+        }
+        if (prefixHash === true) {
+            findOpts.prefixHash = true;
+        }
+        for (const g of await findDuplicateFiles(root, findOpts)) {
             // If include/exclude prunes the group below 2 paths it is no
             // longer a duplicate — drop it.
             const filtered =
@@ -250,9 +296,12 @@ export function collapseDuplicates({ roots, minSize, include, exclude }: Collaps
             dirSets,
             fileSets,
             totalReclaimable,
+            cacheHits: stats.cacheHits,
+            cacheMisses: stats.cacheMisses,
+            sha256Calls: stats.sha256Calls,
             elapsedMs: Math.round(sw.elapsedMs),
         },
         "collapseDuplicates complete"
     );
-    return { roots, sets, totalReclaimable, grouped: false, hardStop: roots };
+    return { roots, sets, totalReclaimable, grouped: false, hardStop: roots, stats };
 }

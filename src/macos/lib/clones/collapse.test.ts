@@ -11,7 +11,7 @@ function tree(base: string, name: string): void {
 }
 
 describe("collapseDuplicates", () => {
-    it("rolls identical dirs up to the whole-dir duplicate (not per-file)", () => {
+    it("rolls identical dirs up to the whole-dir duplicate (not per-file)", async () => {
         const dir = mkdtempSync(join(tmpdir(), "gt-cl-coll-"));
         try {
             mkdirSync(join(dir, "p1"), { recursive: true });
@@ -19,7 +19,7 @@ describe("collapseDuplicates", () => {
             tree(join(dir, "p1"), "dep");
             tree(join(dir, "p2"), "dep");
 
-            const report = collapseDuplicates({ roots: [dir] });
+            const report = await collapseDuplicates({ roots: [dir] });
             expect(report.sets.length).toBe(1);
             const set = report.sets[0];
             expect(set.kind).toBe("dir");
@@ -35,7 +35,7 @@ describe("collapseDuplicates", () => {
         }
     });
 
-    it("HARD STOP: never ascends above a scan root even when parent dirs match", () => {
+    it("HARD STOP: never ascends above a scan root even when parent dirs match", async () => {
         const outer = mkdtempSync(join(tmpdir(), "gt-cl-hs-"));
         try {
             mkdirSync(join(outer, "shared", "r1"), { recursive: true });
@@ -45,7 +45,7 @@ describe("collapseDuplicates", () => {
             const r1 = join(outer, "shared", "r1");
             const r2 = join(outer, "shared", "r2");
 
-            const report = collapseDuplicates({ roots: [r1, r2] });
+            const report = await collapseDuplicates({ roots: [r1, r2] });
             const allPaths = report.sets.flatMap((s) => [s.what, ...s.members]).join("|");
             expect(allPaths).not.toContain(`${join(outer, "shared")}|`);
             for (const s of report.sets) {
@@ -58,7 +58,7 @@ describe("collapseDuplicates", () => {
         }
     });
 
-    it("count cheap-reject: dirs with different file counts are never whole-dir dupes", () => {
+    it("count cheap-reject: dirs with different file counts are never whole-dir dupes", async () => {
         const dir = mkdtempSync(join(tmpdir(), "gt-cl-cr-"));
         try {
             mkdirSync(join(dir, "a"), { recursive: true });
@@ -66,7 +66,7 @@ describe("collapseDuplicates", () => {
             writeFileSync(join(dir, "a", "f1"), Buffer.alloc(30_000, 9));
             writeFileSync(join(dir, "b", "f1"), Buffer.alloc(30_000, 9));
             writeFileSync(join(dir, "b", "extra"), Buffer.alloc(10, 1));
-            const report = collapseDuplicates({ roots: [dir] });
+            const report = await collapseDuplicates({ roots: [dir] });
             const dirSets = report.sets.filter((s) => s.kind === "dir");
             expect(dirSets.length).toBe(0);
             expect(report.sets.some((s) => s.kind === "file")).toBe(true);
