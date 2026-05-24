@@ -1,4 +1,4 @@
-import type { DedupeStatus } from "@app/utils/fs/disk-usage";
+import type { DedupeStatus, FindDuplicatesStats } from "@app/utils/fs/disk-usage";
 
 export type Format = "auto" | "table" | "json" | "jsonl";
 
@@ -78,6 +78,9 @@ export interface DuplicatesReport {
     totalReclaimable: number;
     grouped: boolean;
     hardStop: string[];
+    /** Per-scan stats aggregated across all roots. Optional so older callers
+     *  building reports manually (tests, daemon paths) don't break. */
+    stats?: FindDuplicatesStats;
 }
 
 export type OpKind = "clone" | "skip" | "error" | "rollback-uncloned";
