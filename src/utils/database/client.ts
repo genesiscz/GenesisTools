@@ -33,6 +33,11 @@ export interface CreateKyselyClientOptions<DB> {
     pragmas?: Pragmas;
     /** Open in read-only mode (system databases). */
     readonly?: boolean;
+    /** Return INTEGER columns as `bigint` instead of `number`. Required when a
+     *  column can exceed Number.MAX_SAFE_INTEGER (2^53) — e.g. APFS mtime_ns
+     *  (~1.78e18). bun:sqlite only honors this at construction time, so it's
+     *  hoisted to a top-level option here. Off by default. */
+    safeIntegers?: boolean;
     /** Hook to load extensions (e.g. sqlite-vec) before pragmas/bootstrap run. */
     onOpen?: (db: BunDatabase) => void;
     /** Optional schema-typed reference; only used to anchor the DB type parameter. */
@@ -40,7 +45,7 @@ export interface CreateKyselyClientOptions<DB> {
 }
 
 export function createKyselyClient<DB>(opts: CreateKyselyClientOptions<DB>): DatabaseClient<DB> {
-    const { path, bootstrap, migrations, migrationContext, pragmas, readonly = false, onOpen } = opts;
+    const { path, bootstrap, migrations, migrationContext, pragmas, readonly = false, safeIntegers, onOpen } = opts;
 
     // In-memory DBs have no filesystem directory. `dirname(":memory:")` is a
     // bogus path on Windows (`:` is the drive separator), so the mkdir below
@@ -57,7 +62,14 @@ export function createKyselyClient<DB>(opts: CreateKyselyClientOptions<DB>): Dat
         }
     }
 
-    const raw = new BunDatabase(path, readonly ? { readonly: true } : undefined);
+    const openOpts: { readonly?: boolean; safeIntegers?: boolean } = {};
+    if (readonly) {
+        openOpts.readonly = true;
+    }
+    if (safeIntegers) {
+        openOpts.safeIntegers = true;
+    }
+    const raw = new BunDatabase(path, Object.keys(openOpts).length > 0 ? openOpts : undefined);
     onOpen?.(raw);
     applyPragmas(raw, pragmas, readonly);
 
