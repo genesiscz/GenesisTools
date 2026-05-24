@@ -11,6 +11,7 @@ import {
 } from "@app/macos/lib/clones/audit";
 import { cachePlan, getCachedPlan } from "@app/macos/lib/clones/cache";
 import { collapseDuplicates } from "@app/macos/lib/clones/collapse";
+import { FileMetaCache } from "@app/macos/lib/clones/file-meta-cache";
 import { expandNodeModules, resolveRoots } from "@app/macos/lib/clones/orchestrator";
 import { JsonRenderer, resolveFormat, resolveRenderer } from "@app/macos/lib/clones/render/index";
 import type { DuplicateSet, ProcessReport } from "@app/macos/lib/clones/render/types";
@@ -193,79 +194,144 @@ export function createOptimizeCommand(): Command {
                 nodeModules: Boolean(opts.nodeModules),
             };
 
-            if (opts.apply) {
-                const cached = opts.cache === false ? null : await getCachedPlan(cacheParams);
-                const sets =
-                    cached?.plan ??
-                    collapseDuplicates({
+            // SIGINT/SIGTERM → abort scan within ~one 64 KB chunk. Mirrors
+            // duplicates.ts so optimize's dry-run + --apply scan phases are
+            // also interruptible. Without this the user can wait many seconds
+            // for sync readSync to return on a large file.
+            const controller = new AbortController();
+            const onSigint = (): void => {
+                if (!controller.signal.aborted) {
+                    log.warn("SIGINT received, aborting optimize");
+                    controller.abort(new Error("aborted by SIGINT"));
+                }
+            };
+            process.on("SIGINT", onSigint);
+            process.on("SIGTERM", onSigint);
+
+            // Share the per-file metadata cache singleton with the duplicates
+            // command. The cache only speeds up detection; runOptimize's
+            // dedupeFile still byte-verifies before each clonefile (Safety
+            // Contract invariant 1) so a stale cache row can't cause an
+            // incorrect dedupe — at worst one extra streaming byte-compare.
+            const fileCache = FileMetaCache.getInstance();
+            const scanStartedAt = Date.now();
+
+            try {
+                for (const root of roots) {
+                    await fileCache.loadScope(root);
+                    await fileCache.loadDirScope(root);
+                }
+                log.info(
+                    { scanStartedAt, roots, fileCacheSize: fileCache.size(), dirCacheSize: fileCache.dirSize() },
+                    "optimize starting with FileMetaCache attached"
+                );
+
+                if (opts.apply) {
+                    const cached = opts.cache === false ? null : await getCachedPlan(cacheParams);
+                    const sets =
+                        cached?.plan ??
+                        (
+                            await collapseDuplicates({
+                                roots,
+                                minSize: cacheParams.minSize,
+                                include: cacheParams.include,
+                                exclude: cacheParams.exclude,
+                                cache: fileCache,
+                                signal: controller.signal,
+                            })
+                        ).sets;
+                    const projected = sets.reduce((s, x) => s + x.reclaimable, 0);
+
+                    if (isInteractive()) {
+                        p.intro(pc.bgCyan(pc.black(" clones optimize --apply ")));
+                        p.log.info(
+                            `${sets.length} set(s) → clones · reclaim ${formatBytes(projected)} · ` +
+                                "rewrites in place, content-verified"
+                        );
+                        const token = await p.text({
+                            message: 'Type "apply" to proceed',
+                            validate: (v) => (v === "apply" ? undefined : 'Type exactly "apply" or Ctrl-C'),
+                        });
+
+                        if (p.isCancel(token) || token !== "apply") {
+                            p.cancel("Aborted — nothing was changed.");
+                            process.exit(0);
+                        }
+                    } else if (!opts.yes) {
+                        console.error("optimize --apply requires confirmation. In non-interactive mode pass --yes.");
+                        console.error(
+                            suggestCommand("tools macos clones optimize", {
+                                add: ["--apply", "--yes"],
+                                subcommand: ["macos", "clones", "optimize"],
+                            })
+                        );
+                        process.exit(1);
+                    }
+
+                    try {
+                        const rep = runOptimize({
+                            roots,
+                            sets,
+                            planCacheHit: Boolean(cached),
+                            ...(cached ? { planCacheAgeMs: cached.ageMs } : {}),
+                        });
+                        console.log(resolveRenderer(resolveFormat(opts.format)).processReport(rep));
+                        process.exitCode = rep.totals.errors > 0 ? 1 : 0;
+                    } catch (err) {
+                        if (err instanceof IntegrityError) {
+                            console.error(`INTEGRITY ABORT: ${err.message}`);
+                            process.exit(1);
+                        }
+
+                        if (err instanceof CloneUnsupportedError) {
+                            console.error(`Cannot --apply: ${err.message}`);
+                            process.exit(1);
+                        }
+
+                        throw err;
+                    }
+
+                    return;
+                }
+
+                const sets = (
+                    await collapseDuplicates({
                         roots,
                         minSize: cacheParams.minSize,
                         include: cacheParams.include,
                         exclude: cacheParams.exclude,
-                    }).sets;
-                const projected = sets.reduce((s, x) => s + x.reclaimable, 0);
-
-                if (isInteractive()) {
-                    p.intro(pc.bgCyan(pc.black(" clones optimize --apply ")));
-                    p.log.info(
-                        `${sets.length} set(s) → clones · reclaim ${formatBytes(projected)} · ` +
-                            "rewrites in place, content-verified"
-                    );
-                    const token = await p.text({
-                        message: 'Type "apply" to proceed',
-                        validate: (v) => (v === "apply" ? undefined : 'Type exactly "apply" or Ctrl-C'),
-                    });
-
-                    if (p.isCancel(token) || token !== "apply") {
-                        p.cancel("Aborted — nothing was changed.");
-                        process.exit(0);
-                    }
-                } else if (!opts.yes) {
-                    console.error("optimize --apply requires confirmation. In non-interactive mode pass --yes.");
-                    console.error(
-                        suggestCommand("tools macos clones optimize", {
-                            add: ["--apply", "--yes"],
-                            subcommand: ["macos", "clones", "optimize"],
-                        })
-                    );
-                    process.exit(1);
+                        cache: fileCache,
+                        signal: controller.signal,
+                    })
+                ).sets;
+                await cachePlan(cacheParams, sets);
+                console.log(resolveRenderer(resolveFormat(opts.format)).processReport(dryRunReport(roots, sets)));
+                process.exitCode = 0;
+            } catch (err) {
+                if (controller.signal.aborted) {
+                    log.warn({ err }, "optimize aborted");
+                    process.exitCode = 130;
+                    return;
                 }
 
+                throw err;
+            } finally {
+                // Flush + prune-per-root + close the cache regardless of
+                // success path so subsequent scans see this run's writes
+                // and the WAL is released.
                 try {
-                    const rep = runOptimize({
-                        roots,
-                        sets,
-                        planCacheHit: Boolean(cached),
-                        ...(cached ? { planCacheAgeMs: cached.ageMs } : {}),
-                    });
-                    console.log(resolveRenderer(resolveFormat(opts.format)).processReport(rep));
-                    process.exitCode = rep.totals.errors > 0 ? 1 : 0;
-                } catch (err) {
-                    if (err instanceof IntegrityError) {
-                        console.error(`INTEGRITY ABORT: ${err.message}`);
-                        process.exit(1);
+                    await fileCache.flush(scanStartedAt);
+                    await fileCache.flushDir(scanStartedAt);
+                    for (const root of roots) {
+                        await fileCache.pruneScope(root, scanStartedAt);
+                        await fileCache.pruneDirScope(root, scanStartedAt);
                     }
-
-                    if (err instanceof CloneUnsupportedError) {
-                        console.error(`Cannot --apply: ${err.message}`);
-                        process.exit(1);
-                    }
-
-                    throw err;
+                } finally {
+                    fileCache.close();
                 }
-
-                return;
+                process.off("SIGINT", onSigint);
+                process.off("SIGTERM", onSigint);
             }
-
-            const sets = collapseDuplicates({
-                roots,
-                minSize: cacheParams.minSize,
-                include: cacheParams.include,
-                exclude: cacheParams.exclude,
-            }).sets;
-            await cachePlan(cacheParams, sets);
-            console.log(resolveRenderer(resolveFormat(opts.format)).processReport(dryRunReport(roots, sets)));
-            process.exitCode = 0;
         });
 
     return cmd;
