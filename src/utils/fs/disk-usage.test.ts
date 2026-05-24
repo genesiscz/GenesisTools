@@ -23,6 +23,112 @@ describe("disk-usage per-file sizers + walkFiles", () => {
             rmSync(dir, { recursive: true, force: true });
         }
     });
+
+    it("dir-cache hit replays cached child list (skips readdirSync)", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-dirwalk-"));
+        try {
+            writeFileSync(join(dir, "a.txt"), "1");
+            writeFileSync(join(dir, "b.txt"), "2");
+
+            type DirEntry = {
+                dirMtimeNs: bigint;
+                ino: bigint;
+                childNames: Array<{ name: string; kind: "file" | "dir" | "symlink" }>;
+                lastSeenAt: number;
+            };
+            const dirMem = new Map<string, DirEntry>();
+            const fakeCache = {
+                get: () => null,
+                set: () => {},
+                getDir: (p: string) => dirMem.get(p) ?? null,
+                setDir: (p: string, e: DirEntry) => {
+                    dirMem.set(p, e);
+                },
+            };
+
+            // First walk: cache miss → populates dirMem.
+            const first: string[] = [];
+            for (const e of walkFiles(dir, { cache: fakeCache })) {
+                first.push(e.path);
+            }
+            expect(first.length).toBe(2);
+            expect(dirMem.has(dir)).toBe(true);
+
+            // Inject a sentinel CHILD that doesn't exist on disk. If readdirSync
+            // runs, we won't see it. If the cache hit short-circuits, walkFiles
+            // tries to stat the phantom → onError fires.
+            const entry = dirMem.get(dir);
+            expect(entry).toBeDefined();
+            dirMem.set(dir, {
+                ...(entry as DirEntry),
+                childNames: [...(entry as DirEntry).childNames, { name: "phantom.txt", kind: "file" }],
+            });
+
+            let phantomErrors = 0;
+            for (const _e of walkFiles(dir, {
+                cache: fakeCache,
+                onError: (err) => {
+                    if (err.path.endsWith("phantom.txt")) {
+                        phantomErrors += 1;
+                    }
+                },
+            })) {
+                // count yielded entries via the loop, ignore _e
+                void _e;
+            }
+            expect(phantomErrors).toBe(1); // sentinel proves cached list was used
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("dir-cache mismatch falls back to readdirSync (and overwrites cache)", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-dirwalk-miss-"));
+        try {
+            writeFileSync(join(dir, "a.txt"), "1");
+            type DirEntry = {
+                dirMtimeNs: bigint;
+                ino: bigint;
+                childNames: Array<{ name: string; kind: "file" | "dir" | "symlink" }>;
+                lastSeenAt: number;
+            };
+            const dirMem = new Map<string, DirEntry>();
+            // Poison: wrong mtime + phantom child.
+            dirMem.set(dir, {
+                dirMtimeNs: 999n,
+                ino: 999n,
+                childNames: [{ name: "phantom.txt", kind: "file" }],
+                lastSeenAt: 0,
+            });
+
+            const fakeCache = {
+                get: () => null,
+                set: () => {},
+                getDir: (p: string) => dirMem.get(p) ?? null,
+                setDir: (p: string, e: DirEntry) => {
+                    dirMem.set(p, e);
+                },
+            };
+
+            let phantomErrors = 0;
+            const out: string[] = [];
+            for (const e of walkFiles(dir, {
+                cache: fakeCache,
+                onError: (err) => {
+                    if (err.path.endsWith("phantom.txt")) {
+                        phantomErrors += 1;
+                    }
+                },
+            })) {
+                out.push(e.path);
+            }
+            expect(phantomErrors).toBe(0); // mtime mismatch → readdir ran → no phantom
+            expect(out.length).toBe(1); // a.txt yielded
+            expect(dirMem.get(dir)?.dirMtimeNs).not.toBe(999n); // cache refreshed
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
 });
 
 import { measureTree } from "@app/utils/fs/disk-usage";
@@ -132,7 +238,7 @@ describe("freeDiskSpace / overcountRatio / formatDiskUsage", () => {
 import { findDedupeCandidates, findDuplicateFiles } from "@app/utils/fs/disk-usage";
 
 describe("duplicate detection", () => {
-    it("groups byte-identical files; ignores unique and size-mismatched", () => {
+    it("groups byte-identical files; ignores unique and size-mismatched", async () => {
         const dir = mkdtempSync(join(tmpdir(), "gt-dup-"));
         try {
             const payload = Buffer.alloc(64_000, 0xab);
@@ -141,7 +247,7 @@ describe("duplicate detection", () => {
             writeFileSync(join(dir, "diff.bin"), Buffer.alloc(64_000, 0xcd));
             writeFileSync(join(dir, "small.bin"), Buffer.alloc(10, 1));
 
-            const groups = findDuplicateFiles(dir);
+            const groups = await findDuplicateFiles(dir);
             expect(groups.length).toBe(1);
             expect(groups[0].paths.map((p) => p.split("/").pop()).sort()).toEqual(["one.bin", "two.bin"]);
             expect(groups[0].size).toBe(64_000);
@@ -150,7 +256,211 @@ describe("duplicate detection", () => {
         }
     });
 
-    it("findDedupeCandidates projects savings for non-clone duplicates", () => {
+    it("caches cloneId from walk; cache hit reuses it on warm reruns", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-fmc-clone-"));
+        try {
+            const payload = Buffer.alloc(64_000, 0xab);
+            writeFileSync(join(dir, "one.bin"), payload);
+            writeFileSync(join(dir, "two.bin"), payload);
+
+            type Entry = {
+                size: bigint;
+                mtimeNs: bigint;
+                sha256: string;
+                cloneId: string;
+                lastSeenAt: number;
+            };
+            const mem = new Map<string, Entry>();
+            const fakeCache = {
+                get: (p: string) => mem.get(p) ?? null,
+                set: (p: string, e: Entry) => {
+                    mem.set(p, e);
+                },
+            };
+
+            // First scan: walk's bulk path returns cloneIds, detector groups
+            // by them; cache gets populated with the real cloneIds.
+            await findDuplicateFiles(dir, { cache: fakeCache });
+            expect(mem.size).toBe(2);
+            const one = mem.get(join(dir, "one.bin"));
+            expect(one).toBeDefined();
+            const { getCloneId } = await import("@app/utils/macos/apfs");
+            const freshOne = getCloneId(join(dir, "one.bin"));
+            const expectedOne = freshOne !== null && freshOne !== 0n ? freshOne.toString(16) : "";
+            expect(one?.cloneId).toBe(expectedOne);
+            // Both files end up cached with their real (divergent) cloneIds.
+            expect(mem.get(join(dir, "two.bin"))?.cloneId).toBeDefined();
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("skips bytesEqualStreaming when both sides are cache-confirmed (warm fast path)", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-fmc-bytes-"));
+        try {
+            const payload = Buffer.alloc(64_000, 0xab);
+            writeFileSync(join(dir, "one.bin"), payload);
+            writeFileSync(join(dir, "two.bin"), payload);
+
+            type Entry = {
+                size: bigint;
+                mtimeNs: bigint;
+                sha256: string;
+                cloneId: string;
+                lastSeenAt: number;
+            };
+            const mem = new Map<string, Entry>();
+            const fakeCache = {
+                get: (p: string) => mem.get(p) ?? null,
+                set: (p: string, e: Entry) => {
+                    mem.set(p, e);
+                },
+            };
+            const emptyStats = () => ({
+                walkedFiles: 0,
+                walkedDirs: 0,
+                walkMs: 0,
+                bucketsTotal: 0,
+                bucketsDroppedByClone: 0,
+                bucketsHashed: 0,
+                cloneIdCalls: 0,
+                sha256Calls: 0,
+                sha256Bytes: 0,
+                byteCompareCalls: 0,
+                hashMs: 0,
+                cacheHits: 0,
+                cacheMisses: 0,
+                prefixHashCalls: 0,
+                prefixHashDrops: 0,
+            });
+
+            // Baseline: WITHOUT a cache, byte-compare runs unconditionally.
+            const noCacheStats = emptyStats();
+            await findDuplicateFiles(dir, { stats: noCacheStats });
+            expect(noCacheStats.byteCompareCalls).toBe(1);
+
+            // WITH a cache, even the first scan short-circuits the byte-compare:
+            // cache.set runs inside the hash loop (~10 lines before the
+            // byte-compare filter), so by the time the filter reads cache.get
+            // for both files, the just-written entries match the fresh stats.
+            // That's by design — those entries are by-construction correct
+            // (we just computed sha + stat ourselves this iteration).
+            const coldStats = emptyStats();
+            await findDuplicateFiles(dir, { cache: fakeCache, stats: coldStats });
+            expect(coldStats.byteCompareCalls).toBe(0);
+
+            // Warm: same outcome.
+            const warmStats = emptyStats();
+            const warm = await findDuplicateFiles(dir, { cache: fakeCache, stats: warmStats });
+            expect(warm.length).toBe(1); // still detected as duplicate
+            expect(warmStats.byteCompareCalls).toBe(0);
+
+            // Cache-with-set-blocked-for-one-path mimics "the entry never made
+            // it into the cache" — get returns null for one.bin both during
+            // the hash loop and during the byte-compare filter. The
+            // byte-compare must then run to confirm the pair.
+            const oneKey = join(dir, "one.bin");
+            const fakeBlockingCache = {
+                get: (p: string) => (p === oneKey ? null : (mem.get(p) ?? null)),
+                set: (p: string, e: Entry) => {
+                    if (p !== oneKey) {
+                        mem.set(p, e);
+                    }
+                },
+            };
+            const fallbackStats = emptyStats();
+            await findDuplicateFiles(dir, { cache: fakeBlockingCache, stats: fallbackStats });
+            expect(fallbackStats.byteCompareCalls).toBe(1); // re-verified
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("reuses cached sha256 on warm scan; sentinel sha proves the comparison fires", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-fmc-"));
+        try {
+            const payload = Buffer.alloc(64_000, 0xab);
+            writeFileSync(join(dir, "one.bin"), payload);
+            writeFileSync(join(dir, "two.bin"), payload);
+
+            // Tiny in-memory fake of FileMetaCache (the real one is in
+            // src/macos/lib/clones/, but this test stays in utils/ for layering).
+            type Entry = {
+                size: bigint;
+                mtimeNs: bigint;
+                sha256: string;
+                cloneId: string;
+                lastSeenAt: number;
+            };
+            const mem = new Map<string, Entry>();
+            const fakeCache = {
+                get: (p: string) => mem.get(p) ?? null,
+                set: (p: string, e: Entry) => {
+                    mem.set(p, e);
+                },
+            };
+
+            // Cold run: cache is empty, both files hash, both get cached.
+            const cold = await findDuplicateFiles(dir, { cache: fakeCache });
+            expect(cold.length).toBe(1);
+            expect(mem.size).toBe(2); // both reps cached
+
+            // Inject a sentinel sha for one of the files. If the cache lookup
+            // honors size+mtime correctly, the warm scan reuses this sentinel
+            // → "two.bin"'s sha mismatches "one.bin" → no group emitted.
+            const twoPath = join(dir, "two.bin");
+            const original = mem.get(twoPath);
+            expect(original).toBeDefined();
+            mem.set(twoPath, { ...(original as Entry), sha256: "00".repeat(32) });
+
+            const warm = await findDuplicateFiles(dir, { cache: fakeCache });
+            expect(warm.length).toBe(0); // sentinel forced a mismatch → proves the cache fires
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("cache miss on size/mtime change re-hashes and overwrites the row", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-fmc-miss-"));
+        try {
+            const payload = Buffer.alloc(32_000, 0x55);
+            writeFileSync(join(dir, "one.bin"), payload);
+            writeFileSync(join(dir, "two.bin"), payload);
+
+            type Entry = {
+                size: bigint;
+                mtimeNs: bigint;
+                sha256: string;
+                cloneId: string;
+                lastSeenAt: number;
+            };
+            const mem = new Map<string, Entry>();
+            const fakeCache = {
+                get: (p: string) => mem.get(p) ?? null,
+                set: (p: string, e: Entry) => {
+                    mem.set(p, e);
+                },
+            };
+
+            await findDuplicateFiles(dir, { cache: fakeCache });
+            const twoPath = join(dir, "two.bin");
+            const beforeSha = mem.get(twoPath)?.sha256;
+            expect(beforeSha).toBeDefined();
+
+            // Poison the cache with a mtimeNs that won't match: warm scan should
+            // detect the mismatch and re-hash, overwriting the row with the
+            // real sha (same as cold).
+            const original = mem.get(twoPath) as Entry;
+            mem.set(twoPath, { ...original, mtimeNs: 999n, sha256: "deadbeef" });
+
+            await findDuplicateFiles(dir, { cache: fakeCache });
+            expect(mem.get(twoPath)?.sha256).toBe(beforeSha);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("findDedupeCandidates projects savings for non-clone duplicates", async () => {
         const dir = mkdtempSync(join(tmpdir(), "gt-dupc-"));
         try {
             const payload = Buffer.alloc(128_000, 0x7);
@@ -158,7 +468,7 @@ describe("duplicate detection", () => {
             writeFileSync(join(dir, "b.bin"), payload);
             writeFileSync(join(dir, "c.bin"), payload);
 
-            const cands = findDedupeCandidates(dir);
+            const cands = await findDedupeCandidates(dir);
             expect(cands.length).toBe(1);
             // 3 copies → keep 1, reclaim ~2 copies
             expect(cands[0].reclaimable).toBeGreaterThanOrEqual(128_000);
@@ -308,7 +618,7 @@ describe.skipIf(skip.unlessMac)("dedupeFile safety", () => {
 import { dedupeTree } from "@app/utils/fs/disk-usage";
 
 describe.skipIf(skip.unlessMac)("dedupeTree", () => {
-    it("dry-run reports candidates and mutates nothing; apply reclaims space", () => {
+    it("dry-run reports candidates and mutates nothing; apply reclaims space", async () => {
         const dir = mkdtempSync(join(tmpdir(), "gt-deduptree-"));
         try {
             const payload = Buffer.alloc(1024 * 1024, 0x5e);
@@ -316,17 +626,17 @@ describe.skipIf(skip.unlessMac)("dedupeTree", () => {
             writeFileSync(join(dir, "q.bin"), payload);
             writeFileSync(join(dir, "r.bin"), payload);
 
-            const dry = dedupeTree(dir); // default dryRun: true
+            const dry = await dedupeTree(dir); // default dryRun: true
             expect(dry.dryRun).toBe(true);
             expect(dry.projectedReclaim).toBeGreaterThanOrEqual(2 * 1024 * 1024);
             expect(dry.cloned).toBe(0);
 
-            const applied = dedupeTree(dir, { apply: true });
+            const applied = await dedupeTree(dir, { apply: true });
             expect(applied.cloned).toBe(2); // q,r → clones of p
             expect(applied.bytesReclaimed).toBeGreaterThan(0);
 
             // re-running finds nothing left (already clones)
-            const again = dedupeTree(dir, { apply: true });
+            const again = await dedupeTree(dir, { apply: true });
             expect(again.cloned).toBe(0);
         } finally {
             rmSync(dir, { recursive: true, force: true });
