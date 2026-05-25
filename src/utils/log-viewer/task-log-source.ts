@@ -2,7 +2,6 @@ import type { LogEntry } from "@app/debugging-master/types";
 import { jsonlPath, metaPath } from "@app/task/lib/paths";
 import { TaskSessionStore } from "@app/task/lib/session-store";
 import { filterLineRecords, readJsonlFile } from "@app/utils/log-session/jsonl-reader";
-import { DebuggingMasterLogSource } from "./debugging-master-log-source";
 import type { LogSource, LogSourceSession } from "./log-source";
 import { taskRecordToLogEntry } from "./log-source";
 
@@ -16,6 +15,7 @@ export class TaskLogSource implements LogSource {
         const sessions: LogSourceSession[] = [];
 
         for (const name of names) {
+            const meta = await this.store.getSessionMeta(name);
             const records = await readJsonlFile(jsonlPath(name));
             const lines = filterLineRecords(records);
             sessions.push({
@@ -25,6 +25,9 @@ export class TaskLogSource implements LogSource {
                 jsonlPath: jsonlPath(name),
                 metaPath: metaPath(name),
                 entryCount: lines.length,
+                command: meta?.command,
+                createdAt: meta?.createdAt,
+                lastActivityAt: meta?.lastActivityAt,
             });
         }
 
@@ -39,8 +42,4 @@ export class TaskLogSource implements LogSource {
     getJsonlPath(sessionName: string): string {
         return jsonlPath(sessionName);
     }
-}
-
-export function getAllLogSources(): LogSource[] {
-    return [new DebuggingMasterLogSource(), new TaskLogSource()];
 }

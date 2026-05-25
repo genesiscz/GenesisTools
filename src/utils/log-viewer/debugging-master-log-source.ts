@@ -14,6 +14,7 @@ export class DebuggingMasterLogSource implements LogSource {
         const sessions: LogSourceSession[] = [];
 
         for (const name of names) {
+            const meta = await this.manager.getSessionMeta(name);
             const entries = await this.manager.readEntries(name);
             sessions.push({
                 source: this.id,
@@ -22,6 +23,9 @@ export class DebuggingMasterLogSource implements LogSource {
                 jsonlPath: join(SESSIONS_DIR, `${name}.jsonl`),
                 metaPath: join(SESSIONS_DIR, `${name}.meta.json`),
                 entryCount: entries.length,
+                projectPath: meta?.projectPath,
+                createdAt: meta?.createdAt,
+                lastActivityAt: meta?.lastActivityAt,
             });
         }
 
