@@ -9,10 +9,18 @@
 import { closeSync, existsSync, openSync, readSync, statSync } from "node:fs";
 import { logger, out } from "@app/logger";
 import { Browser } from "@app/utils/browser";
-import { suggestCommand } from "@app/utils/cli";
+import { isInteractive, suggestCommand } from "@app/utils/cli";
+import * as p from "@clack/prompts";
+import pc from "picocolors";
 import { getPortOwner } from "@app/utils/network";
 import { spawnDashboard } from "@app/utils/process/spawnDashboard";
 import { stripAnsi } from "@app/utils/string";
+import {
+    defaultLanDashboardUrl,
+    openDashboardAccess,
+    presentDashboardAccess,
+    resolveDashboardAccessPresentation,
+} from "./access";
 import { spawnDetached } from "./detach";
 import {
     bootoutLaunchd,
@@ -40,6 +48,7 @@ import type {
     DownOptions,
     DownResult,
     InstallOptions,
+    OpenOptions,
     PreflightWarning,
     StatusResult,
     UpOptions,
@@ -341,7 +350,9 @@ async function handleMineMenu(
 ): Promise<UpResult> {
     const { config } = ctx;
     const port = effectivePort;
-    const choice = await promptMineMenu(port, pid, { canOpen: config.type === "ui" });
+    const choice = await promptMineMenu(port, pid, {
+        canOpen: config.type === "ui" || Boolean(config.access?.qr),
+    });
 
     if (choice === null) {
         // Non-TTY: print the verbs and exit.
@@ -372,8 +383,14 @@ async function handleMineMenu(
         return { started: false, port, mode: "background", pid };
     }
     if (choice === "open") {
+        const browserUrl = config.openBrowser?.url?.(port) ?? defaultLanDashboardUrl(port);
         if (config.type === "ui") {
             await openBrowserWhenReady(config, port);
+        } else if (config.access?.qr) {
+            presentDashboardAccess(resolveDashboardAccessPresentation(config, port, { url: browserUrl }));
+            await Browser.open(browserUrl).catch((err) => {
+                logger.warn({ err }, `[${config.key}] browser open failed`);
+            });
         }
         return { started: false, port, mode: "background", pid };
     }
@@ -642,7 +659,12 @@ export function shouldOpenBrowser(config: DashboardAppConfig, opts: UpOptions): 
 }
 
 async function openBrowserWhenReady(config: DashboardAppConfig, port: number): Promise<void> {
-    const browserUrl = config.openBrowser?.url ? config.openBrowser.url(port) : `http://localhost:${port}`;
+    const browserUrl = config.openBrowser?.url ? config.openBrowser.url(port) : defaultLanDashboardUrl(port);
+
+    if (config.access?.qr) {
+        presentDashboardAccess(resolveDashboardAccessPresentation(config, port, { url: browserUrl }));
+    }
+
     const ready = await waitForUrlReady(browserUrl, 20_000);
 
     if (!ready.ready) {
@@ -796,6 +818,100 @@ function isProcessAlive(pid: number): boolean {
         logger.debug({ err, pid }, "process liveness probe failed");
         return false;
     }
+}
+
+export function dashboardUrlWithQuery(port: number, query?: Record<string, string>, baseUrl?: string): string {
+    const url = new URL(baseUrl ?? defaultLanDashboardUrl(port));
+
+    if (query) {
+        for (const [key, value] of Object.entries(query)) {
+            url.searchParams.set(key, value);
+        }
+    }
+
+    return url.toString();
+}
+
+function readinessProbePath(config: DashboardAppConfig): string {
+    const probe = config.readiness;
+
+    if (probe?.kind === "http") {
+        return probe.path ?? "/";
+    }
+
+    return "/";
+}
+
+async function isDashboardReady(ctx: LifecycleContext, port: number): Promise<boolean> {
+    const path = readinessProbePath(ctx.config);
+    const ready = await waitForUrlReady(`http://127.0.0.1:${port}${path}`, 2_000);
+
+    return ready.ready;
+}
+
+async function ensureDashboardRunningForOpen(ctx: LifecycleContext, port: number): Promise<void> {
+    if (await isDashboardReady(ctx, port)) {
+        return;
+    }
+
+    const { config } = ctx;
+    const serveHint = config.open?.serveHint;
+
+    if (!isInteractive()) {
+        out.printlnErr(`error: ${config.name ?? config.key} is not running on port ${port}.`);
+
+        if (serveHint) {
+            out.printlnErr(suggestCommand(serveHint.tool, { replaceCommand: serveHint.replaceCommand }));
+        }
+
+        process.exit(1);
+    }
+
+    const shouldStart = await p.confirm({
+        message: `${config.name ?? config.key} is not running on port ${port}. Start it now?`,
+        initialValue: true,
+    });
+
+    if (p.isCancel(shouldStart) || !shouldStart) {
+        p.cancel("Dashboard not opened.");
+        process.exit(0);
+    }
+
+    out.printlnErr(pc.dim(`▸ Starting ${config.name ?? config.key} on :${port}`));
+
+    const result = await up(ctx, { port, open: false });
+
+    if (!result.started && !(await isDashboardReady(ctx, port))) {
+        out.printlnErr(`error: ${config.name ?? config.key} did not become ready.`);
+        out.printlnErr(pc.dim(`  logs → ${ctx.logFile}`));
+        process.exit(1);
+    }
+}
+
+export async function openDashboard(ctx: LifecycleContext, opts: OpenOptions = {}): Promise<void> {
+    const { config } = ctx;
+    const port = opts.port ?? ctx.port;
+
+    if (Number.isNaN(port) || port < 1 || port > 65_535) {
+        out.printlnErr(`error: Invalid port: ${opts.port ?? port}`);
+        process.exit(1);
+    }
+
+    if (config.open?.preflight) {
+        await config.open.preflight();
+    }
+
+    await ensureDashboardRunningForOpen(ctx, port);
+
+    const url = dashboardUrlWithQuery(port, opts.query);
+    const presentation = resolveDashboardAccessPresentation(config, port, { url });
+    const showQr = opts.qr === false ? false : Boolean(opts.qr ?? config.access?.qr);
+
+    await openDashboardAccess({
+        ...presentation,
+        qr: showQr ? (presentation.qr ?? true) : undefined,
+        openBrowser: opts.openBrowser !== false,
+    });
 }
 
 // Re-export the imperative interface assembled by `index.ts`.

@@ -40,6 +40,17 @@ export interface PreflightWarning {
     fix?: string;
 }
 
+export type DashboardQrOption = boolean | { small?: boolean; level?: "L" | "M" | "Q" | "H" };
+
+export interface DashboardAccessConfig {
+    /** Print a LAN QR code under the URL banner. Default off. */
+    qr?: DashboardQrOption;
+    /** Banner label prefix. Default "dashboard". */
+    label?: string;
+    /** Resolve the URL shown in the banner (and encoded in the QR). */
+    url?: (port: number) => string;
+}
+
 export interface DashboardAppConfig {
     type: DashboardAppType;
 
@@ -90,12 +101,31 @@ export interface DashboardAppConfig {
         url?: (port: number) => string;
     };
 
+    /** Optional LAN URL banner + QR when presenting or opening the dashboard. */
+    access?: DashboardAccessConfig;
+
+    /** Options for the shared `open` verb (preflight, non-TTY serve hint). */
+    open?: DashboardOpenConfig;
+
     /** Launchd opt-in. */
     launchd?: {
         available: boolean;
         /** Plist label. Default `com.genesis-tools.<key>`. */
         label?: string;
     };
+}
+
+export interface DashboardOpenConfig {
+    preflight?: () => Promise<void>;
+    serveHint?: { tool: string; replaceCommand: string[] };
+}
+
+export interface OpenOptions {
+    port?: number;
+    query?: Record<string, string>;
+    openBrowser?: boolean;
+    /** When false, skip QR even if access.qr is set. */
+    qr?: boolean;
 }
 
 export interface UpOptions {
@@ -183,4 +213,5 @@ export interface DashboardApp {
     logs(opts?: { lines?: number }): Promise<void>;
     install(opts?: InstallOptions): Promise<void>;
     uninstall(): Promise<void>;
+    open(opts?: OpenOptions): Promise<void>;
 }
