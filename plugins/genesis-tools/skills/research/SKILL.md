@@ -1,7 +1,6 @@
 ---
 name: gt:research
 description: Use when user says "research X", "look up X online", "what's the current state of X", "what are people saying about X", "find examples of X on github", "compare options for X", "is X worth using", "what do people complain about with X", or otherwise asks for information from outside the local codebase.
-context: fork
 ---
 
 # Research
@@ -96,7 +95,7 @@ Tool lists are **strong nudges**, not bans: agents should prefer these; missing 
 - **Agent:** single `gt:explore` (or `general-purpose` if `gt:explore` not installed), Haiku
 - **Tools:** `mcp__brave-search__brave_web_search`, `mcp__jina__parallel_read_url`; if `obsidian:defuddle` skill is available use it for clean article capture
 - **Min sources:** 4
-- **Save:** if user asked or said "save to obsidian", default to `.claude/work/research/YYYY-MM-DD-HHMM-<CamelCaseTopic>.md` (time in name because news is a dated snapshot); add an Obsidian copy ONLY if the user has set `OBSIDIAN_VAULT_PATH` env var or explicitly named the vault path
+- **Save:** if user asked or said "save to obsidian", default to `.claude/work/research/YYYY-MM-DD-HHMM-<CamelCaseTopic>.md` (time in name because news is a dated snapshot); add an Obsidian copy only if a vault resolves (see **Obsidian vault resolution**) — if none resolves, the `.claude/work/research/` file is the only output
 
 ### comparison
 
@@ -153,16 +152,48 @@ Tool lists are **strong nudges**, not bans: agents should prefer these; missing 
 
 Agents must either meet the count or return **"Under-count: found X of N required"**. No invention. No padding with low-quality links. Main Claude surfaces under-counts in the inline summary and the "Confidence & Gaps" section of the file.
 
+## Obsidian vault resolution
+
+Runs **only when an Obsidian save is actually requested** — the user said "save to obsidian" / "braindump this", or a category preset wants an Obsidian copy *and* the user opted into saving. If no Obsidian save was asked for, skip this section entirely: never auto-detect, never prompt.
+
+Resolve the vault path in this order; **stop at the first hit:**
+
+1. **`$OBSIDIAN_VAULT_PATH` set and non-empty** → use it. No detection, no prompt, no persist offer.
+2. **User named a path in the request** ("save to ~/Notes/…") → expand `~`, use it.
+3. **`obsidian-cli`** — only if `command -v obsidian-cli` succeeds. Run `obsidian-cli print-default --path-only`. Accept the result only if exit code is `0` **and** stdout is non-empty **and** the trimmed path is an existing directory (`[ -d "$path" ]`). `obsidian-cli` being on PATH does NOT imply a default vault is configured (`set-default` may never have run).
+4. **Obsidian desktop registry** (no CLI needed) — read the `vaults` map from the platform config file:
+   - macOS: `~/Library/Application Support/obsidian/obsidian.json`
+   - Linux: `${XDG_CONFIG_HOME:-~/.config}/obsidian/obsidian.json`
+   - Windows: `%APPDATA%\obsidian\obsidian.json`
+
+   Expand `~`. If the file is missing, unreadable, or not valid JSON → silently advance to step 5 (never surface an error). Each entry looks like `{ "path": "...", "ts": <last-opened-ms>, "open": true }`. Selection:
+   - drop any entry whose `path` no longer exists on disk;
+   - exactly one remaining → use its `path`;
+   - multiple → auto-pick the one with `"open": true`, else the highest `ts`. Only if still ambiguous (no `open`, missing/tied `ts`) → `AskUserQuestion` listing vault basenames.
+5. **Ask** — `AskUserQuestion`: "Where's your Obsidian vault? (absolute path)", free-text. If the user cancels or has none → fall back to `.claude/work/research/`, note it in `Confidence & Gaps`, and **do not block** the research.
+
+### Persist the resolved path (offer once)
+
+If the path came from steps 2–5 (i.e. it was **not** already in `$OBSIDIAN_VAULT_PATH`) — and this isn't a "temporary"/"quick" run — offer once to persist it so future runs skip detection. **Exception:** if the path came from step 2 (a user-named path), only offer to persist it when it's actually a vault root (contains a `.obsidian/` subdir); a one-off subfolder like `~/Notes/scratch` should be used for this run but never saved as the global `OBSIDIAN_VAULT_PATH`. `AskUserQuestion`:
+
+- **Question:** "Save `OBSIDIAN_VAULT_PATH=<path>` so I can skip detection next time?"
+- **Options:**
+  - **`~/.claude/settings.json`** — Claude-only; the harness injects the `env` block into Claude Code's environment at session start. Add/replace `OBSIDIAN_VAULT_PATH` inside the top-level `env` object (create `env` if absent). **Use the Read + Edit tools to splice the one key in place** — do NOT parse-and-rewrite the whole file (settings.json is JSONC; a strict `JSON.parse`/stringify round-trip would strip comments and reformat unrelated keys).
+  - **Shell rc** — all tools, all shells. Detect from `$SHELL`: zsh → `~/.zshrc`, bash → `~/.bashrc`, fish → `~/.config/fish/config.fish`. Append `export OBSIDIAN_VAULT_PATH="<path>"` (fish: `set -Ux OBSIDIAN_VAULT_PATH "<path>"`). If a line already sets it, replace that line instead of duplicating.
+  - **`Just this run`** — don't persist.
+
+A persisted value only takes effect in **new** sessions/shells; use the resolved path for THIS run regardless, and say so. The skill writes only the one chosen file — never both.
+
 ## Save rules
 
 Main Claude decides the path **before** dispatching and passes the explicit absolute path to any agent that saves raw material. Agents never guess paths.
 
 | Trigger | Path |
 |---|---|
-| User says "save to Obsidian" / "braindump this" AND has `$OBSIDIAN_VAULT_PATH` set OR specified a vault path | `$OBSIDIAN_VAULT_PATH/Braindump/YYYY-MM-DD-<CamelCaseTopic>.md` (or user-specified subfolder) |
+| User says "save to Obsidian" / "braindump this" | Resolve via **Obsidian vault resolution** above → `<vault>/Braindump/YYYY-MM-DD-<CamelCaseTopic>.md` (or user-specified subfolder). If no vault resolves → `.claude/work/research/YYYY-MM-DD-<CamelCaseTopic>.md` + note in `Confidence & Gaps` |
 | Category = `news` | `.claude/work/research/YYYY-MM-DD-HHMM-<CamelCaseTopic>.md` |
 | Category = `code_hunt`, or query is project-scoped (mentions current repo/feature) | `.claude/work/research/YYYY-MM-DD-<CamelCaseTopic>.md` in cwd |
-| Category = `comparison` / `deep_technical` and broadly useful | `.claude/work/research/YYYY-MM-DD-<CamelCaseTopic>.md`; copy to Obsidian if vault path set |
+| Category = `comparison` / `deep_technical` and broadly useful | `.claude/work/research/YYYY-MM-DD-<CamelCaseTopic>.md`; copy to Obsidian only if a vault resolves (see **Obsidian vault resolution**), else skip the copy |
 | User says "temporary" / "just tell me" / "don't save" / "quick" | inline only, no file |
 | `factual` / small `sentiment` | inline only unless user asked |
 
@@ -245,10 +276,11 @@ SAVE RAW REPORT TO: <exact absolute path, provided by main Claude>
 ## Guardrails
 
 - **Source minimums are hard** (see table above). No invention, no padding.
-- **`AskUserQuestion` fires at most twice per research run**: once for the optional install offer (only if useful and user-stakes-permit), once for ambiguity/depth clarification. Never more.
+- **`AskUserQuestion` budget.** Up to **twice** for the core run: once for the optional install offer, once for ambiguity/depth. **Plus up to two more** — *only* when an Obsidian save is requested and `$OBSIDIAN_VAULT_PATH` isn't already set: one for vault resolution (pick-from-list **or** free-text, never both) and one for the persist offer. Never prompt about the vault when no Obsidian save was asked for.
 - **Tool-availability fallback.** Missing MCP → drop from allowlist, substitute per the table, note in "Confidence & Gaps".
 - **Install offer is opt-in**, never automatic. Default to Skip when in doubt. Never run install commands on behalf of the user — show the command and config snippet only.
-- **"Temporary" override.** Query contains "temporary", "just tell me", "don't save", "quick", "no need to save" → skip file write, skip install offer, inline only. Source minimums still enforced.
+- **Vault detection is gated on an Obsidian save being requested**, and persists only with explicit consent. Never auto-edit `settings.json` or a shell rc without the user picking that option in the persist offer.
+- **"Temporary" override.** Query contains "temporary", "just tell me", "don't save", "quick", "no need to save" → skip file write, skip install offer, skip the vault persist offer, inline only. Source minimums still enforced.
 - **Concurrency cap = 4 parallel agents** per research run. If a preset would spawn more, drop the lowest-priority angle.
 - **Honest under-count reporting** surfaces in both the inline summary and "Confidence & Gaps".
 - **Mixed-model parallel** is fine when non-critical (e.g., Sonnet for docs + Haiku for Reddit in the same fan-out).
@@ -271,9 +303,9 @@ User: "what do people complain about with tRPC, quick"
 User: "find examples of how people use Effect.ts for HTTP clients on github"
 → category=`code_hunt`, single Sonnet, gh_grep + jina read, 3 cited examples, save to `.claude/work/research/2026-04-27-EffectTsHttpClient.md`.
 
-**Example 5 — news, no Obsidian vault configured**
-User: "what happened with React Compiler recently, save it"
-→ category=`news`, single Haiku on `gt:explore` (or `general-purpose` if missing), 4 sources, save to `.claude/work/research/2026-04-27-1430-ReactCompilerUpdate.md` (no Obsidian copy because `OBSIDIAN_VAULT_PATH` is unset).
+**Example 5 — news, vault auto-detected then persisted**
+User: "what happened with React Compiler recently, save to obsidian"
+→ category=`news`, single Haiku on `gt:explore` (or `general-purpose` if missing), 4 sources. `OBSIDIAN_VAULT_PATH` unset → resolution runs: `obsidian-cli print-default --path-only` succeeds (or, no CLI, the `obsidian.json` registry yields one open vault). Offer once to persist it → user picks `~/.claude/settings.json`; skill merges `env.OBSIDIAN_VAULT_PATH` (takes effect next session). Save to `<vault>/Braindump/2026-04-27-1430-ReactCompilerUpdate.md` this run regardless. Had nothing resolved and the user skipped the path prompt → `.claude/work/research/2026-04-27-1430-ReactCompilerUpdate.md`, gap noted.
 
 **Example 6 — deep_technical, depth unstated**
 User: "research how Postgres MVCC works"
