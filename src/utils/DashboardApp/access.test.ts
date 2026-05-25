@@ -1,5 +1,10 @@
 import { describe, expect, it } from "bun:test";
-import { defaultLanDashboardUrl, resolveDashboardAccessPresentation } from "./access";
+import {
+    defaultLanDashboardUrl,
+    defaultLocalDashboardUrl,
+    resolveDashboardAccessPresentation,
+    resolveDashboardBrowserUrl,
+} from "./access";
 import type { DashboardAppConfig } from "./types";
 
 describe("DashboardApp access", () => {
@@ -43,5 +48,30 @@ describe("DashboardApp access", () => {
             url: "http://lan.test:9000/?source=task&session=metro",
         });
         expect(presentation.url).toContain("session=metro");
+    });
+
+    it("resolveDashboardBrowserUrl uses localhost for default bind", () => {
+        const config = {
+            type: "ui",
+            key: "test",
+            description: "test",
+            commandName: "ui",
+            spawn: { cmd: ["true"] },
+        } satisfies DashboardAppConfig;
+
+        expect(resolveDashboardBrowserUrl(config, 3000)).toBe(defaultLocalDashboardUrl(3000));
+    });
+
+    it("resolveDashboardBrowserUrl uses LAN for 0.0.0.0 bind", () => {
+        const config = {
+            type: "ui",
+            key: "test",
+            description: "test",
+            commandName: "ui",
+            bindHost: "0.0.0.0",
+            spawn: { cmd: ["true"] },
+        } satisfies DashboardAppConfig;
+
+        expect(resolveDashboardBrowserUrl(config, 7243)).toBe(defaultLanDashboardUrl(7243));
     });
 });

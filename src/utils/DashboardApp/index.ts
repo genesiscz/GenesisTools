@@ -52,9 +52,12 @@ import type {
 export type { OpenDashboardAccessOpts, PresentDashboardAccessOpts } from "./access";
 export {
     defaultLanDashboardUrl,
+    defaultLocalDashboardUrl,
     openDashboardAccess,
     presentDashboardAccess,
     resolveDashboardAccessPresentation,
+    resolveDashboardBindHost,
+    resolveDashboardBrowserUrl,
 } from "./access";
 export { dashboardUrlWithQuery } from "./lifecycle";
 export type {

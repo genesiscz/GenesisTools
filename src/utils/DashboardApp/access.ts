@@ -4,7 +4,8 @@ import { getLocalIpv4 } from "@app/utils/network";
 import { type QrOptions, renderQr } from "@app/utils/qr";
 import pc from "picocolors";
 import { waitForUrlReady } from "./readiness";
-import type { DashboardAppConfig, DashboardQrOption } from "./types";
+import type { DashboardAppConfig, DashboardBindHost, DashboardQrOption } from "./types";
+import { DEFAULT_BIND_HOST } from "./viteSpawn";
 
 export interface PresentDashboardAccessOpts {
     url: string;
@@ -21,12 +22,38 @@ export function defaultLanDashboardUrl(port: number, path = "/"): string {
     return `http://${getLocalIpv4()}:${port}${path}`;
 }
 
+export function defaultLocalDashboardUrl(port: number, path = "/"): string {
+    return `http://127.0.0.1:${port}${path}`;
+}
+
+export function resolveDashboardBindHost(config: DashboardAppConfig): DashboardBindHost {
+    return config.bindHost ?? DEFAULT_BIND_HOST;
+}
+
+/** URL to probe and open in the browser — localhost when bound to loopback, LAN when on 0.0.0.0. */
+export function resolveDashboardBrowserUrl(config: DashboardAppConfig, port: number, path = "/"): string {
+    if (config.openBrowser?.url) {
+        return config.openBrowser.url(port);
+    }
+
+    if (resolveDashboardBindHost(config) === "0.0.0.0") {
+        return defaultLanDashboardUrl(port, path);
+    }
+
+    return defaultLocalDashboardUrl(port, path);
+}
+
 export function resolveDashboardAccessPresentation(
     config: DashboardAppConfig,
     port: number,
     overrides?: { url?: string }
 ): PresentDashboardAccessOpts {
-    const url = overrides?.url ?? config.access?.url?.(port) ?? defaultLanDashboardUrl(port);
+    const url =
+        overrides?.url ??
+        config.access?.url?.(port) ??
+        (resolveDashboardBindHost(config) === "0.0.0.0"
+            ? defaultLanDashboardUrl(port)
+            : defaultLocalDashboardUrl(port));
 
     return {
         url,

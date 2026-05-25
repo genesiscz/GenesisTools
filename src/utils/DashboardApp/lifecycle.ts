@@ -10,16 +10,16 @@ import { closeSync, existsSync, openSync, readSync, statSync } from "node:fs";
 import { logger, out } from "@app/logger";
 import { Browser } from "@app/utils/browser";
 import { isInteractive, suggestCommand } from "@app/utils/cli";
-import * as p from "@clack/prompts";
-import pc from "picocolors";
 import { getPortOwner } from "@app/utils/network";
 import { spawnDashboard } from "@app/utils/process/spawnDashboard";
 import { stripAnsi } from "@app/utils/string";
+import * as p from "@clack/prompts";
+import pc from "picocolors";
 import {
-    defaultLanDashboardUrl,
     openDashboardAccess,
     presentDashboardAccess,
     resolveDashboardAccessPresentation,
+    resolveDashboardBrowserUrl,
 } from "./access";
 import { spawnDetached } from "./detach";
 import {
@@ -383,7 +383,7 @@ async function handleMineMenu(
         return { started: false, port, mode: "background", pid };
     }
     if (choice === "open") {
-        const browserUrl = config.openBrowser?.url?.(port) ?? defaultLanDashboardUrl(port);
+        const browserUrl = resolveDashboardBrowserUrl(config, port);
         if (config.type === "ui") {
             await openBrowserWhenReady(config, port);
         } else if (config.access?.qr) {
@@ -659,7 +659,7 @@ export function shouldOpenBrowser(config: DashboardAppConfig, opts: UpOptions): 
 }
 
 async function openBrowserWhenReady(config: DashboardAppConfig, port: number): Promise<void> {
-    const browserUrl = config.openBrowser?.url ? config.openBrowser.url(port) : defaultLanDashboardUrl(port);
+    const browserUrl = resolveDashboardBrowserUrl(config, port);
 
     if (config.access?.qr) {
         presentDashboardAccess(resolveDashboardAccessPresentation(config, port, { url: browserUrl }));
@@ -820,8 +820,13 @@ function isProcessAlive(pid: number): boolean {
     }
 }
 
-export function dashboardUrlWithQuery(port: number, query?: Record<string, string>, baseUrl?: string): string {
-    const url = new URL(baseUrl ?? defaultLanDashboardUrl(port));
+export function dashboardUrlWithQuery(
+    config: DashboardAppConfig,
+    port: number,
+    query?: Record<string, string>,
+    baseUrl?: string
+): string {
+    const url = new URL(baseUrl ?? resolveDashboardBrowserUrl(config, port));
 
     if (query) {
         for (const [key, value] of Object.entries(query)) {
@@ -903,7 +908,7 @@ export async function openDashboard(ctx: LifecycleContext, opts: OpenOptions = {
 
     await ensureDashboardRunningForOpen(ctx, port);
 
-    const url = dashboardUrlWithQuery(port, opts.query);
+    const url = dashboardUrlWithQuery(config, port, opts.query);
     const presentation = resolveDashboardAccessPresentation(config, port, { url });
     const showQr = opts.qr === false ? false : Boolean(opts.qr ?? config.access?.qr);
 
