@@ -1,8 +1,7 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
+import { logDashboardApp } from "@app/debugging-master/lib/log-dashboard-app";
 import { out } from "@app/logger";
-import { getLocalIpv4 } from "@app/utils/network";
-import { renderQr } from "@app/utils/qr";
 import type { Command } from "commander";
 import pc from "picocolors";
 
@@ -18,42 +17,7 @@ export function registerDashboardCommand(program: Command): void {
             await runBuild();
         });
 
-    dashboard
-        .command("open")
-        .description("Print the dashboard URL + QR and open it in the browser")
-        .option("--port <n>", "Port the ingest server is on", "7243")
-        .action(async (opts: { port: string }) => {
-            const port = Number.parseInt(opts.port, 10);
-            const lanIp = getLocalIpv4();
-            const url = `http://${lanIp}:${port}/`;
-
-            out.println("");
-            out.println(`  ${pc.bold(pc.yellow("dashboard:"))} ${pc.bold(url)}`);
-            out.println("");
-            out.println(pc.dim("  scan from your phone:"));
-            out.println(renderQr(url, { small: true }));
-
-            try {
-                const cmd = openCommand(url);
-                await Bun.spawn(cmd, { stdout: "ignore", stderr: "ignore" }).exited;
-            } catch {
-                // open command not available — silently skip
-            }
-        });
-}
-
-/** Browser-open command per platform. macOS: `open`, Linux: `xdg-open`, Windows: `cmd /c start ""`. */
-function openCommand(url: string): string[] {
-    switch (process.platform) {
-        case "darwin":
-            return ["open", url];
-        case "win32":
-            // Empty "" arg is the window title — required by `start` so the
-            // URL isn't misinterpreted as a title when it contains spaces.
-            return ["cmd", "/c", "start", "", url];
-        default:
-            return ["xdg-open", url];
-    }
+    dashboard.addCommand(logDashboardApp.commanderCommand);
 }
 
 export async function runBuild(): Promise<void> {
