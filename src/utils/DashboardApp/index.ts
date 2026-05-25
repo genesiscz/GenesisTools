@@ -29,6 +29,7 @@ import {
     down as downLifecycle,
     install as installLifecycle,
     logs as logsLifecycle,
+    openDashboard as openDashboardLifecycle,
     restart as restartLifecycle,
     status as statusLifecycle,
     uninstall as uninstallLifecycle,
@@ -42,18 +43,30 @@ import type {
     DownOptions,
     DownResult,
     InstallOptions,
+    OpenOptions,
     StatusResult,
     UpOptions,
     UpResult,
 } from "./types";
 
+export type { OpenDashboardAccessOpts, PresentDashboardAccessOpts } from "./access";
+export {
+    defaultLanDashboardUrl,
+    openDashboardAccess,
+    presentDashboardAccess,
+    resolveDashboardAccessPresentation,
+} from "./access";
+export { dashboardUrlWithQuery } from "./lifecycle";
 export type {
     AttachOptions,
+    DashboardAccessConfig,
     DashboardApp,
     DashboardAppConfig,
     DashboardAppType,
     DashboardBindHost,
     DashboardDependency,
+    DashboardOpenConfig,
+    DashboardQrOption,
     DependencyPolicy,
     DependencyStatus,
     DownOptions,
@@ -117,6 +130,9 @@ export function defineDashboardApp(config: DashboardAppConfig): DashboardApp {
         },
         async uninstall(): Promise<void> {
             await uninstallLifecycle(ctx);
+        },
+        open(opts?: OpenOptions): Promise<void> {
+            return openDashboardLifecycle(ctx, opts);
         },
     };
 
