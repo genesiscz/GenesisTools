@@ -225,3 +225,7 @@ vercel-skills
 
 # logger-overhaul golden captures (live in /tmp, never tracked)
 /tmp/logger-goldens/
+
+# repowise workspace artifacts
+.repowise/
+.repowise-workspace.yaml
