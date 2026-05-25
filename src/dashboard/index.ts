@@ -19,10 +19,48 @@ function runToCompletion(cmd: string, args: string[]): Promise<number> {
     return new Promise((res) => child.on("exit", (code) => res(code ?? 1)));
 }
 
+async function nativeDepsHealthy(): Promise<boolean> {
+    const sqlitePath = join(NODE_MODULES, "better-sqlite3");
+    if (!existsSync(sqlitePath)) {
+        return true;
+    }
+
+    const proc = Bun.spawn(["sh", "-lc", "cd apps/web && node -e \"require('better-sqlite3')(':memory:').close()\""], {
+        cwd: DASHBOARD_DIR,
+        stdout: "ignore",
+        stderr: "pipe",
+    });
+    const code = await proc.exited;
+
+    return code === 0;
+}
+
+async function rebuildNativeDeps(): Promise<void> {
+    logger.info(pc.cyan(`▶ Rebuilding native modules — ${pc.bold("npm rebuild better-sqlite3")} (apps/web)`));
+    const code = await runToCompletion("sh", ["-lc", "cd apps/web && npm rebuild better-sqlite3"]);
+    if (code !== 0) {
+        logger.error(`bun install failed (exit ${code}).`);
+        process.exit(code);
+    }
+
+    if (!(await nativeDepsHealthy())) {
+        logger.error(
+            "better-sqlite3 still fails to load after reinstall — native ABI may not match this runtime. Try: cd src/dashboard && bun rebuild better-sqlite3"
+        );
+        process.exit(1);
+    }
+
+    logger.info(pc.green("✓ Native modules ready"));
+}
+
 async function ensureDeps(install: boolean, reinstall: boolean): Promise<void> {
     const present = existsSync(NODE_MODULES);
 
     if (present && !reinstall) {
+        if (!(await nativeDepsHealthy())) {
+            await rebuildNativeDeps();
+        }
+
         return;
     }
 
@@ -46,6 +84,13 @@ async function ensureDeps(install: boolean, reinstall: boolean): Promise<void> {
     if (code !== 0) {
         logger.error(`bun install failed (exit ${code}).`);
         process.exit(code);
+    }
+
+    if (!(await nativeDepsHealthy())) {
+        logger.error(
+            "better-sqlite3 failed to load after install — try: cd src/dashboard && bun rebuild better-sqlite3"
+        );
+        process.exit(1);
     }
 
     logger.info(pc.green("✓ Dependencies ready"));
@@ -133,19 +178,23 @@ const dashboardApp = defineDashboardApp({
         cwd: DASHBOARD_DIR,
     },
     preflight: async () => {
-        if (existsSync(NODE_MODULES)) {
-            return { warnings: [] };
+        if (!existsSync(NODE_MODULES)) {
+            return {
+                warnings: [
+                    {
+                        service: "dashboard",
+                        error: "src/dashboard/node_modules is missing.",
+                        fix: `Run ${pc.bold("bun install")} in src/dashboard, or use bare \`tools dashboard\` to auto-install.`,
+                    },
+                ],
+            };
         }
 
-        return {
-            warnings: [
-                {
-                    service: "dashboard",
-                    error: "src/dashboard/node_modules is missing.",
-                    fix: `Run ${pc.bold("bun install")} in src/dashboard, or use bare \`tools dashboard\` to auto-install.`,
-                },
-            ],
-        };
+        if (!(await nativeDepsHealthy())) {
+            await rebuildNativeDeps();
+        }
+
+        return { warnings: [] };
     },
     readiness: { kind: "http", path: "/" },
     openBrowser: { enabled: true },
