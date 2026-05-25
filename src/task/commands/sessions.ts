@@ -1,8 +1,8 @@
-import { out } from "@app/logger";
 import { formatBytes } from "@app/utils/format";
 import type { Command } from "commander";
 import { sessionFilePaths } from "../lib/paths";
 import { TaskSessionStore } from "../lib/session-store";
+import { statusLine } from "../lib/stderr-status";
 
 export function registerSessionsCommand(program: Command): void {
     program
@@ -13,22 +13,22 @@ export function registerSessionsCommand(program: Command): void {
             const names = await store.listSessionNames();
 
             if (names.length === 0) {
-                out.log.info("No task sessions found.");
+                statusLine("No task sessions found.");
                 return;
             }
 
-            out.log.info("");
-            out.log.info("Task sessions:");
-            out.log.info("");
+            statusLine("");
+            statusLine("Task sessions:");
+            statusLine("");
 
             for (const name of names.sort()) {
                 const meta = await store.getSessionMeta(name);
                 const paths = sessionFilePaths(name);
                 const jsonlSize = await store.getSessionFileSize(paths.jsonl);
                 const state = meta?.exitCode !== undefined ? `exited (${meta.exitCode})` : "active";
-                out.log.info(`  ${name.padEnd(24)} ${state.padEnd(16)} ${formatBytes(jsonlSize)}`);
+                statusLine(`  ${name.padEnd(24)} ${state.padEnd(16)} ${formatBytes(jsonlSize)}`);
             }
 
-            out.log.info("");
+            statusLine("");
         });
 }

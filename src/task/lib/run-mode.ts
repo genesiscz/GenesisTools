@@ -1,16 +1,12 @@
 export type RunModeChoice = "auto" | "pty" | "pipe";
 
 export interface ResolveRunModeOptions {
+    /** Commander sets `tty: false` for `--no-tty`, `true` for `--tty`, undefined for auto. */
     tty?: boolean;
-    noTty?: boolean;
 }
 
 export function resolveRunMode(opts: ResolveRunModeOptions): "pty" | "pipe" {
-    if (opts.tty && opts.noTty) {
-        throw new Error("Cannot use --tty and --no-tty together.");
-    }
-
-    if (opts.tty) {
+    if (opts.tty === true) {
         if (process.platform === "win32") {
             throw new Error("--tty requires POSIX (macOS/Linux). Use --no-tty on Windows.");
         }
@@ -18,7 +14,7 @@ export function resolveRunMode(opts: ResolveRunModeOptions): "pty" | "pipe" {
         return "pty";
     }
 
-    if (opts.noTty) {
+    if (opts.tty === false) {
         return "pipe";
     }
 
