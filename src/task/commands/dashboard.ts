@@ -1,9 +1,10 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { runBuild as runDbgDashboardBuild } from "@app/debugging-master/commands/dashboard";
+import {
+    runBuild as runDbgDashboardBuild,
+} from "@app/debugging-master/commands/dashboard";
+import { logDashboardApp } from "@app/debugging-master/lib/log-dashboard-app";
 import { out } from "@app/logger";
-import { getLocalIpv4 } from "@app/utils/network";
-import { renderQr } from "@app/utils/qr";
 import type { Command } from "commander";
 import pc from "picocolors";
 
@@ -19,44 +20,22 @@ export function registerDashboardCommand(program: Command): void {
             await runDbgDashboardBuild();
         });
 
+    dashboard.addCommand(logDashboardApp.commanderCommand);
+
     dashboard
         .command("open")
-        .description("Print dashboard URL and open in browser")
-        .option("--port <n>", "Port the dashboard server is on", "7243")
+        .description("Ensure the log server is up, print URL + QR, and open in the browser")
+        .option("--port <n>", "Port the dashboard server is on", String(logDashboardApp.port))
         .option("--session <name>", "Session to deep-link (optional)")
-        .action(async (opts: { port: string; session?: string }) => {
+        .option("--no-qr", "Skip the phone-scan QR code")
+        .action(async (opts: { port: string; session?: string; noQr?: boolean }) => {
             const port = Number.parseInt(opts.port, 10);
-            const lanIp = getLocalIpv4();
-            let url = `http://${lanIp}:${port}/`;
-
-            if (opts.session) {
-                url += `?source=task&session=${encodeURIComponent(opts.session)}`;
-            }
-
-            out.log.info("");
-            out.log.info(`  ${pc.bold(pc.yellow("dashboard:"))} ${pc.bold(url)}`);
-            out.log.info("");
-            out.log.info(pc.dim("  scan from your phone:"));
-            out.log.info(renderQr(url, { small: true }));
-
-            try {
-                const cmd = openCommand(url);
-                await Bun.spawn(cmd, { stdout: "ignore", stderr: "ignore" }).exited;
-            } catch {
-                // open command not available
-            }
+            await logDashboardApp.open({
+                port,
+                qr: opts.noQr ? false : undefined,
+                query: opts.session ? { source: "task", session: opts.session } : undefined,
+            });
         });
-}
-
-function openCommand(url: string): string[] {
-    switch (process.platform) {
-        case "darwin":
-            return ["open", url];
-        case "win32":
-            return ["cmd", "/c", "start", "", url];
-        default:
-            return ["xdg-open", url];
-    }
 }
 
 export async function ensureTaskDashboardBuilt(): Promise<void> {
@@ -65,6 +44,6 @@ export async function ensureTaskDashboardBuilt(): Promise<void> {
         return;
     }
 
-    out.log.info(pc.dim("▸ Dashboard dist/ missing — building once..."));
+    out.printlnErr(pc.dim("▸ Dashboard dist/ missing — building once..."));
     await runDbgDashboardBuild();
 }
