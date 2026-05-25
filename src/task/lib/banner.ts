@@ -1,27 +1,34 @@
-import { out } from "@app/logger";
+import { escapeShellArg } from "@app/utils/string";
 import { sessionFilePaths } from "./paths";
+import { statusLine } from "./stderr-status";
 import { suggestDashboard, suggestGet, suggestLogs, suggestLogsFollow, suggestTail } from "./suggest-flags";
 
-export function printRunBanner(session: string, command: string, mode: "pty" | "pipe"): void {
+export function formatCommandDisplay(command: string[]): string {
+    return command.map((part) => escapeShellArg(part)).join(" ");
+}
+
+export function printRunBanner(session: string, command: string[], mode: "pty" | "pipe"): void {
     const paths = sessionFilePaths(session);
     const modeLabel = mode === "pty" ? "pty (interactive)" : "pipe (non-interactive)";
+    const cmdDisplay = formatCommandDisplay(command);
+    const pad = Math.max(0, 60 - session.length);
 
-    out.log.info("");
-    out.log.info(`┌ task session: ${session} ${"─".repeat(Math.max(0, 60 - session.length))}┐`);
-    out.log.info(`│ Command:  ${command}`);
-    out.log.info(`│ Mode:     ${modeLabel}`);
-    out.log.info(`│ Logs:     ${paths.jsonl}`);
-    out.log.info(`│           ${paths.stdout}`);
-    out.log.info(`│           ${paths.stderr}`);
-    out.log.info("│");
-    out.log.info(`│ Session info:  ${suggestGet(session)}`);
-    out.log.info(`│ Read logs:     ${suggestLogs(session, ["--lines", "100"])}`);
-    out.log.info(`│ Live follow:   ${suggestTail(session)}`);
-    out.log.info(`│ Same as above: ${suggestLogsFollow(session)}`);
-    out.log.info(`│ Grep-safe:     ${suggestLogs(session, ["--raw"])} | grep PATTERN`);
-    out.log.info(`│ Dashboard:     ${suggestDashboard(session)}`);
-    out.log.info(`└${"─".repeat(76)}┘`);
-    out.log.info("");
+    statusLine("");
+    statusLine(`┌ task session: ${session} ${"─".repeat(pad)}┐`);
+    statusLine(`│ Command:  ${cmdDisplay}`);
+    statusLine(`│ Mode:     ${modeLabel}`);
+    statusLine(`│ Logs:     ${paths.jsonl}`);
+    statusLine(`│           ${paths.stdout}`);
+    statusLine(`│           ${paths.stderr}`);
+    statusLine("│");
+    statusLine(`│ Session info:  ${suggestGet(session)}`);
+    statusLine(`│ Read logs:     ${suggestLogs(session, ["--lines", "100"])}`);
+    statusLine(`│ Live follow:   ${suggestTail(session)}`);
+    statusLine(`│ Same as above: ${suggestLogsFollow(session)}`);
+    statusLine(`│ Grep-safe:     ${suggestLogs(session, ["--raw"])} | grep PATTERN`);
+    statusLine(`│ Dashboard:     ${suggestDashboard(session)}`);
+    statusLine(`└${"─".repeat(76)}┘`);
+    statusLine("");
 }
 
 export function printRunExitSummary(session: string, exitCode: number, durationMs: number): void {
@@ -30,6 +37,6 @@ export function printRunExitSummary(session: string, exitCode: number, durationM
     const secs = seconds % 60;
     const duration = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
 
-    out.log.info(`Session ${session} ended (code ${exitCode}, ${duration})`);
-    out.log.info(`Tip: ${suggestGet(session)}`);
+    statusLine(`Session ${session} ended (code ${exitCode}, ${duration})`);
+    statusLine(`Tip: ${suggestGet(session)}`);
 }

@@ -1,8 +1,8 @@
-import { out } from "@app/logger";
 import { isInteractive, suggestCommand } from "@app/utils/cli/executor";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import { TaskSessionStore } from "../lib/session-store";
+import { statusError, statusLine } from "../lib/stderr-status";
 
 export function registerCleanCommand(program: Command): void {
     program
@@ -17,7 +17,7 @@ export function registerCleanCommand(program: Command): void {
                 const names = await store.listSessionNames();
 
                 if (names.length === 0) {
-                    out.log.info("No sessions to clean.");
+                    statusLine("No sessions to clean.");
                     return;
                 }
 
@@ -27,7 +27,7 @@ export function registerCleanCommand(program: Command): void {
                     });
 
                     if (p.isCancel(confirmed) || !confirmed) {
-                        out.log.info("Cancelled.");
+                        statusLine("Cancelled.");
                         return;
                     }
                 }
@@ -36,21 +36,23 @@ export function registerCleanCommand(program: Command): void {
                     await store.deleteSession(name);
                 }
 
-                out.log.info(`Removed ${names.length} session(s).`);
+                statusLine(`Removed ${names.length} session(s).`);
                 return;
             }
 
             let session = globalOpts.session;
             if (!session) {
                 if (!isInteractive()) {
-                    out.error("--session or --all required in non-interactive mode.");
-                    out.info(suggestCommand("tools task", { add: ["clean", "--session", "my-session"] }));
+                    statusError("--session or --all required in non-interactive mode.");
+                    process.stderr.write(
+                        `${suggestCommand("tools task", { add: ["clean", "--session", "my-session"] })}\n`
+                    );
                     process.exit(1);
                 }
 
                 const names = await store.listSessionNames();
                 if (names.length === 0) {
-                    out.log.info("No sessions to clean.");
+                    statusLine("No sessions to clean.");
                     return;
                 }
 
@@ -60,7 +62,7 @@ export function registerCleanCommand(program: Command): void {
                 });
 
                 if (p.isCancel(picked)) {
-                    out.log.info("Cancelled.");
+                    statusLine("Cancelled.");
                     return;
                 }
 
@@ -70,6 +72,6 @@ export function registerCleanCommand(program: Command): void {
             }
 
             await store.deleteSession(session);
-            out.log.info(`Removed session: ${session}`);
+            statusLine(`Removed session: ${session}`);
         });
 }

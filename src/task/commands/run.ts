@@ -1,9 +1,10 @@
-import { out } from "@app/logger";
 import { isInteractive, suggestCommand } from "@app/utils/cli/executor";
+import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import { printRunBanner, printRunExitSummary } from "../lib/banner";
 import { resolveRunMode } from "../lib/run-mode";
 import { runTask } from "../lib/runner";
+import { statusError } from "../lib/stderr-status";
 
 export function registerRunCommand(program: Command): void {
     program
@@ -12,36 +13,51 @@ export function registerRunCommand(program: Command): void {
         .option("--session <name>", "Session name for log files")
         .option("--tty", "Force PTY mode (interactive)")
         .option("--no-tty", "Force pipe mode (non-interactive)")
-        .argument("[command...]", "Command and args (use -- before flags)")
-        .action(async (commandParts: string[], opts: { session?: string; tty?: boolean; noTty?: boolean }) => {
+        .allowUnknownOption()
+        .allowExcessArguments()
+        .argument("[command...]", "Command after -- (e.g. run --session s -- bash -c 'echo hi')")
+        .action(async (commandParts: string[], opts: { session?: string; tty?: boolean }) => {
             const globalOpts = program.opts<{ session?: string }>();
             const command = commandParts.filter(Boolean);
 
             if (command.length === 0) {
-                out.error("Command required. Example: tools task run --session metro -- npx react-native start");
-                out.info(
-                    suggestCommand("tools task", { add: ["run", "--session", "my-session", "--", "echo", "hello"] })
-                );
+                statusError("Command required after --");
+                statusError("Example: tools task run --session metro -- bash -c 'echo hi'");
                 process.exit(1);
             }
 
             let session = opts.session ?? globalOpts.session;
             if (!session) {
                 if (!isInteractive()) {
-                    out.error("--session required in non-interactive mode.");
-                    out.info(
-                        suggestCommand("tools task", { add: ["run", "--session", "my-session", "--", ...command] })
+                    statusError("--session required in non-interactive mode.");
+                    process.stderr.write(
+                        `${suggestCommand("tools task", { add: ["run", "--session", "my-session", "--", ...command] })}\n`
                     );
                     process.exit(1);
                 }
 
-                session = command[0].replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 40) || `task-${Date.now()}`;
+                const picked = await p.text({
+                    message: "Session name for logs",
+                    placeholder: "metro",
+                    validate: (value) => {
+                        if (!value.trim()) {
+                            return "Session name is required";
+                        }
+
+                        return undefined;
+                    },
+                });
+
+                if (p.isCancel(picked)) {
+                    process.exit(1);
+                }
+
+                session = picked.trim();
             }
 
-            const mode = resolveRunMode({ tty: opts.tty, noTty: opts.noTty });
-            const cmdStr = command.join(" ");
+            const mode = resolveRunMode({ tty: opts.tty });
 
-            printRunBanner(session, cmdStr, mode);
+            printRunBanner(session, command, mode);
 
             const result = await runTask({
                 session,
