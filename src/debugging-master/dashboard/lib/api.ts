@@ -1,13 +1,16 @@
-import type { IndexedLogEntry, SessionMeta } from "@app/debugging-master/types";
+import type { IndexedLogEntry } from "@app/debugging-master/types";
 import { SafeJSON } from "@app/utils/json";
+import type { DashboardSession, LogSourceId } from "@app/utils/log-viewer/log-source";
+import { sessionKey } from "@app/utils/log-viewer/session-key";
 
 export interface SessionsResponse {
-    sessions: SessionMeta[];
+    sessions: DashboardSession[];
 }
 
 export interface EntriesResponse {
     entries: IndexedLogEntry[];
     total: number;
+    source?: LogSourceId;
 }
 
 export interface ExpandResponse {
@@ -22,12 +25,12 @@ async function getJson<T>(path: string): Promise<T> {
     if (!res.ok) {
         throw new Error(`${res.status} ${res.statusText}`);
     }
-    // SafeJSON in strict mode for API boundaries — repo policy is "always
-    // SafeJSON, never JSON" (biome enforces it elsewhere). Strict mode rejects
-    // comments / trailing commas so a malformed server response surfaces here
-    // instead of being silently coerced.
     const text = await res.text();
     return SafeJSON.parse(text, { strict: true }) as T;
+}
+
+export function sessionRoute(source: LogSourceId, name: string): string {
+    return `/api/sessions/${source}/${name}`;
 }
 
 export const api = {
@@ -35,19 +38,21 @@ export const api = {
         return getJson<SessionsResponse>("/api/sessions");
     },
 
-    getEntries(sessionName: string, since = 0, limit = 5000): Promise<EntriesResponse> {
+    getEntries(source: LogSourceId, sessionName: string, since = 0, limit = 5000): Promise<EntriesResponse> {
         const params = new URLSearchParams({ since: String(since), limit: String(limit) });
-        return getJson<EntriesResponse>(`/api/sessions/${sessionName}/entries?${params.toString()}`);
+        return getJson<EntriesResponse>(`${sessionRoute(source, sessionName)}/entries?${params.toString()}`);
     },
 
-    expand(sessionName: string, refId: string): Promise<ExpandResponse> {
-        return getJson<ExpandResponse>(`/api/sessions/${sessionName}/expand/${refId}`);
+    expand(source: LogSourceId, sessionName: string, refId: string): Promise<ExpandResponse> {
+        return getJson<ExpandResponse>(`${sessionRoute(source, sessionName)}/expand/${refId}`);
     },
 
-    async clearSession(sessionName: string): Promise<void> {
-        const res = await fetch(`/api/sessions/${sessionName}`, { method: "DELETE" });
+    async clearSession(source: LogSourceId, sessionName: string): Promise<void> {
+        const res = await fetch(sessionRoute(source, sessionName), { method: "DELETE" });
         if (!res.ok) {
             throw new Error(`${res.status} ${res.statusText}`);
         }
     },
 };
+
+export { sessionKey };

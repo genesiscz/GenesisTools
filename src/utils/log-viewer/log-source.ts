@@ -10,6 +10,21 @@ export interface LogSourceSession {
     jsonlPath: string;
     metaPath?: string;
     entryCount?: number;
+    projectPath?: string;
+    command?: string;
+    createdAt?: number;
+    lastActivityAt?: number;
+}
+
+export interface DashboardSession {
+    source: LogSourceId;
+    name: string;
+    badge: string;
+    projectPath: string;
+    command?: string;
+    createdAt: number;
+    lastActivityAt: number;
+    entryCount?: number;
 }
 
 export interface LogSource {

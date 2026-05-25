@@ -1,4 +1,6 @@
-import type { IndexedLogEntry, LogLevel, SessionMeta } from "@app/debugging-master/types";
+import type { IndexedLogEntry, LogLevel } from "@app/debugging-master/types";
+import type { DashboardSession, LogSourceId } from "@app/utils/log-viewer/log-source";
+import { isLogSourceId } from "@app/utils/log-viewer/session-key";
 import { TooltipProvider } from "@ui/components/tooltip";
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EntryList } from "@/components/EntryList";
@@ -13,33 +15,46 @@ import { type ConnectionStatus, connectStream } from "@/lib/sse";
 const FRESH_TTL_MS = 1500;
 const SESSIONS_REFRESH_MS = 5000;
 
-function readSessionFromUrl(): string | null {
+function readFromUrl(): { source: LogSourceId | null; session: string | null } {
     if (typeof window === "undefined") {
-        return null;
+        return { source: null, session: null };
     }
-    return new URLSearchParams(window.location.search).get("session");
+
+    const params = new URLSearchParams(window.location.search);
+    const sourceParam = params.get("source");
+    const source = sourceParam && isLogSourceId(sourceParam) ? sourceParam : null;
+    return { source, session: params.get("session") };
 }
 
-function writeSessionToUrl(name: string | null): void {
+function writeToUrl(source: LogSourceId | null, name: string | null): void {
     if (typeof window === "undefined") {
         return;
     }
+
     const url = new URL(window.location.href);
-    const current = url.searchParams.get("session");
-    if (name === current) {
+    const currentSource = url.searchParams.get("source");
+    const currentSession = url.searchParams.get("session");
+
+    if (source === currentSource && name === currentSession) {
         return;
     }
-    if (name) {
+
+    if (source && name) {
+        url.searchParams.set("source", source);
         url.searchParams.set("session", name);
     } else {
+        url.searchParams.delete("source");
         url.searchParams.delete("session");
     }
+
     window.history.replaceState(window.history.state, "", url);
 }
 
 export function App(): React.ReactElement {
-    const [sessions, setSessions] = useState<SessionMeta[]>([]);
-    const [activeSession, setActiveSession] = useState<string | null>(readSessionFromUrl);
+    const initial = readFromUrl();
+    const [sessions, setSessions] = useState<DashboardSession[]>([]);
+    const [activeSource, setActiveSource] = useState<LogSourceId | null>(initial.source);
+    const [activeSession, setActiveSession] = useState<string | null>(initial.session);
     const [entries, setEntries] = useState<IndexedLogEntry[]>([]);
     const [status, setStatus] = useState<ConnectionStatus>("connecting");
     const [filterState, setFilterState] = useState<FilterState>(defaultFilterState);
@@ -57,26 +72,40 @@ export function App(): React.ReactElement {
     const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
     const [freshIds, setFreshIds] = useState<Set<number>>(new Set());
 
-    // Batched SSE delivery — accumulate incoming entries in a ref and flush
-    // once per animation frame. EventSource fires `message` events as separate
-    // tasks (React 18 doesn't auto-batch them), so a 300-entry backlog catch-up
-    // would otherwise trigger 300 setEntries spreads (O(N²) allocations) and
-    // 300 reconciliations, freezing the main thread.
     const pendingEntriesRef = useRef<IndexedLogEntry[]>([]);
     const pendingFreshRef = useRef<number[]>([]);
     const flushRafRef = useRef<number | null>(null);
     const freshSweepTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const activeRef = useRef({ source: initial.source, session: initial.session });
+
+    activeRef.current = { source: activeSource, session: activeSession };
+
+    const selectSession = useCallback((source: LogSourceId, name: string) => {
+        setActiveSource(source);
+        setActiveSession(name);
+    }, []);
 
     const refreshSessions = useCallback(async () => {
         try {
             const { sessions: list } = await api.listSessions();
             setSessions(list);
-            setActiveSession((current) => {
-                if (current && list.some((s) => s.name === current)) {
-                    return current;
-                }
-                return list[0]?.name ?? null;
-            });
+
+            const { source, session } = activeRef.current;
+            const stillValid = source && session && list.some((s) => s.source === source && s.name === session);
+
+            if (stillValid) {
+                return;
+            }
+
+            const first = list[0];
+            if (first) {
+                setActiveSource(first.source);
+                setActiveSession(first.name);
+                return;
+            }
+
+            setActiveSource(null);
+            setActiveSession(null);
         } catch {
             setStatus("down");
         }
@@ -88,30 +117,29 @@ export function App(): React.ReactElement {
         return () => clearInterval(interval);
     }, [refreshSessions]);
 
-    // Sync activeSession ↔ URL: write on change, read on browser back/forward.
     useEffect(() => {
-        writeSessionToUrl(activeSession);
-    }, [activeSession]);
+        writeToUrl(activeSource, activeSession);
+    }, [activeSource, activeSession]);
 
     useEffect(() => {
         if (typeof window === "undefined") {
             return;
         }
         const onPop = (): void => {
-            const name = readSessionFromUrl();
-            setActiveSession((current) => {
-                if (name && name !== current) {
-                    return name;
-                }
-                return current;
-            });
+            const { source, session } = readFromUrl();
+            if (source) {
+                setActiveSource(source);
+            }
+            if (session) {
+                setActiveSession(session);
+            }
         };
         window.addEventListener("popstate", onPop);
         return () => window.removeEventListener("popstate", onPop);
     }, []);
 
     useEffect(() => {
-        if (!activeSession) {
+        if (!activeSource || !activeSession) {
             setEntries([]);
             return;
         }
@@ -121,14 +149,11 @@ export function App(): React.ReactElement {
         setExpandedIds(new Set());
         setFreshIds(new Set());
 
-        api.getEntries(activeSession)
+        api.getEntries(activeSource, activeSession)
             .then((res) => {
                 if (cancelled) {
                     return;
                 }
-                // Mark the backlog hydration as a low-priority transition so React
-                // can yield to user input (clicks, scrolls) while reconciling — keeps
-                // the UI responsive even when the session has hundreds of entries.
                 startTransition(() => {
                     setEntries(res.entries);
                 });
@@ -137,7 +162,7 @@ export function App(): React.ReactElement {
                 /* ignore — SSE will catch up */
             });
 
-        const dispose = connectStream(activeSession, {
+        const dispose = connectStream(activeSource, activeSession, {
             onStatus: setStatus,
             onEntry: (entry) => {
                 pendingEntriesRef.current.push(entry);
@@ -162,11 +187,8 @@ export function App(): React.ReactElement {
             dispose();
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [activeSession]);
+    }, [activeSource, activeSession]);
 
-    // One-shot flush: dedup against current state, append novel entries, mark
-    // them fresh, schedule a single TTL sweep. Replaces the per-entry timer
-    // map that was firing N independent setState calls.
     const scheduleFlush = useCallback(() => {
         if (flushRafRef.current !== null) {
             return;
@@ -203,8 +225,6 @@ export function App(): React.ReactElement {
                     }
                     return next;
                 });
-                // Single TTL sweep that drains freshIds. Avoids the previous
-                // map-of-N-timers that was the second-largest perf cliff.
                 if (freshSweepTimerRef.current === null) {
                     freshSweepTimerRef.current = setTimeout(() => {
                         freshSweepTimerRef.current = null;
@@ -287,18 +307,18 @@ export function App(): React.ReactElement {
     }, []);
 
     const onClear = useCallback(async () => {
-        if (!activeSession) {
+        if (!activeSource || !activeSession) {
             return;
         }
-        const ok = confirm(`Clear all logs in "${activeSession}"?`);
+        const ok = confirm(`Clear all logs in [${activeSource}] "${activeSession}"?`);
         if (!ok) {
             return;
         }
-        await api.clearSession(activeSession);
+        await api.clearSession(activeSource, activeSession);
         setEntries([]);
         setExpandedIds(new Set());
         setFreshIds(new Set());
-    }, [activeSession]);
+    }, [activeSource, activeSession]);
 
     return (
         <TooltipProvider>
@@ -306,8 +326,13 @@ export function App(): React.ReactElement {
                 <div className="h-full flex flex-col relative">
                     <Header
                         sessions={sessions}
+                        activeSource={activeSource}
                         activeSession={activeSession}
-                        onSelectSession={setActiveSession}
+                        onSelectSession={(source, name) => {
+                            if (isLogSourceId(source)) {
+                                selectSession(source, name);
+                            }
+                        }}
                         status={status}
                         entryCount={entries.length}
                         onClear={onClear}
@@ -341,7 +366,7 @@ export function App(): React.ReactElement {
                         <span>
                             {filtered.length} / {entries.length}
                         </span>
-                        <span className="text-white/25">debugging-master · live</span>
+                        <span className="text-white/25">dbg + task · live</span>
                     </footer>
                 </div>
             </EntriesContext.Provider>

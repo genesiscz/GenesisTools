@@ -1,16 +1,14 @@
-import { existsSync, statSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { sessionFilePath } from "@app/debugging-master/core/paths";
-import { SessionManager } from "@app/debugging-master/core/session-manager";
 import { sseBroadcaster } from "@app/debugging-master/core/sse-broadcaster";
-import type { IndexedLogEntry, LogEntry, SessionMeta } from "@app/debugging-master/types";
+import type { IndexedLogEntry, LogEntry } from "@app/debugging-master/types";
 import { SafeJSON } from "@app/utils/json";
-
-const sessionManager = new SessionManager();
+import type { DashboardSession, LogSourceId } from "@app/utils/log-viewer/log-source";
+import { getAllLogSources, getLogSource } from "@app/utils/log-viewer/resolve-log-source";
+import { isLogSourceId } from "@app/utils/log-viewer/session-key";
+import { enrichDashboardTimestamps } from "@app/utils/log-viewer/tail-bridge";
 
 const SESSION_NAME = /^[a-zA-Z0-9_-]+$/;
-// Only "s" (vars/snapshot) and "e" (error) prefixes have defined semantics in
-// resolveRefData(); indexes are 1-based, so leading 0 / "x0" are rejected.
 const REF_ID = /^([se])([1-9]\d*)$/;
 
 const DASHBOARD_DIST = resolve(import.meta.dir, "..", "dashboard", "dist");
@@ -18,6 +16,12 @@ const DASHBOARD_DIST = resolve(import.meta.dir, "..", "dashboard", "dist");
 interface JsonInit {
     status?: number;
     headers?: Record<string, string>;
+}
+
+interface ResolvedRoute {
+    source: LogSourceId;
+    sessionName: string;
+    sub: string;
 }
 
 function jsonResponse(body: unknown, cors: Record<string, string>, init: JsonInit = {}): Response {
@@ -32,10 +36,6 @@ function jsonResponse(body: unknown, cors: Record<string, string>, init: JsonIni
     });
 }
 
-/**
- * Handle dashboard routes (HTML shell + /api/*). Returns null if the path
- * is not a dashboard route so the caller can fall through to its 404.
- */
 export async function handleDashboardRequest(
     req: Request,
     url: URL,
@@ -70,6 +70,23 @@ export async function handleDashboardRequest(
     return null;
 }
 
+function resolveRoute(pathname: string): ResolvedRoute | null {
+    const match = pathname.match(/^\/api\/sessions\/([^/]+)(?:\/([^/]+))?(?:\/(.*))?$/);
+    if (!match) {
+        return null;
+    }
+
+    const first = match[1];
+    const second = match[2];
+    const rest = match[3] ?? "";
+
+    if (isLogSourceId(first) && second) {
+        return { source: first, sessionName: second, sub: rest };
+    }
+
+    return { source: "debugging-master", sessionName: first, sub: second ? (rest ? `${second}/${rest}` : second) : "" };
+}
+
 async function handleApiRequest(req: Request, url: URL, cors: Record<string, string>): Promise<Response> {
     const { pathname } = url;
     const method = req.method;
@@ -79,43 +96,41 @@ async function handleApiRequest(req: Request, url: URL, cors: Record<string, str
         return jsonResponse({ sessions }, cors);
     }
 
-    const match = pathname.match(/^\/api\/sessions\/([^/]+)(?:\/(.*))?$/);
-    if (!match) {
+    const route = resolveRoute(pathname);
+    if (!route) {
         return jsonResponse({ error: "not found" }, cors, { status: 404 });
     }
 
-    const sessionName = match[1];
-    const sub = match[2] ?? "";
+    const { source, sessionName, sub } = route;
 
     if (!SESSION_NAME.test(sessionName)) {
         return jsonResponse({ error: "invalid session name" }, cors, { status: 400 });
     }
 
+    const logSource = getLogSource(source);
+
     if (method === "GET" && sub === "") {
-        const meta = await readSessionMeta(sessionName);
-        if (!meta) {
+        const session = await findDashboardSession(source, sessionName);
+        if (!session) {
             return jsonResponse({ error: "session not found" }, cors, { status: 404 });
         }
-        const entries = await readEntries(sessionName);
-        return jsonResponse({ meta, entryCount: entries.length }, cors);
+        const entries = await logSource.readEntries(sessionName);
+        return jsonResponse({ meta: session, entryCount: entries.length }, cors);
     }
 
     if (method === "GET" && sub === "entries") {
-        // Validate + clamp: NaN/negative inputs collapse to safe defaults,
-        // and `limit` is hard-capped at 5000 so a malicious or careless query
-        // can't force the server to slice and serialize a huge array.
         const rawSince = Number.parseInt(url.searchParams.get("since") ?? "0", 10);
         const rawLimit = Number.parseInt(url.searchParams.get("limit") ?? "5000", 10);
         const since = Number.isFinite(rawSince) ? Math.max(0, rawSince) : 0;
         const limit = Number.isFinite(rawLimit) ? Math.min(5000, Math.max(1, rawLimit)) : 5000;
-        const all = await readEntries(sessionName);
+        const all = await logSource.readEntries(sessionName);
         const indexed: IndexedLogEntry[] = all.map((e, i) => ({ ...e, index: i + 1 }));
         const sliced = indexed.slice(since, since + limit);
-        return jsonResponse({ entries: sliced, total: indexed.length }, cors);
+        return jsonResponse({ entries: sliced, total: indexed.length, source }, cors);
     }
 
     if (method === "GET" && sub === "stream") {
-        const { stream, unsubscribe } = sseBroadcaster.subscribe(sessionName);
+        const { stream, unsubscribe } = sseBroadcaster.subscribe(source, sessionName);
         req.signal?.addEventListener("abort", unsubscribe, { once: true });
         return new Response(stream, {
             headers: {
@@ -137,7 +152,7 @@ async function handleApiRequest(req: Request, url: URL, cors: Record<string, str
         }
         const prefix = refMatch[1];
         const entryIndex = Number.parseInt(refMatch[2], 10);
-        const entries = await readEntries(sessionName);
+        const entries = await logSource.readEntries(sessionName);
         const entry = entries[entryIndex - 1];
         if (!entry) {
             return jsonResponse({ error: "entry not found" }, cors, { status: 404 });
@@ -147,18 +162,15 @@ async function handleApiRequest(req: Request, url: URL, cors: Record<string, str
     }
 
     if (method === "DELETE" && sub === "") {
-        const path = await sessionJsonlPath(sessionName);
-        if (!path) {
+        const path = logSource.getJsonlPath(sessionName);
+        if (!existsSync(path)) {
             return jsonResponse({ error: "session not found" }, cors, { status: 404 });
         }
         await Bun.write(path, "");
-        sseBroadcaster.publishCleared(sessionName);
-        return jsonResponse({ cleared: true }, cors);
+        sseBroadcaster.publishCleared(source, sessionName);
+        return jsonResponse({ cleared: true, source }, cors);
     }
 
-    // Unknown subpath under /api/sessions/<name>/ — treat as not-found rather
-    // than method-not-allowed (405 implies the resource exists at this URL but
-    // doesn't accept this verb, which isn't true for arbitrary subpaths).
     return jsonResponse({ error: "not found" }, cors, { status: 404 });
 }
 
@@ -178,48 +190,32 @@ function resolveRefData(entry: LogEntry, prefix: string): unknown {
     return entry.data ?? entry.stack ?? null;
 }
 
-async function listSessions(): Promise<SessionMeta[]> {
-    const names = await sessionManager.listSessionNames();
-    const out: SessionMeta[] = [];
-    for (const name of names) {
-        const meta = await sessionManager.getSessionMeta(name);
-        if (meta) {
-            const enriched = meta.lastActivityAt > 0 ? meta : enrichWithFileStat(meta, name);
-            out.push(enriched);
-            continue;
+async function listSessions(): Promise<DashboardSession[]> {
+    const all: DashboardSession[] = [];
+
+    for (const source of getAllLogSources()) {
+        const listed = await source.listSessions();
+        for (const session of listed) {
+            const times = enrichDashboardTimestamps(session, session.jsonlPath);
+            all.push({
+                source: session.source,
+                name: session.name,
+                badge: session.badge,
+                projectPath: session.projectPath ?? session.command ?? "",
+                command: session.command,
+                createdAt: times.createdAt,
+                lastActivityAt: times.lastActivityAt,
+                entryCount: session.entryCount,
+            });
         }
-        // Sessions written via the dbg snippet (no `start` command run) have no
-        // meta.json — fall back to the JSONL file's mtime/birthtime so they
-        // still sort and display sensibly.
-        out.push(enrichWithFileStat({ name, projectPath: "", createdAt: 0, lastActivityAt: 0 }, name));
     }
-    return out.sort((a, b) => b.lastActivityAt - a.lastActivityAt);
+
+    return all.sort((a, b) => b.lastActivityAt - a.lastActivityAt);
 }
 
-function enrichWithFileStat(meta: SessionMeta, name: string): SessionMeta {
-    try {
-        const st = statSync(sessionFilePath(name));
-        return {
-            ...meta,
-            createdAt: meta.createdAt > 0 ? meta.createdAt : st.birthtimeMs,
-            lastActivityAt: meta.lastActivityAt > 0 ? meta.lastActivityAt : st.mtimeMs,
-        };
-    } catch {
-        return meta;
-    }
-}
-
-async function readEntries(sessionName: string): Promise<LogEntry[]> {
-    return sessionManager.readEntries(sessionName);
-}
-
-async function readSessionMeta(sessionName: string): Promise<SessionMeta | null> {
-    return sessionManager.getSessionMeta(sessionName);
-}
-
-async function sessionJsonlPath(sessionName: string): Promise<string | null> {
-    const path = await sessionManager.getSessionPath(sessionName);
-    return existsSync(path) ? path : null;
+async function findDashboardSession(source: LogSourceId, name: string): Promise<DashboardSession | null> {
+    const sessions = await listSessions();
+    return sessions.find((s) => s.source === source && s.name === name) ?? null;
 }
 
 function sanitizeAssetPath(pathname: string): string | null {
@@ -274,7 +270,7 @@ function notBuiltHtml(): { status: number; body: string; contentType: string } {
   <p>The dashboard frontend hasn't been built yet. Run:</p>
   <p><code>tools debugging-master dashboard build</code></p>
   <p>then refresh this page.</p>
-  <p style="opacity:.6;margin-top:32px">ingest server is up — <code>POST /log/&lt;session&gt;</code> still works.</p>
+  <p style="opacity:.6;margin-top:32px">ingest server is up — unified dbg + task sessions.</p>
 </body></html>`,
     };
 }

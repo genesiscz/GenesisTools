@@ -116,7 +116,7 @@ export function startServer(port: number = 7243): { server: ReturnType<typeof Bu
 
                 try {
                     await Bun.write(path, "");
-                    sseBroadcaster.publishCleared(sessionName);
+                    sseBroadcaster.publishCleared("debugging-master", sessionName);
                     return new Response("cleared", { status: 200, headers: corsHeaders });
                 } catch {
                     return new Response("failed to clear session", { status: 500, headers: corsHeaders });

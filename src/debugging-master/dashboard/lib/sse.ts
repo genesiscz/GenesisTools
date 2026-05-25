@@ -1,5 +1,7 @@
 import type { IndexedLogEntry } from "@app/debugging-master/types";
 import { SafeJSON } from "@app/utils/json";
+import type { LogSourceId } from "@app/utils/log-viewer/log-source";
+import { sessionRoute } from "./api";
 
 export type ConnectionStatus = "connecting" | "live" | "reconnecting" | "down";
 
@@ -12,11 +14,7 @@ export interface SseHandlers {
 const RECONNECT_DELAY_MS = 1500;
 const MAX_RECONNECT_DELAY_MS = 15_000;
 
-/**
- * Connect to the live SSE stream for a session. Returns a disposer; call it
- * to close the connection and cancel pending reconnects.
- */
-export function connectStream(sessionName: string, handlers: SseHandlers): () => void {
+export function connectStream(source: LogSourceId, sessionName: string, handlers: SseHandlers): () => void {
     let es: EventSource | null = null;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     let attempt = 0;
@@ -28,7 +26,7 @@ export function connectStream(sessionName: string, handlers: SseHandlers): () =>
         }
 
         handlers.onStatus(attempt === 0 ? "connecting" : "reconnecting");
-        es = new EventSource(`/api/sessions/${sessionName}/stream`);
+        es = new EventSource(`${sessionRoute(source, sessionName)}/stream`);
 
         es.addEventListener("open", () => {
             attempt = 0;
@@ -56,10 +54,6 @@ export function connectStream(sessionName: string, handlers: SseHandlers): () =>
             es = null;
             attempt++;
             handlers.onStatus(attempt > 4 ? "down" : "reconnecting");
-            // Defensive: cancel any pending reconnect before scheduling a new
-            // one. Some browsers can fire `error` more than once for the same
-            // dead socket; without this, two reconnect timers could race and
-            // open duplicate streams.
             if (reconnectTimer) {
                 clearTimeout(reconnectTimer);
                 reconnectTimer = null;

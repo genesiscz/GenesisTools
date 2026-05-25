@@ -1,50 +1,47 @@
-import { FileTailer } from "@app/debugging-master/core/file-tailer";
-import { sessionFilePath } from "@app/debugging-master/core/paths";
 import type { LogEntry } from "@app/debugging-master/types";
 import { SafeJSON } from "@app/utils/json";
+import type { LogSourceId } from "@app/utils/log-viewer/log-source";
+import { createSourceTailer, sessionKey } from "@app/utils/log-viewer/tail-bridge";
 
 interface Subscriber {
     id: number;
     controller: ReadableStreamDefaultController<Uint8Array>;
-    sessionName: string;
+    key: string;
 }
 
 const HEARTBEAT_INTERVAL_MS = 15_000;
 const encoder = new TextEncoder();
 
 /**
- * Live log pub/sub. Each session gets a single `FileTailer` watching its
- * JSONL file; new lines fan out to all SSE subscribers on that session.
- * Watching the file (not the in-process write path) means it works whether
- * ingest comes from this process or another — useful when the dashboard
- * runs on a different port from the ingest server.
+ * Live log pub/sub keyed by `source:session`. Each session gets a single
+ * FileTailer watching its JSONL file; new lines fan out to SSE subscribers.
  */
 export class SSEBroadcaster {
     private subscribers = new Map<string, Set<Subscriber>>();
-    private tailers = new Map<string, FileTailer>();
+    private tailers = new Map<string, ReturnType<typeof createSourceTailer>>();
     private nextId = 1;
     private heartbeat: ReturnType<typeof setInterval> | null = null;
 
-    /**
-     * Open a new SSE stream for the given session. The returned `ReadableStream`
-     * should be handed to a `Response` with `Content-Type: text/event-stream`.
-     */
-    subscribe(sessionName: string): { stream: ReadableStream<Uint8Array>; unsubscribe: () => void } {
+    subscribe(
+        source: LogSourceId,
+        sessionName: string
+    ): { stream: ReadableStream<Uint8Array>; unsubscribe: () => void } {
+        const key = sessionKey(source, sessionName);
         const id = this.nextId++;
         let sub: Subscriber;
 
         const stream = new ReadableStream<Uint8Array>({
             start: (controller) => {
-                sub = { id, controller, sessionName };
-                let bucket = this.subscribers.get(sessionName);
+                sub = { id, controller, key };
+                let bucket = this.subscribers.get(key);
                 if (!bucket) {
                     bucket = new Set();
-                    this.subscribers.set(sessionName, bucket);
+                    this.subscribers.set(key, bucket);
                 }
                 bucket.add(sub);
 
-                this.ensureTailer(sessionName);
-                controller.enqueue(encoder.encode(`event: hello\ndata: {"sub":${id}}\n\n`));
+                this.ensureTailer(source, sessionName, key);
+                controller.enqueue(encoder.encode(`event: hello\ndata: {"sub":${id},"source":"${source}"}\n\n`));
                 this.ensureHeartbeat();
             },
             cancel: () => {
@@ -64,15 +61,13 @@ export class SSEBroadcaster {
         return { stream, unsubscribe };
     }
 
-    /**
-     * Notify all subscribers on a session that its log file was cleared.
-     * Frontend should reset its local entries / expanded / fresh state.
-     */
-    publishCleared(sessionName: string): void {
-        const bucket = this.subscribers.get(sessionName);
+    publishCleared(source: LogSourceId, sessionName: string): void {
+        const key = sessionKey(source, sessionName);
+        const bucket = this.subscribers.get(key);
         if (!bucket || bucket.size === 0) {
             return;
         }
+
         const frame = encoder.encode("event: cleared\ndata: {}\n\n");
         for (const sub of [...bucket]) {
             try {
@@ -83,10 +78,9 @@ export class SSEBroadcaster {
         }
     }
 
-    /** Number of active subscribers (across all sessions, or for a specific session). */
-    subscriberCount(sessionName?: string): number {
-        if (sessionName !== undefined) {
-            return this.subscribers.get(sessionName)?.size ?? 0;
+    subscriberCount(key?: string): number {
+        if (key !== undefined) {
+            return this.subscribers.get(key)?.size ?? 0;
         }
 
         let total = 0;
@@ -96,7 +90,6 @@ export class SSEBroadcaster {
         return total;
     }
 
-    /** Stop heartbeats, file watchers, and drop all state. Test helper. */
     reset(): void {
         for (const bucket of this.subscribers.values()) {
             for (const sub of bucket) {
@@ -118,19 +111,20 @@ export class SSEBroadcaster {
         }
     }
 
-    private ensureTailer(sessionName: string): void {
-        if (this.tailers.has(sessionName)) {
+    private ensureTailer(source: LogSourceId, sessionName: string, key: string): void {
+        if (this.tailers.has(key)) {
             return;
         }
-        const tailer = new FileTailer(sessionFilePath(sessionName), {
-            onEntry: (entry, index) => this.fanOut(sessionName, entry, index),
+
+        const tailer = createSourceTailer(source, sessionName, (entry, index) => {
+            this.fanOut(key, entry, index);
         });
         tailer.start();
-        this.tailers.set(sessionName, tailer);
+        this.tailers.set(key, tailer);
     }
 
-    private fanOut(sessionName: string, entry: LogEntry, entryIndex: number): void {
-        const bucket = this.subscribers.get(sessionName);
+    private fanOut(key: string, entry: LogEntry, entryIndex: number): void {
+        const bucket = this.subscribers.get(key);
         if (!bucket || bucket.size === 0) {
             return;
         }
@@ -148,20 +142,21 @@ export class SSEBroadcaster {
     }
 
     private removeSubscriber(sub: Subscriber): void {
-        const bucket = this.subscribers.get(sub.sessionName);
+        const bucket = this.subscribers.get(sub.key);
         if (!bucket) {
             return;
         }
 
         bucket.delete(sub);
         if (bucket.size === 0) {
-            this.subscribers.delete(sub.sessionName);
-            const tailer = this.tailers.get(sub.sessionName);
+            this.subscribers.delete(sub.key);
+            const tailer = this.tailers.get(sub.key);
             if (tailer) {
                 tailer.stop();
-                this.tailers.delete(sub.sessionName);
+                this.tailers.delete(sub.key);
             }
         }
+
         if (this.subscribers.size === 0 && this.heartbeat) {
             clearInterval(this.heartbeat);
             this.heartbeat = null;
@@ -189,5 +184,4 @@ export class SSEBroadcaster {
     }
 }
 
-/** Process-wide broadcaster. */
 export const sseBroadcaster = new SSEBroadcaster();
