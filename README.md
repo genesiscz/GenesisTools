@@ -66,7 +66,7 @@ Commands are invoked manually with `/gt:<name>`:
 | [`gt:automate`](#gtautomate) | Build or run multi-step `tools` CLI automation presets |
 | [`gt:timelog`](#gttimelog) | Sync Timely → Azure DevOps timelogs and fill Clarity PPM timesheets |
 | [`gt:claude-history`](#gtclaude-history-command) | Search conversation history by keywords, files, commits, or time range |
-| [`gt:question`](#gtquestion) | Answer-only mode — research and explain without modifying code |
+| [`gt:question`](#gtquestion) | Answer a question and preserve the Q→A to the local question store for later review |
 
 ### Skills
 
@@ -83,7 +83,6 @@ Skills activate automatically when you mention relevant topics in conversation:
 | [`gt:typescript-error-fixer`](#gttypescript-error-fixer) | "fix type errors", "eliminate any types" | Systematic 4-phase TS error fixing with zero `any` tolerance |
 | [`gt:git-rebaser`](#gtgit-rebaser) | "rebase branches", "cascade rebase", "update child branches" | Guided rebase cascade for branch hierarchies with `--onto` |
 | [`gt:living-docs`](#gtliving-docs) | "bootstrap docs", "validate documentation", "audit docs" | Self-maintaining documentation system with context rules |
-| [`gt:writing-plans`](#gtwriting-plans) | "write a plan", "create implementation plan" | Write bite-sized TDD implementation plans with exact file paths |
 | [`debugging-master`](#debugging-master) | "debug runtime", "why is this slow", "add logging" | Hypothesis-driven runtime debugging with instrumentation toolkit |
 
 ---
@@ -152,14 +151,14 @@ Supports keyword search, file-based search, commit-based search, tool filtering,
 
 #### `gt:question`
 
-Answer-only mode — Claude researches your question (reads files, searches code, browses the web) but **never modifies any files**.
+Answer a question, then preserve the Q→A to the local question store so it can be reviewed later (`tools question log` / `tools question tail`). Also fires automatically right after you answer an important question interjected mid-session.
 
 ```bash
 /gt:question "how does the caching layer work?"
 /gt:question "what's the difference between timelog add and prepare-import?"
 ```
 
-Includes a refinement loop: after each answer, asks if you want it simpler, longer, shorter, or if it's good.
+Captured via the `question_answer` MCP tool, falling back to the `tools question record` CLI.
 
 ---
 
@@ -347,21 +346,6 @@ Self-maintaining documentation system. Bootstraps, validates, refines, and optim
 | **Migrate** | Convert old trigger formats to context rules |
 
 Philosophy: docs are a search index, not a textbook. Only document what can't be found easily.
-
-</details>
-
-#### `gt:writing-plans`
-
-Write comprehensive TDD implementation plans with bite-sized tasks, exact file paths, and complete code.
-
-<details>
-<summary><b>What you get</b></summary>
-
-- Each step is one action (2-5 minutes): write failing test → verify fail → implement → verify pass → commit
-- Exact file paths, exact commands with expected output
-- Execution handoff: subagent-driven (this session) or parallel session
-
-Plans are saved to `.claude/plans/YYYY-MM-DD-<feature-name>.md`.
 
 </details>
 
