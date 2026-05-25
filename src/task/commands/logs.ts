@@ -1,7 +1,7 @@
+import { out } from "@app/logger";
 import type { Command } from "commander";
 import { buildLogQueryOpts, tailOrQuery } from "../lib/build-log-query-opts";
 import { TaskSessionStore } from "../lib/session-store";
-import { statusError } from "../lib/stderr-status";
 
 export function registerLogsCommand(program: Command): void {
     program
@@ -26,7 +26,7 @@ export function registerLogsCommand(program: Command): void {
                 const queryOpts = buildLogQueryOpts(session, opts);
                 await tailOrQuery(queryOpts, Boolean(opts.tail || opts.follow));
             } catch (err) {
-                statusError(err instanceof Error ? err.message : String(err));
+                out.printlnErr(`error: ${err instanceof Error ? err.message : String(err)}`);
                 process.exit(1);
             }
         });

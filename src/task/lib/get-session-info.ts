@@ -1,8 +1,8 @@
+import { out } from "@app/logger";
 import { formatBytes } from "@app/utils/format";
 import { filterByStream, filterLineRecords, lastNLines, readJsonlFile } from "@app/utils/log-session/jsonl-reader";
 import { sessionFilePaths } from "./paths";
 import { TaskSessionStore } from "./session-store";
-import { statusLine } from "./stderr-status";
 import { suggestDashboard, suggestLogs, suggestLogsFollow, suggestTail } from "./suggest-flags";
 
 function formatDurationMs(ms: number): string {
@@ -48,72 +48,72 @@ export async function getSessionInfo(session: string): Promise<void> {
     const lastSeq = allLines[allLines.length - 1]?.seq ?? 0;
     const modeLabel = meta?.mode === "pty" ? "pty (interactive — j/r/d keys work)" : "pipe (non-interactive)";
 
-    statusLine("");
-    statusLine(`╔ task session: ${session} ${"═".repeat(Math.max(0, 58 - session.length))}╗`);
-    statusLine("║ STATUS");
-    statusLine(`║   State:     ${formatState(meta)}`);
-    statusLine(`║   Mode:      ${modeLabel}`);
-    statusLine(`║   Command:   ${meta?.command ?? "(unknown)"}`);
-    statusLine(`║   CWD:       ${meta?.cwd ?? "(unknown)"}`);
+    out.printlnErr("");
+    out.printlnErr(`╔ task session: ${session} ${"═".repeat(Math.max(0, 58 - session.length))}╗`);
+    out.printlnErr("║ STATUS");
+    out.printlnErr(`║   State:     ${formatState(meta)}`);
+    out.printlnErr(`║   Mode:      ${modeLabel}`);
+    out.printlnErr(`║   Command:   ${meta?.command ?? "(unknown)"}`);
+    out.printlnErr(`║   CWD:       ${meta?.cwd ?? "(unknown)"}`);
 
     if (meta?.pid) {
-        statusLine(`║   PID:       ${meta.pid}`);
+        out.printlnErr(`║   PID:       ${meta.pid}`);
     }
 
-    statusLine("║");
-    statusLine("║ LOG FILES");
-    statusLine(`║   jsonl:     ${paths.jsonl}  (${formatBytes(jsonlSize)})`);
-    statusLine(`║   stdout:    ${paths.stdout}  (${formatBytes(stdoutSize)})`);
-    statusLine(`║   stderr:    ${paths.stderr}  (${formatBytes(stderrSize)})`);
-    statusLine("║");
-    statusLine("║ COUNTS");
-    statusLine(`║   Lines:     ${allLines.length.toLocaleString()} (seq ${firstSeq}–${lastSeq})`);
-    statusLine(
+    out.printlnErr("║");
+    out.printlnErr("║ LOG FILES");
+    out.printlnErr(`║   jsonl:     ${paths.jsonl}  (${formatBytes(jsonlSize)})`);
+    out.printlnErr(`║   stdout:    ${paths.stdout}  (${formatBytes(stdoutSize)})`);
+    out.printlnErr(`║   stderr:    ${paths.stderr}  (${formatBytes(stderrSize)})`);
+    out.printlnErr("║");
+    out.printlnErr("║ COUNTS");
+    out.printlnErr(`║   Lines:     ${allLines.length.toLocaleString()} (seq ${firstSeq}–${lastSeq})`);
+    out.printlnErr(
         `║   stdout:    ${stdoutLines.length.toLocaleString()} lines · stderr: ${stderrLines.length.toLocaleString()} lines`
     );
 
     if (allLines.length > 0) {
         const latest = allLines[allLines.length - 1];
-        statusLine(`║   Latest:    seq ${latest.seq} @ ${new Date(latest.ts).toLocaleTimeString()}`);
+        out.printlnErr(`║   Latest:    seq ${latest.seq} @ ${new Date(latest.ts).toLocaleTimeString()}`);
     }
 
-    statusLine("║");
-    statusLine("║ LAST 10 LINES (preview)");
+    out.printlnErr("║");
+    out.printlnErr("║ LAST 10 LINES (preview)");
 
     if (preview.length === 0) {
-        statusLine("║   (no lines yet)");
+        out.printlnErr("║   (no lines yet)");
     } else {
         for (const line of preview) {
             const text = line.text.length > 60 ? `${line.text.slice(0, 57)}...` : line.text;
-            statusLine(`║   #${line.seq}  ${line.out.padEnd(6)}  ${text}`);
+            out.printlnErr(`║   #${line.seq}  ${line.out.padEnd(6)}  ${text}`);
         }
     }
 
-    statusLine("║");
-    statusLine("║ WHAT TO RUN NEXT (copy-paste)");
-    statusLine(`║   Read last 100    ${suggestLogs(session, ["--lines", "100"])}`);
-    statusLine(`║   Live follow      ${suggestTail(session)}`);
-    statusLine(`║   Same as above    ${suggestLogsFollow(session)}`);
-    statusLine(`║   Stderr only      ${suggestLogs(session, ["--stderr", "--raw"])}`);
-    statusLine(`║   Grep stdout      ${suggestLogs(session, ["--raw"])} | grep PATTERN`);
-    statusLine(`║   JSONL + rg       ${suggestLogs(session, ["--jsonl"])} | rg error`);
-    statusLine(`║   Dashboard        ${suggestDashboard(session)}`);
-    statusLine("║");
-    statusLine("║ FLAGS (logs + tail — short forms also work but mean the same)");
-    statusLine("║   --follow       Stream live until Ctrl+C (alias: -f)");
-    statusLine("║   --tail         On logs only — same as --follow");
-    statusLine("║   --lines N      Last N lines by seq (alias: -n)");
-    statusLine("║   --from-seq N   Include from seq N onward");
-    statusLine("║   --to-seq N     Include up to seq N");
-    statusLine("║   --stdout       Stdout lines only (default: both streams)");
-    statusLine("║   --stderr       Stderr lines only");
-    statusLine("║   --raw          Plain text on stdout → safe for | grep");
-    statusLine("║   --jsonl        JSON lines on stdout → safe for | rg");
-    statusLine("║   --grep PAT     Filter before printing");
-    statusLine("║");
-    statusLine("║ I/O CONTRACT");
-    statusLine("║   this panel (get)     → stderr — don't pipe");
-    statusLine("║   logs/tail content    → stdout — pipe with --raw or --jsonl for grep");
-    statusLine(`╚${"═".repeat(76)}╝`);
-    statusLine("");
+    out.printlnErr("║");
+    out.printlnErr("║ WHAT TO RUN NEXT (copy-paste)");
+    out.printlnErr(`║   Read last 100    ${suggestLogs(session, ["--lines", "100"])}`);
+    out.printlnErr(`║   Live follow      ${suggestTail(session)}`);
+    out.printlnErr(`║   Same as above    ${suggestLogsFollow(session)}`);
+    out.printlnErr(`║   Stderr only      ${suggestLogs(session, ["--stderr", "--raw"])}`);
+    out.printlnErr(`║   Grep stdout      ${suggestLogs(session, ["--raw"])} | grep PATTERN`);
+    out.printlnErr(`║   JSONL + rg       ${suggestLogs(session, ["--jsonl"])} | rg error`);
+    out.printlnErr(`║   Dashboard        ${suggestDashboard(session)}`);
+    out.printlnErr("║");
+    out.printlnErr("║ FLAGS (logs + tail — short forms also work but mean the same)");
+    out.printlnErr("║   --follow       Stream live until Ctrl+C (alias: -f)");
+    out.printlnErr("║   --tail         On logs only — same as --follow");
+    out.printlnErr("║   --lines N      Last N lines by seq (alias: -n)");
+    out.printlnErr("║   --from-seq N   Include from seq N onward");
+    out.printlnErr("║   --to-seq N     Include up to seq N");
+    out.printlnErr("║   --stdout       Stdout lines only (default: both streams)");
+    out.printlnErr("║   --stderr       Stderr lines only");
+    out.printlnErr("║   --raw          Plain text on stdout → safe for | grep");
+    out.printlnErr("║   --jsonl        JSON lines on stdout → safe for | rg");
+    out.printlnErr("║   --grep PAT     Filter before printing");
+    out.printlnErr("║");
+    out.printlnErr("║ I/O CONTRACT");
+    out.printlnErr("║   this panel (get)     → stderr — don't pipe");
+    out.printlnErr("║   logs/tail content    → stdout — pipe with --raw or --jsonl for grep");
+    out.printlnErr(`╚${"═".repeat(76)}╝`);
+    out.printlnErr("");
 }
