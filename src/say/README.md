@@ -193,7 +193,7 @@ In a non-TTY context both entry points fail fast — pass `--app <name> --save` 
 | `--volume <n>` | Volume `0.0-1.0` or `0-100%` |
 | `--voice [name]` | Voice id; pass without value to list available voices |
 | `--rate <n>` | Speed: `0..2` multiplier or `0..200%` (`1` = default). Matched across providers. |
-| `--wait` | Block until speech finishes |
+| `--wait` | Block until speech finishes. Default is fire-and-forget: speech plays in a detached background process and the command returns immediately (so editor hooks that `await` `tools say` don't block on audio). |
 | `--app <name>` | App profile to load; required target for `--save` |
 | `--mute` | Mute the app (requires `--save`) |
 | `--unmute` | Unmute the app (requires `--save`) |

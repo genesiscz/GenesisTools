@@ -141,6 +141,75 @@ describe("SayAudioCache", () => {
         expect(() => c.recordMiss(baseParams, Buffer.from([1]), "audio/mpeg")).not.toThrow();
     });
 
+    const backdateAllEntries = (ageMs: number): void => {
+        const idxPath = join(dir, "index.json");
+        const idx = SafeJSON.parse(readFileSync(idxPath, "utf8")) as {
+            version: number;
+            entries: Record<string, { lastUsed: number }>;
+        };
+
+        for (const e of Object.values(idx.entries)) {
+            e.lastUsed = Date.now() - ageMs;
+        }
+
+        writeFileSync(idxPath, SafeJSON.stringify(idx, null, 2));
+    };
+
+    const readTexts = (): Array<string | undefined> => {
+        const raw = SafeJSON.parse(readFileSync(join(dir, "index.json"), "utf8")) as {
+            entries: Record<string, { text?: string }>;
+        };
+        return Object.values(raw.entries).map((e) => e.text);
+    };
+
+    it("prunes stale counter entries older than ttlMs on the next recordMiss", () => {
+        const c = new SayAudioCache({ dir, threshold: 5, ttlMs: 86_400_000 });
+        c.recordMiss({ ...baseParams, text: "stale" });
+        backdateAllEntries(48 * 60 * 60 * 1000); // 48h ago — older than the 24h TTL
+
+        // A miss for an unrelated phrase triggers a prune of the stale entry.
+        c.recordMiss({ ...baseParams, text: "fresh" });
+
+        const texts = readTexts();
+        expect(texts).toContain("fresh");
+        expect(texts).not.toContain("stale");
+    });
+
+    it("deletes the persisted audio file when an entry expires by ttl", () => {
+        const c = new SayAudioCache({ dir, threshold: 1, ttlMs: 86_400_000 });
+        c.recordMiss({ ...baseParams, text: "audio-old" }, Buffer.from([1, 2, 3]), "audio/mpeg");
+        expect(c.get({ ...baseParams, text: "audio-old" })).not.toBeNull();
+        expect(readdirSync(dir).filter((f) => f.endsWith(".mp3")).length).toBe(1);
+
+        backdateAllEntries(48 * 60 * 60 * 1000);
+        c.recordMiss({ ...baseParams, text: "audio-new" });
+
+        expect(c.get({ ...baseParams, text: "audio-old" })).toBeNull();
+        expect(readdirSync(dir).filter((f) => f.endsWith(".mp3")).length).toBe(0);
+    });
+
+    it("keeps a frequently-used entry alive because each access refreshes lastUsed", () => {
+        const c = new SayAudioCache({ dir, threshold: 5, ttlMs: 86_400_000 });
+        c.recordMiss({ ...baseParams, text: "recurring" });
+        backdateAllEntries(48 * 60 * 60 * 1000);
+
+        // Re-saying the same phrase prunes it first, then re-creates it fresh
+        // (count resets, but the phrase is not lost from the index).
+        c.recordMiss({ ...baseParams, text: "recurring" });
+
+        expect(readTexts()).toContain("recurring");
+    });
+
+    it("does not prune when ttlMs is disabled (<= 0)", () => {
+        const c = new SayAudioCache({ dir, threshold: 5, ttlMs: 0 });
+        c.recordMiss({ ...baseParams, text: "keep" });
+        backdateAllEntries(365 * 24 * 60 * 60 * 1000); // a year old
+
+        c.recordMiss({ ...baseParams, text: "another" });
+
+        expect(readTexts()).toContain("keep");
+    });
+
     it("writes index.json atomically and leaves no temp files behind", () => {
         const c = new SayAudioCache({ dir, threshold: 1 });
         c.recordMiss(baseParams, Buffer.from([1, 2]), "audio/mpeg");
