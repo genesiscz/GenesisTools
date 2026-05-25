@@ -1,6 +1,6 @@
+import { out } from "@app/logger";
 import { escapeShellArg } from "@app/utils/string";
 import { sessionFilePaths } from "./paths";
-import { statusLine } from "./stderr-status";
 import { suggestDashboard, suggestGet, suggestLogs, suggestLogsFollow, suggestTail } from "./suggest-flags";
 
 export function formatCommandDisplay(command: string[]): string {
@@ -13,22 +13,22 @@ export function printRunBanner(session: string, command: string[], mode: "pty" |
     const cmdDisplay = formatCommandDisplay(command);
     const pad = Math.max(0, 60 - session.length);
 
-    statusLine("");
-    statusLine(`┌ task session: ${session} ${"─".repeat(pad)}┐`);
-    statusLine(`│ Command:  ${cmdDisplay}`);
-    statusLine(`│ Mode:     ${modeLabel}`);
-    statusLine(`│ Logs:     ${paths.jsonl}`);
-    statusLine(`│           ${paths.stdout}`);
-    statusLine(`│           ${paths.stderr}`);
-    statusLine("│");
-    statusLine(`│ Session info:  ${suggestGet(session)}`);
-    statusLine(`│ Read logs:     ${suggestLogs(session, ["--lines", "100"])}`);
-    statusLine(`│ Live follow:   ${suggestTail(session)}`);
-    statusLine(`│ Same as above: ${suggestLogsFollow(session)}`);
-    statusLine(`│ Grep-safe:     ${suggestLogs(session, ["--raw"])} | grep PATTERN`);
-    statusLine(`│ Dashboard:     ${suggestDashboard(session)}`);
-    statusLine(`└${"─".repeat(76)}┘`);
-    statusLine("");
+    out.printlnErr("");
+    out.printlnErr(`┌ task session: ${session} ${"─".repeat(pad)}┐`);
+    out.printlnErr(`│ Command:  ${cmdDisplay}`);
+    out.printlnErr(`│ Mode:     ${modeLabel}`);
+    out.printlnErr(`│ Logs:     ${paths.jsonl}`);
+    out.printlnErr(`│           ${paths.stdout}`);
+    out.printlnErr(`│           ${paths.stderr}`);
+    out.printlnErr("│");
+    out.printlnErr(`│ Session info:  ${suggestGet(session)}`);
+    out.printlnErr(`│ Read logs:     ${suggestLogs(session, ["--lines", "100"])}`);
+    out.printlnErr(`│ Live follow:   ${suggestTail(session)}`);
+    out.printlnErr(`│ Same as above: ${suggestLogsFollow(session)}`);
+    out.printlnErr(`│ Grep-safe:     ${suggestLogs(session, ["--raw"])} | grep PATTERN`);
+    out.printlnErr(`│ Dashboard:     ${suggestDashboard(session)}`);
+    out.printlnErr(`└${"─".repeat(76)}┘`);
+    out.printlnErr("");
 }
 
 export function printRunExitSummary(session: string, exitCode: number, durationMs: number): void {
@@ -37,6 +37,6 @@ export function printRunExitSummary(session: string, exitCode: number, durationM
     const secs = seconds % 60;
     const duration = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
 
-    statusLine(`Session ${session} ended (code ${exitCode}, ${duration})`);
-    statusLine(`Tip: ${suggestGet(session)}`);
+    out.printlnErr(`Session ${session} ended (code ${exitCode}, ${duration})`);
+    out.printlnErr(`Tip: ${suggestGet(session)}`);
 }

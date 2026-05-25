@@ -1,7 +1,7 @@
+import { out } from "@app/logger";
 import type { Command } from "commander";
 import { getSessionInfo } from "../lib/get-session-info";
 import { TaskSessionStore } from "../lib/session-store";
-import { statusError } from "../lib/stderr-status";
 
 export function registerGetCommand(program: Command): void {
     program
@@ -15,7 +15,7 @@ export function registerGetCommand(program: Command): void {
                 const session = await store.resolveSession(globalOpts.session);
                 await getSessionInfo(session);
             } catch (err) {
-                statusError(err instanceof Error ? err.message : String(err));
+                out.printlnErr(`error: ${err instanceof Error ? err.message : String(err)}`);
                 process.exit(1);
             }
         });

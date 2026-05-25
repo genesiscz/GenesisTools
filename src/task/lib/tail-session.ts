@@ -7,7 +7,6 @@ import type { LogQueryOpts } from "../types";
 import { printTailStatus } from "./log-hints";
 import { queryLogs } from "./log-query";
 import { jsonlPath } from "./paths";
-import { statusLine } from "./stderr-status";
 
 function matchesFilters(line: JsonlLineRecord, opts: LogQueryOpts, seenSeq: Set<number>): boolean {
     if (line.type !== "line") {
@@ -90,7 +89,7 @@ export async function tailSession(opts: LogQueryOpts & { follow: true }): Promis
     await new Promise<void>((resolve) => {
         const onSigint = (): void => {
             tailer.stop();
-            statusLine("\nStopped tailing.");
+            out.printlnErr("\nStopped tailing.");
             resolve();
         };
 

@@ -1,10 +1,10 @@
+import { out } from "@app/logger";
 import { isInteractive, suggestCommand } from "@app/utils/cli/executor";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import { printRunBanner, printRunExitSummary } from "../lib/banner";
 import { resolveRunMode } from "../lib/run-mode";
 import { runTask } from "../lib/runner";
-import { statusError } from "../lib/stderr-status";
 
 export function registerRunCommand(program: Command): void {
     program
@@ -21,17 +21,17 @@ export function registerRunCommand(program: Command): void {
             const command = commandParts.filter(Boolean);
 
             if (command.length === 0) {
-                statusError("Command required after --");
-                statusError("Example: tools task run --session metro -- bash -c 'echo hi'");
+                out.printlnErr("error: Command required after --");
+                out.printlnErr("error: Example: tools task run --session metro -- bash -c 'echo hi'");
                 process.exit(1);
             }
 
             let session = opts.session ?? globalOpts.session;
             if (!session) {
                 if (!isInteractive()) {
-                    statusError("--session required in non-interactive mode.");
-                    process.stderr.write(
-                        `${suggestCommand("tools task", { add: ["run", "--session", "my-session", "--", ...command] })}\n`
+                    out.printlnErr("error: --session required in non-interactive mode.");
+                    out.printlnErr(
+                        suggestCommand("tools task", { add: ["run", "--session", "my-session", "--", ...command] })
                     );
                     process.exit(1);
                 }
@@ -40,7 +40,7 @@ export function registerRunCommand(program: Command): void {
                     message: "Session name for logs",
                     placeholder: "metro",
                     validate: (value) => {
-                        if (!value.trim()) {
+                        if (!value?.trim()) {
                             return "Session name is required";
                         }
 
