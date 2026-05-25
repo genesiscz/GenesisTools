@@ -32,6 +32,36 @@ describe("out facade discipline", () => {
         expect(e.join("")).toContain("STATUS_LINE");
     });
 
+    it("printErr/printlnErr write plain text to STDERR without clack framing", async () => {
+        const { out } = await import("./out");
+        const o: string[] = [];
+        const e: string[] = [];
+        const oo = process.stdout.write.bind(process.stdout);
+        const oe = process.stderr.write.bind(process.stderr);
+        process.stdout.write = (c: string) => {
+            o.push(String(c));
+            return true;
+        };
+        process.stderr.write = (c: string) => {
+            e.push(String(c));
+            return true;
+        };
+        try {
+            out.printErr("ERR_RAW");
+            out.printlnErr("ERR_LINE");
+            await Bun.sleep(10);
+        } finally {
+            process.stdout.write = oo;
+            process.stderr.write = oe;
+        }
+        expect(o.join("")).toBe("");
+        const combined = e.join("");
+        expect(combined).toContain("ERR_RAW");
+        expect(combined).toContain("ERR_LINE");
+        expect(combined).not.toContain("│");
+        expect(combined).not.toContain("●");
+    });
+
     it("re-exports the real clack isCancel sentinel", async () => {
         const { out } = await import("./out");
         const clack = await import("@clack/prompts");
