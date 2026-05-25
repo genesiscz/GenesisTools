@@ -60,7 +60,10 @@ const program = new Command()
         "Speed: 0..2 multiplier or 0..200%. 0=slowest, 1 (or 100)=default, 2 (or 200)=fastest. Provider speeds are matched to macOS native (~0.81×..1.86×) so the same --rate sounds identical on macOS and xAI.",
         parseFloat
     )
-    .option("--wait", "Block until speech finishes")
+    .option(
+        "--wait",
+        "Block until speech finishes. Default is fire-and-forget: speech plays in a detached background process and the command returns immediately."
+    )
     .option("--app <name>", "App profile to load (and required target for --save)")
     .option("--mute", "Mute (requires --save to persist)")
     .option("--unmute", "Unmute (requires --save to persist)")
@@ -133,6 +136,19 @@ const program = new Command()
 
         if (!wantsMuteWrite && (await mgr.isMuted(opts.app))) {
             process.stderr.write("[say] muted\n");
+            return;
+        }
+
+        // Fire-and-forget by default: speech is a notification, so callers
+        // (e.g. editor announce hooks that `await` `tools say`) must not block
+        // on the synth + audio playback. Re-spawn ourselves detached with
+        // --wait so the child performs the (possibly network-bound for cloud
+        // providers) synth + playback in its own process group, then return
+        // immediately. --wait opts back into blocking; it is also the recursion
+        // guard since this branch only triggers without it. --save runs inline
+        // so its confirmation output is preserved.
+        if (!opts.wait && !opts.save) {
+            spawnDetachedSpeaker();
             return;
         }
 
@@ -272,6 +288,27 @@ interface EffectiveSettings {
     language?: string | null;
 }
 
+/**
+ * Re-spawn this CLI detached with `--wait` appended so speech plays in a
+ * background process that outlives the foreground command. `detached: true`
+ * (POSIX `setsid`) plus fully-ignored stdio lets the child survive both this
+ * process exiting and any SIGHUP the `tools` wrapper forwards. Preloads are
+ * skipped — the say tool needs neither the sqlite-vec nor the solid-scope
+ * preload — so the background process starts lean. Errors in the detached
+ * child surface in the day-stamped log file (`@app/logger`), not on stderr
+ * (which is intentionally ignored here).
+ */
+function spawnDetachedSpeaker(): void {
+    const child = Bun.spawn([process.execPath, import.meta.path, ...process.argv.slice(2), "--wait"], {
+        stdin: "ignore",
+        stdout: "ignore",
+        stderr: "ignore",
+        detached: true,
+    });
+
+    child.unref();
+}
+
 function validateUnsetFields(raw: string[]): SettableField[] {
     // Renamed from `out` to avoid shadowing the `@app/logger` `out` import
     // added by the console-sweep codemod (the `out.error(...)` calls below
@@ -361,8 +398,8 @@ async function speakCached(args: SpeakCachedArgs): Promise<void> {
         return;
     }
 
-    const { threshold, maxBytes } = await mgr.getCacheSettings();
-    const cache = new SayAudioCache({ dir: getSayStorage().getCacheDir(), threshold, maxBytes });
+    const { threshold, maxBytes, ttlMs } = await mgr.getCacheSettings();
+    const cache = new SayAudioCache({ dir: getSayStorage().getCacheDir(), threshold, maxBytes, ttlMs });
     const params = {
         text,
         provider,
