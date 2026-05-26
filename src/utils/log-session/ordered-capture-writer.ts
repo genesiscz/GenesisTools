@@ -50,19 +50,15 @@ export class OrderedCaptureWriter {
 
     enqueue(out: StreamOut, chunk: string): void {
         this.queue.push({ out, chunk });
-        void this.drain();
+        this.drain();
     }
 
     async flush(): Promise<void> {
-        while (this.queue.length > 0 || this.draining) {
-            await this.drain();
-            if (this.queue.length === 0 && !this.draining) {
-                break;
-            }
-
-            await Bun.sleep(1);
-        }
-
+        // `drain()` is synchronous and reentrancy-guarded, so a single call is
+        // sufficient — there is no remaining queue work after it returns. The
+        // prior loop+Bun.sleep dance compensated for an async drain that
+        // contained no awaits (misleading signature).
+        this.drain();
         this.flushPartial("stdout");
         this.flushPartial("stderr");
     }
@@ -71,40 +67,45 @@ export class OrderedCaptureWriter {
         return this.seq;
     }
 
-    private async drain(): Promise<void> {
+    private drain(): void {
         if (this.draining) {
             return;
         }
 
         this.draining = true;
 
-        while (this.queue.length > 0) {
-            const item = this.queue.shift();
-            if (!item) {
-                break;
-            }
+        // try/finally so a write throw (disk full, EROFS, encoder error)
+        // doesn't leave `draining` permanently true and silently block all
+        // further enqueue() calls from making progress.
+        try {
+            while (this.queue.length > 0) {
+                const item = this.queue.shift();
+                if (!item) {
+                    break;
+                }
 
-            const lines = this.extractLines(item.out, item.chunk);
-            for (const text of lines) {
-                this.seq += 1;
-                const outStream: StreamOut = this.mode === "pty" ? "stdout" : item.out;
-                const plain = stripAnsi(text);
-                this.appendUiLine(this.seq, text);
-                const record = {
-                    type: "line" as const,
-                    seq: this.seq,
-                    out: outStream,
-                    level: inferLineLevel(outStream, plain),
-                    ts: Date.now(),
-                    text: plain,
-                    raw: text,
-                };
-                this.jsonlWriter.append(record);
-                this.appendPlainMirror(outStream, record.text);
+                const lines = this.extractLines(item.out, item.chunk);
+                for (const text of lines) {
+                    this.seq += 1;
+                    const outStream: StreamOut = this.mode === "pty" ? "stdout" : item.out;
+                    const plain = stripAnsi(text);
+                    this.appendUiLine(this.seq, text);
+                    const record = {
+                        type: "line" as const,
+                        seq: this.seq,
+                        out: outStream,
+                        level: inferLineLevel(outStream, plain),
+                        ts: Date.now(),
+                        text: plain,
+                        raw: text,
+                    };
+                    this.jsonlWriter.append(record);
+                    this.appendPlainMirror(outStream, record.text);
+                }
             }
+        } finally {
+            this.draining = false;
         }
-
-        this.draining = false;
     }
 
     private extractLines(out: StreamOut, chunk: string): string[] {
