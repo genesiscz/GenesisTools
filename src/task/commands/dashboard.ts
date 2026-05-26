@@ -1,8 +1,6 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import {
-    runBuild as runDbgDashboardBuild,
-} from "@app/debugging-master/commands/dashboard";
+import { runBuild as runDbgDashboardBuild } from "@app/debugging-master/commands/dashboard";
 import { logDashboardApp } from "@app/debugging-master/lib/log-dashboard-app";
 import { out } from "@app/logger";
 import type { Command } from "commander";
