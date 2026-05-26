@@ -151,7 +151,21 @@ function callerDirOf(argv: readonly string[]): string {
 }
 
 export function argvRequestsReadme(args: string[]): boolean {
-    return args.some((arg) => arg === "--readme" || arg.startsWith("--readme="));
+    // Stop at the conventional `--` separator: everything after it is meant
+    // for a wrapped child command (e.g. `tools task run -- bash --readme`),
+    // not for the wrapper itself. Scanning past it caused the wrapper to
+    // hijack any child whose own flags happened to include --readme.
+    for (const arg of args) {
+        if (arg === "--") {
+            return false;
+        }
+
+        if (arg === "--readme" || arg.startsWith("--readme=")) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 /**

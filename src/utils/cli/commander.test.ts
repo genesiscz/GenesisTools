@@ -90,6 +90,13 @@ describe("argvRequestsReadme", () => {
         expect(argvRequestsReadme(["run", "--session", "x", "--readme"])).toBe(true);
         expect(argvRequestsReadme(["run", "--session", "x"])).toBe(false);
     });
+
+    it("ignores --readme after the `--` separator (child-process argv)", () => {
+        // Was a real foot-gun: `tools task run --session foo -- bash --readme`
+        // used to print the task README instead of running bash.
+        expect(argvRequestsReadme(["run", "--session", "x", "--", "bash", "--readme"])).toBe(false);
+        expect(argvRequestsReadme(["run", "--", "npx", "tool", "--readme=foo"])).toBe(false);
+    });
 });
 
 describe("addGlobalVerboseOption trace gate", () => {
