@@ -57,11 +57,11 @@ tools task logs --session metro --tail --follow
 
 ## Session names
 
-Reusing a name that already has a `.jsonl` on disk **does not wipe** the old session. The run is assigned a suffixed id such as `metro-2026-05-26_14:30:22`, printed immediately on stderr before the banner:
+Reusing a name that already has a `.jsonl` on disk **does not wipe** the old session. The run is assigned a suffixed id such as `metro-2026-05-26_14-30-22`, printed immediately on stderr before the banner:
 
 ```text
-note: session "metro" already exists — using "metro-2026-05-26_14:30:22"
-task-session-id: metro-2026-05-26_14:30:22
+note: session "metro" already exists — using "metro-2026-05-26_14-30-22"
+task-session-id: metro-2026-05-26_14-30-22
 ```
 
 Use `tools task get --session <full-id>` or pick the suffixed name from `tools task sessions` (see **Related:** in `get`).

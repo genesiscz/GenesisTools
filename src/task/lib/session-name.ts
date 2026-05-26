@@ -1,4 +1,7 @@
-const COLLISION_SUFFIX = /^\d{4}-\d{2}-\d{2}_\d{2}:\d{2}:\d{2}$/;
+// Use `-` between time fields (not `:`) so collision-suffixed names remain
+// valid NTFS filenames AND match the SAFE_LOG_SESSION_NAME charset enforced
+// at the dashboard route layer. See utils/log-viewer/session-name.ts.
+const COLLISION_SUFFIX = /^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$/;
 
 export function formatSessionDatetimeSuffix(date = new Date()): string {
     const pad = (value: number, length = 2): string => {
@@ -12,7 +15,7 @@ export function formatSessionDatetimeSuffix(date = new Date()): string {
     const mi = pad(date.getMinutes());
     const s = pad(date.getSeconds());
 
-    return `${y}-${mo}-${d}_${h}:${mi}:${s}`;
+    return `${y}-${mo}-${d}_${h}-${mi}-${s}`;
 }
 
 export function buildTimestampedSessionName(base: string, date = new Date()): string {
