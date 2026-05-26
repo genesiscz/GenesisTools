@@ -4,6 +4,7 @@ import { formatDurationMs, formatTime } from "@/lib/format";
 import { LEVEL_META } from "@/lib/levels";
 import { ExpandedView } from "./ExpandedView";
 import { InlineJsonPreview } from "./InlineJsonPreview";
+import { LogLineText } from "./LogLineText";
 
 type InlinePayload = { kind: "json"; value: unknown } | { kind: "text"; value: string } | null;
 
@@ -60,11 +61,17 @@ function EntryRowImpl({ entry, expanded, fresh, onToggle, onFilterHypothesis }: 
                         h:{entry.h}
                     </button>
                 ) : null}
-                <span className="flex-1 truncate-mono">
-                    {entry.label ? <span className="text-amber-200">{entry.label}</span> : null}
-                    {entry.label && entry.msg ? <span className="text-white/40"> · </span> : null}
-                    {entry.msg ? <span className="text-white/85">{entry.msg}</span> : null}
-                    {!entry.label && !entry.msg && !inline ? (
+                <span className="flex-1 truncate-mono min-w-0">
+                    {entry.msgAnsi ? (
+                        <LogLineText entry={entry} />
+                    ) : (
+                        <>
+                            {entry.label ? <span className="text-amber-200">{entry.label}</span> : null}
+                            {entry.label && entry.msg ? <span className="text-white/40"> · </span> : null}
+                            {entry.msg ? <span className="text-white/85">{entry.msg}</span> : null}
+                        </>
+                    )}
+                    {!entry.label && !entry.msg && !entry.msgAnsi && !inline ? (
                         <span className="text-white/40">{describeAssert(entry)}</span>
                     ) : null}
                 </span>

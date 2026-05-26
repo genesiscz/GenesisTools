@@ -1,15 +1,51 @@
 import type { IndexedLogEntry } from "@app/debugging-master/types";
 import type { DashboardSession, LogSourceId } from "@app/utils/log-viewer/log-source";
 import { sessionKey } from "@app/utils/log-viewer/session-key";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { buildBalancedMosaicLayout, reconcileMosaicLayout } from "@app/utils/ui/helpers/mosaic-layout";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Mosaic, type MosaicNode, MosaicWindow } from "react-mosaic-component";
 import { formatRelativeTime } from "@/lib/format";
 import { api } from "@/lib/api";
 import type { ConnectionStatus, MultiplexLogEntry } from "@/lib/sse";
 import { connectActiveStream } from "@/lib/sse";
 import { StatusPill } from "./StatusPill";
+import { SessionStatusLabel } from "./SessionStatusLabel";
+import { ActiveSessionMosaicToolbar } from "./ActiveSessionMosaicToolbar";
+import { DisplaySettingsButton } from "./DisplaySettingsButton";
+import { formatSessionHeaderParts } from "@/lib/session-run-context";
+import { SessionHeaderLine } from "./SessionHeaderLine";
+import { LogLineText } from "./LogLineText";
 
-const PREVIEW_LINES = 8;
+const ACTIVE_PREVIEW_LINES = 2000;
 const ARCHIVE_PREVIEW_LIMIT = 40;
+const MAX_ACTIVE_TILES = 6;
+const MOSAIC_MAX_COLUMNS = 3;
+
+function toMultiplexEntry(session: DashboardSession, entry: IndexedLogEntry): MultiplexLogEntry {
+    return {
+        ...entry,
+        source: session.source,
+        session: session.name,
+    };
+}
+
+function mergePreviewLines(
+    existing: MultiplexLogEntry[],
+    incoming: MultiplexLogEntry[],
+    maxLines: number
+): MultiplexLogEntry[] {
+    const byIndex = new Map<number, MultiplexLogEntry>();
+
+    for (const entry of existing) {
+        byIndex.set(entry.index, entry);
+    }
+
+    for (const entry of incoming) {
+        byIndex.set(entry.index, entry);
+    }
+
+    return [...byIndex.values()].sort((a, b) => a.index - b.index).slice(-maxLines);
+}
 
 interface Props {
     sessions: DashboardSession[];
@@ -39,18 +75,314 @@ function stateClass(state: DashboardSession["state"]): string {
     return "text-amber-400/80";
 }
 
+function latestLineTimestamp(lines: MultiplexLogEntry[]): number | undefined {
+    if (lines.length === 0) {
+        return undefined;
+    }
+
+    return lines[lines.length - 1].ts;
+}
+
+type MosaicVisibility = "visible" | "hidden" | "overflow";
+
+function resolveMosaicVisibility({
+    key,
+    allActiveKeys,
+    userHiddenKeys,
+    maxTiles,
+}: {
+    key: string;
+    allActiveKeys: string[];
+    userHiddenKeys: ReadonlySet<string>;
+    maxTiles: number;
+}): MosaicVisibility {
+    if (userHiddenKeys.has(key)) {
+        return "hidden";
+    }
+
+    const eligible = allActiveKeys.filter((candidate) => !userHiddenKeys.has(candidate));
+    const index = eligible.indexOf(key);
+
+    if (index === -1) {
+        return "hidden";
+    }
+
+    if (index < maxTiles) {
+        return "visible";
+    }
+
+    return "overflow";
+}
+
+function mosaicToggleTitle(visibility: MosaicVisibility, session: DashboardSession): string {
+    const header = formatSessionHeaderParts(session);
+    const label = header.cwd ? `${header.name} · ${header.cwd}` : header.name;
+
+    if (visibility === "visible") {
+        return `Hide "${label}" from mosaic`;
+    }
+
+    if (visibility === "overflow") {
+        return `Show "${label}" in mosaic (replaces another tile)`;
+    }
+
+    return `Show "${label}" in mosaic`;
+}
+
+function mosaicToggleClass(visibility: MosaicVisibility, badge: string): string {
+    const base =
+        "inline-flex items-center gap-1.5 max-w-[420px] px-2 py-1 rounded-md border text-[10px] transition-colors";
+
+    if (visibility === "visible") {
+        return `${base} ${badgeClass(badge)} border-emerald-400/50 bg-emerald-500/10 text-white/90 hover:bg-emerald-500/20`;
+    }
+
+    if (visibility === "overflow") {
+        return `${base} ${badgeClass(badge)} border-amber-400/35 bg-amber-500/5 text-white/70 hover:bg-amber-500/15`;
+    }
+
+    return `${base} border-white/10 bg-white/5 text-white/40 hover:text-white/70 hover:border-white/20`;
+}
+
 function previewText(entry: IndexedLogEntry | MultiplexLogEntry): string {
     return entry.msg ?? "";
 }
 
+function ActiveSessionTile({
+    lines,
+    autoScroll,
+}: {
+    lines: MultiplexLogEntry[];
+    autoScroll: boolean;
+}): React.ReactElement {
+    const scrollRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        const el = scrollRef.current;
+
+        if (!el || !autoScroll) {
+            return;
+        }
+
+        el.scrollTop = Number.MAX_SAFE_INTEGER;
+    }, [lines, autoScroll]);
+
+    return (
+        <div className="h-full flex flex-col bg-black/30">
+            <div
+                ref={scrollRef}
+                className="flex-1 min-h-0 overflow-y-auto font-mono dbg-log-text leading-relaxed"
+            >
+                {lines.length === 0 ? (
+                    <p className="px-2 py-2 text-white/25 italic">waiting for lines…</p>
+                ) : (
+                    lines.map((line) => (
+                        <div
+                            key={`${line.index}-${line.ts}`}
+                            className="px-2 py-0.5 border-b border-white/4 text-white/70 min-w-0"
+                            title={previewText(line)}
+                        >
+                            {line.msgAnsi ? (
+                                <LogLineText entry={line} />
+                            ) : (
+                                <>
+                                    <span className="text-white/30 mr-1.5">[{line.level}]</span>
+                                    <span className="truncate-mono">{previewText(line)}</span>
+                                </>
+                            )}
+                        </div>
+                    ))
+                )}
+            </div>
+        </div>
+    );
+}
+
+interface ActiveSessionMosaicPaneProps {
+    session: DashboardSession;
+    path: string[];
+    lines: MultiplexLogEntry[];
+    onOpenSession: (source: LogSourceId, name: string) => void;
+    onDelete: (session: DashboardSession) => void;
+}
+
+function ActiveSessionMosaicPane({
+    session,
+    path,
+    lines,
+    onOpenSession,
+    onDelete,
+}: ActiveSessionMosaicPaneProps): React.ReactElement {
+    const [paused, setPaused] = useState(false);
+
+    const togglePause = useCallback(() => {
+        setPaused((current) => !current);
+    }, []);
+
+    return (
+        <MosaicWindow<string>
+            path={path}
+            title=""
+            toolbarControls={<span />}
+            renderToolbar={() => (
+                <ActiveSessionMosaicToolbar
+                    session={session}
+                    lines={lines}
+                    paused={paused}
+                    onTogglePause={togglePause}
+                    onOpen={() => {
+                        onOpenSession(session.source, session.name);
+                    }}
+                    onDelete={() => {
+                        onDelete(session);
+                    }}
+                />
+            )}
+        >
+            <ActiveSessionTile lines={lines} autoScroll={!paused} />
+        </MosaicWindow>
+    );
+}
+
 export function SessionsHome({ sessions, status, onRefresh, onOpenSession, onStatus }: Props): React.ReactElement {
     const [liveLines, setLiveLines] = useState<Map<string, MultiplexLogEntry[]>>(new Map());
+    const [archiveOpen, setArchiveOpen] = useState(false);
     const [expandedArchive, setExpandedArchive] = useState<Set<string>>(new Set());
     const [archiveEntries, setArchiveEntries] = useState<Map<string, IndexedLogEntry[]>>(new Map());
     const [loadingArchive, setLoadingArchive] = useState<Set<string>>(new Set());
+    const [layout, setLayout] = useState<MosaicNode<string> | null>(null);
+    const [userHiddenKeys, setUserHiddenKeys] = useState<Set<string>>(() => new Set());
 
-    const activeSessions = useMemo(() => sessions.filter((s) => s.state === "active"), [sessions]);
+    const allActiveSessions = useMemo(() => sessions.filter((s) => s.state === "active"), [sessions]);
+    const allActiveKeys = useMemo(
+        () => allActiveSessions.map((s) => sessionKey(s.source, s.name)),
+        [allActiveSessions]
+    );
+    const mosaicActiveKeys = useMemo(() => {
+        return allActiveKeys.filter((key) => !userHiddenKeys.has(key)).slice(0, MAX_ACTIVE_TILES);
+    }, [allActiveKeys, userHiddenKeys]);
+    const mosaicActiveSessions = useMemo(() => {
+        const visible = new Set(mosaicActiveKeys);
+
+        return allActiveSessions.filter((session) => visible.has(sessionKey(session.source, session.name)));
+    }, [allActiveSessions, mosaicActiveKeys]);
     const archiveSessions = useMemo(() => sessions.filter((s) => s.state !== "active"), [sessions]);
+    const hiddenActiveCount = allActiveSessions.length - mosaicActiveKeys.length;
+
+    const sessionByKey = useMemo(() => {
+        const map = new Map<string, DashboardSession>();
+        for (const session of sessions) {
+            map.set(sessionKey(session.source, session.name), session);
+        }
+        return map;
+    }, [sessions]);
+
+    const activeKeys = mosaicActiveKeys;
+
+    useEffect(() => {
+        setUserHiddenKeys((prev) => {
+            const activeSet = new Set(allActiveKeys);
+            const next = new Set([...prev].filter((key) => activeSet.has(key)));
+
+            if (next.size === prev.size) {
+                return prev;
+            }
+
+            return next;
+        });
+    }, [allActiveKeys]);
+
+    useEffect(() => {
+        setLayout((current) => reconcileMosaicLayout(current, activeKeys, { maxColumns: MOSAIC_MAX_COLUMNS }));
+    }, [activeKeys]);
+
+    const mosaicLayout =
+        layout ?? buildBalancedMosaicLayout(activeKeys, { maxColumns: MOSAIC_MAX_COLUMNS });
+
+    useEffect(() => {
+        if (mosaicActiveSessions.length === 0) {
+            return;
+        }
+
+        let cancelled = false;
+
+        const prefetchActiveTails = async (): Promise<void> => {
+            const results = await Promise.all(
+                mosaicActiveSessions.map(async (session) => {
+                    const key = sessionKey(session.source, session.name);
+
+                    try {
+                        const res = await api.getRecentEntries(
+                            session.source,
+                            session.name,
+                            ACTIVE_PREVIEW_LINES
+                        );
+                        const tail = res.entries.map((entry) => toMultiplexEntry(session, entry));
+
+                        return { key, tail };
+                    } catch {
+                        return { key, tail: [] as MultiplexLogEntry[] };
+                    }
+                })
+            );
+
+            if (cancelled) {
+                return;
+            }
+
+            setLiveLines((prev) => {
+                const next = new Map(prev);
+
+                for (const { key, tail } of results) {
+                    const existing = next.get(key) ?? [];
+                    next.set(key, mergePreviewLines(existing, tail, ACTIVE_PREVIEW_LINES));
+                }
+
+                return next;
+            });
+        };
+
+        void prefetchActiveTails();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [mosaicActiveSessions]);
+
+    const toggleSessionInMosaic = useCallback(
+        (key: string) => {
+            setUserHiddenKeys((prev) => {
+                const next = new Set(prev);
+                const currentlyVisible = allActiveKeys
+                    .filter((candidate) => !next.has(candidate))
+                    .slice(0, MAX_ACTIVE_TILES);
+                const isVisible = currentlyVisible.includes(key);
+
+                if (isVisible) {
+                    next.add(key);
+                    return next;
+                }
+
+                next.delete(key);
+
+                const wouldBeVisible = allActiveKeys.filter((candidate) => !next.has(candidate));
+
+                if (wouldBeVisible.length > MAX_ACTIVE_TILES) {
+                    for (let index = currentlyVisible.length - 1; index >= 0; index--) {
+                        const displaced = currentlyVisible[index];
+
+                        if (displaced !== key) {
+                            next.add(displaced);
+                            break;
+                        }
+                    }
+                }
+
+                return next;
+            });
+        },
+        [allActiveKeys]
+    );
 
     useEffect(() => {
         const dispose = connectActiveStream({
@@ -59,8 +391,8 @@ export function SessionsHome({ sessions, status, onRefresh, onOpenSession, onSta
                 const key = sessionKey(entry.source, entry.session);
                 setLiveLines((prev) => {
                     const next = new Map(prev);
-                    const bucket = [...(next.get(key) ?? []), entry];
-                    next.set(key, bucket.slice(-PREVIEW_LINES));
+                    const bucket = next.get(key) ?? [];
+                    next.set(key, mergePreviewLines(bucket, [entry], ACTIVE_PREVIEW_LINES));
                     return next;
                 });
             },
@@ -77,7 +409,7 @@ export function SessionsHome({ sessions, status, onRefresh, onOpenSession, onSta
         return dispose;
     }, [onStatus]);
 
-    const toggleArchive = useCallback(async (session: DashboardSession) => {
+    const toggleArchiveRow = useCallback(async (session: DashboardSession) => {
         const key = sessionKey(session.source, session.name);
         setExpandedArchive((prev) => {
             const next = new Set(prev);
@@ -132,18 +464,32 @@ export function SessionsHome({ sessions, status, onRefresh, onOpenSession, onSta
                 next.delete(key);
                 return next;
             });
+            setUserHiddenKeys((prev) => {
+                if (!prev.has(key)) {
+                    return prev;
+                }
+
+                const next = new Set(prev);
+                next.delete(key);
+                return next;
+            });
             await onRefresh();
         },
         [onRefresh]
     );
 
     return (
-        <div className="h-full flex flex-col">
-            <header className="sticky top-0 z-20 glass-card border-b border-white/8">
+        <div className="h-full min-h-0 flex flex-col">
+            <header className="sticky top-0 z-20 glass-card border-b border-white/8 shrink-0">
                 <div className="px-3 sm:px-5 py-2.5 flex flex-wrap items-center gap-3">
                     <div className="flex items-center gap-3 mr-auto">
                         <span className="brand-title text-[13px] sm:text-[15px]">▓▓▓ SESSIONS</span>
                         <StatusPill status={status} />
+                        <span className="text-[10px] text-emerald-400/70">
+                            {allActiveSessions.length} active
+                            {hiddenActiveCount > 0 ? ` · ${mosaicActiveKeys.length} in mosaic` : ""}
+                            {hiddenActiveCount > 0 ? ` · ${hiddenActiveCount} hidden` : ""}
+                        </span>
                     </div>
                     <button
                         type="button"
@@ -154,112 +500,110 @@ export function SessionsHome({ sessions, status, onRefresh, onOpenSession, onSta
                     >
                         ↻ refresh
                     </button>
+                    <DisplaySettingsButton />
                 </div>
+
+                {allActiveSessions.length > 0 ? (
+                    <div className="px-3 sm:px-5 pb-2.5 flex flex-wrap items-center gap-1.5 border-t border-white/5 pt-2">
+                        <span className="text-[9px] uppercase tracking-widest text-white/30 mr-1 shrink-0">Mosaic</span>
+                        {allActiveSessions.map((session) => {
+                            const key = sessionKey(session.source, session.name);
+                            const visibility = resolveMosaicVisibility({
+                                key,
+                                allActiveKeys,
+                                userHiddenKeys,
+                                maxTiles: MAX_ACTIVE_TILES,
+                            });
+
+                            return (
+                                <button
+                                    key={key}
+                                    type="button"
+                                    onClick={() => {
+                                        toggleSessionInMosaic(key);
+                                    }}
+                                    className={mosaicToggleClass(visibility, session.badge)}
+                                    title={mosaicToggleTitle(visibility, session)}
+                                    aria-pressed={visibility === "visible"}
+                                >
+                                    <SessionHeaderLine session={session} showCommand={false} className="text-[10px]" />
+                                    <span className="text-[9px] shrink-0 opacity-70 ml-1">
+                                        {visibility === "visible" ? "●" : visibility === "overflow" ? "◐" : "○"}
+                                    </span>
+                                </button>
+                            );
+                        })}
+                    </div>
+                ) : null}
             </header>
 
-            <main className="flex-1 overflow-y-auto px-3 sm:px-5 py-4 space-y-6">
-                <section>
-                    <div className="flex items-baseline gap-2 mb-3">
-                        <h2 className="section-label text-[11px] uppercase tracking-widest text-white/50">Active</h2>
-                        <span className="text-[10px] text-emerald-400/70">{activeSessions.length} streaming</span>
-                    </div>
-
-                    {activeSessions.length === 0 ? (
-                        <p className="text-xs text-white/35 py-6 text-center border border-dashed border-white/10 rounded-lg">
-                            No active sessions — start one with{" "}
-                            <code className="text-cyan-300/80">tools task run --session &lt;name&gt; -- &lt;cmd&gt;</code>
-                        </p>
-                    ) : (
-                        <div className="grid gap-3 lg:grid-cols-2">
-                            {activeSessions.map((session) => {
-                                const key = sessionKey(session.source, session.name);
-                                const lines = liveLines.get(key) ?? [];
-
+            <div className="flex-1 min-h-0 flex flex-col px-2 py-2">
+                {allActiveSessions.length === 0 ? (
+                    <p className="text-xs text-white/35 py-6 text-center border border-dashed border-white/10 rounded-lg mx-1">
+                        No active sessions — start one with{" "}
+                        <code className="text-cyan-300/80">tools task run --session &lt;name&gt; -- &lt;cmd&gt;</code>
+                    </p>
+                ) : mosaicActiveSessions.length === 0 ? (
+                    <p className="text-xs text-white/35 py-6 text-center border border-dashed border-white/10 rounded-lg mx-1">
+                        All active sessions hidden — click a pill above to show one in the mosaic
+                    </p>
+                ) : mosaicLayout ? (
+                    <Mosaic<string>
+                        value={mosaicLayout}
+                        onChange={(next) => setLayout(next)}
+                        className="dbg-mosaic flex-1 min-h-0"
+                        renderTile={(id, path) => {
+                            const session = sessionByKey.get(id);
+                            if (!session) {
                                 return (
-                                    <article
-                                        key={key}
-                                        className="glass-card border border-white/8 rounded-lg overflow-hidden"
-                                    >
-                                        <div className="px-3 py-2 flex items-start gap-2 border-b border-white/6 bg-black/20">
-                                            <div className="flex-1 min-w-0">
-                                                <div className="flex items-center gap-2 flex-wrap">
-                                                    <span
-                                                        className={`text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border ${badgeClass(session.badge)}`}
-                                                    >
-                                                        {session.badge}
-                                                    </span>
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => {
-                                                            onOpenSession(session.source, session.name);
-                                                        }}
-                                                        className="text-xs text-white/90 hover:text-cyan-300 truncate-mono text-left"
-                                                        title="Open full log viewer"
-                                                    >
-                                                        {session.name}
-                                                    </button>
-                                                    <span className={`text-[10px] ${stateClass(session.state)}`}>
-                                                        {session.stateLabel}
-                                                    </span>
-                                                </div>
-                                                {session.command || session.projectPath ? (
-                                                    <p
-                                                        className="text-[10px] text-white/35 truncate-mono mt-1"
-                                                        title={session.command ?? session.projectPath}
-                                                    >
-                                                        {session.command ?? session.projectPath}
-                                                    </p>
-                                                ) : null}
-                                            </div>
-                                            <div className="flex items-center gap-1 shrink-0">
-                                                <span className="text-[10px] text-white/30">
-                                                    {session.entryCount ?? 0} lines
-                                                </span>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => {
-                                                        void handleDelete(session);
-                                                    }}
-                                                    className="text-[10px] uppercase tracking-wider text-rose-400/70 hover:text-rose-300 px-1.5 py-0.5 border border-rose-500/20 hover:border-rose-500/60 rounded transition-colors"
-                                                >
-                                                    delete
-                                                </button>
-                                            </div>
-                                        </div>
-                                        <div className="max-h-40 overflow-y-auto font-mono text-[11px] leading-relaxed">
-                                            {lines.length === 0 ? (
-                                                <p className="px-3 py-2 text-white/25 italic">waiting for lines…</p>
-                                            ) : (
-                                                lines.map((line) => (
-                                                    <div
-                                                        key={`${line.index}-${line.ts}`}
-                                                        className="px-3 py-0.5 border-b border-white/4 text-white/70 truncate-mono"
-                                                        title={previewText(line)}
-                                                    >
-                                                        <span className="text-white/30 mr-2">[{line.level}]</span>
-                                                        {previewText(line)}
-                                                    </div>
-                                                ))
-                                            )}
-                                        </div>
-                                    </article>
+                                    <MosaicWindow<string> path={path} title={id} toolbarControls={<span />}>
+                                        <div className="p-2 text-white/40 text-xs">session gone</div>
+                                    </MosaicWindow>
                                 );
-                            })}
-                        </div>
-                    )}
-                </section>
+                            }
 
-                <section>
-                    <div className="flex items-baseline gap-2 mb-3">
-                        <h2 className="section-label text-[11px] uppercase tracking-widest text-white/50">Archive</h2>
-                        <span className="text-[10px] text-white/35">{archiveSessions.length} sessions</span>
-                    </div>
+                            const lines = liveLines.get(id) ?? [];
 
-                    {archiveSessions.length === 0 ? (
-                        <p className="text-xs text-white/30 py-4">No archived sessions yet.</p>
-                    ) : (
-                        <div className="space-y-2">
-                            {archiveSessions.map((session) => {
+                            return (
+                                <ActiveSessionMosaicPane
+                                    session={session}
+                                    path={path}
+                                    lines={lines}
+                                    onOpenSession={onOpenSession}
+                                    onDelete={(s) => {
+                                        void handleDelete(s);
+                                    }}
+                                />
+                            );
+                        }}
+                    />
+                ) : null}
+            </div>
+
+            <div
+                className={`shrink-0 border-t border-white/10 bg-black/40 flex flex-col transition-[height] duration-200 ease-out ${
+                    archiveOpen ? "h-[min(42vh,360px)]" : "h-9"
+                }`}
+            >
+                <button
+                    type="button"
+                    onClick={() => {
+                        setArchiveOpen((open) => !open);
+                    }}
+                    className="h-9 px-3 sm:px-5 flex items-center gap-2 text-[10px] uppercase tracking-widest text-white/50 hover:text-white/80 hover:bg-white/5 shrink-0"
+                    aria-expanded={archiveOpen}
+                >
+                    <span className="text-white/35">{archiveOpen ? "▾" : "▴"}</span>
+                    <span>Archive</span>
+                    <span className="text-white/30 normal-case tracking-normal">({archiveSessions.length})</span>
+                </button>
+
+                {archiveOpen ? (
+                    <div className="flex-1 min-h-0 overflow-y-auto px-2 pb-2 space-y-1">
+                        {archiveSessions.length === 0 ? (
+                            <p className="text-xs text-white/30 px-2 py-1">No archived sessions.</p>
+                        ) : (
+                            archiveSessions.map((session) => {
                                 const key = sessionKey(session.source, session.name);
                                 const open = expandedArchive.has(key);
                                 const entries = archiveEntries.get(key) ?? [];
@@ -268,96 +612,79 @@ export function SessionsHome({ sessions, status, onRefresh, onOpenSession, onSta
                                 return (
                                     <article
                                         key={key}
-                                        className="glass-card border border-white/8 rounded-lg overflow-hidden"
+                                        className="glass-card border border-white/8 rounded-md overflow-hidden"
                                     >
-                                        <div className="px-3 py-2 flex items-center gap-2">
+                                        <div className="px-2 py-1.5 flex items-center gap-2">
                                             <button
                                                 type="button"
                                                 onClick={() => {
-                                                    void toggleArchive(session);
+                                                    void toggleArchiveRow(session);
                                                 }}
-                                                className="text-white/50 hover:text-white/80 w-5 text-center shrink-0"
+                                                className="text-white/50 hover:text-white/80 w-4 text-center shrink-0"
                                                 aria-expanded={open}
                                             >
                                                 {open ? "▾" : "▸"}
                                             </button>
-                                            <span
-                                                className={`text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border ${badgeClass(session.badge)}`}
-                                            >
-                                                {session.badge}
-                                            </span>
-                                            <button
-                                                type="button"
-                                                onClick={() => {
+                                            <SessionHeaderLine
+                                                session={session}
+                                                onNameClick={() => {
                                                     onOpenSession(session.source, session.name);
                                                 }}
-                                                className="text-xs text-white/85 hover:text-cyan-300 truncate-mono flex-1 text-left min-w-0"
-                                            >
-                                                {session.name}
-                                            </button>
-                                            <span className={`text-[10px] shrink-0 ${stateClass(session.state)}`}>
-                                                {session.stateLabel}
-                                            </span>
+                                                className="flex-1 text-[11px]"
+                                            />
+                                            <SessionStatusLabel
+                                                session={session}
+                                                className={`text-[10px] shrink-0 ${stateClass(session.state)}`}
+                                            />
                                             <span className="text-[10px] text-white/30 shrink-0">
                                                 {formatRelativeTime(session.lastActivityAt)}
-                                            </span>
-                                            <span className="text-[10px] text-white/30 shrink-0">
-                                                {session.entryCount ?? 0} lines
                                             </span>
                                             <button
                                                 type="button"
                                                 onClick={() => {
                                                     void handleDelete(session);
                                                 }}
-                                                className="text-[10px] uppercase tracking-wider text-rose-400/70 hover:text-rose-300 px-1.5 py-0.5 border border-rose-500/20 hover:border-rose-500/60 rounded shrink-0 transition-colors"
+                                                className="text-[10px] uppercase tracking-wider text-rose-400/70 hover:text-rose-300 px-1 py-0.5 border border-rose-500/20 hover:border-rose-500/60 rounded shrink-0"
                                             >
                                                 delete
                                             </button>
                                         </div>
 
                                         {open ? (
-                                            <div className="border-t border-white/6 bg-black/25 max-h-56 overflow-y-auto font-mono text-[11px]">
+                                            <div className="border-t border-white/6 bg-black/25 max-h-40 overflow-y-auto font-mono dbg-log-text">
                                                 {loading ? (
-                                                    <p className="px-3 py-2 text-white/30 italic">loading…</p>
+                                                    <p className="px-2 py-1 text-white/30 italic">loading…</p>
                                                 ) : entries.length === 0 ? (
-                                                    <p className="px-3 py-2 text-white/30 italic">no log lines</p>
+                                                    <p className="px-2 py-1 text-white/30 italic">no log lines</p>
                                                 ) : (
                                                     entries.map((entry) => (
                                                         <div
                                                             key={entry.index}
-                                                            className="px-3 py-0.5 border-b border-white/4 text-white/65 truncate-mono"
+                                                            className="px-2 py-0.5 border-b border-white/4 text-white/65 min-w-0"
                                                             title={previewText(entry)}
                                                         >
-                                                            <span className="text-white/30 mr-2">[{entry.level}]</span>
-                                                            {previewText(entry)}
+                                                            {entry.msgAnsi ? (
+                                                                <LogLineText entry={entry} />
+                                                            ) : (
+                                                                <>
+                                                                    <span className="text-white/30 mr-1.5">
+                                                                        [{entry.level}]
+                                                                    </span>
+                                                                    <span className="truncate-mono">{previewText(entry)}</span>
+                                                                </>
+                                                            )}
                                                         </div>
                                                     ))
                                                 )}
-                                                <div className="px-3 py-2 border-t border-white/6">
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => {
-                                                            onOpenSession(session.source, session.name);
-                                                        }}
-                                                        className="text-[10px] uppercase tracking-wider text-cyan-400/80 hover:text-cyan-300"
-                                                    >
-                                                        open full viewer →
-                                                    </button>
-                                                </div>
                                             </div>
                                         ) : null}
                                     </article>
                                 );
-                            })}
-                        </div>
-                    )}
-                </section>
-            </main>
-
-            <footer className="px-3 sm:px-5 py-1.5 border-t border-white/8 bg-black/30 text-[10px] text-white/40 flex items-center justify-between">
-                <span>{sessions.length} sessions total</span>
-                <span className="text-white/25">dbg + task · live multiplex</span>
-            </footer>
+                            })
+                        )}
+                    </div>
+                ) : null}
+            </div>
         </div>
     );
 }

@@ -30,24 +30,98 @@
     --lvl-snapshot: #3b82f6;    /* electric blue */
     --lvl-trace: #8a8aa3;       /* muted */
     --lvl-raw: #6a6a82;
+
+    --dbg-font-ui: 12px;
+    --dbg-font-header: 11px;
+    --dbg-font-log: 11px;
+
+    /* xterm-like ANSI palette for dashboard log rendering */
+    --ansi-black: #1e1e2e;
+    --ansi-red: #f87171;
+    --ansi-green: #4ade80;
+    --ansi-yellow: #facc15;
+    --ansi-blue: #60a5fa;
+    --ansi-magenta: #e879f9;
+    --ansi-cyan: #22d3ee;
+    --ansi-white: #e5e7eb;
+    --ansi-bright-black: #6b7280;
+    --ansi-bright-red: #fca5a5;
+    --ansi-bright-green: #86efac;
+    --ansi-bright-yellow: #fde047;
+    --ansi-bright-blue: #93c5fd;
+    --ansi-bright-magenta: #f0abfc;
+    --ansi-bright-cyan: #67e8f9;
+    --ansi-bright-white: #f9fafb;
+    --ansi-bg-black: rgba(0, 0, 0, 0.35);
+    --ansi-bg-red: rgba(248, 113, 113, 0.18);
+    --ansi-bg-green: rgba(74, 222, 128, 0.15);
+    --ansi-bg-yellow: rgba(250, 204, 21, 0.15);
+    --ansi-bg-blue: rgba(96, 165, 250, 0.15);
+    --ansi-bg-magenta: rgba(232, 121, 249, 0.15);
+    --ansi-bg-cyan: rgba(34, 211, 238, 0.12);
+    --ansi-bg-white: rgba(255, 255, 255, 0.08);
+    --ansi-bg-bright-black: rgba(107, 114, 128, 0.2);
+    --ansi-bg-bright-red: rgba(252, 165, 165, 0.2);
+    --ansi-bg-bright-green: rgba(134, 239, 172, 0.18);
+    --ansi-bg-bright-yellow: rgba(253, 224, 71, 0.18);
+    --ansi-bg-bright-blue: rgba(147, 197, 253, 0.18);
+    --ansi-bg-bright-magenta: rgba(240, 171, 252, 0.18);
+    --ansi-bg-bright-cyan: rgba(103, 232, 249, 0.16);
+    --ansi-bg-bright-white: rgba(249, 250, 251, 0.12);
 }
 
-html, body, #app {
-    height: 100%;
+html {
+    min-height: 100%;
+    min-height: 100dvh;
     margin: 0;
     background: var(--dbg-bg);
-    color: var(--dbg-fg);
-    font-family: 'JetBrains Mono', ui-monospace, Menlo, Monaco, Consolas, monospace;
-    -webkit-font-smoothing: antialiased;
-    text-rendering: optimizeLegibility;
 }
 
 body {
-    /* Ambient mesh gradient on the document, NOT fixed-attachment. With
-       `background-attachment: fixed`, every scroll frame forces a full
-       repaint of the backdrop — at ~4k rows that saturates the compositor
-       and the page goes unresponsive. Plain background scrolls with the
-       document and gets the browser's fast-scroll path. */
+    min-height: 100%;
+    min-height: 100dvh;
+    margin: 0;
+    color: var(--dbg-fg);
+    font-family: 'JetBrains Mono', ui-monospace, Menlo, Monaco, Consolas, monospace;
+    font-size: var(--dbg-font-ui);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    background: var(--dbg-bg);
+}
+
+#app {
+    position: relative;
+    z-index: 2;
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+    min-height: 100dvh;
+    margin: 0;
+    background: transparent;
+    color: var(--dbg-fg);
+    font-family: inherit;
+}
+
+.dbg-header-text {
+    font-size: var(--dbg-font-header);
+}
+
+.dbg-log-text {
+    font-size: var(--dbg-font-log);
+}
+
+.ansi-log {
+    font-family: inherit;
+    line-height: inherit;
+}
+
+/* Full-viewport ambient layer — fixed so it never clips when inner panes scroll. */
+body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
     background:
         radial-gradient(circle at 15% 5%, rgba(168, 85, 247, 0.06), transparent 40%),
         radial-gradient(circle at 85% 95%, rgba(6, 182, 212, 0.05), transparent 50%),
@@ -306,4 +380,68 @@ body::before {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+/* ============================================================================
+   MOSAIC — resizable active session grid (override react-mosaic defaults)
+   ============================================================================ */
+
+.dbg-mosaic {
+    height: 100%;
+    min-height: 12rem;
+    background: transparent;
+}
+
+.dbg-mosaic.mosaic,
+.dbg-mosaic.mosaic-blueprint {
+    background: transparent;
+}
+
+.dbg-mosaic .mosaic-window,
+.dbg-mosaic .mosaic-preview {
+    background: rgba(10, 10, 20, 0.92);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+.dbg-mosaic .mosaic-window .mosaic-window-toolbar,
+.dbg-mosaic .mosaic-preview .mosaic-window-toolbar {
+    background: rgba(0, 0, 0, 0.55);
+    color: rgba(255, 255, 255, 0.55);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    min-height: 28px;
+    height: auto;
+    align-items: stretch;
+    font-family: inherit;
+    font-size: 10px;
+    box-shadow: none;
+    padding: 2px 4px;
+}
+
+.dbg-mosaic .mosaic-window .mosaic-window-title,
+.dbg-mosaic .mosaic-preview .mosaic-window-title {
+    display: none;
+}
+
+.dbg-mosaic .mosaic-window .mosaic-window-body,
+.dbg-mosaic .mosaic-preview .mosaic-window-body {
+    background: rgba(7, 7, 13, 0.85);
+}
+
+.dbg-mosaic .mosaic-window .mosaic-window-body-overlay,
+.dbg-mosaic .mosaic-preview .mosaic-window-body-overlay,
+.dbg-mosaic .mosaic-window .mosaic-window-additional-actions-bar,
+.dbg-mosaic .mosaic-preview .mosaic-window-additional-actions-bar {
+    background: rgba(10, 10, 20, 0.95);
+}
+
+.dbg-mosaic .mosaic-split {
+    z-index: 5;
+    background: rgba(255, 255, 255, 0.06);
+}
+
+.dbg-mosaic .mosaic-split:hover {
+    background: rgba(168, 85, 247, 0.45);
 }
