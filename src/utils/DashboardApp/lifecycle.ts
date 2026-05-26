@@ -11,6 +11,7 @@ import { logger, out } from "@app/logger";
 import { Browser } from "@app/utils/browser";
 import { isInteractive, suggestCommand } from "@app/utils/cli";
 import { getPortOwner } from "@app/utils/network";
+import { isProcessAlive } from "@app/utils/process-alive";
 import { spawnDashboard } from "@app/utils/process/spawnDashboard";
 import { stripAnsi } from "@app/utils/string";
 import * as p from "@clack/prompts";
@@ -811,15 +812,8 @@ export async function uninstall(ctx: LifecycleContext): Promise<void> {
     out.log.success(`Launchd plist removed.`);
 }
 
-function isProcessAlive(pid: number): boolean {
-    try {
-        process.kill(pid, 0);
-        return true;
-    } catch (err) {
-        logger.debug({ err, pid }, "process liveness probe failed");
-        return false;
-    }
-}
+// isProcessAlive lives in src/utils/process-alive.ts — one canonical copy
+// across the repo with ESRCH/EPERM disambiguation. Imported below.
 
 export function dashboardUrlWithQuery(
     config: DashboardAppConfig,

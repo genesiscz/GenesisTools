@@ -1,23 +1,4 @@
-interface ErrnoException {
-    code?: string;
-}
-
-export function isProcessAlive(pid: number): boolean {
-    try {
-        process.kill(pid, 0);
-        return true;
-    } catch (err) {
-        // POSIX semantics for `kill(pid, 0)`:
-        //   ESRCH  → no such process (dead)
-        //   EPERM  → process exists but the caller can't signal it
-        //            (different uid / different sandbox / etc.)
-        //   any other error → treat conservatively as alive so we don't
-        //            falsely mark a sticky-PID session as exited.
-        const code = (err as ErrnoException).code;
-        if (code === "ESRCH") {
-            return false;
-        }
-
-        return true;
-    }
-}
+// Re-export the canonical helper so existing `@app/task/lib/process-alive`
+// imports keep working — the implementation lives in src/utils/process-alive.ts
+// (one copy across timer, port, task, storage/file-lock, DashboardApp).
+export { isProcessAlive } from "@app/utils/process-alive";
