@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { logDashboardApp } from "@app/debugging-master/lib/log-dashboard-app";
+import { logDashboardUiApp } from "@app/debugging-master/lib/log-dashboard-ui-app";
 import { out } from "@app/logger";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -12,12 +13,13 @@ export function registerDashboardCommand(program: Command): void {
 
     dashboard
         .command("build")
-        .description("Compile the dashboard frontend (vite build)")
+        .description("Compile the dashboard frontend (vite build) — required for `serve`, not for `ui` dev")
         .action(async () => {
             await runBuild();
         });
 
     dashboard.addCommand(logDashboardApp.commanderCommand);
+    dashboard.addCommand(logDashboardUiApp.commanderCommand);
 }
 
 export async function runBuild(): Promise<void> {
