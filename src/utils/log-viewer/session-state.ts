@@ -6,6 +6,8 @@ import type { DashboardSessionState, LogSourceId } from "./log-source";
 export interface ResolvedSessionState {
     state: DashboardSessionState;
     stateLabel: string;
+    exitCode?: number;
+    exitedAt?: number;
 }
 
 export async function resolveSessionState(source: LogSourceId, name: string): Promise<ResolvedSessionState> {
@@ -25,9 +27,13 @@ async function resolveTaskSessionState(name: string): Promise<ResolvedSessionSta
     }
 
     const label = formatSessionState(meta);
+    const exitFields = {
+        exitCode: meta.exitCode,
+        exitedAt: meta.exitedAt ? Date.parse(meta.exitedAt) : undefined,
+    };
 
     if (meta.exitCode !== undefined) {
-        return { state: "exited", stateLabel: label };
+        return { state: "exited", stateLabel: label, ...exitFields };
     }
 
     if (Date.now() - meta.lastActivityAt < TASK_ACTIVE_THRESHOLD_MS) {

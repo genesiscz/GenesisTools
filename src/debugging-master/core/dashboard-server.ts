@@ -8,6 +8,7 @@ import type { DashboardSession, LogSourceId } from "@app/utils/log-viewer/log-so
 import { getAllLogSources, getLogSource } from "@app/utils/log-viewer/resolve-log-source";
 import { isLogSourceId } from "@app/utils/log-viewer/session-key";
 import { enrichDashboardTimestamps } from "@app/utils/log-viewer/tail-bridge";
+import { sortSessionsByRecency } from "@app/utils/log-viewer/session-recency";
 import { decodeSessionPathSegment, isSafeLogSessionName } from "@app/utils/log-viewer/session-name";
 import { resolveSessionState } from "@app/utils/log-viewer/session-state";
 
@@ -244,6 +245,10 @@ async function listSessions(): Promise<DashboardSession[]> {
     for (const source of getAllLogSources()) {
         const listed = await source.listSessions();
         for (const session of listed) {
+            if (!isSafeLogSessionName(session.name)) {
+                continue;
+            }
+
             const times = enrichDashboardTimestamps(session, session.jsonlPath);
             const resolved = await resolveSessionState(session.source, session.name);
             all.push({
@@ -257,11 +262,13 @@ async function listSessions(): Promise<DashboardSession[]> {
                 entryCount: session.entryCount,
                 state: resolved.state,
                 stateLabel: resolved.stateLabel,
+                exitCode: resolved.exitCode,
+                exitedAt: resolved.exitedAt,
             });
         }
     }
 
-    return all.sort((a, b) => b.lastActivityAt - a.lastActivityAt);
+    return sortSessionsByRecency(all);
 }
 
 async function findDashboardSession(source: LogSourceId, name: string): Promise<DashboardSession | null> {
