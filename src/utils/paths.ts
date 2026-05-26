@@ -100,27 +100,32 @@ export function collapsePathForDisplay(p: string): string {
         return p;
     }
 
-    const normalized = toPosixPath(p);
-
-    if (normalized.startsWith("~/") || normalized === "~") {
-        return normalized;
+    if (p.startsWith("~/") || p === "~" || p === "~\\" || p.startsWith("~\\")) {
+        return toPosixPath(p);
     }
 
     try {
         const home = homedir();
         if (home) {
-            const collapsed = collapsePath(normalized);
-            if (collapsed !== normalized) {
-                return collapsed;
+            // Collapse against the ORIGINAL native path — collapsePath()
+            // does both unix and Windows home-prefix checks internally,
+            // and `homedir()` returns the native form. On Windows the
+            // input is typically `C:\Users\name\foo` and home is
+            // `C:\Users\name`; pre-normalizing to POSIX first would break
+            // the prefix match (the prior bug).
+            const collapsed = collapsePath(p);
+            const displayCollapsed = toPosixPath(collapsed);
+            if (collapsed !== p) {
+                return displayCollapsed;
             }
 
-            return normalized;
+            return toPosixPath(p);
         }
     } catch {
         // Browser bundle — no homedir.
     }
 
-    return collapsePathHeuristic(normalized);
+    return collapsePathHeuristic(toPosixPath(p));
 }
 
 /**
