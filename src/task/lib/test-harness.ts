@@ -1,7 +1,6 @@
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { filterLineRecords, readJsonlFile } from "@app/utils/log-session/jsonl-reader";
-import { TASK_SESSIONS_DIR } from "@app/task/lib/paths";
 
 const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 
@@ -52,5 +51,3 @@ export async function readTaskJsonl(session: string, homeDir: string) {
     const records = await readJsonlFile(path);
     return filterLineRecords(records);
 }
-
-export { TASK_SESSIONS_DIR };

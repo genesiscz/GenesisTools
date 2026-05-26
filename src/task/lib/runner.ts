@@ -187,15 +187,28 @@ async function runPtyMode(opts: RunTaskOptions, writer: OrderedCaptureWriter): P
 export async function runTask(opts: RunTaskOptions): Promise<RunTaskResult> {
     const cwd = opts.cwd ?? process.cwd();
     const store = new TaskSessionStore();
-    const resolved: ResolvedRunSession = opts.resolved ?? (await store.resolveRunSessionName(opts.session));
+    const resolved: ResolvedRunSession = opts.resolved ?? {
+        session: opts.session,
+        requested: opts.session,
+        renamed: false,
+    };
 
-    await store.prepareSession({
+    const prepareInput = {
         name: resolved.session,
         command: opts.command.join(" "),
         mode: opts.mode,
         cwd,
         requestedAs: resolved.renamed ? resolved.requested : undefined,
-    });
+    };
+
+    if (resolved.reuse === "reuse-clear") {
+        await store.clearSessionLogs(resolved.session);
+        await store.prepareSession(prepareInput);
+    } else if (resolved.reuse === "reuse-continue") {
+        await store.prepareSessionReuseContinue(prepareInput);
+    } else {
+        await store.prepareSession(prepareInput);
+    }
 
     const session = resolved.session;
     const paths = sessionFilePaths(session);
@@ -210,12 +223,18 @@ export async function runTask(opts: RunTaskOptions): Promise<RunTaskResult> {
         startedAt: new Date().toISOString(),
     });
 
+    const initialSeq =
+        resolved.reuse === "reuse-continue" && resolved.previousLastSeq !== undefined
+            ? resolved.previousLastSeq
+            : undefined;
+
     const writer = new OrderedCaptureWriter({
         jsonlPath: jsonlPath(session),
         uiJsonlPath: uiJsonlPath(session),
         stdoutPath: stdoutLogPath(session),
         stderrPath: stderrLogPath(session),
         mode: opts.mode,
+        initialSeq,
     });
 
     const startMs = Date.now();

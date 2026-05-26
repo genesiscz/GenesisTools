@@ -2,10 +2,32 @@ import { out } from "@app/logger";
 import { isInteractive, suggestCommand } from "@app/utils/cli/executor";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
+import pc from "picocolors";
 import { printRunBanner, printRunExitSummary } from "@app/task/lib/banner";
+import { resolveRunSession } from "@app/task/lib/resolve-run-session";
 import { resolveRunMode } from "@app/task/lib/run-mode";
 import { runTask } from "@app/task/lib/runner";
+import { suggestClearOlderThanSeq, suggestTail } from "@app/task/lib/suggest-flags";
 import { TaskSessionStore } from "@app/task/lib/session-store";
+
+function printExplicitReuseWarnings(
+    session: string,
+    previousLastSeq: number | undefined
+): void {
+    out.printlnErr(pc.yellow(`warn: reusing existing session "${session}" (append mode)`));
+
+    if (previousLastSeq !== undefined && previousLastSeq > 0) {
+        out.printlnErr(pc.dim(`info: last seq ${previousLastSeq}; new lines continue from ${previousLastSeq + 1}`));
+    }
+
+    out.printlnErr(pc.dim(`info: tail live output: ${suggestTail(session)}`));
+
+    if (previousLastSeq !== undefined && previousLastSeq > 0) {
+        out.printlnErr(
+            pc.dim(`info: clear older lines: ${suggestClearOlderThanSeq(session, previousLastSeq)}`)
+        );
+    }
+}
 
 export function registerRunCommand(program: Command): void {
     program
@@ -27,7 +49,10 @@ export function registerRunCommand(program: Command): void {
                 process.exit(1);
             }
 
-            let session = opts.session ?? globalOpts.session;
+            const explicitSessionFromFlag = opts.session ?? globalOpts.session;
+            let session = explicitSessionFromFlag;
+            const explicitSessionFlag = Boolean(explicitSessionFromFlag);
+
             if (!session) {
                 if (!isInteractive()) {
                     out.printlnErr("error: --session required in non-interactive mode.");
@@ -59,13 +84,24 @@ export function registerRunCommand(program: Command): void {
             const mode = resolveRunMode({ tty: opts.tty });
 
             const store = new TaskSessionStore();
-            const resolved = await store.resolveRunSessionName(session);
+            const resolved = await resolveRunSession(store, session, {
+                explicitSessionFlag,
+                interactive: isInteractive(),
+            });
+
+            if (!resolved) {
+                process.exit(1);
+            }
 
             if (resolved.renamed) {
                 out.printlnErr(
                     `note: session "${resolved.requested}" already exists — using "${resolved.session}"`
                 );
                 out.printlnErr(`task-session-id: ${resolved.session}`);
+            }
+
+            if (resolved.reuse === "reuse-continue" && explicitSessionFlag) {
+                printExplicitReuseWarnings(resolved.session, resolved.previousLastSeq);
             }
 
             printRunBanner({ session: resolved.session, command, mode });

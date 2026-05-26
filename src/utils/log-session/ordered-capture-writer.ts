@@ -13,6 +13,8 @@ export interface OrderedCaptureWriterOptions {
     stdoutPath: string;
     stderrPath: string;
     mode: CaptureMode;
+    /** Continue seq numbering from an existing session (reuse-continue). */
+    initialSeq?: number;
 }
 
 export class OrderedCaptureWriter {
@@ -29,6 +31,7 @@ export class OrderedCaptureWriter {
         this.jsonlWriter = new JsonlWriter(opts.jsonlPath);
         this.uiJsonlWriter = opts.uiJsonlPath ? new JsonlWriter(opts.uiJsonlPath) : null;
         this.mode = opts.mode;
+        this.seq = opts.initialSeq ?? 0;
         mkdirSync(dirname(opts.jsonlPath), { recursive: true });
         mkdirSync(dirname(opts.stdoutPath), { recursive: true });
         mkdirSync(dirname(opts.stderrPath), { recursive: true });
