@@ -1,5 +1,4 @@
 import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { suggestCommand } from "@app/utils/cli/executor";
 import { SafeJSON } from "@app/utils/json";
 import { fuzzyResolveSession } from "@app/utils/log-session/fuzzy-resolver";
@@ -368,16 +367,15 @@ export class TaskSessionStore {
     }
 
     async deleteSession(name: string): Promise<void> {
-        const sessionsDir = getTaskSessionsDir();
-        const paths = [
-            join(sessionsDir, `${name}.jsonl`),
-            join(sessionsDir, `${name}.ui.jsonl`),
-            join(sessionsDir, `${name}.log`),
-            join(sessionsDir, `${name}.err.log`),
-            metaPath(name),
-        ];
-
-        for (const path of paths) {
+        // Every path goes through safeSessionPath (via sessionFilePaths) so
+        // a maliciously-named session — `..` traversal, embedded `/` — is
+        // rejected before any unlink runs. The prior implementation used
+        // bare path.join for 4 of 5 entries; safety relied on the array
+        // literal evaluating metaPath() first and throwing. A future
+        // refactor that reordered or removed it would silently unmask the
+        // traversal.
+        const paths = sessionFilePaths(name);
+        for (const path of [paths.jsonl, paths.uiJsonl, paths.stdout, paths.stderr, paths.meta]) {
             if (existsSync(path)) {
                 unlinkSync(path);
             }
