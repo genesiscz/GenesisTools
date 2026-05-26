@@ -3,9 +3,16 @@ import { basename, join } from "node:path";
 import { suggestCommand } from "@app/utils/cli/executor";
 import { SafeJSON } from "@app/utils/json";
 import { fuzzyResolveSession } from "@app/utils/log-session/fuzzy-resolver";
+import { readJsonlFile } from "@app/utils/log-session/jsonl-reader";
+import type { JsonlExitRecord } from "@app/utils/log-session/types";
 import { Storage } from "@app/utils/storage/storage";
-import type { TaskConfig, TaskRunMode, TaskSessionMeta } from "../types";
-import { metaPath, TASK_SESSIONS_DIR } from "./paths";
+import type { MarkExitedInput, PrepareSessionInput, TaskConfig, TaskSessionMeta } from "../types";
+import { jsonlPath, metaPath, TASK_SESSIONS_DIR } from "./paths";
+import { buildTimestampedSessionName } from "./session-name";
+import { isProcessAlive } from "./process-alive";
+
+export type { ResolvedRunSession } from "../types";
+import type { ResolvedRunSession } from "../types";
 
 const TOOL_NAME = "tools task";
 export const ACTIVE_THRESHOLD_MS = 60 * 60 * 1000;
@@ -69,36 +76,86 @@ export class TaskSessionStore {
         await this.writeSessionMeta(meta);
     }
 
-    async prepareSession(name: string, command: string, mode: TaskRunMode, cwd: string): Promise<void> {
+    sessionFilesExist(name: string): boolean {
+        return existsSync(jsonlPath(name));
+    }
+
+    async resolveRunSessionName(requested: string): Promise<ResolvedRunSession> {
+        await this.getSessionsDir();
+
+        if (!this.sessionFilesExist(requested)) {
+            return { session: requested, requested, renamed: false };
+        }
+
+        let session = buildTimestampedSessionName(requested);
+        while (this.sessionFilesExist(session)) {
+            session = buildTimestampedSessionName(requested, new Date(), true);
+        }
+
+        return { session, requested, renamed: true };
+    }
+
+    async listRelatedSessionNames(name: string, requestedAs?: string): Promise<string[]> {
+        const base = requestedAs ?? name;
+        const names = await this.listSessionNames();
+
+        return names.filter((candidate) => candidate === base || candidate.startsWith(`${base}-`)).sort();
+    }
+
+    async reconcileSessionState(name: string): Promise<TaskSessionMeta | null> {
+        let meta = await this.getSessionMeta(name);
+
+        if (!meta || meta.exitCode !== undefined) {
+            return meta;
+        }
+
+        const records = await readJsonlFile(jsonlPath(name));
+        const exit = records.find(
+            (record): record is JsonlExitRecord =>
+                record.type === "exit" && typeof (record as JsonlExitRecord).code === "number"
+        );
+
+        if (exit) {
+            await this.markExited({ name, exitCode: exit.code, durationMs: exit.durationMs });
+            return this.getSessionMeta(name);
+        }
+
+        if (meta.pid !== undefined && !isProcessAlive(meta.pid)) {
+            const durationMs = Date.now() - meta.createdAt;
+            await this.markExited({ name, exitCode: 130, durationMs });
+            return this.getSessionMeta(name);
+        }
+
+        return meta;
+    }
+
+    async prepareSession(input: PrepareSessionInput): Promise<void> {
         await this.getSessionsDir();
         const now = Date.now();
-        const existing = await this.getSessionMeta(name);
 
         const meta: TaskSessionMeta = {
-            name,
-            command,
-            mode,
-            cwd,
-            createdAt: existing?.createdAt ?? now,
+            name: input.name,
+            requestedAs: input.requestedAs,
+            command: input.command,
+            mode: input.mode,
+            cwd: input.cwd,
+            createdAt: now,
             lastActivityAt: now,
             startedAt: new Date(now).toISOString(),
         };
 
-        await Bun.write(join(TASK_SESSIONS_DIR, `${name}.jsonl`), "");
-        await Bun.write(join(TASK_SESSIONS_DIR, `${name}.log`), "");
-        await Bun.write(join(TASK_SESSIONS_DIR, `${name}.err.log`), "");
         await this.writeSessionMeta(meta);
-        await this.setRecentSession(name);
+        await this.setRecentSession(input.name);
     }
 
-    async markExited(name: string, exitCode: number, durationMs: number): Promise<void> {
-        const meta = await this.getSessionMeta(name);
+    async markExited(input: MarkExitedInput): Promise<void> {
+        const meta = await this.getSessionMeta(input.name);
         if (!meta) {
             return;
         }
 
-        meta.exitCode = exitCode;
-        meta.durationMs = durationMs;
+        meta.exitCode = input.exitCode;
+        meta.durationMs = input.durationMs;
         meta.exitedAt = new Date().toISOString();
         meta.lastActivityAt = Date.now();
         await this.writeSessionMeta(meta);
@@ -120,7 +177,7 @@ export class TaskSessionStore {
         const active: TaskSessionMeta[] = [];
 
         for (const name of names) {
-            const meta = await this.getSessionMeta(name);
+            const meta = await this.reconcileSessionState(name);
             if (meta && meta.exitCode === undefined && now - meta.lastActivityAt < ACTIVE_THRESHOLD_MS) {
                 active.push(meta);
             }
@@ -143,7 +200,7 @@ export class TaskSessionStore {
 
         const config = await this.loadConfig();
         if (config.recentSession && names.includes(config.recentSession)) {
-            const meta = await this.getSessionMeta(config.recentSession);
+            const meta = await this.reconcileSessionState(config.recentSession);
             if (meta && meta.exitCode === undefined && Date.now() - meta.lastActivityAt < ACTIVE_THRESHOLD_MS) {
                 return config.recentSession;
             }

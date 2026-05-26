@@ -22,7 +22,7 @@ export function registerSessionsCommand(program: Command): void {
             out.printlnErr("");
 
             for (const name of names.sort()) {
-                const meta = await store.getSessionMeta(name);
+                const meta = await store.reconcileSessionState(name);
                 const paths = sessionFilePaths(name);
                 const jsonlSize = await store.getSessionFileSize(paths.jsonl);
                 const state = meta?.exitCode !== undefined ? `exited (${meta.exitCode})` : "active";

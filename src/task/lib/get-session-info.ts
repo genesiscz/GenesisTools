@@ -32,7 +32,7 @@ function formatState(meta: Awaited<ReturnType<TaskSessionStore["getSessionMeta"]
 
 export async function getSessionInfo(session: string): Promise<void> {
     const store = new TaskSessionStore();
-    const meta = await store.getSessionMeta(session);
+    const meta = await store.reconcileSessionState(session);
     const paths = sessionFilePaths(session);
     const records = await readJsonlFile(paths.jsonl);
     const allLines = filterLineRecords(records);
@@ -55,6 +55,15 @@ export async function getSessionInfo(session: string): Promise<void> {
     out.printlnErr(`║   Mode:      ${modeLabel}`);
     out.printlnErr(`║   Command:   ${meta?.command ?? "(unknown)"}`);
     out.printlnErr(`║   CWD:       ${meta?.cwd ?? "(unknown)"}`);
+
+    if (meta?.requestedAs) {
+        out.printlnErr(`║   Requested:  ${meta.requestedAs} (auto-suffixed)`);
+    }
+
+    const related = await store.listRelatedSessionNames(session, meta?.requestedAs);
+    if (related.length > 1) {
+        out.printlnErr(`║   Related:    ${related.join(", ")}`);
+    }
 
     if (meta?.pid) {
         out.printlnErr(`║   PID:       ${meta.pid}`);

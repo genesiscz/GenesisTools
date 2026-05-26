@@ -54,12 +54,33 @@ tools task logs --session metro --tail --follow
 - **`.log` / `.err.log`** — ANSI-stripped mirrors for grep
 - **`.meta.json`** — session metadata
 
+## Session names
+
+Reusing a name that already has a `.jsonl` on disk **does not wipe** the old session. The run is assigned a suffixed id such as `metro-2026-05-26-14-30-22` (or `…-22-456` if another run collides in the same second), printed immediately on stderr before the banner:
+
+```text
+note: session "metro" already exists — using "metro-2026-05-26-14-30-22"
+task-session-id: metro-2026-05-26-14-30-22
+```
+
+Use `tools task get --session <full-id>` or pick the suffixed name from `tools task sessions` (see **Related:** in `get`).
+
+When **`--session` is omitted**, `get` / `logs` / `tail` auto-resolve: explicit `--session` flag → fuzzy match → sole active session → error if ambiguous. Use `tools task sessions` to list all.
+
 ## Run modes
 
-| Mode | Trigger |
-|---|---|
-| PTY | `--tty` or auto (stdin TTY) |
-| Pipe | `--no-tty` or auto (no stdin TTY) |
+| Mode | Trigger | Stream order in JSONL |
+|---|---|---|
+| PTY | `--tty` or auto (stdin TTY) | Single merged terminal stream — matches what you see on screen |
+| Pipe | `--no-tty` or auto (no stdin TTY) | **Arrival order** at the capture layer (monotonic `seq`), not guaranteed to match the child’s write order |
+
+### Pipe mode and buffering (read this)
+
+In **pipe mode**, stdout and stderr are separate OS pipes. The child process often **block-buffers stdout** when it is not attached to a TTY (stderr is usually unbuffered). A script that *writes* stdout → stderr → stdout in a loop may **flush** as stdout chunk, then all stderr, then remaining stdout — exactly what you see in JSONL.
+
+`tools task` records lines in the order chunks **arrive** from the pipes (via `Promise.race` on both readers). That order is **stable and monotonic** (`seq` 1…N) but is **not** a faithful replay of interleaved write order inside a block-buffered child.
+
+For Metro/Vite/interactive dev servers, prefer **PTY mode** (default when stdin is a TTY). Use pipe mode for CI/agents without a TTY; use `--stderr` / `"out":"stderr"` in JSONL for stream attribution, not write-order archaeology.
 
 ## vs shell `tee`
 

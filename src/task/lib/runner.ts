@@ -1,7 +1,7 @@
 import { logger } from "@app/logger";
 import { JsonlWriter } from "@app/utils/log-session/jsonl-writer";
 import { OrderedCaptureWriter } from "@app/utils/log-session/ordered-capture-writer";
-import type { RunTaskOptions, RunTaskResult } from "../types";
+import type { RunTaskOptions, RunTaskResult, ResolvedRunSession } from "../types";
 import { jsonlPath, sessionFilePaths, stderrLogPath, stdoutLogPath } from "./paths";
 import { TaskSessionStore } from "./session-store";
 
@@ -113,10 +113,21 @@ async function runPipeMode(opts: RunTaskOptions, writer: OrderedCaptureWriter): 
     const drainAbort = new AbortController();
     const streamsDone = multiplexPipeStreams(proc.stdout, proc.stderr, writer, drainAbort.signal);
 
-    const exitCode = await proc.exited;
-    drainAbort.abort();
-    await streamsDone;
-    await writer.flush();
+    const onSigInt = (): void => {
+        drainAbort.abort();
+    };
+
+    process.on("SIGINT", onSigInt);
+
+    let exitCode = 1;
+
+    try {
+        exitCode = await proc.exited;
+        await streamsDone;
+        await writer.flush();
+    } finally {
+        process.off("SIGINT", onSigInt);
+    }
 
     return exitCode;
 }
@@ -176,13 +187,23 @@ async function runPtyMode(opts: RunTaskOptions, writer: OrderedCaptureWriter): P
 export async function runTask(opts: RunTaskOptions): Promise<RunTaskResult> {
     const cwd = opts.cwd ?? process.cwd();
     const store = new TaskSessionStore();
-    await store.prepareSession(opts.session, opts.command.join(" "), opts.mode, cwd);
+    const resolved: ResolvedRunSession = opts.resolved ?? (await store.resolveRunSessionName(opts.session));
 
-    const paths = sessionFilePaths(opts.session);
+    await store.prepareSession({
+        name: resolved.session,
+        command: opts.command.join(" "),
+        mode: opts.mode,
+        cwd,
+        requestedAs: resolved.renamed ? resolved.requested : undefined,
+    });
+
+    const session = resolved.session;
+    const paths = sessionFilePaths(session);
     const jsonl = new JsonlWriter(paths.jsonl);
     jsonl.append({
         type: "meta",
-        session: opts.session,
+        session,
+        requestedAs: resolved.renamed ? resolved.requested : undefined,
         command: opts.command.join(" "),
         mode: opts.mode,
         cwd,
@@ -190,9 +211,9 @@ export async function runTask(opts: RunTaskOptions): Promise<RunTaskResult> {
     });
 
     const writer = new OrderedCaptureWriter({
-        jsonlPath: jsonlPath(opts.session),
-        stdoutPath: stdoutLogPath(opts.session),
-        stderrPath: stderrLogPath(opts.session),
+        jsonlPath: jsonlPath(session),
+        stdoutPath: stdoutLogPath(session),
+        stderrPath: stderrLogPath(session),
         mode: opts.mode,
     });
 
@@ -201,12 +222,12 @@ export async function runTask(opts: RunTaskOptions): Promise<RunTaskResult> {
 
     try {
         if (opts.mode === "pty") {
-            exitCode = await runPtyMode(opts, writer);
+            exitCode = await runPtyMode({ ...opts, session }, writer);
         } else {
-            exitCode = await runPipeMode(opts, writer);
+            exitCode = await runPipeMode({ ...opts, session }, writer);
         }
     } catch (err) {
-        log.warn({ err, session: opts.session }, "task run failed");
+        log.warn({ err, session }, "task run failed");
         throw err;
     }
 
@@ -218,7 +239,7 @@ export async function runTask(opts: RunTaskOptions): Promise<RunTaskResult> {
         ts: new Date().toISOString(),
     });
 
-    await store.markExited(opts.session, exitCode, durationMs);
+    await store.markExited({ name: session, exitCode, durationMs });
 
-    return { exitCode, durationMs, session: opts.session };
+    return { exitCode, durationMs, session, requestedSession: resolved.requested, renamed: resolved.renamed };
 }

@@ -1,7 +1,6 @@
-import { out } from "@app/logger";
 import type { Command } from "commander";
 import { buildLogQueryOpts, tailOrQuery } from "../lib/build-log-query-opts";
-import { TaskSessionStore } from "../lib/session-store";
+import { withResolvedSession } from "../lib/with-resolved-session";
 
 export function registerTailCommand(program: Command): void {
     program
@@ -18,15 +17,10 @@ export function registerTailCommand(program: Command): void {
         .option("-f, --follow", "Follow live (default for tail)")
         .action(async (opts) => {
             const globalOpts = program.opts<{ session?: string }>();
-            const store = new TaskSessionStore();
 
-            try {
-                const session = await store.resolveSession(globalOpts.session);
+            await withResolvedSession(globalOpts.session, async (session) => {
                 const queryOpts = buildLogQueryOpts(session, opts);
                 await tailOrQuery(queryOpts, true);
-            } catch (err) {
-                out.printlnErr(`error: ${err instanceof Error ? err.message : String(err)}`);
-                process.exit(1);
-            }
+            });
         });
 }

@@ -1,13 +1,14 @@
 import { out } from "@app/logger";
 import { escapeShellArg } from "@app/utils/string";
 import { sessionFilePaths } from "./paths";
+import type { RunBannerInput, RunExitSummaryInput } from "../types";
 import { suggestDashboard, suggestGet, suggestLogs, suggestLogsFollow, suggestTail } from "./suggest-flags";
 
 export function formatCommandDisplay(command: string[]): string {
     return command.map((part) => escapeShellArg(part)).join(" ");
 }
 
-export function printRunBanner(session: string, command: string[], mode: "pty" | "pipe"): void {
+export function printRunBanner({ session, command, mode }: RunBannerInput): void {
     const paths = sessionFilePaths(session);
     const modeLabel = mode === "pty" ? "pty (interactive)" : "pipe (non-interactive)";
     const cmdDisplay = formatCommandDisplay(command);
@@ -31,7 +32,7 @@ export function printRunBanner(session: string, command: string[], mode: "pty" |
     out.printlnErr("");
 }
 
-export function printRunExitSummary(session: string, exitCode: number, durationMs: number): void {
+export function printRunExitSummary({ session, exitCode, durationMs }: RunExitSummaryInput): void {
     const seconds = Math.round(durationMs / 1000);
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;

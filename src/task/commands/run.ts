@@ -5,6 +5,7 @@ import type { Command } from "commander";
 import { printRunBanner, printRunExitSummary } from "../lib/banner";
 import { resolveRunMode } from "../lib/run-mode";
 import { runTask } from "../lib/runner";
+import { TaskSessionStore } from "../lib/session-store";
 
 export function registerRunCommand(program: Command): void {
     program
@@ -57,15 +58,30 @@ export function registerRunCommand(program: Command): void {
 
             const mode = resolveRunMode({ tty: opts.tty });
 
-            printRunBanner(session, command, mode);
+            const store = new TaskSessionStore();
+            const resolved = await store.resolveRunSessionName(session);
+
+            if (resolved.renamed) {
+                out.printlnErr(
+                    `note: session "${resolved.requested}" already exists — using "${resolved.session}"`
+                );
+                out.printlnErr(`task-session-id: ${resolved.session}`);
+            }
+
+            printRunBanner({ session: resolved.session, command, mode });
 
             const result = await runTask({
-                session,
+                session: resolved.session,
+                resolved,
                 command,
                 mode,
             });
 
-            printRunExitSummary(session, result.exitCode, result.durationMs);
+            printRunExitSummary({
+                session: result.session,
+                exitCode: result.exitCode,
+                durationMs: result.durationMs,
+            });
             process.exit(result.exitCode);
         });
 }
