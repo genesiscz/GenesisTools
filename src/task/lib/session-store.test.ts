@@ -28,6 +28,19 @@ describe("TaskSessionStore.resolveRunSessionName", () => {
         expect(resolved.session).not.toBe("metro-dup");
     });
 
+    it("listRelatedSessionNames matches base and underscore-suffixed sessions (eval2 bug #6)", async () => {
+        const store = new TaskSessionStore();
+        await store.getSessionsDir();
+        writeFileSync(jsonlPath("eval2-dup"), '{"type":"meta"}\n');
+        writeFileSync(jsonlPath("eval2-dup_2026-05-26_02-46-24"), '{"type":"meta"}\n');
+        writeFileSync(jsonlPath("eval2-dup-unrelated"), '{"type":"meta"}\n');
+
+        const related = await store.listRelatedSessionNames("eval2-dup_2026-05-26_02-46-24", "eval2-dup");
+
+        expect(related).toEqual(["eval2-dup", "eval2-dup_2026-05-26_02-46-24"]);
+        expect(related).not.toContain("eval2-dup-unrelated");
+    });
+
     it("prepareSession does not truncate an existing session", async () => {
         const store = new TaskSessionStore();
         await store.getSessionsDir();
