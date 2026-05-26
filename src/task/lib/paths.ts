@@ -14,6 +14,10 @@ function safeSessionPath(session: string, suffix: string): string {
     return candidate;
 }
 
+export function uiJsonlPath(session: string): string {
+    return safeSessionPath(session, ".ui.jsonl");
+}
+
 export function jsonlPath(session: string): string {
     return safeSessionPath(session, ".jsonl");
 }
@@ -32,12 +36,14 @@ export function metaPath(session: string): string {
 
 export function sessionFilePaths(session: string): {
     jsonl: string;
+    uiJsonl: string;
     stdout: string;
     stderr: string;
     meta: string;
 } {
     return {
         jsonl: jsonlPath(session),
+        uiJsonl: uiJsonlPath(session),
         stdout: stdoutLogPath(session),
         stderr: stderrLogPath(session),
         meta: metaPath(session),

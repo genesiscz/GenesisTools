@@ -50,7 +50,8 @@ tools task logs --session metro --tail --follow
 
 `~/.genesis-tools/task/sessions/<name>.{jsonl,log,err.log,meta.json}`
 
-- **`.jsonl`** — canonical ordered stream (monotonic `seq`)
+- **`.jsonl`** — canonical ordered stream (monotonic `seq`); plain text for agents (`logs` / `tail` / `get`)
+- **`.ui.jsonl`** — dashboard-only ANSI mirror (same `seq`); never read by CLI tools
 - **`.log` / `.err.log`** — ANSI-stripped mirrors for grep
 - **`.meta.json`** — session metadata
 
