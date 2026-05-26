@@ -63,7 +63,12 @@ export async function getSessionInfo(session: string): Promise<void> {
 
     if (allLines.length > 0) {
         const latest = allLines[allLines.length - 1];
-        out.printlnErr(`║   Latest:    seq ${latest.seq} @ ${new Date(latest.ts).toLocaleTimeString()}`);
+        // ISO time (UTC) — locale-stable so this banner remains a copy-
+        // pasteable diagnostic and any agent scraping it parses the same
+        // shape on every machine. toLocaleTimeString() previously drifted
+        // between 12h/24h, AM/PM order and separators across locales.
+        const iso = new Date(latest.ts).toISOString();
+        out.printlnErr(`║   Latest:    seq ${latest.seq} @ ${iso}`);
     }
 
     out.printlnErr("║");

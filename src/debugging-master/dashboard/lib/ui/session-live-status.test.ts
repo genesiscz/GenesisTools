@@ -40,7 +40,7 @@ describe("session-live-status", () => {
         expect(display.agoLabel).toBe("2m 15s ago");
     });
 
-    it("shows killed with second-level ago from exitedAt", () => {
+    it("shows killed for signal-derived exits (code >= 128)", () => {
         const session: DashboardSession = {
             ...base,
             state: "exited",
@@ -58,6 +58,44 @@ describe("session-live-status", () => {
         expect(display.phase).toBe("killed");
         expect(display.stateLabel).toBe("killed");
         expect(display.agoLabel).toBe("5m 5s ago");
+    });
+
+    it("shows failed-exit label (not killed) for ordinary non-zero exit codes", () => {
+        const session: DashboardSession = {
+            ...base,
+            state: "exited",
+            stateLabel: "exited (code 1)",
+            exitCode: 1,
+            exitedAt: now - 10_000,
+            lastActivityAt: now - 10_000,
+        };
+
+        const display = resolveSessionLiveStatusDisplay({
+            session,
+            now,
+        });
+
+        expect(display.phase).toBe("exited");
+        expect(display.stateLabel).toBe("exited (1)");
+    });
+
+    it("shows plain exited for code 0", () => {
+        const session: DashboardSession = {
+            ...base,
+            state: "exited",
+            stateLabel: "exited (code 0)",
+            exitCode: 0,
+            exitedAt: now - 1_000,
+            lastActivityAt: now - 1_000,
+        };
+
+        const display = resolveSessionLiveStatusDisplay({
+            session,
+            now,
+        });
+
+        expect(display.phase).toBe("exited");
+        expect(display.stateLabel).toBe("exited");
     });
 
     it("includes seconds after one minute", () => {
