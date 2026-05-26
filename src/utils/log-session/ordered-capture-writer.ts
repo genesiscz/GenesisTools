@@ -9,6 +9,7 @@ export type CaptureMode = "pty" | "pipe";
 
 export interface OrderedCaptureWriterOptions {
     jsonlPath: string;
+    uiJsonlPath?: string;
     stdoutPath: string;
     stderrPath: string;
     mode: CaptureMode;
@@ -16,6 +17,7 @@ export interface OrderedCaptureWriterOptions {
 
 export class OrderedCaptureWriter {
     private readonly jsonlWriter: JsonlWriter;
+    private readonly uiJsonlWriter: JsonlWriter | null;
     private readonly mode: CaptureMode;
     private queue: Array<{ out: StreamOut; chunk: string }> = [];
     private seq = 0;
@@ -25,6 +27,7 @@ export class OrderedCaptureWriter {
 
     constructor(private readonly opts: OrderedCaptureWriterOptions) {
         this.jsonlWriter = new JsonlWriter(opts.jsonlPath);
+        this.uiJsonlWriter = opts.uiJsonlPath ? new JsonlWriter(opts.uiJsonlPath) : null;
         this.mode = opts.mode;
         mkdirSync(dirname(opts.jsonlPath), { recursive: true });
         mkdirSync(dirname(opts.stdoutPath), { recursive: true });
@@ -35,6 +38,10 @@ export class OrderedCaptureWriter {
 
         if (!existsSync(opts.stderrPath)) {
             writeFileSync(opts.stderrPath, "");
+        }
+
+        if (opts.uiJsonlPath && !existsSync(opts.uiJsonlPath)) {
+            writeFileSync(opts.uiJsonlPath, "");
         }
     }
 
@@ -79,6 +86,7 @@ export class OrderedCaptureWriter {
                 this.seq += 1;
                 const outStream: StreamOut = this.mode === "pty" ? "stdout" : item.out;
                 const plain = stripAnsi(text);
+                this.appendUiLine(this.seq, text);
                 const record = {
                     type: "line" as const,
                     seq: this.seq,
@@ -118,6 +126,7 @@ export class OrderedCaptureWriter {
         this.seq += 1;
         const outStream: StreamOut = this.mode === "pty" ? "stdout" : out;
         const plain = stripAnsi(partial);
+        this.appendUiLine(this.seq, partial);
         const record = {
             type: "line" as const,
             seq: this.seq,
@@ -128,6 +137,18 @@ export class OrderedCaptureWriter {
         };
         this.jsonlWriter.append(record);
         this.appendPlainMirror(outStream, record.text);
+    }
+
+    private appendUiLine(seq: number, raw: string): void {
+        if (!this.uiJsonlWriter) {
+            return;
+        }
+
+        this.uiJsonlWriter.append({
+            type: "line",
+            seq,
+            text: raw,
+        });
     }
 
     private appendPlainMirror(out: StreamOut, text: string): void {

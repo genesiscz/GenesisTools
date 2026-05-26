@@ -5,9 +5,20 @@ import type { JsonlLineRecord } from "@app/utils/log-session/types";
 import type { LogSourceId } from "./log-source";
 import { taskRecordToLogEntry } from "./log-source";
 import { getLogSource } from "./resolve-log-source";
+import {
+    ensureTaskUiTailer,
+    lookupTaskUiText,
+    preloadTaskUiLineMap,
+    stopTaskUiTailer,
+} from "./task-ui-lines";
 import { sessionKey } from "./session-key";
 
-export function parseTailEntry(source: LogSourceId, raw: unknown, _fallbackIndex: number): LogEntry | null {
+export function parseTailEntry(
+    source: LogSourceId,
+    raw: unknown,
+    _fallbackIndex: number,
+    uiKey?: string
+): LogEntry | null {
     if (source === "task") {
         const record = raw as { type?: string };
         if (record.type !== "line") {
@@ -15,7 +26,9 @@ export function parseTailEntry(source: LogSourceId, raw: unknown, _fallbackIndex
         }
 
         const line = record as JsonlLineRecord;
-        return taskRecordToLogEntry(line);
+        const uiText = uiKey ? lookupTaskUiText(uiKey, line.seq) : undefined;
+
+        return taskRecordToLogEntry(line, uiText);
     }
 
     return raw as LogEntry;
@@ -38,9 +51,16 @@ export function createSourceTailer(
     onEntry: (entry: LogEntry, index: number) => void
 ): FileTailer {
     const path = getLogSource(source).getJsonlPath(sessionName);
+    const key = sessionKey(source, sessionName);
+
+    if (source === "task") {
+        void preloadTaskUiLineMap(key, sessionName);
+        ensureTaskUiTailer(sessionName, key);
+    }
+
     return new FileTailer(path, {
         onEntry: (raw, index) => {
-            const entry = parseTailEntry(source, raw, index);
+            const entry = parseTailEntry(source, raw, index, key);
             if (!entry) {
                 return;
             }

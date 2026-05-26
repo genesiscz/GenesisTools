@@ -12,6 +12,13 @@ export interface JsonlLineRecord {
     text: string;
 }
 
+/** Dashboard-only ANSI mirror — same seq as canonical jsonl; never emitted by task logs/tail/get. */
+export interface JsonlUiLineRecord {
+    type: "line";
+    seq: number;
+    text: string;
+}
+
 export interface JsonlMetaRecord {
     type: "meta";
     session: string;

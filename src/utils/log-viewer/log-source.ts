@@ -41,13 +41,14 @@ export interface LogSource {
     deleteSession(sessionName: string): Promise<void>;
 }
 
-export function taskRecordToLogEntry(r: JsonlLineRecord): LogEntry {
+export function taskRecordToLogEntry(r: JsonlLineRecord, uiText?: string): LogEntry {
     const level = r.level ?? inferLineLevel(r.out, r.text);
 
     return {
         level,
         label: r.out,
         msg: r.text,
+        msgAnsi: uiText,
         ts: r.ts,
     };
 }

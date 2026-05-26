@@ -272,6 +272,7 @@ export class TaskSessionStore {
     async deleteSession(name: string): Promise<void> {
         const paths = [
             join(TASK_SESSIONS_DIR, `${name}.jsonl`),
+            join(TASK_SESSIONS_DIR, `${name}.ui.jsonl`),
             join(TASK_SESSIONS_DIR, `${name}.log`),
             join(TASK_SESSIONS_DIR, `${name}.err.log`),
             metaPath(name),

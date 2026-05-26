@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { filterLineRecords, readJsonlFile } from "./jsonl-reader";
+import { filterUiLineRecords } from "./ui-jsonl";
 import { OrderedCaptureWriter } from "./ordered-capture-writer";
 
 const dirs: string[] = [];
@@ -85,5 +86,26 @@ describe("OrderedCaptureWriter", () => {
         await w.flush();
         expect(readFileSync(join(dir, "s.log"), "utf8")).toBe("combined\n");
         expect(readFileSync(join(dir, "s.err.log"), "utf8")).toBe("");
+    });
+
+    it("writes dashboard ui jsonl with raw ansi while canonical jsonl stays plain", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "ocw-"));
+        dirs.push(dir);
+        const w = new OrderedCaptureWriter({
+            jsonlPath: join(dir, "s.jsonl"),
+            uiJsonlPath: join(dir, "s.ui.jsonl"),
+            stdoutPath: join(dir, "s.log"),
+            stderrPath: join(dir, "s.err.log"),
+            mode: "pty",
+        });
+
+        w.enqueue("stdout", "\u001b[31mError\u001b[0m\n");
+        await w.flush();
+
+        const records = filterLineRecords(await readJsonlFile(join(dir, "s.jsonl")));
+        expect(records[0]?.text).toBe("Error");
+
+        const uiRecords = filterUiLineRecords(await readJsonlFile(join(dir, "s.ui.jsonl")));
+        expect(uiRecords[0]?.text).toBe("\u001b[31mError\u001b[0m");
     });
 });

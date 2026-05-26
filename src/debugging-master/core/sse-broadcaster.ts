@@ -3,6 +3,7 @@ import { SafeJSON } from "@app/utils/json";
 import type { LogSourceId } from "@app/utils/log-viewer/log-source";
 import { createSourceTailer, sessionKey } from "@app/utils/log-viewer/tail-bridge";
 import { parseSessionKey } from "@app/utils/log-viewer/session-key";
+import { stopTaskUiTailer } from "@app/utils/log-viewer/task-ui-lines";
 
 interface Subscriber {
     id: number;
@@ -144,6 +145,12 @@ export class SSEBroadcaster {
             tailer.stop();
             this.tailers.delete(key);
         }
+
+        const parsed = parseSessionKey(key);
+        if (parsed?.source === "task") {
+            stopTaskUiTailer(key);
+        }
+
         this.subscribers.delete(key);
 
         for (const sub of this.multiplexSubscribers) {
@@ -304,6 +311,11 @@ export class SSEBroadcaster {
             if (tailer) {
                 tailer.stop();
                 this.tailers.delete(sub.key);
+            }
+
+            const parsed = parseSessionKey(sub.key);
+            if (parsed?.source === "task") {
+                stopTaskUiTailer(sub.key);
             }
         }
 

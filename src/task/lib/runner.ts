@@ -2,7 +2,7 @@ import { logger } from "@app/logger";
 import { JsonlWriter } from "@app/utils/log-session/jsonl-writer";
 import { OrderedCaptureWriter } from "@app/utils/log-session/ordered-capture-writer";
 import type { RunTaskOptions, RunTaskResult, ResolvedRunSession } from "@app/task/types";
-import { jsonlPath, sessionFilePaths, stderrLogPath, stdoutLogPath } from "@app/task/lib/paths";
+import { jsonlPath, sessionFilePaths, stderrLogPath, stdoutLogPath, uiJsonlPath } from "@app/task/lib/paths";
 import { TaskSessionStore } from "@app/task/lib/session-store";
 
 const log = logger.child({ component: "task:runner" });
@@ -212,6 +212,7 @@ export async function runTask(opts: RunTaskOptions): Promise<RunTaskResult> {
 
     const writer = new OrderedCaptureWriter({
         jsonlPath: jsonlPath(session),
+        uiJsonlPath: uiJsonlPath(session),
         stdoutPath: stdoutLogPath(session),
         stderrPath: stderrLogPath(session),
         mode: opts.mode,
