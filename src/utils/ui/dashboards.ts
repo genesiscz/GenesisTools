@@ -139,7 +139,7 @@ export const DASHBOARDS = {
         portOverride: { flag: "--port" },
         tech: "vite",
         auth: "none",
-        note: "Shared by tools task dashboard open and tools debugging-master dashboard open.",
+        note: "Shared by `tools task dashboard open` and `tools debugging-master dashboard serve open` (latter via the DashboardApp commander).",
     },
 } as const satisfies Record<string, DashboardEntry>;
 
