@@ -46,6 +46,7 @@ export function registerRunCommand(program: Command): void {
             if (command.length === 0) {
                 out.printlnErr("error: Command required after --");
                 out.printlnErr("error: Example: tools task run --session metro -- bash -c 'echo hi'");
+                await out.flush();
                 process.exit(1);
             }
 
@@ -59,6 +60,7 @@ export function registerRunCommand(program: Command): void {
                     out.printlnErr(
                         suggestCommand("tools task", { add: ["run", "--session", "my-session", "--", ...command] })
                     );
+                    await out.flush();
                     process.exit(1);
                 }
 

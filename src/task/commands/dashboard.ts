@@ -39,6 +39,7 @@ export function registerDashboardCommand(program: Command): void {
                 } catch (err) {
                     const detail = err instanceof Error ? err.message : String(err);
                     out.printlnErr(`error: --session "${rawSession}" did not resolve: ${detail}`);
+                    await out.flush();
                     process.exit(1);
                 }
             }
