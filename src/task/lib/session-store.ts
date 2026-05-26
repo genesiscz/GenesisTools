@@ -6,13 +6,12 @@ import { fuzzyResolveSession } from "@app/utils/log-session/fuzzy-resolver";
 import { readJsonlFile } from "@app/utils/log-session/jsonl-reader";
 import type { JsonlExitRecord, JsonlMetaRecord } from "@app/utils/log-session/types";
 import { Storage } from "@app/utils/storage/storage";
-import type { MarkExitedInput, PrepareSessionInput, TaskConfig, TaskSessionMeta } from "../types";
-import { jsonlPath, metaPath, TASK_SESSIONS_DIR } from "./paths";
-import { buildTimestampedSessionName } from "./session-name";
-import { isProcessAlive } from "./process-alive";
+import type { MarkExitedInput, PrepareSessionInput, ResolvedRunSession, TaskConfig, TaskSessionMeta } from "@app/task/types";
+import { jsonlPath, metaPath, TASK_SESSIONS_DIR } from "@app/task/lib/paths";
+import { buildTimestampedSessionName, isRelatedSessionName } from "@app/task/lib/session-name";
+import { isProcessAlive } from "@app/task/lib/process-alive";
 
-export type { ResolvedRunSession } from "../types";
-import type { ResolvedRunSession } from "../types";
+export type { ResolvedRunSession } from "@app/task/types";
 
 const TOOL_NAME = "tools task";
 export const ACTIVE_THRESHOLD_MS = 60 * 60 * 1000;
@@ -89,7 +88,8 @@ export class TaskSessionStore {
 
         let session = buildTimestampedSessionName(requested);
         while (this.sessionFilesExist(session)) {
-            session = buildTimestampedSessionName(requested, new Date(), true);
+            await Bun.sleep(1100);
+            session = buildTimestampedSessionName(requested);
         }
 
         return { session, requested, renamed: true };
@@ -99,7 +99,7 @@ export class TaskSessionStore {
         const base = requestedAs ?? name;
         const names = await this.listSessionNames();
 
-        return names.filter((candidate) => candidate === base || candidate.startsWith(`${base}_`)).sort();
+        return names.filter((candidate) => isRelatedSessionName(base, candidate)).sort();
     }
 
     private metaFromJsonl(name: string, records: Awaited<ReturnType<typeof readJsonlFile>>): TaskSessionMeta | null {

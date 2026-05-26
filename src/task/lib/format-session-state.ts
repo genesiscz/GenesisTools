@@ -1,4 +1,4 @@
-import type { TaskSessionMeta } from "../types";
+import type { TaskSessionMeta } from "@app/task/types";
 
 function formatDurationMs(ms: number): string {
     const seconds = Math.round(ms / 1000);

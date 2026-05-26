@@ -2,13 +2,13 @@
 
 import { runTool } from "@app/utils/cli";
 import { Command } from "commander";
-import { registerCleanCommand } from "./commands/clean";
-import { registerDashboardCommand } from "./commands/dashboard";
-import { registerGetCommand } from "./commands/get";
-import { registerLogsCommand } from "./commands/logs";
-import { registerRunCommand } from "./commands/run";
-import { registerSessionsCommand } from "./commands/sessions";
-import { registerTailCommand } from "./commands/tail";
+import { registerCleanCommand } from "@app/task/commands/clean";
+import { registerDashboardCommand } from "@app/task/commands/dashboard";
+import { registerGetCommand } from "@app/task/commands/get";
+import { registerLogsCommand } from "@app/task/commands/logs";
+import { registerRunCommand } from "@app/task/commands/run";
+import { registerSessionsCommand } from "@app/task/commands/sessions";
+import { registerTailCommand } from "@app/task/commands/tail";
 
 const program = new Command();
 

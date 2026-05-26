@@ -1,5 +1,5 @@
 import { out } from "@app/logger";
-import { TaskSessionStore } from "./session-store";
+import { TaskSessionStore } from "@app/task/lib/session-store";
 
 export async function withResolvedSession(
     sessionFlag: string | undefined,

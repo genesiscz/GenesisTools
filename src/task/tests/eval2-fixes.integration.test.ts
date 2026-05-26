@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { filterLineRecords, readJsonlFile } from "@app/utils/log-session/jsonl-reader";
-import { readTaskJsonl, runTaskCapture, runTaskCli } from "../lib/test-harness";
+import { readTaskJsonl, runTaskCapture, runTaskCli } from "@app/task/lib/test-harness";
 
 const dirs: string[] = [];
 
@@ -150,7 +150,7 @@ describe("eval2 bug fixes integration", () => {
         expect(result.stderr).toContain("Session exited (code 42)");
     }, 10_000);
 
-    it("collision suffix uses underscore separator (bug #6)", async () => {
+    it("collision suffix uses -YYYY-MM-dd_HH:mm:ss format (bug #6)", async () => {
         const homeDir = setupHome();
         const session = `eval2-dup-${Date.now()}`;
 
@@ -160,7 +160,9 @@ describe("eval2 bug fixes integration", () => {
 
         const second = await runTaskCli(["run", "--session", session, "--no-tty", "--", "echo", "two"], { homeDir });
         expect(second.exitCode).toBe(0);
-        expect(second.stderr).toMatch(new RegExp(`task-session-id: ${session}_\\d{4}-\\d{2}-\\d{2}_\\d{2}-\\d{2}-\\d{2}`));
+        expect(second.stderr).toMatch(
+            new RegExp(`task-session-id: ${session.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}-\\d{4}-\\d{2}-\\d{2}_\\d{2}:\\d{2}:\\d{2}`)
+        );
     }, 30_000);
 });
 

@@ -1,6 +1,6 @@
 import type { Command } from "commander";
-import { buildLogQueryOpts, tailOrQuery } from "../lib/build-log-query-opts";
-import { withResolvedSession } from "../lib/with-resolved-session";
+import { buildLogQueryOpts, tailOrQuery } from "@app/task/lib/build-log-query-opts";
+import { withResolvedSession } from "@app/task/lib/with-resolved-session";
 
 export function registerTailCommand(program: Command): void {
     program

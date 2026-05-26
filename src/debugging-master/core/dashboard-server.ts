@@ -7,8 +7,8 @@ import type { DashboardSession, LogSourceId } from "@app/utils/log-viewer/log-so
 import { getAllLogSources, getLogSource } from "@app/utils/log-viewer/resolve-log-source";
 import { isLogSourceId } from "@app/utils/log-viewer/session-key";
 import { enrichDashboardTimestamps } from "@app/utils/log-viewer/tail-bridge";
+import { decodeSessionPathSegment, isSafeLogSessionName } from "@app/utils/log-viewer/session-name";
 
-const SESSION_NAME = /^[a-zA-Z0-9_-]+$/;
 const REF_ID = /^([se])([1-9]\d*)$/;
 
 const DASHBOARD_DIST = resolve(import.meta.dir, "..", "dashboard", "dist");
@@ -81,10 +81,14 @@ function resolveRoute(pathname: string): ResolvedRoute | null {
     const rest = match[3] ?? "";
 
     if (isLogSourceId(first) && second) {
-        return { source: first, sessionName: second, sub: rest };
+        return { source: first, sessionName: decodeSessionPathSegment(second), sub: rest };
     }
 
-    return { source: "debugging-master", sessionName: first, sub: second ? (rest ? `${second}/${rest}` : second) : "" };
+    return {
+        source: "debugging-master",
+        sessionName: decodeSessionPathSegment(first),
+        sub: second ? (rest ? `${second}/${rest}` : second) : "",
+    };
 }
 
 async function handleApiRequest(req: Request, url: URL, cors: Record<string, string>): Promise<Response> {
@@ -103,7 +107,7 @@ async function handleApiRequest(req: Request, url: URL, cors: Record<string, str
 
     const { source, sessionName, sub } = route;
 
-    if (!SESSION_NAME.test(sessionName)) {
+    if (!isSafeLogSessionName(sessionName)) {
         return jsonResponse({ error: "invalid session name" }, cors, { status: 400 });
     }
 
