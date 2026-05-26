@@ -38,7 +38,17 @@ export interface JsonlExitRecord {
     ts: string;
 }
 
-export type JsonlRecord = JsonlLineRecord | JsonlMetaRecord | JsonlExitRecord | Record<string, unknown>;
+// Includes JsonlUiLineRecord so the ui.jsonl reader can narrow records of
+// the union via a type predicate without TS complaining the predicate isn't
+// assignable to the parameter type. JsonlLineRecord and JsonlUiLineRecord
+// both have `type: "line"` so callers need to discriminate further (e.g.
+// presence of `out`) when consuming the canonical jsonl.
+export type JsonlRecord =
+    | JsonlLineRecord
+    | JsonlUiLineRecord
+    | JsonlMetaRecord
+    | JsonlExitRecord
+    | Record<string, unknown>;
 
 export interface SessionMetaBase {
     name: string;
