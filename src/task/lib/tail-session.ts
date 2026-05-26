@@ -142,6 +142,16 @@ export async function tailSession(opts: LogQueryOpts & { follow: true }): Promis
         resolveFollow = resolve;
 
         onSigint = (): void => {
+            // Detach ourselves so we don't leak the listener — a subsequent
+            // tailSession() call in the same process (tests, repeated CLI use,
+            // long-lived MCP) would otherwise stack handlers and a single
+            // Ctrl+C would resolve multiple promises out of order. The exit-
+            // record branch above already calls process.off; do the same here
+            // for the explicit-cancel branch.
+            if (onSigint) {
+                process.off("SIGINT", onSigint);
+            }
+
             tailer.stop();
             out.printlnErr("\nStopped tailing.");
             resolve();
