@@ -1,13 +1,18 @@
 import { homedir } from "node:os";
 import { resolve, sep } from "node:path";
 
-const ROOT = process.env.GENESIS_TOOLS_HOME || homedir();
+function genesisToolsRoot(): string {
+    return process.env.GENESIS_TOOLS_HOME || homedir();
+}
 
-export const TASK_SESSIONS_DIR = resolve(ROOT, ".genesis-tools", "task", "sessions");
+export function getTaskSessionsDir(): string {
+    return resolve(genesisToolsRoot(), ".genesis-tools", "task", "sessions");
+}
 
 function safeSessionPath(session: string, suffix: string): string {
-    const candidate = resolve(TASK_SESSIONS_DIR, `${session}${suffix}`);
-    if (!candidate.startsWith(`${TASK_SESSIONS_DIR}${sep}`)) {
+    const sessionsDir = getTaskSessionsDir();
+    const candidate = resolve(sessionsDir, `${session}${suffix}`);
+    if (!candidate.startsWith(`${sessionsDir}${sep}`)) {
         throw new Error(`Invalid session name: ${session}`);
     }
 
@@ -32,6 +37,18 @@ export function stderrLogPath(session: string): string {
 
 export function metaPath(session: string): string {
     return safeSessionPath(session, ".meta.json");
+}
+
+export function isCanonicalSessionJsonlFilename(filename: string): boolean {
+    return filename.endsWith(".jsonl") && !filename.endsWith(".ui.jsonl");
+}
+
+export function sessionNameFromJsonlFilename(filename: string): string | null {
+    if (!isCanonicalSessionJsonlFilename(filename)) {
+        return null;
+    }
+
+    return filename.slice(0, -".jsonl".length);
 }
 
 export function sessionFilePaths(session: string): {

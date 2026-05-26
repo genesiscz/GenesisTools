@@ -2,10 +2,14 @@ export type TaskRunMode = "pty" | "pipe";
 
 export type TaskSessionState = "active" | "exited" | "unknown";
 
+export type SessionReuseMode = "reuse-clear" | "reuse-continue" | "prefix";
+
 export interface ResolvedRunSession {
     session: string;
     requested: string;
     renamed: boolean;
+    reuse?: SessionReuseMode;
+    previousLastSeq?: number;
 }
 
 export interface TaskSessionMeta {

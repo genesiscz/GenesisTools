@@ -1,13 +1,13 @@
-import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
-import { basename, join } from "node:path";
+import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { suggestCommand } from "@app/utils/cli/executor";
 import { SafeJSON } from "@app/utils/json";
 import { fuzzyResolveSession } from "@app/utils/log-session/fuzzy-resolver";
-import { readJsonlFile } from "@app/utils/log-session/jsonl-reader";
-import type { JsonlExitRecord, JsonlMetaRecord } from "@app/utils/log-session/types";
+import { filterLineRecords, readJsonlFile } from "@app/utils/log-session/jsonl-reader";
+import type { JsonlExitRecord, JsonlLineRecord, JsonlMetaRecord } from "@app/utils/log-session/types";
 import { Storage } from "@app/utils/storage/storage";
 import type { MarkExitedInput, PrepareSessionInput, ResolvedRunSession, TaskConfig, TaskSessionMeta } from "@app/task/types";
-import { jsonlPath, metaPath, TASK_SESSIONS_DIR } from "@app/task/lib/paths";
+import { getTaskSessionsDir, jsonlPath, metaPath, sessionFilePaths, sessionNameFromJsonlFilename, uiJsonlPath } from "@app/task/lib/paths";
 import { buildTimestampedSessionName, isRelatedSessionName } from "@app/task/lib/session-name";
 import { isProcessAlive } from "@app/task/lib/process-alive";
 
@@ -20,11 +20,12 @@ export class TaskSessionStore {
     private storage = new Storage("task");
 
     async getSessionsDir(): Promise<string> {
-        if (!existsSync(TASK_SESSIONS_DIR)) {
-            mkdirSync(TASK_SESSIONS_DIR, { recursive: true });
+        const sessionsDir = getTaskSessionsDir();
+        if (!existsSync(sessionsDir)) {
+            mkdirSync(sessionsDir, { recursive: true });
         }
 
-        return TASK_SESSIONS_DIR;
+        return sessionsDir;
     }
 
     async loadConfig(): Promise<TaskConfig> {
@@ -43,9 +44,19 @@ export class TaskSessionStore {
     }
 
     async listSessionNames(): Promise<string[]> {
-        await this.getSessionsDir();
-        const files = readdirSync(TASK_SESSIONS_DIR);
-        return files.filter((f) => f.endsWith(".jsonl")).map((f) => basename(f, ".jsonl"));
+        const sessionsDir = await this.getSessionsDir();
+        const files = readdirSync(sessionsDir);
+        const names: string[] = [];
+
+        for (const file of files) {
+            const name = sessionNameFromJsonlFilename(file);
+
+            if (name) {
+                names.push(name);
+            }
+        }
+
+        return names;
     }
 
     async getSessionMeta(name: string): Promise<TaskSessionMeta | null> {
@@ -77,6 +88,93 @@ export class TaskSessionStore {
 
     sessionFilesExist(name: string): boolean {
         return existsSync(jsonlPath(name));
+    }
+
+    async getLastLineSeq(name: string): Promise<number> {
+        const records = await readJsonlFile(jsonlPath(name));
+        const lines = filterLineRecords(records);
+
+        if (lines.length === 0) {
+            return 0;
+        }
+
+        return Math.max(...lines.map((line) => line.seq));
+    }
+
+    async clearSessionLogs(name: string): Promise<void> {
+        await this.getSessionsDir();
+        const paths = sessionFilePaths(name);
+
+        writeFileSync(paths.jsonl, "");
+        writeFileSync(paths.uiJsonl, "");
+        writeFileSync(paths.stdout, "");
+        writeFileSync(paths.stderr, "");
+
+        if (existsSync(paths.meta)) {
+            unlinkSync(paths.meta);
+        }
+    }
+
+    async prepareSessionReuseContinue(input: PrepareSessionInput): Promise<void> {
+        await this.getSessionsDir();
+        const path = jsonlPath(input.name);
+        const records = await readJsonlFile(path);
+        const kept = records.filter((record) => record.type !== "exit");
+        const body = kept.map((record) => SafeJSON.stringify(record)).join("\n");
+
+        await Bun.write(path, body ? `${body}\n` : "");
+
+        const now = Date.now();
+        const existing = await this.getSessionMeta(input.name);
+
+        const meta: TaskSessionMeta = {
+            name: input.name,
+            requestedAs: input.requestedAs ?? existing?.requestedAs,
+            command: input.command,
+            mode: input.mode,
+            cwd: input.cwd,
+            createdAt: existing?.createdAt ?? now,
+            lastActivityAt: now,
+            startedAt: existing?.startedAt ?? new Date(now).toISOString(),
+        };
+
+        await this.writeSessionMeta(meta);
+        await this.setRecentSession(input.name);
+    }
+
+    async clearOlderThanSeq(name: string, seq: number): Promise<number> {
+        await this.getSessionsDir();
+
+        const canonicalPath = jsonlPath(name);
+        const uiPath = uiJsonlPath(name);
+        const records = await readJsonlFile(canonicalPath);
+        const linesBefore = filterLineRecords(records).length;
+        const kept = records.filter((record) => {
+            if (record.type !== "line") {
+                return true;
+            }
+
+            return (record as JsonlLineRecord).seq > seq;
+        });
+        const linesAfter = filterLineRecords(kept).length;
+        const body = kept.map((record) => SafeJSON.stringify(record)).join("\n");
+
+        await Bun.write(canonicalPath, body ? `${body}\n` : "");
+
+        if (existsSync(uiPath)) {
+            const uiRecords = await readJsonlFile(uiPath);
+            const keptUi = uiRecords.filter((record) => {
+                if (record.type !== "line") {
+                    return true;
+                }
+
+                return (record as JsonlLineRecord).seq > seq;
+            });
+            const uiBody = keptUi.map((record) => SafeJSON.stringify(record)).join("\n");
+            await Bun.write(uiPath, uiBody ? `${uiBody}\n` : "");
+        }
+
+        return linesBefore - linesAfter;
     }
 
     async resolveRunSessionName(requested: string): Promise<ResolvedRunSession> {
@@ -270,11 +368,12 @@ export class TaskSessionStore {
     }
 
     async deleteSession(name: string): Promise<void> {
+        const sessionsDir = getTaskSessionsDir();
         const paths = [
-            join(TASK_SESSIONS_DIR, `${name}.jsonl`),
-            join(TASK_SESSIONS_DIR, `${name}.ui.jsonl`),
-            join(TASK_SESSIONS_DIR, `${name}.log`),
-            join(TASK_SESSIONS_DIR, `${name}.err.log`),
+            join(sessionsDir, `${name}.jsonl`),
+            join(sessionsDir, `${name}.ui.jsonl`),
+            join(sessionsDir, `${name}.log`),
+            join(sessionsDir, `${name}.err.log`),
             metaPath(name),
         ];
 

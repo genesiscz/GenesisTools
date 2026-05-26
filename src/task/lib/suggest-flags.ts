@@ -34,3 +34,10 @@ export function suggestLogsFollow(session: string): string {
         keepFlags: [],
     });
 }
+
+export function suggestClearOlderThanSeq(session: string, seq: number): string {
+    return suggestCommand("tools task", {
+        replaceCommand: ["get", "--session", session, "--clear-older-than-seq", String(seq)],
+        keepFlags: [],
+    });
+}
