@@ -13,7 +13,7 @@ import { FILTER_ORDER } from "@/lib/levels";
 import { type ConnectionStatus, connectStream } from "@/lib/sse";
 
 const FRESH_TTL_MS = 1500;
-const SESSIONS_REFRESH_MS = 5000;
+const SESSIONS_REFRESH_MS = 15_000;
 
 function readFromUrl(): { source: LogSourceId | null; session: string | null } {
     if (typeof window === "undefined") {
@@ -77,6 +77,7 @@ export function App(): React.ReactElement {
     const flushRafRef = useRef<number | null>(null);
     const freshSweepTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const activeRef = useRef({ source: initial.source, session: initial.session });
+    const refreshInFlightRef = useRef<Promise<void> | null>(null);
 
     activeRef.current = { source: activeSource, session: activeSession };
 
@@ -86,29 +87,40 @@ export function App(): React.ReactElement {
     }, []);
 
     const refreshSessions = useCallback(async () => {
-        try {
-            const { sessions: list } = await api.listSessions();
-            setSessions(list);
-
-            const { source, session } = activeRef.current;
-            const stillValid = source && session && list.some((s) => s.source === source && s.name === session);
-
-            if (stillValid) {
-                return;
-            }
-
-            const first = list[0];
-            if (first) {
-                setActiveSource(first.source);
-                setActiveSession(first.name);
-                return;
-            }
-
-            setActiveSource(null);
-            setActiveSession(null);
-        } catch {
-            setStatus("down");
+        if (refreshInFlightRef.current) {
+            return refreshInFlightRef.current;
         }
+
+        const run = async (): Promise<void> => {
+            try {
+                const { sessions: list } = await api.listSessions();
+                setSessions(list);
+
+                const { source, session } = activeRef.current;
+                const stillValid = source && session && list.some((s) => s.source === source && s.name === session);
+
+                if (stillValid) {
+                    return;
+                }
+
+                const first = list[0];
+                if (first) {
+                    setActiveSource(first.source);
+                    setActiveSession(first.name);
+                    return;
+                }
+
+                setActiveSource(null);
+                setActiveSession(null);
+            } catch {
+                setStatus("down");
+            } finally {
+                refreshInFlightRef.current = null;
+            }
+        };
+
+        refreshInFlightRef.current = run();
+        return refreshInFlightRef.current;
     }, []);
 
     useEffect(() => {
