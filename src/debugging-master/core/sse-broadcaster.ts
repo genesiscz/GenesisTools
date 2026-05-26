@@ -153,8 +153,20 @@ export class SSEBroadcaster {
 
         this.subscribers.delete(key);
 
-        for (const sub of this.multiplexSubscribers) {
+        // Drop the key from each multiplex sub, and reap any whose key set
+        // is now empty — otherwise they linger forever, the 15s heartbeat
+        // keeps pinging them, and `subscribers.size === 0` will never let
+        // the heartbeat shut down even when no live consumer remains.
+        for (const sub of [...this.multiplexSubscribers]) {
             sub.keys.delete(key);
+            if (sub.keys.size === 0) {
+                this.removeMultiplexSubscriber(sub);
+                try {
+                    sub.controller.close();
+                } catch {
+                    // already closed
+                }
+            }
         }
     }
 
@@ -319,15 +331,22 @@ export class SSEBroadcaster {
         bucket.delete(sub);
         if (bucket.size === 0) {
             this.subscribers.delete(sub.key);
-            const tailer = this.tailers.get(sub.key);
-            if (tailer) {
-                tailer.stop();
-                this.tailers.delete(sub.key);
-            }
 
-            const parsed = parseSessionKey(sub.key);
-            if (parsed?.source === "task") {
-                stopTaskUiTailer(sub.key);
+            // Don't tear down the tailer / UI-line map if ANY multiplex
+            // subscriber still references this key — SessionsHome holds a
+            // multiplex sub that needs to keep receiving the session's
+            // entries even after the user closes the session-detail page.
+            if (!this.isKeyReferencedByMultiplex(sub.key)) {
+                const tailer = this.tailers.get(sub.key);
+                if (tailer) {
+                    tailer.stop();
+                    this.tailers.delete(sub.key);
+                }
+
+                const parsed = parseSessionKey(sub.key);
+                if (parsed?.source === "task") {
+                    stopTaskUiTailer(sub.key);
+                }
             }
         }
 
@@ -335,6 +354,16 @@ export class SSEBroadcaster {
             clearInterval(this.heartbeat);
             this.heartbeat = null;
         }
+    }
+
+    private isKeyReferencedByMultiplex(key: string): boolean {
+        for (const sub of this.multiplexSubscribers) {
+            if (sub.keys.has(key)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private ensureHeartbeat(): void {
