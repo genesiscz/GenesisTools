@@ -41,13 +41,13 @@ export function SessionHeaderLine({
 
         return (
             <div
-                className={`dbg-header-text flex items-center gap-1 min-w-0 px-3 sm:px-5 pb-2 text-white/50 font-mono ${className}`}
+                className={`dbg-header-text inline-flex flex-wrap items-baseline gap-x-1 min-w-0 text-white/50 font-mono ${className}`}
                 title={parts.title}
             >
-                {parts.cwd ? <DirPath path={parts.cwd} className="min-w-0 flex-1" /> : null}
-                {parts.cwd && showCommand && parts.command ? <span className="text-white/20 mx-1">·</span> : null}
+                {parts.cwd ? <DirPath path={parts.cwd} className="min-w-0" /> : null}
+                {parts.cwd && showCommand && parts.command ? <span className="text-white/20 shrink-0">·</span> : null}
                 {showCommand && parts.command ? (
-                    <span className="text-cyan-300/70">{parts.command}</span>
+                    <span className="text-cyan-300/70 shrink-0">{parts.command}</span>
                 ) : null}
             </div>
         );
