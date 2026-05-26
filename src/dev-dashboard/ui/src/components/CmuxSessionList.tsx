@@ -17,7 +17,7 @@ import {
     flattenMosaicLeaves,
     pruneMosaicLeaves,
     reconcileMosaicLayout,
-} from "@/lib/mosaic-layout";
+} from "@app/utils/ui/helpers/mosaic-layout";
 
 interface Props {
     snapshot: CmuxSnapshot;
