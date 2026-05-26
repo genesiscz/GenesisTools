@@ -139,20 +139,7 @@ export const DASHBOARDS = {
         portOverride: { flag: "--port" },
         tech: "vite",
         auth: "none",
-        note: "API + static dist. Use `dashboard ui` for Vite HMR dev (port 7244).",
-    },
-    "debugging-master-ui": {
-        key: "debugging-master-ui",
-        name: "Log Viewer dev UI",
-        description: "Vite dev server for the log dashboard (proxies /api to :7243).",
-        port: 7244,
-        bindHost: "0.0.0.0",
-        strictPort: true,
-        launch: "tools debugging-master dashboard ui",
-        portOverride: { flag: "--port" },
-        tech: "vite",
-        auth: "none",
-        note: "Auto-starts `dashboard serve` as a dependency. Open :7244, not :7243, while developing UI.",
+        note: "Shared by tools task dashboard open and tools debugging-master dashboard open.",
     },
 } as const satisfies Record<string, DashboardEntry>;
 
