@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { runBuild as runDbgDashboardBuild } from "@app/debugging-master/commands/dashboard";
 import { logDashboardApp } from "@app/debugging-master/lib/log-dashboard-app";
 import { out } from "@app/logger";
+import { dashboardUrlWithQuery } from "@app/utils/DashboardApp/lifecycle";
 import type { Command } from "commander";
 import pc from "picocolors";
 
@@ -26,13 +27,18 @@ export function registerDashboardCommand(program: Command): void {
         .option("--port <n>", "Port the dashboard server is on", String(logDashboardApp.port))
         .option("--session <name>", "Session to deep-link (optional)")
         .option("--no-qr", "Skip the phone-scan QR code")
-        .action(async (opts: { port: string; session?: string; noQr?: boolean }) => {
+        .action(async (opts: { port: string; session?: string; qr?: boolean }) => {
             const port = Number.parseInt(opts.port, 10);
+            const query = opts.session ? { source: "task", session: opts.session } : undefined;
             await logDashboardApp.open({
                 port,
-                qr: opts.noQr ? false : undefined,
-                query: opts.session ? { source: "task", session: opts.session } : undefined,
+                qr: opts.qr === false ? false : undefined,
+                query,
             });
+
+            if (query) {
+                out.printlnErr(`  deep-link: ${dashboardUrlWithQuery(logDashboardApp.config, port, query)}`);
+            }
         });
 }
 
