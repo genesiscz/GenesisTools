@@ -7,36 +7,43 @@ const REPO_ROOT = join(import.meta.dir, "..", "..", "..");
 export interface RunTaskCaptureOptions {
     session: string;
     noTty?: boolean;
+    tty?: boolean;
     command: string[];
     homeDir?: string;
 }
 
 export async function runTaskCapture(opts: RunTaskCaptureOptions): Promise<number> {
-    const homeDir = opts.homeDir ?? join(REPO_ROOT, ".tmp-task-test");
-    const proc = Bun.spawn(
-        [
-            "bun",
-            "run",
-            join(REPO_ROOT, "src/task/index.ts"),
-            "run",
-            "--session",
-            opts.session,
-            ...(opts.noTty ? ["--no-tty"] : []),
-            "--",
-            ...opts.command,
-        ],
-        {
-            cwd: REPO_ROOT,
-            env: {
-                ...process.env,
-                GENESIS_TOOLS_HOME: homeDir,
-            },
-            stdout: "pipe",
-            stderr: "pipe",
-        }
-    );
+    const modeFlags = opts.tty ? ["--tty"] : opts.noTty ? ["--no-tty"] : [];
+    const result = await runTaskCli(["run", "--session", opts.session, ...modeFlags, "--", ...opts.command], {
+        homeDir: opts.homeDir ?? join(REPO_ROOT, ".tmp-task-test"),
+    });
+    return result.exitCode;
+}
 
-    return proc.exited;
+export interface RunTaskCliResult {
+    exitCode: number;
+    stdout: string;
+    stderr: string;
+}
+
+export async function runTaskCli(args: string[], opts: { homeDir: string }): Promise<RunTaskCliResult> {
+    const proc = Bun.spawn(["bun", "run", join(REPO_ROOT, "src/task/index.ts"), ...args], {
+        cwd: REPO_ROOT,
+        env: {
+            ...process.env,
+            GENESIS_TOOLS_HOME: opts.homeDir,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+    });
+
+    const [exitCode, stdout, stderr] = await Promise.all([
+        proc.exited,
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+    ]);
+
+    return { exitCode, stdout, stderr };
 }
 
 export async function readTaskJsonl(session: string, homeDir: string) {
