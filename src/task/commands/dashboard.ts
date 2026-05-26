@@ -1,14 +1,9 @@
-import { existsSync } from "node:fs";
-import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { runBuild as runDbgDashboardBuild } from "@app/debugging-master/commands/dashboard";
 import { logDashboardApp } from "@app/debugging-master/lib/log-dashboard-app";
 import { out } from "@app/logger";
 import { dashboardUrlWithQuery } from "@app/utils/DashboardApp/lifecycle";
+import { TaskSessionStore } from "@app/task/lib/session-store";
 import type { Command } from "commander";
-import pc from "picocolors";
-
-const DASHBOARD_ROOT = fileURLToPath(new URL("../../debugging-master/dashboard", import.meta.url));
 
 export function registerDashboardCommand(program: Command): void {
     const dashboard = program.command("dashboard").description("Build or open the unified log dashboard");
@@ -30,7 +25,24 @@ export function registerDashboardCommand(program: Command): void {
         .action(async (opts: { port: string; qr?: boolean }) => {
             const port = Number.parseInt(opts.port, 10);
             const globalOpts = program.opts<{ session?: string }>();
-            const session = globalOpts.session;
+            // Fuzzy-resolve via the session store so prefix/abbrev matches
+            // work (e.g. --session metro resolves to the latest
+            // metro-2026-05-26_14-30-22). Without this the deep-link query
+            // is passed through verbatim and a 404 lands on App.refreshSessions
+            // which falls back to the first session in the list — silently
+            // opening a different one than the user typed.
+            const rawSession = globalOpts.session;
+            let session: string | undefined;
+            if (rawSession) {
+                try {
+                    session = await new TaskSessionStore().resolveSession(rawSession);
+                } catch (err) {
+                    const detail = err instanceof Error ? err.message : String(err);
+                    out.printlnErr(`error: --session "${rawSession}" did not resolve: ${detail}`);
+                    process.exit(1);
+                }
+            }
+
             const query = session ? { source: "task" as const, session } : undefined;
 
             await logDashboardApp.open({
@@ -45,14 +57,4 @@ export function registerDashboardCommand(program: Command): void {
                 out.printlnErr(`  deep-link: ${url}`);
             }
         });
-}
-
-export async function ensureTaskDashboardBuilt(): Promise<void> {
-    const distIndex = join(DASHBOARD_ROOT, "dist", "index.html");
-    if (existsSync(distIndex)) {
-        return;
-    }
-
-    out.printlnErr(pc.dim("▸ Dashboard dist/ missing — building once..."));
-    await runDbgDashboardBuild();
 }
