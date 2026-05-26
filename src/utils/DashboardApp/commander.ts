@@ -18,7 +18,18 @@
  *     -i, --interactive   force the menu
  */
 import { Command } from "commander";
-import { attach, down, install, type LifecycleContext, logs, openDashboard, printStatus, restart, uninstall, up } from "./lifecycle";
+import {
+    attach,
+    down,
+    install,
+    type LifecycleContext,
+    logs,
+    openDashboard,
+    printStatus,
+    restart,
+    uninstall,
+    up,
+} from "./lifecycle";
 import type { DashboardAppConfig } from "./types";
 
 interface BuildOptions {
