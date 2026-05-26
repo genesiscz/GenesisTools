@@ -185,6 +185,19 @@ describe("paths: collapsePath", () => {
     });
 });
 
+describe("collapsePathForDisplay", () => {
+    let collapsePathForDisplay: typeof import("./paths").collapsePathForDisplay;
+
+    beforeEach(async () => {
+        const mod = await import("./paths");
+        collapsePathForDisplay = mod.collapsePathForDisplay;
+    });
+
+    it("leaves paths outside the current home unchanged", () => {
+        expect(collapsePathForDisplay("/Users/dev/my-app")).toBe("/Users/dev/my-app");
+    });
+});
+
 // ---------------------------------------------------------------------------
 // Windows simulation tests
 // ---------------------------------------------------------------------------
