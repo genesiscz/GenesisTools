@@ -243,7 +243,7 @@ async function listSessions(): Promise<DashboardSession[]> {
                 source: session.source,
                 name: session.name,
                 badge: session.badge,
-                projectPath: session.projectPath ?? session.command ?? "",
+                projectPath: session.projectPath ?? "",
                 command: session.command,
                 createdAt: times.createdAt,
                 lastActivityAt: times.lastActivityAt,
