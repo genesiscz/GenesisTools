@@ -20,7 +20,7 @@ interface Props {
 
 export function StatusPill({ status }: Props): React.ReactElement {
     return (
-        <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md border border-white/8 bg-white/[0.02] text-[10px] uppercase tracking-wider">
+        <span className="dbg-ui-text-sm inline-flex items-center gap-1.5 px-2 py-1 rounded-md border border-white/8 bg-white/[0.02] uppercase tracking-wider">
             <span className={DOT_CLASS[status]} />
             <span className="text-white/70">{LABELS[status]}</span>
         </span>

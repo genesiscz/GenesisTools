@@ -1,5 +1,9 @@
 import type { CSSProperties, ReactElement, ReactNode } from "react";
 
+function sanitizeAnsiForDisplay(text: string): string {
+    return text.replace(/\r\n/g, "\n").replace(/\r/g, "");
+}
+
 const CSI_PATTERN = /\u001b\[([0-9:;]*)([@-~])/g;
 
 const ANSI_FG: Record<number, string> = {
@@ -174,5 +178,7 @@ interface Props {
 }
 
 export function AnsiLogText({ text, className = "" }: Props): ReactElement {
-    return <span className={`ansi-log whitespace-pre-wrap break-all ${className}`}>{ansiToReactNodes(text)}</span>;
+    return (
+        <span className={`ansi-log ${className}`}>{ansiToReactNodes(sanitizeAnsiForDisplay(text))}</span>
+    );
 }

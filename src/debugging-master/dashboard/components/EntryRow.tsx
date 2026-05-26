@@ -12,15 +12,24 @@ interface Props {
     entry: IndexedLogEntry;
     expanded: boolean;
     fresh: boolean;
+    showTimestamp?: boolean;
     onToggle: (index: number) => void;
     onFilterHypothesis?: (h: string) => void;
 }
 
-function EntryRowImpl({ entry, expanded, fresh, onToggle, onFilterHypothesis }: Props): React.ReactElement {
+function EntryRowImpl({
+    entry,
+    expanded,
+    fresh,
+    showTimestamp = true,
+    onToggle,
+    onFilterHypothesis,
+}: Props): React.ReactElement {
     const failed = entry.level === "assert" && entry.passed === false;
     const refMeta = LEVEL_META[entry.level];
     const refId = refMeta.refPrefix ? `${refMeta.refPrefix}${entry.index}` : null;
     const inline: InlinePayload = !expanded ? getInlinePayload(entry) : null;
+    const showLevelChip = !entry.msgAnsi;
 
     return (
         <div
@@ -38,50 +47,56 @@ function EntryRowImpl({ entry, expanded, fresh, onToggle, onFilterHypothesis }: 
             role="button"
             tabIndex={0}
         >
-            <div className="px-3 sm:px-4 py-1.5 flex items-baseline gap-2.5 text-[12px]">
-                <span className="text-white/35 tabular-nums">{formatTime(entry.ts)}</span>
-                <span
-                    className="lvl-chip"
-                    data-lvl={entry.level}
-                    data-failed={failed ? "true" : undefined}
-                    title={LEVEL_META[entry.level].description}
-                >
-                    {LEVEL_META[entry.level].label}
+            <div className="dbg-log-line px-3 sm:px-4">
+                <span className="dbg-log-line__ts" aria-hidden={!showTimestamp}>
+                    {showTimestamp ? formatTime(entry.ts) : null}
                 </span>
-                {entry.h ? (
-                    <button
-                        type="button"
-                        onClick={(e) => {
-                            e.stopPropagation();
-                            onFilterHypothesis?.(entry.h!);
-                        }}
-                        className="h-chip"
-                        title={`filter by hypothesis: ${entry.h}`}
-                    >
-                        h:{entry.h}
-                    </button>
-                ) : null}
-                <span className="flex-1 truncate-mono min-w-0">
-                    {entry.msgAnsi ? (
-                        <LogLineText entry={entry} />
-                    ) : (
-                        <>
-                            {entry.label ? <span className="text-amber-200">{entry.label}</span> : null}
-                            {entry.label && entry.msg ? <span className="text-white/40"> · </span> : null}
-                            {entry.msg ? <span className="text-white/85">{entry.msg}</span> : null}
-                        </>
-                    )}
-                    {!entry.label && !entry.msg && !entry.msgAnsi && !inline ? (
-                        <span className="text-white/40">{describeAssert(entry)}</span>
+                <div className="dbg-log-line__body flex items-baseline gap-2 min-w-0 flex-wrap">
+                    {showLevelChip ? (
+                        <span
+                            className="lvl-chip shrink-0"
+                            data-lvl={entry.level}
+                            data-failed={failed ? "true" : undefined}
+                            title={LEVEL_META[entry.level].description}
+                        >
+                            {LEVEL_META[entry.level].label}
+                        </span>
                     ) : null}
-                </span>
-                {entry.durationMs !== undefined ? (
-                    <span className="text-purple-300 text-[12px] tabular-nums">
-                        {formatDurationMs(entry.durationMs)}
+                    {entry.h ? (
+                        <button
+                            type="button"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                onFilterHypothesis?.(entry.h!);
+                            }}
+                            className="h-chip"
+                            title={`filter by hypothesis: ${entry.h}`}
+                        >
+                            h:{entry.h}
+                        </button>
+                    ) : null}
+                    <span className={`flex-1 min-w-0 ${entry.msgAnsi ? "" : "truncate-mono"}`}>
+                        {entry.msgAnsi ? (
+                            <LogLineText entry={entry} />
+                        ) : (
+                            <>
+                                {entry.label ? <span className="text-amber-200">{entry.label}</span> : null}
+                                {entry.label && entry.msg ? <span className="text-white/40"> · </span> : null}
+                                {entry.msg ? <span className="text-white/85">{entry.msg}</span> : null}
+                            </>
+                        )}
+                        {!entry.label && !entry.msg && !entry.msgAnsi && !inline ? (
+                            <span className="text-white/40">{describeAssert(entry)}</span>
+                        ) : null}
                     </span>
-                ) : null}
-                {refId ? <span className="text-white/45 text-[12px] tabular-nums">{refId}</span> : null}
-                <span className="text-white/45 text-[12px]">{expanded ? "▾" : "▸"}</span>
+                    {entry.durationMs !== undefined ? (
+                        <span className="dbg-log-meta text-purple-300 tabular-nums shrink-0">
+                            {formatDurationMs(entry.durationMs)}
+                        </span>
+                    ) : null}
+                    {refId ? <span className="dbg-log-meta text-white/45 tabular-nums shrink-0">{refId}</span> : null}
+                    <span className="dbg-log-meta text-white/45 shrink-0">{expanded ? "▾" : "▸"}</span>
+                </div>
             </div>
             {inline ? (
                 <div className="json-tree px-3 sm:px-4 pb-1.5 pl-[5.5rem] sm:pl-[6.5rem] text-[11px] truncate-mono">

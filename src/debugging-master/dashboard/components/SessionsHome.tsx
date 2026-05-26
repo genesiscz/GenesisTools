@@ -1,20 +1,28 @@
 import type { IndexedLogEntry } from "@app/debugging-master/types";
 import type { DashboardSession, LogSourceId } from "@app/utils/log-viewer/log-source";
 import { sessionKey } from "@app/utils/log-viewer/session-key";
+import { sortSessionsByRecency } from "@app/utils/log-viewer/session-recency";
 import { buildBalancedMosaicLayout, reconcileMosaicLayout } from "@app/utils/ui/helpers/mosaic-layout";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Mosaic, type MosaicNode, MosaicWindow } from "react-mosaic-component";
-import { formatRelativeTime } from "@/lib/format";
+import type { TimestampMode } from "@/lib/display-settings";
+import { filterDisplayLogLines, shouldShowLogTimestamp } from "@/lib/log-line-display";
 import { api } from "@/lib/api";
+import { useAutoScroll } from "@app/utils/ui/hooks/useAutoScroll";
+import { useNowTick } from "@app/utils/ui/hooks/useNowTick";
 import type { ConnectionStatus, MultiplexLogEntry } from "@/lib/sse";
 import { connectActiveStream } from "@/lib/sse";
+import { isSessionInActivePool } from "@/lib/session-active-pool";
 import { StatusPill } from "./StatusPill";
-import { SessionStatusLabel } from "./SessionStatusLabel";
 import { ActiveSessionMosaicToolbar } from "./ActiveSessionMosaicToolbar";
 import { DisplaySettingsButton } from "./DisplaySettingsButton";
+import { shortenPathWithPrefix } from "@app/utils/paths.client";
+import { useDirPathPrefix } from "@ui/components/DirPath";
 import { formatSessionHeaderParts } from "@/lib/session-run-context";
 import { SessionHeaderLine } from "./SessionHeaderLine";
-import { LogLineText } from "./LogLineText";
+import { LogPreviewLine } from "./LogPreviewLine";
+import { SessionDeleteButton, SessionRowBar } from "./SessionRowBar";
+import { useDisplaySettings } from "./DisplaySettingsProvider";
 
 const ACTIVE_PREVIEW_LINES = 2000;
 const ARCHIVE_PREVIEW_LIMIT = 40;
@@ -63,18 +71,6 @@ function badgeClass(badge: string): string {
     return "bg-purple-500/20 text-purple-300 border-purple-500/30";
 }
 
-function stateClass(state: DashboardSession["state"]): string {
-    if (state === "active") {
-        return "text-emerald-400/90";
-    }
-
-    if (state === "exited") {
-        return "text-white/45";
-    }
-
-    return "text-amber-400/80";
-}
-
 function latestLineTimestamp(lines: MultiplexLogEntry[]): number | undefined {
     if (lines.length === 0) {
         return undefined;
@@ -114,9 +110,10 @@ function resolveMosaicVisibility({
     return "overflow";
 }
 
-function mosaicToggleTitle(visibility: MosaicVisibility, session: DashboardSession): string {
+function mosaicToggleTitle(visibility: MosaicVisibility, session: DashboardSession, pathPrefix: string): string {
     const header = formatSessionHeaderParts(session);
-    const label = header.cwd ? `${header.name} · ${header.cwd}` : header.name;
+    const cwd = header.cwd ? shortenPathWithPrefix(header.cwd, pathPrefix) : undefined;
+    const label = cwd ? `${header.name} · ${cwd}` : header.name;
 
     if (visibility === "visible") {
         return `Hide "${label}" from mosaic`;
@@ -131,7 +128,7 @@ function mosaicToggleTitle(visibility: MosaicVisibility, session: DashboardSessi
 
 function mosaicToggleClass(visibility: MosaicVisibility, badge: string): string {
     const base =
-        "inline-flex items-center gap-1.5 max-w-[420px] px-2 py-1 rounded-md border text-[10px] transition-colors";
+        "dbg-ui-text-xs inline-flex items-center gap-1.5 min-w-0 max-w-[min(100%,36rem)] px-2 py-1 rounded-md border transition-colors";
 
     if (visibility === "visible") {
         return `${base} ${badgeClass(badge)} border-emerald-400/50 bg-emerald-500/10 text-white/90 hover:bg-emerald-500/20`;
@@ -150,48 +147,44 @@ function previewText(entry: IndexedLogEntry | MultiplexLogEntry): string {
 
 function ActiveSessionTile({
     lines,
-    autoScroll,
+    scrollRef,
+    onScroll,
+    timestampMode,
 }: {
     lines: MultiplexLogEntry[];
-    autoScroll: boolean;
+    scrollRef: React.RefObject<HTMLDivElement | null>;
+    onScroll: () => void;
+    timestampMode: TimestampMode;
 }): React.ReactElement {
-    const scrollRef = useRef<HTMLDivElement>(null);
-
-    useEffect(() => {
-        const el = scrollRef.current;
-
-        if (!el || !autoScroll) {
-            return;
-        }
-
-        el.scrollTop = Number.MAX_SAFE_INTEGER;
-    }, [lines, autoScroll]);
+    const visibleLines = useMemo(() => filterDisplayLogLines(lines), [lines]);
 
     return (
         <div className="h-full flex flex-col bg-black/30">
             <div
                 ref={scrollRef}
-                className="flex-1 min-h-0 overflow-y-auto font-mono dbg-log-text leading-relaxed"
+                onScroll={onScroll}
+                className="flex-1 min-h-0 overflow-y-auto overflow-x-auto font-mono dbg-log-text"
             >
-                {lines.length === 0 ? (
+                {visibleLines.length === 0 ? (
                     <p className="px-2 py-2 text-white/25 italic">waiting for lines…</p>
                 ) : (
-                    lines.map((line) => (
-                        <div
-                            key={`${line.index}-${line.ts}`}
-                            className="px-2 py-0.5 border-b border-white/4 text-white/70 min-w-0"
-                            title={previewText(line)}
-                        >
-                            {line.msgAnsi ? (
-                                <LogLineText entry={line} />
-                            ) : (
-                                <>
-                                    <span className="text-white/30 mr-1.5">[{line.level}]</span>
-                                    <span className="truncate-mono">{previewText(line)}</span>
-                                </>
-                            )}
-                        </div>
-                    ))
+                    visibleLines.map((line, index) => {
+                        const previousTs = index > 0 ? visibleLines[index - 1]?.ts : undefined;
+                        const showTimestamp = shouldShowLogTimestamp({
+                            mode: timestampMode,
+                            ts: line.ts,
+                            previousTs,
+                        });
+
+                        return (
+                            <LogPreviewLine
+                                key={`${line.index}-${line.ts}`}
+                                entry={line}
+                                previewText={previewText(line)}
+                                showTimestamp={showTimestamp}
+                            />
+                        );
+                    })
                 )}
             </div>
         </div>
@@ -202,22 +195,40 @@ interface ActiveSessionMosaicPaneProps {
     session: DashboardSession;
     path: string[];
     lines: MultiplexLogEntry[];
+    timestampMode: TimestampMode;
     onOpenSession: (source: LogSourceId, name: string) => void;
-    onDelete: (session: DashboardSession) => void;
+    onDeleteConfirmed: (session: DashboardSession) => void;
 }
 
 function ActiveSessionMosaicPane({
     session,
     path,
     lines,
+    timestampMode,
     onOpenSession,
-    onDelete,
+    onDeleteConfirmed,
 }: ActiveSessionMosaicPaneProps): React.ReactElement {
     const [paused, setPaused] = useState(false);
 
-    const togglePause = useCallback(() => {
-        setPaused((current) => !current);
+    const onAutoscrollChange = useCallback((enabled: boolean) => {
+        setPaused(!enabled);
     }, []);
+
+    const { ref, onScroll, resume } = useAutoScroll({
+        enabled: !paused,
+        onEnabledChange: onAutoscrollChange,
+        edge: "bottom",
+        snapDeps: [lines],
+    });
+
+    const togglePause = useCallback(() => {
+        if (paused) {
+            resume();
+            return;
+        }
+
+        setPaused(true);
+    }, [paused, resume]);
 
     return (
         <MosaicWindow<string>
@@ -225,26 +236,31 @@ function ActiveSessionMosaicPane({
             title=""
             toolbarControls={<span />}
             renderToolbar={() => (
-                <ActiveSessionMosaicToolbar
-                    session={session}
-                    lines={lines}
-                    paused={paused}
-                    onTogglePause={togglePause}
-                    onOpen={() => {
-                        onOpenSession(session.source, session.name);
-                    }}
-                    onDelete={() => {
-                        onDelete(session);
-                    }}
-                />
+                <div className="flex w-full min-w-0">
+                    <ActiveSessionMosaicToolbar
+                        session={session}
+                        lines={lines}
+                        paused={paused}
+                        onTogglePause={togglePause}
+                        onOpen={() => {
+                            onOpenSession(session.source, session.name);
+                        }}
+                        onDeleteConfirmed={() => {
+                            onDeleteConfirmed(session);
+                        }}
+                    />
+                </div>
             )}
         >
-            <ActiveSessionTile lines={lines} autoScroll={!paused} />
+            <ActiveSessionTile lines={lines} scrollRef={ref} onScroll={onScroll} timestampMode={timestampMode} />
         </MosaicWindow>
     );
 }
 
 export function SessionsHome({ sessions, status, onRefresh, onOpenSession, onStatus }: Props): React.ReactElement {
+    const { settings } = useDisplaySettings();
+    const pathPrefix = useDirPathPrefix();
+    const now = useNowTick(1000);
     const [liveLines, setLiveLines] = useState<Map<string, MultiplexLogEntry[]>>(new Map());
     const [archiveOpen, setArchiveOpen] = useState(false);
     const [expandedArchive, setExpandedArchive] = useState<Set<string>>(new Set());
@@ -253,7 +269,10 @@ export function SessionsHome({ sessions, status, onRefresh, onOpenSession, onSta
     const [layout, setLayout] = useState<MosaicNode<string> | null>(null);
     const [userHiddenKeys, setUserHiddenKeys] = useState<Set<string>>(() => new Set());
 
-    const allActiveSessions = useMemo(() => sessions.filter((s) => s.state === "active"), [sessions]);
+    const allActiveSessions = useMemo(
+        () => sortSessionsByRecency(sessions.filter((session) => isSessionInActivePool(session, now))),
+        [sessions, now]
+    );
     const allActiveKeys = useMemo(
         () => allActiveSessions.map((s) => sessionKey(s.source, s.name)),
         [allActiveSessions]
@@ -266,7 +285,10 @@ export function SessionsHome({ sessions, status, onRefresh, onOpenSession, onSta
 
         return allActiveSessions.filter((session) => visible.has(sessionKey(session.source, session.name)));
     }, [allActiveSessions, mosaicActiveKeys]);
-    const archiveSessions = useMemo(() => sessions.filter((s) => s.state !== "active"), [sessions]);
+    const archiveSessions = useMemo(
+        () => sortSessionsByRecency(sessions.filter((session) => !isSessionInActivePool(session, now))),
+        [sessions, now]
+    );
     const hiddenActiveCount = allActiveSessions.length - mosaicActiveKeys.length;
 
     const sessionByKey = useMemo(() => {
@@ -334,8 +356,7 @@ export function SessionsHome({ sessions, status, onRefresh, onOpenSession, onSta
                 const next = new Map(prev);
 
                 for (const { key, tail } of results) {
-                    const existing = next.get(key) ?? [];
-                    next.set(key, mergePreviewLines(existing, tail, ACTIVE_PREVIEW_LINES));
+                    next.set(key, tail.slice(-ACTIVE_PREVIEW_LINES));
                 }
 
                 return next;
@@ -404,6 +425,18 @@ export function SessionsHome({ sessions, status, onRefresh, onOpenSession, onSta
                     return next;
                 });
             },
+            onCleared: (source, session) => {
+                const key = sessionKey(source, session);
+                setLiveLines((prev) => {
+                    if (!prev.has(key)) {
+                        return prev;
+                    }
+
+                    const next = new Map(prev);
+                    next.set(key, []);
+                    return next;
+                });
+            },
         });
 
         return dispose;
@@ -440,53 +473,43 @@ export function SessionsHome({ sessions, status, onRefresh, onOpenSession, onSta
         }
     }, [archiveEntries, loadingArchive]);
 
-    const handleDelete = useCallback(
-        async (session: DashboardSession) => {
-            const ok = confirm(`Delete session [${session.badge}] "${session.name}" and all log files?`);
-            if (!ok) {
-                return;
+    const clearDeletedSessionLocalState = useCallback((session: DashboardSession) => {
+        const key = sessionKey(session.source, session.name);
+        setLiveLines((prev) => {
+            const next = new Map(prev);
+            next.delete(key);
+            return next;
+        });
+        setExpandedArchive((prev) => {
+            const next = new Set(prev);
+            next.delete(key);
+            return next;
+        });
+        setArchiveEntries((prev) => {
+            const next = new Map(prev);
+            next.delete(key);
+            return next;
+        });
+        setUserHiddenKeys((prev) => {
+            if (!prev.has(key)) {
+                return prev;
             }
 
-            await api.deleteSession(session.source, session.name);
-            const key = sessionKey(session.source, session.name);
-            setLiveLines((prev) => {
-                const next = new Map(prev);
-                next.delete(key);
-                return next;
-            });
-            setExpandedArchive((prev) => {
-                const next = new Set(prev);
-                next.delete(key);
-                return next;
-            });
-            setArchiveEntries((prev) => {
-                const next = new Map(prev);
-                next.delete(key);
-                return next;
-            });
-            setUserHiddenKeys((prev) => {
-                if (!prev.has(key)) {
-                    return prev;
-                }
-
-                const next = new Set(prev);
-                next.delete(key);
-                return next;
-            });
-            await onRefresh();
-        },
-        [onRefresh]
-    );
+            const next = new Set(prev);
+            next.delete(key);
+            return next;
+        });
+    }, []);
 
     return (
         <div className="h-full min-h-0 flex flex-col">
             <header className="sticky top-0 z-20 glass-card border-b border-white/8 shrink-0">
                 <div className="px-3 sm:px-5 py-2.5 flex flex-wrap items-center gap-3">
                     <div className="flex items-center gap-3 mr-auto">
-                        <span className="brand-title text-[13px] sm:text-[15px]">▓▓▓ SESSIONS</span>
+                        <span className="brand-title">▓▓▓ SESSIONS</span>
                         <StatusPill status={status} />
-                        <span className="text-[10px] text-emerald-400/70">
-                            {allActiveSessions.length} active
+                        <span className="dbg-ui-text-sm text-emerald-400/70">
+                            {allActiveSessions.length} live
                             {hiddenActiveCount > 0 ? ` · ${mosaicActiveKeys.length} in mosaic` : ""}
                             {hiddenActiveCount > 0 ? ` · ${hiddenActiveCount} hidden` : ""}
                         </span>
@@ -496,7 +519,7 @@ export function SessionsHome({ sessions, status, onRefresh, onOpenSession, onSta
                         onClick={() => {
                             void onRefresh();
                         }}
-                        className="text-[10px] uppercase tracking-wider text-white/50 hover:text-white/90 px-2 py-1 border border-white/10 rounded-md hover:border-cyan-500/40 transition-colors"
+                        className="dbg-ui-btn uppercase tracking-wider text-white/50 hover:text-white/90 px-2 py-1 border border-white/10 rounded-md hover:border-cyan-500/40 transition-colors"
                     >
                         ↻ refresh
                     </button>
@@ -505,7 +528,7 @@ export function SessionsHome({ sessions, status, onRefresh, onOpenSession, onSta
 
                 {allActiveSessions.length > 0 ? (
                     <div className="px-3 sm:px-5 pb-2.5 flex flex-wrap items-center gap-1.5 border-t border-white/5 pt-2">
-                        <span className="text-[9px] uppercase tracking-widest text-white/30 mr-1 shrink-0">Mosaic</span>
+                        <span className="dbg-ui-text-xs uppercase tracking-widest text-white/30 mr-1 shrink-0">Mosaic</span>
                         {allActiveSessions.map((session) => {
                             const key = sessionKey(session.source, session.name);
                             const visibility = resolveMosaicVisibility({
@@ -523,11 +546,16 @@ export function SessionsHome({ sessions, status, onRefresh, onOpenSession, onSta
                                         toggleSessionInMosaic(key);
                                     }}
                                     className={mosaicToggleClass(visibility, session.badge)}
-                                    title={mosaicToggleTitle(visibility, session)}
+                                    title={mosaicToggleTitle(visibility, session, pathPrefix)}
                                     aria-pressed={visibility === "visible"}
                                 >
-                                    <SessionHeaderLine session={session} showCommand={false} className="text-[10px]" />
-                                    <span className="text-[9px] shrink-0 opacity-70 ml-1">
+                                    <SessionHeaderLine
+                                        session={session}
+                                        showCommand={false}
+                                        layout="inline"
+                                        className="min-w-0 flex-1"
+                                    />
+                                    <span className="dbg-ui-text-xs shrink-0 opacity-70 ml-1">
                                         {visibility === "visible" ? "●" : visibility === "overflow" ? "◐" : "○"}
                                     </span>
                                 </button>
@@ -569,10 +597,9 @@ export function SessionsHome({ sessions, status, onRefresh, onOpenSession, onSta
                                     session={session}
                                     path={path}
                                     lines={lines}
+                                    timestampMode={settings.timestampMode}
                                     onOpenSession={onOpenSession}
-                                    onDelete={(s) => {
-                                        void handleDelete(s);
-                                    }}
+                                    onDeleteConfirmed={clearDeletedSessionLocalState}
                                 />
                             );
                         }}
@@ -590,7 +617,7 @@ export function SessionsHome({ sessions, status, onRefresh, onOpenSession, onSta
                     onClick={() => {
                         setArchiveOpen((open) => !open);
                     }}
-                    className="h-9 px-3 sm:px-5 flex items-center gap-2 text-[10px] uppercase tracking-widest text-white/50 hover:text-white/80 hover:bg-white/5 shrink-0"
+                    className="h-9 px-3 sm:px-5 flex items-center gap-2 dbg-ui-btn uppercase tracking-widest text-white/50 hover:text-white/80 hover:bg-white/5 shrink-0"
                     aria-expanded={archiveOpen}
                 >
                     <span className="text-white/35">{archiveOpen ? "▾" : "▴"}</span>
@@ -614,40 +641,32 @@ export function SessionsHome({ sessions, status, onRefresh, onOpenSession, onSta
                                         key={key}
                                         className="glass-card border border-white/8 rounded-md overflow-hidden"
                                     >
-                                        <div className="px-2 py-1.5 flex items-center gap-2">
+                                        <div className="flex items-start gap-1">
                                             <button
                                                 type="button"
                                                 onClick={() => {
                                                     void toggleArchiveRow(session);
                                                 }}
-                                                className="text-white/50 hover:text-white/80 w-4 text-center shrink-0"
+                                                className="text-white/50 hover:text-white/80 w-4 text-center shrink-0 mt-2"
                                                 aria-expanded={open}
                                             >
                                                 {open ? "▾" : "▸"}
                                             </button>
-                                            <SessionHeaderLine
+                                            <SessionRowBar
                                                 session={session}
                                                 onNameClick={() => {
                                                     onOpenSession(session.source, session.name);
                                                 }}
-                                                className="flex-1 text-[11px]"
+                                                className="dbg-session-row--archive flex-1 min-w-0"
+                                                trailing={
+                                                    <SessionDeleteButton
+                                                        session={session}
+                                                        onConfirmed={() => {
+                                                            clearDeletedSessionLocalState(session);
+                                                        }}
+                                                    />
+                                                }
                                             />
-                                            <SessionStatusLabel
-                                                session={session}
-                                                className={`text-[10px] shrink-0 ${stateClass(session.state)}`}
-                                            />
-                                            <span className="text-[10px] text-white/30 shrink-0">
-                                                {formatRelativeTime(session.lastActivityAt)}
-                                            </span>
-                                            <button
-                                                type="button"
-                                                onClick={() => {
-                                                    void handleDelete(session);
-                                                }}
-                                                className="text-[10px] uppercase tracking-wider text-rose-400/70 hover:text-rose-300 px-1 py-0.5 border border-rose-500/20 hover:border-rose-500/60 rounded shrink-0"
-                                            >
-                                                delete
-                                            </button>
                                         </div>
 
                                         {open ? (
@@ -657,24 +676,23 @@ export function SessionsHome({ sessions, status, onRefresh, onOpenSession, onSta
                                                 ) : entries.length === 0 ? (
                                                     <p className="px-2 py-1 text-white/30 italic">no log lines</p>
                                                 ) : (
-                                                    entries.map((entry) => (
-                                                        <div
-                                                            key={entry.index}
-                                                            className="px-2 py-0.5 border-b border-white/4 text-white/65 min-w-0"
-                                                            title={previewText(entry)}
-                                                        >
-                                                            {entry.msgAnsi ? (
-                                                                <LogLineText entry={entry} />
-                                                            ) : (
-                                                                <>
-                                                                    <span className="text-white/30 mr-1.5">
-                                                                        [{entry.level}]
-                                                                    </span>
-                                                                    <span className="truncate-mono">{previewText(entry)}</span>
-                                                                </>
-                                                            )}
-                                                        </div>
-                                                    ))
+                                                    filterDisplayLogLines(entries).map((entry, index, visible) => {
+                                                        const previousTs = index > 0 ? visible[index - 1]?.ts : undefined;
+                                                        const showTimestamp = shouldShowLogTimestamp({
+                                                            mode: settings.timestampMode,
+                                                            ts: entry.ts,
+                                                            previousTs,
+                                                        });
+
+                                                        return (
+                                                            <LogPreviewLine
+                                                                key={entry.index}
+                                                                entry={entry}
+                                                                previewText={previewText(entry)}
+                                                                showTimestamp={showTimestamp}
+                                                            />
+                                                        );
+                                                    })
                                                 )}
                                             </div>
                                         ) : null}

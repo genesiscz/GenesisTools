@@ -1,7 +1,14 @@
 import type { IndexedLogEntry } from "@app/debugging-master/types";
-import { memo, useEffect, useRef } from "react";
+import { memo, useEffect, useImperativeHandle, useMemo } from "react";
+import { useAutoScroll } from "@app/utils/ui/hooks/useAutoScroll";
+import { filterDisplayLogLines, shouldShowLogTimestamp } from "@/lib/log-line-display";
 import { EntryRow } from "./EntryRow";
 import type { SortDir } from "./FilterBar";
+import { useDisplaySettings } from "./DisplaySettingsProvider";
+
+export interface EntryListHandle {
+    resume: () => void;
+}
 
 interface Props {
     entries: IndexedLogEntry[];
@@ -11,6 +18,8 @@ interface Props {
     sortDir: SortDir;
     onToggle: (index: number) => void;
     onFilterHypothesis: (h: string) => void;
+    onAutoScrollChange: (enabled: boolean) => void;
+    resumeRef?: React.RefObject<EntryListHandle | null>;
 }
 
 function EntryListImpl({
@@ -21,36 +30,28 @@ function EntryListImpl({
     sortDir,
     onToggle,
     onFilterHypothesis,
+    onAutoScrollChange,
+    resumeRef,
 }: Props): React.ReactElement {
-    const ref = useRef<HTMLDivElement>(null);
+    const { settings } = useDisplaySettings();
+    const edge = sortDir === "desc" ? "top" : "bottom";
+    const visibleEntries = useMemo(() => filterDisplayLogLines(entries), [entries]);
+    const { ref, onScroll, resume } = useAutoScroll({
+        enabled: autoScroll,
+        onEnabledChange: onAutoScrollChange,
+        edge,
+        snapDeps: [visibleEntries, sortDir],
+    });
 
-    // When sort direction flips, snap to the new active edge.
-    // `Number.MAX_SAFE_INTEGER` is the trick to scroll-to-bottom without
-    // reading `scrollHeight` — the browser clamps internally. Reading
-    // `scrollHeight` forces a sync layout pass, which is what was throttling
-    // bursty ingest at 300+ rows.
+    useImperativeHandle(resumeRef, () => ({ resume }), [resume]);
+
+    // When sort direction flips, snap to the new active edge immediately.
     useEffect(() => {
-        const el = ref.current;
-        if (!el) {
-            return;
-        }
-        el.scrollTop = sortDir === "desc" ? 0 : Number.MAX_SAFE_INTEGER;
+        resume();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [sortDir]);
 
-    // While autoscroll is on, snap to the active edge on every entry change.
-    // `useEffect` (post-paint) instead of `useLayoutEffect` — the bottom-snap
-    // doesn't need to be synchronous; `overflow-anchor` keeps the visible
-    // content stable across the brief gap. Trading a single frame of "wrong"
-    // scroll position for not blocking paint on every burst.
-    useEffect(() => {
-        const el = ref.current;
-        if (!el || !autoScroll) {
-            return;
-        }
-        el.scrollTop = sortDir === "desc" ? 0 : Number.MAX_SAFE_INTEGER;
-    }, [entries, autoScroll, sortDir]);
-
-    if (entries.length === 0) {
+    if (visibleEntries.length === 0) {
         return (
             <div className="flex-1 grid place-items-center text-white/30 text-[13px] tracking-wider uppercase">
                 <div className="flex flex-col items-center gap-2">
@@ -62,17 +63,31 @@ function EntryListImpl({
     }
 
     return (
-        <div ref={ref} className="flex-1 overflow-y-auto overflow-x-hidden divide-y divide-white/4 dbg-log-text font-mono">
-            {entries.map((e) => (
-                <EntryRow
-                    key={e.index}
-                    entry={e}
-                    expanded={expandedIds.has(e.index)}
-                    fresh={freshIds.has(e.index)}
-                    onToggle={onToggle}
-                    onFilterHypothesis={onFilterHypothesis}
-                />
-            ))}
+        <div
+            ref={ref}
+            onScroll={onScroll}
+            className="flex-1 overflow-y-auto overflow-x-auto dbg-log-text font-mono"
+        >
+            {visibleEntries.map((e, index) => {
+                const previousTs = index > 0 ? visibleEntries[index - 1]?.ts : undefined;
+                const showTimestamp = shouldShowLogTimestamp({
+                    mode: settings.timestampMode,
+                    ts: e.ts,
+                    previousTs,
+                });
+
+                return (
+                    <EntryRow
+                        key={e.index}
+                        entry={e}
+                        expanded={expandedIds.has(e.index)}
+                        fresh={freshIds.has(e.index)}
+                        showTimestamp={showTimestamp}
+                        onToggle={onToggle}
+                        onFilterHypothesis={onFilterHypothesis}
+                    />
+                );
+            })}
         </div>
     );
 }

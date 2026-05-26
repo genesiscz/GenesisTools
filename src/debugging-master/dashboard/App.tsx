@@ -1,13 +1,17 @@
 import type { IndexedLogEntry, LogLevel } from "@app/debugging-master/types";
 import type { DashboardSession, LogSourceId } from "@app/utils/log-viewer/log-source";
 import { isLogSourceId } from "@app/utils/log-viewer/session-key";
+import { sortSessionsByRecency } from "@app/utils/log-viewer/session-recency";
 import { TooltipProvider } from "@ui/components/tooltip";
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { EntryList } from "@/components/EntryList";
+import { EntryList, type EntryListHandle } from "@/components/EntryList";
 import { FilterBar, type SortDir } from "@/components/FilterBar";
 import { Header } from "@/components/Header";
 import { SessionsHome } from "@/components/SessionsHome";
 import { DisplaySettingsProvider } from "@/components/DisplaySettingsProvider";
+import { SessionDeleteConfirmProvider } from "@/lib/ui/SessionDeleteConfirm";
+import { collectSessionCwds } from "@/lib/session-run-context";
+import { DirPathPrefixProvider } from "@ui/components/DirPath";
 import { api } from "@/lib/api";
 import { EntriesContext } from "@/lib/entries-context";
 import { applyFilter, collectHypotheses, defaultFilterState, type FilterState } from "@/lib/filters";
@@ -15,7 +19,7 @@ import { FILTER_ORDER } from "@/lib/levels";
 import { type ConnectionStatus, connectStream } from "@/lib/sse";
 
 const FRESH_TTL_MS = 1500;
-const SESSIONS_REFRESH_MS = 15_000;
+const SESSIONS_REFRESH_MS = 5_000;
 
 type AppView = "home" | "detail";
 
@@ -84,6 +88,7 @@ export function App(): React.ReactElement {
     });
     const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
     const [freshIds, setFreshIds] = useState<Set<number>>(new Set());
+    const entryListResumeRef = useRef<EntryListHandle | null>(null);
 
     const pendingEntriesRef = useRef<IndexedLogEntry[]>([]);
     const pendingFreshRef = useRef<number[]>([]);
@@ -117,7 +122,7 @@ export function App(): React.ReactElement {
         const run = async (): Promise<void> => {
             try {
                 const { sessions: list } = await api.listSessions();
-                setSessions(list);
+                setSessions(sortSessionsByRecency(list));
 
                 const { view: currentView, source, session } = activeRef.current;
 
@@ -283,6 +288,22 @@ export function App(): React.ReactElement {
     const filtered = useMemo(() => applyFilter(entries, filterState), [entries, filterState]);
     const displayed = useMemo(() => (sortDir === "desc" ? [...filtered].reverse() : filtered), [filtered, sortDir]);
 
+    const activeSessionMeta = useMemo(() => {
+        if (!activeSource || !activeSession) {
+            return undefined;
+        }
+
+        return sessions.find((s) => s.source === activeSource && s.name === activeSession);
+    }, [sessions, activeSource, activeSession]);
+
+    const latestLineTs = useMemo(() => {
+        if (entries.length === 0) {
+            return undefined;
+        }
+
+        return entries[entries.length - 1]?.ts;
+    }, [entries]);
+
     const onToggleLevel = useCallback((lvl: LogLevel) => {
         setFilterState((prev) => {
             const next = new Set(prev.levels);
@@ -312,7 +333,16 @@ export function App(): React.ReactElement {
     }, []);
 
     const onTogglePause = useCallback(() => {
-        setPaused((p) => !p);
+        if (paused) {
+            entryListResumeRef.current?.resume();
+            return;
+        }
+
+        setPaused(true);
+    }, [paused]);
+
+    const onAutoScrollChange = useCallback((enabled: boolean) => {
+        setPaused(!enabled);
     }, []);
 
     const onToggleSort = useCallback(() => {
@@ -353,22 +383,26 @@ export function App(): React.ReactElement {
         setFreshIds(new Set());
     }, [activeSource, activeSession]);
 
-    const onDelete = useCallback(async () => {
-        if (!activeSource || !activeSession) {
-            return;
-        }
-        const ok = confirm(`Delete session [${activeSource}] "${activeSession}" and all log files?`);
-        if (!ok) {
-            return;
-        }
-        await api.deleteSession(activeSource, activeSession);
-        await refreshSessions();
-        goHome();
-    }, [activeSource, activeSession, refreshSessions, goHome]);
+    const onDeleteSession = useCallback(
+        async (source: LogSourceId, name: string) => {
+            setSessions((prev) => prev.filter((session) => !(session.source === source && session.name === name)));
+
+            try {
+                await api.deleteSession(source, name);
+            } catch {
+                await refreshSessions();
+            }
+        },
+        [refreshSessions]
+    );
+
+    const sessionDirSources = useMemo(() => collectSessionCwds(sessions), [sessions]);
 
     return (
         <DisplaySettingsProvider>
-            <TooltipProvider>
+            <SessionDeleteConfirmProvider onDeleteSession={onDeleteSession}>
+                <DirPathPrefixProvider paths={sessionDirSources}>
+                <TooltipProvider>
                 {view === "home" ? (
                     <div className="h-full min-h-0 flex flex-col">
                         <SessionsHome
@@ -394,7 +428,6 @@ export function App(): React.ReactElement {
                                 status={status}
                                 entryCount={entries.length}
                                 onClear={onClear}
-                                onDelete={onDelete}
                                 onRefresh={() => {
                                     void refreshSessions();
                                 }}
@@ -406,6 +439,8 @@ export function App(): React.ReactElement {
                                 hypotheses={hypotheses}
                                 paused={paused}
                                 sortDir={sortDir}
+                                session={activeSessionMeta}
+                                latestLineTs={latestLineTs}
                                 onToggleLevel={onToggleLevel}
                                 onToggleAll={onToggleAll}
                                 onChangeHypothesis={onChangeHypothesis}
@@ -422,6 +457,8 @@ export function App(): React.ReactElement {
                                 sortDir={sortDir}
                                 onToggle={onToggleExpand}
                                 onFilterHypothesis={onChangeHypothesis}
+                                onAutoScrollChange={onAutoScrollChange}
+                                resumeRef={entryListResumeRef}
                             />
 
                             <footer className="px-3 sm:px-5 py-1.5 border-t border-white/8 bg-black/30 text-[10px] text-white/40 flex items-center justify-between">
@@ -434,6 +471,8 @@ export function App(): React.ReactElement {
                     </EntriesContext.Provider>
                 )}
             </TooltipProvider>
+                </DirPathPrefixProvider>
+            </SessionDeleteConfirmProvider>
         </DisplaySettingsProvider>
     );
 }
