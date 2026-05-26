@@ -278,6 +278,7 @@ export async function runTask(opts: RunTaskOptions): Promise<RunTaskResult> {
 
     const startMs = Date.now();
     let exitCode = 1;
+    let spawnFailed = false;
 
     try {
         if (opts.mode === "pty") {
@@ -286,19 +287,37 @@ export async function runTask(opts: RunTaskOptions): Promise<RunTaskResult> {
             exitCode = await runPipeMode({ ...opts, session }, writer);
         }
     } catch (err) {
+        spawnFailed = true;
         log.warn({ err, session }, "task run failed");
         throw err;
+    } finally {
+        // Always record an exit + mark the session exited, even when the spawn
+        // / runtime throws — otherwise the session is stuck in "active" forever
+        // on disk and downstream readers can't tell it's dead. On a throw the
+        // exit code stays at 1 (the initial value) which matches the rethrown
+        // error path the caller will see.
+        const durationMs = Date.now() - startMs;
+        try {
+            jsonl.append({
+                type: "exit",
+                code: exitCode,
+                durationMs,
+                ts: new Date().toISOString(),
+            });
+        } catch (err) {
+            log.warn({ err, session }, "failed to append exit record to jsonl");
+        }
+
+        try {
+            await store.markExited({ name: session, exitCode, durationMs });
+        } catch (err) {
+            log.warn({ err, session }, "failed to mark session exited");
+        }
+
+        if (spawnFailed) {
+            log.debug({ session, exitCode, durationMs }, "exit record persisted despite runner throw");
+        }
     }
 
-    const durationMs = Date.now() - startMs;
-    jsonl.append({
-        type: "exit",
-        code: exitCode,
-        durationMs,
-        ts: new Date().toISOString(),
-    });
-
-    await store.markExited({ name: session, exitCode, durationMs });
-
-    return { exitCode, durationMs, session, requestedSession: resolved.requested, renamed: resolved.renamed };
+    return { exitCode, durationMs: Date.now() - startMs, session, requestedSession: resolved.requested, renamed: resolved.renamed };
 }
