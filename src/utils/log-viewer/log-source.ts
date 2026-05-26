@@ -1,4 +1,5 @@
 import type { LogEntry } from "@app/debugging-master/types";
+import { inferLineLevel } from "@app/utils/log-session/infer-line-level";
 import type { JsonlLineRecord } from "@app/utils/log-session/types";
 
 export type LogSourceId = "debugging-master" | "task";
@@ -36,7 +37,7 @@ export interface LogSource {
 }
 
 export function taskRecordToLogEntry(r: JsonlLineRecord): LogEntry {
-    const level = r.level ?? (r.out === "stderr" ? "error" : "info");
+    const level = r.level ?? inferLineLevel(r.out, r.text);
 
     return {
         level,

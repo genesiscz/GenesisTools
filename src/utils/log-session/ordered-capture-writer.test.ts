@@ -33,7 +33,27 @@ describe("OrderedCaptureWriter", () => {
         expect(lines.map((l) => l.text)).toEqual(["a", "b", "c"]);
         expect(lines.map((l) => l.out)).toEqual(["stdout", "stderr", "stdout"]);
         expect(lines.map((l) => l.seq)).toEqual([1, 2, 3]);
-        expect(lines.map((l) => l.level)).toEqual(["info", "error", "info"]);
+        expect(lines.map((l) => l.level)).toEqual(["info", "info", "info"]);
+    });
+
+    it("pipe mode infers warn/error level from stderr text", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "ocw-"));
+        dirs.push(dir);
+        const w = new OrderedCaptureWriter({
+            jsonlPath: join(dir, "s.jsonl"),
+            stdoutPath: join(dir, "s.log"),
+            stderrPath: join(dir, "s.err.log"),
+            mode: "pipe",
+        });
+        w.enqueue("stderr", "Error: cache busted\n");
+        w.enqueue("stderr", " WARN  something\n");
+        w.enqueue("stderr", " INFO ok\n");
+        w.enqueue("stderr", "plain diagnostic\n");
+        await w.flush();
+
+        const lines = filterLineRecords(await readJsonlFile(join(dir, "s.jsonl")));
+        expect(lines.map((l) => l.out)).toEqual(["stderr", "stderr", "stderr", "stderr"]);
+        expect(lines.map((l) => l.level)).toEqual(["error", "warn", "info", "info"]);
     });
 
     it("pty mode infers warn/error level into jsonl", async () => {
