@@ -115,7 +115,13 @@ export class OrderedCaptureWriter {
         const remainder = parts.pop() ?? "";
         this[partialKey] = remainder;
 
-        return parts.filter((line) => line.length > 0 || parts.length > 1);
+        // Every part-before-the-pop'd-remainder was terminated by a real
+        // \n in the input; emit ALL of them — empty lines included. The
+        // prior `filter(line.length > 0 || parts.length > 1)` dropped lone
+        // empty lines arriving as chunk "\n" while preserving them when
+        // they arrived as "\n\n", so the recorded line count depended on
+        // child-flush timing instead of the actual newline count.
+        return parts;
     }
 
     private flushPartial(out: StreamOut): void {
