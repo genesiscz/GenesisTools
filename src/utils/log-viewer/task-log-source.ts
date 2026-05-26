@@ -50,10 +50,6 @@ export class TaskLogSource implements LogSource {
         return filterLineRecords(records).map((record) => taskRecordToLogEntry(record, uiMap.get(record.seq)));
     }
 
-    getUiJsonlPath(sessionName: string): string {
-        return uiJsonlPath(sessionName);
-    }
-
     getJsonlPath(sessionName: string): string {
         return jsonlPath(sessionName);
     }
