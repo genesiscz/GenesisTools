@@ -3,7 +3,7 @@ import { SafeJSON } from "@app/utils/json";
 import type { LogSourceId } from "@app/utils/log-viewer/log-source";
 import { createSourceTailer, sessionKey } from "@app/utils/log-viewer/tail-bridge";
 import { parseSessionKey } from "@app/utils/log-viewer/session-key";
-import { stopTaskUiTailer } from "@app/utils/log-viewer/task-ui-lines";
+import { resetTaskUiTailer, stopTaskUiTailer } from "@app/utils/log-viewer/task-ui-lines";
 
 interface Subscriber {
     id: number;
@@ -160,7 +160,8 @@ export class SSEBroadcaster {
 
     publishCleared(source: LogSourceId, sessionName: string): void {
         const key = sessionKey(source, sessionName);
-        const frame = encoder.encode("event: cleared\ndata: {}\n\n");
+        const payload = SafeJSON.stringify({ source, session: sessionName });
+        const frame = encoder.encode(`event: cleared\ndata: ${payload}\n\n`);
 
         const bucket = this.subscribers.get(key);
         if (bucket) {
@@ -232,9 +233,20 @@ export class SSEBroadcaster {
             return;
         }
 
-        const tailer = createSourceTailer(source, sessionName, (entry, index) => {
-            this.fanOut(key, entry, index);
-        });
+        const tailer = createSourceTailer(
+            source,
+            sessionName,
+            (entry, index) => {
+                this.fanOut(key, entry, index);
+            },
+            () => {
+                if (source === "task") {
+                    resetTaskUiTailer(key, sessionName);
+                }
+
+                this.publishCleared(source, sessionName);
+            }
+        );
         tailer.start();
         this.tailers.set(key, tailer);
     }

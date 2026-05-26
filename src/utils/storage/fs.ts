@@ -3,6 +3,7 @@ import { closeSync, type FSWatcher, openSync, readSync, statSync, watch } from "
 interface FileWatcherOptions {
     filePath: string;
     onData: (newBytes: Buffer) => void;
+    onTruncated?: () => void;
     pollInterval?: number;
     debounce?: boolean;
 }
@@ -85,6 +86,7 @@ export class FileWatcher {
 
         if (currentSize < this.offset) {
             this.offset = 0;
+            this.options.onTruncated?.();
         }
 
         if (currentSize <= this.offset) {

@@ -56,6 +56,9 @@ export function ensureTaskUiTailer(sessionName: string, key: string): void {
 
             map.set(record.seq, record.text);
         },
+        onTruncated: () => {
+            map.clear();
+        },
     });
 
     tailer.start();

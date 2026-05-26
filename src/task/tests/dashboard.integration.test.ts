@@ -1,19 +1,25 @@
+import { setupStorageSandbox } from "@app/utils/storage/test-sandbox";
+
+setupStorageSandbox();
+
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { appendFileSync, mkdirSync } from "node:fs";
+import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { handleDashboardRequest } from "@app/debugging-master/core/dashboard-server";
 import { startServer } from "@app/debugging-master/core/http-server";
 import { sseBroadcaster } from "@app/debugging-master/core/sse-broadcaster";
-import { jsonlPath, metaPath } from "@app/task/lib/paths";
+import { jsonlPath, metaPath, uiJsonlPath } from "@app/task/lib/paths";
 import { SafeJSON } from "@app/utils/json";
 
-const homeDir = join(fileURLToPath(new URL("../../..", import.meta.url)), ".tmp-dashboard-test");
 let port = 0;
 let server: ReturnType<typeof startServer>["server"];
 
 beforeAll(() => {
-    process.env.GENESIS_TOOLS_HOME = homeDir;
+    const homeDir = process.env.GENESIS_TOOLS_HOME;
+    if (!homeDir) {
+        throw new Error("GENESIS_TOOLS_HOME must be set by setupStorageSandbox");
+    }
+
     mkdirSync(join(homeDir, ".genesis-tools", "task", "sessions"), { recursive: true });
     const started = startServer(0);
     server = started.server;
@@ -23,7 +29,6 @@ beforeAll(() => {
 afterAll(() => {
     sseBroadcaster.reset();
     server.stop();
-    delete process.env.GENESIS_TOOLS_HOME;
 });
 
 async function fetchApi(path: string, init?: RequestInit): Promise<Response> {
@@ -44,6 +49,22 @@ describe("task dashboard integration", () => {
         expect(res.ok).toBe(true);
         const body = (await res.json()) as { sessions: Array<{ source: string; name: string; badge: string }> };
         expect(body.sessions.some((s) => s.source === "task" && s.name === session)).toBe(true);
+    });
+
+    it("does not list dashboard ui jsonl mirrors as sessions", async () => {
+        const session = `ui-mirror-${Date.now()}`;
+        const path = jsonlPath(session);
+        appendFileSync(path, `${SafeJSON.stringify({ type: "meta", session, command: "echo", cwd: "/tmp" })}\n`);
+        appendFileSync(
+            uiJsonlPath(session),
+            `${SafeJSON.stringify({ type: "line", seq: 1, text: "ansi mirror" })}\n`
+        );
+
+        const res = await fetchApi("/api/sessions");
+        expect(res.ok).toBe(true);
+        const body = (await res.json()) as { sessions: Array<{ source: string; name: string }> };
+        expect(body.sessions.some((s) => s.source === "task" && s.name === session)).toBe(true);
+        expect(body.sessions.some((s) => s.source === "task" && s.name === `${session}.ui`)).toBe(false);
     });
 
     it("streams task session entries over SSE", async () => {
@@ -171,6 +192,68 @@ describe("task dashboard integration", () => {
 
         ac.abort();
         expect(found).toBe(true);
+    }, 15_000);
+
+    it("emits cleared SSE when a tailed task session log file is truncated", async () => {
+        const session = `clear-${Date.now()}`;
+        const path = jsonlPath(session);
+        const now = Date.now();
+        appendFileSync(
+            path,
+            `${SafeJSON.stringify({ type: "line", seq: 1, out: "stdout", ts: now, text: "before clear" })}\n`
+        );
+        appendFileSync(
+            metaPath(session),
+            SafeJSON.stringify({
+                name: session,
+                command: "echo test",
+                mode: "pipe",
+                cwd: "/tmp",
+                createdAt: now,
+                lastActivityAt: now,
+                startedAt: new Date(now).toISOString(),
+            })
+        );
+
+        const ac = new AbortController();
+        const streamRes = await fetchApi(`/api/sessions/task/${encodeURIComponent(session)}/stream`, {
+            signal: ac.signal,
+        });
+        expect(streamRes.status).toBe(200);
+
+        writeFileSync(path, "");
+        await Bun.sleep(400);
+
+        writeFileSync(
+            path,
+            `${SafeJSON.stringify({ type: "line", seq: 1, out: "stdout", ts: Date.now(), text: "after clear" })}\n`
+        );
+
+        const reader = streamRes.body?.getReader();
+        const decoder = new TextDecoder();
+        let sawCleared = false;
+        let sawFreshLine = false;
+        const deadline = Date.now() + 8000;
+
+        while (Date.now() < deadline && !(sawCleared && sawFreshLine)) {
+            const { value, done } = await reader!.read();
+            if (done) {
+                break;
+            }
+
+            const chunk = decoder.decode(value);
+            if (chunk.includes("event: cleared") && chunk.includes(session)) {
+                sawCleared = true;
+            }
+
+            if (chunk.includes("after clear")) {
+                sawFreshLine = true;
+            }
+        }
+
+        ac.abort();
+        expect(sawCleared).toBe(true);
+        expect(sawFreshLine).toBe(true);
     }, 15_000);
 
     it("sessions list includes state field", async () => {
