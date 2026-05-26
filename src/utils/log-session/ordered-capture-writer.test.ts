@@ -109,6 +109,27 @@ describe("OrderedCaptureWriter", () => {
         expect(uiRecords[0]?.text).toBe("\u001b[31mError\u001b[0m");
     });
 
+    it("emits a single empty line for a lone \"\\n\" chunk (no asymmetric drop)", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "ocw-"));
+        dirs.push(dir);
+        const w = new OrderedCaptureWriter({
+            jsonlPath: join(dir, "s.jsonl"),
+            stdoutPath: join(dir, "s.log"),
+            stderrPath: join(dir, "s.err.log"),
+            mode: "pipe",
+        });
+
+        w.enqueue("stdout", "first\n");
+        w.enqueue("stdout", "\n");        // lone blank — was previously dropped
+        w.enqueue("stdout", "third\n");
+        w.enqueue("stdout", "\n\n");      // two blanks
+        w.enqueue("stdout", "last\n");
+        await w.flush();
+
+        const lines = filterLineRecords(await readJsonlFile(join(dir, "s.jsonl")));
+        expect(lines.map((l) => l.text)).toEqual(["first", "", "third", "", "", "last"]);
+    });
+
     it("stores raw ansi on canonical jsonl records", async () => {
         const dir = mkdtempSync(join(tmpdir(), "ocw-"));
         dirs.push(dir);
