@@ -377,6 +377,14 @@ body::before {
     position: relative;
 }
 
+.entry-row[data-expandable="false"] {
+    cursor: default;
+}
+
+.entry-row[data-expandable="false"]:hover {
+    background: transparent;
+}
+
 /* Transition only kicks in on hover — avoids 300+ active transition state
    machines + restyle invalidations during bursty ingest. */
 .entry-row:hover {

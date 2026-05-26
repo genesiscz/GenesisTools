@@ -11,8 +11,6 @@ import type { ConnectionStatus } from "@/lib/sse";
 import { useSessionDeleteConfirm } from "@/lib/ui/SessionDeleteConfirm";
 import { DisplaySettingsButton } from "./DisplaySettingsButton";
 import { StatusPill } from "./StatusPill";
-import { SessionHeaderLine } from "./SessionHeaderLine";
-
 interface Props {
     sessions: DashboardSession[];
     activeSource: string | null;
@@ -69,7 +67,7 @@ export function Header({
     return (
         <header className="sticky top-0 z-20 glass-card border-b border-white/8">
             <div className="px-3 sm:px-5 py-2.5 flex flex-wrap items-center gap-3">
-                <div className="flex items-center gap-3 mr-auto">
+                <div className="flex items-center gap-3 shrink-0">
                     <button
                         type="button"
                         onClick={onBack}
@@ -82,77 +80,81 @@ export function Header({
                     <StatusPill status={status} />
                 </div>
 
-                <Select
-                    value={selectValue || undefined}
-                    onValueChange={(value) => {
-                        const parsed = parseSessionKey(value);
-                        if (parsed) {
-                            onSelectSession(parsed.source, parsed.name);
-                        }
-                    }}
-                    disabled={sessionOptions.length === 0}
-                >
-                    <SelectTrigger
-                        aria-label="active session"
-                        className="dbg-ui-text h-auto min-h-9 max-w-[20rem] border-white/10 bg-black/40 py-1.5 text-white/90 shadow-none focus-visible:border-purple-500/50 focus-visible:ring-purple-500/30 [&>span]:line-clamp-1"
-                    >
-                        <SelectValue placeholder="no sessions" />
-                    </SelectTrigger>
-                    <SelectContent className="dbg-ui-text max-h-80 border-white/10 bg-[#0d0d18] text-white/90">
-                        {sessionOptions.map((option) => (
-                            <SelectItem
-                                key={option.value}
-                                value={option.value}
-                                className="font-mono text-white/85 focus:bg-white/10 focus:text-white"
+                <div className="flex flex-1 min-w-0 items-center gap-3">
+                    <div className="min-w-0 flex-1">
+                        <Select
+                            value={selectValue || undefined}
+                            onValueChange={(value) => {
+                                const parsed = parseSessionKey(value);
+                                if (parsed) {
+                                    onSelectSession(parsed.source, parsed.name);
+                                }
+                            }}
+                            disabled={sessionOptions.length === 0}
+                        >
+                            <SelectTrigger
+                                aria-label="active session"
+                                className="dbg-ui-text h-auto min-h-9 w-full max-w-none border-white/10 bg-black/40 py-1.5 text-white/90 shadow-none focus-visible:border-purple-500/50 focus-visible:ring-purple-500/30 [&_[data-slot=select-value]]:truncate"
                             >
-                                {option.label}
-                            </SelectItem>
-                        ))}
-                    </SelectContent>
-                </Select>
+                                <SelectValue placeholder="no sessions" />
+                            </SelectTrigger>
+                            <SelectContent className="dbg-ui-text max-h-80 border-white/10 bg-[#0d0d18] text-white/90">
+                                {sessionOptions.map((option) => (
+                                    <SelectItem
+                                        key={option.value}
+                                        value={option.value}
+                                        className="font-mono text-white/85 focus:bg-white/10 focus:text-white"
+                                    >
+                                        {option.label}
+                                    </SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                    </div>
 
-                <button
-                    type="button"
-                    onClick={onRefresh}
-                    className="dbg-ui-btn uppercase tracking-wider text-white/50 hover:text-white/90 px-2 py-1 border border-white/10 rounded-md hover:border-cyan-500/40 transition-colors"
-                    title="refetch session list"
-                >
-                    ↻
-                </button>
+                    <div className="flex items-center gap-3 shrink-0">
+                        <button
+                            type="button"
+                            onClick={onRefresh}
+                            className="dbg-ui-btn uppercase tracking-wider text-white/50 hover:text-white/90 px-2 py-1 border border-white/10 rounded-md hover:border-cyan-500/40 transition-colors"
+                            title="refetch session list"
+                        >
+                            ↻
+                        </button>
 
-                <button
-                    type="button"
-                    onClick={onClear}
-                    disabled={!activeSession || entryCount === 0}
-                    className="dbg-ui-btn uppercase tracking-wider text-amber-400/70 hover:text-amber-300 px-2 py-1 border border-amber-500/20 hover:border-amber-500/60 rounded-md disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-                >
-                    clear logs
-                </button>
+                        <button
+                            type="button"
+                            onClick={onClear}
+                            disabled={!activeSession || entryCount === 0}
+                            className="dbg-ui-btn uppercase tracking-wider text-amber-400/70 hover:text-amber-300 px-2 py-1 border border-amber-500/20 hover:border-amber-500/60 rounded-md disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                        >
+                            clear logs
+                        </button>
 
-                <button
-                    type="button"
-                    onClick={() => {
-                        if (!activeSource || !activeSession || !isLogSourceId(activeSource)) {
-                            return;
-                        }
+                        <button
+                            type="button"
+                            onClick={() => {
+                                if (!activeSource || !activeSession || !isLogSourceId(activeSource)) {
+                                    return;
+                                }
 
-                        requestDelete({
-                            source: activeSource,
-                            name: activeSession,
-                            badge: meta?.badge,
-                            onAfterDelete: onBack,
-                        });
-                    }}
-                    disabled={!activeSession}
-                    className="dbg-ui-btn uppercase tracking-wider text-rose-400/70 hover:text-rose-300 px-2 py-1 border border-rose-500/20 hover:border-rose-500/60 rounded-md disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-                >
-                    delete session
-                </button>
+                                requestDelete({
+                                    source: activeSource,
+                                    name: activeSession,
+                                    badge: meta?.badge,
+                                    onAfterDelete: onBack,
+                                });
+                            }}
+                            disabled={!activeSession}
+                            className="dbg-ui-btn uppercase tracking-wider text-rose-400/70 hover:text-rose-300 px-2 py-1 border border-rose-500/20 hover:border-rose-500/60 rounded-md disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                        >
+                            delete session
+                        </button>
 
-                <DisplaySettingsButton />
+                        <DisplaySettingsButton />
+                    </div>
+                </div>
             </div>
-
-            {meta ? <SessionHeaderLine session={meta} layout="context" /> : null}
         </header>
     );
 }

@@ -1,5 +1,6 @@
 import type { IndexedLogEntry } from "@app/debugging-master/types";
 import { memo } from "react";
+import { entryHasExpandableContent } from "@/lib/entry-expandable";
 import { formatDurationMs, formatTime } from "@/lib/format";
 import { LEVEL_META } from "@/lib/levels";
 import { ExpandedView } from "./ExpandedView";
@@ -28,7 +29,8 @@ function EntryRowImpl({
     const failed = entry.level === "assert" && entry.passed === false;
     const refMeta = LEVEL_META[entry.level];
     const refId = refMeta.refPrefix ? `${refMeta.refPrefix}${entry.index}` : null;
-    const inline: InlinePayload = !expanded ? getInlinePayload(entry) : null;
+    const expandable = entryHasExpandableContent(entry);
+    const inline: InlinePayload = expandable && !expanded ? getInlinePayload(entry) : null;
     const showLevelChip = !entry.msgAnsi;
 
     return (
@@ -37,15 +39,20 @@ function EntryRowImpl({
             data-lvl={entry.level}
             data-failed={failed ? "true" : undefined}
             data-fresh={fresh ? "true" : undefined}
-            onClick={() => onToggle(entry.index)}
-            onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    onToggle(entry.index);
-                }
-            }}
-            role="button"
-            tabIndex={0}
+            data-expandable={expandable ? "true" : "false"}
+            onClick={expandable ? () => onToggle(entry.index) : undefined}
+            onKeyDown={
+                expandable
+                    ? (e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              onToggle(entry.index);
+                          }
+                      }
+                    : undefined
+            }
+            role={expandable ? "button" : undefined}
+            tabIndex={expandable ? 0 : undefined}
         >
             <div className="dbg-log-line px-3 sm:px-4">
                 <span className="dbg-log-line__ts" aria-hidden={!showTimestamp}>
@@ -95,7 +102,9 @@ function EntryRowImpl({
                         </span>
                     ) : null}
                     {refId ? <span className="dbg-log-meta text-white/45 tabular-nums shrink-0">{refId}</span> : null}
-                    <span className="dbg-log-meta text-white/45 shrink-0">{expanded ? "▾" : "▸"}</span>
+                    {expandable ? (
+                        <span className="dbg-log-meta text-white/45 shrink-0">{expanded ? "▾" : "▸"}</span>
+                    ) : null}
                 </div>
             </div>
             {inline ? (
@@ -107,7 +116,7 @@ function EntryRowImpl({
                     )}
                 </div>
             ) : null}
-            {expanded ? <ExpandedView entry={entry} /> : null}
+            {expanded && expandable ? <ExpandedView entry={entry} /> : null}
         </div>
     );
 }
