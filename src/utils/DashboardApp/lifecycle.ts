@@ -16,6 +16,7 @@ import { stripAnsi } from "@app/utils/string";
 import * as p from "@clack/prompts";
 import pc from "picocolors";
 import {
+    DashboardNotReadyError,
     openDashboardAccess,
     presentDashboardAccess,
     resolveDashboardAccessPresentation,
@@ -912,11 +913,23 @@ export async function openDashboard(ctx: LifecycleContext, opts: OpenOptions = {
     const presentation = resolveDashboardAccessPresentation(config, port, { url });
     const showQr = opts.qr === false ? false : Boolean(opts.qr ?? config.access?.qr);
 
-    await openDashboardAccess({
-        ...presentation,
-        qr: showQr ? (presentation.qr ?? true) : undefined,
-        openBrowser: opts.openBrowser !== false,
-    });
+    try {
+        await openDashboardAccess({
+            ...presentation,
+            qr: showQr ? (presentation.qr ?? true) : undefined,
+            openBrowser: opts.openBrowser !== false,
+        });
+    } catch (err) {
+        // openDashboardAccess used to call process.exit(1) inline; that has
+        // been replaced by a DashboardNotReadyError so programmatic callers
+        // can recover. The CLI entrypoint still wants a non-zero exit, so
+        // surface it here — at the boundary that's specifically the CLI.
+        if (err instanceof DashboardNotReadyError) {
+            process.exit(1);
+        }
+
+        throw err;
+    }
 }
 
 // Re-export the imperative interface assembled by `index.ts`.
