@@ -36,8 +36,10 @@ export interface LogSource {
 }
 
 export function taskRecordToLogEntry(r: JsonlLineRecord): LogEntry {
+    const level = r.level ?? (r.out === "stderr" ? "error" : "info");
+
     return {
-        level: r.out === "stderr" ? "error" : "info",
+        level,
         label: r.out,
         msg: r.text,
         ts: r.ts,
