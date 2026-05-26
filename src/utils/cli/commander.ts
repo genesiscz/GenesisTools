@@ -150,6 +150,10 @@ function callerDirOf(argv: readonly string[]): string {
     return dirname(argv[1] ?? "");
 }
 
+export function argvRequestsReadme(args: string[]): boolean {
+    return args.some((arg) => arg === "--readme" || arg.startsWith("--readme="));
+}
+
 /**
  * Unified tool bootstrap: registers the non-destructive `-v`/`--verbose`
  * (and trace-gated `--trace`) option + a visible `--readme` flag, resolves
@@ -173,6 +177,11 @@ export async function runTool(
 
     if (!program.options.some((o) => o.long === "--readme")) {
         program.option("--readme", "Print this tool's README and exit");
+    }
+
+    const readmeInArgv = argvRequestsReadme(argv.slice(2));
+    if (readmeInArgv) {
+        printReadmeAndExit(callerDirOf(argv));
     }
 
     program.hook("preAction", () => {

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { Command } from "commander";
-import { addGlobalVerboseOption, applyVerbosityToEnv, getArgvVerbosity, isVerbose, runTool } from "./commander";
+import { addGlobalVerboseOption, applyVerbosityToEnv, argvRequestsReadme, getArgvVerbosity, isVerbose, runTool } from "./commander";
 
 const ORIGINAL_LOG_DEBUG = process.env.LOG_DEBUG;
 const ORIGINAL_LOG_TRACE = process.env.LOG_TRACE;
@@ -81,6 +81,14 @@ describe("runTool", () => {
         expect(res.tool).toBe("d2");
         expect(prog.helpInformation()).not.toContain("--trace");
         expect(prog.helpInformation()).toContain("tool's own");
+    });
+});
+
+describe("argvRequestsReadme", () => {
+    it("detects --readme before subcommand parse", () => {
+        expect(argvRequestsReadme(["--readme"])).toBe(true);
+        expect(argvRequestsReadme(["run", "--session", "x", "--readme"])).toBe(true);
+        expect(argvRequestsReadme(["run", "--session", "x"])).toBe(false);
     });
 });
 
