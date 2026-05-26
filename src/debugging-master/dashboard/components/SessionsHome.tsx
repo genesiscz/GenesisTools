@@ -321,6 +321,16 @@ export function SessionsHome({ sessions, status, onRefresh, onOpenSession, onSta
     const mosaicLayout =
         layout ?? buildBalancedMosaicLayout(activeKeys, { maxColumns: MOSAIC_MAX_COLUMNS });
 
+    // Stable membership signature of the mosaic — recomputes only when the
+    // SET of active session keys changes, not on every `now` tick. Without
+    // this, `mosaicActiveSessions` (derived from useNowTick(1000)) gave a
+    // new array reference every second, retriggering this effect and the
+    // SSE subscription effect below — refetching ACTIVE_PREVIEW_LINES = 2000
+    // entries per session per second, and tearing down + re-opening one
+    // EventSource per second. That swamped the dashboard server (the
+    // exact symptom that caused the dashboard hang during eval2).
+    const mosaicActiveKeysSig = useMemo(() => mosaicActiveKeys.join("\n"), [mosaicActiveKeys]);
+
     useEffect(() => {
         if (mosaicActiveSessions.length === 0) {
             return;
@@ -368,7 +378,10 @@ export function SessionsHome({ sessions, status, onRefresh, onOpenSession, onSta
         return () => {
             cancelled = true;
         };
-    }, [mosaicActiveSessions]);
+        // Depend on the stable membership signature, NOT mosaicActiveSessions
+        // (which is a new array ref every second from useNowTick).
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [mosaicActiveKeysSig]);
 
     const toggleSessionInMosaic = useCallback(
         (key: string) => {
@@ -406,6 +419,11 @@ export function SessionsHome({ sessions, status, onRefresh, onOpenSession, onSta
     );
 
     useEffect(() => {
+        // Re-open the multiplex SSE whenever the SET of active keys changes,
+        // so newly-spawned sessions actually stream into the home view. The
+        // server-side `subscribeActive` snapshots its target keys once at
+        // subscribe time; without a re-open, new sessions appear via the
+        // prefetch above but get NO live updates until manual refresh.
         const dispose = connectActiveStream({
             onStatus: onStatus,
             onEntry: (entry) => {
@@ -440,7 +458,10 @@ export function SessionsHome({ sessions, status, onRefresh, onOpenSession, onSta
         });
 
         return dispose;
-    }, [onStatus]);
+        // Depend on the stable membership signature — see prefetchActiveTails
+        // for why mosaicActiveSessions itself is not used as a dep.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [onStatus, mosaicActiveKeysSig]);
 
     const toggleArchiveRow = useCallback(async (session: DashboardSession) => {
         const key = sessionKey(session.source, session.name);
