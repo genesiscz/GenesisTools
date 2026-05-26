@@ -2,8 +2,15 @@ export type TaskRunMode = "pty" | "pipe";
 
 export type TaskSessionState = "active" | "exited" | "unknown";
 
+export interface ResolvedRunSession {
+    session: string;
+    requested: string;
+    renamed: boolean;
+}
+
 export interface TaskSessionMeta {
     name: string;
+    requestedAs?: string;
     command: string;
     mode: TaskRunMode;
     cwd: string;
@@ -32,8 +39,35 @@ export interface LogQueryOpts {
     streams: Set<"stdout" | "stderr">;
 }
 
+export interface PrepareSessionInput {
+    name: string;
+    command: string;
+    mode: TaskRunMode;
+    cwd: string;
+    requestedAs?: string;
+}
+
+export interface MarkExitedInput {
+    name: string;
+    exitCode: number;
+    durationMs: number;
+}
+
+export interface RunBannerInput {
+    session: string;
+    command: string[];
+    mode: TaskRunMode;
+}
+
+export interface RunExitSummaryInput {
+    session: string;
+    exitCode: number;
+    durationMs: number;
+}
+
 export interface RunTaskOptions {
     session: string;
+    resolved?: ResolvedRunSession;
     command: string[];
     mode: TaskRunMode;
     cwd?: string;
@@ -43,4 +77,6 @@ export interface RunTaskResult {
     exitCode: number;
     durationMs: number;
     session: string;
+    requestedSession: string;
+    renamed: boolean;
 }
