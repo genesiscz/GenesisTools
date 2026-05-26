@@ -49,7 +49,10 @@ export function ensureTaskUiTailer(sessionName: string, key: string): void {
 
     const tailer = new FileTailer(path, {
         onEntry: (raw) => {
-            const record = raw as JsonlUiLineRecord;
+            // FileTailer's onEntry generic is LogEntry by default; the
+            // .ui.jsonl actually carries JsonlUiLineRecord. Bridge via
+            // `unknown` so TS accepts the narrowing cast.
+            const record = raw as unknown as JsonlUiLineRecord;
             if (record.type !== "line" || typeof record.seq !== "number") {
                 return;
             }

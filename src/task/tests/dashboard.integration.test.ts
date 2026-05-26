@@ -260,7 +260,8 @@ describe("task dashboard integration", () => {
         const res = await fetchApi("/api/sessions");
         const body = (await res.json()) as { sessions: Array<{ state?: string; stateLabel?: string }> };
         for (const session of body.sessions) {
-            expect(["active", "exited", "unknown"]).toContain(session.state);
+            expect(session.state).toBeDefined();
+            expect(["active", "exited", "unknown"]).toContain(session.state as string);
             expect(typeof session.stateLabel).toBe("string");
         }
     });
