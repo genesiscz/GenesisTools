@@ -25,7 +25,7 @@ describe("TaskSessionStore.resolveRunSessionName", () => {
 
         expect(resolved.requested).toBe("metro-dup");
         expect(resolved.renamed).toBe(true);
-        expect(resolved.session).toMatch(/^metro-dup-\d{4}-\d{2}-\d{2}_\d{2}:\d{2}:\d{2}$/);
+        expect(resolved.session).toMatch(/^metro-dup-\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$/);
         expect(resolved.session).not.toBe("metro-dup");
     });
 
@@ -33,12 +33,12 @@ describe("TaskSessionStore.resolveRunSessionName", () => {
         const store = new TaskSessionStore();
         await store.getSessionsDir();
         writeFileSync(jsonlPath("eval2-dup"), '{"type":"meta"}\n');
-        writeFileSync(jsonlPath("eval2-dup-2026-05-26_14:30:22"), '{"type":"meta"}\n');
+        writeFileSync(jsonlPath("eval2-dup-2026-05-26_14-30-22"), '{"type":"meta"}\n');
         writeFileSync(jsonlPath("eval2-dup-unrelated"), '{"type":"meta"}\n');
 
-        const related = await store.listRelatedSessionNames("eval2-dup-2026-05-26_14:30:22", "eval2-dup");
+        const related = await store.listRelatedSessionNames("eval2-dup-2026-05-26_14-30-22", "eval2-dup");
 
-        expect(related).toEqual(["eval2-dup", "eval2-dup-2026-05-26_14:30:22"]);
+        expect(related).toEqual(["eval2-dup", "eval2-dup-2026-05-26_14-30-22"]);
         expect(related).not.toContain("eval2-dup-unrelated");
     });
 

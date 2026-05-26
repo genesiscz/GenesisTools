@@ -2,14 +2,14 @@ import { describe, expect, it } from "bun:test";
 import { parseSessionKey, sessionKey } from "./session-key";
 
 describe("parseSessionKey", () => {
-    it("parses session names containing colons", () => {
-        expect(parseSessionKey("task:col-fe-2026-05-26_03:59:30")).toEqual({
+    it("parses dash-format collision-suffixed names", () => {
+        expect(parseSessionKey("task:col-fe-2026-05-26_03-59-30")).toEqual({
             source: "task",
-            name: "col-fe-2026-05-26_03:59:30",
+            name: "col-fe-2026-05-26_03-59-30",
         });
     });
 
-    it("parses plain session names without colons", () => {
+    it("parses plain session names without dashes", () => {
         expect(parseSessionKey("debugging-master:eval2-storm")).toEqual({
             source: "debugging-master",
             name: "eval2-storm",
@@ -17,10 +17,10 @@ describe("parseSessionKey", () => {
     });
 
     it("round-trips via sessionKey", () => {
-        const key = sessionKey("task", "col-fe-2026-05-26_03:59:30");
+        const key = sessionKey("task", "col-fe-2026-05-26_03-59-30");
         expect(parseSessionKey(key)).toEqual({
             source: "task",
-            name: "col-fe-2026-05-26_03:59:30",
+            name: "col-fe-2026-05-26_03-59-30",
         });
     });
 

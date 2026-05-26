@@ -104,12 +104,12 @@ describe("task dashboard integration", () => {
         expect(found).toBe(true);
     }, 10_000);
 
-    it("serves task sessions with colon collision suffix (entries + stream)", async () => {
-        const session = "metro-2026-05-26_14:30:22";
+    it("serves task sessions with dash collision suffix (entries + stream)", async () => {
+        const session = "metro-2026-05-26_14-30-22";
         const path = jsonlPath(session);
         appendFileSync(
             path,
-            `${SafeJSON.stringify({ type: "line", seq: 1, out: "stdout", ts: Date.now(), text: "colon session line", level: "info" })}\n`
+            `${SafeJSON.stringify({ type: "line", seq: 1, out: "stdout", ts: Date.now(), text: "dash session line", level: "info" })}\n`
         );
 
         const encoded = encodeURIComponent(session);
@@ -118,7 +118,7 @@ describe("task dashboard integration", () => {
 
         const entriesBody = (await entriesRes.json()) as { entries: Array<{ msg?: string; text?: string }> };
         const text = entriesBody.entries[0]?.msg ?? entriesBody.entries[0]?.text ?? "";
-        expect(text).toContain("colon session line");
+        expect(text).toContain("dash session line");
 
         const ac = new AbortController();
         const streamRes = await fetchApi(`/api/sessions/task/${encoded}/stream`, { signal: ac.signal });

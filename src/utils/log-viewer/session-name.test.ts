@@ -2,8 +2,12 @@ import { describe, expect, it } from "bun:test";
 import { isSafeLogSessionName } from "./session-name";
 
 describe("isSafeLogSessionName", () => {
-    it("accepts task collision suffix with colons", () => {
-        expect(isSafeLogSessionName("metro-2026-05-26_14:30:22")).toBe(true);
+    it("accepts dash-format task collision suffix (NTFS-safe)", () => {
+        expect(isSafeLogSessionName("metro-2026-05-26_14-30-22")).toBe(true);
+    });
+
+    it("rejects legacy colon-format suffixes (Windows-illegal)", () => {
+        expect(isSafeLogSessionName("metro-2026-05-26_14:30:22")).toBe(false);
     });
 
     it("accepts plain alphanumeric session names", () => {
