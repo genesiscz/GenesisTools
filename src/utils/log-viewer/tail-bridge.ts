@@ -48,7 +48,8 @@ export function entryIndexForTail(source: LogSourceId, raw: unknown, fallbackInd
 export function createSourceTailer(
     source: LogSourceId,
     sessionName: string,
-    onEntry: (entry: LogEntry, index: number) => void
+    onEntry: (entry: LogEntry, index: number) => void,
+    onTruncated?: () => void
 ): FileTailer {
     const path = getLogSource(source).getJsonlPath(sessionName);
     const key = sessionKey(source, sessionName);
@@ -68,6 +69,7 @@ export function createSourceTailer(
             const entryIndex = entryIndexForTail(source, raw, index);
             onEntry(entry, entryIndex);
         },
+        onTruncated,
     });
 }
 

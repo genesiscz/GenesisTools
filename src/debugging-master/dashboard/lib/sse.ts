@@ -127,8 +127,13 @@ export function connectActiveStream(handlers: ActiveStreamHandlers): () => void 
             }
         });
 
-        es.addEventListener("cleared", () => {
-            // per-session cleared events on multiplex lack source — client clears on refresh
+        es.addEventListener("cleared", (ev: MessageEvent<string>) => {
+            try {
+                const parsed = SafeJSON.parse(ev.data, { strict: true }) as { source: LogSourceId; session: string };
+                handlers.onCleared?.(parsed.source, parsed.session);
+            } catch {
+                // ignore malformed frames
+            }
         });
 
         es.addEventListener("error", () => {
