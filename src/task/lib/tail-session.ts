@@ -8,7 +8,12 @@ import { printTailStatus } from "@app/task/lib/log-hints";
 import { queryLogs } from "@app/task/lib/log-query";
 import { jsonlPath } from "@app/task/lib/paths";
 
-function matchesFilters(line: JsonlLineRecord, opts: LogQueryOpts, seenSeq: Set<number>): boolean {
+function matchesFilters(
+    line: JsonlLineRecord,
+    opts: LogQueryOpts,
+    seenSeq: Set<number>,
+    grepRe: RegExp | null
+): boolean {
     if (line.type !== "line") {
         return false;
     }
@@ -29,14 +34,24 @@ function matchesFilters(line: JsonlLineRecord, opts: LogQueryOpts, seenSeq: Set<
         return false;
     }
 
-    if (opts.grep) {
-        const re = new RegExp(opts.grep, "i");
-        if (!re.test(line.text)) {
-            return false;
-        }
+    if (grepRe && !grepRe.test(line.text)) {
+        return false;
     }
 
     return true;
+}
+
+function compileGrep(pattern: string | undefined): RegExp | null {
+    if (!pattern) {
+        return null;
+    }
+
+    try {
+        return new RegExp(pattern, "i");
+    } catch (err) {
+        const detail = err instanceof Error ? err.message : String(err);
+        throw new Error(`invalid --grep pattern: ${detail}`);
+    }
 }
 
 function emitLine(line: JsonlLineRecord, format: LogQueryOpts["format"]): void {
@@ -63,15 +78,22 @@ function findExitRecord(records: JsonlRecord[]): JsonlExitRecord | undefined {
 export async function tailSession(opts: LogQueryOpts & { follow: true }): Promise<void> {
     const path = jsonlPath(opts.session);
     const seenSeq = new Set<number>();
+    // Compile once at the entry — a bad pattern fails up-front (loud and
+    // recoverable) instead of throwing per-line inside the live tailer's
+    // onLine callback where the error is swallowed and the tail dies silent.
+    const grepRe = compileGrep(opts.grep);
 
     const records = await readJsonlFile(path);
     const existingExit = findExitRecord(records);
     const existing = filterLineRecords(records);
+    // `opts.lines ?? 10` lets `--lines 0` mean "show no backlog, just stream
+    // new lines" (rather than the default 10). slice(-0) === slice(0) returns
+    // the WHOLE array, so guard the zero case explicitly.
     const tailCount = opts.lines ?? 10;
-    const initial = existing.slice(-tailCount);
+    const initial = tailCount > 0 ? existing.slice(-tailCount) : [];
 
     for (const line of initial) {
-        if (matchesFilters(line, opts, seenSeq)) {
+        if (matchesFilters(line, opts, seenSeq, grepRe)) {
             seenSeq.add(line.seq);
             emitLine(line, opts.format);
         }
@@ -107,7 +129,7 @@ export async function tailSession(opts: LogQueryOpts & { follow: true }): Promis
             }
 
             const line = entry as JsonlLineRecord;
-            if (matchesFilters(line, opts, seenSeq)) {
+            if (matchesFilters(line, opts, seenSeq, grepRe)) {
                 seenSeq.add(line.seq);
                 emitLine(line, opts.format);
             }

@@ -18,7 +18,14 @@ function applyGrep(lines: JsonlLineRecord[], pattern?: string): JsonlLineRecord[
         return lines;
     }
 
-    const re = new RegExp(pattern, "i");
+    let re: RegExp;
+    try {
+        re = new RegExp(pattern, "i");
+    } catch (err) {
+        const detail = err instanceof Error ? err.message : String(err);
+        throw new Error(`invalid --grep pattern: ${detail}`);
+    }
+
     return lines.filter((l) => re.test(l.text));
 }
 
@@ -44,29 +51,35 @@ function selectLines(allLines: JsonlLineRecord[], opts: LogQueryOpts): JsonlLine
 }
 
 function formatHuman(lines: JsonlLineRecord[]): void {
-    let currentStream: string | null = null;
-    let rangeStart = 0;
-
-    for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-        const next = lines[i + 1];
-
-        if (currentStream !== line.out) {
-            if (currentStream !== null) {
-                out.print(`\n`);
-            }
-
-            rangeStart = line.seq;
-            currentStream = line.out;
-            const rangeEnd = line.seq;
-            out.print(`=== [${line.out}] seq ${rangeStart}${rangeEnd !== rangeStart ? `–${rangeEnd}` : ""} ===\n`);
+    // A "block" is a maximal contiguous run of lines from the same stream.
+    // Headers are emitted as `=== [stream] seq A-B ===` where A and B are
+    // the first and LAST seq in the block. The previous implementation set
+    // rangeEnd to the current line's seq inline, so the displayed header
+    // was always degenerate (`seq A`); compute the block boundaries up
+    // front by scanning forward to the next stream change.
+    let i = 0;
+    while (i < lines.length) {
+        const blockStart = i;
+        const blockStream = lines[i].out;
+        let blockEnd = i;
+        while (blockEnd + 1 < lines.length && lines[blockEnd + 1].out === blockStream) {
+            blockEnd += 1;
         }
 
-        out.print(`${line.text}\n`);
-
-        if (next && next.out !== line.out) {
-            currentStream = null;
+        if (blockStart > 0) {
+            out.print(`\n`);
         }
+
+        const startSeq = lines[blockStart].seq;
+        const endSeq = lines[blockEnd].seq;
+        const rangeLabel = endSeq !== startSeq ? `${startSeq}–${endSeq}` : `${startSeq}`;
+        out.print(`=== [${blockStream}] seq ${rangeLabel} ===\n`);
+
+        for (let j = blockStart; j <= blockEnd; j++) {
+            out.print(`${lines[j].text}\n`);
+        }
+
+        i = blockEnd + 1;
     }
 }
 
