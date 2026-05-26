@@ -1,6 +1,7 @@
 import type { LogEntry } from "@app/debugging-master/types";
 import { jsonlPath, metaPath, uiJsonlPath } from "@app/task/lib/paths";
 import { TaskSessionStore } from "@app/task/lib/session-store";
+import { countJsonlLineRecords } from "@app/utils/log-session/count-line-records";
 import { filterLineRecords, readJsonlFile } from "@app/utils/log-session/jsonl-reader";
 import { readUiLineMap } from "@app/utils/log-session/ui-jsonl";
 import { resolveTaskSessionListingMeta } from "@app/utils/log-viewer/task-session-listing-meta";
@@ -16,23 +17,29 @@ export class TaskLogSource implements LogSource {
         const names = await this.store.listSessionNames();
         const sessions: LogSourceSession[] = [];
 
+        // Hot path: this runs on every dashboard sidebar refresh (~5s
+        // polled). We deliberately AVOID readJsonlFile here — for a long-
+        // running session whose jsonl is tens-to-hundreds of MB, parsing
+        // every record per refresh per session was the dominant cost
+        // (gemini-code-assist on PR #184 thread t9). entryCount uses a
+        // fast indexOf scan of `"type":"line"`; listing meta resolves from
+        // the persisted .meta.json (no jsonl read needed in the common
+        // case). The detail view still parses records via readEntries().
         for (const name of names) {
             const path = jsonlPath(name);
-            const records = await readJsonlFile(path);
             const listing = await resolveTaskSessionListingMeta({
                 store: this.store,
                 name,
                 jsonlPath: path,
-                records,
             });
-            const lines = filterLineRecords(records);
+            const entryCount = await countJsonlLineRecords(path);
             sessions.push({
                 source: this.id,
                 name,
                 badge: this.badge,
                 jsonlPath: path,
                 metaPath: metaPath(name),
-                entryCount: lines.length,
+                entryCount,
                 projectPath: listing.cwd,
                 command: listing.command,
                 createdAt: listing.createdAt,
