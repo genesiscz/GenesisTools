@@ -10,6 +10,8 @@ export interface JsonlLineRecord {
     level?: JsonlLineLevel;
     ts: number;
     text: string;
+    /** Original PTY text with ANSI — dashboard fallback when ui.jsonl races. */
+    raw?: string;
 }
 
 /** Dashboard-only ANSI mirror — same seq as canonical jsonl; never emitted by task logs/tail/get. */

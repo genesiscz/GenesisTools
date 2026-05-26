@@ -46,4 +46,36 @@ describe("taskRecordToLogEntry", () => {
             }).level
         ).toBe("error");
     });
+
+    it("falls back to raw for msgAnsi when ui text is missing", () => {
+        const entry = taskRecordToLogEntry(
+            {
+                type: "line",
+                seq: 1,
+                out: "stdout",
+                ts: 1,
+                text: "QR block",
+                raw: "\u001b[31m█\u001b[0m",
+            },
+            undefined
+        );
+
+        expect(entry.msgAnsi).toBe("\u001b[31m█\u001b[0m");
+    });
+
+    it("prefers ui text over raw for msgAnsi", () => {
+        const entry = taskRecordToLogEntry(
+            {
+                type: "line",
+                seq: 1,
+                out: "stdout",
+                ts: 1,
+                text: "plain",
+                raw: "raw-ansi",
+            },
+            "ui-ansi"
+        );
+
+        expect(entry.msgAnsi).toBe("ui-ansi");
+    });
 });

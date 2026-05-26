@@ -4,7 +4,7 @@ function sanitizeAnsiForDisplay(text: string): string {
     return text.replace(/\r\n/g, "\n").replace(/\r/g, "");
 }
 
-const CSI_PATTERN = /\u001b\[([0-9:;]*)([@-~])/g;
+const CSI_PATTERN = /\u001b\[([\?]?[0-9;]*)([@-~])/g;
 
 const ANSI_FG: Record<number, string> = {
     30: "var(--ansi-black)",

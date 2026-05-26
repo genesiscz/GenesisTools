@@ -108,4 +108,23 @@ describe("OrderedCaptureWriter", () => {
         const uiRecords = filterUiLineRecords(await readJsonlFile(join(dir, "s.ui.jsonl")));
         expect(uiRecords[0]?.text).toBe("\u001b[31mError\u001b[0m");
     });
+
+    it("stores raw ansi on canonical jsonl records", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "ocw-"));
+        dirs.push(dir);
+        const w = new OrderedCaptureWriter({
+            jsonlPath: join(dir, "s.jsonl"),
+            uiJsonlPath: join(dir, "s.ui.jsonl"),
+            stdoutPath: join(dir, "s.log"),
+            stderrPath: join(dir, "s.err.log"),
+            mode: "pty",
+        });
+
+        w.enqueue("stdout", "\u001b[?25l\u001b[31m█\u001b[0m\n");
+        await w.flush();
+
+        const records = filterLineRecords(await readJsonlFile(join(dir, "s.jsonl")));
+        expect(records[0]?.text).toBe("█");
+        expect(records[0]?.raw).toBe("\u001b[?25l\u001b[31m█\u001b[0m");
+    });
 });

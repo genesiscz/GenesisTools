@@ -135,6 +135,7 @@ async function runPipeMode(opts: RunTaskOptions, writer: OrderedCaptureWriter): 
 async function runPtyMode(opts: RunTaskOptions, writer: OrderedCaptureWriter): Promise<number> {
     const cols = process.stdout.columns ?? 80;
     const rows = process.stdout.rows ?? 24;
+    const ptyDecoder = new TextDecoder();
 
     const proc = Bun.spawn(opts.command, {
         cwd: opts.cwd,
@@ -143,7 +144,8 @@ async function runPtyMode(opts: RunTaskOptions, writer: OrderedCaptureWriter): P
             cols,
             rows,
             data(_term, data) {
-                const text = typeof data === "string" ? data : Buffer.from(data).toString("utf8");
+                const text =
+                    typeof data === "string" ? data : ptyDecoder.decode(data, { stream: true });
                 process.stdout.write(text);
                 writer.enqueue("stdout", text);
             },
@@ -179,6 +181,13 @@ async function runPtyMode(opts: RunTaskOptions, writer: OrderedCaptureWriter): P
     }
 
     proc.terminal?.close();
+
+    const ptyTail = ptyDecoder.decode();
+    if (ptyTail) {
+        process.stdout.write(ptyTail);
+        writer.enqueue("stdout", ptyTail);
+    }
+
     await writer.flush();
 
     return exitCode;
