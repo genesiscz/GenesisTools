@@ -97,6 +97,7 @@ export class OrderedCaptureWriter {
                     level: inferLineLevel(outStream, plain),
                     ts: Date.now(),
                     text: plain,
+                    raw: text,
                 };
                 this.jsonlWriter.append(record);
                 this.appendPlainMirror(outStream, record.text);
@@ -137,6 +138,7 @@ export class OrderedCaptureWriter {
             level: inferLineLevel(outStream, plain),
             ts: Date.now(),
             text: plain,
+            raw: partial,
         };
         this.jsonlWriter.append(record);
         this.appendPlainMirror(outStream, record.text);

@@ -50,7 +50,7 @@ export function taskRecordToLogEntry(r: JsonlLineRecord, uiText?: string): LogEn
         level,
         label: r.out,
         msg: r.text,
-        msgAnsi: uiText,
+        msgAnsi: uiText ?? r.raw,
         ts: r.ts,
     };
 }
