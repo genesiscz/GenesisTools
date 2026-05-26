@@ -51,6 +51,16 @@ export const api = {
     },
 
     async clearSession(source: LogSourceId, sessionName: string): Promise<void> {
+        const res = await fetch(`${sessionRoute(source, sessionName)}/clear`, {
+            method: "POST",
+            signal: AbortSignal.timeout(10_000),
+        });
+        if (!res.ok) {
+            throw new Error(`${res.status} ${res.statusText}`);
+        }
+    },
+
+    async deleteSession(source: LogSourceId, sessionName: string): Promise<void> {
         const res = await fetch(sessionRoute(source, sessionName), {
             method: "DELETE",
             signal: AbortSignal.timeout(10_000),

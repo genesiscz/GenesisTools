@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { handleDashboardRequest } from "@app/debugging-master/core/dashboard-server";
 import { startServer } from "@app/debugging-master/core/http-server";
 import { sseBroadcaster } from "@app/debugging-master/core/sse-broadcaster";
-import { jsonlPath } from "@app/task/lib/paths";
+import { jsonlPath, metaPath } from "@app/task/lib/paths";
 import { SafeJSON } from "@app/utils/json";
 
 const homeDir = join(fileURLToPath(new URL("../../..", import.meta.url)), ".tmp-dashboard-test");
@@ -109,5 +109,76 @@ describe("task dashboard integration", () => {
         const url = new URL(`http://127.0.0.1:${port}/api/sessions`);
         const res = await handleDashboardRequest(new Request(url), url, {});
         expect(res?.status).toBe(200);
+    });
+
+    it("DELETE removes task session files", async () => {
+        const session = `del-${Date.now()}`;
+        const path = jsonlPath(session);
+        appendFileSync(path, `${SafeJSON.stringify({ type: "line", seq: 1, out: "stdout", ts: Date.now(), text: "bye" })}\n`);
+
+        const encoded = encodeURIComponent(session);
+        const delRes = await fetchApi(`/api/sessions/task/${encoded}`, { method: "DELETE" });
+        expect(delRes.status).toBe(200);
+
+        const listRes = await fetchApi("/api/sessions");
+        const body = (await listRes.json()) as { sessions: Array<{ name: string }> };
+        expect(body.sessions.some((s) => s.name === session)).toBe(false);
+    });
+
+    it("multiplex stream for active sessions via single SSE request", async () => {
+        const session = `active-${Date.now()}`;
+        const path = jsonlPath(session);
+        const now = Date.now();
+        appendFileSync(path, "");
+        appendFileSync(
+            metaPath(session),
+            SafeJSON.stringify({
+                name: session,
+                command: "echo test",
+                mode: "pipe",
+                cwd: "/tmp",
+                createdAt: now,
+                lastActivityAt: now,
+                startedAt: new Date(now).toISOString(),
+            })
+        );
+
+        const ac = new AbortController();
+        const streamRes = await fetchApi("/api/sessions/stream?active=1", { signal: ac.signal });
+        expect(streamRes.status).toBe(200);
+
+        appendFileSync(
+            path,
+            `${SafeJSON.stringify({ type: "line", seq: 1, out: "stdout", ts: Date.now(), text: "multiplex line", level: "info" })}\n`
+        );
+
+        const reader = streamRes.body?.getReader();
+        const decoder = new TextDecoder();
+        let found = false;
+        const deadline = Date.now() + 8000;
+
+        while (Date.now() < deadline && !found) {
+            const { value, done } = await reader!.read();
+            if (done) {
+                break;
+            }
+
+            const chunk = decoder.decode(value);
+            if (chunk.includes("multiplex line") && chunk.includes(session)) {
+                found = true;
+            }
+        }
+
+        ac.abort();
+        expect(found).toBe(true);
+    }, 15_000);
+
+    it("sessions list includes state field", async () => {
+        const res = await fetchApi("/api/sessions");
+        const body = (await res.json()) as { sessions: Array<{ state?: string; stateLabel?: string }> };
+        for (const session of body.sessions) {
+            expect(["active", "exited", "unknown"]).toContain(session.state);
+            expect(typeof session.stateLabel).toBe("string");
+        }
     });
 });

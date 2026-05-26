@@ -1,3 +1,4 @@
+import { existsSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { SESSIONS_DIR } from "@app/debugging-master/core/paths";
 import { SessionManager } from "@app/debugging-master/core/session-manager";
@@ -38,5 +39,15 @@ export class DebuggingMasterLogSource implements LogSource {
 
     getJsonlPath(sessionName: string): string {
         return join(SESSIONS_DIR, `${sessionName}.jsonl`);
+    }
+
+    async deleteSession(sessionName: string): Promise<void> {
+        const dir = SESSIONS_DIR;
+        for (const suffix of [".jsonl", ".meta.json"]) {
+            const path = join(dir, `${sessionName}${suffix}`);
+            if (existsSync(path)) {
+                unlinkSync(path);
+            }
+        }
     }
 }

@@ -8,6 +8,7 @@ import { getAllLogSources, getLogSource } from "@app/utils/log-viewer/resolve-lo
 import { isLogSourceId } from "@app/utils/log-viewer/session-key";
 import { enrichDashboardTimestamps } from "@app/utils/log-viewer/tail-bridge";
 import { decodeSessionPathSegment, isSafeLogSessionName } from "@app/utils/log-viewer/session-name";
+import { resolveSessionState } from "@app/utils/log-viewer/session-state";
 
 const REF_ID = /^([se])([1-9]\d*)$/;
 
@@ -100,6 +101,30 @@ async function handleApiRequest(req: Request, url: URL, cors: Record<string, str
         return jsonResponse({ sessions }, cors);
     }
 
+    if (method === "GET" && pathname === "/api/sessions/stream") {
+        const activeOnly = url.searchParams.get("active") === "1" || url.searchParams.get("scope") === "active";
+        if (!activeOnly) {
+            return jsonResponse({ error: "use ?active=1 for multiplex stream" }, cors, { status: 400 });
+        }
+
+        const sessions = await listSessions();
+        const targets = sessions
+            .filter((s) => s.state === "active")
+            .map((s) => ({ source: s.source, sessionName: s.name }));
+
+        const { stream, unsubscribe } = sseBroadcaster.subscribeActive(targets);
+        req.signal?.addEventListener("abort", unsubscribe, { once: true });
+        return new Response(stream, {
+            headers: {
+                "Content-Type": "text/event-stream; charset=utf-8",
+                "Cache-Control": "no-cache, no-transform",
+                Connection: "keep-alive",
+                "X-Accel-Buffering": "no",
+                ...cors,
+            },
+        });
+    }
+
     const route = resolveRoute(pathname);
     if (!route) {
         return jsonResponse({ error: "not found" }, cors, { status: 404 });
@@ -170,6 +195,18 @@ async function handleApiRequest(req: Request, url: URL, cors: Record<string, str
         if (!existsSync(path)) {
             return jsonResponse({ error: "session not found" }, cors, { status: 404 });
         }
+
+        await logSource.deleteSession(sessionName);
+        sseBroadcaster.publishRemoved(source, sessionName);
+        return jsonResponse({ deleted: true, source }, cors);
+    }
+
+    if (method === "POST" && sub === "clear") {
+        const path = logSource.getJsonlPath(sessionName);
+        if (!existsSync(path)) {
+            return jsonResponse({ error: "session not found" }, cors, { status: 404 });
+        }
+
         await Bun.write(path, "");
         sseBroadcaster.publishCleared(source, sessionName);
         return jsonResponse({ cleared: true, source }, cors);
@@ -201,6 +238,7 @@ async function listSessions(): Promise<DashboardSession[]> {
         const listed = await source.listSessions();
         for (const session of listed) {
             const times = enrichDashboardTimestamps(session, session.jsonlPath);
+            const resolved = await resolveSessionState(session.source, session.name);
             all.push({
                 source: session.source,
                 name: session.name,
@@ -210,6 +248,8 @@ async function listSessions(): Promise<DashboardSession[]> {
                 createdAt: times.createdAt,
                 lastActivityAt: times.lastActivityAt,
                 entryCount: session.entryCount,
+                state: resolved.state,
+                stateLabel: resolved.stateLabel,
             });
         }
     }

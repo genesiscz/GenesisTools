@@ -11,7 +11,9 @@ interface Props {
     status: ConnectionStatus;
     entryCount: number;
     onClear: () => void;
+    onDelete: () => void;
     onRefresh: () => void;
+    onBack: () => void;
 }
 
 function badgeClass(badge: string): string {
@@ -30,7 +32,9 @@ export function Header({
     status,
     entryCount,
     onClear,
+    onDelete,
     onRefresh,
+    onBack,
 }: Props): React.ReactElement {
     const meta = sessions.find((s) => s.source === activeSource && s.name === activeSession);
     const selectValue = activeSource && activeSession ? `${activeSource}:${activeSession}` : "";
@@ -39,6 +43,14 @@ export function Header({
         <header className="sticky top-0 z-20 glass-card border-b border-white/8">
             <div className="px-3 sm:px-5 py-2.5 flex flex-wrap items-center gap-3">
                 <div className="flex items-center gap-3 mr-auto">
+                    <button
+                        type="button"
+                        onClick={onBack}
+                        className="text-[10px] uppercase tracking-wider text-white/50 hover:text-white/90 px-2 py-1 border border-white/10 rounded-md hover:border-cyan-500/40 transition-colors"
+                        title="Back to sessions home"
+                    >
+                        ← sessions
+                    </button>
                     <span className="brand-title text-[13px] sm:text-[15px]">▓▓▓ LOG VIEWER</span>
                     {meta ? (
                         <span
@@ -83,15 +95,27 @@ export function Header({
                     type="button"
                     onClick={onClear}
                     disabled={!activeSession || entryCount === 0}
+                    className="text-[10px] uppercase tracking-wider text-amber-400/70 hover:text-amber-300 px-2 py-1 border border-amber-500/20 hover:border-amber-500/60 rounded-md disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                >
+                    clear logs
+                </button>
+
+                <button
+                    type="button"
+                    onClick={onDelete}
+                    disabled={!activeSession}
                     className="text-[10px] uppercase tracking-wider text-rose-400/70 hover:text-rose-300 px-2 py-1 border border-rose-500/20 hover:border-rose-500/60 rounded-md disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
                 >
-                    clear
+                    delete session
                 </button>
             </div>
 
-            {meta?.projectPath ? (
-                <div className="px-3 sm:px-5 pb-2 text-[10px] text-white/40 truncate-mono" title={meta.projectPath}>
-                    {meta.projectPath}
+            {meta?.projectPath || meta?.command ? (
+                <div
+                    className="px-3 sm:px-5 pb-2 text-[10px] text-white/40 truncate-mono"
+                    title={meta.projectPath || meta.command}
+                >
+                    {meta.command ?? meta.projectPath}
                 </div>
             ) : null}
         </header>
