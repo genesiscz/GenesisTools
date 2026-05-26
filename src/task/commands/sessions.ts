@@ -1,6 +1,7 @@
 import { out } from "@app/logger";
 import { formatBytes } from "@app/utils/format";
 import type { Command } from "commander";
+import { formatSessionState } from "../lib/format-session-state";
 import { sessionFilePaths } from "../lib/paths";
 import { TaskSessionStore } from "../lib/session-store";
 
@@ -25,7 +26,7 @@ export function registerSessionsCommand(program: Command): void {
                 const meta = await store.reconcileSessionState(name);
                 const paths = sessionFilePaths(name);
                 const jsonlSize = await store.getSessionFileSize(paths.jsonl);
-                const state = meta?.exitCode !== undefined ? `exited (${meta.exitCode})` : "active";
+                const state = formatSessionState(meta);
                 out.printlnErr(`  ${name.padEnd(24)} ${state.padEnd(16)} ${formatBytes(jsonlSize)}`);
             }
 

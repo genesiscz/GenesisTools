@@ -2,7 +2,7 @@ import { out } from "@app/logger";
 import { FileTailer } from "@app/utils/fs/file-tailer";
 import { SafeJSON } from "@app/utils/json";
 import { filterLineRecords, readJsonlFile } from "@app/utils/log-session/jsonl-reader";
-import type { JsonlLineRecord } from "@app/utils/log-session/types";
+import type { JsonlExitRecord, JsonlLineRecord, JsonlRecord } from "@app/utils/log-session/types";
 import type { LogQueryOpts } from "../types";
 import { printTailStatus } from "./log-hints";
 import { queryLogs } from "./log-query";
@@ -53,11 +53,19 @@ function emitLine(line: JsonlLineRecord, format: LogQueryOpts["format"]): void {
     out.print(`=== [${line.out}] seq ${line.seq} ===\n${line.text}\n`);
 }
 
+function findExitRecord(records: JsonlRecord[]): JsonlExitRecord | undefined {
+    return records.find(
+        (record): record is JsonlExitRecord =>
+            record.type === "exit" && typeof (record as JsonlExitRecord).code === "number"
+    );
+}
+
 export async function tailSession(opts: LogQueryOpts & { follow: true }): Promise<void> {
     const path = jsonlPath(opts.session);
     const seenSeq = new Set<number>();
 
     const records = await readJsonlFile(path);
+    const existingExit = findExitRecord(records);
     const existing = filterLineRecords(records);
     const tailCount = opts.lines ?? 10;
     const initial = existing.slice(-tailCount);
@@ -69,17 +77,39 @@ export async function tailSession(opts: LogQueryOpts & { follow: true }): Promis
         }
     }
 
+    if (existingExit) {
+        out.printlnErr(`Session exited (code ${existingExit.code}).`);
+        return;
+    }
+
     printTailStatus(opts.session);
 
-    const tailer = new FileTailer<JsonlLineRecord>(path, {
+    let resolveFollow: (() => void) | undefined;
+    let onSigint: (() => void) | undefined;
+
+    const tailer = new FileTailer<JsonlRecord>(path, {
         onLine: (entry) => {
+            if (entry.type === "exit") {
+                const exit = entry as JsonlExitRecord;
+                tailer.stop();
+
+                if (onSigint) {
+                    process.off("SIGINT", onSigint);
+                }
+
+                out.printlnErr(`\nSession exited (code ${exit.code}).`);
+                resolveFollow?.();
+                return;
+            }
+
             if (entry.type !== "line") {
                 return;
             }
 
-            if (matchesFilters(entry, opts, seenSeq)) {
-                seenSeq.add(entry.seq);
-                emitLine(entry, opts.format);
+            const line = entry as JsonlLineRecord;
+            if (matchesFilters(line, opts, seenSeq)) {
+                seenSeq.add(line.seq);
+                emitLine(line, opts.format);
             }
         },
     });
@@ -87,7 +117,9 @@ export async function tailSession(opts: LogQueryOpts & { follow: true }): Promis
     tailer.start();
 
     await new Promise<void>((resolve) => {
-        const onSigint = (): void => {
+        resolveFollow = resolve;
+
+        onSigint = (): void => {
             tailer.stop();
             out.printlnErr("\nStopped tailing.");
             resolve();

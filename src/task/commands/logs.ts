@@ -7,6 +7,7 @@ export function registerLogsCommand(program: Command): void {
         .command("logs")
         .description("Read session log content (snapshot or live with --tail/--follow)")
         .option("-n, --lines <count>", "Last N lines", "50")
+        .option("--all", "Return all matching lines (ignore --lines default)")
         .option("--from-seq <n>", "Start at seq N (inclusive)")
         .option("--to-seq <n>", "End at seq N (inclusive)")
         .option("--grep <pat>", "Filter lines matching pattern")

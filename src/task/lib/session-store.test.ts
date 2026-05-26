@@ -24,7 +24,7 @@ describe("TaskSessionStore.resolveRunSessionName", () => {
 
         expect(resolved.requested).toBe("metro-dup");
         expect(resolved.renamed).toBe(true);
-        expect(resolved.session).toMatch(/^metro-dup-\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2}(-\d{3})?$/);
+        expect(resolved.session).toMatch(/^metro-dup_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}(-\d{3})?$/);
         expect(resolved.session).not.toBe("metro-dup");
     });
 
@@ -68,5 +68,23 @@ describe("TaskSessionStore.resolveRunSessionName", () => {
 
         expect(reconciled?.exitCode).toBe(0);
         expect(reconciled?.durationMs).toBe(1200);
+    });
+
+    it("reconcileSessionState synthesizes meta from jsonl-only sessions", async () => {
+        const store = new TaskSessionStore();
+        await store.getSessionsDir();
+        const name = "dash-artifact";
+        writeFileSync(
+            jsonlPath(name),
+            [
+                '{"type":"meta","session":"dash-artifact","command":"test","mode":"pipe","cwd":"/tmp","startedAt":"2026-05-26T00:00:00.000Z"}',
+                '{"type":"exit","code":42,"durationMs":500,"ts":"2026-05-26T00:00:01.000Z"}',
+            ].join("\n") + "\n"
+        );
+
+        const reconciled = await store.reconcileSessionState(name);
+
+        expect(reconciled?.exitCode).toBe(42);
+        expect(reconciled?.command).toBe("test");
     });
 });
