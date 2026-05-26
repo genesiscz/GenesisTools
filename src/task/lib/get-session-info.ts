@@ -1,34 +1,10 @@
 import { out } from "@app/logger";
 import { formatBytes } from "@app/utils/format";
 import { filterByStream, filterLineRecords, lastNLines, readJsonlFile } from "@app/utils/log-session/jsonl-reader";
+import { formatSessionState } from "./format-session-state";
 import { sessionFilePaths } from "./paths";
 import { TaskSessionStore } from "./session-store";
 import { suggestDashboard, suggestLogs, suggestLogsFollow, suggestTail } from "./suggest-flags";
-
-function formatDurationMs(ms: number): string {
-    const seconds = Math.round(ms / 1000);
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-
-    if (mins > 0) {
-        return `${mins}m ${secs}s`;
-    }
-
-    return `${secs}s`;
-}
-
-function formatState(meta: Awaited<ReturnType<TaskSessionStore["getSessionMeta"]>>): string {
-    if (!meta) {
-        return "unknown";
-    }
-
-    if (meta.exitCode !== undefined) {
-        return `exited (code ${meta.exitCode}, ${formatDurationMs(meta.durationMs ?? 0)})`;
-    }
-
-    const runningMs = Date.now() - meta.createdAt;
-    return `active (running ${formatDurationMs(runningMs)})`;
-}
 
 export async function getSessionInfo(session: string): Promise<void> {
     const store = new TaskSessionStore();
@@ -51,8 +27,12 @@ export async function getSessionInfo(session: string): Promise<void> {
     out.printlnErr("");
     out.printlnErr(`╔ task session: ${session} ${"═".repeat(Math.max(0, 58 - session.length))}╗`);
     out.printlnErr("║ STATUS");
-    out.printlnErr(`║   State:     ${formatState(meta)}`);
+    out.printlnErr(`║   State:     ${formatSessionState(meta)}`);
     out.printlnErr(`║   Mode:      ${modeLabel}`);
+
+    if (meta?.mode === "pty") {
+        out.printlnErr("║   Streams:   merged (use pipe mode for --stdout/--stderr filters)");
+    }
     out.printlnErr(`║   Command:   ${meta?.command ?? "(unknown)"}`);
     out.printlnErr(`║   CWD:       ${meta?.cwd ?? "(unknown)"}`);
 
@@ -101,6 +81,7 @@ export async function getSessionInfo(session: string): Promise<void> {
     out.printlnErr("║");
     out.printlnErr("║ WHAT TO RUN NEXT (copy-paste)");
     out.printlnErr(`║   Read last 100    ${suggestLogs(session, ["--lines", "100"])}`);
+    out.printlnErr(`║   All lines        ${suggestLogs(session, ["--all", "--raw"])}`);
     out.printlnErr(`║   Live follow      ${suggestTail(session)}`);
     out.printlnErr(`║   Same as above    ${suggestLogsFollow(session)}`);
     out.printlnErr(`║   Stderr only      ${suggestLogs(session, ["--stderr", "--raw"])}`);
@@ -111,7 +92,8 @@ export async function getSessionInfo(session: string): Promise<void> {
     out.printlnErr("║ FLAGS (logs + tail — short forms also work but mean the same)");
     out.printlnErr("║   --follow       Stream live until Ctrl+C (alias: -f)");
     out.printlnErr("║   --tail         On logs only — same as --follow");
-    out.printlnErr("║   --lines N      Last N lines by seq (alias: -n)");
+    out.printlnErr("║   --lines N      Last N lines by seq (alias: -n; default: logs=50, tail=10)");
+    out.printlnErr("║   --all          Full session (ignore --lines default)");
     out.printlnErr("║   --from-seq N   Include from seq N onward");
     out.printlnErr("║   --to-seq N     Include up to seq N");
     out.printlnErr("║   --stdout       Stdout lines only (default: both streams)");

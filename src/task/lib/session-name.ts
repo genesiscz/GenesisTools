@@ -9,7 +9,7 @@ export function formatSessionDatetimeSuffix(date = new Date(), includeMs = false
     const h = pad(date.getHours());
     const mi = pad(date.getMinutes());
     const s = pad(date.getSeconds());
-    const base = `${y}-${mo}-${d}-${h}-${mi}-${s}`;
+    const base = `${y}-${mo}-${d}_${h}-${mi}-${s}`;
 
     if (!includeMs) {
         return base;
@@ -20,5 +20,5 @@ export function formatSessionDatetimeSuffix(date = new Date(), includeMs = false
 }
 
 export function buildTimestampedSessionName(base: string, date = new Date(), includeMs = false): string {
-    return `${base}-${formatSessionDatetimeSuffix(date, includeMs)}`;
+    return `${base}_${formatSessionDatetimeSuffix(date, includeMs)}`;
 }

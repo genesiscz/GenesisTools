@@ -25,11 +25,13 @@ export function registerDashboardCommand(program: Command): void {
         .command("open")
         .description("Ensure the log server is up, print URL + QR, and open in the browser")
         .option("--port <n>", "Port the dashboard server is on", String(logDashboardApp.port))
-        .option("--session <name>", "Session to deep-link (optional)")
         .option("--no-qr", "Skip the phone-scan QR code")
-        .action(async (opts: { port: string; session?: string; qr?: boolean }) => {
+        .action(async (opts: { port: string; qr?: boolean }) => {
             const port = Number.parseInt(opts.port, 10);
-            const query = opts.session ? { source: "task", session: opts.session } : undefined;
+            const globalOpts = program.opts<{ session?: string }>();
+            const session = globalOpts.session;
+            const query = session ? { source: "task" as const, session } : undefined;
+
             await logDashboardApp.open({
                 port,
                 qr: opts.qr === false ? false : undefined,
@@ -37,7 +39,9 @@ export function registerDashboardCommand(program: Command): void {
             });
 
             if (query) {
-                out.printlnErr(`  deep-link: ${dashboardUrlWithQuery(logDashboardApp.config, port, query)}`);
+                const url = dashboardUrlWithQuery(logDashboardApp.config, port, query);
+                out.print(`${url}\n`);
+                out.printlnErr(`  deep-link: ${url}`);
             }
         });
 }

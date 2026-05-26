@@ -4,7 +4,7 @@ import { suggestCommand } from "@app/utils/cli/executor";
 import { SafeJSON } from "@app/utils/json";
 import { fuzzyResolveSession } from "@app/utils/log-session/fuzzy-resolver";
 import { readJsonlFile } from "@app/utils/log-session/jsonl-reader";
-import type { JsonlExitRecord } from "@app/utils/log-session/types";
+import type { JsonlExitRecord, JsonlMetaRecord } from "@app/utils/log-session/types";
 import { Storage } from "@app/utils/storage/storage";
 import type { MarkExitedInput, PrepareSessionInput, TaskConfig, TaskSessionMeta } from "../types";
 import { jsonlPath, metaPath, TASK_SESSIONS_DIR } from "./paths";
@@ -99,13 +99,42 @@ export class TaskSessionStore {
         const base = requestedAs ?? name;
         const names = await this.listSessionNames();
 
-        return names.filter((candidate) => candidate === base || candidate.startsWith(`${base}-`)).sort();
+        return names.filter((candidate) => candidate === base || candidate.startsWith(`${base}_`)).sort();
+    }
+
+    private metaFromJsonl(name: string, records: Awaited<ReturnType<typeof readJsonlFile>>): TaskSessionMeta | null {
+        const metaRecord = records.find((record): record is JsonlMetaRecord => record.type === "meta");
+        const exitRecord = records.find(
+            (record): record is JsonlExitRecord =>
+                record.type === "exit" && typeof (record as JsonlExitRecord).code === "number"
+        );
+
+        if (!metaRecord && !exitRecord) {
+            return null;
+        }
+
+        const now = Date.now();
+        const startedAt = metaRecord?.startedAt ?? new Date(now).toISOString();
+
+        return {
+            name,
+            command: metaRecord?.command ?? "(unknown)",
+            mode: metaRecord?.mode ?? "pipe",
+            cwd: metaRecord?.cwd ?? "(unknown)",
+            createdAt: now,
+            lastActivityAt: now,
+            startedAt,
+            pid: metaRecord?.pid,
+            exitCode: exitRecord?.code,
+            durationMs: exitRecord?.durationMs,
+            exitedAt: exitRecord ? exitRecord.ts : undefined,
+        };
     }
 
     async reconcileSessionState(name: string): Promise<TaskSessionMeta | null> {
         let meta = await this.getSessionMeta(name);
 
-        if (!meta || meta.exitCode !== undefined) {
+        if (meta?.exitCode !== undefined) {
             return meta;
         }
 
@@ -116,17 +145,33 @@ export class TaskSessionStore {
         );
 
         if (exit) {
-            await this.markExited({ name, exitCode: exit.code, durationMs: exit.durationMs });
-            return this.getSessionMeta(name);
+            if (meta) {
+                await this.markExited({ name, exitCode: exit.code, durationMs: exit.durationMs });
+                return this.getSessionMeta(name);
+            }
+
+            const synthesized = this.metaFromJsonl(name, records);
+            if (synthesized) {
+                await this.writeSessionMeta(synthesized);
+                return synthesized;
+            }
         }
 
-        if (meta.pid !== undefined && !isProcessAlive(meta.pid)) {
-            const durationMs = Date.now() - meta.createdAt;
-            await this.markExited({ name, exitCode: 130, durationMs });
-            return this.getSessionMeta(name);
+        if (meta) {
+            if (meta.pid !== undefined && !isProcessAlive(meta.pid)) {
+                const durationMs = Date.now() - meta.createdAt;
+                await this.markExited({ name, exitCode: 130, durationMs });
+                return this.getSessionMeta(name);
+            }
+
+            return meta;
         }
 
-        return meta;
+        if (records.length > 0) {
+            return this.metaFromJsonl(name, records);
+        }
+
+        return null;
     }
 
     async prepareSession(input: PrepareSessionInput): Promise<void> {

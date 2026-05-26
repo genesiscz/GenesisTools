@@ -7,6 +7,7 @@ export function registerTailCommand(program: Command): void {
         .command("tail")
         .description("Follow session logs live (same as logs --tail)")
         .option("-n, --lines <count>", "Show last N existing lines before follow", "10")
+        .option("--all", "Return all matching lines (ignore --lines default)")
         .option("--from-seq <n>", "Start at seq N (inclusive)")
         .option("--to-seq <n>", "End at seq N (inclusive)")
         .option("--grep <pat>", "Filter lines matching pattern")

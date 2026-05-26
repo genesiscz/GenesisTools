@@ -56,11 +56,11 @@ tools task logs --session metro --tail --follow
 
 ## Session names
 
-Reusing a name that already has a `.jsonl` on disk **does not wipe** the old session. The run is assigned a suffixed id such as `metro-2026-05-26-14-30-22` (or `…-22-456` if another run collides in the same second), printed immediately on stderr before the banner:
+Reusing a name that already has a `.jsonl` on disk **does not wipe** the old session. The run is assigned a suffixed id such as `metro_2026-05-26_14-30-22` (or `…_22-456` if another run collides in the same second), printed immediately on stderr before the banner:
 
 ```text
-note: session "metro" already exists — using "metro-2026-05-26-14-30-22"
-task-session-id: metro-2026-05-26-14-30-22
+note: session "metro" already exists — using "metro_2026-05-26_14-30-22"
+task-session-id: metro_2026-05-26_14-30-22
 ```
 
 Use `tools task get --session <full-id>` or pick the suffixed name from `tools task sessions` (see **Related:** in `get`).
@@ -69,10 +69,10 @@ When **`--session` is omitted**, `get` / `logs` / `tail` auto-resolve: explicit 
 
 ## Run modes
 
-| Mode | Trigger | Stream order in JSONL |
-|---|---|---|
-| PTY | `--tty` or auto (stdin TTY) | Single merged terminal stream — matches what you see on screen |
-| Pipe | `--no-tty` or auto (no stdin TTY) | **Arrival order** at the capture layer (monotonic `seq`), not guaranteed to match the child’s write order |
+| Mode | Trigger | Stream order in JSONL | Stream attribution |
+|---|---|---|---|
+| PTY | `--tty` or auto (stdin TTY) | Single merged terminal stream — matches what you see on screen | **Merged** — all lines recorded as `stdout`; `--stderr` filters return nothing |
+| Pipe | `--no-tty` or auto (no stdin TTY) | **Arrival order** at the capture layer (monotonic `seq`), not guaranteed to match the child’s write order | Separate `stdout` / `stderr` in JSONL — use `--stdout` / `--stderr` filters |
 
 ### Pipe mode and buffering (read this)
 
@@ -81,6 +81,15 @@ In **pipe mode**, stdout and stderr are separate OS pipes. The child process oft
 `tools task` records lines in the order chunks **arrive** from the pipes (via `Promise.race` on both readers). That order is **stable and monotonic** (`seq` 1…N) but is **not** a faithful replay of interleaved write order inside a block-buffered child.
 
 For Metro/Vite/interactive dev servers, prefer **PTY mode** (default when stdin is a TTY). Use pipe mode for CI/agents without a TTY; use `--stderr` / `"out":"stderr"` in JSONL for stream attribution, not write-order archaeology.
+
+## Log window defaults
+
+`logs` defaults to the **last 50 lines**; `tail` shows the last 10 before follow. Use `--all` to dump the full session, `--from-seq 1` for seq-based windows, or `--lines N` for a custom tail count.
+
+```bash
+tools task logs --session metro --all --raw | grep TOKEN
+tools task logs --session metro --from-seq 1 --jsonl | rg error
+```
 
 ## vs shell `tee`
 
