@@ -7,6 +7,7 @@
 import { mkdtempSync } from "node:fs";
 import { homedir, tmpdir as osTmpdir } from "node:os";
 import { isAbsolute, join, resolve, sep } from "node:path";
+import { collapsePathForDisplay as collapsePathHeuristic } from "./paths.client";
 
 /**
  * Whether a path string ends with a directory separator (/ or \).
@@ -88,6 +89,38 @@ export function collapsePath(p: string): string {
     }
 
     return p;
+}
+
+/**
+ * Collapse home for display in browser or Node. Uses `collapsePath()` when
+ * `homedir()` is available; otherwise falls back to `/Users/*` / `/home/*` heuristics.
+ */
+export function collapsePathForDisplay(p: string): string {
+    if (!p) {
+        return p;
+    }
+
+    const normalized = toPosixPath(p);
+
+    if (normalized.startsWith("~/") || normalized === "~") {
+        return normalized;
+    }
+
+    try {
+        const home = homedir();
+        if (home) {
+            const collapsed = collapsePath(normalized);
+            if (collapsed !== normalized) {
+                return collapsed;
+            }
+
+            return normalized;
+        }
+    } catch {
+        // Browser bundle — no homedir.
+    }
+
+    return collapsePathHeuristic(normalized);
 }
 
 /**
