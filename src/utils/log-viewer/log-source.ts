@@ -17,6 +17,8 @@ export interface LogSourceSession {
     lastActivityAt?: number;
 }
 
+export type DashboardSessionState = "active" | "exited" | "unknown";
+
 export interface DashboardSession {
     source: LogSourceId;
     name: string;
@@ -26,6 +28,8 @@ export interface DashboardSession {
     createdAt: number;
     lastActivityAt: number;
     entryCount?: number;
+    state: DashboardSessionState;
+    stateLabel: string;
 }
 
 export interface LogSource {
@@ -34,6 +38,7 @@ export interface LogSource {
     listSessions(): Promise<LogSourceSession[]>;
     readEntries(sessionName: string): Promise<LogEntry[]>;
     getJsonlPath(sessionName: string): string;
+    deleteSession(sessionName: string): Promise<void>;
 }
 
 export function taskRecordToLogEntry(r: JsonlLineRecord): LogEntry {

@@ -2,11 +2,18 @@ import type { LogEntry } from "@app/debugging-master/types";
 import { SafeJSON } from "@app/utils/json";
 import type { LogSourceId } from "@app/utils/log-viewer/log-source";
 import { createSourceTailer, sessionKey } from "@app/utils/log-viewer/tail-bridge";
+import { parseSessionKey } from "@app/utils/log-viewer/session-key";
 
 interface Subscriber {
     id: number;
     controller: ReadableStreamDefaultController<Uint8Array>;
     key: string;
+}
+
+interface MultiplexSubscriber {
+    id: number;
+    controller: ReadableStreamDefaultController<Uint8Array>;
+    keys: Set<string>;
 }
 
 const HEARTBEAT_INTERVAL_MS = 15_000;
@@ -18,6 +25,7 @@ const encoder = new TextEncoder();
  */
 export class SSEBroadcaster {
     private subscribers = new Map<string, Set<Subscriber>>();
+    private multiplexSubscribers = new Set<MultiplexSubscriber>();
     private tailers = new Map<string, ReturnType<typeof createSourceTailer>>();
     private nextId = 1;
     private heartbeat: ReturnType<typeof setInterval> | null = null;
@@ -61,19 +69,112 @@ export class SSEBroadcaster {
         return { stream, unsubscribe };
     }
 
-    publishCleared(source: LogSourceId, sessionName: string): void {
+    subscribeActive(
+        targets: ReadonlyArray<{ source: LogSourceId; sessionName: string }>
+    ): { stream: ReadableStream<Uint8Array>; unsubscribe: () => void } {
+        const keys = new Set(targets.map((t) => sessionKey(t.source, t.sessionName)));
+        const id = this.nextId++;
+        let sub: MultiplexSubscriber;
+
+        const stream = new ReadableStream<Uint8Array>({
+            start: (controller) => {
+                sub = { id, controller, keys };
+                this.multiplexSubscribers.add(sub);
+
+                for (const target of targets) {
+                    const key = sessionKey(target.source, target.sessionName);
+                    this.ensureTailer(target.source, target.sessionName, key);
+                }
+
+                const hello = SafeJSON.stringify({
+                    sub: id,
+                    scope: "active",
+                    sessions: targets.map((t) => ({ source: t.source, session: t.sessionName })),
+                });
+                controller.enqueue(encoder.encode(`event: hello\ndata: ${hello}\n\n`));
+                this.ensureHeartbeat();
+            },
+            cancel: () => {
+                this.removeMultiplexSubscriber(sub);
+            },
+        });
+
+        const unsubscribe = (): void => {
+            this.removeMultiplexSubscriber(sub);
+            try {
+                sub.controller.close();
+            } catch {
+                // already closed
+            }
+        };
+
+        return { stream, unsubscribe };
+    }
+
+    publishRemoved(source: LogSourceId, sessionName: string): void {
         const key = sessionKey(source, sessionName);
+        const payload = SafeJSON.stringify({ source, session: sessionName });
+        const frame = encoder.encode(`event: removed\ndata: ${payload}\n\n`);
+
         const bucket = this.subscribers.get(key);
-        if (!bucket || bucket.size === 0) {
-            return;
+        if (bucket) {
+            for (const sub of [...bucket]) {
+                try {
+                    sub.controller.enqueue(frame);
+                } catch {
+                    this.removeSubscriber(sub);
+                }
+            }
         }
 
-        const frame = encoder.encode("event: cleared\ndata: {}\n\n");
-        for (const sub of [...bucket]) {
+        for (const sub of [...this.multiplexSubscribers]) {
+            if (!sub.keys.has(key)) {
+                continue;
+            }
+
             try {
                 sub.controller.enqueue(frame);
             } catch {
-                this.removeSubscriber(sub);
+                this.removeMultiplexSubscriber(sub);
+            }
+        }
+
+        const tailer = this.tailers.get(key);
+        if (tailer) {
+            tailer.stop();
+            this.tailers.delete(key);
+        }
+        this.subscribers.delete(key);
+
+        for (const sub of this.multiplexSubscribers) {
+            sub.keys.delete(key);
+        }
+    }
+
+    publishCleared(source: LogSourceId, sessionName: string): void {
+        const key = sessionKey(source, sessionName);
+        const frame = encoder.encode("event: cleared\ndata: {}\n\n");
+
+        const bucket = this.subscribers.get(key);
+        if (bucket) {
+            for (const sub of [...bucket]) {
+                try {
+                    sub.controller.enqueue(frame);
+                } catch {
+                    this.removeSubscriber(sub);
+                }
+            }
+        }
+
+        for (const sub of [...this.multiplexSubscribers]) {
+            if (!sub.keys.has(key)) {
+                continue;
+            }
+
+            try {
+                sub.controller.enqueue(frame);
+            } catch {
+                this.removeMultiplexSubscriber(sub);
             }
         }
     }
@@ -101,6 +202,14 @@ export class SSEBroadcaster {
             }
         }
         this.subscribers.clear();
+        for (const sub of this.multiplexSubscribers) {
+            try {
+                sub.controller.close();
+            } catch {
+                // already closed
+            }
+        }
+        this.multiplexSubscribers.clear();
         for (const tailer of this.tailers.values()) {
             tailer.stop();
         }
@@ -125,19 +234,60 @@ export class SSEBroadcaster {
 
     private fanOut(key: string, entry: LogEntry, entryIndex: number): void {
         const bucket = this.subscribers.get(key);
-        if (!bucket || bucket.size === 0) {
+
+        if (bucket && bucket.size > 0) {
+            const payload = SafeJSON.stringify({ ...entry, index: entryIndex });
+            const frame = encoder.encode(`event: entry\ndata: ${payload}\n\n`);
+
+            for (const sub of [...bucket]) {
+                try {
+                    sub.controller.enqueue(frame);
+                } catch {
+                    this.removeSubscriber(sub);
+                }
+            }
+        }
+
+        this.fanOutMultiplex(key, entry, entryIndex);
+    }
+
+    private fanOutMultiplex(key: string, entry: LogEntry, entryIndex: number): void {
+        if (this.multiplexSubscribers.size === 0) {
             return;
         }
 
-        const payload = SafeJSON.stringify({ ...entry, index: entryIndex });
+        const parsed = parseSessionKey(key);
+        if (!parsed) {
+            return;
+        }
+
+        const payload = SafeJSON.stringify({
+            source: parsed.source,
+            session: parsed.name,
+            ...entry,
+            index: entryIndex,
+        });
         const frame = encoder.encode(`event: entry\ndata: ${payload}\n\n`);
 
-        for (const sub of [...bucket]) {
+        for (const sub of [...this.multiplexSubscribers]) {
+            if (!sub.keys.has(key)) {
+                continue;
+            }
+
             try {
                 sub.controller.enqueue(frame);
             } catch {
-                this.removeSubscriber(sub);
+                this.removeMultiplexSubscriber(sub);
             }
+        }
+    }
+
+    private removeMultiplexSubscriber(sub: MultiplexSubscriber): void {
+        this.multiplexSubscribers.delete(sub);
+
+        if (this.subscribers.size === 0 && this.multiplexSubscribers.size === 0 && this.heartbeat) {
+            clearInterval(this.heartbeat);
+            this.heartbeat = null;
         }
     }
 
@@ -157,7 +307,7 @@ export class SSEBroadcaster {
             }
         }
 
-        if (this.subscribers.size === 0 && this.heartbeat) {
+        if (this.subscribers.size === 0 && this.multiplexSubscribers.size === 0 && this.heartbeat) {
             clearInterval(this.heartbeat);
             this.heartbeat = null;
         }
@@ -177,6 +327,14 @@ export class SSEBroadcaster {
                     } catch {
                         this.removeSubscriber(sub);
                     }
+                }
+            }
+
+            for (const sub of [...this.multiplexSubscribers]) {
+                try {
+                    sub.controller.enqueue(ping);
+                } catch {
+                    this.removeMultiplexSubscriber(sub);
                 }
             }
         }, HEARTBEAT_INTERVAL_MS);

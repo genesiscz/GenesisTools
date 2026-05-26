@@ -6,6 +6,7 @@ import { startTransition, useCallback, useEffect, useMemo, useRef, useState } fr
 import { EntryList } from "@/components/EntryList";
 import { FilterBar, type SortDir } from "@/components/FilterBar";
 import { Header } from "@/components/Header";
+import { SessionsHome } from "@/components/SessionsHome";
 import { api } from "@/lib/api";
 import { EntriesContext } from "@/lib/entries-context";
 import { applyFilter, collectHypotheses, defaultFilterState, type FilterState } from "@/lib/filters";
@@ -15,31 +16,33 @@ import { type ConnectionStatus, connectStream } from "@/lib/sse";
 const FRESH_TTL_MS = 1500;
 const SESSIONS_REFRESH_MS = 15_000;
 
-function readFromUrl(): { source: LogSourceId | null; session: string | null } {
+type AppView = "home" | "detail";
+
+function readFromUrl(): { view: AppView; source: LogSourceId | null; session: string | null } {
     if (typeof window === "undefined") {
-        return { source: null, session: null };
+        return { view: "home", source: null, session: null };
     }
 
     const params = new URLSearchParams(window.location.search);
     const sourceParam = params.get("source");
+    const session = params.get("session");
     const source = sourceParam && isLogSourceId(sourceParam) ? sourceParam : null;
-    return { source, session: params.get("session") };
+
+    if (source && session) {
+        return { view: "detail", source, session };
+    }
+
+    return { view: "home", source: null, session: null };
 }
 
-function writeToUrl(source: LogSourceId | null, name: string | null): void {
+function writeToUrl(view: AppView, source: LogSourceId | null, name: string | null): void {
     if (typeof window === "undefined") {
         return;
     }
 
     const url = new URL(window.location.href);
-    const currentSource = url.searchParams.get("source");
-    const currentSession = url.searchParams.get("session");
 
-    if (source === currentSource && name === currentSession) {
-        return;
-    }
-
-    if (source && name) {
+    if (view === "detail" && source && name) {
         url.searchParams.set("source", source);
         url.searchParams.set("session", name);
     } else {
@@ -52,6 +55,7 @@ function writeToUrl(source: LogSourceId | null, name: string | null): void {
 
 export function App(): React.ReactElement {
     const initial = readFromUrl();
+    const [view, setView] = useState<AppView>(initial.view);
     const [sessions, setSessions] = useState<DashboardSession[]>([]);
     const [activeSource, setActiveSource] = useState<LogSourceId | null>(initial.source);
     const [activeSession, setActiveSession] = useState<string | null>(initial.session);
@@ -76,14 +80,23 @@ export function App(): React.ReactElement {
     const pendingFreshRef = useRef<number[]>([]);
     const flushRafRef = useRef<number | null>(null);
     const freshSweepTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const activeRef = useRef({ source: initial.source, session: initial.session });
+    const activeRef = useRef({ view: initial.view, source: initial.source, session: initial.session });
     const refreshInFlightRef = useRef<Promise<void> | null>(null);
 
-    activeRef.current = { source: activeSource, session: activeSession };
+    activeRef.current = { view, source: activeSource, session: activeSession };
 
-    const selectSession = useCallback((source: LogSourceId, name: string) => {
+    const goHome = useCallback(() => {
+        setView("home");
+        setActiveSource(null);
+        setActiveSession(null);
+        writeToUrl("home", null, null);
+    }, []);
+
+    const openSession = useCallback((source: LogSourceId, name: string) => {
+        setView("detail");
         setActiveSource(source);
         setActiveSession(name);
+        writeToUrl("detail", source, name);
     }, []);
 
     const refreshSessions = useCallback(async () => {
@@ -96,7 +109,12 @@ export function App(): React.ReactElement {
                 const { sessions: list } = await api.listSessions();
                 setSessions(list);
 
-                const { source, session } = activeRef.current;
+                const { view: currentView, source, session } = activeRef.current;
+
+                if (currentView !== "detail") {
+                    return;
+                }
+
                 const stillValid = source && session && list.some((s) => s.source === source && s.name === session);
 
                 if (stillValid) {
@@ -107,11 +125,11 @@ export function App(): React.ReactElement {
                 if (first) {
                     setActiveSource(first.source);
                     setActiveSession(first.name);
+                    writeToUrl("detail", first.source, first.name);
                     return;
                 }
 
-                setActiveSource(null);
-                setActiveSession(null);
+                goHome();
             } catch {
                 setStatus("down");
             } finally {
@@ -121,7 +139,7 @@ export function App(): React.ReactElement {
 
         refreshInFlightRef.current = run();
         return refreshInFlightRef.current;
-    }, []);
+    }, [goHome]);
 
     useEffect(() => {
         refreshSessions();
@@ -130,28 +148,21 @@ export function App(): React.ReactElement {
     }, [refreshSessions]);
 
     useEffect(() => {
-        writeToUrl(activeSource, activeSession);
-    }, [activeSource, activeSession]);
-
-    useEffect(() => {
         if (typeof window === "undefined") {
             return;
         }
         const onPop = (): void => {
-            const { source, session } = readFromUrl();
-            if (source) {
-                setActiveSource(source);
-            }
-            if (session) {
-                setActiveSession(session);
-            }
+            const next = readFromUrl();
+            setView(next.view);
+            setActiveSource(next.source);
+            setActiveSession(next.session);
         };
         window.addEventListener("popstate", onPop);
         return () => window.removeEventListener("popstate", onPop);
     }, []);
 
     useEffect(() => {
-        if (!activeSource || !activeSession) {
+        if (view !== "detail" || !activeSource || !activeSession) {
             setEntries([]);
             return;
         }
@@ -199,7 +210,7 @@ export function App(): React.ReactElement {
             dispose();
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [activeSource, activeSession]);
+    }, [view, activeSource, activeSession]);
 
     const scheduleFlush = useCallback(() => {
         if (flushRafRef.current !== null) {
@@ -332,6 +343,33 @@ export function App(): React.ReactElement {
         setFreshIds(new Set());
     }, [activeSource, activeSession]);
 
+    const onDelete = useCallback(async () => {
+        if (!activeSource || !activeSession) {
+            return;
+        }
+        const ok = confirm(`Delete session [${activeSource}] "${activeSession}" and all log files?`);
+        if (!ok) {
+            return;
+        }
+        await api.deleteSession(activeSource, activeSession);
+        await refreshSessions();
+        goHome();
+    }, [activeSource, activeSession, refreshSessions, goHome]);
+
+    if (view === "home") {
+        return (
+            <TooltipProvider>
+                <SessionsHome
+                    sessions={sessions}
+                    status={status}
+                    onRefresh={refreshSessions}
+                    onOpenSession={openSession}
+                    onStatus={setStatus}
+                />
+            </TooltipProvider>
+        );
+    }
+
     return (
         <TooltipProvider>
             <EntriesContext.Provider value={entries}>
@@ -342,13 +380,17 @@ export function App(): React.ReactElement {
                         activeSession={activeSession}
                         onSelectSession={(source, name) => {
                             if (isLogSourceId(source)) {
-                                selectSession(source, name);
+                                openSession(source, name);
                             }
                         }}
                         status={status}
                         entryCount={entries.length}
                         onClear={onClear}
-                        onRefresh={refreshSessions}
+                        onDelete={onDelete}
+                        onRefresh={() => {
+                            void refreshSessions();
+                        }}
+                        onBack={goHome}
                     />
 
                     <FilterBar

@@ -42,4 +42,8 @@ export class TaskLogSource implements LogSource {
     getJsonlPath(sessionName: string): string {
         return jsonlPath(sessionName);
     }
+
+    async deleteSession(sessionName: string): Promise<void> {
+        await this.store.deleteSession(sessionName);
+    }
 }
