@@ -21,7 +21,10 @@ export interface ExpandResponse {
 }
 
 async function getJson<T>(path: string): Promise<T> {
-    const res = await fetch(path, { headers: { Accept: "application/json" } });
+    const res = await fetch(path, {
+        headers: { Accept: "application/json" },
+        signal: AbortSignal.timeout(10_000),
+    });
     if (!res.ok) {
         throw new Error(`${res.status} ${res.statusText}`);
     }
@@ -48,7 +51,10 @@ export const api = {
     },
 
     async clearSession(source: LogSourceId, sessionName: string): Promise<void> {
-        const res = await fetch(sessionRoute(source, sessionName), { method: "DELETE" });
+        const res = await fetch(sessionRoute(source, sessionName), {
+            method: "DELETE",
+            signal: AbortSignal.timeout(10_000),
+        });
         if (!res.ok) {
             throw new Error(`${res.status} ${res.statusText}`);
         }

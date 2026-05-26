@@ -77,7 +77,7 @@ function parseQueryParam(value: string, previous: Record<string, string> = {}): 
 
 interface OpenFlags {
     port?: string;
-    noQr?: boolean;
+    qr?: boolean;
     open?: boolean;
     query?: Record<string, string>;
 }
@@ -185,7 +185,7 @@ export function buildCommanderCommand({ config, ctx }: BuildOptions): Command {
 
             await openDashboard(ctx, {
                 port: flags.port ? parsePort(flags.port) : undefined,
-                qr: flags.noQr ? false : undefined,
+                qr: flags.qr === false ? false : undefined,
                 openBrowser: flags.open !== false,
                 query: hasQuery ? query : undefined,
             });
