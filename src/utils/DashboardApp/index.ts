@@ -51,6 +51,7 @@ import type {
 
 export type { OpenDashboardAccessOpts, PresentDashboardAccessOpts } from "./access";
 export {
+    DashboardNotReadyError,
     defaultLanDashboardUrl,
     defaultLocalDashboardUrl,
     openDashboardAccess,

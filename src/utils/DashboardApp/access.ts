@@ -79,6 +79,22 @@ export function presentDashboardAccess(opts: PresentDashboardAccessOpts): void {
     out.printlnErr(renderQr(opts.url, qrOpts));
 }
 
+/** Thrown when the URL doesn't become reachable inside the timeout. The CLI
+ *  entrypoint catches this and exits with a non-zero code; programmatic
+ *  callers (tests, MCP servers, embedded use) can catch and recover. The
+ *  prior process.exit(1) made the helper unusable outside a CLI process. */
+export class DashboardNotReadyError extends Error {
+    readonly url: string;
+    readonly detail: string;
+
+    constructor(url: string, detail: string) {
+        super(`Dashboard page not ready (${detail}).`);
+        this.name = "DashboardNotReadyError";
+        this.url = url;
+        this.detail = detail;
+    }
+}
+
 export async function openDashboardAccess(opts: OpenDashboardAccessOpts): Promise<void> {
     presentDashboardAccess(opts);
 
@@ -88,9 +104,10 @@ export async function openDashboardAccess(opts: OpenDashboardAccessOpts): Promis
 
     const ready = await waitForUrlReady(opts.url, opts.readyTimeoutMs ?? 10_000);
     if (!ready.ready) {
-        out.printlnErr(`error: Dashboard page not ready (${ready.detail ?? "timeout"}).`);
+        const detail = ready.detail ?? "timeout";
+        out.printlnErr(`error: Dashboard page not ready (${detail}).`);
         out.printlnErr(pc.dim(`  open manually: ${opts.url}`));
-        process.exit(1);
+        throw new DashboardNotReadyError(opts.url, detail);
     }
 
     await Browser.open(opts.url).catch((err) => {
