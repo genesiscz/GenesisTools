@@ -53,12 +53,26 @@ export function resolveSessionLiveStatusDisplay({
             };
         }
 
-        const killed = session.exitCode !== undefined && session.exitCode !== 0;
+        // "killed" reads as terminated-by-signal. POSIX surfaces signal-
+        // derived exits as code >= 128 (130 = SIGINT, 137 = SIGKILL, 143
+        // = SIGTERM, etc.); any code < 128 is a normal program-driven
+        // exit, including ordinary failures (lint, test, build returning
+        // 1/2). The prior `code !== 0` classifier mislabeled every failing
+        // test run as "killed", which is misleading in the dashboard UI.
+        const killed = session.exitCode !== undefined && session.exitCode >= 128;
+        const failed = session.exitCode !== undefined && session.exitCode !== 0 && !killed;
         const recency = resolveQaRecency(endedAt, now);
 
+        const phase = killed ? "killed" : "exited";
+        const stateLabel = killed
+            ? "killed"
+            : failed
+              ? `exited (${session.exitCode})`
+              : "exited";
+
         return {
-            phase: killed ? "killed" : "exited",
-            stateLabel: killed ? "killed" : "exited",
+            phase,
+            stateLabel,
             agoLabel: formatStatusAgo(endedAt, now),
             recencyTier: recency.tier,
         };
