@@ -88,6 +88,12 @@ export interface Out {
     info(msg?: unknown, ...rest: unknown[]): void;
     warn(msg?: unknown, ...rest: unknown[]): void;
     error(msg?: unknown, ...rest: unknown[]): void;
+    // Drain barrier — await this BEFORE process.exit() if you just emitted
+    // printErr / printlnErr (which are fire-and-forget). Resolves once the
+    // stderr pipe has accepted everything written so far; otherwise the
+    // OS pipe buffer can be torn down with the message still queued and
+    // the user sees an empty exit-1 instead of the diagnostic.
+    flush(): Promise<void>;
 }
 
 // Drain-safe stdout write; a rejected write is surfaced to the logger (file)
@@ -210,6 +216,20 @@ export function makeOut(component: string | null, mirror: "component" | "config"
         info: Lrest("info"),
         warn: Lrest("warn"),
         error: Lrest("error"),
+        flush: () => {
+            // Write empty strings via the same Promise-returning paths to
+            // serialize behind any pending writes. The callback only fires
+            // after the bytes are queued in the kernel pipe, which is the
+            // strongest guarantee process.stderr.write offers on a pipe.
+            return Promise.all([
+                writeStdout("").catch((err) => {
+                    logger.debug({ err }, "out.flush: stdout drain failed");
+                }),
+                writeStderr("").catch((err) => {
+                    logger.debug({ err }, "out.flush: stderr drain failed");
+                }),
+            ]).then(() => undefined);
+        },
     };
 }
 

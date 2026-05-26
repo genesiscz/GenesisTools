@@ -17,6 +17,7 @@ export async function withResolvedSession(
         await run(session);
     } catch (err) {
         out.printlnErr(`error: ${err instanceof Error ? err.message : String(err)}`);
+        await out.flush();
         process.exit(1);
     }
 }
