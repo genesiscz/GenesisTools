@@ -1,6 +1,7 @@
 import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { stripAnsi } from "@app/utils/string";
+import { inferLineLevel } from "./infer-line-level";
 import { JsonlWriter } from "./jsonl-writer";
 import type { StreamOut } from "./types";
 
@@ -77,12 +78,14 @@ export class OrderedCaptureWriter {
             for (const text of lines) {
                 this.seq += 1;
                 const outStream: StreamOut = this.mode === "pty" ? "stdout" : item.out;
+                const plain = stripAnsi(text);
                 const record = {
                     type: "line" as const,
                     seq: this.seq,
                     out: outStream,
+                    level: inferLineLevel(outStream, plain),
                     ts: Date.now(),
-                    text: stripAnsi(text),
+                    text: plain,
                 };
                 this.jsonlWriter.append(record);
                 this.appendPlainMirror(outStream, record.text);
@@ -114,12 +117,14 @@ export class OrderedCaptureWriter {
         this[partialKey] = "";
         this.seq += 1;
         const outStream: StreamOut = this.mode === "pty" ? "stdout" : out;
+        const plain = stripAnsi(partial);
         const record = {
             type: "line" as const,
             seq: this.seq,
             out: outStream,
+            level: inferLineLevel(outStream, plain),
             ts: Date.now(),
-            text: stripAnsi(partial),
+            text: plain,
         };
         this.jsonlWriter.append(record);
         this.appendPlainMirror(outStream, record.text);
