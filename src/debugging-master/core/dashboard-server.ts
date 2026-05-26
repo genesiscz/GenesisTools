@@ -3,7 +3,6 @@ import { join, resolve } from "node:path";
 import { sseBroadcaster } from "@app/debugging-master/core/sse-broadcaster";
 import type { IndexedLogEntry, LogEntry } from "@app/debugging-master/types";
 import { SafeJSON } from "@app/utils/json";
-import { uiJsonlPath } from "@app/task/lib/paths";
 import type { DashboardSession, LogSourceId } from "@app/utils/log-viewer/log-source";
 import { getAllLogSources, getLogSource } from "@app/utils/log-viewer/resolve-log-source";
 import { isLogSourceId } from "@app/utils/log-viewer/session-key";
@@ -209,13 +208,13 @@ async function handleApiRequest(req: Request, url: URL, cors: Record<string, str
             return jsonResponse({ error: "session not found" }, cors, { status: 404 });
         }
 
-        await Bun.write(path, "");
-        if (source === "task") {
-            const uiPath = uiJsonlPath(sessionName);
-            if (existsSync(uiPath)) {
-                await Bun.write(uiPath, "");
-            }
-        }
+        // Delegate to the LogSource — task wipes jsonl + ui.jsonl + the
+        // plain stdout/stderr mirrors + meta (matching what the CLI does
+        // with `tools task get --clear`). The prior code only truncated
+        // jsonl + ui.jsonl, leaving the .log mirrors with stale bytes and
+        // the persisted meta with the previous exit code — so subsequent
+        // listSessions calls still showed an "exited (code N)" state.
+        await logSource.clearSession(sessionName);
         sseBroadcaster.publishCleared(source, sessionName);
         return jsonResponse({ cleared: true, source }, cors);
     }

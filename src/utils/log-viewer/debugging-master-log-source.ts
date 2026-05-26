@@ -1,4 +1,4 @@
-import { existsSync, unlinkSync } from "node:fs";
+import { existsSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { SESSIONS_DIR } from "@app/debugging-master/core/paths";
 import { SessionManager } from "@app/debugging-master/core/session-manager";
@@ -48,6 +48,13 @@ export class DebuggingMasterLogSource implements LogSource {
             if (existsSync(path)) {
                 unlinkSync(path);
             }
+        }
+    }
+
+    async clearSession(sessionName: string): Promise<void> {
+        const path = join(SESSIONS_DIR, `${sessionName}.jsonl`);
+        if (existsSync(path)) {
+            writeFileSync(path, "");
         }
     }
 }

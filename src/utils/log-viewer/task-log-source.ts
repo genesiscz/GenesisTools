@@ -61,4 +61,8 @@ export class TaskLogSource implements LogSource {
     async deleteSession(sessionName: string): Promise<void> {
         await this.store.deleteSession(sessionName);
     }
+
+    async clearSession(sessionName: string): Promise<void> {
+        await this.store.clearSessionLogs(sessionName);
+    }
 }

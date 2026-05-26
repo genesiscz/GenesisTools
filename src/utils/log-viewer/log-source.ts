@@ -41,6 +41,11 @@ export interface LogSource {
     readEntries(sessionName: string): Promise<LogEntry[]>;
     getJsonlPath(sessionName: string): string;
     deleteSession(sessionName: string): Promise<void>;
+    /** Clear ALL log mirrors + meta for this session (task: jsonl, ui.jsonl,
+     *  stdout.log, stderr.log, meta; dbg: jsonl). Lets the dashboard /clear
+     *  endpoint match what `tools task get --clear` does locally instead of
+     *  truncating only the canonical jsonl. */
+    clearSession(sessionName: string): Promise<void>;
 }
 
 export function taskRecordToLogEntry(r: JsonlLineRecord, uiText?: string): LogEntry {
