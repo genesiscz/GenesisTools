@@ -16,7 +16,11 @@ interface DisplaySettingsContextValue {
 const DisplaySettingsContext = createContext<DisplaySettingsContextValue | null>(null);
 
 export function DisplaySettingsProvider({ children }: { children: ReactNode }): ReactElement {
-    const [settings, setSettings] = useState<DisplaySettings>(() => loadDisplaySettings());
+    const [settings, setSettings] = useState<DisplaySettings>(() => {
+        const loaded = loadDisplaySettings();
+        applyDisplaySettings(loaded);
+        return loaded;
+    });
 
     useEffect(() => {
         applyDisplaySettings(settings);

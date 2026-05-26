@@ -1,5 +1,7 @@
 import type { LogLevel } from "@app/debugging-master/types";
+import type { DashboardSession } from "@app/utils/log-viewer/log-source";
 import type { FilterState } from "@/lib/filters";
+import { SessionLiveStatus } from "@/lib/ui/SessionLiveStatus";
 import { FILTER_ORDER, LEVEL_META } from "@/lib/levels";
 import { AutoscrollToggle } from "./AutoscrollToggle";
 import { LevelTooltip } from "./LevelTooltip";
@@ -11,6 +13,8 @@ interface Props {
     hypotheses: string[];
     paused: boolean;
     sortDir: SortDir;
+    session?: DashboardSession;
+    latestLineTs?: number;
     onToggleLevel: (level: LogLevel) => void;
     onToggleAll: () => void;
     onChangeHypothesis: (h: string | "all") => void;
@@ -24,6 +28,8 @@ export function FilterBar({
     hypotheses,
     paused,
     sortDir,
+    session,
+    latestLineTs,
     onToggleLevel,
     onToggleAll,
     onChangeHypothesis,
@@ -89,19 +95,29 @@ export function FilterBar({
                     className="flex-1 min-w-[8rem] bg-black/40 border border-white/10 text-white/90 text-xs px-2.5 py-1 rounded placeholder:text-white/30 focus:outline-none focus:border-cyan-500/50 focus:ring-1 focus:ring-cyan-500/20"
                 />
 
-                <button
-                    type="button"
-                    onClick={onToggleSort}
-                    className="text-[10px] uppercase tracking-wider px-2.5 py-1 border rounded-md transition-colors text-white/70 border-white/10 hover:border-cyan-500/40 hover:text-white/95"
-                    title={
-                        sortDir === "asc"
-                            ? "showing oldest → newest (newest at bottom)"
-                            : "showing newest → oldest (newest at top)"
-                    }
-                >
-                    {sortDir === "asc" ? "↓ newest" : "↑ newest"}
-                </button>
-                <AutoscrollToggle paused={paused} onToggle={onTogglePause} />
+                <div className="ml-auto flex flex-wrap items-center gap-2">
+                    {session ? (
+                        <SessionLiveStatus
+                            session={session}
+                            latestLineTs={latestLineTs}
+                            className="dbg-ui-text-sm shrink-0"
+                        />
+                    ) : null}
+
+                    <button
+                        type="button"
+                        onClick={onToggleSort}
+                        className="dbg-ui-btn uppercase tracking-wider px-2.5 py-1 border rounded-md transition-colors text-white/70 border-white/10 hover:border-cyan-500/40 hover:text-white/95"
+                        title={
+                            sortDir === "asc"
+                                ? "showing oldest → newest (newest at bottom)"
+                                : "showing newest → oldest (newest at top)"
+                        }
+                    >
+                        {sortDir === "asc" ? "↓ newest" : "↑ newest"}
+                    </button>
+                    <AutoscrollToggle paused={paused} onToggle={onTogglePause} />
+                </div>
             </div>
         </div>
     );

@@ -41,6 +41,34 @@ function resolveSessionCwd(session: DashboardSession): string | undefined {
     return collapsePathForDisplay(rawPath);
 }
 
+export function collectSessionCwds(sessions: readonly DashboardSession[]): string[] {
+    const cwds: string[] = [];
+
+    for (const session of sessions) {
+        const cwd = resolveSessionCwd(session);
+
+        if (cwd) {
+            cwds.push(cwd);
+        }
+    }
+
+    return cwds;
+}
+
+export function collectSessionDirSources(sessions: readonly DashboardSession[]): string[] {
+    const sources: string[] = [];
+
+    for (const session of sessions) {
+        const rawPath = session.projectPath.trim();
+
+        if (rawPath && isLikelyDirectoryPath(rawPath)) {
+            sources.push(rawPath);
+        }
+    }
+
+    return sources;
+}
+
 export function formatSessionHeaderParts(session: DashboardSession): SessionHeaderParts {
     const command = session.command?.trim() || undefined;
     const cwd = resolveSessionCwd(session);

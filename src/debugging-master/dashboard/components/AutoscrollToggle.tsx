@@ -23,7 +23,7 @@ export function AutoscrollToggle({ paused, onToggle, className = "" }: Props): R
         <button
             type="button"
             onClick={onToggle}
-            className={`inline-flex items-center gap-1.5 text-[10px] uppercase tracking-wider px-2.5 py-1 border rounded-md transition-colors ${className}`}
+            className={`dbg-ui-btn inline-flex items-center gap-1.5 uppercase tracking-wider px-2.5 py-1 border rounded-md transition-colors ${className}`}
             style={style}
             title={paused ? "click to resume autoscroll" : "click to pause autoscroll"}
         >
