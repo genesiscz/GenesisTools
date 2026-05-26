@@ -1,12 +1,6 @@
 import { stripAnsi } from "@app/utils/string";
 import type { JsonlLineLevel, StreamOut } from "./types";
 
-const SEVERITY: Record<JsonlLineLevel, number> = {
-    info: 0,
-    warn: 1,
-    error: 2,
-};
-
 const ERROR_LINE =
     /^(?:Error|ERROR|Fatal|FATAL|Exception|Unhandled|Uncaught)\b|\bError:\s|^ERR!|^npm ERR!|\[error\]|^✖|^■/i;
 const ERROR_STACK = /^\s+at (?:[\w./<>[\]$]+|\(.+\))/;
@@ -35,29 +29,6 @@ function inferLevelFromText(text: string): JsonlLineLevel | null {
     return null;
 }
 
-function streamBaseline(out: StreamOut): JsonlLineLevel {
-    if (out === "stderr") {
-        return "error";
-    }
-
-    return "info";
-}
-
-function maxLevel(a: JsonlLineLevel, b: JsonlLineLevel): JsonlLineLevel {
-    if (SEVERITY[a] >= SEVERITY[b]) {
-        return a;
-    }
-
-    return b;
-}
-
-export function inferLineLevel(out: StreamOut, text: string): JsonlLineLevel {
-    const baseline = streamBaseline(out);
-    const fromText = inferLevelFromText(text);
-
-    if (!fromText) {
-        return baseline;
-    }
-
-    return maxLevel(baseline, fromText);
+export function inferLineLevel(_out: StreamOut, text: string): JsonlLineLevel {
+    return inferLevelFromText(text) ?? "info";
 }

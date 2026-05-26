@@ -2,8 +2,26 @@ import { describe, expect, it } from "bun:test";
 import { inferLineLevel } from "./infer-line-level";
 
 describe("inferLineLevel", () => {
-    it("keeps stderr stream at error when text is neutral", () => {
-        expect(inferLineLevel("stderr", "plain message\n")).toBe("error");
+    it("neutral stderr stays info", () => {
+        expect(inferLineLevel("stderr", "plain message\n")).toBe("info");
+    });
+
+    it("infers warn from stderr WARN text", () => {
+        expect(inferLineLevel("stderr", "▲ WARN  Fast Refresh reload batch\r")).toBe("warn");
+        expect(inferLineLevel("stderr", " WARN  Ignoring DevTools app debug target\r")).toBe("warn");
+    });
+
+    it("keeps stderr INFO lines as info", () => {
+        expect(inferLineLevel("stderr", "INFO  EVAL2_HUNT_TOKEN=HUNT-EVAL2-1779756173\r")).toBe("info");
+    });
+
+    it("infers error from stderr error text", () => {
+        expect(inferLineLevel("stderr", "Error: TransformError: something failed\r")).toBe("error");
+        expect(inferLineLevel("stderr", "npm ERR! code ELIFECYCLE\r")).toBe("error");
+    });
+
+    it("infers error from stderr stack frames", () => {
+        expect(inferLineLevel("stderr", "    at deserialize (node:v8:468:7)\r")).toBe("error");
     });
 
     it("bumps PTY stdout Error lines to error", () => {
