@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { filterLineRecords, readJsonlFile } from "@app/utils/log-session/jsonl-reader";
-import { jsonlPath } from "./paths";
+import { jsonlPath } from "@app/task/lib/paths";
 
 const originalHome = process.env.GENESIS_TOOLS_HOME;
 const dirs: string[] = [];

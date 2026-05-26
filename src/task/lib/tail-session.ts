@@ -3,10 +3,10 @@ import { FileTailer } from "@app/utils/fs/file-tailer";
 import { SafeJSON } from "@app/utils/json";
 import { filterLineRecords, readJsonlFile } from "@app/utils/log-session/jsonl-reader";
 import type { JsonlExitRecord, JsonlLineRecord, JsonlRecord } from "@app/utils/log-session/types";
-import type { LogQueryOpts } from "../types";
-import { printTailStatus } from "./log-hints";
-import { queryLogs } from "./log-query";
-import { jsonlPath } from "./paths";
+import type { LogQueryOpts } from "@app/task/types";
+import { printTailStatus } from "@app/task/lib/log-hints";
+import { queryLogs } from "@app/task/lib/log-query";
+import { jsonlPath } from "@app/task/lib/paths";
 
 function matchesFilters(line: JsonlLineRecord, opts: LogQueryOpts, seenSeq: Set<number>): boolean {
     if (line.type !== "line") {

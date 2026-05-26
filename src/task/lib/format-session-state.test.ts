@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import type { TaskSessionMeta } from "../types";
-import { formatSessionState } from "./format-session-state";
+import type { TaskSessionMeta } from "@app/task/types";
+import { formatSessionState } from "@app/task/lib/format-session-state";
 
 describe("formatSessionState", () => {
     it("returns unknown when meta is null (eval2 bug #3)", () => {
@@ -15,6 +15,7 @@ describe("formatSessionState", () => {
             cwd: "/tmp",
             createdAt: Date.now() - 5000,
             lastActivityAt: Date.now(),
+            startedAt: new Date(Date.now() - 5000).toISOString(),
             exitCode: 42,
             durationMs: 5000,
         };
@@ -30,6 +31,7 @@ describe("formatSessionState", () => {
             cwd: "/tmp",
             createdAt: Date.now() - 60_000,
             lastActivityAt: Date.now(),
+            startedAt: new Date(Date.now() - 60_000).toISOString(),
         };
 
         expect(formatSessionState(meta)).toMatch(/^active \(running 1m \d+s\)$/);

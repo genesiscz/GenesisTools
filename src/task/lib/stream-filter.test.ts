@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { resolveStreamFilter } from "./stream-filter";
+import { resolveStreamFilter } from "@app/task/lib/stream-filter";
 
 describe("resolveStreamFilter", () => {
     it("defaults to both streams", () => {

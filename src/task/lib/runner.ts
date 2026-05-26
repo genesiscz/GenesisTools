@@ -1,9 +1,9 @@
 import { logger } from "@app/logger";
 import { JsonlWriter } from "@app/utils/log-session/jsonl-writer";
 import { OrderedCaptureWriter } from "@app/utils/log-session/ordered-capture-writer";
-import type { RunTaskOptions, RunTaskResult, ResolvedRunSession } from "../types";
-import { jsonlPath, sessionFilePaths, stderrLogPath, stdoutLogPath } from "./paths";
-import { TaskSessionStore } from "./session-store";
+import type { RunTaskOptions, RunTaskResult, ResolvedRunSession } from "@app/task/types";
+import { jsonlPath, sessionFilePaths, stderrLogPath, stdoutLogPath } from "@app/task/lib/paths";
+import { TaskSessionStore } from "@app/task/lib/session-store";
 
 const log = logger.child({ component: "task:runner" });
 

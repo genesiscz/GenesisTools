@@ -2,10 +2,10 @@ import { out } from "@app/logger";
 import { isInteractive, suggestCommand } from "@app/utils/cli/executor";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
-import { printRunBanner, printRunExitSummary } from "../lib/banner";
-import { resolveRunMode } from "../lib/run-mode";
-import { runTask } from "../lib/runner";
-import { TaskSessionStore } from "../lib/session-store";
+import { printRunBanner, printRunExitSummary } from "@app/task/lib/banner";
+import { resolveRunMode } from "@app/task/lib/run-mode";
+import { runTask } from "@app/task/lib/runner";
+import { TaskSessionStore } from "@app/task/lib/session-store";
 
 export function registerRunCommand(program: Command): void {
     program

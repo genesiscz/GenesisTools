@@ -1,4 +1,6 @@
-export function formatSessionDatetimeSuffix(date = new Date(), includeMs = false): string {
+const COLLISION_SUFFIX = /^\d{4}-\d{2}-\d{2}_\d{2}:\d{2}:\d{2}$/;
+
+export function formatSessionDatetimeSuffix(date = new Date()): string {
     const pad = (value: number, length = 2): string => {
         return String(value).padStart(length, "0");
     };
@@ -9,16 +11,23 @@ export function formatSessionDatetimeSuffix(date = new Date(), includeMs = false
     const h = pad(date.getHours());
     const mi = pad(date.getMinutes());
     const s = pad(date.getSeconds());
-    const base = `${y}-${mo}-${d}_${h}-${mi}-${s}`;
 
-    if (!includeMs) {
-        return base;
-    }
-
-    const ms = pad(date.getMilliseconds(), 3);
-    return `${base}-${ms}`;
+    return `${y}-${mo}-${d}_${h}:${mi}:${s}`;
 }
 
-export function buildTimestampedSessionName(base: string, date = new Date(), includeMs = false): string {
-    return `${base}_${formatSessionDatetimeSuffix(date, includeMs)}`;
+export function buildTimestampedSessionName(base: string, date = new Date()): string {
+    return `${base}-${formatSessionDatetimeSuffix(date)}`;
+}
+
+export function isRelatedSessionName(base: string, candidate: string): boolean {
+    if (candidate === base) {
+        return true;
+    }
+
+    if (!candidate.startsWith(`${base}-`)) {
+        return false;
+    }
+
+    const suffix = candidate.slice(base.length + 1);
+    return COLLISION_SUFFIX.test(suffix);
 }

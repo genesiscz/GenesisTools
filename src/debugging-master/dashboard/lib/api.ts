@@ -33,7 +33,7 @@ async function getJson<T>(path: string): Promise<T> {
 }
 
 export function sessionRoute(source: LogSourceId, name: string): string {
-    return `/api/sessions/${source}/${name}`;
+    return `/api/sessions/${source}/${encodeURIComponent(name)}`;
 }
 
 export const api = {

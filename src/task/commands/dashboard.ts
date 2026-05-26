@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { runBuild as runDbgDashboardBuild } from "@app/debugging-master/commands/dashboard";
 import { logDashboardApp } from "@app/debugging-master/lib/log-dashboard-app";
 import { out } from "@app/logger";
@@ -7,7 +8,7 @@ import { dashboardUrlWithQuery } from "@app/utils/DashboardApp/lifecycle";
 import type { Command } from "commander";
 import pc from "picocolors";
 
-const DASHBOARD_ROOT = resolve(import.meta.dir, "..", "..", "debugging-master", "dashboard");
+const DASHBOARD_ROOT = fileURLToPath(new URL("../../debugging-master/dashboard", import.meta.url));
 
 export function registerDashboardCommand(program: Command): void {
     const dashboard = program.command("dashboard").description("Build or open the unified log dashboard");
@@ -47,7 +48,7 @@ export function registerDashboardCommand(program: Command): void {
 }
 
 export async function ensureTaskDashboardBuilt(): Promise<void> {
-    const distIndex = resolve(DASHBOARD_ROOT, "dist", "index.html");
+    const distIndex = join(DASHBOARD_ROOT, "dist", "index.html");
     if (existsSync(distIndex)) {
         return;
     }

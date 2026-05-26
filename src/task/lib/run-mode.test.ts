@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { resolveRunMode } from "./run-mode";
+import { resolveRunMode } from "@app/task/lib/run-mode";
 
 describe("resolveRunMode", () => {
     it("honours commander tty=false from --no-tty", () => {

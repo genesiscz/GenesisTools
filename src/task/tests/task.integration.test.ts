@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readTaskJsonl, runTaskCapture } from "../lib/test-harness";
+import { readTaskJsonl, runTaskCapture } from "@app/task/lib/test-harness";
 
 const dirs: string[] = [];
 afterEach(() => {

@@ -1,6 +1,6 @@
 import type { Command } from "commander";
-import { getSessionInfo } from "../lib/get-session-info";
-import { withResolvedSession } from "../lib/with-resolved-session";
+import { getSessionInfo } from "@app/task/lib/get-session-info";
+import { withResolvedSession } from "@app/task/lib/with-resolved-session";
 
 export function registerGetCommand(program: Command): void {
     program

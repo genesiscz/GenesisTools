@@ -2,7 +2,7 @@ import { out } from "@app/logger";
 import { isInteractive, suggestCommand } from "@app/utils/cli/executor";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
-import { TaskSessionStore } from "../lib/session-store";
+import { TaskSessionStore } from "@app/task/lib/session-store";
 
 export function registerCleanCommand(program: Command): void {
     program

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { buildLogQueryOpts } from "./build-log-query-opts";
+import { buildLogQueryOpts } from "@app/task/lib/build-log-query-opts";
 
 describe("buildLogQueryOpts", () => {
     it("defaults to 50 lines when --all is not set (eval2 bug #7 baseline)", () => {

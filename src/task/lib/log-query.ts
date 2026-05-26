@@ -9,9 +9,9 @@ import {
     readJsonlFile,
 } from "@app/utils/log-session/jsonl-reader";
 import type { JsonlLineRecord } from "@app/utils/log-session/types";
-import type { LogQueryOpts } from "../types";
-import { printLogNavigationHints } from "./log-hints";
-import { jsonlPath } from "./paths";
+import type { LogQueryOpts } from "@app/task/types";
+import { printLogNavigationHints } from "@app/task/lib/log-hints";
+import { jsonlPath } from "@app/task/lib/paths";
 
 function applyGrep(lines: JsonlLineRecord[], pattern?: string): JsonlLineRecord[] {
     if (!pattern) {

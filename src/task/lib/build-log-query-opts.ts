@@ -1,6 +1,6 @@
-import { resolveStreamFilter } from "../lib/stream-filter";
-import { tailOrQuery } from "../lib/tail-session";
-import type { LogOutputFormat, LogQueryOpts } from "../types";
+import { resolveStreamFilter } from "@app/task/lib/stream-filter";
+import { tailOrQuery } from "@app/task/lib/tail-session";
+import type { LogOutputFormat, LogQueryOpts } from "@app/task/types";
 
 export function buildLogQueryOpts(
     session: string,
