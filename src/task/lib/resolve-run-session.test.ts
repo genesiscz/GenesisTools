@@ -56,6 +56,6 @@ describe("resolveRunSession", () => {
         expect(resolved?.requested).toBe("metro");
         expect(resolved?.renamed).toBe(true);
         expect(resolved?.reuse).toBe("prefix");
-        expect(resolved?.session).toMatch(/^metro-\d{4}-\d{2}-\d{2}_\d{2}:\d{2}:\d{2}$/);
+        expect(resolved?.session).toMatch(/^metro-\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$/);
     });
 });
