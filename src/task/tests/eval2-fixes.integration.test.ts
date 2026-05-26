@@ -150,7 +150,13 @@ describe("eval2 bug fixes integration", () => {
         expect(result.stderr).toContain("Session exited (code 42)");
     }, 10_000);
 
-    it("collision suffix uses -YYYY-MM-dd_HH:mm:ss format (bug #6)", async () => {
+    it("explicit --session reuses existing session in non-interactive mode (bug #6 — current contract)", async () => {
+        // Original eval2 bug #6 tested that a second run with the same explicit
+        // --session got a colon-format collision suffix. That behavior changed
+        // with the session-reuse feature: explicit --session now reuse-continues
+        // instead of suffix-colliding. The dash-format suffix (NTFS-safe) is
+        // covered by the unit tests in session-name.test.ts and
+        // resolve-run-session.test.ts; here we assert the new reuse contract.
         const homeDir = setupHome();
         const session = `eval2-dup-${Date.now()}`;
 
@@ -160,9 +166,8 @@ describe("eval2 bug fixes integration", () => {
 
         const second = await runTaskCli(["run", "--session", session, "--no-tty", "--", "echo", "two"], { homeDir });
         expect(second.exitCode).toBe(0);
-        expect(second.stderr).toMatch(
-            new RegExp(`task-session-id: ${session.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}-\\d{4}-\\d{2}-\\d{2}_\\d{2}:\\d{2}:\\d{2}`)
-        );
+        expect(second.stderr).toContain(`warn: reusing existing session "${session}" (append mode)`);
+        expect(second.stderr).not.toMatch(/_\d{2}:\d{2}:\d{2}/); // never colon-format
     }, 30_000);
 });
 

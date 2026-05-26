@@ -113,8 +113,18 @@ async function runPipeMode(opts: RunTaskOptions, writer: OrderedCaptureWriter): 
     const drainAbort = new AbortController();
     const streamsDone = multiplexPipeStreams(proc.stdout, proc.stderr, writer, drainAbort.signal);
 
+    // Forward our SIGINT to the child. In an interactive terminal the kernel
+    // signals the whole foreground process group so this is redundant, but
+    // when the wrapper is signaled out-of-band (`kill -INT <wrapper-pid>`
+    // from a supervisor, an orphaned/reparented child, etc.) `proc.exited`
+    // would otherwise wait forever while we sit holding the JSONL/meta lock.
     const onSigInt = (): void => {
         drainAbort.abort();
+        try {
+            proc.kill("SIGINT");
+        } catch (err) {
+            log.debug({ err, pid: proc.pid }, "forwarding SIGINT to child failed");
+        }
     };
 
     process.on("SIGINT", onSigInt);
@@ -162,33 +172,44 @@ async function runPtyMode(opts: RunTaskOptions, writer: OrderedCaptureWriter): P
         }
     };
 
+    const stdinHandler = (chunk: Buffer): void => {
+        proc.terminal?.write(chunk);
+    };
+
     process.stdout.on("resize", onResize);
 
-    if (process.stdin.isTTY && proc.terminal) {
+    const ownsRawMode = process.stdin.isTTY && proc.terminal;
+    if (ownsRawMode) {
         process.stdin.setRawMode?.(true);
         process.stdin.resume();
-        process.stdin.on("data", (chunk: Buffer) => {
-            proc.terminal?.write(chunk);
-        });
+        process.stdin.on("data", stdinHandler);
     }
 
-    const exitCode = await proc.exited;
-    process.stdout.off("resize", onResize);
+    // Wrap in try/finally so any throw (decoder error, terminal close, etc.)
+    // still restores cooked-mode stdin and detaches the listener — otherwise
+    // the user's shell is left in raw mode and a stray `data` handler stays
+    // attached, accumulating across runs.
+    let exitCode = 1;
+    try {
+        exitCode = await proc.exited;
+    } finally {
+        process.stdout.off("resize", onResize);
+        if (ownsRawMode) {
+            process.stdin.off("data", stdinHandler);
+            process.stdin.setRawMode?.(false);
+            process.stdin.pause();
+        }
 
-    if (process.stdin.isTTY) {
-        process.stdin.setRawMode?.(false);
-        process.stdin.pause();
+        proc.terminal?.close();
+
+        const ptyTail = ptyDecoder.decode();
+        if (ptyTail) {
+            process.stdout.write(ptyTail);
+            writer.enqueue("stdout", ptyTail);
+        }
+
+        await writer.flush();
     }
-
-    proc.terminal?.close();
-
-    const ptyTail = ptyDecoder.decode();
-    if (ptyTail) {
-        process.stdout.write(ptyTail);
-        writer.enqueue("stdout", ptyTail);
-    }
-
-    await writer.flush();
 
     return exitCode;
 }
@@ -222,15 +243,24 @@ export async function runTask(opts: RunTaskOptions): Promise<RunTaskResult> {
     const session = resolved.session;
     const paths = sessionFilePaths(session);
     const jsonl = new JsonlWriter(paths.jsonl);
-    jsonl.append({
-        type: "meta",
-        session,
-        requestedAs: resolved.renamed ? resolved.requested : undefined,
-        command: opts.command.join(" "),
-        mode: opts.mode,
-        cwd,
-        startedAt: new Date().toISOString(),
-    });
+
+    // reuse-continue preserves the original meta record at the top of the
+    // jsonl (only the `exit` record was trimmed in prepareSessionReuseContinue).
+    // Appending a fresh meta would leave [old meta][lines][new meta][new lines]
+    // — and downstream `records.find(meta)` always returns the FIRST hit, so
+    // the dashboard listing + fallback meta synthesis would show the original
+    // command/cwd/mode forever. Skip the append in that case.
+    if (resolved.reuse !== "reuse-continue") {
+        jsonl.append({
+            type: "meta",
+            session,
+            requestedAs: resolved.renamed ? resolved.requested : undefined,
+            command: opts.command.join(" "),
+            mode: opts.mode,
+            cwd,
+            startedAt: new Date().toISOString(),
+        });
+    }
 
     const initialSeq =
         resolved.reuse === "reuse-continue" && resolved.previousLastSeq !== undefined
