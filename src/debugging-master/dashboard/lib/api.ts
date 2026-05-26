@@ -46,6 +46,20 @@ export const api = {
         return getJson<EntriesResponse>(`${sessionRoute(source, sessionName)}/entries?${params.toString()}`);
     },
 
+    async getRecentEntries(
+        source: LogSourceId,
+        sessionName: string,
+        limit = 2000
+    ): Promise<EntriesResponse> {
+        const probe = await api.getEntries(source, sessionName, 0, 1);
+
+        if (probe.total <= limit) {
+            return api.getEntries(source, sessionName, 0, probe.total);
+        }
+
+        return api.getEntries(source, sessionName, probe.total - limit, limit);
+    },
+
     expand(source: LogSourceId, sessionName: string, refId: string): Promise<ExpandResponse> {
         return getJson<ExpandResponse>(`${sessionRoute(source, sessionName)}/expand/${refId}`);
     },

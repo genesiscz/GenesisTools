@@ -1,6 +1,7 @@
 import type { LogLevel } from "@app/debugging-master/types";
 import type { FilterState } from "@/lib/filters";
 import { FILTER_ORDER, LEVEL_META } from "@/lib/levels";
+import { AutoscrollToggle } from "./AutoscrollToggle";
 import { LevelTooltip } from "./LevelTooltip";
 
 export type SortDir = "asc" | "desc";
@@ -100,28 +101,7 @@ export function FilterBar({
                 >
                     {sortDir === "asc" ? "↓ newest" : "↑ newest"}
                 </button>
-                <button
-                    type="button"
-                    onClick={onTogglePause}
-                    className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-wider px-2.5 py-1 border rounded-md transition-colors"
-                    style={
-                        paused
-                            ? {
-                                  color: "var(--lvl-error)",
-                                  borderColor: "rgba(244,63,94,0.45)",
-                                  background: "rgba(244,63,94,0.08)",
-                              }
-                            : {
-                                  color: "var(--lvl-checkpoint)",
-                                  borderColor: "rgba(16,185,129,0.45)",
-                                  background: "rgba(16,185,129,0.08)",
-                              }
-                    }
-                    title={paused ? "click to resume autoscroll" : "click to pause autoscroll"}
-                >
-                    <span className={paused ? "status-dot status-down" : "status-dot status-live"} />
-                    {paused ? "paused" : "autoscroll"}
-                </button>
+                <AutoscrollToggle paused={paused} onToggle={onTogglePause} />
             </div>
         </div>
     );

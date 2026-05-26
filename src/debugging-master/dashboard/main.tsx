@@ -1,6 +1,7 @@
 import { StrictMode } from "react";
 import ReactDOM from "react-dom/client";
 
+import "react-mosaic-component/react-mosaic-component.css";
 import "./styles.css";
 import { App } from "./App";
 

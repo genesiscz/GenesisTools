@@ -62,7 +62,7 @@ function EntryListImpl({
     }
 
     return (
-        <div ref={ref} className="flex-1 overflow-y-auto overflow-x-hidden divide-y divide-white/4">
+        <div ref={ref} className="flex-1 overflow-y-auto overflow-x-hidden divide-y divide-white/4 dbg-log-text font-mono">
             {entries.map((e) => (
                 <EntryRow
                     key={e.index}

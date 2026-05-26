@@ -7,6 +7,7 @@ import { EntryList } from "@/components/EntryList";
 import { FilterBar, type SortDir } from "@/components/FilterBar";
 import { Header } from "@/components/Header";
 import { SessionsHome } from "@/components/SessionsHome";
+import { DisplaySettingsProvider } from "@/components/DisplaySettingsProvider";
 import { api } from "@/lib/api";
 import { EntriesContext } from "@/lib/entries-context";
 import { applyFilter, collectHypotheses, defaultFilterState, type FilterState } from "@/lib/filters";
@@ -35,7 +36,7 @@ function readFromUrl(): { view: AppView; source: LogSourceId | null; session: st
     return { view: "home", source: null, session: null };
 }
 
-function writeToUrl(view: AppView, source: LogSourceId | null, name: string | null): void {
+function applyUrl(view: AppView, source: LogSourceId | null, name: string | null, mode: "push" | "replace"): void {
     if (typeof window === "undefined") {
         return;
     }
@@ -50,7 +51,15 @@ function writeToUrl(view: AppView, source: LogSourceId | null, name: string | nu
         url.searchParams.delete("session");
     }
 
-    window.history.replaceState(window.history.state, "", url);
+    const state = { view, source, session: name };
+    const href = `${url.pathname}${url.search}${url.hash}`;
+
+    if (mode === "push") {
+        window.history.pushState(state, "", href);
+        return;
+    }
+
+    window.history.replaceState(state, "", href);
 }
 
 export function App(): React.ReactElement {
@@ -89,14 +98,15 @@ export function App(): React.ReactElement {
         setView("home");
         setActiveSource(null);
         setActiveSession(null);
-        writeToUrl("home", null, null);
+        applyUrl("home", null, null, "replace");
     }, []);
 
     const openSession = useCallback((source: LogSourceId, name: string) => {
+        const fromHome = activeRef.current.view === "home";
         setView("detail");
         setActiveSource(source);
         setActiveSession(name);
-        writeToUrl("detail", source, name);
+        applyUrl("detail", source, name, fromHome ? "push" : "replace");
     }, []);
 
     const refreshSessions = useCallback(async () => {
@@ -125,7 +135,7 @@ export function App(): React.ReactElement {
                 if (first) {
                     setActiveSource(first.source);
                     setActiveSession(first.name);
-                    writeToUrl("detail", first.source, first.name);
+                    applyUrl("detail", first.source, first.name, "replace");
                     return;
                 }
 
@@ -356,74 +366,74 @@ export function App(): React.ReactElement {
         goHome();
     }, [activeSource, activeSession, refreshSessions, goHome]);
 
-    if (view === "home") {
-        return (
-            <TooltipProvider>
-                <SessionsHome
-                    sessions={sessions}
-                    status={status}
-                    onRefresh={refreshSessions}
-                    onOpenSession={openSession}
-                    onStatus={setStatus}
-                />
-            </TooltipProvider>
-        );
-    }
-
     return (
-        <TooltipProvider>
-            <EntriesContext.Provider value={entries}>
-                <div className="h-full flex flex-col relative">
-                    <Header
-                        sessions={sessions}
-                        activeSource={activeSource}
-                        activeSession={activeSession}
-                        onSelectSession={(source, name) => {
-                            if (isLogSourceId(source)) {
-                                openSession(source, name);
-                            }
-                        }}
-                        status={status}
-                        entryCount={entries.length}
-                        onClear={onClear}
-                        onDelete={onDelete}
-                        onRefresh={() => {
-                            void refreshSessions();
-                        }}
-                        onBack={goHome}
-                    />
+        <DisplaySettingsProvider>
+            <TooltipProvider>
+                {view === "home" ? (
+                    <div className="h-full min-h-0 flex flex-col">
+                        <SessionsHome
+                            sessions={sessions}
+                            status={status}
+                            onRefresh={refreshSessions}
+                            onOpenSession={openSession}
+                            onStatus={setStatus}
+                        />
+                    </div>
+                ) : (
+                    <EntriesContext.Provider value={entries}>
+                        <div className="h-full flex flex-col relative">
+                            <Header
+                                sessions={sessions}
+                                activeSource={activeSource}
+                                activeSession={activeSession}
+                                onSelectSession={(source, name) => {
+                                    if (isLogSourceId(source)) {
+                                        openSession(source, name);
+                                    }
+                                }}
+                                status={status}
+                                entryCount={entries.length}
+                                onClear={onClear}
+                                onDelete={onDelete}
+                                onRefresh={() => {
+                                    void refreshSessions();
+                                }}
+                                onBack={goHome}
+                            />
 
-                    <FilterBar
-                        state={filterState}
-                        hypotheses={hypotheses}
-                        paused={paused}
-                        sortDir={sortDir}
-                        onToggleLevel={onToggleLevel}
-                        onToggleAll={onToggleAll}
-                        onChangeHypothesis={onChangeHypothesis}
-                        onChangeSearch={onChangeSearch}
-                        onTogglePause={onTogglePause}
-                        onToggleSort={onToggleSort}
-                    />
+                            <FilterBar
+                                state={filterState}
+                                hypotheses={hypotheses}
+                                paused={paused}
+                                sortDir={sortDir}
+                                onToggleLevel={onToggleLevel}
+                                onToggleAll={onToggleAll}
+                                onChangeHypothesis={onChangeHypothesis}
+                                onChangeSearch={onChangeSearch}
+                                onTogglePause={onTogglePause}
+                                onToggleSort={onToggleSort}
+                            />
 
-                    <EntryList
-                        entries={displayed}
-                        expandedIds={expandedIds}
-                        freshIds={freshIds}
-                        autoScroll={!paused}
-                        sortDir={sortDir}
-                        onToggle={onToggleExpand}
-                        onFilterHypothesis={onChangeHypothesis}
-                    />
+                            <EntryList
+                                entries={displayed}
+                                expandedIds={expandedIds}
+                                freshIds={freshIds}
+                                autoScroll={!paused}
+                                sortDir={sortDir}
+                                onToggle={onToggleExpand}
+                                onFilterHypothesis={onChangeHypothesis}
+                            />
 
-                    <footer className="px-3 sm:px-5 py-1.5 border-t border-white/8 bg-black/30 text-[10px] text-white/40 flex items-center justify-between">
-                        <span>
-                            {filtered.length} / {entries.length}
-                        </span>
-                        <span className="text-white/25">dbg + task · live</span>
-                    </footer>
-                </div>
-            </EntriesContext.Provider>
-        </TooltipProvider>
+                            <footer className="px-3 sm:px-5 py-1.5 border-t border-white/8 bg-black/30 text-[10px] text-white/40 flex items-center justify-between">
+                                <span>
+                                    {filtered.length} / {entries.length}
+                                </span>
+                                <span className="text-white/25">dbg + task · live</span>
+                            </footer>
+                        </div>
+                    </EntriesContext.Provider>
+                )}
+            </TooltipProvider>
+        </DisplaySettingsProvider>
     );
 }
