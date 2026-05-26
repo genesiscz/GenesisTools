@@ -30,6 +30,8 @@ export interface DashboardSession {
     entryCount?: number;
     state: DashboardSessionState;
     stateLabel: string;
+    exitCode?: number;
+    exitedAt?: number;
 }
 
 export interface LogSource {
