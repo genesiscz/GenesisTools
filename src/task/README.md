@@ -95,6 +95,23 @@ tools task logs --session metro --from-seq 1 --jsonl | rg error
 tools task logs --session metro --head 5 --tail 5 --raw
 ```
 
+## Wait for a session
+
+Block on session completion or a pattern. Replaces the `until grep -qE …; sleep 5; done` polling idiom.
+
+```bash
+# Wait for dev server "ready" sentinel, max 60s
+tools task wait --session metro --exit-on-match "Bundled" --timeout 60
+
+# Wait for session to exit, propagate exit code
+tools task wait --session jest --propagate-exit
+
+# Or follow live and exit with the child's code when the session ends
+tools task tail --session jest --follow --propagate-exit
+```
+
+Exit codes: 0 on match or normal exit (without `--propagate-exit`), child's code with `--propagate-exit`, 124 on timeout.
+
 ## vs shell `tee`
 
 Use `task` when you need ordered stdout/stderr interleaving, seq navigation, agent-friendly `get`, and dashboard integration. Use plain `tee` when you only need a single combined file.

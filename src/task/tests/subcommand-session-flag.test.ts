@@ -9,6 +9,6 @@ function help(subcommand: string): string {
     return (r.stdout ?? "") + (r.stderr ?? "");
 }
 
-test.each(["get", "logs", "tail", "clean"])("--session listed in 'tools task %s --help' (B4)", (sub) => {
+test.each(["get", "logs", "tail", "clean", "wait"])("--session listed in 'tools task %s --help' (B4)", (sub) => {
     expect(help(sub)).toContain("--session");
 });
