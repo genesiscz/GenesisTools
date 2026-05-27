@@ -25,7 +25,7 @@ test("tail --follow --exit-on-match PATTERN exits on first match (F2)", async ()
     );
     producer.unref();
 
-    await new Promise((r) => setTimeout(r, 200));
+    await new Promise((r) => setTimeout(r, 800));
 
     const waitStart = Date.now();
     const watcher = spawnSync(
@@ -63,7 +63,7 @@ test("tail --follow --propagate-exit propagates session exit code (F3)", async (
     );
     producer.unref();
 
-    await new Promise((r) => setTimeout(r, 200));
+    await new Promise((r) => setTimeout(r, 800));
 
     const watcher = spawnSync(
         "bun",

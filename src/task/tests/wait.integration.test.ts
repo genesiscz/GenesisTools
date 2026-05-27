@@ -23,7 +23,7 @@ test("wait --exit-on-match exits 0 on first pattern match (F1)", async () => {
         { detached: true, stdio: "ignore" }
     ).unref();
 
-    await new Promise((r) => setTimeout(r, 200));
+    await new Promise((r) => setTimeout(r, 800));
 
     const start = Date.now();
     const r = spawnSync(
@@ -46,7 +46,7 @@ test("wait --timeout exits non-zero on deadline (F1)", async () => {
         { detached: true, stdio: "ignore" }
     ).unref();
 
-    await new Promise((r) => setTimeout(r, 200));
+    await new Promise((r) => setTimeout(r, 800));
 
     const r = spawnSync(
         "bun",
@@ -66,7 +66,7 @@ test("wait without --exit-on-match waits for session exit + --propagate-exit (F1
         { detached: true, stdio: "ignore" }
     ).unref();
 
-    await new Promise((r) => setTimeout(r, 200));
+    await new Promise((r) => setTimeout(r, 800));
 
     const r = spawnSync(
         "bun",
