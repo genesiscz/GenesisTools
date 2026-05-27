@@ -35,6 +35,13 @@ export function suggestLogsFollow(session: string): string {
     });
 }
 
+export function suggestLogsAllGrep(session: string): string {
+    return suggestCommand("tools task", {
+        replaceCommand: ["logs", "--session", session, "--grep", "PATTERN"],
+        keepFlags: [],
+    });
+}
+
 export function suggestClearOlderThanSeq(session: string, seq: number): string {
     return suggestCommand("tools task", {
         replaceCommand: ["get", "--session", session, "--clear-older-than-seq", String(seq)],
