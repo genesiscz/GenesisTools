@@ -1,7 +1,7 @@
-import { existsSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, unlinkSync, writeFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { SESSIONS_DIR } from "@app/debugging-master/core/paths";
-import { SessionManager } from "@app/debugging-master/core/session-manager";
+import { countNewlines, SessionManager } from "@app/debugging-master/core/session-manager";
 import type { LogEntry } from "@app/debugging-master/types";
 import type { LogSource, LogSourceSession } from "./log-source";
 
@@ -16,14 +16,21 @@ export class DebuggingMasterLogSource implements LogSource {
 
         for (const name of names) {
             const meta = await this.manager.getSessionMeta(name);
-            const entries = await this.manager.readEntries(name);
+            const jsonlPath = join(SESSIONS_DIR, `${name}.jsonl`);
+            let entryCount = 0;
+
+            if (existsSync(jsonlPath)) {
+                const stat = statSync(jsonlPath);
+                entryCount = stat.size > 0 ? countNewlines(jsonlPath, stat.size) : 0;
+            }
+
             sessions.push({
                 source: this.id,
                 name,
                 badge: this.badge,
-                jsonlPath: join(SESSIONS_DIR, `${name}.jsonl`),
+                jsonlPath,
                 metaPath: join(SESSIONS_DIR, `${name}.meta.json`),
-                entryCount: entries.length,
+                entryCount,
                 projectPath: meta?.projectPath,
                 createdAt: meta?.createdAt,
                 lastActivityAt: meta?.lastActivityAt,

@@ -66,6 +66,10 @@ export class FileWatcher {
         return this.offset;
     }
 
+    seek(offset: number): void {
+        this.offset = Math.max(0, offset);
+    }
+
     isActive(thresholdMs = 10_000): boolean {
         try {
             const mtime = statSync(this.options.filePath).mtimeMs;

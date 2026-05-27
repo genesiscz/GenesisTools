@@ -18,6 +18,13 @@ describe("log-line-display", () => {
         expect(filterDisplayLogLines(lines)).toEqual([{ msg: "ok" }, { msg: "next" }]);
     });
 
+    it("treats dbg dump labels as visible when msg is empty", () => {
+        const entry = { level: "dump", label: "authAuthenticateSaga-tick", msg: "" };
+        expect(visibleLogText(entry)).toBe("authAuthenticateSaga-tick");
+        expect(isBlankLogLine(entry)).toBe(false);
+        expect(filterDisplayLogLines([entry])).toEqual([entry]);
+    });
+
     describe("shouldShowLogTimestamp", () => {
         const t1 = Date.parse("2026-01-01T12:00:00.000");
         const t2 = Date.parse("2026-01-01T12:00:00.001");

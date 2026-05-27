@@ -172,6 +172,8 @@ export class SSEBroadcaster {
 
     publishCleared(source: LogSourceId, sessionName: string): void {
         const key = sessionKey(source, sessionName);
+        this.tailers.get(key)?.resetAfterClear();
+
         const payload = SafeJSON.stringify({ source, session: sessionName });
         const frame = encoder.encode(`event: cleared\ndata: ${payload}\n\n`);
 

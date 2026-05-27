@@ -16,6 +16,7 @@ import { api } from "@/lib/api";
 import { EntriesContext } from "@/lib/entries-context";
 import { applyFilter, collectHypotheses, defaultFilterState, type FilterState } from "@/lib/filters";
 import { FILTER_ORDER } from "@/lib/levels";
+import { mergeIndexedLogEntries } from "@/lib/merge-indexed-entries";
 import { type ConnectionStatus, connectStream } from "@/lib/sse";
 
 const FRESH_TTL_MS = 1500;
@@ -96,6 +97,11 @@ export function App(): React.ReactElement {
     const freshSweepTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const activeRef = useRef({ view: initial.view, source: initial.source, session: initial.session });
     const refreshInFlightRef = useRef<Promise<void> | null>(null);
+    const entriesLoadGenerationRef = useRef(0);
+
+    const invalidateEntriesLoad = useCallback((): void => {
+        entriesLoadGenerationRef.current += 1;
+    }, []);
 
     activeRef.current = { view, source: activeSource, session: activeSession };
 
@@ -183,13 +189,15 @@ export function App(): React.ReactElement {
         }
 
         let cancelled = false;
+        const loadGeneration = ++entriesLoadGenerationRef.current;
+        const abortController = new AbortController();
         setEntries([]);
         setExpandedIds(new Set());
         setFreshIds(new Set());
 
-        api.getEntries(activeSource, activeSession)
+        api.getEntries(activeSource, activeSession, 0, 5000, abortController.signal)
             .then((res) => {
-                if (cancelled) {
+                if (cancelled || loadGeneration !== entriesLoadGenerationRef.current) {
                     return;
                 }
                 startTransition(() => {
@@ -208,6 +216,7 @@ export function App(): React.ReactElement {
                 scheduleFlush();
             },
             onCleared: () => {
+                invalidateEntriesLoad();
                 pendingEntriesRef.current = [];
                 pendingFreshRef.current = [];
                 if (flushRafRef.current !== null) {
@@ -222,6 +231,7 @@ export function App(): React.ReactElement {
 
         return () => {
             cancelled = true;
+            abortController.abort();
             dispose();
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -241,19 +251,7 @@ export function App(): React.ReactElement {
                 return;
             }
 
-            setEntries((prev) => {
-                const lastIndex = prev.length > 0 ? prev[prev.length - 1].index : -1;
-                const novel: IndexedLogEntry[] = [];
-                for (const e of incoming) {
-                    if (e.index > lastIndex) {
-                        novel.push(e);
-                    }
-                }
-                if (novel.length === 0) {
-                    return prev;
-                }
-                return prev.concat(novel);
-            });
+            setEntries((prev) => mergeIndexedLogEntries(prev, incoming));
 
             if (freshAdds.length > 0) {
                 setFreshIds((prev) => {
@@ -377,11 +375,12 @@ export function App(): React.ReactElement {
         if (!ok) {
             return;
         }
-        await api.clearSession(activeSource, activeSession);
+        invalidateEntriesLoad();
         setEntries([]);
         setExpandedIds(new Set());
         setFreshIds(new Set());
-    }, [activeSource, activeSession]);
+        await api.clearSession(activeSource, activeSession);
+    }, [activeSource, activeSession, invalidateEntriesLoad]);
 
     const onDeleteSession = useCallback(
         async (source: LogSourceId, name: string) => {

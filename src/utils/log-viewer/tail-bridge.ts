@@ -85,7 +85,10 @@ export function enrichDashboardTimestamps(
         const st = statSync(jsonlPath);
         return {
             createdAt: session.createdAt && session.createdAt > 0 ? session.createdAt : st.birthtimeMs,
-            lastActivityAt: session.lastActivityAt && session.lastActivityAt > 0 ? session.lastActivityAt : st.mtimeMs,
+            lastActivityAt: Math.max(
+                session.lastActivityAt && session.lastActivityAt > 0 ? session.lastActivityAt : 0,
+                st.mtimeMs
+            ),
         };
     } catch {
         return {
