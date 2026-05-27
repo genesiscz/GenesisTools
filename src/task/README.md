@@ -57,16 +57,27 @@ tools task logs --session metro --tail --follow
 
 ## Session names
 
-Reusing a name that already has a `.jsonl` on disk **does not wipe** the old session. The run is assigned a suffixed id such as `metro-2026-05-26_14-30-22`, printed immediately on stderr before the banner:
+A session name is the file stem under `~/.genesis-tools/task/sessions/`. There are two distinct reuse paths:
+
+**1. Implicit reuse (no `--session` flag).** When you previously ran `tools task run -- npx react-native start` with no `--session`, `tools task get` / `logs` / `tail` will fuzzy-resolve to the most recent matching session. If no exact match, the run is assigned a timestamp-suffixed id (`metro-2026-05-26_14-30-22`) printed on stderr before the banner:
 
 ```text
 note: session "metro" already exists — using "metro-2026-05-26_14-30-22"
 task-session-id: metro-2026-05-26_14-30-22
 ```
 
-Use `tools task get --session <full-id>` or pick the suffixed name from `tools task sessions` (see **Related:** in `get`).
+**2. Explicit reuse (you passed `--session foo` and `foo` already exists).** This is **append mode**: the new run continues writing into the existing `.jsonl` and `.log` files, with `seq` continuing from the prior last value. You'll see:
 
-When **`--session` is omitted**, `get` / `logs` / `tail` auto-resolve: explicit `--session` flag → fuzzy match → sole active session → error if ambiguous. Use `tools task sessions` to list all.
+```text
+warn: reusing existing session "foo" (append mode)
+info: last seq 1234; new lines continue from 1235
+info: tail live output: tools task tail --session foo --follow
+info: clear older lines: tools task get --session foo --clear-older-than-seq 1234
+```
+
+Append mode is useful when re-running the same logical task (e.g. `lint`, `tsc`) and you want one rolling log per check-name. Use `--clear-older-than-seq N` on `get` to drop the prior run's lines if you want a clean slate without renaming the session.
+
+When **`--session` is omitted**, `get` / `logs` / `tail` auto-resolve: explicit flag → fuzzy match → sole active session → error if ambiguous. Use `tools task sessions` to list all.
 
 ## Run modes
 
