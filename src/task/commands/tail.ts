@@ -5,7 +5,8 @@ import { withResolvedSession } from "@app/task/lib/with-resolved-session";
 export function registerTailCommand(program: Command): void {
     program
         .command("tail")
-        .description("Follow session logs live (same as logs --tail)")
+        .description("Follow session logs live (same as logs --follow)")
+        .option("--session <name>", "Session name (fuzzy-matched; inherits global if unset)")
         .option("-n, --lines <count>", "Show last N existing lines before follow", "10")
         .option("--all", "Return all matching lines (ignore --lines default)")
         .option("--from-seq <n>", "Start at seq N (inclusive)")
@@ -16,10 +17,11 @@ export function registerTailCommand(program: Command): void {
         .option("--stdout", "Stdout stream only")
         .option("--stderr", "Stderr stream only")
         .option("-f, --follow", "Follow live (default for tail)")
-        .action(async (opts) => {
+        .action(async (opts: { session?: string }) => {
             const globalOpts = program.opts<{ session?: string }>();
+            const sessionFlag = opts.session ?? globalOpts.session;
 
-            await withResolvedSession(globalOpts.session, async (session) => {
+            await withResolvedSession(sessionFlag, async (session) => {
                 const queryOpts = buildLogQueryOpts(session, opts);
                 await tailOrQuery(queryOpts, true);
             });
