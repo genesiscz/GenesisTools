@@ -185,6 +185,8 @@ export async function runTool(
         addGlobalVerboseOption(program, { trace: opts.trace === true });
     }
 
+    program.showHelpAfterError(true);
+
     if (opts.enhanceHelp) {
         enhanceHelp(program);
     }
