@@ -5,7 +5,7 @@ import { filterLineRecords, readJsonlFile } from "@app/utils/log-session/jsonl-r
 import type { JsonlExitRecord, JsonlLineRecord, JsonlRecord } from "@app/utils/log-session/types";
 import type { LogQueryOpts } from "@app/task/types";
 import { printTailStatus } from "@app/task/lib/log-hints";
-import { queryLogs } from "@app/task/lib/log-query";
+import { queryLogs, sliceLogLines } from "@app/task/lib/log-query";
 import { jsonlPath } from "@app/task/lib/paths";
 
 function matchesFilters(
@@ -75,38 +75,49 @@ function findExitRecord(records: JsonlRecord[]): JsonlExitRecord | undefined {
     );
 }
 
-export async function tailSession(opts: LogQueryOpts & { follow: true }): Promise<void> {
+function filterExistingLines(records: JsonlLineRecord[], opts: LogQueryOpts, grepRe: RegExp | null): JsonlLineRecord[] {
+    const seenSeq = new Set<number>();
+    const matched: JsonlLineRecord[] = [];
+
+    for (const line of records) {
+        if (matchesFilters(line, opts, seenSeq, grepRe)) {
+            seenSeq.add(line.seq);
+            matched.push(line);
+        }
+    }
+
+    if (opts.fromSeq !== undefined || opts.toSeq !== undefined) {
+        return matched;
+    }
+
+    return sliceLogLines(matched, opts).lines;
+}
+
+export async function tailSession(
+    opts: LogQueryOpts & { follow: true },
+    tailOpts?: { propagateExit?: boolean }
+): Promise<number | undefined> {
     const path = jsonlPath(opts.session);
     const seenSeq = new Set<number>();
-    // Compile once at the entry — a bad pattern fails up-front (loud and
-    // recoverable) instead of throwing per-line inside the live tailer's
-    // onLine callback where the error is swallowed and the tail dies silent.
     const grepRe = compileGrep(opts.grep);
 
     const records = await readJsonlFile(path);
     const existingExit = findExitRecord(records);
     const existing = filterLineRecords(records);
-    // `opts.lines ?? 10` lets `--lines 0` mean "show no backlog, just stream
-    // new lines" (rather than the default 10). slice(-0) === slice(0) returns
-    // the WHOLE array, so guard the zero case explicitly.
-    const tailCount = opts.lines ?? 10;
-    const initial = tailCount > 0 ? existing.slice(-tailCount) : [];
+    const initial = filterExistingLines(existing, opts, grepRe);
 
     for (const line of initial) {
-        if (matchesFilters(line, opts, seenSeq, grepRe)) {
-            seenSeq.add(line.seq);
-            emitLine(line, opts.format);
-        }
+        emitLine(line, opts.format);
     }
 
     if (existingExit) {
         out.printlnErr(`Session exited (code ${existingExit.code}).`);
-        return;
+        return tailOpts?.propagateExit ? existingExit.code : undefined;
     }
 
     printTailStatus(opts.session);
 
-    let resolveFollow: (() => void) | undefined;
+    let resolveFollow: ((code?: number) => void) | undefined;
     let onSigint: (() => void) | undefined;
 
     const tailer = new FileTailer<JsonlRecord>(path, {
@@ -120,7 +131,7 @@ export async function tailSession(opts: LogQueryOpts & { follow: true }): Promis
                 }
 
                 out.printlnErr(`\nSession exited (code ${exit.code}).`);
-                resolveFollow?.();
+                resolveFollow?.(exit.code);
                 return;
             }
 
@@ -138,34 +149,34 @@ export async function tailSession(opts: LogQueryOpts & { follow: true }): Promis
 
     tailer.start();
 
-    await new Promise<void>((resolve) => {
-        resolveFollow = resolve;
+    return new Promise<number | undefined>((resolve) => {
+        resolveFollow = (code?: number) => {
+            resolve(code);
+        };
 
         onSigint = (): void => {
-            // Detach ourselves so we don't leak the listener — a subsequent
-            // tailSession() call in the same process (tests, repeated CLI use,
-            // long-lived MCP) would otherwise stack handlers and a single
-            // Ctrl+C would resolve multiple promises out of order. The exit-
-            // record branch above already calls process.off; do the same here
-            // for the explicit-cancel branch.
             if (onSigint) {
                 process.off("SIGINT", onSigint);
             }
 
             tailer.stop();
             out.printlnErr("\nStopped tailing.");
-            resolve();
+            resolve(undefined);
         };
 
         process.on("SIGINT", onSigint);
     });
 }
 
-export async function tailOrQuery(opts: LogQueryOpts, follow: boolean): Promise<void> {
+export async function tailOrQuery(
+    opts: LogQueryOpts,
+    follow: boolean,
+    tailOpts?: { propagateExit?: boolean }
+): Promise<number | undefined> {
     if (follow) {
-        await tailSession({ ...opts, follow: true });
-        return;
+        return tailSession({ ...opts, follow: true }, tailOpts);
     }
 
     await queryLogs(opts);
+    return undefined;
 }

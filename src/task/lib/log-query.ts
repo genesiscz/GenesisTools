@@ -5,13 +5,44 @@ import {
     filterFromSeq,
     filterLineRecords,
     filterToSeq,
-    lastNLines,
     readJsonlFile,
 } from "@app/utils/log-session/jsonl-reader";
 import type { JsonlLineRecord } from "@app/utils/log-session/types";
 import type { LogQueryOpts } from "@app/task/types";
 import { printLogNavigationHints } from "@app/task/lib/log-hints";
 import { jsonlPath } from "@app/task/lib/paths";
+
+export interface SliceResult<T> {
+    lines: T[];
+    elidedCount: number;
+    headCount: number;
+}
+
+export function sliceLogLines<T>(lines: T[], opts: Pick<LogQueryOpts, "head" | "tail" | "all">): SliceResult<T> {
+    if (opts.all || lines.length === 0) {
+        return { lines, elidedCount: 0, headCount: 0 };
+    }
+
+    const h = opts.head ?? 0;
+    const t = opts.tail ?? 0;
+
+    if (h === 0 && t === 0) {
+        return { lines, elidedCount: 0, headCount: 0 };
+    }
+
+    if (h + t >= lines.length) {
+        return { lines, elidedCount: 0, headCount: 0 };
+    }
+
+    const headSlice = h > 0 ? lines.slice(0, h) : [];
+    const tailSlice = t > 0 ? lines.slice(-t) : [];
+
+    return {
+        lines: [...headSlice, ...tailSlice],
+        elidedCount: lines.length - headSlice.length - tailSlice.length,
+        headCount: headSlice.length,
+    };
+}
 
 function applyGrep(lines: JsonlLineRecord[], pattern?: string): JsonlLineRecord[] {
     if (!pattern) {
@@ -29,7 +60,7 @@ function applyGrep(lines: JsonlLineRecord[], pattern?: string): JsonlLineRecord[
     return lines.filter((l) => re.test(l.text));
 }
 
-function selectLines(allLines: JsonlLineRecord[], opts: LogQueryOpts): JsonlLineRecord[] {
+function selectLines(allLines: JsonlLineRecord[], opts: LogQueryOpts): SliceResult<JsonlLineRecord> {
     let lines = [...allLines];
 
     if (opts.fromSeq !== undefined) {
@@ -43,22 +74,20 @@ function selectLines(allLines: JsonlLineRecord[], opts: LogQueryOpts): JsonlLine
     lines = filterByStream(lines, opts.streams);
     lines = applyGrep(lines, opts.grep);
 
-    if (opts.fromSeq === undefined && opts.toSeq === undefined && opts.lines !== undefined) {
-        lines = lastNLines(lines, opts.lines);
+    if (opts.fromSeq !== undefined || opts.toSeq !== undefined) {
+        return { lines, elidedCount: 0, headCount: 0 };
     }
 
-    return lines;
+    return sliceLogLines(lines, opts);
 }
 
-function formatHuman(lines: JsonlLineRecord[]): void {
-    // A "block" is a maximal contiguous run of lines from the same stream.
-    // Headers are emitted as `=== [stream] seq A-B ===` where A and B are
-    // the first and LAST seq in the block. The previous implementation set
-    // rangeEnd to the current line's seq inline, so the displayed header
-    // was always degenerate (`seq A`); compute the block boundaries up
-    // front by scanning forward to the next stream change.
+function formatHuman(lines: JsonlLineRecord[], elision?: { count: number; afterIndex: number }): void {
     let i = 0;
     while (i < lines.length) {
+        if (elision && i === elision.afterIndex) {
+            out.print(`... ${elision.count} lines elided ...\n`);
+        }
+
         const blockStart = i;
         const blockStream = lines[i].out;
         let blockEnd = i;
@@ -66,7 +95,7 @@ function formatHuman(lines: JsonlLineRecord[]): void {
             blockEnd += 1;
         }
 
-        if (blockStart > 0) {
+        if (blockStart > 0 && !(elision && blockStart === elision.afterIndex)) {
             out.print(`\n`);
         }
 
@@ -83,29 +112,39 @@ function formatHuman(lines: JsonlLineRecord[]): void {
     }
 }
 
-function formatRaw(lines: JsonlLineRecord[]): void {
-    for (const line of lines) {
-        out.print(`${line.text}\n`);
+function formatRaw(lines: JsonlLineRecord[], elision?: { count: number; afterIndex: number }): void {
+    for (let i = 0; i < lines.length; i++) {
+        if (elision && i === elision.afterIndex) {
+            out.print(`... ${elision.count} lines elided ...\n`);
+        }
+
+        out.print(`${lines[i].text}\n`);
     }
 }
 
-function formatJsonl(lines: JsonlLineRecord[]): void {
-    for (const line of lines) {
-        out.print(`${SafeJSON.stringify(line, { jsonl: true })}\n`);
+function formatJsonl(lines: JsonlLineRecord[], elision?: { count: number; afterIndex: number }): void {
+    for (let i = 0; i < lines.length; i++) {
+        if (elision && i === elision.afterIndex) {
+            out.print(`${SafeJSON.stringify({ type: "elision", count: elision.count }, { jsonl: true })}\n`);
+        }
+
+        out.print(`${SafeJSON.stringify(lines[i], { jsonl: true })}\n`);
     }
 }
 
 export async function queryLogs(opts: LogQueryOpts): Promise<void> {
     const records = await readJsonlFile(jsonlPath(opts.session));
     const allLines = filterLineRecords(records);
-    const lines = selectLines(allLines, opts);
+    const { lines, elidedCount, headCount } = selectLines(allLines, opts);
+    const elision =
+        elidedCount > 0 && headCount > 0 ? { count: elidedCount, afterIndex: headCount } : undefined;
 
     if (opts.format === "raw") {
-        formatRaw(lines);
+        formatRaw(lines, elision);
     } else if (opts.format === "jsonl") {
-        formatJsonl(lines);
+        formatJsonl(lines, elision);
     } else {
-        formatHuman(lines);
+        formatHuman(lines, elision);
     }
 
     if (opts.format === "human") {
@@ -113,10 +152,27 @@ export async function queryLogs(opts: LogQueryOpts): Promise<void> {
             session: opts.session,
             lines,
             totalLines: allLines.length,
-            linesRequested: opts.lines,
+            windowLabel: windowLabel(opts),
             streams: opts.streams,
         });
     }
+}
+
+function windowLabel(opts: LogQueryOpts): string {
+    if (opts.all) {
+        return "all";
+    }
+
+    const parts: string[] = [];
+    if (opts.head) {
+        parts.push(`--head ${opts.head}`);
+    }
+
+    if (opts.tail) {
+        parts.push(`--tail ${opts.tail}`);
+    }
+
+    return parts.length > 0 ? parts.join(" ") : "default";
 }
 
 export async function loadSessionLines(session: string): Promise<JsonlLineRecord[]> {

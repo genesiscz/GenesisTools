@@ -16,7 +16,7 @@ tools task run --session metro -- npx react-native start
 tools task get --session metro
 
 # Read last 100 lines
-tools task logs --session metro --lines 100
+tools task logs --session metro --tail 100
 
 # Live follow
 tools task tail --session metro --follow
@@ -85,11 +85,14 @@ For Metro/Vite/interactive dev servers, prefer **PTY mode** (default when stdin 
 
 ## Log window defaults
 
-`logs` defaults to the **last 50 lines**; `tail` shows the last 10 before follow. Use `--all` to dump the full session, `--from-seq 1` for seq-based windows, or `--lines N` for a custom tail count.
+`logs` defaults to the **last 50 lines** in a TTY; `tail` shows the last 10 before follow. When stdout is **not** a TTY (pipes, agents), both default to **`--all`** so nothing is silently truncated.
+
+Use `--head N` / `--tail N` for windows, `--head X --tail Y` for first+last with an elision marker, or `--all` for the full session. `--grep PAT` implies `--all` unless you also pass `--head` / `--tail`.
 
 ```bash
 tools task logs --session metro --all --raw | grep TOKEN
 tools task logs --session metro --from-seq 1 --jsonl | rg error
+tools task logs --session metro --head 5 --tail 5 --raw
 ```
 
 ## vs shell `tee`
