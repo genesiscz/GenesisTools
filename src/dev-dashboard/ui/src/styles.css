@@ -22,3 +22,16 @@ pre,
 .font-mono {
     font-family: "JetBrains Mono", source-code-pro, Menlo, Monaco, Consolas, monospace;
 }
+
+.dd-qa-topbar {
+    background: rgba(15, 23, 36, var(--dd-topbar-opacity, 0.8));
+    transition: background 200ms linear;
+    border-bottom: 1px solid rgba(42, 52, 69, var(--dd-topbar-opacity, 0.8));
+}
+
+.dd-qa-mark {
+    background: rgba(250, 204, 21, 0.35);
+    color: inherit;
+    border-radius: 2px;
+    padding: 0 1px;
+}
