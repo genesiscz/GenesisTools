@@ -1,6 +1,7 @@
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { handleDashboardRequest } from "@app/debugging-master/core/dashboard-server";
 import { SESSIONS_DIR, sessionFilePath } from "@app/debugging-master/core/paths";
+import { SessionManager } from "@app/debugging-master/core/session-manager";
 import { sseBroadcaster } from "@app/debugging-master/core/sse-broadcaster";
 import type { LogEntry } from "@app/debugging-master/types";
 
@@ -94,10 +95,11 @@ export function startServer(port: number = 7243): { server: ReturnType<typeof Bu
                     return new Response("Invalid session name", { status: 400, headers: corsHeaders });
                 }
 
-                return req.text().then((body) => {
+                return req.text().then(async (body) => {
                     const entry = normalizeEntry(body);
                     const path = sessionFilePath(sessionName);
                     appendFileSync(path, `${SafeJSON.stringify(entry)}\n`);
+                    await new SessionManager().touchSession(sessionName);
                     return new Response("ok", { status: 200, headers: corsHeaders });
                 });
             }

@@ -19,7 +19,7 @@ const NEWLINE = 0x0a;
 const COUNT_BUF_SIZE = 16_384;
 
 /** Count newline bytes in a file without reading it into a JS string. */
-function countNewlines(filePath: string, fileSize: number): number {
+export function countNewlines(filePath: string, fileSize: number): number {
     const fd = openSync(filePath, "r");
     const buf = Buffer.allocUnsafe(Math.min(COUNT_BUF_SIZE, fileSize));
     let count = 0;

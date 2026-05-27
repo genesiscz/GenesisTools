@@ -2,17 +2,29 @@ import { stripAnsi } from "@app/utils/string";
 import type { TimestampMode } from "./display-settings";
 import { formatTime } from "./format";
 
-export function visibleLogText(entry: { msg?: string; msgAnsi?: string }): string {
-    const raw = entry.msgAnsi ?? entry.msg ?? "";
+function pickLogTextRaw(entry: { msg?: string; msgAnsi?: string; label?: string }): string {
+    if (entry.msgAnsi !== undefined && entry.msgAnsi !== null) {
+        return entry.msgAnsi;
+    }
+
+    if (entry.msg?.trim()) {
+        return entry.msg;
+    }
+
+    return entry.label ?? "";
+}
+
+export function visibleLogText(entry: { msg?: string; msgAnsi?: string; label?: string }): string {
+    const raw = pickLogTextRaw(entry);
 
     return stripAnsi(raw).replace(/\r/g, "").trim();
 }
 
-export function isBlankLogLine(entry: { msg?: string; msgAnsi?: string }): boolean {
+export function isBlankLogLine(entry: { msg?: string; msgAnsi?: string; label?: string }): boolean {
     return visibleLogText(entry).length === 0;
 }
 
-export function filterDisplayLogLines<T extends { msg?: string; msgAnsi?: string }>(lines: T[]): T[] {
+export function filterDisplayLogLines<T extends { msg?: string; msgAnsi?: string; label?: string }>(lines: T[]): T[] {
     return lines.filter((line) => !isBlankLogLine(line));
 }
 

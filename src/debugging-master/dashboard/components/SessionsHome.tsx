@@ -3,10 +3,10 @@ import type { DashboardSession, LogSourceId } from "@app/utils/log-viewer/log-so
 import { sessionKey } from "@app/utils/log-viewer/session-key";
 import { sortSessionsByRecency } from "@app/utils/log-viewer/session-recency";
 import { buildBalancedMosaicLayout, reconcileMosaicLayout } from "@app/utils/ui/helpers/mosaic-layout";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Mosaic, type MosaicNode, MosaicWindow } from "react-mosaic-component";
 import type { TimestampMode } from "@/lib/display-settings";
-import { filterDisplayLogLines, shouldShowLogTimestamp } from "@/lib/log-line-display";
+import { filterDisplayLogLines, shouldShowLogTimestamp, visibleLogText } from "@/lib/log-line-display";
 import { api } from "@/lib/api";
 import { useAutoScroll } from "@app/utils/ui/hooks/useAutoScroll";
 import { useNowTick } from "@app/utils/ui/hooks/useNowTick";
@@ -142,7 +142,7 @@ function mosaicToggleClass(visibility: MosaicVisibility, badge: string): string 
 }
 
 function previewText(entry: IndexedLogEntry | MultiplexLogEntry): string {
-    return entry.msg ?? "";
+    return visibleLogText(entry);
 }
 
 function ActiveSessionTile({
@@ -268,6 +268,35 @@ export function SessionsHome({ sessions, status, onRefresh, onOpenSession, onSta
     const [loadingArchive, setLoadingArchive] = useState<Set<string>>(new Set());
     const [layout, setLayout] = useState<MosaicNode<string> | null>(null);
     const [userHiddenKeys, setUserHiddenKeys] = useState<Set<string>>(() => new Set());
+    const prefetchGenerationRef = useRef(new Map<string, number>());
+
+    const bumpPrefetchGeneration = useCallback((key: string): number => {
+        const next = (prefetchGenerationRef.current.get(key) ?? 0) + 1;
+        prefetchGenerationRef.current.set(key, next);
+        return next;
+    }, []);
+
+    const prefetchSessionTail = useCallback(async (session: DashboardSession): Promise<void> => {
+        const key = sessionKey(session.source, session.name);
+        const generation = prefetchGenerationRef.current.get(key) ?? 0;
+
+        try {
+            const res = await api.getRecentEntries(session.source, session.name, ACTIVE_PREVIEW_LINES);
+            if (generation !== (prefetchGenerationRef.current.get(key) ?? 0)) {
+                return;
+            }
+
+            const tail = res.entries.map((entry) => toMultiplexEntry(session, entry));
+            setLiveLines((prev) => {
+                const next = new Map(prev);
+                const existing = next.get(key) ?? [];
+                next.set(key, mergePreviewLines(existing, tail, ACTIVE_PREVIEW_LINES));
+                return next;
+            });
+        } catch {
+            // ignore — SSE will catch up
+        }
+    }, []);
 
     const allActiveSessions = useMemo(
         () => sortSessionsByRecency(sessions.filter((session) => isSessionInActivePool(session, now))),
@@ -298,6 +327,8 @@ export function SessionsHome({ sessions, status, onRefresh, onOpenSession, onSta
         }
         return map;
     }, [sessions]);
+    const sessionByKeyRef = useRef(sessionByKey);
+    sessionByKeyRef.current = sessionByKey;
 
     const activeKeys = mosaicActiveKeys;
 
@@ -339,38 +370,7 @@ export function SessionsHome({ sessions, status, onRefresh, onOpenSession, onSta
         let cancelled = false;
 
         const prefetchActiveTails = async (): Promise<void> => {
-            const results = await Promise.all(
-                mosaicActiveSessions.map(async (session) => {
-                    const key = sessionKey(session.source, session.name);
-
-                    try {
-                        const res = await api.getRecentEntries(
-                            session.source,
-                            session.name,
-                            ACTIVE_PREVIEW_LINES
-                        );
-                        const tail = res.entries.map((entry) => toMultiplexEntry(session, entry));
-
-                        return { key, tail };
-                    } catch {
-                        return { key, tail: [] as MultiplexLogEntry[] };
-                    }
-                })
-            );
-
-            if (cancelled) {
-                return;
-            }
-
-            setLiveLines((prev) => {
-                const next = new Map(prev);
-
-                for (const { key, tail } of results) {
-                    next.set(key, tail.slice(-ACTIVE_PREVIEW_LINES));
-                }
-
-                return next;
-            });
+            await Promise.all(mosaicActiveSessions.map((session) => prefetchSessionTail(session)));
         };
 
         void prefetchActiveTails();
@@ -445,15 +445,17 @@ export function SessionsHome({ sessions, status, onRefresh, onOpenSession, onSta
             },
             onCleared: (source, session) => {
                 const key = sessionKey(source, session);
+                bumpPrefetchGeneration(key);
                 setLiveLines((prev) => {
-                    if (!prev.has(key)) {
-                        return prev;
-                    }
-
                     const next = new Map(prev);
                     next.set(key, []);
                     return next;
                 });
+
+                const dashboardSession = sessionByKeyRef.current.get(key);
+                if (dashboardSession) {
+                    void prefetchSessionTail(dashboardSession);
+                }
             },
         });
 

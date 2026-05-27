@@ -20,10 +20,10 @@ export interface ExpandResponse {
     data: unknown;
 }
 
-async function getJson<T>(path: string): Promise<T> {
+async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
     const res = await fetch(path, {
         headers: { Accept: "application/json" },
-        signal: AbortSignal.timeout(10_000),
+        signal: signal ?? AbortSignal.timeout(10_000),
     });
     if (!res.ok) {
         throw new Error(`${res.status} ${res.statusText}`);
@@ -41,23 +41,30 @@ export const api = {
         return getJson<SessionsResponse>("/api/sessions");
     },
 
-    getEntries(source: LogSourceId, sessionName: string, since = 0, limit = 5000): Promise<EntriesResponse> {
+    getEntries(
+        source: LogSourceId,
+        sessionName: string,
+        since = 0,
+        limit = 5000,
+        signal?: AbortSignal
+    ): Promise<EntriesResponse> {
         const params = new URLSearchParams({ since: String(since), limit: String(limit) });
-        return getJson<EntriesResponse>(`${sessionRoute(source, sessionName)}/entries?${params.toString()}`);
+        return getJson<EntriesResponse>(`${sessionRoute(source, sessionName)}/entries?${params.toString()}`, signal);
     },
 
     async getRecentEntries(
         source: LogSourceId,
         sessionName: string,
-        limit = 2000
+        limit = 2000,
+        signal?: AbortSignal
     ): Promise<EntriesResponse> {
-        const probe = await api.getEntries(source, sessionName, 0, 1);
+        const probe = await api.getEntries(source, sessionName, 0, 1, signal);
 
         if (probe.total <= limit) {
-            return api.getEntries(source, sessionName, 0, probe.total);
+            return api.getEntries(source, sessionName, 0, probe.total, signal);
         }
 
-        return api.getEntries(source, sessionName, probe.total - limit, limit);
+        return api.getEntries(source, sessionName, probe.total - limit, limit, signal);
     },
 
     expand(source: LogSourceId, sessionName: string, refId: string): Promise<ExpandResponse> {

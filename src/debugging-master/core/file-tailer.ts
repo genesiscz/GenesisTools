@@ -88,6 +88,13 @@ export class FileTailer {
         this.started = false;
     }
 
+    /** After an out-of-band truncate/clear — realign offset + entry numbering. */
+    resetAfterClear(): void {
+        this.entryIndex = 0;
+        this.remainder = Buffer.alloc(0);
+        this.watcher?.seek(0);
+    }
+
     private measureCurrent(): { offset: number; lineCount: number } {
         if (!existsSync(this.path)) {
             return { offset: 0, lineCount: 0 };
