@@ -4,7 +4,13 @@ import { filterByStream, filterLineRecords, lastNLines, readJsonlFile } from "@a
 import { formatSessionState } from "@app/task/lib/format-session-state";
 import { sessionFilePaths } from "@app/task/lib/paths";
 import { TaskSessionStore } from "@app/task/lib/session-store";
-import { suggestDashboard, suggestLogs, suggestLogsFollow, suggestTail } from "@app/task/lib/suggest-flags";
+import {
+    suggestDashboard,
+    suggestLogs,
+    suggestLogsAllGrep,
+    suggestLogsFollow,
+    suggestTail,
+} from "@app/task/lib/suggest-flags";
 
 export async function getSessionInfo(session: string): Promise<void> {
     const store = new TaskSessionStore();
@@ -90,7 +96,7 @@ export async function getSessionInfo(session: string): Promise<void> {
     out.printlnErr(`║   Live follow      ${suggestTail(session)}`);
     out.printlnErr(`║   Same as above    ${suggestLogsFollow(session)}`);
     out.printlnErr(`║   Stderr only      ${suggestLogs(session, ["--stderr", "--raw"])}`);
-    out.printlnErr(`║   Grep stdout      ${suggestLogs(session, ["--raw"])} | grep PATTERN`);
+    out.printlnErr(`║   Grep stdout      ${suggestLogsAllGrep(session)}`);
     out.printlnErr(`║   JSONL + rg       ${suggestLogs(session, ["--jsonl"])} | rg error`);
     out.printlnErr(`║   Dashboard        ${suggestDashboard(session)}`);
     out.printlnErr("║");
