@@ -7,8 +7,8 @@ import { TaskSessionStore } from "@app/task/lib/session-store";
 export function registerCleanCommand(program: Command): void {
     program
         .command("clean")
-        .description("Remove session log files")
-        .option("--session <name>", "Session name (fuzzy-matched; inherits global if unset)")
+        .description("Remove session log files (--session <name> for one, --all for all)")
+        .option("--session <name>", "Remove a single session by name (fuzzy-matched)")
         .option("--all", "Remove all sessions")
         .action(async (opts: { all?: boolean; session?: string }) => {
             const globalOpts = program.opts<{ session?: string }>();
