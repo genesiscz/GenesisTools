@@ -1,6 +1,7 @@
 import type { Command } from "commander";
 import { buildLogQueryOpts, tailOrQuery } from "@app/task/lib/build-log-query-opts";
 import { applyGrepImpliesAll, applyLogWindowDefaults } from "@app/task/lib/log-window";
+import { waitForSession } from "@app/task/lib/wait-for-session";
 import { withResolvedSession } from "@app/task/lib/with-resolved-session";
 import type { LogCliOpts } from "@app/task/types";
 
@@ -20,15 +21,40 @@ export function registerTailCommand(program: Command): void {
         .option("--stdout", "Stdout stream only")
         .option("--stderr", "Stderr stream only")
         .option("-f, --follow", "Follow live (default for tail)")
-        .action(async (opts: LogCliOpts) => {
+        .option("--exit-on-match <pat>", "Exit 0 as soon as PATTERN appears (regex)")
+        .option("--propagate-exit", "Exit with the session's exit code when it ends")
+        .action(async (opts: LogCliOpts & { exitOnMatch?: string; propagateExit?: boolean }) => {
             const globalOpts = program.opts<{ session?: string }>();
             const sessionFlag = opts.session ?? globalOpts.session;
             let resolvedOpts = applyLogWindowDefaults(opts, { ttyTail: "10" });
             resolvedOpts = applyGrepImpliesAll(resolvedOpts);
 
             await withResolvedSession(sessionFlag, async (session) => {
+                if (opts.exitOnMatch) {
+                    const result = await waitForSession({
+                        session,
+                        exitOnMatch: new RegExp(opts.exitOnMatch),
+                    });
+
+                    if (result.reason === "match") {
+                        if (result.matchedLine) {
+                            process.stdout.write(`${result.matchedLine}\n`);
+                        }
+
+                        process.exit(0);
+                    }
+
+                    process.exit(1);
+                }
+
                 const queryOpts = buildLogQueryOpts(session, resolvedOpts);
-                await tailOrQuery(queryOpts, true);
+                const sessionExitCode = await tailOrQuery(queryOpts, true, {
+                    propagateExit: Boolean(opts.propagateExit),
+                });
+
+                if (opts.propagateExit && typeof sessionExitCode === "number") {
+                    process.exit(sessionExitCode);
+                }
             });
         });
 }
