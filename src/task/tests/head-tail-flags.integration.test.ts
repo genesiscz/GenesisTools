@@ -57,3 +57,15 @@ test("--all dumps every line, overrides --head/--tail (F7)", () => {
     const lines = r.stdout.trim().split("\n").filter((l) => l.startsWith("line "));
     expect(lines).toHaveLength(100);
 });
+
+test("B1 repro — tail --all returns ALL lines, not just last 10", () => {
+    const r = task(["tail", "--session", SESSION, "--all", "--raw"]);
+    const matchingLines = r.stdout.trim().split("\n").filter((l) => l.startsWith("line "));
+    expect(matchingLines).toHaveLength(100);
+});
+
+test("B1 repro — tail --all --grep returns ALL matching lines", () => {
+    const r = task(["tail", "--session", SESSION, "--all", "--grep", "^line ", "--raw"]);
+    const matchingLines = r.stdout.trim().split("\n").filter((l) => /^line /.test(l));
+    expect(matchingLines).toHaveLength(100);
+});
