@@ -562,6 +562,12 @@ export function attachDevDashboardMiddleware(middlewares: Connect.Server): void 
                     }
                 );
                 const { obsidianVault } = await getConfig();
+
+                if (!obsidianVault) {
+                    sendJson(res, 500, { error: "obsidian vault not configured" });
+                    return;
+                }
+
                 const result = await saveToObsidianUnique({
                     vaultRoot: obsidianVault,
                     relativeDir,
@@ -602,6 +608,12 @@ export function attachDevDashboardMiddleware(middlewares: Connect.Server): void 
                 }
 
                 const { obsidianVault } = await getConfig();
+
+                if (!obsidianVault) {
+                    sendJson(res, 500, { error: "obsidian vault not configured" });
+                    return;
+                }
+
                 await mkdirInVault(obsidianVault, relativeDir.trim());
                 sendJson(res, 200, { ok: true, relativeDir: relativeDir.trim() });
             } catch (err) {
