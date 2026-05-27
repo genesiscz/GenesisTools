@@ -1,6 +1,5 @@
 import type { QaRow } from "@app/dev-dashboard/lib/qa-types";
 import { resolveQaRecency } from "@app/utils/ui/helpers/qa-recency";
-import { useScrollProgress } from "@app/utils/ui/hooks/useScrollProgress.client";
 import { ScrollArea } from "@ui/components/scroll-area";
 
 const TAG_DOT: Record<string, string> = {
@@ -9,10 +8,18 @@ const TAG_DOT: Record<string, string> = {
     question: "bg-[var(--dd-text-secondary)]",
 };
 
-export function QaScrollNav({ entries, seenIds }: { entries: QaRow[]; seenIds: Set<string> }) {
-    const { y } = useScrollProgress();
+export const QA_SCROLL_NAV_OFFSET_PX = 400;
 
-    if (y < 400) {
+export function QaScrollNav({
+    entries,
+    seenIds,
+    visible,
+}: {
+    entries: QaRow[];
+    seenIds: Set<string>;
+    visible: boolean;
+}) {
+    if (!visible) {
         return null;
     }
 

@@ -52,6 +52,7 @@
     margin-left: 0.625rem;
     padding-left: 0.75rem;
     border-left: 1px solid var(--dd-border);
+    overflow-wrap: anywhere;
 }
 
 .dd-qa-card--unread {

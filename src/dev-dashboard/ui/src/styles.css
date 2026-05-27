@@ -8,6 +8,11 @@
 
 @custom-variant dark (&:is(.dark *));
 
+html {
+    /* Keep viewport width stable when filtering shortens the page and the scrollbar disappears. */
+    scrollbar-gutter: stable;
+}
+
 body {
     font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif;
     -webkit-font-smoothing: antialiased;

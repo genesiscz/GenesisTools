@@ -3,6 +3,7 @@ import { isQaAnswerTruncated } from "@app/dev-dashboard/lib/qa-render";
 import type { QaRow } from "@app/dev-dashboard/lib/qa-types";
 import { highlightMatchesInHtml } from "@app/utils/ui/helpers/highlight-matches.client";
 import { hasNonEmptySelection } from "@app/utils/ui/hooks/useSelectionAware.client";
+import { useScrollProgress } from "@app/utils/ui/hooks/useScrollProgress.client";
 import { SafeJSON } from "@app/utils/json";
 import { useQuery } from "@tanstack/react-query";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -10,7 +11,7 @@ import { QaClockProvider } from "@/components/QaClockProvider";
 import { QaCopyButtons } from "@/components/QaCopyButtons";
 import { QaRecencyTime } from "@/components/QaRecencyTime";
 import { QaSaveToObsidianDialog } from "@/components/QaSaveToObsidianDialog";
-import { QaScrollNav } from "@/components/QaScrollNav";
+import { QA_SCROLL_NAV_OFFSET_PX, QaScrollNav } from "@/components/QaScrollNav";
 import { QaSearchBox } from "@/components/QaSearchBox";
 import { QaSectionHeading } from "@/components/QaSectionHeading";
 import { QaSourceToggle, type QaViewMode } from "@/components/QaSourceToggle";
@@ -198,6 +199,7 @@ export function QaRoute() {
     const pendingUnreadIds = useRef<Set<string>>(new Set());
     const readFlushTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
     const readApiDisabledRef = useRef(false);
+    const { y: scrollY } = useScrollProgress();
 
     useEffect(() => {
         if (initialReadIds.current === null && logQuery.data) {
@@ -369,6 +371,7 @@ export function QaRoute() {
     const persisted = (logQuery.data ?? []).filter((r) => !seen.current.has(r.id));
     const all = [...live, ...persisted];
     const { entries: filtered, tokens: highlightTokens } = searchQa(all, query);
+    const showScrollNav = scrollY >= QA_SCROLL_NAV_OFFSET_PX && filtered.length > 0;
 
     return (
         <div className="relative flex flex-col gap-4">
@@ -387,7 +390,9 @@ export function QaRoute() {
                 </div>
             ) : (
                 <QaClockProvider>
-                    <div className="flex flex-col gap-3 pr-0 lg:pr-68">
+                    <div
+                        className={`flex flex-col gap-3${showScrollNav ? " pr-0 lg:pr-68" : ""}`}
+                    >
                         {filtered.map((entry) => (
                             <QaCard
                                 key={entry.id}
@@ -401,7 +406,7 @@ export function QaRoute() {
                             />
                         ))}
                     </div>
-                    <QaScrollNav entries={filtered} seenIds={seenIds} />
+                    <QaScrollNav entries={filtered} seenIds={seenIds} visible={showScrollNav} />
                 </QaClockProvider>
             )}
         </div>
