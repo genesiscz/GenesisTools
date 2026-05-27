@@ -5,6 +5,10 @@ import type { Command } from "commander";
 import pc from "picocolors";
 import { printRunBanner, printRunExitSummary } from "@app/task/lib/banner";
 import { resolveRunSession } from "@app/task/lib/resolve-run-session";
+import { pollSessionExitCode, shouldSuperviseDetachedRun, spawnDetachedRunWorker } from "@app/task/lib/detached-run";
+import { loadTaskToolConfig } from "@app/task/lib/config";
+import { runSessionGc } from "@app/task/lib/gc";
+import { logger } from "@app/logger";
 import { resolveRunMode } from "@app/task/lib/run-mode";
 import { runTask } from "@app/task/lib/runner";
 import { suggestClearOlderThanSeq, suggestTail } from "@app/task/lib/suggest-flags";
@@ -85,6 +89,13 @@ export function registerRunCommand(program: Command): void {
 
             const mode = resolveRunMode({ tty: opts.tty });
 
+            const taskConfig = loadTaskToolConfig();
+            if (taskConfig.gcOnRunStart) {
+                runSessionGc({ retentionDays: taskConfig.sessionRetentionDays }).catch((err) => {
+                    logger.warn({ err }, "gc: failed");
+                });
+            }
+
             const store = new TaskSessionStore();
             const resolved = await resolveRunSession(store, session, {
                 explicitSessionFlag,
@@ -107,6 +118,27 @@ export function registerRunCommand(program: Command): void {
             }
 
             printRunBanner({ session: resolved.session, command, mode });
+
+            if (shouldSuperviseDetachedRun()) {
+                const toolsEntry = process.argv[1] ?? "tools";
+                const worker = spawnDetachedRunWorker({
+                    toolsEntry,
+                    session: resolved.session,
+                    command,
+                    mode,
+                    forceTty: opts.tty === true,
+                    forceNoTty: opts.tty === false,
+                });
+                worker.unref();
+
+                const exitCode = await pollSessionExitCode(resolved.session);
+                printRunExitSummary({
+                    session: resolved.session,
+                    exitCode,
+                    durationMs: 0,
+                });
+                process.exit(exitCode);
+            }
 
             const result = await runTask({
                 session: resolved.session,
