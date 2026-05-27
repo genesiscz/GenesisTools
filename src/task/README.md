@@ -95,6 +95,17 @@ tools task logs --session metro --from-seq 1 --jsonl | rg error
 tools task logs --session metro --head 5 --tail 5 --raw
 ```
 
+## Dashboard auto-start
+
+The dashboard at `http://localhost:7243` is **NOT** automatically started by `tools task run`. To launch it:
+
+```bash
+tools task dashboard up         # foreground (Ctrl+C to stop)
+tools task dashboard open       # open in browser (starts if not running)
+```
+
+If you see :7243 listening when you did not start it, another GenesisTools dashboard is sharing the port — see `src/utils/ui/dashboards.ts` for the canonical registry.
+
 ## Wait for a session
 
 Block on session completion or a pattern. Replaces the `until grep -qE …; sleep 5; done` polling idiom.
@@ -111,6 +122,18 @@ tools task tail --session jest --follow --propagate-exit
 ```
 
 Exit codes: 0 on match or normal exit (without `--propagate-exit`), child's code with `--propagate-exit`, 124 on timeout.
+
+## Retention
+
+Sessions older than `sessionRetentionDays` (default **30**) are GC'd on the next `tools task run` when `gcOnRunStart` is true (default). Configure interactively or via flags:
+
+```bash
+tools task config                              # print current config (JSON)
+tools task config --session-retention-days 14  # example: shorter retention
+tools task config --gc-on-run-start off        # disable opportunistic GC
+```
+
+Config file (same values): `~/.genesis-tools/task/config.json`. Manually: `tools task clean --all`, or `tools task clean --session <name>`.
 
 ## vs shell `tee`
 
