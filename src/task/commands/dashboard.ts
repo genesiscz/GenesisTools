@@ -20,9 +20,10 @@ export function registerDashboardCommand(program: Command): void {
     dashboard
         .command("open")
         .description("Ensure the log server is up, print URL + QR, and open in the browser")
+        .option("--session <name>", "Session name (fuzzy-matched; inherits global if unset)")
         .option("--port <n>", "Port the dashboard server is on", String(logDashboardApp.port))
         .option("--no-qr", "Skip the phone-scan QR code")
-        .action(async (opts: { port: string; qr?: boolean }) => {
+        .action(async (opts: { port: string; qr?: boolean; session?: string }) => {
             const port = Number.parseInt(opts.port, 10);
             const globalOpts = program.opts<{ session?: string }>();
             // Fuzzy-resolve via the session store so prefix/abbrev matches
@@ -31,7 +32,7 @@ export function registerDashboardCommand(program: Command): void {
             // is passed through verbatim and a 404 lands on App.refreshSessions
             // which falls back to the first session in the list — silently
             // opening a different one than the user typed.
-            const rawSession = globalOpts.session;
+            const rawSession = opts.session ?? globalOpts.session;
             let session: string | undefined;
             if (rawSession) {
                 try {

@@ -8,8 +8,9 @@ export function registerCleanCommand(program: Command): void {
     program
         .command("clean")
         .description("Remove session log files")
+        .option("--session <name>", "Session name (fuzzy-matched; inherits global if unset)")
         .option("--all", "Remove all sessions")
-        .action(async (opts: { all?: boolean }) => {
+        .action(async (opts: { all?: boolean; session?: string }) => {
             const globalOpts = program.opts<{ session?: string }>();
             const store = new TaskSessionStore();
 
@@ -40,7 +41,7 @@ export function registerCleanCommand(program: Command): void {
                 return;
             }
 
-            let session = globalOpts.session;
+            let session = opts.session ?? globalOpts.session;
             if (!session) {
                 if (!isInteractive()) {
                     out.printlnErr("error: --session or --all required in non-interactive mode.");
