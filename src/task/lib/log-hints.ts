@@ -6,10 +6,10 @@ export function printLogNavigationHints(opts: {
     session: string;
     lines: JsonlLineRecord[];
     totalLines: number;
-    linesRequested?: number;
+    windowLabel: string;
     streams: Set<"stdout" | "stderr">;
 }): void {
-    const { session, lines, totalLines, linesRequested, streams } = opts;
+    const { session, lines, totalLines, windowLabel, streams } = opts;
 
     if (lines.length === 0) {
         out.printlnErr(`── session ${session} ── no matching lines`);
@@ -21,21 +21,20 @@ export function printLogNavigationHints(opts: {
     const firstSeq = lines[0].seq;
     const lastSeq = lines[lines.length - 1].seq;
     const streamLabel = streams.size === 2 ? "stdout+stderr" : streams.has("stdout") ? "stdout" : "stderr";
-    const linesLabel = linesRequested ? `--lines ${linesRequested}` : "all";
 
     out.printlnErr(`── session ${session} ${"─".repeat(Math.max(0, 40 - session.length))}`);
     out.printlnErr(
-        `  Showing seq ${firstSeq}–${lastSeq} of ${totalLines.toLocaleString()} lines (${linesLabel}, streams: ${streamLabel})`
+        `  Showing seq ${firstSeq}–${lastSeq} of ${totalLines.toLocaleString()} lines (${windowLabel}, streams: ${streamLabel})`
     );
     out.printlnErr("");
     out.printlnErr("  Navigate:");
 
     if (firstSeq > 1) {
-        out.printlnErr(`    earlier  → ${suggestLogs(session, ["--to-seq", String(firstSeq - 1), "--lines", "50"])}`);
+        out.printlnErr(`    earlier  → ${suggestLogs(session, ["--to-seq", String(firstSeq - 1), "--tail", "50"])}`);
     }
 
     if (lastSeq < totalLines) {
-        out.printlnErr(`    later    → ${suggestLogs(session, ["--from-seq", String(lastSeq + 1), "--lines", "50"])}`);
+        out.printlnErr(`    later    → ${suggestLogs(session, ["--from-seq", String(lastSeq + 1), "--tail", "50"])}`);
     }
 
     out.printlnErr(`    live     → ${suggestTail(session)}`);

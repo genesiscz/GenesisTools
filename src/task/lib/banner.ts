@@ -23,7 +23,7 @@ export function printRunBanner({ session, command, mode }: RunBannerInput): void
     out.printlnErr(`│           ${paths.stderr}`);
     out.printlnErr("│");
     out.printlnErr(`│ Session info:  ${suggestGet(session)}`);
-    out.printlnErr(`│ Read logs:     ${suggestLogs(session, ["--lines", "100"])}`);
+    out.printlnErr(`│ Read logs:     ${suggestLogs(session, ["--tail", "100"])}`);
     out.printlnErr(`│ Live follow:   ${suggestTail(session)}`);
     out.printlnErr(`│ Same as above: ${suggestLogsFollow(session)}`);
     out.printlnErr(`│ Grep-safe:     ${suggestLogs(session, ["--raw"])} | grep PATTERN`);

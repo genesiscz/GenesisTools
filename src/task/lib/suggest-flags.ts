@@ -30,7 +30,7 @@ export function suggestDashboard(session: string): string {
 
 export function suggestLogsFollow(session: string): string {
     return suggestCommand("tools task", {
-        replaceCommand: ["logs", "--session", session, "--tail", "--follow"],
+        replaceCommand: ["logs", "--session", session, "--follow"],
         keepFlags: [],
     });
 }
