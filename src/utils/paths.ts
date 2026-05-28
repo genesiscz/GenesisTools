@@ -7,6 +7,7 @@
 import { mkdtempSync } from "node:fs";
 import { homedir, tmpdir as osTmpdir } from "node:os";
 import { isAbsolute, join, resolve, sep } from "node:path";
+import { collapsePathForDisplay as collapsePathHeuristic } from "./paths.client";
 
 /**
  * Whether a path string ends with a directory separator (/ or \).
@@ -88,6 +89,43 @@ export function collapsePath(p: string): string {
     }
 
     return p;
+}
+
+/**
+ * Collapse home for display in browser or Node. Uses `collapsePath()` when
+ * `homedir()` is available; otherwise falls back to `/Users/*` / `/home/*` heuristics.
+ */
+export function collapsePathForDisplay(p: string): string {
+    if (!p) {
+        return p;
+    }
+
+    if (p.startsWith("~/") || p === "~" || p === "~\\" || p.startsWith("~\\")) {
+        return toPosixPath(p);
+    }
+
+    try {
+        const home = homedir();
+        if (home) {
+            // Collapse against the ORIGINAL native path — collapsePath()
+            // does both unix and Windows home-prefix checks internally,
+            // and `homedir()` returns the native form. On Windows the
+            // input is typically `C:\Users\name\foo` and home is
+            // `C:\Users\name`; pre-normalizing to POSIX first would break
+            // the prefix match (the prior bug).
+            const collapsed = collapsePath(p);
+            const displayCollapsed = toPosixPath(collapsed);
+            if (collapsed !== p) {
+                return displayCollapsed;
+            }
+
+            return toPosixPath(p);
+        }
+    } catch {
+        // Browser bundle — no homedir.
+    }
+
+    return collapsePathHeuristic(toPosixPath(p));
 }
 
 /**
