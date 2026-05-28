@@ -5,13 +5,15 @@ import { getRouter } from "@/router";
 import "./styles.css";
 
 function preventMobileBrowserZoomGestures(): void {
-    document.addEventListener(
-        "gesturestart",
-        (event) => {
-            event.preventDefault();
-        },
-        { passive: false }
-    );
+    for (const type of ["gesturestart", "gesturechange", "gestureend"] as const) {
+        document.addEventListener(
+            type,
+            (event) => {
+                event.preventDefault();
+            },
+            { passive: false }
+        );
+    }
 }
 
 preventMobileBrowserZoomGestures();

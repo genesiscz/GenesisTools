@@ -79,5 +79,9 @@ export function TtydFrame({ id, title, className }: TtydFrameProps) {
         );
     }
 
-    return <iframe src={src} title={title} className={className} />;
+    return (
+        <div className={`dd-ttyd-embed ${className ?? ""}`.trim()}>
+            <iframe src={src} title={title} tabIndex={-1} />
+        </div>
+    );
 }

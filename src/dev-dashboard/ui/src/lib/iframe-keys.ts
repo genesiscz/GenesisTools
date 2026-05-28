@@ -117,16 +117,33 @@ export function scrollIframeTerminal(iframe: HTMLIFrameElement | null, amount: n
     viewport.dispatchEvent(
         new WheelEvent("wheel", {
             deltaY,
-            deltaMode: 0, // pixels
+            deltaMode: 0,
             bubbles: true,
             cancelable: true,
         })
     );
 
-    // Some xterm.js renderers detach visual rows from the scrollable DOM, so
-    // belt-and-braces also nudge scrollTop; harmless if the wheel already won.
     viewport.scrollTop = Math.max(0, viewport.scrollTop + deltaY);
     return true;
+}
+
+export function estimateVisibleTerminalLines(iframe: HTMLIFrameElement | null): number {
+    const viewport = getXtermViewport(iframe);
+
+    if (!viewport) {
+        return 24;
+    }
+
+    const lineHeight = estimateLineHeight(viewport);
+
+    return Math.max(1, Math.floor(viewport.clientHeight / lineHeight));
+}
+
+/** Scroll roughly one visible screen of scrollback up or down. */
+export function scrollIframeTerminalByPage(iframe: HTMLIFrameElement | null, direction: -1 | 1): boolean {
+    const lines = estimateVisibleTerminalLines(iframe);
+
+    return scrollIframeTerminal(iframe, direction * lines);
 }
 
 function getXtermViewport(iframe: HTMLIFrameElement): HTMLElement | null {

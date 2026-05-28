@@ -7,6 +7,7 @@ import {
     verifySessionToken,
 } from "@app/dev-dashboard/lib/auth";
 import { getTtydPort } from "@app/dev-dashboard/lib/ttyd/manager";
+import { injectTtydMobileShell, shouldInjectTtydMobileShell } from "@app/dev-dashboard/lib/ttyd/mobile-shell";
 import { logger } from "@app/logger";
 import type { Server, ServerWebSocket } from "bun";
 
@@ -297,6 +298,16 @@ export function startFrontProxy(opts: {
                 for (const cookie of setCookies) {
                     headers.append("set-cookie", cookie);
                 }
+            }
+
+            if (ttyd && shouldInjectTtydMobileShell(url.pathname, headers.get("content-type"))) {
+                const html = await upstream.text();
+
+                return new Response(injectTtydMobileShell(html), {
+                    status: upstream.status,
+                    statusText: upstream.statusText,
+                    headers,
+                });
             }
 
             return new Response(upstream.body, {

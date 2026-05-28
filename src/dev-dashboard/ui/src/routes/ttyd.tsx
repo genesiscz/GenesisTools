@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useNavigate, useSearch } from "@tanstack/react-router";
 import { Layers, Plus, Send, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Mosaic, type MosaicNode, MosaicWindow } from "react-mosaic-component";
 import "react-mosaic-component/react-mosaic-component.css";
 import { Button } from "@ui/components/button";
@@ -10,13 +11,15 @@ import { TmuxSessionsPanel } from "@/components/TmuxSessionsPanel";
 import { TtydCloseDialog } from "@/components/TtydCloseDialog";
 import { TtydFrame } from "@/components/TtydFrame";
 import { TtydPane } from "@/components/TtydPane";
+import { TtydScrollPads } from "@/components/TtydScrollPads";
 import { MobileTerminalShell } from "@/components/terminal-shell/MobileTerminalShell";
 import { ShellIconButton } from "@/components/terminal-shell/ShellIconButton";
 import { useLayoutMode } from "@/hooks/useLayoutMode";
+import { useLockPageScroll } from "@/hooks/useLockPageScroll";
 import { ttydApi, tmuxApi } from "@/lib/api";
 import { findIframeByTitle, scrollIframeTerminal, sendKeyToIframe } from "@/lib/iframe-keys";
 import { buildTtydTabs } from "@/lib/terminal-tabs";
-import { pickStoredTtydActiveId, writeTtydActiveId } from "@/lib/view-state";
+import { pickTtydActiveId, TTYD_TAB_SEARCH_KEY, writeTtydActiveId } from "@/lib/view-state";
 import { buildBalancedMosaicLayout, flattenMosaicLeaves, reconcileMosaicLayout } from "@app/utils/ui/helpers/mosaic-layout";
 import { ttydLabel } from "@app/dev-dashboard/lib/ttyd/label";
 import type { TtydSession } from "@app/dev-dashboard/lib/ttyd/types";
@@ -36,6 +39,8 @@ function LayoutToggle({ mode, setMode }: { mode: "mosaic" | "focused"; setMode: 
 
 export function TtydRoute() {
     const queryClient = useQueryClient();
+    const navigate = useNavigate({ from: "/ttyd" });
+    const { tab: urlTabId } = useSearch({ from: "/ttyd" });
     const { data } = useQuery({ queryKey: ["ttyd", "list"], queryFn: ttydApi.list });
     const { data: tmuxHub } = useQuery({
         queryKey: ["tmux", "sessions"],
@@ -48,6 +53,7 @@ export function TtydRoute() {
         tmuxHub?.some((session) => session.name === tmuxSessionName && session.inCmux) ?? false;
     const [layout, setLayout] = useState<MosaicNode<string> | null>(null);
     const { mode, isMobile, setMode } = useLayoutMode("ttyd");
+    useLockPageScroll(mode === "focused");
     const [activeId, setActiveId] = useState<string | null>(null);
     const active = activeId ?? sessions[0]?.id ?? null;
     const [hubOpen, setHubOpen] = useState(false);
@@ -55,28 +61,20 @@ export function TtydRoute() {
     const [sendTarget, setSendTarget] = useState<TtydSession | null>(null);
     const [highlightId, setHighlightId] = useState<string | null>(null);
 
-    const focusTtydTab = (ttydId: string) => {
-        setActiveId(ttydId);
-        writeTtydActiveId(ttydId);
-        setHighlightId(ttydId);
-        window.setTimeout(() => setHighlightId(null), 2500);
-    };
+    const focusTtydTab = useCallback(
+        (ttydId: string) => {
+            setActiveId(ttydId);
+            writeTtydActiveId(ttydId);
+            setHighlightId(ttydId);
+            window.setTimeout(() => setHighlightId(null), 2500);
+            navigate({ search: { [TTYD_TAB_SEARCH_KEY]: ttydId }, replace: true });
+        },
+        [navigate]
+    );
 
     useEffect(() => {
         if (sessions.length === 0) {
             return;
-        }
-
-        const oneShot = sessionStorage.getItem("dd-ttyd-focus");
-
-        if (oneShot) {
-            sessionStorage.removeItem("dd-ttyd-focus");
-
-            if (sessions.some((session) => session.id === oneShot)) {
-                setActiveId(oneShot);
-                writeTtydActiveId(oneShot);
-                return;
-            }
         }
 
         setActiveId((current) => {
@@ -84,15 +82,12 @@ export function TtydRoute() {
                 return current;
             }
 
-            const stored = pickStoredTtydActiveId(sessions.map((session) => session.id));
-
-            if (stored) {
-                return stored;
-            }
-
-            return sessions[0]?.id ?? null;
+            return pickTtydActiveId({
+                sessionIds: sessions.map((session) => session.id),
+                urlTabId,
+            });
         });
-    }, [sessions]);
+    }, [sessions, urlTabId]);
 
     useEffect(() => {
         if (!activeId) {
@@ -100,7 +95,11 @@ export function TtydRoute() {
         }
 
         writeTtydActiveId(activeId);
-    }, [activeId]);
+
+        if (urlTabId !== activeId) {
+            navigate({ search: { [TTYD_TAB_SEARCH_KEY]: activeId }, replace: true });
+        }
+    }, [activeId, navigate, urlTabId]);
 
     const maxColumns = 3;
 
@@ -138,10 +137,11 @@ export function TtydRoute() {
 
     const kill = useMutation({
         mutationFn: ({ id, killTmux }: { id: string; killTmux: boolean }) => ttydApi.kill(id, killTmux),
-        onSuccess: () => {
+        onSuccess: (_, { id: killedId }) => {
             queryClient.invalidateQueries({ queryKey: ["ttyd", "list"] });
             queryClient.invalidateQueries({ queryKey: ["tmux"] });
             setCloseTarget(null);
+            setActiveId((current) => (current === killedId ? null : current));
         },
     });
 
@@ -209,7 +209,7 @@ export function TtydRoute() {
 
     if (mode === "focused") {
         return (
-            <div className="dd-focused-host relative overflow-hidden">
+            <div className="dd-focused-host dd-ttyd-focused relative overflow-hidden">
                 {!isMobile ? (
                     <div className="absolute right-2 top-1 z-30 flex gap-2">
                         <LayoutToggle mode={mode} setMode={setMode} />
@@ -217,10 +217,27 @@ export function TtydRoute() {
                 ) : null}
                 <MobileTerminalShell
                     tabs={buildTtydTabs(sessions, active).map((t) => ({ ...t, dot: "active" as const }))}
-                    onSelect={setActiveId}
+                    onSelect={(id) => {
+                        setActiveId(id);
+                    }}
                     onRename={(id, name) => renameMut.mutate({ id, name })}
                     headerActions={
-                        <ShellIconButton icon={Layers} label="Tmux sessions" onClick={() => setHubOpen(true)} />
+                        <>
+                            <ShellIconButton icon={Layers} label="Tmux sessions" onClick={() => setHubOpen(true)} />
+                            {active ? (
+                                <ShellIconButton
+                                    icon={X}
+                                    label="Close terminal"
+                                    onClick={() => {
+                                        const session = sessions.find((candidate) => candidate.id === active);
+
+                                        if (session) {
+                                            setCloseTarget(session);
+                                        }
+                                    }}
+                                />
+                            ) : null}
+                        </>
                     }
                     primaryAction={{ label: "＋", onClick: () => spawn.mutate() }}
                     renderPreview={(id) => {
@@ -239,18 +256,15 @@ export function TtydRoute() {
                         sessions.map((s) => (
                             <div
                                 key={s.id}
-                                className="absolute inset-0"
+                                className="absolute inset-0 min-w-0 overflow-hidden"
                                 style={{
                                     opacity: s.id === active ? 1 : 0,
                                     pointerEvents: s.id === active ? "auto" : "none",
                                     zIndex: s.id === active ? 1 : 0,
                                 }}
                             >
-                                <TtydFrame
-                                    id={s.id}
-                                    title={`ttyd-${s.id}`}
-                                    className="h-full w-full border-0 bg-black"
-                                />
+                                <TtydFrame id={s.id} title={`ttyd-${s.id}`} className="h-full w-full bg-black" />
+                                {s.id === active ? <TtydScrollPads iframeTitle={`ttyd-${s.id}`} /> : null}
                             </div>
                         ))
                     ) : (
