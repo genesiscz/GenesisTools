@@ -13,39 +13,27 @@ const DAY = 24 * HOUR;
 
 export function resolveQaRecency(ts: number, now = Date.now()): QaRecency {
     const ageMs = Math.max(0, now - ts);
-    const ageSec = Math.floor(ageMs / SECOND);
+    const secs = Math.floor(ageMs / SECOND);
 
-    if (ageSec < 10) {
-        return {
-            tier: "hot",
-            relative: ageSec < 1 ? "just now" : `${ageSec}s ago`,
-            ageMs,
-        };
+    if (secs < 5) {
+        return { tier: "hot", relative: "just now", ageMs };
     }
 
-    if (ageSec < 30) {
-        return { tier: "fresh", relative: `${ageSec}s ago`, ageMs };
+    if (secs < 60) {
+        return { tier: "hot", relative: `${secs}s ago`, ageMs };
     }
 
-    if (ageSec < 60) {
-        return { tier: "recent", relative: `${ageSec}s ago`, ageMs };
-    }
+    const mins = Math.floor(secs / 60);
+    const remainderSecs = secs - mins * 60;
 
-    const ageMin = Math.floor(ageMs / MINUTE);
+    if (mins < 60) {
+        const tier: QaRecencyTier = mins < 5 ? "fresh" : mins < 30 ? "recent" : "warm";
+        const relative = remainderSecs === 0 ? `${mins}m ago` : `${mins}m ${remainderSecs}s ago`;
 
-    if (ageMin < 5) {
-        return { tier: "warm", relative: `${ageMin}m ago`, ageMs };
-    }
-
-    if (ageMin < 15) {
-        return { tier: "cool", relative: `${ageMin}m ago`, ageMs };
+        return { tier, relative, ageMs };
     }
 
     const ageHours = Math.floor(ageMs / HOUR);
-
-    if (ageHours < 1) {
-        return { tier: "cool", relative: `${ageMin}m ago`, ageMs };
-    }
 
     if (ageHours < 24) {
         return { tier: "muted", relative: `${ageHours}h ago`, ageMs };
@@ -53,5 +41,13 @@ export function resolveQaRecency(ts: number, now = Date.now()): QaRecency {
 
     const ageDays = Math.floor(ageMs / DAY);
 
-    return { tier: "stale", relative: `${ageDays}d ago`, ageMs };
+    if (ageDays < 7) {
+        return { tier: "cool", relative: `${ageDays}d ago`, ageMs };
+    }
+
+    if (ageDays < 30) {
+        return { tier: "stale", relative: `${ageDays}d ago`, ageMs };
+    }
+
+    return { tier: "stale", relative: `${Math.floor(ageDays / 7)}w ago`, ageMs };
 }

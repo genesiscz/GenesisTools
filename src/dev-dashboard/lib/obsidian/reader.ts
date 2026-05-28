@@ -1,4 +1,4 @@
-import { readdir, readFile, stat } from "node:fs/promises";
+import { mkdir, readdir, readFile, stat } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 import type { VaultEntry } from "@app/dev-dashboard/lib/obsidian/types";
 
@@ -47,6 +47,11 @@ export async function listVault(vaultRoot: string): Promise<VaultEntry[]> {
     }
 
     return walk(vaultRoot);
+}
+
+export async function mkdirInVault(vaultRoot: string, relativeDir: string): Promise<void> {
+    const full = assertInsideVault(vaultRoot, relativeDir);
+    await mkdir(full, { recursive: true });
 }
 
 export async function readNote(vaultRoot: string, relativePath: string): Promise<string> {

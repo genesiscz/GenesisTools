@@ -164,6 +164,21 @@ export function queryEntries(db: Database, opts: QueryOpts = {}): QaRow[] {
     }));
 }
 
+export function markEntriesUnread(db: Database, ids: string[], opts: Pick<QueryOpts, "logBase"> = {}): number {
+    if (ids.length === 0) {
+        return 0;
+    }
+
+    catchUp(db, opts.logBase);
+    const placeholders = ids.map(() => "?").join(",");
+    const result = db.run(
+        `UPDATE entries SET read_at = NULL WHERE id IN (${placeholders}) AND read_at IS NOT NULL`,
+        ids
+    );
+
+    return result.changes;
+}
+
 export function markEntriesRead(db: Database, ids: string[], opts: Pick<QueryOpts, "logBase"> = {}): number {
     if (ids.length === 0) {
         return 0;

@@ -1,32 +1,29 @@
 import { describe, expect, test } from "bun:test";
 import { resolveQaRecency } from "./qa-recency";
 
-const now = Date.parse("2026-05-20T12:00:00.000Z");
+const now = 1_700_000_000_000;
 
 describe("resolveQaRecency", () => {
-    test("uses hot tier under 10 seconds", () => {
-        expect(resolveQaRecency(now - 4_000, now)).toEqual({
-            tier: "hot",
-            relative: "4s ago",
-            ageMs: 4_000,
-        });
+    test("just-now under 5 seconds", () => {
+        expect(resolveQaRecency(now - 2_000, now).relative).toBe("just now");
     });
 
-    test("uses fresh tier from 10s to under 30s", () => {
-        expect(resolveQaRecency(now - 18_000, now).tier).toBe("fresh");
-        expect(resolveQaRecency(now - 18_000, now).relative).toBe("18s ago");
+    test("under 60s shows Ns ago", () => {
+        expect(resolveQaRecency(now - 30_000, now).relative).toBe("30s ago");
     });
 
-    test("uses recent tier from 30s to under 1 minute", () => {
-        expect(resolveQaRecency(now - 45_000, now).tier).toBe("recent");
+    test("under 60min shows Nm Ks ago", () => {
+        expect(resolveQaRecency(now - 312_000, now).relative).toBe("5m 12s ago");
     });
 
-    test("uses warm tier from 1 to under 5 minutes", () => {
-        expect(resolveQaRecency(now - 3 * 60_000, now).tier).toBe("warm");
+    test("uses fresh tier under 5 minutes", () => {
+        expect(resolveQaRecency(now - 3 * 60_000, now).tier).toBe("fresh");
         expect(resolveQaRecency(now - 3 * 60_000, now).relative).toBe("3m ago");
     });
 
-    test("cools down after 15 minutes", () => {
-        expect(resolveQaRecency(now - 20 * 60_000, now).tier).toBe("cool");
+    test("uses muted tier for hours", () => {
+        expect(resolveQaRecency(now - 2 * HOUR, now).tier).toBe("muted");
     });
 });
+
+const HOUR = 60 * 60_000;
