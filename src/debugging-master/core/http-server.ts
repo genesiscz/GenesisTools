@@ -1,10 +1,12 @@
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { handleDashboardRequest } from "@app/debugging-master/core/dashboard-server";
 import { SESSIONS_DIR, sessionFilePath } from "@app/debugging-master/core/paths";
+import { SessionManager } from "@app/debugging-master/core/session-manager";
 import { sseBroadcaster } from "@app/debugging-master/core/sse-broadcaster";
 import type { LogEntry } from "@app/debugging-master/types";
 
 import { SafeJSON } from "@app/utils/json";
+import { isSafeLogSessionName, decodeSessionPathSegment } from "@app/utils/log-viewer/session-name";
 
 function ensureDir(): void {
     if (!existsSync(SESSIONS_DIR)) {
@@ -55,8 +57,6 @@ function normalizeEntry(body: string): LogEntry {
 export function startServer(port: number = 7243): { server: ReturnType<typeof Bun.serve>; port: number } {
     ensureDir();
 
-    const SAFE_SESSION_NAME = /^[a-zA-Z0-9_-]+$/;
-
     const corsHeaders: Record<string, string> = {
         "Access-Control-Allow-Origin": "*",
         "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
@@ -90,23 +90,24 @@ export function startServer(port: number = 7243): { server: ReturnType<typeof Bu
 
             // Log ingestion: POST /log/<session-name>
             if (req.method === "POST" && url.pathname.startsWith("/log/")) {
-                const sessionName = url.pathname.slice(5);
-                if (!sessionName || !SAFE_SESSION_NAME.test(sessionName)) {
+                const sessionName = decodeSessionPathSegment(url.pathname.slice(5));
+                if (!sessionName || !isSafeLogSessionName(sessionName)) {
                     return new Response("Invalid session name", { status: 400, headers: corsHeaders });
                 }
 
-                return req.text().then((body) => {
+                return req.text().then(async (body) => {
                     const entry = normalizeEntry(body);
                     const path = sessionFilePath(sessionName);
                     appendFileSync(path, `${SafeJSON.stringify(entry)}\n`);
+                    await new SessionManager().touchSession(sessionName);
                     return new Response("ok", { status: 200, headers: corsHeaders });
                 });
             }
 
             // Clear session: DELETE /log/<session-name>
             if (req.method === "DELETE" && url.pathname.startsWith("/log/")) {
-                const sessionName = url.pathname.slice(5);
-                if (!sessionName || !SAFE_SESSION_NAME.test(sessionName)) {
+                const sessionName = decodeSessionPathSegment(url.pathname.slice(5));
+                if (!sessionName || !isSafeLogSessionName(sessionName)) {
                     return new Response("Invalid session name", { status: 400, headers: corsHeaders });
                 }
                 const path = sessionFilePath(sessionName);
@@ -116,7 +117,7 @@ export function startServer(port: number = 7243): { server: ReturnType<typeof Bu
 
                 try {
                     await Bun.write(path, "");
-                    sseBroadcaster.publishCleared(sessionName);
+                    sseBroadcaster.publishCleared("debugging-master", sessionName);
                     return new Response("cleared", { status: 200, headers: corsHeaders });
                 } catch {
                     return new Response("failed to clear session", { status: 500, headers: corsHeaders });

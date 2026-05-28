@@ -1,4 +1,5 @@
 import { SafeJSON } from "@app/utils/json";
+import { formatLastMessageAgo } from "@app/utils/format";
 
 /** HH:MM:SS.mmm */
 export function formatTime(ts: number): string {
@@ -14,17 +15,8 @@ export function formatRelativeTime(ts: number): string {
     if (!ts) {
         return "never";
     }
-    const delta = Date.now() - ts;
-    if (delta < 60_000) {
-        return "just now";
-    }
-    if (delta < 3_600_000) {
-        return `${Math.floor(delta / 60_000)}m ago`;
-    }
-    if (delta < 86_400_000) {
-        return `${Math.floor(delta / 3_600_000)}h ago`;
-    }
-    return `${Math.floor(delta / 86_400_000)}d ago`;
+
+    return formatLastMessageAgo(Math.max(0, Date.now() - ts));
 }
 
 export function formatDurationMs(ms: number): string {

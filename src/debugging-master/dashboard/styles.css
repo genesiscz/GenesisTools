@@ -1,6 +1,7 @@
 @import 'tailwindcss';
 @import '@ui/theme/styles.css';
 @import '@ui/theme/cyberpunk.css';
+@import '../../utils/ui/helpers/recency.css';
 @source "../../utils/ui";
 @source "./";
 
@@ -30,24 +31,243 @@
     --lvl-snapshot: #3b82f6;    /* electric blue */
     --lvl-trace: #8a8aa3;       /* muted */
     --lvl-raw: #6a6a82;
+
+    --dbg-font-ui: 12px;
+    --dbg-font-header: 11px;
+    --dbg-font-log: 11px;
+    --dbg-font-family: 'JetBrains Mono', ui-monospace, Menlo, Monaco, Consolas, monospace;
+    --dbg-line-border: rgba(255, 255, 255, 0.04);
+
+    /* xterm-like ANSI palette for dashboard log rendering */
+    --ansi-black: #1e1e2e;
+    --ansi-red: #f87171;
+    --ansi-green: #4ade80;
+    --ansi-yellow: #facc15;
+    --ansi-blue: #60a5fa;
+    --ansi-magenta: #e879f9;
+    --ansi-cyan: #22d3ee;
+    --ansi-white: #e5e7eb;
+    --ansi-bright-black: #6b7280;
+    --ansi-bright-red: #fca5a5;
+    --ansi-bright-green: #86efac;
+    --ansi-bright-yellow: #fde047;
+    --ansi-bright-blue: #93c5fd;
+    --ansi-bright-magenta: #f0abfc;
+    --ansi-bright-cyan: #67e8f9;
+    --ansi-bright-white: #f9fafb;
+    --ansi-bg-black: rgba(0, 0, 0, 0.35);
+    --ansi-bg-red: rgba(248, 113, 113, 0.18);
+    --ansi-bg-green: rgba(74, 222, 128, 0.15);
+    --ansi-bg-yellow: rgba(250, 204, 21, 0.15);
+    --ansi-bg-blue: rgba(96, 165, 250, 0.15);
+    --ansi-bg-magenta: rgba(232, 121, 249, 0.15);
+    --ansi-bg-cyan: rgba(34, 211, 238, 0.12);
+    --ansi-bg-white: rgba(255, 255, 255, 0.08);
+    --ansi-bg-bright-black: rgba(107, 114, 128, 0.2);
+    --ansi-bg-bright-red: rgba(252, 165, 165, 0.2);
+    --ansi-bg-bright-green: rgba(134, 239, 172, 0.18);
+    --ansi-bg-bright-yellow: rgba(253, 224, 71, 0.18);
+    --ansi-bg-bright-blue: rgba(147, 197, 253, 0.18);
+    --ansi-bg-bright-magenta: rgba(240, 171, 252, 0.18);
+    --ansi-bg-bright-cyan: rgba(103, 232, 249, 0.16);
+    --ansi-bg-bright-white: rgba(249, 250, 251, 0.12);
 }
 
-html, body, #app {
-    height: 100%;
+html {
+    min-height: 100%;
+    min-height: 100dvh;
     margin: 0;
     background: var(--dbg-bg);
-    color: var(--dbg-fg);
-    font-family: 'JetBrains Mono', ui-monospace, Menlo, Monaco, Consolas, monospace;
-    -webkit-font-smoothing: antialiased;
-    text-rendering: optimizeLegibility;
 }
 
 body {
-    /* Ambient mesh gradient on the document, NOT fixed-attachment. With
-       `background-attachment: fixed`, every scroll frame forces a full
-       repaint of the backdrop — at ~4k rows that saturates the compositor
-       and the page goes unresponsive. Plain background scrolls with the
-       document and gets the browser's fast-scroll path. */
+    min-height: 100%;
+    min-height: 100dvh;
+    margin: 0;
+    color: var(--dbg-fg);
+    font-family: var(--dbg-font-family);
+    font-size: var(--dbg-font-ui);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    background: var(--dbg-bg);
+}
+
+#app {
+    position: relative;
+    z-index: 2;
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+    min-height: 100dvh;
+    margin: 0;
+    background: transparent;
+    color: var(--dbg-fg);
+    font-family: inherit;
+}
+
+.dbg-ui-text {
+    font-size: var(--dbg-font-ui);
+}
+
+.dbg-ui-text-sm {
+    font-size: calc(var(--dbg-font-ui) * 0.85);
+}
+
+.dbg-ui-text-xs {
+    font-size: calc(var(--dbg-font-ui) * 0.75);
+}
+
+.dbg-ui-btn {
+    font-size: var(--dbg-font-ui);
+    line-height: 1.2;
+}
+
+.dbg-header-text {
+    font-size: var(--dbg-font-header);
+    line-height: 1.35;
+}
+
+.dbg-log-text {
+    font-size: var(--dbg-font-log);
+    font-family: inherit;
+    line-height: inherit;
+}
+
+.dbg-log-meta {
+    font-size: inherit;
+    line-height: inherit;
+    opacity: 0.55;
+}
+
+.dbg-log-line {
+    display: grid;
+    grid-template-columns: 12ch minmax(0, 1fr);
+    column-gap: 0.5rem;
+    align-items: baseline;
+    border-bottom: 1px solid var(--dbg-line-border);
+    padding: 0 0.5rem;
+}
+
+.dbg-log-line__ts {
+    color: rgba(255, 255, 255, 0.35);
+    font-size: inherit;
+    line-height: inherit;
+    font-variant-numeric: tabular-nums;
+    user-select: none;
+    white-space: nowrap;
+}
+
+.dbg-log-line__body {
+    min-width: 0;
+    overflow: hidden;
+    line-height: inherit;
+}
+
+.dbg-session-toolbar {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent);
+    padding: 0.375rem 0.5rem;
+}
+
+.dbg-session-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.375rem 0.75rem;
+    align-items: center;
+    width: 100%;
+    min-width: 0;
+}
+
+.dbg-session-row__identity {
+    min-width: 0;
+}
+
+.dbg-session-row__meta {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.375rem;
+    flex-shrink: 0;
+}
+
+.dbg-session-row__actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.375rem;
+}
+
+.dbg-session-row .dbg-header-text {
+    font-size: var(--dbg-font-ui);
+    line-height: 1.35;
+}
+
+.dbg-session-row .dbg-ui-text-sm,
+.dbg-session-row .ui-recency {
+    font-size: var(--dbg-font-ui);
+}
+
+.dbg-session-row--archive {
+    padding: 0.375rem 0.5rem 0.375rem 0.25rem;
+}
+
+.dbg-session-row--archive .dbg-session-row__meta {
+    flex-wrap: nowrap;
+}
+
+@media (max-width: 640px) {
+    .dbg-session-row {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .dbg-session-row__meta {
+        flex-direction: row;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        width: 100%;
+    }
+}
+
+.dbg-header-stacked {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    column-gap: 0.5rem;
+    row-gap: 0.125rem;
+    align-items: baseline;
+}
+
+.dbg-header-stacked__meta {
+    grid-column: 2;
+    display: flex;
+    align-items: baseline;
+    gap: 0.375rem;
+    min-width: 0;
+    color: rgba(255, 255, 255, 0.5);
+}
+
+:root[data-dbg-line-boundaries="hide"] {
+    --dbg-line-border: transparent;
+}
+
+.ansi-log {
+    font-family: inherit;
+    font-size: inherit;
+    line-height: inherit;
+    white-space: pre;
+    vertical-align: baseline;
+}
+
+/* Full-viewport ambient layer — fixed so it never clips when inner panes scroll. */
+body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
     background:
         radial-gradient(circle at 15% 5%, rgba(168, 85, 247, 0.06), transparent 40%),
         radial-gradient(circle at 85% 95%, rgba(6, 182, 212, 0.05), transparent 50%),
@@ -87,7 +307,7 @@ body::before {
     gap: 0.25rem;
     padding: 1px 6px;
     border-radius: 3px;
-    font-size: 10px;
+    font-size: 0.85em;
     font-weight: 600;
     letter-spacing: 0.06em;
     text-transform: uppercase;
@@ -155,6 +375,14 @@ body::before {
     border-left: 3px solid transparent;
     cursor: pointer;
     position: relative;
+}
+
+.entry-row[data-expandable="false"] {
+    cursor: default;
+}
+
+.entry-row[data-expandable="false"]:hover {
+    background: transparent;
 }
 
 /* Transition only kicks in on hover — avoids 300+ active transition state
@@ -231,7 +459,7 @@ body::before {
 .filter-pill {
     padding: 4px 10px;
     border-radius: 999px;
-    font-size: 11px;
+    font-size: var(--dbg-font-ui);
     font-weight: 600;
     letter-spacing: 0.06em;
     text-transform: uppercase;
@@ -276,7 +504,8 @@ body::before {
    ============================================================================ */
 
 .brand-title {
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-family: var(--dbg-font-family);
+    font-size: calc(var(--dbg-font-ui) * 1.08);
     font-weight: 800;
     letter-spacing: 0.18em;
     background: linear-gradient(135deg, #ff9500, #ffd700, #00f0ff);
@@ -306,4 +535,85 @@ body::before {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+/* Path truncation: ellipsis on the left, keep the tail (project dir) visible. */
+.truncate-mono-tail {
+    display: inline-block;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    direction: rtl;
+    text-align: left;
+    unicode-bidi: plaintext;
+}
+
+.truncate-mono-tail > .truncate-mono-tail__text {
+    direction: ltr;
+    unicode-bidi: plaintext;
+}
+
+/* ============================================================================
+   MOSAIC — resizable active session grid (override react-mosaic defaults)
+   ============================================================================ */
+
+.dbg-mosaic {
+    height: 100%;
+    min-height: 12rem;
+    background: transparent;
+}
+
+.dbg-mosaic.mosaic,
+.dbg-mosaic.mosaic-blueprint {
+    background: transparent;
+}
+
+.dbg-mosaic .mosaic-window,
+.dbg-mosaic .mosaic-preview {
+    background: rgba(10, 10, 20, 0.92);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+.dbg-mosaic .mosaic-window .mosaic-window-toolbar,
+.dbg-mosaic .mosaic-preview .mosaic-window-toolbar {
+    background: rgba(0, 0, 0, 0.55);
+    color: rgba(255, 255, 255, 0.55);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    min-height: 28px;
+    height: auto;
+    align-items: stretch;
+    font-family: inherit;
+    font-size: var(--dbg-font-header);
+    box-shadow: none;
+    padding: 2px 4px;
+}
+
+.dbg-mosaic .mosaic-window .mosaic-window-title,
+.dbg-mosaic .mosaic-preview .mosaic-window-title {
+    display: none;
+}
+
+.dbg-mosaic .mosaic-window .mosaic-window-body,
+.dbg-mosaic .mosaic-preview .mosaic-window-body {
+    background: rgba(7, 7, 13, 0.85);
+}
+
+.dbg-mosaic .mosaic-window .mosaic-window-body-overlay,
+.dbg-mosaic .mosaic-preview .mosaic-window-body-overlay,
+.dbg-mosaic .mosaic-window .mosaic-window-additional-actions-bar,
+.dbg-mosaic .mosaic-preview .mosaic-window-additional-actions-bar {
+    background: rgba(10, 10, 20, 0.95);
+}
+
+.dbg-mosaic .mosaic-split {
+    z-index: 5;
+    background: rgba(255, 255, 255, 0.06);
+}
+
+.dbg-mosaic .mosaic-split:hover {
+    background: rgba(168, 85, 247, 0.45);
 }

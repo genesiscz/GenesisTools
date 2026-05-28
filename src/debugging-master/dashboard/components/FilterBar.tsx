@@ -1,7 +1,12 @@
 import type { LogLevel } from "@app/debugging-master/types";
+import type { DashboardSession } from "@app/utils/log-viewer/log-source";
 import type { FilterState } from "@/lib/filters";
+import { formatSessionHeaderParts } from "@/lib/session-run-context";
+import { SessionLiveStatus } from "@/lib/ui/SessionLiveStatus";
 import { FILTER_ORDER, LEVEL_META } from "@/lib/levels";
+import { AutoscrollToggle } from "./AutoscrollToggle";
 import { LevelTooltip } from "./LevelTooltip";
+import { SessionHeaderLine } from "./SessionHeaderLine";
 
 export type SortDir = "asc" | "desc";
 
@@ -10,6 +15,8 @@ interface Props {
     hypotheses: string[];
     paused: boolean;
     sortDir: SortDir;
+    session?: DashboardSession;
+    latestLineTs?: number;
     onToggleLevel: (level: LogLevel) => void;
     onToggleAll: () => void;
     onChangeHypothesis: (h: string | "all") => void;
@@ -23,6 +30,8 @@ export function FilterBar({
     hypotheses,
     paused,
     sortDir,
+    session,
+    latestLineTs,
     onToggleLevel,
     onToggleAll,
     onChangeHypothesis,
@@ -31,6 +40,8 @@ export function FilterBar({
     onToggleSort,
 }: Props): React.ReactElement {
     const allOn = state.levels.size === FILTER_ORDER.length;
+    const sessionContext = session ? formatSessionHeaderParts(session) : null;
+    const showSessionContext = Boolean(sessionContext?.cwd || sessionContext?.command);
 
     return (
         <div className="sticky top-[3.25rem] sm:top-[3.5rem] z-10 glass-card border-b border-white/8 px-3 sm:px-5 py-2.5 flex flex-col gap-2.5">
@@ -87,41 +98,42 @@ export function FilterBar({
                     onChange={(e) => onChangeSearch(e.target.value)}
                     className="flex-1 min-w-[8rem] bg-black/40 border border-white/10 text-white/90 text-xs px-2.5 py-1 rounded placeholder:text-white/30 focus:outline-none focus:border-cyan-500/50 focus:ring-1 focus:ring-cyan-500/20"
                 />
+            </div>
 
-                <button
-                    type="button"
-                    onClick={onToggleSort}
-                    className="text-[10px] uppercase tracking-wider px-2.5 py-1 border rounded-md transition-colors text-white/70 border-white/10 hover:border-cyan-500/40 hover:text-white/95"
-                    title={
-                        sortDir === "asc"
-                            ? "showing oldest → newest (newest at bottom)"
-                            : "showing newest → oldest (newest at top)"
-                    }
-                >
-                    {sortDir === "asc" ? "↓ newest" : "↑ newest"}
-                </button>
-                <button
-                    type="button"
-                    onClick={onTogglePause}
-                    className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-wider px-2.5 py-1 border rounded-md transition-colors"
-                    style={
-                        paused
-                            ? {
-                                  color: "var(--lvl-error)",
-                                  borderColor: "rgba(244,63,94,0.45)",
-                                  background: "rgba(244,63,94,0.08)",
-                              }
-                            : {
-                                  color: "var(--lvl-checkpoint)",
-                                  borderColor: "rgba(16,185,129,0.45)",
-                                  background: "rgba(16,185,129,0.08)",
-                              }
-                    }
-                    title={paused ? "click to resume autoscroll" : "click to pause autoscroll"}
-                >
-                    <span className={paused ? "status-dot status-down" : "status-dot status-live"} />
-                    {paused ? "paused" : "autoscroll"}
-                </button>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 min-w-0">
+                {session ? (
+                    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 min-w-0 flex-1">
+                        <SessionLiveStatus
+                            session={session}
+                            latestLineTs={latestLineTs}
+                            className="dbg-ui-text-sm shrink-0"
+                        />
+                        {showSessionContext ? (
+                            <>
+                                <span className="text-white/20 shrink-0">·</span>
+                                <SessionHeaderLine session={session} layout="context" className="min-w-0" />
+                            </>
+                        ) : null}
+                    </div>
+                ) : (
+                    <div className="flex-1" />
+                )}
+
+                <div className="flex shrink-0 items-center gap-2">
+                    <button
+                        type="button"
+                        onClick={onToggleSort}
+                        className="dbg-ui-btn uppercase tracking-wider px-2.5 py-1 border rounded-md transition-colors text-white/70 border-white/10 hover:border-cyan-500/40 hover:text-white/95"
+                        title={
+                            sortDir === "asc"
+                                ? "showing oldest → newest (newest at bottom)"
+                                : "showing newest → oldest (newest at top)"
+                        }
+                    >
+                        {sortDir === "asc" ? "↓ newest" : "↑ newest"}
+                    </button>
+                    <AutoscrollToggle paused={paused} onToggle={onTogglePause} />
+                </div>
             </div>
         </div>
     );
