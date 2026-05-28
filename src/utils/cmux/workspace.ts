@@ -3,6 +3,7 @@ import { withFocusedWorkspace } from "@app/cmux/lib/focus-guard";
 import { paneList, type SurfaceSplitResult, workspaceCreate } from "@app/cmux/lib/socket";
 import { findWorkspaceByName } from "@app/utils/cmux/layout";
 import { logger } from "@app/logger";
+import { localeExportPrefix } from "@app/utils/terminal/locale";
 
 export interface OpenSplitResult {
     paneId: string;
@@ -94,7 +95,7 @@ export async function sendAttachCommand({
     surfaceRef: string;
     tmuxSessionName: string;
 }): Promise<void> {
-    const payload = `exec tmux attach-session -t ${shellQuote(tmuxSessionName)}\n`;
+    const payload = `${localeExportPrefix()}exec tmux attach-session -t ${shellQuote(tmuxSessionName)}\n`;
     await runCmuxOk(["send", "--workspace", workspaceRef, "--surface", surfaceRef, payload]);
 }
 
@@ -109,7 +110,7 @@ export async function sendNewSessionCommand({
     tmuxSessionName: string;
     cwd: string;
 }): Promise<void> {
-    const payload = `exec tmux new-session -A -s ${shellQuote(tmuxSessionName)} -c ${shellQuote(cwd)}\n`;
+    const payload = `${localeExportPrefix()}exec tmux new-session -A -s ${shellQuote(tmuxSessionName)} -c ${shellQuote(cwd)}\n`;
     await runCmuxOk(["send", "--workspace", workspaceRef, "--surface", surfaceRef, payload]);
 }
 

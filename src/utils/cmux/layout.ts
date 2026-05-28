@@ -56,16 +56,44 @@ function workspaceName(workspace: WorkspaceEntry): string {
     return workspace.title ?? workspace.id ?? workspace.ref;
 }
 
+const PREVIEW_LINE_BUDGET = 100;
+const PREVIEW_HEAD_LINES = 24;
+
+export function formatDualPreview(text: string, maxLines = PREVIEW_LINE_BUDGET): string {
+    const lines = text.replace(/\r\n/g, "\n").split("\n");
+
+    if (lines.length <= maxLines) {
+        return lines.join("\n");
+    }
+
+    const tailLines = maxLines - PREVIEW_HEAD_LINES - 1;
+    const omitted = lines.length - PREVIEW_HEAD_LINES - tailLines;
+
+    return [
+        ...lines.slice(0, PREVIEW_HEAD_LINES),
+        `── ··· ${omitted} lines ··· ──`,
+        ...lines.slice(-tailLines),
+    ].join("\n");
+}
+
 async function readSelectedSurfacePreview(workspaceId: string, surfaceId: string): Promise<string | undefined> {
     try {
         const { runCmux } = await import("@app/cmux/lib/cli");
-        const response = await runCmux(["capture-pane", "--workspace", workspaceId, "--surface", surfaceId, "--lines", "80"]);
+        const response = await runCmux([
+            "capture-pane",
+            "--workspace",
+            workspaceId,
+            "--surface",
+            surfaceId,
+            "--lines",
+            String(PREVIEW_LINE_BUDGET),
+        ]);
 
         if (response.code !== 0) {
             return undefined;
         }
 
-        return redactTerminalPreview(response.stdout);
+        return formatDualPreview(redactTerminalPreview(response.stdout));
     } catch (err) {
         logger.debug({ err, workspaceId, surfaceId }, "cmux layout preview failed");
         return undefined;

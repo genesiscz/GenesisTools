@@ -1,7 +1,21 @@
 import { describe, expect, spyOn, test, afterEach } from "bun:test";
 import * as cli from "@app/cmux/lib/cli";
 import * as socket from "@app/cmux/lib/socket";
-import { fetchCmuxFullLayout, findWorkspaceByName } from "@app/utils/cmux/layout";
+import { fetchCmuxFullLayout, findWorkspaceByName, formatDualPreview } from "@app/utils/cmux/layout";
+
+describe("formatDualPreview", () => {
+    test("passes through short output unchanged", () => {
+        expect(formatDualPreview("line1\nline2")).toBe("line1\nline2");
+    });
+
+    test("collapses long output to head and tail", () => {
+        const lines = Array.from({ length: 120 }, (_, index) => `line-${index}`);
+        const formatted = formatDualPreview(lines.join("\n"));
+        expect(formatted.startsWith("line-0\nline-1")).toBe(true);
+        expect(formatted).toContain("── ··· 21 lines ··· ──");
+        expect(formatted.endsWith("line-119")).toBe(true);
+    });
+});
 
 describe("fetchCmuxFullLayout", () => {
     afterEach(() => {

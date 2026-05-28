@@ -14,6 +14,7 @@ import { getPortOwner } from "@app/utils/network";
 import { isProcessAlive } from "@app/utils/process-alive";
 import { spawnDashboard } from "@app/utils/process/spawnDashboard";
 import { stripAnsi } from "@app/utils/string";
+import { terminalLocaleEnvRecord } from "@app/utils/terminal/locale";
 import * as p from "@clack/prompts";
 import pc from "picocolors";
 import {
@@ -79,6 +80,7 @@ export function buildLifecycleContext(config: DashboardAppConfig, resolvedPort: 
 function spawnEnv(config: DashboardAppConfig): Record<string, string | undefined> {
     return {
         ...config.spawn.env,
+        ...terminalLocaleEnvRecord(),
         ...(config.type === "ui"
             ? {
                   FORCE_COLOR: "1",

@@ -6,7 +6,8 @@ import { findFreePort } from "@app/dev-dashboard/lib/ttyd/free-port";
 import type { TtydSession } from "@app/dev-dashboard/lib/ttyd/types";
 import { logger } from "@app/logger";
 import { resolveTmuxBin } from "@app/utils/tmux/bin";
-import { createTmuxSession, killTmuxSession, sessionExists } from "@app/utils/tmux/sessions";
+import { createTmuxSession, ensureTmuxSessionUtf8Locale, killTmuxSession, sessionExists } from "@app/utils/tmux/sessions";
+import { buildTerminalSpawnEnv } from "@app/utils/terminal/locale";
 import type { Subprocess } from "bun";
 
 export { ttydLabel } from "@app/dev-dashboard/lib/ttyd/label";
@@ -168,6 +169,7 @@ export async function spawnTtyd(opts: SpawnOptions = {}): Promise<TtydSession> {
         }
 
         tmuxSessionName = opts.attachTmuxSession;
+        ensureTmuxSessionUtf8Locale(tmuxSessionName);
     } else {
         tmuxSessionName = makeTtydTmuxSessionName(id);
         createTmuxSession(tmuxSessionName, cwd, command);
@@ -193,6 +195,7 @@ export async function spawnTtyd(opts: SpawnOptions = {}): Promise<TtydSession> {
             tmuxSessionName,
         ],
         cwd,
+        env: buildTerminalSpawnEnv(),
         stdio: ["ignore", "ignore", "ignore"],
         detached: true,
         onExit(_proc, code, signal, err) {
@@ -276,6 +279,24 @@ export async function renameTtyd(id: string, name: string): Promise<boolean> {
     logger.info({ id, name: tracked.session.name }, "ttyd renamed");
 
     return true;
+}
+
+export async function retargetTtydTmuxBindings(fromName: string, toName: string): Promise<void> {
+    await hydrateRegistry();
+
+    let changed = false;
+
+    for (const tracked of registry.values()) {
+        if (tracked.session.tmuxSessionName === fromName) {
+            tracked.session.tmuxSessionName = toName;
+            changed = true;
+        }
+    }
+
+    if (changed) {
+        await persistRegistry();
+        logger.info({ fromName, toName }, "retargeted ttyd tmux bindings after rename");
+    }
 }
 
 export async function killTtyd(id: string, opts: KillTtydOptions = {}): Promise<boolean> {

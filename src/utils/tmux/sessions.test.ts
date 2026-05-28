@@ -1,6 +1,6 @@
 import { describe, expect, test, afterEach } from "bun:test";
 import { resetTmuxBinCache, setTmuxBinForTests } from "@app/utils/tmux/bin";
-import { listTmuxSessions, sessionExists, setTmuxSpawnSyncForTests } from "@app/utils/tmux/sessions";
+import { buildTmuxSpawnEnv, listTmuxSessions, renameTmuxSession, sessionExists, setTmuxSpawnSyncForTests } from "@app/utils/tmux/sessions";
 
 describe("tmux sessions", () => {
     afterEach(() => {
@@ -46,5 +46,58 @@ describe("tmux sessions", () => {
 
         expect(sessionExists("foo")).toBe(true);
         expect(sessionExists("missing")).toBe(false);
+    });
+
+    test("buildTmuxSpawnEnv sets UTF-8 locale when LANG unset", () => {
+        const saved = {
+            LANG: process.env.LANG,
+            LC_ALL: process.env.LC_ALL,
+            LC_CTYPE: process.env.LC_CTYPE,
+        };
+
+        delete process.env.LANG;
+        delete process.env.LC_ALL;
+        delete process.env.LC_CTYPE;
+
+        try {
+            expect(buildTmuxSpawnEnv().LANG).toMatch(/UTF-8/i);
+            expect(buildTmuxSpawnEnv().LC_ALL).toBe(buildTmuxSpawnEnv().LANG);
+        } finally {
+            if (saved.LANG === undefined) {
+                delete process.env.LANG;
+            } else {
+                process.env.LANG = saved.LANG;
+            }
+
+            if (saved.LC_ALL === undefined) {
+                delete process.env.LC_ALL;
+            } else {
+                process.env.LC_ALL = saved.LC_ALL;
+            }
+
+            if (saved.LC_CTYPE === undefined) {
+                delete process.env.LC_CTYPE;
+            } else {
+                process.env.LC_CTYPE = saved.LC_CTYPE;
+            }
+        }
+    });
+
+    test("renameTmuxSession calls tmux rename-session", () => {
+        setTmuxBinForTests("/mock/tmux");
+        const calls: string[][] = [];
+        setTmuxSpawnSyncForTests((cmd) => {
+            calls.push(cmd);
+
+            if (cmd.includes("list-sessions")) {
+                return { exitCode: 0, stdout: "foo\t1\t1\n" };
+            }
+
+            return { exitCode: 0, stdout: "" };
+        });
+
+        renameTmuxSession("foo", "bar");
+
+        expect(calls.some((cmd) => cmd.includes("rename-session") && cmd.includes("bar"))).toBe(true);
     });
 });
