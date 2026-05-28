@@ -25,6 +25,10 @@
   ],
   "overrides": {
     "react": "19.2.5",
-    "react-dom": "19.2.5"
+    "react-dom": "19.2.5",
+    "@tanstack/ai": "0.18.0",
+    "@tanstack/ai-client": "0.10.0",
+    "@tanstack/ai-event-client": "0.3.2",
+    "@tanstack/ai-utils": "0.2.0"
   }
 }

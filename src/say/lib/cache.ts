@@ -65,6 +65,13 @@ export interface SayAudioCacheOptions {
      * are evicted. Default 50 MB.
      */
     maxBytes?: number;
+    /**
+     * Max age in ms before an entry is pruned by `lastUsed`, regardless of
+     * size. Counter-only entries (one-off phrases that never reach `threshold`)
+     * are 0 bytes, so the byte-cap eviction never touches them — without a TTL
+     * the index grows unbounded. Default 24h; pass <= 0 to disable.
+     */
+    ttlMs?: number;
 }
 
 /**
@@ -79,12 +86,14 @@ export class SayAudioCache {
     private readonly dir: string;
     private readonly threshold: number;
     private readonly maxBytes: number;
+    private readonly ttlMs: number;
     private readonly indexPath: string;
 
     constructor(opts: SayAudioCacheOptions) {
         this.dir = opts.dir;
         this.threshold = opts.threshold ?? 5;
         this.maxBytes = opts.maxBytes ?? 50_000_000;
+        this.ttlMs = opts.ttlMs ?? 86_400_000;
         this.indexPath = join(this.dir, "index.json");
 
         if (!existsSync(this.dir)) {
@@ -224,10 +233,18 @@ export class SayAudioCache {
         }
 
         const idx = this.readIndex();
+        const now = Date.now();
+
+        // Drop stale entries before touching the current key. recordMiss runs on
+        // every cache miss, so this is where one-off counter entries are born —
+        // and the only place we can reliably keep the index from growing
+        // unbounded with phrases that are said once and never again.
+        this.pruneExpired(idx, now);
+
         const key = this.hash(p);
-        const existing: IndexEntry = idx.entries[key] ?? { count: 0, lastUsed: Date.now(), sizeBytes: 0 };
+        const existing: IndexEntry = idx.entries[key] ?? { count: 0, lastUsed: now, sizeBytes: 0 };
         existing.count += 1;
-        existing.lastUsed = Date.now();
+        existing.lastUsed = now;
         existing.text = p.text;
 
         // If a previously-persisted audio file vanished under us, drop the
@@ -250,6 +267,44 @@ export class SayAudioCache {
         idx.entries[key] = existing;
         this.evictIfOverCap(idx);
         this.writeIndex(idx);
+    }
+
+    /**
+     * Remove entries whose `lastUsed` is older than `ttlMs`, deleting any
+     * persisted audio file. Unlike `evictIfOverCap` (byte-budget LRU), this
+     * also clears 0-byte counter entries, which otherwise accumulate forever.
+     * A frequently-spoken phrase keeps its `lastUsed` fresh on every hit/miss,
+     * so it survives; genuinely one-off phrases age out. Pass `ttlMs <= 0` to
+     * disable.
+     */
+    private pruneExpired(idx: IndexShape, now: number): void {
+        if (!Number.isFinite(this.ttlMs) || this.ttlMs <= 0) {
+            return;
+        }
+
+        const cutoff = now - this.ttlMs;
+        let pruned = 0;
+
+        for (const [key, e] of Object.entries(idx.entries)) {
+            if (e.lastUsed >= cutoff) {
+                continue;
+            }
+
+            if (e.audioPath && existsSync(e.audioPath)) {
+                try {
+                    unlinkSync(e.audioPath);
+                } catch (err) {
+                    logger.debug(`[say/cache] ttl unlink failed (${e.audioPath}): ${err}`);
+                }
+            }
+
+            delete idx.entries[key];
+            pruned += 1;
+        }
+
+        if (pruned > 0) {
+            logger.debug(`[say/cache] pruned ${pruned} entries older than ${this.ttlMs}ms`);
+        }
     }
 
     private evictIfOverCap(idx: IndexShape): void {
