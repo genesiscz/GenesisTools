@@ -10,6 +10,7 @@
  *     status
  *     attach       --lines <n>
  *     logs         --lines <n>
+ *     open         --port <n> --no-qr --no-open --query key=value
  *     install      (only if launchd.available)
  *     uninstall    (only if launchd.available)
  *
@@ -17,7 +18,18 @@
  *     -i, --interactive   force the menu
  */
 import { Command } from "commander";
-import { attach, down, install, type LifecycleContext, logs, printStatus, restart, uninstall, up } from "./lifecycle";
+import {
+    attach,
+    down,
+    install,
+    type LifecycleContext,
+    logs,
+    openDashboard,
+    printStatus,
+    restart,
+    uninstall,
+    up,
+} from "./lifecycle";
 import type { DashboardAppConfig } from "./types";
 
 interface BuildOptions {
@@ -51,6 +63,23 @@ function parseLines(value: string): number {
     }
 
     return parsed;
+}
+
+function parseQueryParam(value: string, previous: Record<string, string> = {}): Record<string, string> {
+    const eq = value.indexOf("=");
+
+    if (eq <= 0) {
+        throw new Error(`Invalid --query value: ${value} (expected key=value)`);
+    }
+
+    return { ...previous, [value.slice(0, eq)]: value.slice(eq + 1) };
+}
+
+interface OpenFlags {
+    port?: string;
+    qr?: boolean;
+    open?: boolean;
+    query?: Record<string, string>;
 }
 
 function toUpOptions(flags: UpFlags) {
@@ -137,6 +166,29 @@ export function buildCommanderCommand({ config, ctx }: BuildOptions): Command {
         .option("-n, --lines <n>", "lines to print", parseLines, 200)
         .action(async (flags: { lines?: number }) => {
             await logs(ctx, { lines: flags.lines });
+        });
+
+    cmd.command("open")
+        .description("Ensure the dashboard is up, print URL (+ optional QR), and open in the browser.")
+        .option("-p, --port <n>", "override the default port")
+        .option("--no-qr", "skip the phone-scan QR code")
+        .option("--no-open", "print URL only; do not open the browser")
+        .option(
+            "-q, --query <kv>",
+            "URL query param key=value (repeatable)",
+            parseQueryParam,
+            {} as Record<string, string>
+        )
+        .action(async (flags: OpenFlags) => {
+            const query = flags.query;
+            const hasQuery = query && Object.keys(query).length > 0;
+
+            await openDashboard(ctx, {
+                port: flags.port ? parsePort(flags.port) : undefined,
+                qr: flags.qr === false ? false : undefined,
+                openBrowser: flags.open !== false,
+                query: hasQuery ? query : undefined,
+            });
         });
 
     // `install` / `uninstall` only when the app opts into launchd.
