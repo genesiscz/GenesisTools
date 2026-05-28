@@ -1,50 +1,56 @@
-import { FileTailer } from "@app/debugging-master/core/file-tailer";
-import { sessionFilePath } from "@app/debugging-master/core/paths";
 import type { LogEntry } from "@app/debugging-master/types";
 import { SafeJSON } from "@app/utils/json";
+import type { LogSourceId } from "@app/utils/log-viewer/log-source";
+import { createSourceTailer, sessionKey } from "@app/utils/log-viewer/tail-bridge";
+import { parseSessionKey } from "@app/utils/log-viewer/session-key";
+import { resetTaskUiTailer, stopTaskUiTailer } from "@app/utils/log-viewer/task-ui-lines";
 
 interface Subscriber {
     id: number;
     controller: ReadableStreamDefaultController<Uint8Array>;
-    sessionName: string;
+    key: string;
+}
+
+interface MultiplexSubscriber {
+    id: number;
+    controller: ReadableStreamDefaultController<Uint8Array>;
+    keys: Set<string>;
 }
 
 const HEARTBEAT_INTERVAL_MS = 15_000;
 const encoder = new TextEncoder();
 
 /**
- * Live log pub/sub. Each session gets a single `FileTailer` watching its
- * JSONL file; new lines fan out to all SSE subscribers on that session.
- * Watching the file (not the in-process write path) means it works whether
- * ingest comes from this process or another — useful when the dashboard
- * runs on a different port from the ingest server.
+ * Live log pub/sub keyed by `source:session`. Each session gets a single
+ * FileTailer watching its JSONL file; new lines fan out to SSE subscribers.
  */
 export class SSEBroadcaster {
     private subscribers = new Map<string, Set<Subscriber>>();
-    private tailers = new Map<string, FileTailer>();
+    private multiplexSubscribers = new Set<MultiplexSubscriber>();
+    private tailers = new Map<string, ReturnType<typeof createSourceTailer>>();
     private nextId = 1;
     private heartbeat: ReturnType<typeof setInterval> | null = null;
 
-    /**
-     * Open a new SSE stream for the given session. The returned `ReadableStream`
-     * should be handed to a `Response` with `Content-Type: text/event-stream`.
-     */
-    subscribe(sessionName: string): { stream: ReadableStream<Uint8Array>; unsubscribe: () => void } {
+    subscribe(
+        source: LogSourceId,
+        sessionName: string
+    ): { stream: ReadableStream<Uint8Array>; unsubscribe: () => void } {
+        const key = sessionKey(source, sessionName);
         const id = this.nextId++;
         let sub: Subscriber;
 
         const stream = new ReadableStream<Uint8Array>({
             start: (controller) => {
-                sub = { id, controller, sessionName };
-                let bucket = this.subscribers.get(sessionName);
+                sub = { id, controller, key };
+                let bucket = this.subscribers.get(key);
                 if (!bucket) {
                     bucket = new Set();
-                    this.subscribers.set(sessionName, bucket);
+                    this.subscribers.set(key, bucket);
                 }
                 bucket.add(sub);
 
-                this.ensureTailer(sessionName);
-                controller.enqueue(encoder.encode(`event: hello\ndata: {"sub":${id}}\n\n`));
+                this.ensureTailer(source, sessionName, key);
+                controller.enqueue(encoder.encode(`event: hello\ndata: {"sub":${id},"source":"${source}"}\n\n`));
                 this.ensureHeartbeat();
             },
             cancel: () => {
@@ -64,29 +70,140 @@ export class SSEBroadcaster {
         return { stream, unsubscribe };
     }
 
-    /**
-     * Notify all subscribers on a session that its log file was cleared.
-     * Frontend should reset its local entries / expanded / fresh state.
-     */
-    publishCleared(sessionName: string): void {
-        const bucket = this.subscribers.get(sessionName);
-        if (!bucket || bucket.size === 0) {
-            return;
+    subscribeActive(
+        targets: ReadonlyArray<{ source: LogSourceId; sessionName: string }>
+    ): { stream: ReadableStream<Uint8Array>; unsubscribe: () => void } {
+        const keys = new Set(targets.map((t) => sessionKey(t.source, t.sessionName)));
+        const id = this.nextId++;
+        let sub: MultiplexSubscriber;
+
+        const stream = new ReadableStream<Uint8Array>({
+            start: (controller) => {
+                sub = { id, controller, keys };
+                this.multiplexSubscribers.add(sub);
+
+                for (const target of targets) {
+                    const key = sessionKey(target.source, target.sessionName);
+                    this.ensureTailer(target.source, target.sessionName, key);
+                }
+
+                const hello = SafeJSON.stringify({
+                    sub: id,
+                    scope: "active",
+                    sessions: targets.map((t) => ({ source: t.source, session: t.sessionName })),
+                });
+                controller.enqueue(encoder.encode(`event: hello\ndata: ${hello}\n\n`));
+                this.ensureHeartbeat();
+            },
+            cancel: () => {
+                this.removeMultiplexSubscriber(sub);
+            },
+        });
+
+        const unsubscribe = (): void => {
+            this.removeMultiplexSubscriber(sub);
+            try {
+                sub.controller.close();
+            } catch {
+                // already closed
+            }
+        };
+
+        return { stream, unsubscribe };
+    }
+
+    publishRemoved(source: LogSourceId, sessionName: string): void {
+        const key = sessionKey(source, sessionName);
+        const payload = SafeJSON.stringify({ source, session: sessionName });
+        const frame = encoder.encode(`event: removed\ndata: ${payload}\n\n`);
+
+        const bucket = this.subscribers.get(key);
+        if (bucket) {
+            for (const sub of [...bucket]) {
+                try {
+                    sub.controller.enqueue(frame);
+                } catch {
+                    this.removeSubscriber(sub);
+                }
+            }
         }
-        const frame = encoder.encode("event: cleared\ndata: {}\n\n");
-        for (const sub of [...bucket]) {
+
+        for (const sub of [...this.multiplexSubscribers]) {
+            if (!sub.keys.has(key)) {
+                continue;
+            }
+
             try {
                 sub.controller.enqueue(frame);
             } catch {
-                this.removeSubscriber(sub);
+                this.removeMultiplexSubscriber(sub);
+            }
+        }
+
+        const tailer = this.tailers.get(key);
+        if (tailer) {
+            tailer.stop();
+            this.tailers.delete(key);
+        }
+
+        const parsed = parseSessionKey(key);
+        if (parsed?.source === "task") {
+            stopTaskUiTailer(key);
+        }
+
+        this.subscribers.delete(key);
+
+        // Drop the key from each multiplex sub, and reap any whose key set
+        // is now empty — otherwise they linger forever, the 15s heartbeat
+        // keeps pinging them, and `subscribers.size === 0` will never let
+        // the heartbeat shut down even when no live consumer remains.
+        for (const sub of [...this.multiplexSubscribers]) {
+            sub.keys.delete(key);
+            if (sub.keys.size === 0) {
+                this.removeMultiplexSubscriber(sub);
+                try {
+                    sub.controller.close();
+                } catch {
+                    // already closed
+                }
             }
         }
     }
 
-    /** Number of active subscribers (across all sessions, or for a specific session). */
-    subscriberCount(sessionName?: string): number {
-        if (sessionName !== undefined) {
-            return this.subscribers.get(sessionName)?.size ?? 0;
+    publishCleared(source: LogSourceId, sessionName: string): void {
+        const key = sessionKey(source, sessionName);
+        this.tailers.get(key)?.resetAfterClear();
+
+        const payload = SafeJSON.stringify({ source, session: sessionName });
+        const frame = encoder.encode(`event: cleared\ndata: ${payload}\n\n`);
+
+        const bucket = this.subscribers.get(key);
+        if (bucket) {
+            for (const sub of [...bucket]) {
+                try {
+                    sub.controller.enqueue(frame);
+                } catch {
+                    this.removeSubscriber(sub);
+                }
+            }
+        }
+
+        for (const sub of [...this.multiplexSubscribers]) {
+            if (!sub.keys.has(key)) {
+                continue;
+            }
+
+            try {
+                sub.controller.enqueue(frame);
+            } catch {
+                this.removeMultiplexSubscriber(sub);
+            }
+        }
+    }
+
+    subscriberCount(key?: string): number {
+        if (key !== undefined) {
+            return this.subscribers.get(key)?.size ?? 0;
         }
 
         let total = 0;
@@ -96,7 +213,6 @@ export class SSEBroadcaster {
         return total;
     }
 
-    /** Stop heartbeats, file watchers, and drop all state. Test helper. */
     reset(): void {
         for (const bucket of this.subscribers.values()) {
             for (const sub of bucket) {
@@ -108,6 +224,14 @@ export class SSEBroadcaster {
             }
         }
         this.subscribers.clear();
+        for (const sub of this.multiplexSubscribers) {
+            try {
+                sub.controller.close();
+            } catch {
+                // already closed
+            }
+        }
+        this.multiplexSubscribers.clear();
         for (const tailer of this.tailers.values()) {
             tailer.stop();
         }
@@ -118,54 +242,130 @@ export class SSEBroadcaster {
         }
     }
 
-    private ensureTailer(sessionName: string): void {
-        if (this.tailers.has(sessionName)) {
+    private ensureTailer(source: LogSourceId, sessionName: string, key: string): void {
+        if (this.tailers.has(key)) {
             return;
         }
-        const tailer = new FileTailer(sessionFilePath(sessionName), {
-            onEntry: (entry, index) => this.fanOut(sessionName, entry, index),
-        });
+
+        const tailer = createSourceTailer(
+            source,
+            sessionName,
+            (entry, index) => {
+                this.fanOut(key, entry, index);
+            },
+            () => {
+                if (source === "task") {
+                    resetTaskUiTailer(key, sessionName);
+                }
+
+                this.publishCleared(source, sessionName);
+            }
+        );
         tailer.start();
-        this.tailers.set(sessionName, tailer);
+        this.tailers.set(key, tailer);
     }
 
-    private fanOut(sessionName: string, entry: LogEntry, entryIndex: number): void {
-        const bucket = this.subscribers.get(sessionName);
-        if (!bucket || bucket.size === 0) {
+    private fanOut(key: string, entry: LogEntry, entryIndex: number): void {
+        const bucket = this.subscribers.get(key);
+
+        if (bucket && bucket.size > 0) {
+            const payload = SafeJSON.stringify({ ...entry, index: entryIndex });
+            const frame = encoder.encode(`event: entry\ndata: ${payload}\n\n`);
+
+            for (const sub of [...bucket]) {
+                try {
+                    sub.controller.enqueue(frame);
+                } catch {
+                    this.removeSubscriber(sub);
+                }
+            }
+        }
+
+        this.fanOutMultiplex(key, entry, entryIndex);
+    }
+
+    private fanOutMultiplex(key: string, entry: LogEntry, entryIndex: number): void {
+        if (this.multiplexSubscribers.size === 0) {
             return;
         }
 
-        const payload = SafeJSON.stringify({ ...entry, index: entryIndex });
+        const parsed = parseSessionKey(key);
+        if (!parsed) {
+            return;
+        }
+
+        const payload = SafeJSON.stringify({
+            source: parsed.source,
+            session: parsed.name,
+            ...entry,
+            index: entryIndex,
+        });
         const frame = encoder.encode(`event: entry\ndata: ${payload}\n\n`);
 
-        for (const sub of [...bucket]) {
+        for (const sub of [...this.multiplexSubscribers]) {
+            if (!sub.keys.has(key)) {
+                continue;
+            }
+
             try {
                 sub.controller.enqueue(frame);
             } catch {
-                this.removeSubscriber(sub);
+                this.removeMultiplexSubscriber(sub);
             }
         }
     }
 
+    private removeMultiplexSubscriber(sub: MultiplexSubscriber): void {
+        this.multiplexSubscribers.delete(sub);
+
+        if (this.subscribers.size === 0 && this.multiplexSubscribers.size === 0 && this.heartbeat) {
+            clearInterval(this.heartbeat);
+            this.heartbeat = null;
+        }
+    }
+
     private removeSubscriber(sub: Subscriber): void {
-        const bucket = this.subscribers.get(sub.sessionName);
+        const bucket = this.subscribers.get(sub.key);
         if (!bucket) {
             return;
         }
 
         bucket.delete(sub);
         if (bucket.size === 0) {
-            this.subscribers.delete(sub.sessionName);
-            const tailer = this.tailers.get(sub.sessionName);
-            if (tailer) {
-                tailer.stop();
-                this.tailers.delete(sub.sessionName);
+            this.subscribers.delete(sub.key);
+
+            // Don't tear down the tailer / UI-line map if ANY multiplex
+            // subscriber still references this key — SessionsHome holds a
+            // multiplex sub that needs to keep receiving the session's
+            // entries even after the user closes the session-detail page.
+            if (!this.isKeyReferencedByMultiplex(sub.key)) {
+                const tailer = this.tailers.get(sub.key);
+                if (tailer) {
+                    tailer.stop();
+                    this.tailers.delete(sub.key);
+                }
+
+                const parsed = parseSessionKey(sub.key);
+                if (parsed?.source === "task") {
+                    stopTaskUiTailer(sub.key);
+                }
             }
         }
-        if (this.subscribers.size === 0 && this.heartbeat) {
+
+        if (this.subscribers.size === 0 && this.multiplexSubscribers.size === 0 && this.heartbeat) {
             clearInterval(this.heartbeat);
             this.heartbeat = null;
         }
+    }
+
+    private isKeyReferencedByMultiplex(key: string): boolean {
+        for (const sub of this.multiplexSubscribers) {
+            if (sub.keys.has(key)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private ensureHeartbeat(): void {
@@ -184,10 +384,17 @@ export class SSEBroadcaster {
                     }
                 }
             }
+
+            for (const sub of [...this.multiplexSubscribers]) {
+                try {
+                    sub.controller.enqueue(ping);
+                } catch {
+                    this.removeMultiplexSubscriber(sub);
+                }
+            }
         }, HEARTBEAT_INTERVAL_MS);
         this.heartbeat.unref?.();
     }
 }
 
-/** Process-wide broadcaster. */
 export const sseBroadcaster = new SSEBroadcaster();

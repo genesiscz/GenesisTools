@@ -3,7 +3,7 @@ import { basename, join } from "node:path";
 import type { LogEntry, SessionMeta } from "@app/debugging-master/types";
 import { suggestCommand } from "@app/utils/cli/executor";
 import { SafeJSON } from "@app/utils/json";
-import { fuzzyFind } from "@app/utils/string";
+import { fuzzyResolveSession } from "@app/utils/log-session/fuzzy-resolver";
 import { ConfigManager } from "./config-manager";
 
 export interface CreateSessionResult {
@@ -19,7 +19,7 @@ const NEWLINE = 0x0a;
 const COUNT_BUF_SIZE = 16_384;
 
 /** Count newline bytes in a file without reading it into a JS string. */
-function countNewlines(filePath: string, fileSize: number): number {
+export function countNewlines(filePath: string, fileSize: number): number {
     const fd = openSync(filePath, "r");
     const buf = Buffer.allocUnsafe(Math.min(COUNT_BUF_SIZE, fileSize));
     let count = 0;
@@ -109,22 +109,12 @@ export class SessionManager {
         const names = await this.listSessionNames();
 
         if (sessionFlag) {
-            if (names.includes(sessionFlag)) {
-                await this.config.setRecentSession(sessionFlag);
-                return sessionFlag;
-            }
-
-            const match = fuzzyFind(sessionFlag, names);
-            if (match) {
-                await this.config.setRecentSession(match);
-                return match;
-            }
-
-            const available = names.length > 0 ? names.join(", ") : "(none)";
-            throw new Error(
-                `Session "${sessionFlag}" not found. Available: ${available}\n` +
-                    `Tip: ${TOOL_NAME} start --session ${sessionFlag}`
-            );
+            const resolved = fuzzyResolveSession(sessionFlag, names, {
+                toolHint: TOOL_NAME,
+                startHint: `${TOOL_NAME} start --session ${sessionFlag}`,
+            });
+            await this.config.setRecentSession(resolved);
+            return resolved;
         }
 
         const recent = await this.config.getRecentSession();
