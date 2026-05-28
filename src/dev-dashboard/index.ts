@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { getConfig, saveConfig } from "@app/dev-dashboard/config";
 import { createBasicAuthCredentials } from "@app/dev-dashboard/lib/auth";
 import { startFrontProxy } from "@app/dev-dashboard/lib/front-proxy";
+import { stopUiServerOnPort } from "@app/dev-dashboard/lib/stop-ui-server";
 import { findFreePort } from "@app/dev-dashboard/lib/ttyd/free-port";
 import { logger, out } from "@app/logger";
 import { runTool } from "@app/utils/cli";
@@ -36,6 +37,9 @@ async function runUiServer(): Promise<void> {
 
     const { port } = await getConfig();
     const url = `http://localhost:${port}`;
+
+    stopUiServerOnPort(port);
+
     // Vite runs on a private loopback port; a Bun.serve front proxy owns the
     // public port so WebSockets (ttyd + Vite HMR) work — Bun's node:http
     // upgrade socket is broken (oven-sh/bun#28396).
@@ -73,7 +77,7 @@ async function runUiServer(): Promise<void> {
 
     // Teardown hooks below are registered after this line; if startFrontProxy
     // throws, the already-spawned Vite child would be orphaned. Kill it here.
-    let frontProxy: ReturnType<typeof startFrontProxy>;
+    let frontProxy: ReturnType<typeof startFrontProxy> | undefined;
 
     const internalUrl = `http://127.0.0.1:${internalPort}/`;
     logger.info({ internalPort, publicPort: port }, "waiting for Vite before binding public front-proxy port");
@@ -105,6 +109,10 @@ async function runUiServer(): Promise<void> {
         throw err;
     }
     const stopFrontProxy = () => {
+        if (!frontProxy) {
+            return;
+        }
+
         try {
             frontProxy.stop(true);
         } catch (err) {
@@ -163,7 +171,10 @@ async function runUiServer(): Promise<void> {
     }
 
     const exitCode: number = await new Promise((resolveExit) => {
-        child.on("exit", (code) => resolveExit(code ?? 1));
+        child.on("exit", (code) => {
+            stopFrontProxy();
+            resolveExit(code ?? 1);
+        });
     });
 
     if (exitCode !== 0) {
