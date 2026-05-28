@@ -1,4 +1,5 @@
 import { readdir, stat } from "node:fs/promises";
+import { join } from "node:path";
 import { logger } from "@app/logger";
 import { getTaskSessionsDir } from "@app/task/lib/paths";
 import { TaskSessionStore } from "@app/task/lib/session-store";
@@ -22,7 +23,7 @@ export async function runSessionGc(opts: { retentionDays: number }): Promise<{ r
         const session = file.replace(/\.jsonl$/, "");
 
         try {
-            const st = await stat(`${dir}/${file}`);
+            const st = await stat(join(dir, file));
             if (st.mtimeMs >= cutoffMs) {
                 continue;
             }

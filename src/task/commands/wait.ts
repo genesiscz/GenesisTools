@@ -27,6 +27,15 @@ export function registerWaitCommand(program: Command): void {
                 const globalOpts = program.opts<{ session?: string }>();
                 const sessionFlag = opts.session ?? globalOpts.session;
 
+                if (opts.timeout !== undefined) {
+                    const seconds = Number.parseInt(opts.timeout, 10);
+
+                    if (Number.isNaN(seconds) || seconds <= 0) {
+                        out.printlnErr("error: --timeout requires a positive number of seconds");
+                        process.exit(1);
+                    }
+                }
+
                 await withResolvedSession(sessionFlag, async (resolved) => {
                     const result = await waitForSession({
                         session: resolved,

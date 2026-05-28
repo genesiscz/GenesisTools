@@ -1,6 +1,7 @@
+import { openSync } from "node:fs";
 import { readJsonlFile } from "@app/utils/log-session/jsonl-reader";
 import type { JsonlExitRecord } from "@app/utils/log-session/types";
-import { jsonlPath } from "@app/task/lib/paths";
+import { jsonlPath, stdoutLogPath } from "@app/task/lib/paths";
 import type { TaskRunMode } from "@app/task/types";
 
 const WORKER_ENV = "TASK_RUN_WORKER";
@@ -63,13 +64,15 @@ export function spawnDetachedRunWorker(opts: {
 
     cmd.push("--", ...opts.command);
 
+    const logFd = openSync(stdoutLogPath(opts.session), "a");
+
     return Bun.spawn({
         cmd,
         env: { ...process.env, [WORKER_ENV]: "1" },
         cwd: process.cwd(),
-        stdin: "inherit",
-        stdout: "inherit",
-        stderr: "inherit",
+        stdin: "ignore",
+        stdout: logFd,
+        stderr: logFd,
         detached: true,
     });
 }

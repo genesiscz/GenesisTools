@@ -23,11 +23,15 @@ export function sliceLogLines<T>(lines: T[], opts: Pick<LogQueryOpts, "head" | "
         return { lines, elidedCount: 0, headCount: 0 };
     }
 
+    if (opts.head === undefined && opts.tail === undefined) {
+        return { lines, elidedCount: 0, headCount: 0 };
+    }
+
     const h = opts.head ?? 0;
     const t = opts.tail ?? 0;
 
     if (h === 0 && t === 0) {
-        return { lines, elidedCount: 0, headCount: 0 };
+        return { lines: [], elidedCount: 0, headCount: 0 };
     }
 
     if (h + t >= lines.length) {
@@ -137,7 +141,9 @@ export async function queryLogs(opts: LogQueryOpts): Promise<void> {
     const allLines = filterLineRecords(records);
     const { lines, elidedCount, headCount } = selectLines(allLines, opts);
     const elision =
-        elidedCount > 0 && headCount > 0 ? { count: elidedCount, afterIndex: headCount } : undefined;
+        elidedCount > 0 && (opts.head ?? 0) > 0 && (opts.tail ?? 0) > 0
+            ? { count: elidedCount, afterIndex: headCount }
+            : undefined;
 
     if (opts.format === "raw") {
         formatRaw(lines, elision);

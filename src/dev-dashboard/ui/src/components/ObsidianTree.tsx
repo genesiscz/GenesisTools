@@ -149,11 +149,19 @@ export function ObsidianTree({
 
         const relativeDir = parent ? `${parent}/${name.trim()}` : name.trim();
 
-        await fetch("/api/obsidian/mkdir", {
+        const res = await fetch("/api/obsidian/mkdir", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: SafeJSON.stringify({ relativeDir }),
         });
+
+        if (!res.ok) {
+            const err = (await res.json().catch(() => ({ error: "Unknown error" }))) as { error?: string };
+            window.alert(`Failed to create folder: ${err.error ?? "Unknown error"}`);
+
+            return;
+        }
+
         onSelect(relativeDir);
         onTreeChange?.();
     };

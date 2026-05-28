@@ -6,7 +6,7 @@ import { hasNonEmptySelection } from "@app/utils/ui/hooks/useSelectionAware.clie
 import { useScrollProgress } from "@app/utils/ui/hooks/useScrollProgress.client";
 import { SafeJSON } from "@app/utils/json";
 import { useQuery } from "@tanstack/react-query";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { QaClockProvider } from "@/components/QaClockProvider";
 import { QaCopyButtons } from "@/components/QaCopyButtons";
 import { QaRecencyTime } from "@/components/QaRecencyTime";
@@ -91,7 +91,19 @@ const QaCard = memo(function QaCard({
         return highlightMatchesInHtml(answerBase, highlightTokens);
     }, [answerBase, highlightTokens, viewMode]);
 
-    const handleCardMouseUp = useCallback(() => {
+    const handleCardMouseUp = useCallback((ev: MouseEvent) => {
+        const target = ev.target as HTMLElement;
+
+        if (target.closest("button") || target.closest("a")) {
+            return;
+        }
+
+        const nestedButton = target.closest("[role='button']");
+
+        if (nestedButton && nestedButton !== ev.currentTarget) {
+            return;
+        }
+
         if (hasNonEmptySelection()) {
             return;
         }

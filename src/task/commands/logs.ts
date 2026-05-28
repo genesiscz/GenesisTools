@@ -23,8 +23,8 @@ export function registerLogsCommand(program: Command): void {
         .action(async (opts: LogCliOpts) => {
             const globalOpts = program.opts<{ session?: string }>();
             const sessionFlag = opts.session ?? globalOpts.session;
-            let resolvedOpts = applyLogWindowDefaults(opts, { ttyTail: "50" });
-            resolvedOpts = applyGrepImpliesAll(resolvedOpts);
+            let resolvedOpts = applyGrepImpliesAll(opts);
+            resolvedOpts = applyLogWindowDefaults(resolvedOpts, { ttyTail: "50" });
 
             await withResolvedSession(sessionFlag, async (session) => {
                 const queryOpts = buildLogQueryOpts(session, resolvedOpts);

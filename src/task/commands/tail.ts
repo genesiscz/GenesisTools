@@ -26,14 +26,15 @@ export function registerTailCommand(program: Command): void {
         .action(async (opts: LogCliOpts & { exitOnMatch?: string; propagateExit?: boolean }) => {
             const globalOpts = program.opts<{ session?: string }>();
             const sessionFlag = opts.session ?? globalOpts.session;
-            let resolvedOpts = applyLogWindowDefaults(opts, { ttyTail: "10" });
-            resolvedOpts = applyGrepImpliesAll(resolvedOpts);
+            let resolvedOpts = applyGrepImpliesAll(opts);
+            resolvedOpts = applyLogWindowDefaults(resolvedOpts, { ttyTail: "10" });
 
             await withResolvedSession(sessionFlag, async (session) => {
                 if (opts.exitOnMatch) {
                     const result = await waitForSession({
                         session,
                         exitOnMatch: new RegExp(opts.exitOnMatch),
+                        waitForExit: true,
                     });
 
                     if (result.reason === "match") {
