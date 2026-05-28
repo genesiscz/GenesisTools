@@ -9,6 +9,8 @@
     --dd-text-primary: #e6edf3;
     --dd-text-secondary: #8b96a0;
     --dd-text-muted: #5b6670;
+    --dd-danger: #f87171;
+    --dd-accent-glow: rgba(52, 211, 153, 0.35);
 }
 
 .dd-grid-bg {
@@ -29,6 +31,110 @@
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;
+}
+
+.dd-qa-section-heading {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.dd-qa-section-heading-bar {
+    flex: none;
+    width: 2px;
+    height: 0.875rem;
+    border-radius: 9999px;
+    background: var(--dd-accent-gradient);
+    box-shadow: 0 0 8px var(--dd-accent-glow);
+}
+
+.dd-qa-section-body {
+    margin-left: 0.625rem;
+    padding-left: 0.75rem;
+    border-left: 1px solid var(--dd-border);
+}
+
+.dd-qa-card--unread {
+    border-color: rgba(52, 211, 153, 0.28);
+    background:
+        linear-gradient(180deg, rgba(52, 211, 153, 0.07), transparent 55%),
+        var(--dd-bg-panel);
+    box-shadow: 0 0 0 1px rgba(52, 211, 153, 0.06);
+}
+
+.dd-qa-card--clickable {
+    cursor: pointer;
+}
+
+.dd-qa-card--clickable:focus-visible {
+    outline: 2px solid rgba(52, 211, 153, 0.45);
+    outline-offset: 2px;
+}
+
+.dd-qa-card--unread .dd-qa-unread-badge {
+    display: inline-flex;
+}
+
+.dd-qa-unread-badge {
+    display: none;
+    align-items: center;
+    border-radius: 9999px;
+    border: 1px solid rgba(52, 211, 153, 0.35);
+    background: rgba(52, 211, 153, 0.1);
+    color: #6ee7b7;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    padding: 1px 7px;
+    text-transform: uppercase;
+}
+
+.dd-qa-recency {
+    font-weight: 600;
+    letter-spacing: 0.01em;
+}
+
+.dd-qa-recency--hot {
+    color: #34d399;
+    text-shadow: 0 0 12px rgba(52, 211, 153, 0.65);
+    animation: dd-qa-recency-pulse 1.4s ease-in-out infinite;
+}
+
+.dd-qa-recency--fresh {
+    color: #2dd4bf;
+}
+
+.dd-qa-recency--recent {
+    color: #22d3ee;
+}
+
+.dd-qa-recency--warm {
+    color: #38bdf8;
+}
+
+.dd-qa-recency--cool {
+    color: #7dd3fc;
+}
+
+.dd-qa-recency--muted {
+    color: var(--dd-text-secondary);
+    font-weight: 500;
+}
+
+.dd-qa-recency--stale {
+    color: var(--dd-text-muted);
+    font-weight: 400;
+}
+
+@keyframes dd-qa-recency-pulse {
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.72;
+    }
 }
 
 .dd-mosaic .mosaic-window {
@@ -124,12 +230,16 @@
     border-radius: 8px;
     background: #050607;
     color: #aab4bd;
-    padding: 10px;
+    padding: 10px calc(10px + env(safe-area-inset-right, 0px))
+        calc(10px + env(safe-area-inset-bottom, 0px)) 10px;
     font-family: "JetBrains Mono", source-code-pro, Menlo, Monaco, Consolas, monospace;
     font-size: 11px;
     line-height: 1.55;
     text-shadow: 0 0 10px rgba(52, 211, 153, 0.05);
     white-space: pre-wrap;
+    /* Native momentum scroll on iOS + don't yank parent scroll. */
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
 }
 
 .dd-terminal-line {
@@ -516,4 +626,80 @@
 .dd-dot.is-off {
     background: #3c4a44;
     box-shadow: none;
+}
+
+/* Mobile virtual keys bar — floats just above the OS keyboard.
+   Inline `bottom` is driven by visualViewport in MobileKeyBar.tsx. */
+.dd-keybar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    z-index: 60;
+    display: flex;
+    gap: 6px;
+    padding: 6px 8px calc(6px + env(safe-area-inset-bottom, 0px));
+    background:
+        linear-gradient(180deg, rgba(16, 19, 22, 0.92), rgba(8, 10, 12, 0.96));
+    border-top: 1px solid var(--dd-border);
+    box-shadow: 0 -10px 24px rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    overflow-x: auto;
+    scrollbar-width: none;
+    font-family: "JetBrains Mono", source-code-pro, Menlo, Monaco, Consolas, monospace;
+    /* Mobile only — desktop never sees this. */
+    pointer-events: auto;
+}
+
+.dd-keybar::-webkit-scrollbar {
+    display: none;
+}
+
+.dd-keybar-key {
+    flex: 1 0 auto;
+    min-width: 44px;
+    height: 38px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 10px;
+    border: 1px solid var(--dd-border);
+    border-radius: 8px;
+    background: #0f1316;
+    color: var(--dd-text-primary);
+    font-size: 12px;
+    line-height: 1;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    transition:
+        background 120ms ease,
+        border-color 120ms ease,
+        transform 80ms ease,
+        box-shadow 120ms ease;
+}
+
+.dd-keybar-key:hover {
+    border-color: #2a3338;
+    background: #141a1f;
+}
+
+.dd-keybar-key:active {
+    transform: translateY(1px);
+    background: rgba(52, 211, 153, 0.08);
+    border-color: rgba(52, 211, 153, 0.4);
+    box-shadow: inset 0 0 0 1px rgba(52, 211, 153, 0.2);
+}
+
+.dd-keybar-key.is-accent {
+    color: #baf7dc;
+    border-color: rgba(52, 211, 153, 0.45);
+    background: rgba(52, 211, 153, 0.08);
+    box-shadow: inset 0 -1px 0 rgba(52, 211, 153, 0.3);
+}
+
+.dd-keybar-label {
+    text-transform: uppercase;
+    font-weight: 600;
 }

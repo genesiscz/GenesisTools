@@ -232,7 +232,7 @@ export function CmuxSessionList({ snapshot }: Props) {
                     )}
                 >
                     {activePane ? (
-                        <div className="absolute inset-0 overflow-hidden p-2 font-mono">
+                        <div className="absolute inset-0 flex flex-col overflow-hidden p-2 font-mono">
                             <SemanticTerminalPreview
                                 preview={activeSurface?.preview || activePane.preview || "(no snapshot text)"}
                             />
