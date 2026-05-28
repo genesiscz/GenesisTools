@@ -27,6 +27,7 @@ import {
 } from "@app/dev-dashboard/lib/obsidian/publish";
 import { listVault, readNote } from "@app/dev-dashboard/lib/obsidian/reader";
 import { renderSharePage } from "@app/dev-dashboard/lib/obsidian/share-template";
+import { enrichQaEntry } from "@app/dev-dashboard/lib/qa-render";
 import { createQaStream, todayLogFile } from "@app/dev-dashboard/lib/qa-sse";
 import { configureRetention, getCachedPulse, getSeries, startPulsePolling } from "@app/dev-dashboard/lib/system/poller";
 import { addTodo, completeTodo, deleteTodo, listTodos } from "@app/dev-dashboard/lib/todos/service";
@@ -34,7 +35,7 @@ import { killTtyd, listTtyd, renameTtyd, spawnTtyd } from "@app/dev-dashboard/li
 import { fetchWeather } from "@app/dev-dashboard/lib/weather/client";
 import { logger } from "@app/logger";
 import { defaultDbPath } from "@app/question/commands/log";
-import { openReadModel, queryEntries } from "@app/question/lib/read-model";
+import { markEntriesRead, openReadModel, queryEntries } from "@app/question/lib/read-model";
 import { getAudioLibrary } from "@app/utils/audio/library";
 import { resolveSoundBuffer } from "@app/utils/audio/runner.server";
 import { SafeJSON } from "@app/utils/json";
@@ -353,11 +354,28 @@ export function attachDevDashboardMiddleware(middlewares: Connect.Server): void 
                     unread: url.searchParams.get("unread") === "1",
                     limit: Number.parseInt(url.searchParams.get("limit") ?? "100", 10),
                 });
-                sendJson(res, 200, { entries: rows });
+                sendJson(res, 200, { entries: rows.map((row) => enrichQaEntry(row)) });
             } catch (err) {
                 sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
             } finally {
                 db?.close(); // bun:sqlite has no GC finalizer — close every request or leak an FD (t1)
+            }
+
+            return;
+        }
+
+        if (req.method === "POST" && url.pathname === "/api/qa/read") {
+            let db: ReturnType<typeof openReadModel> | undefined;
+            try {
+                const body = await readJson<{ ids?: string[] }>(req);
+                const ids = body.ids?.filter((id) => typeof id === "string" && id.length > 0) ?? [];
+                db = openReadModel(defaultDbPath());
+                const updated = markEntriesRead(db, ids);
+                sendJson(res, 200, { ok: true, updated });
+            } catch (err) {
+                sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
+            } finally {
+                db?.close();
             }
 
             return;
@@ -425,9 +443,9 @@ export function attachDevDashboardMiddleware(middlewares: Connect.Server): void 
             });
             res.write(": qa stream open\n\n");
             const stream = createQaStream(todayLogFile(), (entry) => {
-                res.write(`data: ${SafeJSON.stringify(entry)}\n\n`);
+                res.write(`data: ${SafeJSON.stringify(enrichQaEntry(entry))}\n\n`);
             });
-            const keepAlive = setInterval(() => res.write(": ping\n\n"), 25000);
+            const keepAlive = setInterval(() => res.write(": ping\n\n"), 12_000);
             const shutdown = (): void => {
                 clearInterval(keepAlive);
                 stream.close();

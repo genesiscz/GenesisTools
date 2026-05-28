@@ -1,8 +1,15 @@
+import { type EnrichedQaEntry, isQaAnswerTruncated } from "@app/dev-dashboard/lib/qa-render";
 import type { QaEntry } from "@app/question/lib/types";
 import { playDingInBrowser } from "@app/utils/audio/runner.client";
 import { SafeJSON } from "@app/utils/json";
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { LiveSseIndicator } from "@/components/LiveSseIndicator";
+import { QaClockProvider } from "@/components/QaClockProvider";
+import { QaRecencyTime } from "@/components/QaRecencyTime";
+import { QaSectionHeading } from "@/components/QaSectionHeading";
+
+const READ_PERSIST_DEBOUNCE_MS = 400;
 
 interface AudioEntry {
     id: string;
@@ -103,7 +110,7 @@ function SoundControl() {
     );
 }
 
-interface QaRow extends QaEntry {
+interface QaRow extends QaEntry, EnrichedQaEntry {
     supersededBy: string | null;
     readAt: number | null;
 }
@@ -130,26 +137,63 @@ function tagClass(tag: string): string {
     return "border-[#2a3445] text-[var(--dd-text-secondary)]";
 }
 
-function QaCard({ entry }: { entry: QaRow }) {
-    const [open, setOpen] = useState(false);
-    const when = new Date(entry.ts).toISOString().slice(0, 16).replace("T", " ");
-    const lines = entry.answerMd.split("\n");
-    const preview = lines.slice(0, 3).join("\n");
-    const truncated = lines.length > 3;
+const QaCard = memo(function QaCard({
+    entry,
+    unread,
+    onSeen,
+}: {
+    entry: QaRow;
+    unread: boolean;
+    onSeen: (id: string) => void;
+}) {
+    const [open, setOpen] = useState(true);
+    const truncated = isQaAnswerTruncated(entry.answerMd);
+    const answerHtml = open || !truncated ? entry.answerHtml : entry.answerHtmlPreview;
+
+    const handleMarkRead = useCallback(() => {
+        if (!unread) {
+            return;
+        }
+
+        onSeen(entry.id);
+    }, [entry.id, onSeen, unread]);
 
     return (
-        <div className="dd-panel flex flex-col gap-2 p-4">
+        <div
+            role={unread ? "button" : undefined}
+            tabIndex={unread ? 0 : undefined}
+            className={`dd-panel flex flex-col gap-3 p-4${unread ? " dd-qa-card--unread dd-qa-card--clickable" : ""}`}
+            data-qa-id={entry.id}
+            data-qa-unread={unread ? "1" : "0"}
+            onClick={handleMarkRead}
+            onKeyDown={(ev) => {
+                if (!unread) {
+                    return;
+                }
+
+                if (ev.key === "Enter" || ev.key === " ") {
+                    ev.preventDefault();
+                    onSeen(entry.id);
+                }
+            }}
+        >
             <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--dd-text-muted)]">
+                <span className="dd-qa-unread-badge">new</span>
                 <span className="text-[var(--dd-text-secondary)]">{entry.project}</span>
                 <span>·</span>
                 <span>{entry.branch ?? "-"}</span>
                 <span className={`rounded-full border px-2 py-[1px] ${tagClass(entry.tag)}`}>{entry.tag}</span>
-                <span className="ml-auto">{when}</span>
+                <QaRecencyTime ts={entry.ts} />
             </div>
-            <div className="font-bold text-[var(--dd-text-primary)]">❯ {entry.question}</div>
-            <pre className="whitespace-pre-wrap break-words text-sm text-[var(--dd-text-secondary)]">
-                {open ? entry.answerMd : preview}
-            </pre>
+            <QaSectionHeading label="Question" />
+            <div className="dd-qa-section-body text-[var(--dd-text-primary)] font-medium leading-relaxed">
+                {entry.question}
+            </div>
+            <QaSectionHeading label="Answer" />
+            <article
+                className="dd-qa-section-body dd-markdown text-sm"
+                dangerouslySetInnerHTML={{ __html: answerHtml }}
+            />
             {truncated ? (
                 <button type="button" className="dd-accent-text self-start text-xs" onClick={() => setOpen((v) => !v)}>
                     {open ? "▴ collapse" : "▾ expand full answer (rationale · refs · links)"}
@@ -162,13 +206,109 @@ function QaCard({ entry }: { entry: QaRow }) {
             ) : null}
         </div>
     );
-}
+});
 
 export function QaRoute() {
     const logQuery = useQuery({ queryKey: ["qa-log"], queryFn: fetchQaLog, retry: false });
     const [live, setLive] = useState<QaRow[]>([]);
     const [sseDown, setSseDown] = useState(false);
+    const [seenIds, setSeenIds] = useState<Set<string>>(() => new Set());
     const seen = useRef<Set<string>>(new Set());
+    const markedReadRef = useRef<Set<string>>(new Set());
+    const pendingReadIds = useRef<Set<string>>(new Set());
+    const readFlushTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+    const readApiDisabledRef = useRef(false);
+
+    const flushReadIds = useCallback(() => {
+        readFlushTimer.current = undefined;
+
+        if (readApiDisabledRef.current) {
+            pendingReadIds.current.clear();
+            return;
+        }
+
+        const ids = [...pendingReadIds.current];
+        pendingReadIds.current.clear();
+
+        if (ids.length === 0) {
+            return;
+        }
+
+        void fetch("/api/qa/read", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: SafeJSON.stringify({ ids }),
+        })
+            .then((res) => {
+                if (res.status === 404) {
+                    readApiDisabledRef.current = true;
+                }
+            })
+            .catch(() => {
+                /* best-effort — unread styling is client-side until next load */
+            });
+    }, []);
+
+    const markSeen = useCallback(
+        (id: string) => {
+            if (markedReadRef.current.has(id)) {
+                return;
+            }
+
+            markedReadRef.current.add(id);
+            setSeenIds((prev) => {
+                if (prev.has(id)) {
+                    return prev;
+                }
+
+                const next = new Set(prev);
+                next.add(id);
+                return next;
+            });
+            pendingReadIds.current.add(id);
+
+            if (readFlushTimer.current) {
+                return;
+            }
+
+            readFlushTimer.current = setTimeout(flushReadIds, READ_PERSIST_DEBOUNCE_MS);
+        },
+        [flushReadIds]
+    );
+
+    useEffect(() => {
+        return () => {
+            if (readFlushTimer.current) {
+                clearTimeout(readFlushTimer.current);
+            }
+
+            flushReadIds();
+        };
+    }, [flushReadIds]);
+
+    useEffect(() => {
+        if (!logQuery.data) {
+            return;
+        }
+
+        setSeenIds((prev) => {
+            const next = new Set(prev);
+            let changed = false;
+
+            for (const row of logQuery.data) {
+                if (row.readAt != null) {
+                    markedReadRef.current.add(row.id);
+
+                    if (!next.has(row.id)) {
+                        next.add(row.id);
+                        changed = true;
+                    }
+                }
+            }
+
+            return changed ? next : prev;
+        });
+    }, [logQuery.data]);
 
     useEffect(() => {
         const es = new EventSource("/api/qa/stream");
@@ -187,8 +327,13 @@ export function QaRoute() {
                 /* ignore malformed frame */
             }
         };
-        // Without this the indicator stays green forever on a dropped stream (t8).
-        es.onerror = () => setSseDown(true);
+        es.onerror = () => {
+            // EventSource auto-reconnects while CONNECTING — only show disconnected when
+            // the browser has given up (CLOSED). Avoid flicker on transient proxy blips.
+            if (es.readyState === EventSource.CLOSED) {
+                setSseDown(true);
+            }
+        };
         return () => es.close();
     }, []);
 
@@ -211,13 +356,7 @@ export function QaRoute() {
             <div className="flex flex-wrap items-center justify-between gap-3">
                 <h2 className="dd-accent-text text-xl font-bold">Q&amp;A</h2>
                 <SoundControl />
-                <span
-                    className="text-xs"
-                    style={{ color: sseDown ? "#f87171" : "var(--dd-text-muted)" }}
-                    title={sseDown ? "SSE stream disconnected — reconnecting…" : "live stream connected"}
-                >
-                    {sseDown ? "○ disconnected" : "● live (SSE)"} · {all.length} shown
-                </span>
+                <LiveSseIndicator live={!sseDown} count={all.length} />
             </div>
 
             {logQuery.isLoading ? (
@@ -227,11 +366,13 @@ export function QaRoute() {
                     No questions recorded yet.
                 </div>
             ) : (
-                <div className="flex flex-col gap-3">
-                    {all.map((entry) => (
-                        <QaCard key={entry.id} entry={entry} />
-                    ))}
-                </div>
+                <QaClockProvider>
+                    <div className="flex flex-col gap-3">
+                        {all.map((entry) => (
+                            <QaCard key={entry.id} entry={entry} unread={!seenIds.has(entry.id)} onSeen={markSeen} />
+                        ))}
+                    </div>
+                </QaClockProvider>
             )}
         </div>
     );
