@@ -14,6 +14,7 @@
  */
 import { logger } from "@app/logger";
 import { getPortOwner, type PortOwner } from "@app/utils/network";
+import { isProcessAlive } from "@app/utils/process-alive";
 import { defaultPlistLabel, isLaunchdInstalled } from "./launchd";
 import { readPid, readPidRaw } from "./pidFile";
 import { readPreferences } from "./preferences";
@@ -188,12 +189,5 @@ export async function killPortOwner(owner: PortOwner, opts: { force?: boolean } 
     await Bun.sleep(500);
 }
 
-function isProcessAlive(pid: number): boolean {
-    try {
-        process.kill(pid, 0);
-        return true;
-    } catch (error) {
-        logger.debug({ pid, error }, "process liveness probe failed");
-        return false;
-    }
-}
+// isProcessAlive lives in src/utils/process-alive.ts — single canonical
+// helper with ESRCH/EPERM disambiguation. See top imports.
