@@ -25,7 +25,9 @@ import {
     publishNote,
     unpublishNote,
 } from "@app/dev-dashboard/lib/obsidian/publish";
-import { listVault, readNote } from "@app/dev-dashboard/lib/obsidian/reader";
+import { saveToObsidianUnique } from "@app/dev-dashboard/lib/obsidian-save";
+import { formatQaAsMarkdown } from "@app/dev-dashboard/lib/qa-clipboard";
+import { mkdirInVault, listVault, readNote } from "@app/dev-dashboard/lib/obsidian/reader";
 import { renderSharePage } from "@app/dev-dashboard/lib/obsidian/share-template";
 import { enrichQaEntry } from "@app/dev-dashboard/lib/qa-render";
 import { createQaStream, todayLogFile } from "@app/dev-dashboard/lib/qa-sse";
@@ -35,7 +37,7 @@ import { killTtyd, listTtyd, renameTtyd, spawnTtyd } from "@app/dev-dashboard/li
 import { fetchWeather } from "@app/dev-dashboard/lib/weather/client";
 import { logger } from "@app/logger";
 import { defaultDbPath } from "@app/question/commands/log";
-import { markEntriesRead, openReadModel, queryEntries } from "@app/question/lib/read-model";
+import { markEntriesRead, markEntriesUnread, openReadModel, queryEntries } from "@app/question/lib/read-model";
 import { getAudioLibrary } from "@app/utils/audio/library";
 import { resolveSoundBuffer } from "@app/utils/audio/runner.server";
 import { SafeJSON } from "@app/utils/json";
@@ -367,10 +369,10 @@ export function attachDevDashboardMiddleware(middlewares: Connect.Server): void 
         if (req.method === "POST" && url.pathname === "/api/qa/read") {
             let db: ReturnType<typeof openReadModel> | undefined;
             try {
-                const body = await readJson<{ ids?: string[] }>(req);
+                const body = await readJson<{ ids?: string[]; unread?: boolean }>(req);
                 const ids = body.ids?.filter((id) => typeof id === "string" && id.length > 0) ?? [];
                 db = openReadModel(defaultDbPath());
-                const updated = markEntriesRead(db, ids);
+                const updated = body.unread ? markEntriesUnread(db, ids) : markEntriesRead(db, ids);
                 sendJson(res, 200, { ok: true, updated });
             } catch (err) {
                 sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
@@ -521,11 +523,99 @@ export function attachDevDashboardMiddleware(middlewares: Connect.Server): void 
             return;
         }
 
+        if (req.method === "POST" && url.pathname === "/api/qa/save-to-obsidian") {
+            let db: ReturnType<typeof openReadModel> | undefined;
+            try {
+                const body = await readJson<{
+                    entryId?: string;
+                    relativeDir?: string;
+                    baseName?: string;
+                    mode?: "create" | "append";
+                    createDir?: boolean;
+                    includeFrontmatter?: boolean;
+                    includeQuestion?: boolean;
+                }>(req);
+                const entryId = body.entryId ?? "";
+                const relativeDir = body.relativeDir ?? "";
+                const baseName = (body.baseName ?? "").replace(/\.md$/i, "").trim();
+
+                if (!entryId || !relativeDir || !baseName) {
+                    sendJson(res, 400, { error: "entryId, relativeDir, and baseName required" });
+                    return;
+                }
+
+                db = openReadModel(defaultDbPath());
+                const rows = queryEntries(db, { limit: 500 });
+                const row = rows.find((r) => r.id === entryId);
+
+                if (!row) {
+                    sendJson(res, 404, { error: `unknown entry: ${entryId}` });
+                    return;
+                }
+
+                const enriched = enrichQaEntry(row);
+                const content = formatQaAsMarkdown(
+                    { ...enriched, supersededBy: row.supersededBy, readAt: row.readAt },
+                    {
+                        includeFrontmatter: body.includeFrontmatter !== false,
+                        includeQuestion: body.includeQuestion !== false,
+                    }
+                );
+                const { obsidianVault } = await getConfig();
+
+                if (!obsidianVault) {
+                    sendJson(res, 500, { error: "obsidian vault not configured" });
+                    return;
+                }
+
+                const result = await saveToObsidianUnique({
+                    vaultRoot: obsidianVault,
+                    relativeDir,
+                    baseName,
+                    content,
+                    mode: body.mode === "append" ? "append" : "create",
+                    createDir: body.createDir === true,
+                });
+                sendJson(res, 200, result);
+            } catch (err) {
+                sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
+            } finally {
+                db?.close();
+            }
+
+            return;
+        }
+
         if (req.method === "GET" && url.pathname === "/api/obsidian/tree") {
             try {
                 const { obsidianVault } = await getConfig();
                 const entries = await listVault(obsidianVault);
                 sendJson(res, 200, { entries });
+            } catch (err) {
+                sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
+            }
+
+            return;
+        }
+
+        if (req.method === "POST" && url.pathname === "/api/obsidian/mkdir") {
+            try {
+                const { relativeDir } = await readJson<{ relativeDir?: string }>(req);
+
+                if (!relativeDir?.trim()) {
+                    sendJson(res, 400, { error: "relativeDir required" });
+                    return;
+                }
+
+                const { obsidianVault } = await getConfig();
+
+                if (!obsidianVault) {
+                    sendJson(res, 500, { error: "obsidian vault not configured" });
+                    return;
+                }
+
+                await mkdirInVault(obsidianVault, relativeDir.trim());
+                sendJson(res, 200, { ok: true, relativeDir: relativeDir.trim() });
             } catch (err) {
                 sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
             }
