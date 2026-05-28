@@ -31,6 +31,7 @@ const KEY_TABLE: Record<IframeKey, { key: string; code: string; keyCode: number 
 
 interface TtydIframeWindow extends Window {
     __ddTtydScroll?: (lines: number) => boolean;
+    __ddTtydScrollPage?: (direction: -1 | 1) => boolean;
 }
 
 function getHelperTextarea(iframe: HTMLIFrameElement): HTMLTextAreaElement | null {
@@ -99,45 +100,30 @@ export function scrollIframeTerminal(iframe: HTMLIFrameElement | null, amount: n
     }
 }
 
-export function estimateVisibleTerminalLines(iframe: HTMLIFrameElement | null): number {
-    if (!iframe) {
-        return 24;
-    }
-
-    const viewport = getXtermViewport(iframe);
-
-    if (viewport && viewport.clientHeight > 0) {
-        const lineHeight = estimateLineHeight(viewport);
-
-        return Math.max(1, Math.floor(viewport.clientHeight / lineHeight));
-    }
-
-    const iframeHeight = iframe.clientHeight;
-
-    if (iframeHeight > 0) {
-        return Math.max(1, Math.floor(iframeHeight / 17));
-    }
-
-    return 24;
+function scrollPageViaPostMessage(contentWindow: TtydIframeWindow, direction: -1 | 1): void {
+    contentWindow.postMessage({ type: "dd-ttyd-scroll-page", direction }, "*");
 }
 
 /** Scroll roughly one visible screen of scrollback up or down. */
 export function scrollIframeTerminalByPage(iframe: HTMLIFrameElement | null, direction: -1 | 1): boolean {
-    const lines = estimateVisibleTerminalLines(iframe);
-
-    return scrollIframeTerminal(iframe, direction * lines);
-}
-
-function getXtermViewport(iframe: HTMLIFrameElement): HTMLElement | null {
-    try {
-        return iframe.contentDocument?.querySelector<HTMLElement>(".xterm-viewport") ?? null;
-    } catch {
-        return null;
+    if (!iframe) {
+        return false;
     }
-}
 
-function estimateLineHeight(viewport: HTMLElement): number {
-    const rowEl = viewport.parentElement?.querySelector<HTMLElement>(".xterm-rows > div");
-    const measured = rowEl?.getBoundingClientRect().height;
-    return measured && measured > 4 ? measured : 17;
+    try {
+        const contentWindow = iframe.contentWindow as TtydIframeWindow | null;
+
+        if (!contentWindow) {
+            return false;
+        }
+
+        if (typeof contentWindow.__ddTtydScrollPage === "function") {
+            return contentWindow.__ddTtydScrollPage(direction);
+        }
+
+        scrollPageViaPostMessage(contentWindow, direction);
+        return true;
+    } catch {
+        return false;
+    }
 }

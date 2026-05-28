@@ -18,7 +18,7 @@ import { useLayoutMode } from "@/hooks/useLayoutMode";
 import { useLockPageScroll } from "@/hooks/useLockPageScroll";
 import { useVisualViewportSize } from "@/hooks/useVisualViewportSize";
 import { ttydApi, tmuxApi } from "@/lib/api";
-import { scrollIframeTerminal, sendKeyToIframe } from "@/lib/iframe-keys";
+import { scrollIframeTerminal, scrollIframeTerminalByPage, sendKeyToIframe } from "@/lib/iframe-keys";
 import { buildTtydTabs } from "@/lib/terminal-tabs";
 import { pickTtydActiveId, TTYD_TAB_SEARCH_KEY, writeTtydActiveId } from "@/lib/view-state";
 import { buildBalancedMosaicLayout, flattenMosaicLeaves, reconcileMosaicLayout } from "@app/utils/ui/helpers/mosaic-layout";
@@ -289,6 +289,7 @@ export function TtydRoute() {
                         embedded
                         onKey={(key) => sendKeyToIframe(activeIframeRef.current, key)}
                         onScroll={(lines) => scrollIframeTerminal(activeIframeRef.current, lines)}
+                        onPageScroll={(direction) => scrollIframeTerminalByPage(activeIframeRef.current, direction)}
                     />
                 ) : null}
                 {overlays}

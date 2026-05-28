@@ -68,9 +68,9 @@ const TTYD_MOBILE_SHELL_SCRIPT = `<script id="dd-ttyd-mobile-shell-js">
         return true;
     }
 
-    function scrollViaMouseWheel(lines) {
+    function scrollViaMouseWheel(steps, direction) {
         var term = getTerm();
-        if (!term || !lines) {
+        if (!term || !steps || !direction) {
             return false;
         }
 
@@ -80,19 +80,19 @@ const TTYD_MOBILE_SHELL_SCRIPT = `<script id="dd-ttyd-mobile-shell-js">
             return false;
         }
 
-        var steps = Math.max(1, Math.abs(Math.trunc(lines)));
+        var count = Math.max(1, Math.abs(Math.trunc(steps)));
         var col = Math.max(1, Math.floor(term.cols / 2));
         var row = Math.max(1, Math.floor(term.rows / 2));
         var lh = lineHeight();
 
-        for (var i = 0; i < steps; i++) {
+        for (var i = 0; i < count; i++) {
             cms.triggerMouseEvent({
                 col: col,
                 row: row,
                 x: col * lh,
                 y: row * lh,
                 button: 4,
-                action: lines < 0 ? 0 : 1,
+                action: direction < 0 ? 0 : 1,
                 ctrl: false,
                 alt: false,
                 shift: false
@@ -102,12 +102,47 @@ const TTYD_MOBILE_SHELL_SCRIPT = `<script id="dd-ttyd-mobile-shell-js">
         return true;
     }
 
+    // tmux scrolls several history lines per wheel tick — not 1:1 with xterm rows.
+    var WHEEL_LINES_PER_TICK = 4;
+
+    function wheelTicksForLines(lines) {
+        return Math.max(1, Math.round(Math.abs(lines) / WHEEL_LINES_PER_TICK));
+    }
+
+    function wheelTicksForPage() {
+        var term = getTerm();
+        var rows = term && term.rows ? term.rows : 24;
+        return Math.max(1, Math.round(rows / WHEEL_LINES_PER_TICK));
+    }
+
+    window.__ddTtydScrollPage = function (direction) {
+        if (!direction) {
+            return false;
+        }
+
+        var ticks = wheelTicksForPage();
+        if (scrollViaMouseWheel(ticks, direction)) {
+            return true;
+        }
+
+        var term = getTerm();
+        if (term && term.scrollLines && activeBufferType() !== "alternate") {
+            term.scrollLines.call(term, direction * (term.rows || 24));
+            return true;
+        }
+
+        return false;
+    };
+
     window.__ddTtydScroll = function (lines) {
         if (!lines) {
             return false;
         }
 
-        if (scrollViaMouseWheel(lines)) {
+        var direction = lines < 0 ? -1 : 1;
+        var ticks = wheelTicksForLines(lines);
+
+        if (scrollViaMouseWheel(ticks, direction)) {
             return true;
         }
 
@@ -142,7 +177,15 @@ const TTYD_MOBILE_SHELL_SCRIPT = `<script id="dd-ttyd-mobile-shell-js">
 
     window.addEventListener("message", function (event) {
         var data = event.data;
-        if (!data || data.type !== "dd-ttyd-scroll") {
+        if (!data || (data.type !== "dd-ttyd-scroll" && data.type !== "dd-ttyd-scroll-page")) {
+            return;
+        }
+
+        if (data.type === "dd-ttyd-scroll-page") {
+            var direction = Number(data.direction);
+            if (direction) {
+                window.__ddTtydScrollPage(direction);
+            }
             return;
         }
 

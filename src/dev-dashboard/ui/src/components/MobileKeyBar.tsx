@@ -5,6 +5,7 @@ import type { IframeKey } from "@/lib/iframe-keys";
 interface MobileKeyBarProps {
     onKey: (key: IframeKey) => void;
     onScroll: (lines: number) => void;
+    onPageScroll?: (direction: -1 | 1) => void;
     /** Tweak how many lines a PgUp/PgDn tap scrolls. Defaults to 10. */
     scrollStep?: number;
     /** In document flow at the bottom of the ttyd shell (not fixed over the terminal). */
@@ -24,7 +25,7 @@ interface KeySpec {
  * using window.visualViewport (the only API iOS Safari actually honours),
  * and falls back to bottom-of-viewport when no soft keyboard is open.
  */
-export function MobileKeyBar({ onKey, onScroll, scrollStep = 10, embedded = false }: MobileKeyBarProps) {
+export function MobileKeyBar({ onKey, onScroll, onPageScroll, scrollStep = 10, embedded = false }: MobileKeyBarProps) {
     const [bottomOffset, setBottomOffset] = useState(0);
 
     useEffect(() => {
@@ -63,8 +64,8 @@ export function MobileKeyBar({ onKey, onScroll, scrollStep = 10, embedded = fals
         { label: "↑", aria: "Arrow up", icon: <ArrowUp size={16} />, action: () => onKey("ArrowUp") },
         { label: "↓", aria: "Arrow down", icon: <ArrowDown size={16} />, action: () => onKey("ArrowDown") },
         { label: "→", aria: "Arrow right", icon: <ArrowRight size={16} />, action: () => onKey("ArrowRight") },
-        { label: "PgUp", aria: "Scroll up", icon: <ChevronsUp size={16} />, action: () => onScroll(-scrollStep) },
-        { label: "PgDn", aria: "Scroll down", icon: <ChevronsDown size={16} />, action: () => onScroll(scrollStep) },
+        { label: "PgUp", aria: "Scroll up", icon: <ChevronsUp size={16} />, action: () => (onPageScroll ? onPageScroll(-1) : onScroll(-scrollStep)) },
+        { label: "PgDn", aria: "Scroll down", icon: <ChevronsDown size={16} />, action: () => (onPageScroll ? onPageScroll(1) : onScroll(scrollStep)) },
     ];
 
     return (
