@@ -19,6 +19,8 @@ export interface MobileTerminalShellProps {
     onSelectSecondary?: (id: string) => void;
     onRename?: (id: string, name: string) => void;
     onRenameSecondary?: (id: string, name: string) => void;
+    /** Icon buttons rendered before the primary action (e.g. tmux hub). */
+    headerActions?: ReactNode;
     /** ＋ button (ttyd "new terminal"); omit to hide. */
     primaryAction?: { label: string; onClick: () => void };
     /** Per-tab content, all mounted; only the active one is visible (caller toggles via CSS). */
@@ -83,7 +85,7 @@ export function MobileTerminalShell(props: MobileTerminalShellProps) {
     };
 
     return (
-        <div className="dd-focused flex h-full flex-col">
+        <div className="dd-focused grid h-full min-w-0 max-w-full grid-rows-[auto_1fr] overflow-hidden">
             <div className="dd-edge" aria-hidden />
             <button
                 type="button"
@@ -94,29 +96,46 @@ export function MobileTerminalShell(props: MobileTerminalShellProps) {
                 ›
             </button>
 
-            <div className="dd-strip sticky top-0 z-20 flex items-center gap-1">
-                <button type="button" className="dd-burger" aria-label="overview" onClick={() => setOverviewOpen(true)}>
-                    ☰
-                </button>
-                <div className="flex flex-1 gap-1 overflow-x-auto">
-                    {props.tabs.map((t) => renderTab(t, props.onSelect, props.onRename))}
-                </div>
-                {props.primaryAction ? (
-                    <button type="button" className="dd-plus" onClick={props.primaryAction.onClick}>
-                        {props.primaryAction.label}
-                    </button>
+            <div className="dd-shell-chrome">
+                <header className="dd-strip">
+                    <div className="dd-strip-side dd-strip-side--start">
+                        <button
+                            type="button"
+                            className="dd-burger"
+                            aria-label="overview"
+                            onClick={() => setOverviewOpen(true)}
+                        >
+                            ☰
+                        </button>
+                    </div>
+                    <div className="dd-strip-scroll" role="tablist" aria-label="terminal tabs">
+                        {props.tabs.map((t) => renderTab(t, props.onSelect, props.onRename))}
+                    </div>
+                    <div className="dd-strip-side dd-strip-side--end">
+                        {props.headerActions ? (
+                            <div className="dd-strip-actions">{props.headerActions}</div>
+                        ) : null}
+                        {props.primaryAction ? (
+                            <button type="button" className="dd-plus" onClick={props.primaryAction.onClick}>
+                                {props.primaryAction.label}
+                            </button>
+                        ) : null}
+                    </div>
+                </header>
+
+                {props.secondaryTabs ? (
+                    <div className="dd-subrow">
+                        <div className="dd-subrow-gutter" aria-hidden />
+                        <div className="dd-subrow-scroll" role="tablist" aria-label="surface tabs">
+                            {props.secondaryTabs.map((t) =>
+                                renderTab(t, props.onSelectSecondary ?? (() => {}), props.onRenameSecondary)
+                            )}
+                        </div>
+                    </div>
                 ) : null}
             </div>
 
-            {props.secondaryTabs ? (
-                <div className="dd-subrow flex gap-1 overflow-x-auto">
-                    {props.secondaryTabs.map((t) =>
-                        renderTab(t, props.onSelectSecondary ?? (() => {}), props.onRenameSecondary)
-                    )}
-                </div>
-            ) : null}
-
-            <div className="relative min-h-0 flex-1">{props.children}</div>
+            <div className="dd-shell-body">{props.children}</div>
 
             {navOpen ? (
                 <div className="absolute inset-0 z-40 flex bg-black/55" onClick={() => setNavOpen(false)}>

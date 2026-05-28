@@ -18,6 +18,8 @@
         linear-gradient(var(--dd-grid) 1px, transparent 1px),
         linear-gradient(90deg, var(--dd-grid) 1px, transparent 1px);
     background-size: 20px 20px;
+    height: 100%;
+    min-height: 0;
 }
 
 .dd-panel {
@@ -173,9 +175,11 @@
 
 .dd-cmux-tabs {
     display: flex;
+    min-width: 0;
     min-height: 24px;
     gap: 4px;
     overflow-x: auto;
+    overscroll-behavior-x: contain;
     padding-bottom: 2px;
 }
 
@@ -236,10 +240,26 @@
     font-size: 11px;
     line-height: 1.55;
     text-shadow: 0 0 10px rgba(52, 211, 153, 0.05);
-    white-space: pre-wrap;
-    /* Native momentum scroll on iOS + don't yank parent scroll. */
+    white-space: pre;
+    overflow: auto;
     -webkit-overflow-scrolling: touch;
     overscroll-behavior: contain;
+}
+
+.dd-cmux-preview-pane {
+    max-height: min(calc(1.55em * 20 + 1.25rem), 38vh);
+    min-height: calc(1.55em * 8 + 1rem);
+}
+
+@media (min-width: 768px) {
+    .dd-cmux-preview-pane {
+        max-height: min(calc(1.55em * 30 + 1.25rem), 42vh);
+    }
+}
+
+.dd-ttyd-highlight {
+    box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--dd-accent-from) 55%, transparent);
+    border-radius: 0.5rem;
 }
 
 .dd-terminal-line {
@@ -495,8 +515,44 @@
 }
 
 /* ── Focused terminal chrome (MobileTerminalShell) ───────────────────── */
+.dd-focused-host {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    height: 100dvh;
+}
+.dd-focused-host > .dd-focused {
+    flex: 1;
+    min-height: 0;
+}
 .dd-focused {
     padding: 0;
+    overflow: hidden;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    contain: inline-size;
+}
+.dd-shell-chrome {
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    min-width: 0;
+    max-width: 100%;
+    flex: none;
+    background: var(--dd-bg-panel);
+}
+.dd-shell-chrome .dd-subrow {
+    background: var(--dd-bg-base);
+}
+.dd-shell-body {
+    position: relative;
+    min-height: 0;
+    min-width: 0;
+    overflow: hidden;
 }
 .dd-edge {
     position: absolute;
@@ -523,28 +579,109 @@
     box-shadow: 0 0 9px rgba(52, 211, 153, 0.35);
 }
 .dd-strip {
+    --dd-strip-gutter: 36px;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 4px;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    overflow: hidden;
     background: var(--dd-bg-panel);
     border-bottom: 1px solid var(--dd-border);
     padding: 6px 6px 6px 18px;
+    z-index: 20;
+}
+.dd-strip-side {
+    display: flex;
+    align-items: center;
+    flex: none;
+}
+.dd-strip-side--end {
+    justify-content: flex-end;
+    gap: 4px;
+}
+.dd-strip-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+.dd-strip-scroll {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-x;
+    scrollbar-width: none;
+}
+.dd-strip-scroll::-webkit-scrollbar {
+    display: none;
 }
 .dd-subrow {
+    display: grid;
+    grid-template-columns: var(--dd-strip-gutter, 36px) minmax(0, 1fr);
+    align-items: center;
+    gap: 4px;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    overflow: hidden;
     background: var(--dd-bg-base);
     border-bottom: 1px solid var(--dd-border);
     padding: 5px 6px 5px 18px;
 }
-.dd-burger,
-.dd-plus {
+.dd-subrow-gutter {
+    width: var(--dd-strip-gutter, 36px);
     flex: none;
+}
+.dd-subrow-scroll {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-x;
+    scrollbar-width: none;
+}
+.dd-subrow-scroll::-webkit-scrollbar {
+    display: none;
+}
+.dd-burger,
+.dd-plus,
+.dd-shell-icon {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 28px;
     border: 1px solid var(--dd-border);
     border-radius: 5px;
     background: #11201a;
     color: var(--dd-accent-from);
     padding: 4px 8px;
     font-size: 12px;
+    line-height: 1;
+}
+.dd-shell-icon {
+    width: 28px;
+    height: 28px;
+    padding: 0;
+}
+.dd-shell-icon:hover {
+    border-color: rgba(52, 211, 153, 0.45);
+    background: rgba(52, 211, 153, 0.08);
 }
 .dd-tab {
     flex: none;
-    display: flex;
+    display: inline-flex;
     align-items: center;
     gap: 4px;
     font-size: 12px;
@@ -554,7 +691,7 @@
     border-radius: 5px;
     padding: 4px 8px;
     white-space: nowrap;
-    max-width: 60vw;
+    max-width: min(220px, 52vw);
 }
 .dd-tab.is-active {
     color: #06120d;

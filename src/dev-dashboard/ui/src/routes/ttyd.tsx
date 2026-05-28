@@ -11,10 +11,12 @@ import { TtydCloseDialog } from "@/components/TtydCloseDialog";
 import { TtydFrame } from "@/components/TtydFrame";
 import { TtydPane } from "@/components/TtydPane";
 import { MobileTerminalShell } from "@/components/terminal-shell/MobileTerminalShell";
+import { ShellIconButton } from "@/components/terminal-shell/ShellIconButton";
 import { useLayoutMode } from "@/hooks/useLayoutMode";
-import { ttydApi } from "@/lib/api";
+import { ttydApi, tmuxApi } from "@/lib/api";
 import { findIframeByTitle, scrollIframeTerminal, sendKeyToIframe } from "@/lib/iframe-keys";
 import { buildTtydTabs } from "@/lib/terminal-tabs";
+import { pickStoredTtydActiveId, writeTtydActiveId } from "@/lib/view-state";
 import { buildBalancedMosaicLayout, flattenMosaicLeaves, reconcileMosaicLayout } from "@app/utils/ui/helpers/mosaic-layout";
 import { ttydLabel } from "@app/dev-dashboard/lib/ttyd/label";
 import type { TtydSession } from "@app/dev-dashboard/lib/ttyd/types";
@@ -35,7 +37,15 @@ function LayoutToggle({ mode, setMode }: { mode: "mosaic" | "focused"; setMode: 
 export function TtydRoute() {
     const queryClient = useQueryClient();
     const { data } = useQuery({ queryKey: ["ttyd", "list"], queryFn: ttydApi.list });
+    const { data: tmuxHub } = useQuery({
+        queryKey: ["tmux", "sessions"],
+        queryFn: () => tmuxApi.sessions().then((r) => r.sessions),
+        refetchInterval: 5000,
+    });
     const sessions = data?.sessions ?? [];
+
+    const isSessionInCmux = (tmuxSessionName: string) =>
+        tmuxHub?.some((session) => session.name === tmuxSessionName && session.inCmux) ?? false;
     const [layout, setLayout] = useState<MosaicNode<string> | null>(null);
     const { mode, isMobile, setMode } = useLayoutMode("ttyd");
     const [activeId, setActiveId] = useState<string | null>(null);
@@ -43,6 +53,54 @@ export function TtydRoute() {
     const [hubOpen, setHubOpen] = useState(false);
     const [closeTarget, setCloseTarget] = useState<TtydSession | null>(null);
     const [sendTarget, setSendTarget] = useState<TtydSession | null>(null);
+    const [highlightId, setHighlightId] = useState<string | null>(null);
+
+    const focusTtydTab = (ttydId: string) => {
+        setActiveId(ttydId);
+        writeTtydActiveId(ttydId);
+        setHighlightId(ttydId);
+        window.setTimeout(() => setHighlightId(null), 2500);
+    };
+
+    useEffect(() => {
+        if (sessions.length === 0) {
+            return;
+        }
+
+        const oneShot = sessionStorage.getItem("dd-ttyd-focus");
+
+        if (oneShot) {
+            sessionStorage.removeItem("dd-ttyd-focus");
+
+            if (sessions.some((session) => session.id === oneShot)) {
+                setActiveId(oneShot);
+                writeTtydActiveId(oneShot);
+                return;
+            }
+        }
+
+        setActiveId((current) => {
+            if (current && sessions.some((session) => session.id === current)) {
+                return current;
+            }
+
+            const stored = pickStoredTtydActiveId(sessions.map((session) => session.id));
+
+            if (stored) {
+                return stored;
+            }
+
+            return sessions[0]?.id ?? null;
+        });
+    }, [sessions]);
+
+    useEffect(() => {
+        if (!activeId) {
+            return;
+        }
+
+        writeTtydActiveId(activeId);
+    }, [activeId]);
 
     const maxColumns = 3;
 
@@ -99,15 +157,23 @@ export function TtydRoute() {
             <Button size="sm" variant="outline" onClick={() => spawn.mutate()} disabled={spawn.isPending}>
                 <Plus size={14} /> New terminal
             </Button>
-            <Button size="sm" variant="outline" onClick={() => setHubOpen(true)}>
-                <Layers size={14} /> Tmux sessions
+            <Button size="sm" variant="outline" onClick={() => setHubOpen(true)} aria-label="Tmux sessions">
+                <Layers size={14} />
+                <span className="hidden md:inline">Tmux sessions</span>
             </Button>
         </>
     );
 
     const overlays = (
         <>
-            <TmuxSessionsPanel open={hubOpen} onOpenChange={setHubOpen} />
+            <TmuxSessionsPanel
+                open={hubOpen}
+                onOpenChange={setHubOpen}
+                onFocusTtydTab={(ttydId) => {
+                    focusTtydTab(ttydId);
+                    setHubOpen(false);
+                }}
+            />
             {closeTarget ? (
                 <TtydCloseDialog
                     open
@@ -143,17 +209,9 @@ export function TtydRoute() {
 
     if (mode === "focused") {
         return (
-            <div className="dd-focused-host relative h-[100dvh]">
+            <div className="dd-focused-host relative overflow-hidden">
                 {!isMobile ? (
                     <div className="absolute right-2 top-1 z-30 flex gap-2">
-                        <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => setHubOpen(true)}
-                            className="font-mono text-[11px]"
-                        >
-                            <Layers size={12} /> Sessions
-                        </Button>
                         <LayoutToggle mode={mode} setMode={setMode} />
                     </div>
                 ) : null}
@@ -161,6 +219,9 @@ export function TtydRoute() {
                     tabs={buildTtydTabs(sessions, active).map((t) => ({ ...t, dot: "active" as const }))}
                     onSelect={setActiveId}
                     onRename={(id, name) => renameMut.mutate({ id, name })}
+                    headerActions={
+                        <ShellIconButton icon={Layers} label="Tmux sessions" onClick={() => setHubOpen(true)} />
+                    }
                     primaryAction={{ label: "＋", onClick: () => spawn.mutate() }}
                     renderPreview={(id) => {
                         const s = sessions.find((x) => x.id === id);
@@ -251,6 +312,11 @@ export function TtydRoute() {
                                                     variant="ghost"
                                                     onClick={() => setSendTarget(session)}
                                                     aria-label="send to cmux"
+                                                    className={
+                                                        isSessionInCmux(session.tmuxSessionName)
+                                                            ? "text-zinc-500 hover:bg-white/10 hover:text-zinc-300"
+                                                            : "text-emerald-400 hover:bg-emerald-400/10 hover:text-emerald-300"
+                                                    }
                                                 >
                                                     <Send size={12} />
                                                 </Button>
@@ -266,7 +332,9 @@ export function TtydRoute() {
                                         </div>
                                     }
                                 >
-                                    <TtydPane session={session} />
+                                    <div className={highlightId === id ? "dd-ttyd-highlight h-full" : "h-full"}>
+                                        <TtydPane session={session} />
+                                    </div>
                                 </MosaicWindow>
                             );
                         }}
