@@ -1,18 +1,23 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, X } from "lucide-react";
+import { Layers, Plus, Send, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Mosaic, type MosaicNode, MosaicWindow } from "react-mosaic-component";
 import "react-mosaic-component/react-mosaic-component.css";
 import { Button } from "@ui/components/button";
+import { CmuxSendTargetDialog } from "@/components/CmuxSendTargetDialog";
 import { MobileKeyBar } from "@/components/MobileKeyBar";
+import { TmuxSessionsPanel } from "@/components/TmuxSessionsPanel";
+import { TtydCloseDialog } from "@/components/TtydCloseDialog";
 import { TtydFrame } from "@/components/TtydFrame";
 import { TtydPane } from "@/components/TtydPane";
 import { MobileTerminalShell } from "@/components/terminal-shell/MobileTerminalShell";
 import { useLayoutMode } from "@/hooks/useLayoutMode";
 import { ttydApi } from "@/lib/api";
 import { findIframeByTitle, scrollIframeTerminal, sendKeyToIframe } from "@/lib/iframe-keys";
-import { buildBalancedMosaicLayout, flattenMosaicLeaves, reconcileMosaicLayout } from "@app/utils/ui/helpers/mosaic-layout";
 import { buildTtydTabs } from "@/lib/terminal-tabs";
+import { buildBalancedMosaicLayout, flattenMosaicLeaves, reconcileMosaicLayout } from "@app/utils/ui/helpers/mosaic-layout";
+import { ttydLabel } from "@app/dev-dashboard/lib/ttyd/label";
+import type { TtydSession } from "@app/dev-dashboard/lib/ttyd/types";
 
 function LayoutToggle({ mode, setMode }: { mode: "mosaic" | "focused"; setMode: (m: "mosaic" | "focused") => void }) {
     return (
@@ -35,9 +40,10 @@ export function TtydRoute() {
     const { mode, isMobile, setMode } = useLayoutMode("ttyd");
     const [activeId, setActiveId] = useState<string | null>(null);
     const active = activeId ?? sessions[0]?.id ?? null;
+    const [hubOpen, setHubOpen] = useState(false);
+    const [closeTarget, setCloseTarget] = useState<TtydSession | null>(null);
+    const [sendTarget, setSendTarget] = useState<TtydSession | null>(null);
 
-    // Mosaic layout maths (desktop-mosaic only). Hooks stay unconditional;
-    // the computed `layout` is simply unused in focused mode.
     const maxColumns = 3;
 
     useEffect(() => {
@@ -65,8 +71,7 @@ export function TtydRoute() {
         mutationFn: () => ttydApi.spawn(),
         onSuccess: (data) => {
             queryClient.invalidateQueries({ queryKey: ["ttyd", "list"] });
-            // Focus the freshly-spawned terminal (＋ / "New terminal") instead
-            // of leaving the view on the previously-active tab.
+            queryClient.invalidateQueries({ queryKey: ["tmux"] });
             if (data?.session?.id) {
                 setActiveId(data.session.id);
             }
@@ -74,9 +79,11 @@ export function TtydRoute() {
     });
 
     const kill = useMutation({
-        mutationFn: (id: string) => ttydApi.kill(id),
+        mutationFn: ({ id, killTmux }: { id: string; killTmux: boolean }) => ttydApi.kill(id, killTmux),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ["ttyd", "list"] });
+            queryClient.invalidateQueries({ queryKey: ["tmux"] });
+            setCloseTarget(null);
         },
     });
 
@@ -87,17 +94,69 @@ export function TtydRoute() {
         },
     });
 
+    const toolbar = (
+        <>
+            <Button size="sm" variant="outline" onClick={() => spawn.mutate()} disabled={spawn.isPending}>
+                <Plus size={14} /> New terminal
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => setHubOpen(true)}>
+                <Layers size={14} /> Tmux sessions
+            </Button>
+        </>
+    );
+
+    const overlays = (
+        <>
+            <TmuxSessionsPanel open={hubOpen} onOpenChange={setHubOpen} />
+            {closeTarget ? (
+                <TtydCloseDialog
+                    open
+                    sessionLabel={ttydLabel(closeTarget)}
+                    pending={kill.isPending}
+                    onOpenChange={(open) => {
+                        if (!open) {
+                            setCloseTarget(null);
+                        }
+                    }}
+                    onKeep={() => kill.mutate({ id: closeTarget.id, killTmux: false })}
+                    onKill={() => kill.mutate({ id: closeTarget.id, killTmux: true })}
+                />
+            ) : null}
+            {sendTarget?.tmuxSessionName ? (
+                <CmuxSendTargetDialog
+                    open
+                    tmuxSessionName={sendTarget.tmuxSessionName}
+                    onOpenChange={(open) => {
+                        if (!open) {
+                            setSendTarget(null);
+                        }
+                    }}
+                    onSent={() => {
+                        queryClient.invalidateQueries({ queryKey: ["cmux"] });
+                        queryClient.invalidateQueries({ queryKey: ["tmux"] });
+                        setSendTarget(null);
+                    }}
+                />
+            ) : null}
+        </>
+    );
+
     if (mode === "focused") {
         return (
             <div className="dd-focused-host relative h-[100dvh]">
                 {!isMobile ? (
-                    <div className="absolute right-2 top-1 z-30">
+                    <div className="absolute right-2 top-1 z-30 flex gap-2">
+                        <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => setHubOpen(true)}
+                            className="font-mono text-[11px]"
+                        >
+                            <Layers size={12} /> Sessions
+                        </Button>
                         <LayoutToggle mode={mode} setMode={setMode} />
                     </div>
                 ) : null}
-                {/* Always render the shell — even with zero sessions — so the
-                    edge/nav, sticky strip and ＋ are present (otherwise there's
-                    literally no ＋ to "tap to start one"). */}
                 <MobileTerminalShell
                     tabs={buildTtydTabs(sessions, active).map((t) => ({ ...t, dot: "active" as const }))}
                     onSelect={setActiveId}
@@ -117,9 +176,6 @@ export function TtydRoute() {
                 >
                     {sessions.length > 0 ? (
                         sessions.map((s) => (
-                            // Every iframe stays mounted AND full-size (never display:none — that
-                            // collapses ttyd's xterm fit to ~0 and it never recovers). Toggle
-                            // visibility with opacity/z-index so the websocket + correct fit survive.
                             <div
                                 key={s.id}
                                 className="absolute inset-0"
@@ -148,18 +204,17 @@ export function TtydRoute() {
                         onScroll={(lines) => scrollIframeTerminal(findIframeByTitle(`ttyd-${active}`), lines)}
                     />
                 ) : null}
+                {overlays}
             </div>
         );
     }
 
     return (
         <div className="flex h-[calc(100vh-2rem)] flex-col gap-2">
-            <div className="flex items-center gap-2">
-                <Button size="sm" variant="outline" onClick={() => spawn.mutate()} disabled={spawn.isPending}>
-                    <Plus size={14} /> New terminal
-                </Button>
+            <div className="flex flex-wrap items-center gap-2">
+                {toolbar}
                 <span className="text-[11px] font-mono text-[var(--dd-text-muted)]">
-                    drag dividers to resize · close a window to kill the session
+                    drag dividers to resize · close asks keep or kill tmux
                 </span>
                 {!isMobile ? (
                     <span className="ml-auto">
@@ -186,17 +241,29 @@ export function TtydRoute() {
                             return (
                                 <MosaicWindow<string>
                                     path={path}
-                                    title={`${session.command.split("/").pop()} :${session.port}`}
+                                    title={ttydLabel(session)}
                                     additionalControls={null}
                                     toolbarControls={
-                                        <Button
-                                            size="icon-sm"
-                                            variant="ghost"
-                                            onClick={() => kill.mutate(session.id)}
-                                            aria-label="close terminal"
-                                        >
-                                            <X size={12} />
-                                        </Button>
+                                        <div className="flex items-center gap-0.5">
+                                            {session.tmuxSessionName ? (
+                                                <Button
+                                                    size="icon-sm"
+                                                    variant="ghost"
+                                                    onClick={() => setSendTarget(session)}
+                                                    aria-label="send to cmux"
+                                                >
+                                                    <Send size={12} />
+                                                </Button>
+                                            ) : null}
+                                            <Button
+                                                size="icon-sm"
+                                                variant="ghost"
+                                                onClick={() => setCloseTarget(session)}
+                                                aria-label="close terminal"
+                                            >
+                                                <X size={12} />
+                                            </Button>
+                                        </div>
                                     }
                                 >
                                     <TtydPane session={session} />
@@ -211,6 +278,7 @@ export function TtydRoute() {
                     </div>
                 )}
             </div>
+            {overlays}
         </div>
     );
 }

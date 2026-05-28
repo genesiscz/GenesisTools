@@ -1,13 +1,14 @@
 import type { CmuxSnapshot } from "@app/dev-dashboard/lib/cmux/types";
 import { formatClock } from "@app/utils/format";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@ui/components/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@ui/components/tooltip";
-import { CircleDashed } from "lucide-react";
+import { CircleDashed, Layers, Plus } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Mosaic, type MosaicNode, MosaicWindow } from "react-mosaic-component";
 import "react-mosaic-component/react-mosaic-component.css";
 import { SemanticTerminalPreview } from "@/components/SemanticTerminalPreview";
+import { TmuxSessionsPanel } from "@/components/TmuxSessionsPanel";
 import { MobileTerminalShell } from "@/components/terminal-shell/MobileTerminalShell";
 import { useLayoutMode } from "@/hooks/useLayoutMode";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
@@ -45,6 +46,8 @@ function GoneCmuxPane({ id, onExpire }: GonePaneProps) {
 }
 
 export function CmuxSessionList({ snapshot }: Props) {
+    const queryClient = useQueryClient();
+    const [hubOpen, setHubOpen] = useState(false);
     const workspaceById = useMemo(
         () => new Map(snapshot.workspaces.map((workspace) => [workspace.id, workspace])),
         [snapshot.workspaces]
@@ -70,6 +73,16 @@ export function CmuxSessionList({ snapshot }: Props) {
     const renameMut = useMutation({
         mutationFn: (body: { workspaceId: string; surfaceId?: string; title: string }) => cmuxApi.rename(body),
         // snapshot poll (2s, in CmuxRoute) reflects the new title — no invalidate.
+    });
+    const createTerminal = useMutation({
+        mutationFn: () => cmuxApi.createTerminal(),
+        onSuccess: (data) => {
+            queryClient.invalidateQueries({ queryKey: ["cmux"] });
+            queryClient.invalidateQueries({ queryKey: ["tmux"] });
+            if (data?.result) {
+                attach.mutate({ workspaceId: data.result.workspaceId, paneId: data.result.paneId });
+            }
+        },
     });
     const { mode, isMobile, setMode } = useLayoutMode("cmux");
     const [activePaneId, setActivePaneId] = useState<string | null>(null);
@@ -156,7 +169,18 @@ export function CmuxSessionList({ snapshot }: Props) {
         return (
             <div className="dd-focused-host relative h-[100dvh]">
                 {!isMobile ? (
-                    <div className="absolute right-2 top-1 z-30">
+                    <div className="absolute right-2 top-1 z-30 flex gap-2">
+                        <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={createTerminal.isPending}
+                            onClick={() => createTerminal.mutate()}
+                        >
+                            <Plus size={12} /> New
+                        </Button>
+                        <Button size="sm" variant="outline" onClick={() => setHubOpen(true)}>
+                            <Layers size={12} /> Tmux
+                        </Button>
                         <Button
                             size="sm"
                             variant="outline"
@@ -243,6 +267,7 @@ export function CmuxSessionList({ snapshot }: Props) {
                         </div>
                     )}
                 </MobileTerminalShell>
+                <TmuxSessionsPanel open={hubOpen} onOpenChange={setHubOpen} />
             </div>
         );
     }
@@ -251,7 +276,20 @@ export function CmuxSessionList({ snapshot }: Props) {
         <TooltipProvider>
             <div className="flex h-full flex-col gap-2 overflow-hidden font-mono">
                 <div className="dd-panel flex items-center justify-between px-3 py-2 text-[11px] text-[var(--dd-text-muted)]">
-                    <span>snapshot · {formatClock(snapshot.fetchedAt, { seconds: true })}</span>
+                    <span className="flex items-center gap-2">
+                        <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={createTerminal.isPending}
+                            onClick={() => createTerminal.mutate()}
+                        >
+                            <Plus size={12} /> New
+                        </Button>
+                        <Button size="sm" variant="outline" onClick={() => setHubOpen(true)}>
+                            <Layers size={12} /> Tmux
+                        </Button>
+                        <span>snapshot · {formatClock(snapshot.fetchedAt, { seconds: true })}</span>
+                    </span>
                     <span className="flex items-center gap-3">
                         <span>drag panes to reorder · drag dividers to resize · live snapshot</span>
                         {!isMobile ? (
@@ -374,6 +412,7 @@ export function CmuxSessionList({ snapshot }: Props) {
                         </div>
                     )}
                 </div>
+                <TmuxSessionsPanel open={hubOpen} onOpenChange={setHubOpen} />
             </div>
         </TooltipProvider>
     );
