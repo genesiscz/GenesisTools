@@ -3,7 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { appendEntry } from "./log-store";
-import { markEntriesRead, openReadModel, queryEntries } from "./read-model";
+import { markEntriesRead, markEntriesUnread, openReadModel, queryEntries } from "./read-model";
 import type { QaEntry } from "./types";
 
 function e(id: string, over: Partial<QaEntry> = {}): QaEntry {
@@ -66,5 +66,18 @@ describe("read-model", () => {
         expect(markEntriesRead(db, ["r1", "r2"], { logBase })).toBe(2);
         expect(queryEntries(db, { logBase, unread: true }).length).toBe(0);
         expect(markEntriesRead(db, ["r1"], { logBase })).toBe(0);
+    });
+
+    it("marks entries unread", () => {
+        const logBase = mkdtempSync(join(tmpdir(), "qa-log-"));
+        const dbPath = join(mkdtempSync(join(tmpdir(), "qa-db-")), "qa.db");
+        appendEntry(e("u1"), logBase);
+        const db = openReadModel(dbPath);
+        queryEntries(db, { logBase });
+
+        markEntriesRead(db, ["u1"], { logBase });
+        expect(queryEntries(db, { logBase, unread: true }).length).toBe(0);
+        expect(markEntriesUnread(db, ["u1"], { logBase })).toBe(1);
+        expect(queryEntries(db, { logBase, unread: true }).length).toBe(1);
     });
 });
