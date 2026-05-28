@@ -1,42 +1,53 @@
 import type { CmuxLayoutTree, DashboardSendTarget } from "@app/dev-dashboard/lib/cmux/types";
+import { DEV_DASHBOARD_WORKSPACE } from "@app/dev-dashboard/lib/tmux/constants";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { BezelCard } from "@ui/components/bezel-card";
 import { Button } from "@ui/components/button";
 import {
-    Dialog,
-    DialogContent,
-    DialogDescription,
-    DialogFooter,
-    DialogHeader,
-    DialogTitle,
-} from "@ui/components/dialog";
+    GlassDialogBody,
+    GlassDialogContent,
+    GlassDialogDescription,
+    GlassDialogEyebrow,
+    GlassDialogFooter,
+    GlassDialogHeader,
+    GlassDialogScroll,
+    GlassDialogShell,
+    GlassDialogTitle,
+} from "@ui/components/glass-dialog";
 import { ArrowUpRight, Sparkles } from "lucide-react";
-import type { ReactNode } from "react";
-import { useMemo, useState } from "react";
-import { CmuxLayoutTreePicker } from "@/components/CmuxLayoutTree";
-import { cmuxApi } from "@/lib/api";
-import { DEV_DASHBOARD_WORKSPACE } from "@app/dev-dashboard/lib/tmux/constants";
-
-type DeliveryMode = "new_split" | "new_surface" | "existing_surface";
+import { useEffect, useMemo, useState } from "react";
+import { CmuxLayoutTreePicker, type CmuxPickKind } from "@/components/CmuxLayoutTree";
+import { TmuxSessionName, TmuxSessionNameLabel } from "@/components/TmuxSessionName";
+import { cmuxApi, tmuxApi } from "@/lib/api";
+import { canRemoveFromCmux } from "@/lib/view-state";
 
 interface Props {
     open: boolean;
     onOpenChange: (open: boolean) => void;
     tmuxSessionName: string;
     onSent?: () => void;
+    onRenamed?: (nextName: string) => void;
 }
 
-function DoubleBezel({ children, className = "" }: { children: ReactNode; className?: string }) {
-    return (
-        <div className={`rounded-[1.25rem] bg-white/5 p-1.5 ring-1 ring-white/10 ${className}`}>
-            <div className="rounded-[calc(1.25rem-0.375rem)] bg-[var(--dd-bg-elevated)] shadow-[inset_0_1px_1px_rgba(255,255,255,0.08)]">
-                {children}
-            </div>
-        </div>
-    );
-}
-
-export function CmuxSendTargetDialog({ open, onOpenChange, tmuxSessionName, onSent }: Props) {
+export function CmuxSendTargetDialog({ open, onOpenChange, tmuxSessionName, onSent, onRenamed }: Props) {
     const queryClient = useQueryClient();
+    const [sessionName, setSessionName] = useState(tmuxSessionName);
+
+    useEffect(() => {
+        setSessionName(tmuxSessionName);
+    }, [tmuxSessionName]);
+
+    const { data: hubSessions } = useQuery({
+        queryKey: ["tmux", "sessions"],
+        queryFn: () => tmuxApi.sessions().then((r) => r.sessions),
+        enabled: open,
+        staleTime: 2000,
+    });
+
+    const hubSession = hubSessions?.find((session) => session.name === sessionName);
+    const inCmux = (hubSession?.cmuxSurfaces.length ?? 0) > 0;
+    const canRemove = hubSession ? canRemoveFromCmux(hubSession) : false;
+
     const { data, isLoading, isError } = useQuery({
         queryKey: ["cmux", "layout"],
         queryFn: () => cmuxApi.layout().then((r) => r.layout),
@@ -49,116 +60,186 @@ export function CmuxSendTargetDialog({ open, onOpenChange, tmuxSessionName, onSe
     const [workspaceId, setWorkspaceId] = useState<string | null>(null);
     const [paneId, setPaneId] = useState<string | null>(null);
     const [surfaceId, setSurfaceId] = useState<string | null>(null);
-    const [deliveryMode, setDeliveryMode] = useState<DeliveryMode>("new_split");
+    const [pickKind, setPickKind] = useState<CmuxPickKind | null>(null);
 
     const send = useMutation({
         mutationFn: (target: DashboardSendTarget) =>
-            cmuxApi.sendSession({ tmuxSessionName, target }).then((r) => r.result),
+            cmuxApi.sendSession({ tmuxSessionName: sessionName, target }).then((r) => r.result),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ["cmux"] });
+            queryClient.invalidateQueries({ queryKey: ["tmux"] });
             onSent?.();
             onOpenChange(false);
         },
     });
 
+    const removeFromCmux = useMutation({
+        mutationFn: () => cmuxApi.removeSession({ tmuxSessionName: sessionName }).then((r) => r.removed),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ["cmux"] });
+            queryClient.invalidateQueries({ queryKey: ["tmux"] });
+        },
+    });
+
+    const createWorkspace = useMutation({
+        mutationFn: (body: { windowId: string; name?: string }) => cmuxApi.createWorkspace(body).then((r) => r.result),
+        onSuccess: (result) => {
+            queryClient.invalidateQueries({ queryKey: ["cmux", "layout"] });
+            setWindowId(result.windowId);
+            setWorkspaceId(result.workspaceId);
+            setPaneId("");
+            setSurfaceId("");
+            setPickKind("new_split");
+        },
+    });
+
     const resolvedTarget = useMemo((): DashboardSendTarget | null => {
-        if (deliveryMode === "new_split" && workspaceId) {
+        if (pickKind === "new_split" && workspaceId) {
             return { mode: "new_split", workspaceId };
         }
 
-        if (deliveryMode === "new_surface" && workspaceId && paneId) {
+        if (pickKind === "new_surface" && workspaceId && paneId) {
             return { mode: "new_surface", workspaceId, paneId };
         }
 
-        if (deliveryMode === "existing_surface" && workspaceId && surfaceId) {
+        if (pickKind === "existing_surface" && workspaceId && surfaceId) {
             return { mode: "existing_surface", workspaceId, surfaceId };
         }
 
         return null;
-    }, [deliveryMode, paneId, surfaceId, workspaceId]);
+    }, [paneId, pickKind, surfaceId, workspaceId]);
 
     const canSend = resolvedTarget !== null && !send.isPending;
+    const selectedWindowId = windowId ?? layout?.windows[0]?.id ?? null;
 
     return (
-        <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent
-                showCloseButton
-                className="dd-panel max-h-[min(90dvh,820px)] w-[min(96vw,960px)] max-w-none gap-0 overflow-hidden border-white/10 bg-[#050505]/95 p-0 shadow-[0_0_80px_rgba(0,0,0,0.65)] backdrop-blur-xl sm:max-w-none"
-            >
-                <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top,rgba(56,189,248,0.08),transparent_55%)]" />
-                <div className="relative flex flex-col gap-4 p-5 sm:p-6">
-                    <DialogHeader className="space-y-2 text-left">
-                        <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-[var(--dd-text-muted)]">
-                            Send to cmux
-                        </p>
-                        <DialogTitle className="font-mono text-lg text-[var(--dd-text-primary)]">
-                            Port tmux session
-                        </DialogTitle>
-                        <DialogDescription className="font-mono text-xs text-[var(--dd-text-secondary)]">
-                            Session{" "}
-                            <span className="rounded-full bg-white/5 px-2 py-0.5 text-[var(--dd-accent-from)]">
-                                {tmuxSessionName}
-                            </span>
-                        </DialogDescription>
-                    </DialogHeader>
+        <GlassDialogShell open={open} onOpenChange={onOpenChange}>
+            <GlassDialogContent size="lg" fixedHeight showCloseButton>
+                <GlassDialogBody>
+                    <GlassDialogHeader className="shrink-0 space-y-2 text-left">
+                        <GlassDialogEyebrow>Send to cmux</GlassDialogEyebrow>
+                        <GlassDialogTitle className="font-mono text-lg">Port tmux session</GlassDialogTitle>
+                        <GlassDialogDescription className="flex flex-wrap items-center gap-2 font-mono text-xs text-zinc-400">
+                            <TmuxSessionNameLabel>Session</TmuxSessionNameLabel>
+                            <TmuxSessionName
+                                name={sessionName}
+                                size="sm"
+                                onRenamed={(nextName) => {
+                                    setSessionName(nextName);
+                                    queryClient.invalidateQueries({ queryKey: ["tmux"] });
+                                    queryClient.invalidateQueries({ queryKey: ["ttyd"] });
+                                    onRenamed?.(nextName);
+                                }}
+                            />
+                            {inCmux ? (
+                                <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] text-zinc-500">
+                                    already in cmux
+                                </span>
+                            ) : null}
+                        </GlassDialogDescription>
+                    </GlassDialogHeader>
 
-                    <DoubleBezel>
-                        <button
+                    <GlassDialogScroll className="flex min-h-0 flex-1 flex-col gap-4">
+                        <BezelCard
+                            as="button"
                             type="button"
                             disabled={send.isPending}
                             onClick={() => send.mutate({ mode: "quick_dev_dashboard" })}
-                            className="group flex w-full items-center gap-3 px-4 py-4 text-left transition-transform duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] hover:-translate-y-0.5 active:scale-[0.99]"
+                            className="group w-full text-left transition-transform duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] hover:-translate-y-0.5 active:scale-[0.99] disabled:opacity-50"
+                            innerClassName="px-4 py-4"
                         >
-                            <span className="flex h-10 w-10 items-center justify-center rounded-full bg-[var(--dd-accent-from)]/15 text-[var(--dd-accent-from)]">
-                                <Sparkles size={16} />
-                            </span>
-                            <span className="min-w-0 flex-1">
-                                <span className="block font-mono text-sm font-semibold text-[var(--dd-text-primary)]">
-                                    {DEV_DASHBOARD_WORKSPACE} workspace
+                            <span className="flex items-center gap-3">
+                                <span className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-500/15 text-emerald-400">
+                                    <Sparkles size={16} />
                                 </span>
-                                <span className="block text-[11px] text-[var(--dd-text-muted)]">
-                                    New split · canonical handoff target
+                                <span className="min-w-0 flex-1">
+                                    <span className="block font-mono text-sm font-semibold text-zinc-100">
+                                        {DEV_DASHBOARD_WORKSPACE} workspace
+                                    </span>
+                                    <span className="block text-[11px] text-zinc-500">
+                                        New split · canonical handoff target
+                                    </span>
+                                </span>
+                                <span className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 transition-transform duration-300 group-hover:translate-x-0.5 group-hover:-translate-y-px">
+                                    <ArrowUpRight size={14} />
                                 </span>
                             </span>
-                            <span className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 transition-transform duration-300 group-hover:translate-x-0.5 group-hover:-translate-y-px">
-                                <ArrowUpRight size={14} />
-                            </span>
-                        </button>
-                    </DoubleBezel>
+                        </BezelCard>
 
-                    <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-[var(--dd-text-muted)]">
-                        or choose destination
-                    </p>
-
-                    {isLoading ? (
-                        <div className="py-8 text-center font-mono text-sm text-[var(--dd-text-muted)]">Loading layout…</div>
-                    ) : isError || !layout?.available ? (
-                        <div className="py-8 text-center font-mono text-sm text-[#f87171]">
-                            {layout?.error ?? "Failed to load cmux layout"}
-                        </div>
-                    ) : (
-                        <CmuxLayoutTreePicker
-                            layout={layout}
-                            windowId={windowId}
-                            workspaceId={workspaceId}
-                            paneId={paneId}
-                            surfaceId={surfaceId}
-                            deliveryMode={deliveryMode}
-                            onWindowId={setWindowId}
-                            onWorkspaceId={setWorkspaceId}
-                            onPaneId={setPaneId}
-                            onSurfaceId={setSurfaceId}
-                            onDeliveryMode={setDeliveryMode}
-                        />
-                    )}
-
-                    {send.isError ? (
-                        <p className="font-mono text-xs text-[#f87171]">
-                            {send.error instanceof Error ? send.error.message : String(send.error)}
+                        <p className="shrink-0 font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500">
+                            or choose destination
                         </p>
-                    ) : null}
 
-                    <DialogFooter className="gap-2 sm:justify-end">
+                        <div className="min-h-[320px] flex-1">
+                            {isLoading ? (
+                                <div className="flex h-full min-h-[320px] items-center justify-center font-mono text-sm text-zinc-500">
+                                    Loading layout…
+                                </div>
+                            ) : isError || !layout?.available ? (
+                                <div className="flex h-full min-h-[320px] items-center justify-center font-mono text-sm text-rose-400">
+                                    {layout?.error ?? "Failed to load cmux layout"}
+                                </div>
+                            ) : (
+                                <CmuxLayoutTreePicker
+                                    layout={layout}
+                                    windowId={windowId}
+                                    workspaceId={workspaceId}
+                                    paneId={paneId}
+                                    surfaceId={surfaceId}
+                                    pickKind={pickKind}
+                                    creatingWorkspace={createWorkspace.isPending}
+                                    onWindowId={setWindowId}
+                                    onWorkspaceId={setWorkspaceId}
+                                    onPaneId={setPaneId}
+                                    onSurfaceId={setSurfaceId}
+                                    onPickKind={setPickKind}
+                                    onCreateWorkspace={
+                                        selectedWindowId
+                                            ? () => {
+                                                  createWorkspace.mutate({ windowId: selectedWindowId });
+                                              }
+                                            : undefined
+                                    }
+                                />
+                            )}
+                        </div>
+
+                        {send.isError ? (
+                            <p className="font-mono text-xs text-rose-400">
+                                {send.error instanceof Error ? send.error.message : String(send.error)}
+                            </p>
+                        ) : null}
+
+                        {createWorkspace.isError ? (
+                            <p className="font-mono text-xs text-rose-400">
+                                {createWorkspace.error instanceof Error
+                                    ? createWorkspace.error.message
+                                    : String(createWorkspace.error)}
+                            </p>
+                        ) : null}
+
+                        {removeFromCmux.isError ? (
+                            <p className="font-mono text-xs text-rose-400">
+                                {removeFromCmux.error instanceof Error
+                                    ? removeFromCmux.error.message
+                                    : String(removeFromCmux.error)}
+                            </p>
+                        ) : null}
+                    </GlassDialogScroll>
+
+                    <GlassDialogFooter className="shrink-0 gap-2 sm:justify-end">
+                        {canRemove ? (
+                            <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                disabled={removeFromCmux.isPending}
+                                onClick={() => removeFromCmux.mutate()}
+                                className="mr-auto font-mono text-[11px] text-zinc-500 hover:border-rose-400/30 hover:bg-rose-400/10 hover:text-rose-300"
+                            >
+                                Remove from cmux
+                            </Button>
+                        ) : null}
                         <Button type="button" variant="outline" size="sm" onClick={() => onOpenChange(false)}>
                             Cancel
                         </Button>
@@ -178,9 +259,9 @@ export function CmuxSendTargetDialog({ open, onOpenChange, tmuxSessionName, onSe
                                 <ArrowUpRight size={12} />
                             </span>
                         </Button>
-                    </DialogFooter>
-                </div>
-            </DialogContent>
-        </Dialog>
+                    </GlassDialogFooter>
+                </GlassDialogBody>
+            </GlassDialogContent>
+        </GlassDialogShell>
     );
 }
