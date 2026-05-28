@@ -32,6 +32,7 @@ import {
     getFileIndex,
     getSessionMetadata,
     getSessionMetadataByDir,
+    getSessionMetadataBySessionId,
     invalidateDateRange,
     removeSessionMetadataBatch,
     type SessionMetadataRecord,
@@ -1652,57 +1653,75 @@ export async function rgExtractSnippet(query: string, filePath: string): Promise
 // Get Conversation by Session ID
 // =============================================================================
 
+function buildSearchResultFromMessages(filePath: string, messages: ConversationMessage[]): SearchResult | null {
+    if (messages.length === 0) {
+        return null;
+    }
+
+    const project = extractProjectName(filePath);
+    const isSubagent = filePath.includes(`${sep}subagents${sep}`) || basename(filePath).startsWith("agent-");
+    const fileName = basename(filePath, ".jsonl");
+
+    let summary: string | undefined;
+    let customTitle: string | undefined;
+    let gitBranch: string | undefined;
+    let foundSessionId: string | undefined;
+    let firstTimestamp: Date | undefined;
+
+    for (const msg of messages) {
+        if (msg.type === "summary") {
+            summary = (msg as SummaryMessage).summary;
+        }
+
+        if (msg.type === "custom-title") {
+            customTitle = (msg as CustomTitleMessage).customTitle;
+        }
+
+        if ("gitBranch" in msg && msg.gitBranch) {
+            gitBranch = msg.gitBranch as string;
+        }
+
+        if ("sessionId" in msg && msg.sessionId) {
+            foundSessionId = msg.sessionId as string;
+        }
+
+        if ("timestamp" in msg && msg.timestamp && !firstTimestamp) {
+            firstTimestamp = new Date(msg.timestamp as string);
+        }
+    }
+
+    return {
+        filePath,
+        project,
+        sessionId: foundSessionId || fileName,
+        timestamp: firstTimestamp || new Date(),
+        summary,
+        customTitle,
+        gitBranch,
+        matchedMessages: messages,
+        isSubagent,
+    };
+}
+
 export async function getConversationBySessionId(sessionId: string): Promise<SearchResult | null> {
-    // Find all files and look for matching session
+    const cached = getSessionMetadataBySessionId(sessionId);
+
+    if (cached) {
+        const messages = await parseJsonlFile(cached.filePath);
+        return buildSearchResultFromMessages(cached.filePath, messages);
+    }
+
     const files = await findConversationFiles({});
 
     for (const filePath of files) {
         const fileName = basename(filePath, ".jsonl");
-        if (fileName === sessionId || filePath.includes(sessionId)) {
-            const messages = await parseJsonlFile(filePath);
-            if (messages.length === 0) {
-                continue;
-            }
 
-            const project = extractProjectName(filePath);
-            const isSubagent = filePath.includes(`${sep}subagents${sep}`) || basename(filePath).startsWith("agent-");
-
-            let summary: string | undefined;
-            let customTitle: string | undefined;
-            let gitBranch: string | undefined;
-            let foundSessionId: string | undefined;
-            let firstTimestamp: Date | undefined;
-
-            for (const msg of messages) {
-                if (msg.type === "summary") {
-                    summary = (msg as SummaryMessage).summary;
-                }
-                if (msg.type === "custom-title") {
-                    customTitle = (msg as CustomTitleMessage).customTitle;
-                }
-                if ("gitBranch" in msg && msg.gitBranch) {
-                    gitBranch = msg.gitBranch as string;
-                }
-                if ("sessionId" in msg && msg.sessionId) {
-                    foundSessionId = msg.sessionId as string;
-                }
-                if ("timestamp" in msg && msg.timestamp && !firstTimestamp) {
-                    firstTimestamp = new Date(msg.timestamp as string);
-                }
-            }
-
-            return {
-                filePath,
-                project,
-                sessionId: foundSessionId || fileName,
-                timestamp: firstTimestamp || new Date(),
-                summary,
-                customTitle,
-                gitBranch,
-                matchedMessages: messages,
-                isSubagent,
-            };
+        if (fileName !== sessionId) {
+            continue;
         }
+
+        const messages = await parseJsonlFile(filePath);
+        return buildSearchResultFromMessages(filePath, messages);
     }
 
     return null;

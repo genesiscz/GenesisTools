@@ -677,6 +677,28 @@ export function getSessionMetadata(filePath: string): SessionMetadataRecord | nu
     return row ? rowToSessionMetadataRecord(row) : null;
 }
 
+export function getSessionMetadataBySessionId(sessionId: string): SessionMetadataRecord | null {
+    const db = getDatabase();
+    const byId = db
+        .query("SELECT * FROM session_metadata WHERE session_id = ? LIMIT 1")
+        .get(sessionId) as SessionMetadataRow | null;
+
+    if (byId) {
+        return rowToSessionMetadataRecord(byId);
+    }
+
+    const suffix = `${sep}${sessionId}.jsonl`;
+    const rows = db
+        .query("SELECT * FROM session_metadata WHERE file_path LIKE ? LIMIT 1")
+        .all(`%${suffix}`) as SessionMetadataRow[];
+
+    if (rows.length === 0) {
+        return null;
+    }
+
+    return rowToSessionMetadataRecord(rows[0]);
+}
+
 export function upsertSessionMetadata(record: SessionMetadataRecord): void {
     const db = getDatabase();
     db.query(`
