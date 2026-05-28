@@ -1,5 +1,4 @@
 import { isDashboardExport } from "@app/Internal/commands/reas/lib/api-export";
-import { exportDashboardToPdf } from "@app/Internal/commands/reas/lib/pdf-export";
 import { apiHandler, jsonBody } from "@app/Internal/commands/reas/ui/src/server/api-utils";
 import { createFileRoute } from "@tanstack/react-router";
 
@@ -17,6 +16,7 @@ export const Route = createFileRoute("/api/export-pdf")({
                     return Response.json({ error: "Invalid dashboard export payload" }, { status: 400 });
                 }
 
+                const { exportDashboardToPdf } = await import("@app/Internal/commands/reas/lib/pdf-export");
                 const pdf = await exportDashboardToPdf(body);
                 const responseBody = new ArrayBuffer(pdf.byteLength);
                 new Uint8Array(responseBody).set(pdf);
