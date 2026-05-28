@@ -171,7 +171,10 @@ export function markEntriesUnread(db: Database, ids: string[], opts: Pick<QueryO
 
     catchUp(db, opts.logBase);
     const placeholders = ids.map(() => "?").join(",");
-    const result = db.run(`UPDATE entries SET read_at = NULL WHERE id IN (${placeholders})`, ids);
+    const result = db.run(
+        `UPDATE entries SET read_at = NULL WHERE id IN (${placeholders}) AND read_at IS NOT NULL`,
+        ids
+    );
 
     return result.changes;
 }

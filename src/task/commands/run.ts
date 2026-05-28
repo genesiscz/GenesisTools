@@ -91,9 +91,11 @@ export function registerRunCommand(program: Command): void {
 
             const taskConfig = loadTaskToolConfig();
             if (taskConfig.gcOnRunStart) {
-                runSessionGc({ retentionDays: taskConfig.sessionRetentionDays }).catch((err) => {
+                try {
+                    await runSessionGc({ retentionDays: taskConfig.sessionRetentionDays });
+                } catch (err) {
                     logger.warn({ err }, "gc: failed");
-                });
+                }
             }
 
             const store = new TaskSessionStore();

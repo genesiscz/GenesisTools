@@ -41,13 +41,22 @@ export function QaSoundWrench() {
     const selected = id ?? lib?.default.id ?? "";
 
     const apply = async (): Promise<void> => {
-        await fetch("/api/qa/config", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: SafeJSON.stringify({ sound: selected, soundVolume: vol }),
-        });
-        setSaved(true);
-        setTimeout(() => setSaved(false), 1500);
+        try {
+            const res = await fetch("/api/qa/config", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: SafeJSON.stringify({ sound: selected, soundVolume: vol }),
+            });
+
+            if (!res.ok) {
+                return;
+            }
+
+            setSaved(true);
+            setTimeout(() => setSaved(false), 1500);
+        } catch {
+            return;
+        }
     };
 
     return (

@@ -30,7 +30,9 @@ export function QaSaveToObsidianDialog({
                 throw new Error(`tree: ${r.status}`);
             }
 
-            return (await r.json()) as { entries: import("@app/dev-dashboard/lib/obsidian/types").VaultEntry[] };
+            return SafeJSON.parse(await r.text()) as {
+                entries: import("@app/dev-dashboard/lib/obsidian/types").VaultEntry[];
+            };
         },
         enabled: open,
     });
@@ -61,7 +63,7 @@ export function QaSaveToObsidianDialog({
                 throw new Error(await r.text());
             }
 
-            return r.json() as Promise<{ path: string }>;
+            return SafeJSON.parse(await r.text()) as { path: string };
         },
         onSuccess: () => {
             setTimeout(() => onOpenChange(false), 1500);

@@ -60,9 +60,9 @@ export async function waitForSession(opts: WaitOptions): Promise<WaitResult> {
                     const line = entry as JsonlLineRecord;
                     if (opts.exitOnMatch.test(line.text)) {
                         settle({ reason: "match", matchedLine: line.text });
-                    }
 
-                    return;
+                        return;
+                    }
                 }
 
                 if (opts.waitForExit && entry.type === "exit") {
@@ -72,7 +72,7 @@ export async function waitForSession(opts: WaitOptions): Promise<WaitResult> {
             },
         });
 
-        if (opts.timeoutMs) {
+        if (opts.timeoutMs !== undefined) {
             timer = setTimeout(() => {
                 settle({ reason: "timeout" });
             }, opts.timeoutMs);

@@ -31,6 +31,6 @@ export function registerConfigCommand(program: Command): void {
                 next = saveTaskToolConfig({ gcOnRunStart: opts.gcOnRunStart === "on" });
             }
 
-            out.print(`${SafeJSON.stringify(next, null, 2)}\n`);
+            out.result(SafeJSON.stringify(next, null, 2));
         });
 }

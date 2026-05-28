@@ -12,6 +12,34 @@ function resolveUnderVault(vaultRoot: string, ...segments: string[]): string {
     return target;
 }
 
+function assertSafeBaseName(baseName: string): void {
+    if (baseName.includes("/") || baseName.includes("\\") || baseName.includes("..")) {
+        throw new Error("baseName must not contain path separators");
+    }
+}
+
+function resolveFileInDir(dir: string, fileName: string): string {
+    const target = resolve(dir, fileName);
+
+    if (target !== dir && !target.startsWith(`${dir}${sep}`)) {
+        throw new Error(`file escapes directory: ${fileName}`);
+    }
+
+    return target;
+}
+
+async function readExistingMarkdown(path: string): Promise<string> {
+    try {
+        return await readFile(path, "utf8");
+    } catch (err: unknown) {
+        if (err && typeof err === "object" && "code" in err && err.code === "ENOENT") {
+            return "";
+        }
+
+        throw err;
+    }
+}
+
 export async function saveToObsidianUnique(opts: {
     vaultRoot: string;
     relativeDir: string;
@@ -20,6 +48,7 @@ export async function saveToObsidianUnique(opts: {
     mode: "create" | "append";
     createDir?: boolean;
 }): Promise<{ path: string }> {
+    assertSafeBaseName(opts.baseName);
     const dir = resolveUnderVault(opts.vaultRoot, opts.relativeDir);
 
     if (opts.createDir) {
@@ -33,8 +62,8 @@ export async function saveToObsidianUnique(opts: {
     }
 
     if (opts.mode === "append") {
-        const path = resolveUnderVault(dir, `${opts.baseName}.md`);
-        const existing = await readFile(path, "utf8").catch(() => "");
+        const path = resolveFileInDir(dir, `${opts.baseName}.md`);
+        const existing = await readExistingMarkdown(path);
         const sep = existing && !existing.endsWith("\n") ? "\n\n" : existing ? "\n" : "";
 
         await writeFile(path, existing + sep + opts.content);
@@ -42,23 +71,22 @@ export async function saveToObsidianUnique(opts: {
         return { path };
     }
 
-    let n = 1;
-
-    while (true) {
+    for (let n = 1; n <= 999; n++) {
         const candidate = n === 1 ? `${opts.baseName}.md` : `${opts.baseName}-${n}.md`;
-        const path = resolveUnderVault(dir, candidate);
+        const path = resolveFileInDir(dir, candidate);
 
         try {
-            await stat(path);
-            n++;
-
-            if (n > 999) {
-                throw new Error("too many duplicates");
-            }
-        } catch {
-            await writeFile(path, opts.content);
+            await writeFile(path, opts.content, { flag: "wx" });
 
             return { path };
+        } catch (err: unknown) {
+            if (err && typeof err === "object" && "code" in err && err.code === "EEXIST") {
+                continue;
+            }
+
+            throw err;
         }
     }
+
+    throw new Error("too many duplicates");
 }

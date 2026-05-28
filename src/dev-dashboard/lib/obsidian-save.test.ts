@@ -56,6 +56,21 @@ describe("saveToObsidianUnique", () => {
         ).rejects.toThrow(/escapes vault/);
     });
 
+    test("rejects baseName with path separators", async () => {
+        vaultRoot = await mkdtemp(join(tmpdir(), "vault-"));
+
+        await expect(
+            saveToObsidianUnique({
+                vaultRoot,
+                relativeDir: "inbox",
+                baseName: "foo/bar",
+                content: "nope",
+                mode: "create",
+                createDir: true,
+            })
+        ).rejects.toThrow(/path separators/);
+    });
+
     test("rejects filename traversal", async () => {
         vaultRoot = await mkdtemp(join(tmpdir(), "vault-"));
 
@@ -68,7 +83,7 @@ describe("saveToObsidianUnique", () => {
                 mode: "create",
                 createDir: true,
             })
-        ).rejects.toThrow(/escapes vault/);
+        ).rejects.toThrow(/path separators/);
     });
 
     test("appends to existing file", async () => {
