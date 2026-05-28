@@ -99,12 +99,14 @@ async function multiplexPipeStreams(
 }
 
 async function runPipeMode(opts: RunTaskOptions, writer: OrderedCaptureWriter): Promise<number> {
+    const detachChild = !process.stdin.isTTY;
     const proc = Bun.spawn(opts.command, {
         cwd: opts.cwd,
         stdout: "pipe",
         stderr: "pipe",
         stdin: "inherit",
         env: process.env,
+        detached: detachChild,
     });
 
     const store = new TaskSessionStore();
@@ -127,7 +129,9 @@ async function runPipeMode(opts: RunTaskOptions, writer: OrderedCaptureWriter): 
         }
     };
 
-    process.on("SIGINT", onSigInt);
+    if (process.stdin.isTTY) {
+        process.on("SIGINT", onSigInt);
+    }
 
     let exitCode = 1;
 
@@ -136,7 +140,9 @@ async function runPipeMode(opts: RunTaskOptions, writer: OrderedCaptureWriter): 
         await streamsDone;
         await writer.flush();
     } finally {
-        process.off("SIGINT", onSigInt);
+        if (process.stdin.isTTY) {
+            process.off("SIGINT", onSigInt);
+        }
     }
 
     return exitCode;

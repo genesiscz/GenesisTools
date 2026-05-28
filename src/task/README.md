@@ -16,7 +16,7 @@ tools task run --session metro -- npx react-native start
 tools task get --session metro
 
 # Read last 100 lines
-tools task logs --session metro --lines 100
+tools task logs --session metro --tail 100
 
 # Live follow
 tools task tail --session metro --follow
@@ -43,7 +43,7 @@ tools task logs --session metro --raw | grep BUNDLE
 tools task logs --session metro --jsonl | rg '"text".*error'
 tools task logs --session metro --stderr --raw | grep -i warning
 tools task tail --session metro --follow
-tools task logs --session metro --tail --follow
+tools task logs --session metro --tail 100 --follow
 ```
 
 ## On-disk files
@@ -57,16 +57,27 @@ tools task logs --session metro --tail --follow
 
 ## Session names
 
-Reusing a name that already has a `.jsonl` on disk **does not wipe** the old session. The run is assigned a suffixed id such as `metro-2026-05-26_14-30-22`, printed immediately on stderr before the banner:
+A session name is the file stem under `~/.genesis-tools/task/sessions/`. There are two distinct reuse paths:
+
+**1. Implicit reuse (no `--session` flag).** When you previously ran `tools task run -- npx react-native start` with no `--session`, `tools task get` / `logs` / `tail` will fuzzy-resolve to the most recent matching session. If no exact match, the run is assigned a timestamp-suffixed id (`metro-2026-05-26_14-30-22`) printed on stderr before the banner:
 
 ```text
 note: session "metro" already exists — using "metro-2026-05-26_14-30-22"
 task-session-id: metro-2026-05-26_14-30-22
 ```
 
-Use `tools task get --session <full-id>` or pick the suffixed name from `tools task sessions` (see **Related:** in `get`).
+**2. Explicit reuse (you passed `--session foo` and `foo` already exists).** This is **append mode**: the new run continues writing into the existing `.jsonl` and `.log` files, with `seq` continuing from the prior last value. You'll see:
 
-When **`--session` is omitted**, `get` / `logs` / `tail` auto-resolve: explicit `--session` flag → fuzzy match → sole active session → error if ambiguous. Use `tools task sessions` to list all.
+```text
+warn: reusing existing session "foo" (append mode)
+info: last seq 1234; new lines continue from 1235
+info: tail live output: tools task tail --session foo --follow
+info: clear older lines: tools task get --session foo --clear-older-than-seq 1234
+```
+
+Append mode is useful when re-running the same logical task (e.g. `lint`, `tsc`) and you want one rolling log per check-name. Use `--clear-older-than-seq N` on `get` to drop the prior run's lines if you want a clean slate without renaming the session.
+
+When **`--session` is omitted**, `get` / `logs` / `tail` auto-resolve: explicit flag → fuzzy match → sole active session → error if ambiguous. Use `tools task sessions` to list all.
 
 ## Run modes
 
@@ -85,12 +96,55 @@ For Metro/Vite/interactive dev servers, prefer **PTY mode** (default when stdin 
 
 ## Log window defaults
 
-`logs` defaults to the **last 50 lines**; `tail` shows the last 10 before follow. Use `--all` to dump the full session, `--from-seq 1` for seq-based windows, or `--lines N` for a custom tail count.
+`logs` defaults to the **last 50 lines** in a TTY; `tail` shows the last 10 before follow. When stdout is **not** a TTY (pipes, agents), both default to **`--all`** so nothing is silently truncated.
+
+Use `--head N` / `--tail N` for windows, `--head X --tail Y` for first+last with an elision marker, or `--all` for the full session. `--grep PAT` implies `--all` unless you also pass `--head` / `--tail`.
 
 ```bash
 tools task logs --session metro --all --raw | grep TOKEN
 tools task logs --session metro --from-seq 1 --jsonl | rg error
+tools task logs --session metro --head 5 --tail 5 --raw
 ```
+
+## Dashboard auto-start
+
+The dashboard at `http://localhost:7243` is **NOT** automatically started by `tools task run`. To launch it:
+
+```bash
+tools task dashboard up         # foreground (Ctrl+C to stop)
+tools task dashboard open       # open in browser (starts if not running)
+```
+
+If you see :7243 listening when you did not start it, another GenesisTools dashboard is sharing the port — see `src/utils/ui/dashboards.ts` for the canonical registry.
+
+## Wait for a session
+
+Block on session completion or a pattern. Replaces the `until grep -qE …; sleep 5; done` polling idiom.
+
+```bash
+# Wait for dev server "ready" sentinel, max 60s
+tools task wait --session metro --exit-on-match "Bundled" --timeout 60
+
+# Wait for session to exit, propagate exit code
+tools task wait --session jest --propagate-exit
+
+# Or follow live and exit with the child's code when the session ends
+tools task tail --session jest --follow --propagate-exit
+```
+
+Exit codes: 0 on match or normal exit (without `--propagate-exit`), child's code with `--propagate-exit`, 124 on timeout.
+
+## Retention
+
+Sessions older than `sessionRetentionDays` (default **30**) are GC'd on the next `tools task run` when `gcOnRunStart` is true (default). Configure interactively or via flags:
+
+```bash
+tools task config                              # print current config (JSON)
+tools task config --session-retention-days 14  # example: shorter retention
+tools task config --gc-on-run-start off        # disable opportunistic GC
+```
+
+Config file (same values): `~/.genesis-tools/task/config.json`. Manually: `tools task clean --all`, or `tools task clean --session <name>`.
 
 ## vs shell `tee`
 
