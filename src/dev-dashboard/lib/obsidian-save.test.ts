@@ -41,6 +41,36 @@ describe("saveToObsidianUnique", () => {
         expect(body).toBe("second");
     });
 
+    test("rejects directory traversal", async () => {
+        vaultRoot = await mkdtemp(join(tmpdir(), "vault-"));
+
+        await expect(
+            saveToObsidianUnique({
+                vaultRoot,
+                relativeDir: "../outside",
+                baseName: "note",
+                content: "nope",
+                mode: "create",
+                createDir: true,
+            })
+        ).rejects.toThrow(/escapes vault/);
+    });
+
+    test("rejects filename traversal", async () => {
+        vaultRoot = await mkdtemp(join(tmpdir(), "vault-"));
+
+        await expect(
+            saveToObsidianUnique({
+                vaultRoot,
+                relativeDir: "inbox",
+                baseName: "../../etc/passwd",
+                content: "nope",
+                mode: "create",
+                createDir: true,
+            })
+        ).rejects.toThrow(/escapes vault/);
+    });
+
     test("appends to existing file", async () => {
         vaultRoot = await mkdtemp(join(tmpdir(), "vault-"));
         const first = await saveToObsidianUnique({

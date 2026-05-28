@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
+import { taskConfigPath } from "@app/task/lib/paths";
 import { SafeJSON } from "@app/utils/json";
 
 export interface TaskToolConfig {
@@ -14,7 +14,7 @@ const DEFAULT: TaskToolConfig = {
 };
 
 export function configPath(): string {
-    return process.env.TASK_CONFIG_PATH ?? join(homedir(), ".genesis-tools", "task", "config.json");
+    return taskConfigPath();
 }
 
 export function loadTaskToolConfig(path = configPath()): TaskToolConfig {

@@ -43,7 +43,7 @@ tools task logs --session metro --raw | grep BUNDLE
 tools task logs --session metro --jsonl | rg '"text".*error'
 tools task logs --session metro --stderr --raw | grep -i warning
 tools task tail --session metro --follow
-tools task logs --session metro --tail --follow
+tools task logs --session metro --tail 100 --follow
 ```
 
 ## On-disk files

@@ -1,5 +1,16 @@
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { resolve, sep } from "node:path";
+
+function resolveUnderVault(vaultRoot: string, ...segments: string[]): string {
+    const root = resolve(vaultRoot);
+    const target = resolve(root, ...segments);
+
+    if (target !== root && !target.startsWith(`${root}${sep}`)) {
+        throw new Error(`path escapes vault: ${segments.join("/")}`);
+    }
+
+    return target;
+}
 
 export async function saveToObsidianUnique(opts: {
     vaultRoot: string;
@@ -9,7 +20,7 @@ export async function saveToObsidianUnique(opts: {
     mode: "create" | "append";
     createDir?: boolean;
 }): Promise<{ path: string }> {
-    const dir = join(opts.vaultRoot, opts.relativeDir);
+    const dir = resolveUnderVault(opts.vaultRoot, opts.relativeDir);
 
     if (opts.createDir) {
         await mkdir(dir, { recursive: true });
@@ -22,7 +33,7 @@ export async function saveToObsidianUnique(opts: {
     }
 
     if (opts.mode === "append") {
-        const path = join(dir, `${opts.baseName}.md`);
+        const path = resolveUnderVault(dir, `${opts.baseName}.md`);
         const existing = await readFile(path, "utf8").catch(() => "");
         const sep = existing && !existing.endsWith("\n") ? "\n\n" : existing ? "\n" : "";
 
@@ -35,7 +46,7 @@ export async function saveToObsidianUnique(opts: {
 
     while (true) {
         const candidate = n === 1 ? `${opts.baseName}.md` : `${opts.baseName}-${n}.md`;
-        const path = join(dir, candidate);
+        const path = resolveUnderVault(dir, candidate);
 
         try {
             await stat(path);

@@ -63,7 +63,9 @@ export function QaSaveToObsidianDialog({
 
             return r.json() as Promise<{ path: string }>;
         },
-        onSuccess: () => onOpenChange(false),
+        onSuccess: () => {
+            setTimeout(() => onOpenChange(false), 1500);
+        },
     });
 
     return (
