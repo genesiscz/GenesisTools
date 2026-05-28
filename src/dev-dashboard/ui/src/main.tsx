@@ -1,6 +1,7 @@
 import { RouterProvider } from "@tanstack/react-router";
 import { StrictMode } from "react";
 import ReactDOM from "react-dom/client";
+import { revealAppAfterBoot } from "@/lib/boot-reveal";
 import { getRouter } from "@/router";
 import "./styles.css";
 
@@ -27,4 +28,5 @@ if (rootElement && !rootElement.innerHTML) {
             <RouterProvider router={router} />
         </StrictMode>
     );
+    revealAppAfterBoot();
 }

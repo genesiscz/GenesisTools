@@ -43,6 +43,7 @@ interface UpFlags {
     force?: boolean;
     open?: boolean;
     interactive?: boolean;
+    dev?: boolean;
 }
 
 function parsePort(value: string): number {
@@ -89,7 +90,20 @@ function toUpOptions(flags: UpFlags) {
         force: flags.force,
         open: flags.open,
         interactive: flags.interactive,
+        uiServe: flags.dev ? ("dev" as const) : undefined,
     };
+}
+
+function applyUpFlags(cmd: Command, config: DashboardAppConfig): void {
+    cmd.option("-f, --foreground", "run in the foreground (block until killed)")
+        .option("-p, --port <n>", "override the default port")
+        .option("--force", "kill any conflicting process before starting")
+        .option("--no-open", "do not auto-open the browser (UI apps only)")
+        .option("-i, --interactive", "force the menu");
+
+    if (config.spawn.devCmd) {
+        cmd.option("--dev", "use Vite dev + HMR instead of watch+preview bundle");
+    }
 }
 
 export function buildCommanderCommand({ config, ctx }: BuildOptions): Command {
@@ -113,16 +127,11 @@ export function buildCommanderCommand({ config, ctx }: BuildOptions): Command {
     );
 
     // `up`
-    cmd.command("up")
-        .description("Start (default: background). Use --foreground to block.")
-        .option("-f, --foreground", "run in the foreground (block until killed)")
-        .option("-p, --port <n>", "override the default port")
-        .option("--force", "kill any conflicting process before starting")
-        .option("--no-open", "do not auto-open the browser (UI apps only)")
-        .option("-i, --interactive", "force the menu")
-        .action(async (flags: UpFlags) => {
-            await up(ctx, toUpOptions(flags));
-        });
+    const upCmd = cmd.command("up").description("Start (default: background). Use --foreground to block.");
+    applyUpFlags(upCmd, config);
+    upCmd.action(async (flags: UpFlags) => {
+        await up(ctx, toUpOptions(flags));
+    });
 
     // `down`
     cmd.command("down")
@@ -134,16 +143,11 @@ export function buildCommanderCommand({ config, ctx }: BuildOptions): Command {
         });
 
     // `restart`
-    cmd.command("restart")
-        .description("Stop and start fresh.")
-        .option("-f, --foreground", "run in the foreground (block until killed)")
-        .option("-p, --port <n>", "override the default port")
-        .option("--force", "kill any conflicting process before starting")
-        .option("--no-open", "do not auto-open the browser (UI apps only)")
-        .option("-i, --interactive", "force the menu")
-        .action(async (flags: UpFlags) => {
-            await restart(ctx, toUpOptions(flags));
-        });
+    const restartCmd = cmd.command("restart").description("Stop and start fresh.");
+    applyUpFlags(restartCmd, config);
+    restartCmd.action(async (flags: UpFlags) => {
+        await restart(ctx, toUpOptions(flags));
+    });
 
     // `status`
     cmd.command("status")

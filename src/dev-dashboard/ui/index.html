@@ -19,18 +19,224 @@
                 background: #0c0e10;
             }
 
-            body,
-            #app {
-                background: #0c0e10;
-                color: #e6edf3;
-            }
-
             body {
                 margin: 0;
+                min-height: 100%;
+                height: 100%;
+                overflow: hidden;
+                background: #0c0e10;
+                color: #e6edf3;
+                font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+                -webkit-font-smoothing: antialiased;
+            }
+
+            #app {
+                position: relative;
+                z-index: 1;
+                min-height: 100%;
+                height: 100%;
+                opacity: 0;
+                transition: opacity 520ms cubic-bezier(0.22, 1, 0.36, 1);
+            }
+
+            html.dd-app-ready #app {
+                opacity: 1;
+            }
+
+            #dd-boot {
+                position: fixed;
+                inset: 0;
+                z-index: 10000;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                overflow: hidden;
+                background: #0c0e10;
+                transition:
+                    opacity 480ms cubic-bezier(0.22, 1, 0.36, 1),
+                    visibility 480ms step-end;
+            }
+
+            html.dd-app-ready #dd-boot {
+                opacity: 0;
+                visibility: hidden;
+                pointer-events: none;
+            }
+
+            .dd-boot__grid {
+                position: absolute;
+                inset: 0;
+                background-image:
+                    linear-gradient(rgba(52, 211, 153, 0.045) 1px, transparent 1px),
+                    linear-gradient(90deg, rgba(52, 211, 153, 0.045) 1px, transparent 1px);
+                background-size: 20px 20px;
+                mask-image: radial-gradient(ellipse 85% 70% at 50% 42%, black 20%, transparent 78%);
+            }
+
+            .dd-boot__glow {
+                position: absolute;
+                left: 50%;
+                top: 38%;
+                width: min(520px, 90vw);
+                height: min(320px, 50vh);
+                transform: translate(-50%, -50%);
+                background: radial-gradient(
+                    ellipse at center,
+                    rgba(52, 211, 153, 0.14) 0%,
+                    rgba(45, 212, 191, 0.06) 38%,
+                    transparent 72%
+                );
+                pointer-events: none;
+            }
+
+            .dd-boot__panel {
+                position: relative;
+                z-index: 1;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                gap: 1.25rem;
+                padding: 2rem 2.25rem 1.75rem;
+                border-radius: 14px;
+                border: 1px solid rgba(52, 211, 153, 0.22);
+                background:
+                    linear-gradient(165deg, rgba(52, 211, 153, 0.08) 0%, transparent 42%),
+                    rgba(16, 19, 22, 0.92);
+                box-shadow:
+                    0 0 0 1px rgba(0, 0, 0, 0.45) inset,
+                    0 24px 64px rgba(0, 0, 0, 0.55),
+                    0 0 48px rgba(52, 211, 153, 0.08);
+                backdrop-filter: blur(12px);
+                -webkit-backdrop-filter: blur(12px);
+            }
+
+            .dd-boot__mark {
+                width: 40px;
+                height: 40px;
+                border-radius: 11px;
+                background: linear-gradient(135deg, #34d399, #2dd4bf);
+                box-shadow: 0 0 22px rgba(52, 211, 153, 0.42);
+                animation: dd-boot-mark-pulse 2.4s ease-in-out infinite;
+            }
+
+            .dd-boot__title {
+                margin: 0;
+                font-size: 1.125rem;
+                font-weight: 600;
+                letter-spacing: -0.02em;
+                background: linear-gradient(135deg, #34d399, #2dd4bf);
+                -webkit-background-clip: text;
+                background-clip: text;
+                color: transparent;
+            }
+
+            .dd-boot__status {
+                margin: 0;
+                font-family: "JetBrains Mono", ui-monospace, Menlo, Monaco, Consolas, monospace;
+                font-size: 0.6875rem;
+                letter-spacing: 0.12em;
+                text-transform: uppercase;
+                color: #8b96a0;
+            }
+
+            .dd-boot__status-dots::after {
+                content: "";
+                display: inline-block;
+                width: 1.25em;
+                text-align: left;
+                animation: dd-boot-dots 1.4s steps(4, end) infinite;
+            }
+
+            .dd-boot__bar {
+                width: min(220px, 56vw);
+                height: 3px;
+                border-radius: 999px;
+                background: #1e2428;
+                overflow: hidden;
+            }
+
+            .dd-boot__bar-fill {
+                display: block;
+                height: 100%;
+                width: 42%;
+                border-radius: inherit;
+                background: linear-gradient(90deg, #34d399, #2dd4bf, #34d399);
+                background-size: 200% 100%;
+                animation: dd-boot-bar 1.35s ease-in-out infinite;
+            }
+
+            @keyframes dd-boot-mark-pulse {
+                0%,
+                100% {
+                    box-shadow: 0 0 18px rgba(52, 211, 153, 0.32);
+                    transform: scale(1);
+                }
+
+                50% {
+                    box-shadow: 0 0 28px rgba(52, 211, 153, 0.55);
+                    transform: scale(1.03);
+                }
+            }
+
+            @keyframes dd-boot-bar {
+                0% {
+                    transform: translateX(-120%);
+                    background-position: 0% 50%;
+                }
+
+                100% {
+                    transform: translateX(280%);
+                    background-position: 100% 50%;
+                }
+            }
+
+            @keyframes dd-boot-dots {
+                0% {
+                    content: "";
+                }
+
+                25% {
+                    content: ".";
+                }
+
+                50% {
+                    content: "..";
+                }
+
+                75% {
+                    content: "...";
+                }
+            }
+
+            @media (prefers-reduced-motion: reduce) {
+                #app,
+                #dd-boot {
+                    transition-duration: 80ms;
+                }
+
+                .dd-boot__mark,
+                .dd-boot__bar-fill,
+                .dd-boot__status-dots::after {
+                    animation: none;
+                }
             }
         </style>
     </head>
     <body>
+        <div id="dd-boot" role="status" aria-live="polite" aria-busy="true" aria-label="Loading dev-dashboard">
+            <div class="dd-boot__grid" aria-hidden="true"></div>
+            <div class="dd-boot__glow" aria-hidden="true"></div>
+            <div class="dd-boot__panel">
+                <div class="dd-boot__mark" aria-hidden="true"></div>
+                <h1 class="dd-boot__title">dev-dashboard</h1>
+                <p class="dd-boot__status">
+                    <span class="dd-boot__status-dots">Starting</span>
+                </p>
+                <div class="dd-boot__bar" aria-hidden="true">
+                    <span class="dd-boot__bar-fill"></span>
+                </div>
+            </div>
+        </div>
         <div id="app"></div>
         <script type="module" src="/src/main.tsx"></script>
     </body>

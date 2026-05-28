@@ -6,6 +6,9 @@ const appRoot = resolve(projectRoot, "src");
 const { attachDevDashboardMiddleware } = await import(
     pathToFileURL(resolve(appRoot, "dev-dashboard/ui/vite-middleware.ts")).href
 );
+const { createPreviewIndexInjectMiddleware, createPreviewReloadSseMiddleware } = await import(
+    pathToFileURL(resolve(appRoot, "dev-dashboard/ui/preview-reload.ts")).href
+);
 const { createDashboardViteConfig } = await import(pathToFileURL(resolve(appRoot, "utils/ui/vite.base.ts")).href);
 
 const config = createDashboardViteConfig({
@@ -21,7 +24,19 @@ const config = createDashboardViteConfig({
         },
     },
     tanstackStartOptions: false,
+    overrides: {
+        build: {
+            outDir: "dist",
+            emptyOutDir: true,
+            target: "es2022",
+        },
+        resolve: {
+            dedupe: ["redux"],
+        },
+    },
 });
+
+const distDir = resolve(__dirname, "dist");
 
 // Vite runs on a private port behind the Bun.serve front proxy. Tell the HMR
 // client to connect to the public port so the proxy can bridge the HMR socket
@@ -40,6 +55,11 @@ config.plugins = [
         name: "dev-dashboard-middleware",
         configureServer(server) {
             attachDevDashboardMiddleware(server.middlewares);
+        },
+        configurePreviewServer(server) {
+            attachDevDashboardMiddleware(server.middlewares);
+            server.middlewares.use(createPreviewReloadSseMiddleware());
+            server.middlewares.use(createPreviewIndexInjectMiddleware(distDir));
         },
     },
 ];

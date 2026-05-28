@@ -5,11 +5,12 @@ import { resolve } from "node:path";
 import { getConfig, saveConfig } from "@app/dev-dashboard/config";
 import { createBasicAuthCredentials } from "@app/dev-dashboard/lib/auth";
 import { startFrontProxy } from "@app/dev-dashboard/lib/front-proxy";
+import { runPreviewUiServer } from "@app/dev-dashboard/lib/preview-ui-server";
 import { stopUiServerOnPort } from "@app/dev-dashboard/lib/stop-ui-server";
 import { findFreePort } from "@app/dev-dashboard/lib/ttyd/free-port";
+import { devDashboardUiApp } from "@app/dev-dashboard/ui/app";
 import { logger, out } from "@app/logger";
 import { runTool } from "@app/utils/cli";
-import { defineDashboardApp } from "@app/utils/DashboardApp";
 import { waitForUrlReady } from "@app/utils/DashboardApp/readiness";
 import { PROJECT_ROOT } from "@app/utils/paths";
 import { Command } from "commander";
@@ -40,12 +41,9 @@ async function runUiServer(): Promise<void> {
 
     stopUiServerOnPort(port);
 
-    // Vite runs on a private loopback port; a Bun.serve front proxy owns the
-    // public port so WebSockets (ttyd + Vite HMR) work — Bun's node:http
-    // upgrade socket is broken (oven-sh/bun#28396).
     const internalPort = await findFreePort();
 
-    out.println(`Starting dev-dashboard at ${url} ...`);
+    out.println(`Starting dev-dashboard (Vite dev) at ${url} ...`);
     out.println("(first start can take a few seconds; output below comes from Vite)\n");
 
     const child = spawn(
@@ -75,8 +73,6 @@ async function runUiServer(): Promise<void> {
         }
     );
 
-    // Teardown hooks below are registered after this line; if startFrontProxy
-    // throws, the already-spawned Vite child would be orphaned. Kill it here.
     let frontProxy: ReturnType<typeof startFrontProxy> | undefined;
 
     const internalUrl = `http://127.0.0.1:${internalPort}/`;
@@ -147,8 +143,6 @@ async function runUiServer(): Promise<void> {
         killChild();
     });
 
-    // Foreground-only browser open (launchd/background restarts must not pop a tab).
-    // Lifecycle sets DASHBOARD_OPEN_BROWSER=1 when the user asked for --open.
     if (process.env.DASHBOARD_OPEN_BROWSER === "1") {
         void (async () => {
             const ready = await waitForUrlReady(url, 20_000);
@@ -184,31 +178,20 @@ async function runUiServer(): Promise<void> {
     process.exit(exitCode);
 }
 
-const devDashboardApp = defineDashboardApp({
-    type: "ui",
-    key: "dev-dashboard",
-    name: "Dev Dashboard",
-    description: "Launch the dev-dashboard front-proxy + Vite + ttyd",
-    commandName: "ui",
-    aliases: ["dashboard"],
-    bindHost: "0.0.0.0",
-    spawn: {
-        cmd: [process.execPath, process.argv[1], "__ui-server"],
-        cwd: PROJECT_ROOT,
-    },
-    readiness: { kind: "http", path: "/", timeoutMs: 90_000 },
-    openBrowser: { enabled: false },
-    launchd: { available: true },
-});
-
 program
     .command("__ui-server", { hidden: true })
-    .description("Internal entry: front-proxy + Vite + ttyd")
-    .action(async () => {
-        await runUiServer();
+    .description("Internal entry: front-proxy + UI upstream + ttyd")
+    .option("--dev", "Vite dev + HMR (slower over tunnel; default is watch build + preview)")
+    .action(async (opts: { dev?: boolean }) => {
+        if (opts.dev) {
+            await runUiServer();
+            return;
+        }
+
+        await runPreviewUiServer();
     });
 
-program.addCommand(devDashboardApp.commanderCommand);
+program.addCommand(devDashboardUiApp.commanderCommand);
 
 const auth = program.command("auth").description("Manage dev-dashboard Basic Auth");
 
