@@ -103,21 +103,6 @@ const TTYD_MOBILE_SHELL_SCRIPT = `<script id="dd-ttyd-mobile-shell-js">
         return true;
     }
 
-    function scrollViaWheel(lines) {
-        var viewport = document.querySelector(".xterm-viewport");
-        if (!viewport || !lines) {
-            return false;
-        }
-
-        var linePx = lineHeight();
-        return viewport.dispatchEvent(new WheelEvent("wheel", {
-            deltaY: lines * linePx,
-            deltaMode: 0,
-            bubbles: true,
-            cancelable: true
-        }));
-    }
-
     window.__ddTtydScroll = function (lines) {
         if (!lines) {
             return false;
@@ -128,10 +113,6 @@ const TTYD_MOBILE_SHELL_SCRIPT = `<script id="dd-ttyd-mobile-shell-js">
         }
 
         if (applyScrollLines(lines)) {
-            return true;
-        }
-
-        if (scrollViaWheel(lines)) {
             return true;
         }
 

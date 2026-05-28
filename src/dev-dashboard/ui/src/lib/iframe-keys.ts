@@ -12,7 +12,8 @@
  *
  * Scrollback in tmux attach sessions uses xterm's alternate buffer — scrollLines
  * is a no-op there. Real mouse wheel works via coreMouseService.triggerMouseEvent
- * (SGR wheel buttons). The injected __ddTtydScroll helper mirrors that path.
+ * (SGR wheel buttons). The front-proxy injects __ddTtydScroll into ttyd HTML to
+ * mirror that path; the parent calls it directly or via postMessage.
  */
 
 export type IframeKey = "Escape" | "Tab" | "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight" | "PageUp" | "PageDown";
@@ -28,13 +29,7 @@ const KEY_TABLE: Record<IframeKey, { key: string; code: string; keyCode: number 
     PageDown: { key: "PageDown", code: "PageDown", keyCode: 34 },
 };
 
-interface XtermTerminal {
-    scrollLines?: (amount: number) => void;
-    focus?: () => void;
-}
-
 interface TtydIframeWindow extends Window {
-    term?: XtermTerminal;
     __ddTtydScroll?: (lines: number) => boolean;
 }
 
@@ -74,52 +69,6 @@ export function sendKeyToIframe(iframe: HTMLIFrameElement | null, key: IframeKey
     return dispatchKey(textarea, key);
 }
 
-function scrollViaIframeHelper(contentWindow: TtydIframeWindow, amount: number): boolean {
-    if (typeof contentWindow.__ddTtydScroll === "function") {
-        return contentWindow.__ddTtydScroll(amount);
-    }
-
-    return false;
-}
-
-function scrollViaTermApi(contentWindow: TtydIframeWindow, amount: number): boolean {
-    const term = contentWindow.term;
-
-    if (!term?.scrollLines) {
-        return false;
-    }
-
-    term.scrollLines.call(term, amount);
-    return true;
-}
-
-function scrollViaWheelEvent(iframe: HTMLIFrameElement, amount: number): boolean {
-    const contentWindow = iframe.contentWindow as TtydIframeWindow | null;
-    const doc = iframe.contentDocument;
-
-    if (!contentWindow || !doc) {
-        return false;
-    }
-
-    const viewport = doc.querySelector<HTMLElement>(".xterm-viewport");
-
-    if (!viewport) {
-        return false;
-    }
-
-    const lineHeight = estimateLineHeight(viewport);
-    const deltaY = amount * lineHeight;
-
-    return viewport.dispatchEvent(
-        new (contentWindow as Window).WheelEvent("wheel", {
-            deltaY,
-            deltaMode: 0,
-            bubbles: true,
-            cancelable: true,
-        })
-    );
-}
-
 function scrollViaPostMessage(contentWindow: TtydIframeWindow, amount: number): void {
     contentWindow.postMessage({ type: "dd-ttyd-scroll", lines: amount }, "*");
 }
@@ -139,16 +88,8 @@ export function scrollIframeTerminal(iframe: HTMLIFrameElement | null, amount: n
             return false;
         }
 
-        if (scrollViaIframeHelper(contentWindow, amount)) {
-            return true;
-        }
-
-        if (scrollViaTermApi(contentWindow, amount)) {
-            return true;
-        }
-
-        if (scrollViaWheelEvent(iframe, amount)) {
-            return true;
+        if (typeof contentWindow.__ddTtydScroll === "function") {
+            return contentWindow.__ddTtydScroll(amount);
         }
 
         scrollViaPostMessage(contentWindow, amount);
@@ -199,10 +140,4 @@ function estimateLineHeight(viewport: HTMLElement): number {
     const rowEl = viewport.parentElement?.querySelector<HTMLElement>(".xterm-rows > div");
     const measured = rowEl?.getBoundingClientRect().height;
     return measured && measured > 4 ? measured : 17;
-}
-
-export function findIframeByTitle(title: string): HTMLIFrameElement | null {
-    const escaped = typeof CSS !== "undefined" && "escape" in CSS ? CSS.escape(title) : title;
-
-    return document.querySelector<HTMLIFrameElement>(`iframe[title="${escaped}"]`);
 }

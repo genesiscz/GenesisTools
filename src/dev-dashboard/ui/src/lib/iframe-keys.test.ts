@@ -10,11 +10,6 @@ describe("iframe-keys scroll", () => {
                     scrolled = lines;
                     return true;
                 },
-                term: {
-                    scrollLines: () => {
-                        throw new Error("should not call term.scrollLines when helper exists");
-                    },
-                },
             },
             contentDocument: null,
         } as unknown as HTMLIFrameElement;
@@ -23,42 +18,18 @@ describe("iframe-keys scroll", () => {
         expect(scrolled).toBe(-12);
     });
 
-    test("scrollIframeTerminal falls back to iframe WheelEvent", () => {
-        let wheelDelta = 0;
-        const viewport = {
-            parentElement: {
-                querySelector: () => ({ getBoundingClientRect: () => ({ height: 20 }) }),
-            },
-            clientHeight: 400,
-            dispatchEvent: (event: Event) => {
-                wheelDelta = (event as WheelEvent).deltaY;
-                return true;
-            },
-        };
-
-        class FakeWheelEvent extends Event {
-            deltaY: number;
-            deltaMode: number;
-
-            constructor(type: string, init: { deltaY: number; deltaMode: number; bubbles: boolean; cancelable: boolean }) {
-                super(type, init);
-                this.deltaY = init.deltaY;
-                this.deltaMode = init.deltaMode;
-            }
-        }
-
+    test("scrollIframeTerminal falls back to postMessage before injection is ready", () => {
+        let posted: unknown = null;
         const iframe = {
-            clientHeight: 400,
             contentWindow: {
-                WheelEvent: FakeWheelEvent,
-                term: undefined,
+                postMessage: (data: unknown) => {
+                    posted = data;
+                },
             },
-            contentDocument: {
-                querySelector: () => viewport,
-            },
+            contentDocument: null,
         } as unknown as HTMLIFrameElement;
 
-        expect(scrollIframeTerminal(iframe, 3)).toBe(true);
-        expect(wheelDelta).toBe(60);
+        expect(scrollIframeTerminal(iframe, 5)).toBe(true);
+        expect(posted).toEqual({ type: "dd-ttyd-scroll", lines: 5 });
     });
 });
