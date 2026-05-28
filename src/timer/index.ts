@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { out } from "@app/logger";
 import { runTool } from "@app/utils/cli";
 import { formatDuration, parseDuration } from "@app/utils/format";
+import { isProcessAlive as canonicalIsProcessAlive } from "@app/utils/process-alive";
 import { withCancel } from "@app/utils/prompts/clack/helpers";
 import { Storage } from "@app/utils/storage/storage";
 import { formatTable } from "@app/utils/table";
@@ -263,14 +264,10 @@ async function handleBackgroundRun(args: string[]): Promise<void> {
 // List / Cancel
 // ============================================
 
-export function isProcessAlive(pid: number): boolean {
-    try {
-        process.kill(pid, 0);
-        return true;
-    } catch {
-        return false;
-    }
-}
+// Public re-export — keeps `import { isProcessAlive } from "./index"` callers
+// (and the timer.test.ts test) working while routing through the canonical
+// helper with ESRCH/EPERM disambiguation.
+export const isProcessAlive = canonicalIsProcessAlive;
 
 async function listTimers(): Promise<void> {
     const data = await getActiveTimers();

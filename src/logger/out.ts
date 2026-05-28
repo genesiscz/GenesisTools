@@ -1,6 +1,7 @@
 import { isQuietOutput } from "@app/utils/cli/output-mode";
 import { createQuietSpinner } from "@app/utils/cli/quiet-spinner";
 import { asResult } from "@app/utils/cli/result";
+import { writeStderr } from "@app/utils/cli/stderr";
 import { writeStdout } from "@app/utils/cli/stdout";
 import type { SelectValue } from "@app/utils/prompts/p";
 import * as p from "@app/utils/prompts/p";
@@ -75,6 +76,11 @@ export interface Out {
     // text through asResult so a trailing newline is guaranteed (matching
     // console.log). The console-sweep codemod targets this for console.log.
     println(raw?: unknown, ...rest: unknown[]): void;
+    // printErr / printlnErr — plain stderr without clack borders. Use for
+    // status banners, hints, and panels that must not steal stdout or get
+    // framed by out.log.* (e.g. tools task beside pass-through child output).
+    printErr(raw?: unknown, ...rest: unknown[]): void;
+    printlnErr(raw?: unknown, ...rest: unknown[]): void;
     detail(m: string): void;
     // Convenience shortcuts — match console.* ergonomics (rest args appended).
     // out.info/warn/error forward to out.log.info/warn/error but also accept
@@ -82,6 +88,12 @@ export interface Out {
     info(msg?: unknown, ...rest: unknown[]): void;
     warn(msg?: unknown, ...rest: unknown[]): void;
     error(msg?: unknown, ...rest: unknown[]): void;
+    // Drain barrier — await this BEFORE process.exit() if you just emitted
+    // printErr / printlnErr (which are fire-and-forget). Resolves once the
+    // stderr pipe has accepted everything written so far; otherwise the
+    // OS pipe buffer can be torn down with the message still queued and
+    // the user sees an empty exit-1 instead of the diagnostic.
+    flush(): Promise<void>;
 }
 
 // Drain-safe stdout write; a rejected write is surfaced to the logger (file)
@@ -92,6 +104,12 @@ export interface Out {
 function emitResult(text: string): void {
     writeStdout(text).catch((err) => {
         logger.debug({ err }, "out: stdout write failed");
+    });
+}
+
+function emitStderr(text: string): void {
+    writeStderr(text).catch((err) => {
+        logger.debug({ err }, "out: stderr write failed");
     });
 }
 
@@ -128,6 +146,15 @@ export function makeOut(component: string | null, mirror: "component" | "config"
     // → `out.print()` / `out.info()` works after codemod with no manual fix.
     const stringify = (a: unknown): string =>
         a == null ? String(a) : typeof a === "string" ? a : typeof a === "object" ? asResult(a) : String(a);
+
+    const joinArgs = (raw?: unknown, ...rest: unknown[]): string => {
+        const head = raw === undefined ? "" : stringify(raw);
+        if (rest.length > 0) {
+            return `${head} ${rest.map(stringify).join(" ")}`;
+        }
+
+        return head;
+    };
 
     const Lrest =
         (k: "info" | "warn" | "error") =>
@@ -167,16 +194,20 @@ export function makeOut(component: string | null, mirror: "component" | "config"
         // print: RAW stdout path — bytes pass through unchanged. No newline
         // added, no serialization. Caller owns the bytes (PR #176 t22).
         print: (raw?: unknown, ...rest: unknown[]) => {
-            const head = raw === undefined ? "" : stringify(raw);
-            const text = rest.length > 0 ? `${head} ${rest.map(stringify).join(" ")}` : head;
-            emitResult(text);
+            emitResult(joinArgs(raw, ...rest));
         },
-        // println: console.log-ergonomic — auto-appends newline via asResult
-        // so console.log(x) → out.println(x) preserves stdout-parity.
         println: (raw?: unknown, ...rest: unknown[]) => {
-            const head = raw === undefined ? "" : stringify(raw);
-            const text = rest.length > 0 ? `${head} ${rest.map(stringify).join(" ")}` : head;
-            emitResult(asResult(text));
+            emitResult(asResult(joinArgs(raw, ...rest)));
+        },
+        printErr: (raw?: unknown, ...rest: unknown[]) => {
+            const text = joinArgs(raw, ...rest);
+            emitStderr(text);
+            mirrorLine(text);
+        },
+        printlnErr: (raw?: unknown, ...rest: unknown[]) => {
+            const text = asResult(joinArgs(raw, ...rest));
+            emitStderr(text);
+            mirrorLine(text.trimEnd());
         },
         detail: (m) => {
             p.log.message(m);
@@ -185,6 +216,20 @@ export function makeOut(component: string | null, mirror: "component" | "config"
         info: Lrest("info"),
         warn: Lrest("warn"),
         error: Lrest("error"),
+        flush: () => {
+            // Write empty strings via the same Promise-returning paths to
+            // serialize behind any pending writes. The callback only fires
+            // after the bytes are queued in the kernel pipe, which is the
+            // strongest guarantee process.stderr.write offers on a pipe.
+            return Promise.all([
+                writeStdout("").catch((err) => {
+                    logger.debug({ err }, "out.flush: stdout drain failed");
+                }),
+                writeStderr("").catch((err) => {
+                    logger.debug({ err }, "out.flush: stderr drain failed");
+                }),
+            ]).then(() => undefined);
+        },
     };
 }
 
