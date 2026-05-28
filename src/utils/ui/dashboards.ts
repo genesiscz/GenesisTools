@@ -130,15 +130,16 @@ export const DASHBOARDS = {
     },
     "debugging-master": {
         key: "debugging-master",
-        name: "Debugging Master",
-        description: "Debugging/analysis tool dashboard.",
-        port: 7244,
+        name: "Log Viewer (dbg + task)",
+        description: "Unified live log dashboard for debugging-master and task sessions.",
+        port: 7243,
+        bindHost: "0.0.0.0",
         strictPort: false,
-        launch: null,
-        portOverride: null,
+        launch: "tools debugging-master dashboard serve",
+        portOverride: { flag: "--port" },
         tech: "vite",
         auth: "none",
-        note: "Orphaned — no CLI entry point found; tracked for port coordination only.",
+        note: "Shared by `tools task dashboard open` and `tools debugging-master dashboard serve open` (latter via the DashboardApp commander).",
     },
 } as const satisfies Record<string, DashboardEntry>;
 

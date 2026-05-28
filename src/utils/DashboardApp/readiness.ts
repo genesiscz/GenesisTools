@@ -98,7 +98,7 @@ export async function waitForUrlReady(url: string, timeoutMs = DEFAULT_TIMEOUT_M
         lastError !== undefined
             ? ` (last error: ${lastError instanceof Error ? lastError.message : String(lastError)})`
             : "";
-    return { ready: false, detail: `http ${url} did not respond in ${timeoutMs}ms${statusSuffix}${errorSuffix}` };
+    return { ready: false, detail: `${url} did not respond in ${timeoutMs}ms${statusSuffix}${errorSuffix}` };
 }
 
 async function waitForLog(
