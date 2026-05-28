@@ -1,17 +1,26 @@
-import { describe, expect, it } from "bun:test";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { afterEach, describe, expect, it } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@app/utils/json";
 import { TaskSessionStore } from "@app/task/lib/session-store";
 import { resolveTaskSessionListingMeta } from "./task-session-listing-meta";
 
 describe("resolveTaskSessionListingMeta", () => {
+    let scratchDir: string | undefined;
+
+    afterEach(() => {
+        if (scratchDir) {
+            rmSync(scratchDir, { recursive: true, force: true });
+            scratchDir = undefined;
+        }
+    });
+
     it("falls back to jsonl meta line when meta file is missing", async () => {
-        const dir = join(import.meta.dir, ".tmp-task-listing-meta");
-        mkdirSync(dir, { recursive: true });
+        scratchDir = mkdtempSync(join(tmpdir(), "gt-task-listing-meta-"));
 
         const name = `jsonl-only-${Date.now()}`;
-        const jsonlPath = join(dir, `${name}.jsonl`);
+        const jsonlPath = join(scratchDir, `${name}.jsonl`);
 
         writeFileSync(
             jsonlPath,

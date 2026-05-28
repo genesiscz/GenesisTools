@@ -35,12 +35,29 @@ export type LogOutputFormat = "human" | "raw" | "jsonl";
 
 export interface LogQueryOpts {
     session: string;
-    lines?: number;
+    head?: number;
+    tail?: number;
+    all?: boolean;
     fromSeq?: number;
     toSeq?: number;
     grep?: string;
     format: LogOutputFormat;
     streams: Set<"stdout" | "stderr">;
+}
+
+export interface LogCliOpts {
+    session?: string;
+    head?: string;
+    tail?: string;
+    all?: boolean;
+    fromSeq?: string;
+    toSeq?: string;
+    grep?: string;
+    jsonl?: boolean;
+    raw?: boolean;
+    stdout?: boolean;
+    stderr?: boolean;
+    follow?: boolean;
 }
 
 export interface PrepareSessionInput {

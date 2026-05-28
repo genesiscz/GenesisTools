@@ -103,7 +103,7 @@ describe("eval2 bug fixes integration", () => {
         expect(stderr).toContain("Streams:   merged");
     }, 30_000);
 
-    it("logs --all returns full session beyond default 50-line window (bug #7)", async () => {
+    it("logs default (non-TTY) returns full session; --tail caps window (bug #7 + B2)", async () => {
         const homeDir = setupHome();
         const session = `all-lines-${Date.now()}`;
 
@@ -120,11 +120,12 @@ describe("eval2 bug fixes integration", () => {
         writeFileSync(sessionJsonlPath(homeDir, session), `${lines}\n`);
 
         const defaultWindow = await runTaskCli(["logs", "--session", session, "--raw"], { homeDir });
-        expect(defaultWindow.stdout).not.toContain("EVAL2_EARLY_MARKER");
+        expect(defaultWindow.stdout).toContain("EVAL2_EARLY_MARKER");
+        expect(defaultWindow.stdout.split("\n").filter(Boolean).length).toBe(100);
 
-        const allLines = await runTaskCli(["logs", "--session", session, "--raw", "--all"], { homeDir });
-        expect(allLines.stdout).toContain("EVAL2_EARLY_MARKER");
-        expect(allLines.stdout.split("\n").filter(Boolean).length).toBe(100);
+        const tailWindow = await runTaskCli(["logs", "--session", session, "--raw", "--tail", "50"], { homeDir });
+        expect(tailWindow.stdout).not.toContain("EVAL2_EARLY_MARKER");
+        expect(tailWindow.stdout.split("\n").filter(Boolean).length).toBe(50);
     }, 30_000);
 
     it("tail --follow exits when session already ended (bug #5 CLI)", async () => {

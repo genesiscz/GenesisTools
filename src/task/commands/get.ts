@@ -8,11 +8,13 @@ export function registerGetCommand(program: Command): void {
     program
         .command("get")
         .description("Show session info panel (state, files, flags cheat sheet)")
+        .option("--session <name>", "Session name (fuzzy-matched; inherits global if unset)")
         .option("--clear-older-than-seq <n>", "Remove log lines with seq <= N before showing info")
-        .action(async (opts: { clearOlderThanSeq?: string }) => {
+        .action(async (opts: { session?: string; clearOlderThanSeq?: string }) => {
             const globalOpts = program.opts<{ session?: string }>();
+            const sessionFlag = opts.session ?? globalOpts.session;
 
-            await withResolvedSession(globalOpts.session, async (session) => {
+            await withResolvedSession(sessionFlag, async (session) => {
                 if (opts.clearOlderThanSeq !== undefined) {
                     const seq = Number.parseInt(opts.clearOlderThanSeq, 10);
 
