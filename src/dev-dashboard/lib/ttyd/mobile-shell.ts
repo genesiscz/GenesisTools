@@ -81,7 +81,6 @@ const TTYD_MOBILE_SHELL_SCRIPT = `<script id="dd-ttyd-mobile-shell-js">
         }
 
         var steps = Math.max(1, Math.abs(Math.trunc(lines)));
-        var button = lines < 0 ? 4 : 3;
         var col = Math.max(1, Math.floor(term.cols / 2));
         var row = Math.max(1, Math.floor(term.rows / 2));
         var lh = lineHeight();
@@ -92,8 +91,8 @@ const TTYD_MOBILE_SHELL_SCRIPT = `<script id="dd-ttyd-mobile-shell-js">
                 row: row,
                 x: col * lh,
                 y: row * lh,
-                button: button,
-                action: 0,
+                button: 4,
+                action: lines < 0 ? 0 : 1,
                 ctrl: false,
                 alt: false,
                 shift: false

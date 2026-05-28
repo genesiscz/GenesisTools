@@ -19,6 +19,7 @@ describe("ttyd mobile-shell", () => {
         expect(patched).toContain("__ddTtydScroll");
         expect(patched).toContain("coreMouseService");
         expect(patched).toContain("triggerMouseEvent");
+        expect(patched).toContain("action: lines < 0 ? 0 : 1");
         expect(patched).toContain("scrollLines");
         expect(patched).toContain("touch-action: none");
     });
